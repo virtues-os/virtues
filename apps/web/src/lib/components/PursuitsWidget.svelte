@@ -1,10 +1,5 @@
 <script lang="ts">
-	import type { Task, Initiative, Aspiration } from '$lib/types/axiology';
-
-	type TemporalPursuit =
-		| { type: 'task'; data: Task }
-		| { type: 'initiative'; data: Initiative }
-		| { type: 'aspiration'; data: Aspiration };
+	import type { Task, Initiative, Aspiration, TemporalPursuit } from '$lib/types/actions';
 
 	interface PursuitsData {
 		pursuits: TemporalPursuit[];
