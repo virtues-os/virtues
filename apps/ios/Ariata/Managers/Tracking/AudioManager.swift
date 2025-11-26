@@ -36,6 +36,7 @@ class AudioManager: NSObject, ObservableObject {
     private var currentChunkStartTime: Date?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private let timerQueue = DispatchQueue(label: "com.ariata.audio.timer", qos: .userInitiated)
+    private var pausedForOtherAudio = false
 
     /// Initialize with dependency injection
     init(configProvider: ConfigurationProvider,
@@ -98,7 +99,7 @@ class AudioManager: NSObject, ObservableObject {
             name: AVAudioSession.routeChangeNotification,
             object: audioSession
         )
-        
+
         // Listen for available inputs changes
         NotificationCenter.default.addObserver(
             self,
@@ -106,13 +107,30 @@ class AudioManager: NSObject, ObservableObject {
             name: AVAudioSession.mediaServicesWereResetNotification,
             object: audioSession
         )
-        
+
         // Listen for audio interruptions (phone calls, etc.)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleInterruption),
             name: AVAudioSession.interruptionNotification,
             object: audioSession
+        )
+
+        // Listen for other apps playing audio (Spotify, Apple Music, etc.)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSilenceSecondaryAudioHint),
+            name: AVAudioSession.silenceSecondaryAudioHintNotification,
+            object: audioSession
+        )
+
+        // Listen for app becoming active (returning from background)
+        // This helps resume recording after music apps release audio session
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppBecameActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
         )
     }
     
@@ -123,7 +141,27 @@ class AudioManager: NSObject, ObservableObject {
     @objc private func handleInputsChange(notification: Notification) {
         updateAvailableInputs()
     }
-    
+
+    @objc private func handleAppBecameActive(notification: Notification) {
+        #if DEBUG
+        print("📱 App became active - checking if recording should resume")
+        #endif
+
+        // Check if we should be recording but aren't
+        let shouldBeRecording = configProvider.isStreamEnabled("microphone") && hasPermission
+
+        if shouldBeRecording && !isRecording {
+            #if DEBUG
+            print("   Recording was interrupted, attempting to resume...")
+            #endif
+
+            // Small delay to let audio session settle
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.startRecording()
+            }
+        }
+    }
+
     @objc private func handleInterruption(notification: Notification) {
         guard let info = notification.userInfo,
               let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -201,14 +239,50 @@ class AudioManager: NSObject, ObservableObject {
         }
     }
 
+    @objc private func handleSilenceSecondaryAudioHint(notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let typeValue = userInfo[AVAudioSessionSilenceSecondaryAudioHintTypeKey] as? UInt,
+              let type = AVAudioSession.SilenceSecondaryAudioHintType(rawValue: typeValue) else {
+            return
+        }
+
+        switch type {
+        case .begin:
+            // Other audio (Spotify, Apple Music) started playing
+            #if DEBUG
+            print("Other audio started - pausing recording to preserve audio quality")
+            #endif
+
+            if isRecording {
+                pausedForOtherAudio = true
+                stopRecording()
+            }
+
+        case .end:
+            // Other audio stopped playing
+            #if DEBUG
+            print("Other audio stopped - resuming recording")
+            #endif
+
+            // Only auto-resume if we paused for other audio and stream is enabled
+            if pausedForOtherAudio && configProvider.isStreamEnabled("microphone") && hasPermission {
+                pausedForOtherAudio = false
+                startRecording()
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
     // MARK: - Audio Input Management
 
     /// Refresh available audio inputs (call when opening Settings)
     func refreshAvailableInputs() {
         // Temporarily activate audio session to get full list of inputs
         do {
-            // Use .mixWithOthers to avoid interrupting music playback
-            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .mixWithOthers])
+            // Use both A2DP and HFP to see all Bluetooth devices (AirPods, headsets, car audio)
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothA2DP, .allowBluetoothHFP])
             try audioSession.setActive(true)
 
             // Update the list
@@ -270,11 +344,15 @@ class AudioManager: NSObject, ObservableObject {
     func selectAudioInput(_ input: AVAudioSessionPortDescription?) {
         selectedAudioInput = input
         saveSelectedInput()
-        
+
         // Apply the selection if currently recording
+        // This happens when user EXPLICITLY selects in Settings
         if isRecording {
             do {
                 try audioSession.setPreferredInput(input)
+                #if DEBUG
+                print("   Switched recording input to: \(input.map { getDisplayName(for: $0) } ?? "default")")
+                #endif
             } catch {
                 print("❌ Failed to set preferred audio input: \(error)")
             }
@@ -328,19 +406,18 @@ class AudioManager: NSObject, ObservableObject {
     // MARK: - Audio Session Setup
     
     func setupAudioSession() throws {
-        // Configure audio session without .allowBluetooth if user selected built-in mic
-        let shouldAllowBluetooth = selectedAudioInput?.portType != .builtInMic
-
-        // Use .mixWithOthers to allow music apps (Spotify, etc.) to play simultaneously
-        // Remove .defaultToSpeaker as it can interfere with Bluetooth routing
-        var options: AVAudioSession.CategoryOptions = [.mixWithOthers]
-        if shouldAllowBluetooth {
-            options.insert(.allowBluetooth)
-        }
+        // DO NOT use .mixWithOthers - it degrades audio quality to mono
+        // Instead, we auto-pause recording when other audio plays (see handleSilenceSecondaryAudioHint)
+        // This preserves full audio quality for both recording and music playback
+        //
+        // Use both A2DP and HFP:
+        // - A2DP: High-quality playback (music stops our recording to preserve quality)
+        // - HFP: Bluetooth microphones (AirPods, headsets can be used for recording)
+        let options: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP, .allowBluetoothHFP]
 
         try audioSession.setCategory(.playAndRecord, mode: .default, options: options)
 
-        // Set preferred input if one is selected
+        // Set preferred input to control which device records
         if let selectedInput = selectedAudioInput {
             try audioSession.setPreferredInput(selectedInput)
         }
