@@ -6,7 +6,7 @@ class Uploader {
     private var timer: DispatchSourceTimer?
 
     // Thread-safe state management
-    private let stateQueue = DispatchQueue(label: "com.ariata.uploader.state")
+    private let stateQueue = DispatchQueue(label: "com.virtues.uploader.state")
     private var _retryDelay: TimeInterval = 60 // Start with 1 minute
     private let maxRetryDelay: TimeInterval = 960 // Max 16 minutes
     private var _consecutive401Errors = 0

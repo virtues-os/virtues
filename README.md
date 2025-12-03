@@ -51,8 +51,8 @@ Unlike enterprise tools (Airbyte: Docker per source), Virtues uses **one Rust pa
 
 ```bash
 # Clone and setup
-git clone https://github.com/ariata-os/ariata
-cd ariata
+git clone https://github.com/virtues-os/virtues
+cd virtues
 
 # Start everything (infrastructure + migrations + servers)
 make dev

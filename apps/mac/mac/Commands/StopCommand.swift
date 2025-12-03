@@ -11,7 +11,7 @@ struct StopCommand: ParsableCommand {
         print("Stopping daemon...")
         
         let plistPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/com.ariata.mac.plist")
+            .appendingPathComponent("Library/LaunchAgents/com.virtues.mac.plist")
         
         if !FileManager.default.fileExists(atPath: plistPath.path) {
             print("LaunchAgent not installed")
@@ -29,7 +29,7 @@ struct StopCommand: ParsableCommand {
         
         // Verify it's stopped
         Thread.sleep(forTimeInterval: 0.5)
-        let listResult = shell("launchctl list | grep com.ariata.mac")
+        let listResult = shell("launchctl list | grep com.virtues.mac")
         if listResult.isEmpty {
             print("✓ Service is no longer running")
         } else {

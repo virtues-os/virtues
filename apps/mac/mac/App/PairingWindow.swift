@@ -10,7 +10,7 @@ class PairingWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Pair This Mac with Ariata"
+        window.title = "Pair This Mac with Virtues"
         window.center()
         window.isMovableByWindowBackground = true
 
@@ -50,7 +50,7 @@ class PairingViewController: NSViewController {
         let containerView = view
 
         // Title
-        titleLabel = NSTextField(labelWithString: "Connect to Ariata Server")
+        titleLabel = NSTextField(labelWithString: "Connect to Virtues Server")
         titleLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -77,7 +77,7 @@ class PairingViewController: NSViewController {
         endpointField.placeholderString = "https://your-server.com"
         endpointField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         endpointField.translatesAutoresizingMaskIntoConstraints = false
-        endpointField.stringValue = ProcessInfo.processInfo.environment["ARIATA_API_URL"] ?? "http://localhost:3000"
+        endpointField.stringValue = ProcessInfo.processInfo.environment["VIRTUES_API_URL"] ?? "http://localhost:3000"
         containerView.addSubview(endpointField)
 
         // Code label
@@ -292,7 +292,7 @@ class PairingViewController: NSViewController {
         let alert = NSAlert()
         alert.messageText = "Successfully Paired!"
         alert.informativeText = """
-        Your Mac is now connected to Ariata.
+        Your Mac is now connected to Virtues.
 
         Next Steps:
         • Open the dashboard to verify your streams are working
@@ -310,7 +310,7 @@ class PairingViewController: NSViewController {
 
         if response == .alertFirstButtonReturn {
             // User clicked "Open Dashboard"
-            let dashboardURL = ProcessInfo.processInfo.environment["ARIATA_DASHBOARD_URL"] ?? "http://localhost:5173"
+            let dashboardURL = ProcessInfo.processInfo.environment["VIRTUES_DASHBOARD_URL"] ?? "http://localhost:5173"
             if let url = URL(string: dashboardURL) {
                 NSWorkspace.shared.open(url)
             }
