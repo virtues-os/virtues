@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS app.tools (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
-    tool_type TEXT NOT NULL CHECK (tool_type IN ('mcp', 'ariata')),
+    tool_type TEXT NOT NULL CHECK (tool_type IN ('mcp', 'virtues')),
     category TEXT,
     icon TEXT,
     default_params JSONB,

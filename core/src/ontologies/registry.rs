@@ -1,13 +1,12 @@
 //! Global ontology registry
 //!
-//! Provides a compile-time registry of all ontology definitions and boundary detectors.
+//! Provides a compile-time registry of all ontology definitions.
 //! Similar to the source registry pattern in `crate::registry`.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use super::descriptor::Ontology;
-use super::detector::BoundaryDetector;
 
 // Import domain registrations
 use super::activity::registry::register_activity_ontologies;
@@ -17,6 +16,7 @@ use super::location::registry::register_location_ontologies;
 use super::praxis::registry::register_praxis_ontologies;
 use super::social::registry::register_social_ontologies;
 use super::speech::registry::register_speech_ontologies;
+use super::financial::registry::register_financial_ontologies;
 
 /// Global ontology registry
 pub struct OntologyRegistry {
@@ -26,8 +26,6 @@ pub struct OntologyRegistry {
     by_domain: HashMap<String, Vec<String>>,
     /// Mapping from source stream to target ontologies
     stream_to_ontologies: HashMap<String, Vec<String>>,
-    /// Boundary detectors indexed by ontology name
-    detectors: HashMap<String, Box<dyn BoundaryDetector>>,
 }
 
 impl OntologyRegistry {
@@ -37,7 +35,6 @@ impl OntologyRegistry {
             ontologies: HashMap::new(),
             by_domain: HashMap::new(),
             stream_to_ontologies: HashMap::new(),
-            detectors: HashMap::new(),
         }
     }
 
@@ -69,11 +66,11 @@ impl OntologyRegistry {
         self.ontologies.values().collect()
     }
 
-    /// Get ontologies that have boundary detection enabled
-    pub fn list_with_boundaries(&self) -> Vec<&Ontology> {
+    /// Get ontologies that have embedding/semantic search enabled
+    pub fn list_searchable(&self) -> Vec<&Ontology> {
         self.ontologies
             .values()
-            .filter(|o| !matches!(o.boundary.algorithm, super::descriptor::DetectionAlgorithm::None))
+            .filter(|o| o.embedding.is_some())
             .collect()
     }
 
@@ -108,30 +105,9 @@ impl OntologyRegistry {
             .unwrap_or_default()
     }
 
-    /// Get the narrative role for an ontology by name
-    pub fn get_narrative_role(&self, name: &str) -> Option<&'static str> {
-        self.ontologies.get(name).map(|o| o.narrative_role.as_str())
-    }
-
     /// List all domain names
     pub fn list_domains(&self) -> Vec<&str> {
         self.by_domain.keys().map(|s| s.as_str()).collect()
-    }
-
-    /// Register a boundary detector for an ontology
-    pub fn register_detector(&mut self, detector: Box<dyn BoundaryDetector>) {
-        let name = detector.ontology_name().to_string();
-        self.detectors.insert(name, detector);
-    }
-
-    /// Get a boundary detector by ontology name
-    pub fn get_detector(&self, name: &str) -> Option<&dyn BoundaryDetector> {
-        self.detectors.get(name).map(|d| d.as_ref())
-    }
-
-    /// List all registered boundary detectors
-    pub fn list_detectors(&self) -> Vec<&dyn BoundaryDetector> {
-        self.detectors.values().map(|d| d.as_ref()).collect()
     }
 }
 
@@ -150,6 +126,7 @@ fn init_registry() -> OntologyRegistry {
     register_activity_ontologies(&mut registry);
     register_speech_ontologies(&mut registry);
     register_knowledge_ontologies(&mut registry);
+    register_financial_ontologies(&mut registry);
 
     registry
 }
@@ -181,7 +158,6 @@ mod tests {
 
     #[test]
     fn test_get_ontology() {
-        // These should exist after we implement the domain modules
         let sleep = get_ontology("health_sleep");
         if sleep.is_some() {
             let s = sleep.unwrap();
@@ -205,12 +181,89 @@ mod tests {
     #[test]
     fn test_stream_to_ontology_mapping() {
         let registry = ontology_registry();
-
-        // After implementation, stream_ios_healthkit should map to multiple health ontologies
         let health_ontologies = registry.get_for_stream("stream_ios_healthkit");
-        // This will pass once health ontologies are implemented
         if !health_ontologies.is_empty() {
             assert!(health_ontologies.len() >= 1);
         }
+    }
+
+    #[test]
+    fn test_searchable_ontologies() {
+        let registry = ontology_registry();
+        let searchable = registry.list_searchable();
+        // We have 6 searchable ontologies: email, message, calendar, ai_conversation, document, financial_transaction
+        assert_eq!(searchable.len(), 6);
+        for ont in searchable {
+            assert!(ont.embedding.is_some());
+        }
+    }
+
+    #[test]
+    fn test_registry_stream_ontology_consistency() {
+        // Validates that RegisteredStream.target_ontologies matches Ontology.source_streams
+        // This catches drift between the two metadata definitions
+        use crate::registry::list_all_streams;
+
+        let ontology_registry = ontology_registry();
+        let all_streams = list_all_streams();
+
+        let mut errors = Vec::new();
+
+        // Check: Every ontology's source_streams should have a corresponding RegisteredStream
+        // that lists that ontology in its target_ontologies
+        for ontology in ontology_registry.list() {
+            for source_stream in &ontology.source_streams {
+                // Find the registered stream with this table_name
+                let matching_stream = all_streams
+                    .iter()
+                    .find(|(_, stream)| stream.table_name == *source_stream);
+
+                match matching_stream {
+                    Some((_, stream)) => {
+                        // Verify the stream lists this ontology as a target
+                        if !stream.target_ontologies.contains(&ontology.name) {
+                            errors.push(format!(
+                                "Ontology '{}' claims source_stream '{}', but RegisteredStream '{}' doesn't list it in target_ontologies (has: {:?})",
+                                ontology.name, source_stream, stream.name, stream.target_ontologies
+                            ));
+                        }
+                    }
+                    None => {
+                        errors.push(format!(
+                            "Ontology '{}' claims source_stream '{}' but no RegisteredStream has that table_name",
+                            ontology.name, source_stream
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Check: Every RegisteredStream's target_ontologies should exist and list that stream
+        for (source_name, stream) in &all_streams {
+            for target_ontology in &stream.target_ontologies {
+                match ontology_registry.get(target_ontology) {
+                    Some(ontology) => {
+                        if !ontology.source_streams.contains(&stream.table_name) {
+                            errors.push(format!(
+                                "RegisteredStream '{}/{}' (table: {}) claims target_ontology '{}', but ontology doesn't list it in source_streams (has: {:?})",
+                                source_name, stream.name, stream.table_name, target_ontology, ontology.source_streams
+                            ));
+                        }
+                    }
+                    None => {
+                        errors.push(format!(
+                            "RegisteredStream '{}/{}' claims target_ontology '{}' but no such ontology exists",
+                            source_name, stream.name, target_ontology
+                        ));
+                    }
+                }
+            }
+        }
+
+        assert!(
+            errors.is_empty(),
+            "Registry consistency errors:\n{}",
+            errors.join("\n")
+        );
     }
 }

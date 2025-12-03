@@ -66,7 +66,7 @@
 <div class="chat-input-container {maxWidth} w-full">
 	<div
 		aria-label="Chat input"
-		class="chat-input-wrapper bg-white border border-stone-300 rounded-xl shadow-sm transition-all duration-300 hover:border-blue-200 hover:shadow-blue-200/50 cursor-text"
+		class="chat-input-wrapper bg-surface border border-border rounded-xl shadow-sm transition-all duration-300 hover:border-primary/50 hover:shadow-primary/30 cursor-text"
 		class:focused={isFocused}
 		onclick={handleWrapperClick}
 		role="button"
@@ -90,7 +90,7 @@
 				{placeholder}
 				{disabled}
 				rows="1"
-				class="chat-textarea w-full resize-none outline-none text-stone-800 placeholder:text-stone-500 font-sans text-base"
+				class="chat-textarea w-full resize-none outline-none text-foreground placeholder:text-foreground-subtle font-sans text-base bg-transparent"
 				style="max-height: 200px; overflow-y: auto;"
 			></textarea>
 		</div>
@@ -107,7 +107,7 @@
 				type="button"
 				onclick={handleSubmit}
 				disabled={!value.trim() || sendDisabled}
-				class="send-button w-8 h-8 btn-primary hover:bg-blue cursor-pointer text-white rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
+				class="send-button w-8 h-8 btn-primary cursor-pointer rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
 			>
 				{#if sendDisabled}
 					<iconify-icon
@@ -155,12 +155,12 @@
 	}
 
 	textarea::-webkit-scrollbar-thumb {
-		background: var(--color-stone-300);
+		background: var(--color-border-subtle);
 		border-radius: 3px;
 	}
 
 	textarea::-webkit-scrollbar-thumb:hover {
-		background: var(--color-stone-400);
+		background: var(--color-border-strong);
 	}
 
 	.chat-input-wrapper {
@@ -168,10 +168,10 @@
 	}
 
 	.chat-input-wrapper.focused {
-		border-color: var(--color-blue) !important;
+		border-color: var(--color-primary) !important;
 		box-shadow:
 			0 1px 2px 0 rgb(0 0 0 / 0.05),
-			0 0 0 3px rgba(40, 131, 222, 0.3) !important;
+			0 0 0 3px color-mix(in srgb, var(--color-primary) 30%, transparent) !important;
 	}
 
 	.textarea-section {

@@ -27,7 +27,7 @@
 	</div>
 	<div class="thinking-text">
 		<span
-			class="thinking-text-content font-serif font-light text-base text-blue"
+			class="thinking-text-content font-serif font-light text-base text-primary"
 		>
 			{label}{dots}
 		</span>
@@ -66,7 +66,7 @@
 		position: absolute;
 		width: 4px;
 		height: 4px;
-		background-color: var(--color-blue);
+		background-color: var(--color-primary);
 		border-radius: 50%;
 	}
 

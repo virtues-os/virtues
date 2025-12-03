@@ -588,8 +588,8 @@ CREATE TABLE IF NOT EXISTS data.knowledge_ai_conversation (
     timestamp TIMESTAMPTZ NOT NULL,
 
     source_stream_id UUID NOT NULL,
-    source_table TEXT NOT NULL DEFAULT 'stream_ariata_ai_chat',
-    source_provider TEXT NOT NULL DEFAULT 'ariata',
+    source_table TEXT NOT NULL DEFAULT 'stream_virtues_ai_chat',
+    source_provider TEXT NOT NULL DEFAULT 'virtues',
 
     metadata JSONB DEFAULT '{}',
 

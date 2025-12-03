@@ -1,23 +1,18 @@
 //! Timeline Module
 //!
-//! This module handles the complete narrative primitive pipeline from raw boundaries
-//! to synthesized events.
+//! Location-first day view generation. Converts location_visits into a structured
+//! day view with chunks (Location, Transit, MissingData) and attached ontology data.
 //!
 //! ## Architecture
 //!
-//! - `boundaries/`: Detects and aggregates event boundaries from ontology data
-//! - `synthesis/`: Converts boundaries into narrative primitives (who/when/where/why/what/how)
-//! - `events.rs`: EventBoundary struct representing temporal transition points
+//! - `chunks/`: Location chunking, transit classification, data attachment
+//! - Day view is computed on-demand from existing tables (no persistence)
 //!
-//! ## Pipeline
+//! ## Data Flow
 //!
-//! 1. **Entity Resolution** (inline): Cluster locations, resolve people
-//! 2. **Boundary Detection**: Detect changepoints across ontologies
-//! 3. **Boundary Aggregation**: Weight-based merging and filtering
-//! 4. **Narrative Synthesis**: Extract substance and create primitives
-//!
-//! This module is deterministic and runs hourly with a 6-hour lookback window.
+//! 1. Query location_visits for date
+//! 2. Build chunks from visits + gaps
+//! 3. Classify transit by speed
+//! 4. Attach messages, transcripts, calendar, etc. by temporal intersection
 
-pub mod boundaries;
-pub mod events;
-pub mod synthesis;
+pub mod chunks;

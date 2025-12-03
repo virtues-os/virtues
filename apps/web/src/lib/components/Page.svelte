@@ -3,7 +3,7 @@
     let { children, className = "", scrollable = true } = $props();
 </script>
 
-<div class={twMerge("page-container bg-paper p-12", scrollable && "overflow-y-auto h-full", className)}>
+<div class={twMerge("page-container bg-background p-12", scrollable && "overflow-y-auto h-full", className)}>
     {@render children()}
 </div>
 

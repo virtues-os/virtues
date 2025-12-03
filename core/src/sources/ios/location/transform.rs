@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::sources::base::{OntologyTransform, TransformResult};
+use crate::jobs::{chain_to_place_resolution, TransformContext};
+use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for database inserts
 const BATCH_SIZE: usize = 500;
@@ -253,7 +254,8 @@ impl OntologyTransform for IosLocationTransform {
             records_written,
             records_failed,
             last_processed_id,
-            chained_transforms: vec![],
+            // Chain to entity resolution to create location_visit records
+            chained_transforms: vec![chain_to_place_resolution(source_id)],
         })
     }
 }
@@ -348,6 +350,25 @@ async fn execute_location_batch_insert(
     // Execute batch insert
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
+}
+
+// Self-registration
+struct IosLocationTransformRegistration;
+
+impl TransformRegistration for IosLocationTransformRegistration {
+    fn source_table(&self) -> &'static str {
+        "stream_ios_location"
+    }
+    fn target_table(&self) -> &'static str {
+        "location_point"
+    }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(IosLocationTransform))
+    }
+}
+
+inventory::submit! {
+    &IosLocationTransformRegistration as &dyn TransformRegistration
 }
 
 #[cfg(test)]

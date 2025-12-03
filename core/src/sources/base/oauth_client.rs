@@ -10,7 +10,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use ariata::sources::base::{OAuthHttpClient, RetryConfig, DefaultErrorHandler};
+//! use virtues::sources::base::{OAuthHttpClient, RetryConfig, DefaultErrorHandler};
 //! use std::sync::Arc;
 //!
 //! let client = OAuthHttpClient::new(source_id, token_manager)

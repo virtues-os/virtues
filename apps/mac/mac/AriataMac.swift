@@ -1,12 +1,12 @@
 import ArgumentParser
 import Foundation
 
-/// CLI entry point for Ariata Mac
+/// CLI entry point for Virtues Mac
 /// Note: No @main here - AppDelegate routes to this when CLI args detected
-struct AriataMac: ParsableCommand {
+struct VirtuesMac: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "ariata-mac",
-        abstract: "Ariata Mac activity monitor CLI",
+        commandName: "virtues-mac",
+        abstract: "Virtues Mac activity monitor CLI",
         version: Version.full,
         subcommands: [
             InitCommand.self,

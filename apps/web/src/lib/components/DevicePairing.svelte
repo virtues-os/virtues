@@ -1,11 +1,11 @@
 <script lang="ts">
+	/**
+	 * DevicePairing - Clean monospace code display
+	 * Minimal design: white background, large code, simple timer
+	 */
 	import { onMount, onDestroy } from "svelte";
-	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
-	import type {
-		PairingInitResponse,
-		DeviceInfo,
-	} from "$lib/types/device-pairing";
+	import type { PairingInitResponse, DeviceInfo } from "$lib/types/device-pairing";
 
 	interface Props {
 		deviceType: string;
@@ -25,7 +25,7 @@
 	let hasTimedOut = $state(false);
 
 	// Timer state
-	let timeRemaining = $state(600); // 10 minutes in seconds
+	let timeRemaining = $state(600);
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -35,58 +35,42 @@
 
 	$effect(() => {
 		if (typeof window !== "undefined") {
-			// Fetch smart endpoint from server
-			fetch('/api/app/server-info')
-				.then(r => r.json())
-				.then(data => {
+			fetch("/api/app/server-info")
+				.then((r) => r.json())
+				.then((data) => {
 					apiEndpoint = data.apiEndpoint;
 					isLoadingEndpoint = false;
 				})
 				.catch(() => {
-					// Fallback to origin-based detection
 					apiEndpoint = `${window.location.origin}/api`;
 					isLoadingEndpoint = false;
 				});
 		}
 	});
 
-	// Format time remaining as MM:SS
 	function formatTime(seconds: number): string {
 		const mins = Math.floor(seconds / 60);
 		const secs = seconds % 60;
 		return `${mins}:${secs.toString().padStart(2, "0")}`;
 	}
 
-	// Get urgency color based on time remaining
-	function getUrgencyColor(seconds: number): string {
-		if (seconds > 300) return "text-neutral-700"; // > 5 min
-		if (seconds > 120) return "text-yellow-700"; // > 2 min
-		return "text-red-700"; // < 2 min
-	}
-
-	// Copy code to clipboard
 	async function copyCode() {
 		if (!pairingData) return;
-
 		try {
 			await navigator.clipboard.writeText(pairingData.code);
-			// Could add a toast notification here
 		} catch (err) {
 			console.error("Failed to copy code:", err);
 		}
 	}
 
-	// Copy API endpoint to clipboard
 	async function copyEndpoint() {
 		try {
 			await navigator.clipboard.writeText(apiEndpoint);
-			// Could add a toast notification here
 		} catch (err) {
 			console.error("Failed to copy endpoint:", err);
 		}
 	}
 
-	// Poll for pairing completion
 	async function checkPairingStatus() {
 		if (!pairingData || deviceInfo) return;
 
@@ -94,36 +78,27 @@
 			const status = await api.getPairingStatus(pairingData.source_id);
 
 			if (status.status === "active") {
-				// Pairing completed!
 				deviceInfo = status.device_info;
 				stopPolling();
 				stopTimer();
 				onSuccess(pairingData.source_id, status.device_info);
 			} else if (status.status === "revoked") {
-				// Pairing was cancelled
 				error = "Pairing was cancelled";
 				stopPolling();
 				stopTimer();
 			}
-			// If still pending, continue polling
 		} catch (err) {
 			console.error("Failed to check pairing status:", err);
-			// Don't stop polling on network errors, just log
 		}
 	}
 
-	// Start polling for pairing completion
 	function startPolling() {
 		if (pollInterval) return;
-
 		isPolling = true;
-		// Check immediately
 		checkPairingStatus();
-		// Then poll every 2 seconds
 		pollInterval = setInterval(checkPairingStatus, 2000);
 	}
 
-	// Stop polling
 	function stopPolling() {
 		if (pollInterval) {
 			clearInterval(pollInterval);
@@ -132,22 +107,17 @@
 		isPolling = false;
 	}
 
-	// Start countdown timer
 	function startTimer() {
 		if (timerInterval || !pairingData) return;
 
-		// Calculate time remaining based on expires_at
 		const expiresAt = new Date(pairingData.expires_at);
 		const now = new Date();
-		const secondsRemaining = Math.floor(
-			(expiresAt.getTime() - now.getTime()) / 1000,
-		);
+		const secondsRemaining = Math.floor((expiresAt.getTime() - now.getTime()) / 1000);
 
 		timeRemaining = Math.max(0, secondsRemaining);
 
 		timerInterval = setInterval(() => {
 			timeRemaining--;
-
 			if (timeRemaining <= 0) {
 				hasTimedOut = true;
 				stopTimer();
@@ -156,7 +126,6 @@
 		}, 1000);
 	}
 
-	// Stop timer
 	function stopTimer() {
 		if (timerInterval) {
 			clearInterval(timerInterval);
@@ -164,7 +133,6 @@
 		}
 	}
 
-	// Initiate pairing
 	async function initiate() {
 		isInitiating = true;
 		error = null;
@@ -172,8 +140,6 @@
 		try {
 			const response = await api.initiatePairing(deviceType, deviceName);
 			pairingData = response;
-
-			// Start polling and timer
 			startPolling();
 			startTimer();
 		} catch (err) {
@@ -183,7 +149,6 @@
 		}
 	}
 
-	// Retry after timeout
 	function retry() {
 		hasTimedOut = false;
 		pairingData = null;
@@ -193,199 +158,213 @@
 		initiate();
 	}
 
-	// Handle cancel
 	function handleCancel() {
 		stopPolling();
 		stopTimer();
 		onCancel?.();
 	}
 
-	// Auto-initiate on mount
 	onMount(() => {
 		initiate();
 	});
 
-	// Cleanup on unmount
 	onDestroy(() => {
 		stopPolling();
 		stopTimer();
 	});
 </script>
 
-<div class="space-y-8">
+<div class="pairing-container">
 	{#if error}
-		<div class="p-4 border border-red-300 bg-red-50">
-			<p class="text-sm font-serif text-red-900">{error}</p>
-		</div>
+		<p class="error-text">{error}</p>
 	{/if}
 
 	{#if isInitiating}
-		<div class="text-center py-8">
-			<p class="text-neutral-600">Generating pairing code...</p>
-		</div>
+		<p class="status-text">Generating pairing code...</p>
 	{:else if hasTimedOut}
-		<div class="text-center py-8 space-y-6">
-			<div>
-				<p class="text-xl font-serif text-red-700 mb-2">
-					Pairing Code Expired
-				</p>
-				<p class="text-neutral-600">
-					The pairing code expired after 10 minutes. No device
-					connected.
-				</p>
-			</div>
-			<div class="flex gap-3 justify-center">
-				<Button onclick={retry}>Try Again</Button>
-				{#if onCancel}
-					<Button variant="ghost" onclick={handleCancel}>
-						Cancel
-					</Button>
-				{/if}
-			</div>
-		</div>
-	{:else if deviceInfo}
-		<!-- Success state -->
-		<div class="text-center py-8 space-y-6">
-			<div>
-				<div class="text-4xl mb-4">✅</div>
-				<p class="text-xl font-serif text-green-700 mb-2">
-					Device Paired Successfully!
-				</p>
-			</div>
-
-			<div
-				class="inline-block text-left border border-neutral-200 p-6 space-y-3"
-			>
-				<h3 class="font-serif text-neutral-900 mb-4">Device Details</h3>
-				<div class="space-y-2 text-sm">
-					<div class="flex justify-between gap-8">
-						<span class="text-neutral-600">Name:</span>
-						<span class="text-neutral-900 font-medium">
-							{deviceInfo.device_name}
-						</span>
-					</div>
-					<div class="flex justify-between gap-8">
-						<span class="text-neutral-600">Model:</span>
-						<span class="text-neutral-900 font-medium">
-							{deviceInfo.device_model}
-						</span>
-					</div>
-					<div class="flex justify-between gap-8">
-						<span class="text-neutral-600">OS:</span>
-						<span class="text-neutral-900 font-medium">
-							{deviceInfo.os_version}
-						</span>
-					</div>
-					{#if deviceInfo.app_version}
-						<div class="flex justify-between gap-8">
-							<span class="text-neutral-600">App:</span>
-							<span class="text-neutral-900 font-medium">
-								Ariata v{deviceInfo.app_version}
-							</span>
-						</div>
-					{/if}
-				</div>
+		<div class="timeout-state">
+			<p class="timeout-title">Code Expired</p>
+			<p class="timeout-description">The pairing code expired. No device connected.</p>
+			<div class="actions">
+				<button class="text-btn" onclick={handleCancel}>Cancel</button>
+				<button class="primary-btn" onclick={retry}>Try Again</button>
 			</div>
 		</div>
 	{:else if pairingData}
-		<!-- Waiting for device to connect -->
-		<div class="space-y-8">
-			<div class="text-center">
-				<p class="text-neutral-900 font-serif text-lg mb-2">
-					Open your device app and enter these details:
-				</p>
-				<p class="text-neutral-600 text-sm">
-					Waiting for device to connect...
-				</p>
-			</div>
+		<div class="code-display">
+			<p class="instruction">Enter this code in the Virtues app:</p>
 
-			<!-- API Endpoint Display -->
-			<div class="space-y-4">
-				<div>
-					<label class="block text-sm font-medium text-neutral-700 mb-2">
-						API Endpoint
-					</label>
-					<div
-						class="border-2 border-neutral-300 bg-neutral-50 py-4 px-6 text-center"
-					>
-						<div
-							class="text-lg font-mono text-neutral-900 break-all select-all"
-						>
-							{#if isLoadingEndpoint}
-								<span class="text-neutral-500">Loading...</span>
-							{:else}
-								{apiEndpoint}
-							{/if}
-						</div>
-						<button
-							onclick={copyEndpoint}
-							disabled={isLoadingEndpoint}
-							class="mt-3 text-sm text-neutral-600 hover:text-neutral-900 underline disabled:opacity-50 disabled:cursor-not-allowed"
-						>
-							Copy Endpoint
-						</button>
-					</div>
-				</div>
+			<div class="pairing-code">{pairingData.code}</div>
 
-				<!-- Pairing Code Display -->
-				<div>
-					<label class="block text-sm font-medium text-neutral-700 mb-2">
-						Pairing Code
-					</label>
-					<div
-						class="border-2 border-neutral-300 bg-neutral-50 py-8 px-6 text-center"
-					>
-						<div
-							class="text-6xl font-mono font-bold tracking-[0.5em] text-neutral-900 select-all"
-						>
-							{pairingData.code}
-						</div>
-						<button
-							onclick={copyCode}
-							class="mt-4 text-sm text-neutral-600 hover:text-neutral-900 underline"
-						>
-							Copy Code
-						</button>
-					</div>
+			<p class="expiry">Code expires in {formatTime(timeRemaining)}</p>
 
-					<!-- Countdown timer -->
-					<div class="mt-4 text-center">
-						<p class={`text-sm font-medium ${getUrgencyColor(timeRemaining)}`}>
-							Code expires in {formatTime(timeRemaining)}
-						</p>
-					</div>
-				</div>
-			</div>
-
-			<!-- Instructions -->
-			<div class="border-t border-neutral-200 pt-6 space-y-4">
-				<h3 class="font-serif text-neutral-900">Instructions:</h3>
-				<ol class="space-y-2 text-sm text-neutral-600 leading-relaxed">
-					<li>1. Open the Ariata app on your device</li>
-					<li>2. Navigate to Settings → Sync</li>
-					<li>3. Tap "Connect to Server"</li>
-					<li>4. Enter the <strong class="text-neutral-900">API Endpoint</strong> above</li>
-					<li>5. Enter the <strong class="text-neutral-900">Pairing Code</strong> above</li>
-					<li>6. Wait for confirmation</li>
-				</ol>
-			</div>
-
-			<!-- Cancel button -->
-			{#if onCancel}
-				<div class="pt-4 border-t border-neutral-200 text-center">
-					<Button variant="ghost" onclick={handleCancel}>
-						Cancel Pairing
-					</Button>
-				</div>
-			{/if}
-
-			<!-- Polling indicator -->
-			{#if isPolling}
-				<div class="flex items-center justify-center gap-2 text-sm text-neutral-500">
-					<div class="animate-spin h-4 w-4 border-2 border-neutral-400 border-t-transparent rounded-full"></div>
-					<span>Checking for connection...</span>
-				</div>
-			{/if}
+			<button class="copy-btn" onclick={copyCode}>Copy code</button>
 		</div>
+
+		<div class="endpoint-section">
+			<p class="endpoint-label">Server endpoint:</p>
+			<p class="endpoint-value">
+				{#if isLoadingEndpoint}
+					Loading...
+				{:else}
+					{apiEndpoint}
+				{/if}
+			</p>
+			<button class="copy-btn" onclick={copyEndpoint} disabled={isLoadingEndpoint}>
+				Copy endpoint
+			</button>
+		</div>
+
+		<div class="actions">
+			<button class="text-btn" onclick={handleCancel}>Cancel</button>
+		</div>
+
+		{#if isPolling}
+			<p class="polling-status">Waiting for device...</p>
+		{/if}
 	{/if}
 </div>
+
+<style>
+	.pairing-container {
+		text-align: center;
+	}
+
+	.error-text {
+		font-size: 14px;
+		color: var(--error);
+		margin-bottom: 16px;
+	}
+
+	.status-text {
+		font-size: 14px;
+		color: var(--foreground-muted);
+		padding: 24px 0;
+	}
+
+	/* Timeout State */
+	.timeout-state {
+		padding: 16px 0;
+	}
+
+	.timeout-title {
+		font-family: var(--font-serif);
+		font-size: 18px;
+		font-weight: 500;
+		color: var(--foreground);
+		margin-bottom: 8px;
+	}
+
+	.timeout-description {
+		font-size: 14px;
+		color: var(--foreground-muted);
+		margin-bottom: 24px;
+	}
+
+	/* Code Display */
+	.code-display {
+		margin-bottom: 32px;
+	}
+
+	.instruction {
+		font-size: 14px;
+		color: var(--foreground-muted);
+		margin-bottom: 16px;
+	}
+
+	.pairing-code {
+		font-family: var(--font-mono);
+		font-size: 32px;
+		font-weight: 500;
+		letter-spacing: 0.1em;
+		color: var(--foreground);
+		padding: 24px 0;
+	}
+
+	.expiry {
+		font-size: 13px;
+		color: var(--foreground-muted);
+		margin-bottom: 12px;
+	}
+
+	.copy-btn {
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--foreground-muted);
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-decoration: underline;
+		padding: 4px 0;
+	}
+
+	.copy-btn:hover {
+		color: var(--foreground);
+	}
+
+	.copy-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Endpoint Section */
+	.endpoint-section {
+		padding-top: 24px;
+		border-top: 1px solid var(--border);
+		margin-bottom: 24px;
+	}
+
+	.endpoint-label {
+		font-size: 13px;
+		color: var(--foreground-muted);
+		margin-bottom: 8px;
+	}
+
+	.endpoint-value {
+		font-family: var(--font-mono);
+		font-size: 14px;
+		color: var(--foreground);
+		word-break: break-all;
+		margin-bottom: 8px;
+	}
+
+	/* Actions */
+	.actions {
+		display: flex;
+		justify-content: center;
+		gap: 16px;
+		padding-top: 16px;
+	}
+
+	.text-btn {
+		font-family: var(--font-sans);
+		font-size: 14px;
+		color: var(--foreground-muted);
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 8px 0;
+	}
+
+	.text-btn:hover {
+		color: var(--foreground);
+	}
+
+	.primary-btn {
+		font-family: var(--font-sans);
+		font-size: 14px;
+		font-weight: 500;
+		padding: 12px 24px;
+		background: var(--foreground);
+		color: var(--surface);
+		border: none;
+		cursor: pointer;
+	}
+
+	/* Polling Status */
+	.polling-status {
+		font-size: 13px;
+		color: var(--foreground-muted);
+		margin-top: 24px;
+	}
+</style>

@@ -1,30 +1,28 @@
-//! Ariata Seed - Database seeding utility
+//! Virtues Seed - Database seeding utility
 //!
 //! Seeds the database with Monday in Rome reference dataset
 
-use ariata::database::Database;
-use ariata::jobs::narrative_primitive_pipeline;
-use ariata::seeding::seed_monday_in_rome_dataset;
-use ariata::storage::{stream_writer::StreamWriter, Storage};
-use chrono::{DateTime, Duration, Utc};
+use virtues::database::Database;
+use virtues::seeding::seed_monday_in_rome_dataset;
+use virtues::storage::{stream_writer::StreamWriter, Storage};
 use clap::Parser;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
-#[command(name = "ariata-seed")]
-#[command(about = "Ariata Seed - Monday in Rome Reference Dataset")]
+#[command(name = "virtues-seed")]
+#[command(about = "Virtues Seed - Monday in Rome Reference Dataset")]
 struct Args {
-    /// Run narrative primitive pipeline after seeding
-    #[arg(long, default_value_t = false)]
-    run_pipeline: bool,
+    /// Build timeline chunks after seeding (recommended)
+    #[arg(long, default_value_t = true)]
+    build_chunks: bool,
 
-    /// Simulate hourly cron by running pipeline 12 times with sliding windows (implies --run-pipeline)
+    /// Generate day view after seeding (uses stored chunks if available)
     #[arg(long, default_value_t = false)]
-    simulate_hourly: bool,
+    day_view: bool,
 }
 
 #[tokio::main]
@@ -35,12 +33,12 @@ async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ariata_seed=info".into()),
+                .unwrap_or_else(|_| "virtues_seed=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("🇮🇹 Ariata Seed - Monday in Rome Reference Dataset");
+    info!("Virtues Seed - Monday in Rome Reference Dataset");
 
     // Get database URL from environment
     dotenv::dotenv().ok();
@@ -50,11 +48,11 @@ async fn main() {
     info!("Connecting to database...");
     let db = match Database::new(&database_url) {
         Ok(db) => {
-            info!("✅ Database connection established");
+            info!("Database connection established");
             db
         }
         Err(e) => {
-            error!("❌ Failed to connect to database: {}", e);
+            error!("Failed to connect to database: {}", e);
             std::process::exit(1);
         }
     };
@@ -67,11 +65,11 @@ async fn main() {
 
         match Storage::s3(bucket, endpoint, access_key, secret_key).await {
             Ok(storage) => {
-                info!("✅ S3/MinIO storage initialized");
+                info!("S3/MinIO storage initialized");
                 storage
             }
             Err(e) => {
-                error!("❌ Failed to initialize S3 storage: {}", e);
+                error!("Failed to initialize S3 storage: {}", e);
                 std::process::exit(1);
             }
         }
@@ -80,11 +78,11 @@ async fn main() {
         let path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./data".to_string());
         match Storage::local(path) {
             Ok(storage) => {
-                info!("✅ Local storage initialized");
+                info!("Local storage initialized");
                 storage
             }
             Err(e) => {
-                error!("❌ Failed to initialize local storage: {}", e);
+                error!("Failed to initialize local storage: {}", e);
                 std::process::exit(1);
             }
         }
@@ -93,117 +91,96 @@ async fn main() {
     let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
 
     info!("Seeding Monday in Rome dataset...");
-    info!("This tests the full pipeline: CSV → Archive → Transform → Ontology tables");
+    info!("This seeds: CSV -> Archive -> Transform -> Ontology tables -> Entity Resolution");
 
     match seed_monday_in_rome_dataset(&db, &storage, stream_writer).await {
         Ok(count) => {
             info!(
-                "✅ Monday in Rome ontology seeding completed: {} records!",
+                "Monday in Rome ontology seeding completed: {} records!",
                 count
             );
         }
         Err(e) => {
-            error!("❌ Monday in Rome seeding failed: {}", e);
+            error!("Monday in Rome seeding failed: {}", e);
             std::process::exit(1);
         }
     }
 
-    // Optional: Run narrative primitive pipeline (generates narrative_primitive records)
-    if args.simulate_hourly || args.run_pipeline {
-        info!("🔄 Running narrative primitive pipeline...");
+    // Build timeline chunks (enabled by default)
+    if args.build_chunks {
+        use chrono::{Duration, Utc};
 
-        if args.simulate_hourly {
-            info!("⏰ Simulating hourly cron execution (12 hours of seed data)");
+        info!("Building timeline chunks...");
 
-            // Base time: Nov 10, 2025 07:00 UTC (matches actual seeded data timestamps)
-            let base = DateTime::parse_from_rfc3339("2025-11-10T07:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc);
+        // Process chunks for the seed data time range (Nov 10, 2025 Rome time)
+        // Use a wide window to capture all seed data
+        let end = Utc::now();
+        let start = end - Duration::days(30); // Look back 30 days to capture seed data
 
-            let mut total_primitives = 0;
-            let mut dedupe_count = 0;
+        match virtues::timeline::chunks::process_time_window(db.pool(), start, end).await {
+            Ok(count) => {
+                info!("Timeline chunks built: {} chunks created", count);
+            }
+            Err(e) => {
+                error!("Timeline chunk building failed: {}", e);
+                // Don't exit - this is non-fatal
+            }
+        }
+    }
 
-            // Run pipeline 12 times (simulating 12 hours)
-            for hour in 0..12 {
-                let current_time = base + Duration::hours(hour);
-                let window_start = current_time - Duration::hours(6); // 6h lookback
-                let window_end = current_time;
+    // Optional: Generate day view
+    if args.day_view {
+        use chrono::NaiveDate;
 
+        info!("Generating day view for 2025-11-10...");
+
+        let date = NaiveDate::from_ymd_opt(2025, 11, 10).unwrap();
+        // Use stored chunks (Rome is UTC+1)
+        match virtues::timeline::chunks::get_day_view(db.pool(), date, 1).await {
+            Ok(day_view) => {
                 info!(
-                    hour = hour,
-                    window_start = %window_start,
-                    window_end = %window_end,
-                    "Running pipeline (simulated hour {})",
-                    hour
+                    "Day view generated: {} chunks ({} location, {} transit, {} missing)",
+                    day_view.chunks.len(),
+                    day_view.total_location_minutes,
+                    day_view.total_transit_minutes,
+                    day_view.total_missing_minutes
                 );
 
-                match narrative_primitive_pipeline::run_pipeline_for_range(
-                    &db,
-                    window_start,
-                    window_end,
-                )
-                .await
-                {
-                    Ok(stats) => {
-                        let new_primitives = stats.primitives_created;
-                        let expected_dedupe = hour > 0; // Hours 1+ should see duplicates
-
-                        info!(
-                            hour = hour,
-                            places = stats.places_resolved,
-                            people = stats.people_resolved,
-                            boundaries = stats.boundaries_detected,
-                            primitives = new_primitives,
-                            duration_ms = stats.duration_ms,
-                            "✅ Hour {} completed",
-                            hour
-                        );
-
-                        // Track if deduplication is working
-                        if new_primitives == 0 && expected_dedupe {
-                            dedupe_count += 1;
+                // Print summary of chunks
+                for (i, chunk) in day_view.chunks.iter().enumerate() {
+                    match chunk {
+                        virtues::timeline::chunks::Chunk::Location(loc) => {
+                            info!(
+                                "  [{}] Location: {} ({} min) - {} messages, {} transcripts",
+                                i,
+                                loc.place_name.as_deref().unwrap_or("Unknown"),
+                                loc.duration_minutes,
+                                loc.messages.len(),
+                                loc.transcripts.len()
+                            );
                         }
-
-                        total_primitives += new_primitives;
-                    }
-                    Err(e) => {
-                        warn!(hour = hour, error = %e, "⚠️  Hour {} failed", hour);
+                        virtues::timeline::chunks::Chunk::Transit(t) => {
+                            info!(
+                                "  [{}] Transit: {:.2} km, {:.1} km/h ({} min)",
+                                i,
+                                t.distance_km,
+                                t.avg_speed_kmh,
+                                t.duration_minutes
+                            );
+                        }
+                        virtues::timeline::chunks::Chunk::MissingData(m) => {
+                            info!(
+                                "  [{}] Missing: {:?} ({} min)",
+                                i,
+                                m.likely_reason,
+                                m.duration_minutes
+                            );
+                        }
                     }
                 }
-
-                // Small delay to separate log entries
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
-
-            info!(
-                total_primitives = total_primitives,
-                dedupe_runs = dedupe_count,
-                "✅ Hourly simulation complete. \
-                 Expected: primitives created in early hours, then dedupe prevents duplicates."
-            );
-        } else {
-            // Single run for full range (matches actual seeded data: Nov 10, 07:21 - 18:20)
-            let start = DateTime::parse_from_rfc3339("2025-11-10T07:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc);
-            let end = DateTime::parse_from_rfc3339("2025-11-10T19:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc);
-
-            match narrative_primitive_pipeline::run_pipeline_for_range(&db, start, end).await {
-                Ok(stats) => {
-                    info!(
-                        places = stats.places_resolved,
-                        people = stats.people_resolved,
-                        boundaries = stats.boundaries_detected,
-                        primitives = stats.primitives_created,
-                        duration_ms = stats.duration_ms,
-                        "✅ Pipeline completed"
-                    );
-                }
-                Err(e) => {
-                    warn!(error = %e, "⚠️  Pipeline failed");
-                }
+            Err(e) => {
+                error!("Day view generation failed: {}", e);
             }
         }
     }

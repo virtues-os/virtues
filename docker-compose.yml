@@ -2,12 +2,12 @@ services:
   # PostgreSQL with PostGIS and pgvector extensions
   postgres:
     image: joshuasundance/postgis_pgvector
-    container_name: ariata-postgres
+    container_name: virtues-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-ariata}
+      POSTGRES_DB: ${DB_NAME:-virtues}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -19,12 +19,12 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - ariata-network
+      - virtues-network
 
   # MinIO object storage
   minio:
     image: minio/minio:latest
-    container_name: ariata-minio
+    container_name: virtues-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -41,19 +41,19 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - ariata-network
+      - virtues-network
 
   # Rust backend (core)
   core:
     build:
       context: ./core
       dockerfile: Dockerfile
-    container_name: ariata-core
+    container_name: virtues-core
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-ariata}
-      ARIATA_ENCRYPTION_KEY: ${ARIATA_ENCRYPTION_KEY}
-      RUST_LOG: info,ariata=debug
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-virtues}
+      VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
+      RUST_LOG: info,virtues=debug
       # OAuth endpoints
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
@@ -65,7 +65,7 @@ services:
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
       MINIO_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${S3_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${S3_BUCKET:-ariata}
+      MINIO_BUCKET: ${S3_BUCKET:-virtues}
     ports:
       - "8000:8000"
     depends_on:
@@ -74,7 +74,7 @@ services:
       minio:
         condition: service_healthy
     networks:
-      - ariata-network
+      - virtues-network
     volumes:
       # Mount for hot reload during development (optional)
       - ./core:/app
@@ -87,10 +87,10 @@ services:
       context: ./apps/web
       dockerfile: Dockerfile
       target: development
-    container_name: ariata-web
+    container_name: virtues-web
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-ariata}
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-virtues}
       ELT_API_URL: http://core:8000
       PUBLIC_ELT_API_URL: http://localhost:8000
     ports:
@@ -101,7 +101,7 @@ services:
       core:
         condition: service_started
     networks:
-      - ariata-network
+      - virtues-network
     volumes:
       # Mount for hot reload during development
       - ./apps/web:/app
@@ -116,5 +116,5 @@ volumes:
   target_cache:
 
 networks:
-  ariata-network:
+  virtues-network:
     driver: bridge

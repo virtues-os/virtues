@@ -1,7 +1,7 @@
-//! MCP Server implementation for Ariata
+//! MCP Server implementation for Virtues
 //!
 //! This module implements the ServerHandler trait from rmcp to expose
-//! Ariata's data warehouse as an MCP server.
+//! Virtues's data warehouse as an MCP server.
 
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -19,18 +19,18 @@ use std::sync::Arc;
 
 use crate::mcp::tools;
 
-/// Ariata MCP Server
+/// Virtues MCP Server
 ///
-/// Exposes Ariata's personal data warehouse to AI assistants via the Model Context Protocol.
+/// Exposes Virtues's personal data warehouse to AI assistants via the Model Context Protocol.
 #[derive(Debug, Clone)]
-pub struct AriataMcpServer {
+pub struct VirtuesMcpServer {
     pool: Arc<PgPool>,
-    tool_router: ToolRouter<AriataMcpServer>,
+    tool_router: ToolRouter<VirtuesMcpServer>,
 }
 
 #[tool_router]
-impl AriataMcpServer {
-    /// Create a new Ariata MCP server
+impl VirtuesMcpServer {
+    /// Create a new Virtues MCP server
     pub fn new(pool: PgPool) -> Self {
         let tool_router = Self::tool_router();
         let tool_count = tool_router.list_all().len();
@@ -53,11 +53,60 @@ impl AriataMcpServer {
         }
     }
 
-    /// Unified ontology tool - query data, list tables, or get schema
+    /// Unified ontology tool - query factual life data
     #[tool(
-        description = "Unified ontology tool with 3 operations: (1) 'query' - Execute read-only SQL queries on ontology tables (SELECT only), (2) 'list_tables' - Discover available tables with column names and row counts, (3) 'get_schema' - Get detailed schema for a specific table (column types, nullability, defaults). NOTE: For biographical questions ('who did I meet', 'what happened'), use ariata_query_narratives first instead of exploring tables."
+        description = r#"Query the user's life data - what actually happened.
+
+## Operations
+
+1. **query**: Execute read-only SQL (SELECT only)
+2. **list_tables**: Discover available tables with column names and row counts
+3. **get_schema**: Get detailed schema for a specific table
+
+## When to Use
+
+- "Did I sleep well?" → health_sleep
+- "How many steps?" → health_steps
+- "Show my heart rate" → health_heart_rate (use 'bpm' column, NOT 'heart_rate')
+- "Where was I?" → location_visit
+- "What apps did I use?" → activity_app_usage
+
+## Available Domains
+
+**Health** (data.health_*)
+- health_sleep: Sleep sessions (duration, quality, stages)
+- health_heart_rate: BPM measurements (column: bpm)
+- health_hrv: Heart rate variability
+- health_steps: Daily step counts
+- health_workout: Exercise (type, duration, calories)
+
+**Location** (data.location_*)
+- location_visit: Places visited (name, duration, coordinates)
+- location_point: Raw GPS points
+
+**Social** (data.social_*)
+- social_email: Email messages
+- social_message: SMS/iMessage
+
+**Activity** (data.activity_*)
+- activity_app_usage: App focus time
+- activity_web_browsing: Web history
+
+**Knowledge** (data.knowledge_*)
+- knowledge_document: Documents
+- knowledge_ai_conversation: Past AI chats
+
+**Financial** (data.financial_*)
+- financial_transaction: Bank/card transactions
+
+## Query Tips
+
+- Always include date filters for time-bound queries
+- Use aggregations (AVG, SUM, COUNT) for summaries
+- Limit results to avoid overwhelming context
+- For biographical questions ('what happened', 'who did I meet'), use virtues_query_narratives instead"#
     )]
-    async fn ariata_query_ontology(
+    async fn virtues_query_ontology(
         &self,
         params: Parameters<tools::QueryOntologyRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -89,7 +138,7 @@ impl AriataMcpServer {
     // DISABLED: Exposes test dataset names like "monday-in-rome"
     // /// List all data sources and their status
     // #[tool(description = "List all connected data sources (Google, iOS, Mac, Notion, etc.) and their current status, including number of enabled streams and last sync time.")]
-    // async fn ariata_list_sources(
+    // async fn virtues_list_sources(
     //     &self,
     //     _params: Parameters<tools::ListSourcesRequest>,
     // ) -> Result<CallToolResult, McpError> {
@@ -106,11 +155,49 @@ impl AriataMcpServer {
     //     }
     // }
 
-    /// Execute a read-only SQL query against axiology tables
+    /// Execute a read-only SQL query against axiology and praxis tables
     #[tool(
-        description = "Execute a read-only SQL query against axiology tables. Available tables: data.axiology_value, data.axiology_telos, data.axiology_goal, data.axiology_virtue, data.axiology_vice, data.axiology_temperament, data.axiology_preference. Only SELECT queries are allowed. Returns the user's formal axiological framework for context-aware decision support."
+        description = r#"Query the user's character and commitments - who they are and what they're working on.
+
+## When to Use
+
+- Struggles or temptations → query vices ("SELECT * FROM vices WHERE is_active = true")
+- Decisions or life direction → query telos ("SELECT * FROM telos WHERE is_active = true")
+- "How can I be more X?" → query virtues + temperament
+- What are my goals/tasks? → query tasks, initiatives, aspirations
+- Progress on a virtue → query BOTH the virtue AND tasks linked to it
+
+## Available Tables
+
+**Axiology (character):**
+- telos: Life purpose (singular active)
+- virtues: Positive patterns being cultivated
+- vices: Negative patterns being resisted
+- temperaments: Natural dispositions
+- preferences: Affinities with people/places/activities
+
+**Praxis (action):**
+- tasks: Short-term (daily/weekly), may have virtue_ids/vice_ids
+- initiatives: Medium-term (month/quarter)
+- aspirations: Long-term (years)
+- calendar: Scheduled events
+
+## Key Insight
+
+Tasks and initiatives have virtue_ids and vice_ids. When someone asks "Am I making progress on patience?", query both:
+1. Axiology for the virtue (patience)
+2. Tasks WHERE virtue_ids contains that virtue's ID
+
+## Example Queries
+
+- "SELECT title, description FROM virtues WHERE is_active = true"
+- "SELECT title, description FROM vices WHERE is_active = true"
+- "SELECT * FROM tasks WHERE is_active = true ORDER BY due_date"
+- "SELECT * FROM calendar WHERE start_time >= CURRENT_DATE"
+
+Shorthand table names (virtues, tasks, etc.) are auto-rewritten to data.axiology_virtue, data.praxis_task, etc."#
     )]
-    async fn ariata_query_axiology(
+    async fn virtues_query_axiology(
         &self,
         params: Parameters<tools::QueryAxiologyRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -139,7 +226,7 @@ impl AriataMcpServer {
     #[tool(
         description = "USE THIS FIRST for biographical questions! Query your narrative biography and life story. Returns pre-synthesized prose summaries about what happened, who you met, and events on specific dates/locations. **ALWAYS call this BEFORE any other tool** when answering questions like 'who did I meet', 'what happened on [date]', 'what did I do in [location]', or any question about past events, people, or activities. This is 10x faster than querying raw data tables and contains ALL the context you need. Only use other tools if this returns no results."
     )]
-    async fn ariata_query_narratives(
+    async fn virtues_query_narratives(
         &self,
         params: Parameters<tools::QueryNarrativesRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -165,7 +252,7 @@ impl AriataMcpServer {
     #[tool(
         description = "Manage your axiology system - create, read, update, delete tasks, initiatives, aspirations, values, telos, virtues, vices, habits, temperaments, and preferences. Operations: 'create' (new entity), 'read' (get by ID), 'update' (modify existing), 'delete' (soft delete), 'list' (get all active). Entity types: task (daily/weekly), initiative (month/quarter), aspiration (multi-year), value (foundational principle), telos (life purpose), virtue (positive pattern), vice (negative pattern), habit (daily practice), temperament (innate disposition), preference (entity affinity)."
     )]
-    async fn ariata_manage_axiology(
+    async fn virtues_manage_axiology(
         &self,
         params: Parameters<tools::ManageAxiologyRequest>,
     ) -> Result<CallToolResult, McpError> {
@@ -191,59 +278,38 @@ impl AriataMcpServer {
         }
     }
 
-    // TODO: Re-enable when prudent_context_snapshot table is ready
-    // /// Get pre-computed prudent context
-    // #[tool(description = "Get the latest pre-computed prudent context - the right context at the right time. Refreshed 4x daily (6am, 12pm, 6pm, 10pm) via LLM-powered curation. Contains: prioritized goals, today's habits, relevant virtues/vices, today's calendar, recent salient events, and cross-references between facts and values. Use this at the start of a conversation for baseline context.")]
-    // async fn ariata_get_prudent_context(
-    //     &self,
-    //     _params: Parameters<serde_json::Value>,
-    // ) -> Result<CallToolResult, McpError> {
-    //     // Fetch latest valid context snapshot
-    //     let snapshot = sqlx::query(
-    //         r#"
-    //         SELECT context_data, computed_at
-    //         FROM data.prudent_context_snapshot
-    //         WHERE expires_at > NOW()
-    //         ORDER BY computed_at DESC
-    //         LIMIT 1
-    //         "#
-    //     )
-    //     .fetch_optional(self.pool.as_ref())
-    //     .await
-    //     .map_err(|e| McpError::internal_error(format!("Database error: {}", e), None))?;
-    //
-    //     match snapshot {
-    //         Some(snap) => {
-    //             use sqlx::Row;
-    //             let context_data: serde_json::Value = snap.get("context_data");
-    //             let computed_at: chrono::DateTime<chrono::Utc> = snap.get("computed_at");
-    //
-    //             let context_json = serde_json::to_string_pretty(&serde_json::json!({
-    //                 "computed_at": computed_at,
-    //                 "context": context_data
-    //             }))
-    //             .map_err(|e| McpError::internal_error(format!("Failed to serialize context: {}", e), None))?;
-    //
-    //             Ok(CallToolResult::success(vec![Content::text(context_json)]))
-    //         }
-    //         None => {
-    //             // No context available yet
-    //             let fallback = serde_json::json!({
-    //                 "message": "Prudent context not yet computed. First computation will run at next scheduled time (6am, 12pm, 6pm, or 10pm).",
-    //                 "note": "Use ariata_query_ontology and ariata_query_axiology tools to explore data directly in the meantime."
-    //             });
-    //
-    //             let fallback_json = serde_json::to_string_pretty(&fallback)
-    //                 .map_err(|e| McpError::internal_error(format!("Failed to serialize fallback: {}", e), None))?;
-    //
-    //             Ok(CallToolResult::success(vec![Content::text(fallback_json)]))
-    //         }
-    //     }
-    // }
+    /// Semantic search across emails, messages, calendar events, AI conversations, and documents
+    #[tool(
+        description = "Search your personal data using natural language. Uses AI embeddings (pgvector) to find semantically similar content across emails, messages, calendar events, AI conversations, and documents (including Notion pages). Examples: 'emails about project deadline', 'messages about dinner plans', 'meetings with John about budget', 'documents about architecture'. Returns results ranked by relevance with previews and timestamps."
+    )]
+    async fn virtues_semantic_search(
+        &self,
+        params: Parameters<tools::SemanticSearchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        match tools::semantic_search(&self.pool, params.0).await {
+            Ok(result) => {
+                let json_str = serde_json::to_string_pretty(&result).map_err(|e| {
+                    McpError::internal_error(format!("Failed to serialize result: {}", e), None)
+                })?;
+                Ok(CallToolResult::success(vec![Content::text(json_str)]))
+            }
+            Err(e) => {
+                // Categorize errors appropriately
+                if e.contains("Failed to embed query") || e.contains("Ollama") {
+                    Err(McpError::internal_error(
+                        format!("Embedding service unavailable: {}. Ensure Ollama is running with the nomic-embed-text model.", e),
+                        None,
+                    ))
+                } else {
+                    Err(McpError::internal_error(e, None))
+                }
+            }
+        }
+    }
 }
 
 #[tool_handler]
-impl ServerHandler for AriataMcpServer {
+impl ServerHandler for VirtuesMcpServer {
     fn get_info(&self) -> ServerInfo {
         tracing::debug!("MCP get_info() called");
         ServerInfo {
@@ -253,14 +319,14 @@ impl ServerHandler for AriataMcpServer {
                 .enable_resources()
                 .build(),
             server_info: Implementation {
-                name: "ariata".to_string(),
+                name: "virtues".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                title: Some("Ariata Personal Data Warehouse".to_string()),
-                website_url: Some("https://github.com/adamjace/ariata".to_string()),
+                title: Some("Virtues Personal Data Warehouse".to_string()),
+                website_url: Some("https://github.com/ariata-os/ariata".to_string()),
                 icons: None,
             },
             instructions: Some(
-                r#"Ariata Personal Data Warehouse MCP Server
+                r#"Virtues Personal Data Warehouse MCP Server
 
 This server provides access to your personal data warehouse, which aggregates data from:
 - Health data (HealthKit: heart rate, steps, sleep, etc.)
@@ -270,10 +336,11 @@ This server provides access to your personal data warehouse, which aggregates da
 - Axiology data (values, telos, goals, virtues, vices, habits, temperaments, preferences)
 
 Available Tools:
-1. ariata_query_narratives - Query your narrative biography and life story (use this for "what happened", "who did I meet", biographical questions)
-2. ariata_query_ontology - Unified ontology tool with 3 operations: query (execute SQL), list_tables (discover tables), get_schema (get table details)
-3. ariata_query_axiology - Execute read-only SQL queries against axiology tables
-4. ariata_manage_axiology - Manage your axiology system (create, read, update, delete tasks, initiatives, aspirations, values, etc.)
+1. virtues_query_narratives - Query your narrative biography and life story (use this for "what happened", "who did I meet", biographical questions)
+2. virtues_semantic_search - Natural language search across emails, messages, calendar, AI conversations (use for "find emails about X", "messages mentioning Y")
+3. virtues_query_ontology - Unified ontology tool with 3 operations: query (execute SQL), list_tables (discover tables), get_schema (get table details)
+4. virtues_query_axiology - Execute read-only SQL queries against axiology tables
+5. virtues_manage_axiology - Manage your axiology system (create, read, update, delete tasks, initiatives, aspirations, values, etc.)
 
 Axiology System:
 The axiology tables store the user's formal axiological framework:
@@ -286,8 +353,8 @@ The axiology tables store the user's formal axiological framework:
 - axiology_preference: Affinities with entities (Level 4)
 
 Best Practices:
-- Use ariata_query_ontology with operation='list_tables' to discover what data is available
-- Use ariata_query_ontology with operation='get_schema' to understand column names and types before querying
+- Use virtues_query_ontology with operation='list_tables' to discover what data is available
+- Use virtues_query_ontology with operation='get_schema' to understand column names and types before querying
 - Queries are read-only and limited to 1000 rows max
 - Use aggregate functions (COUNT, AVG, etc.) to summarize large datasets
 - Filter by date ranges to narrow results
@@ -364,7 +431,7 @@ WHERE is_active = true;
         async move {
             // Define the baseline context resource
             let baseline_resource = RawResource {
-                uri: "ariata://context/baseline".to_string(),
+                uri: "virtues://context/baseline".to_string(),
                 name: "Baseline Context".to_string(),
                 title: Some("Prudent Baseline Context".to_string()),
                 description: Some(
@@ -394,7 +461,7 @@ WHERE is_active = true;
     ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         async move {
             match request.uri.as_str() {
-                "ariata://context/baseline" => {
+                "virtues://context/baseline" => {
                     // Get current date/time with timezone
                     let now = chrono::Local::now();
                     let formatted_date = now.format("%A, %B %d, %Y, %I:%M %p %Z").to_string();
@@ -415,13 +482,13 @@ WHERE is_active = true;
 
 **For ANY biographical question** (what happened, who met, what did, where was), your **FIRST and ONLY initial action** must be:
 
-1. Call `ariata_query_narratives` with the date
+1. Call `virtues_query_narratives` with the date
 2. If narratives exist → answer the question from narratives
 3. ONLY if narratives are empty → then consider other tools
 
 **DO NOT:**
-- ❌ Call `ariata_query_ontology` with operation='list_tables' first
-- ❌ Call `ariata_query_ontology` with operation='query' before checking narratives
+- ❌ Call `virtues_query_ontology` with operation='list_tables' first
+- ❌ Call `virtues_query_ontology` with operation='query' before checking narratives
 - ❌ "Explore" the data before checking narratives
 - ❌ Check multiple data sources when narratives have the answer
 
@@ -433,9 +500,9 @@ WHERE is_active = true;
 - Contain the "story" not just raw data points
 
 **When to use other tools:**
-- `ariata_query_ontology` operation='list_tables': Only when you need to discover what raw data types exist
-- `ariata_query_ontology` operation='query': Only for specific metrics (exact heart rate at 3:42pm) or when narratives don't exist
-- `ariata_query_axiology`: For values, goals, habits, virtues, vices queries
+- `virtues_query_ontology` operation='list_tables': Only when you need to discover what raw data types exist
+- `virtues_query_ontology` operation='query': Only for specific metrics (exact heart rate at 3:42pm) or when narratives don't exist
+- `virtues_query_axiology`: For values, goals, habits, virtues, vices queries
 
 ---
 
@@ -448,7 +515,7 @@ When you find information:
 - **Avoid observability language**: Don't say "I queried...", "the data shows...", "the table returned...", or explain your query process
 
 ### Never Say These Things:
-❌ "Let me use the ariata_query_narratives tool..."
+❌ "Let me use the virtues_query_narratives tool..."
 ❌ "Querying the narrative_chunks table..."
 ❌ "The data.narrative_chunks table shows..."
 ❌ "SELECT narrative_text FROM..."

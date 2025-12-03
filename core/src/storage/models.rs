@@ -82,9 +82,21 @@ pub struct UserProfile {
     pub home_state: Option<String>,
     pub home_postal_code: Option<String>,
     pub home_country: Option<String>,
+    pub home_place_id: Option<Uuid>,
     // Work/Occupation
     pub occupation: Option<String>,
     pub employer: Option<String>,
+    // Preferences
+    pub theme: Option<String>,
+    // Crux - shared ethos statement from onboarding
+    pub crux: Option<String>,
+    // Onboarding
+    pub is_onboarding: bool,
+    pub onboarding_step: Option<i32>,
+    pub axiology_complete: bool,
+    pub onboarding_profile_complete: bool,
+    pub onboarding_places_complete: bool,
+    pub onboarding_tools_complete: bool,
     // Audit
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,

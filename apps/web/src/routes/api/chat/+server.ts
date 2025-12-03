@@ -5,7 +5,7 @@ import { getAgent, initializeAgents } from '$lib/server/agents/registry';
 import { routeToAgent, isValidAgentId } from '$lib/server/routing/intent-router';
 import { getDb, getPool } from '$lib/server/db';
 import { chatSessions, assistantProfile, type ChatMessage } from '$lib/server/schema';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
 	isTextUIPart,
 	isToolOrDynamicToolUIPart,
@@ -15,6 +15,7 @@ import {
 } from 'ai';
 import type { AgentId } from '$lib/server/agents/types';
 import { checkRateLimit, recordUsage, RateLimitError } from '$lib/server/rate-limit';
+import { getTracer } from '$lib/server/telemetry/setup';
 
 // Constants
 const MAX_TITLE_LENGTH = 50;
@@ -137,7 +138,7 @@ export const POST: RequestHandler = async (event) => {
 			return new Response(
 				JSON.stringify({
 					error: 'Invalid agentId',
-					allowed: ['auto', 'agent', 'chat']
+					allowed: ['auto', 'agent', 'onboarding']
 				}),
 				{
 					status: 400,
@@ -183,6 +184,7 @@ export const POST: RequestHandler = async (event) => {
 
 		// === AGENT ROUTING ===
 		// Determine which agent should handle this request
+		// Note: Onboarding is now opt-in via explicit agent selection, not forced
 		let selectedAgentId: AgentId;
 		let routingReason: string;
 
@@ -220,19 +222,23 @@ export const POST: RequestHandler = async (event) => {
 
 		// Add context as a system message in UIMessage format
 		const currentDate = new Date().toISOString().split('T')[0];
+		const contextInjectionText = `User: User\nCurrent date: ${currentDate} (YYYY-MM-DD format)`;
 		const contextMessage: UIMessage = {
 			id: 'system-context',
 			role: 'system',
 			parts: [
 				{
 					type: 'text',
-					text: `User: User\nCurrent date: ${currentDate} (YYYY-MM-DD format)`,
+					text: contextInjectionText,
 				},
 			],
 		};
 
 		// Prepend context to original UIMessages
 		const messagesWithContext = [contextMessage, ...(messages as UIMessage[])];
+
+		// Build telemetry metadata for observability (passed to AI SDK experimental_telemetry)
+		const exchangeIndex = messages.filter((m: UIMessage) => m.role === 'user').length - 1;
 
 		// Stream response using agent
 		console.log('[API] Streaming response with', selectedAgentId, 'agent');
@@ -247,9 +253,23 @@ export const POST: RequestHandler = async (event) => {
 				prefix: 'msg',
 				size: 16
 			}),
+			// Enable AI SDK telemetry for observability
+			// Spans are automatically exported to our PostgreSQL via custom SpanExporter
+			experimental_telemetry: {
+				isEnabled: true,
+				tracer: getTracer(),
+				functionId: `chat-${sessionId}`,
+				metadata: {
+					sessionId,
+					exchangeIndex: String(exchangeIndex),
+					agentId: selectedAgentId,
+					routingReason,
+					wasExplicit: String(agentId !== 'auto'),
+				},
+			},
 			onFinish: async ({ messages: completeMessages, usage }) => {
 				try {
-					// Save messages along with agent metadata
+					// Save messages (trace is handled separately by telemetry exporter)
 					await saveMessagesToSession(sessionId, completeMessages, model, selectedAgentId);
 
 					// Record API usage for rate limiting and cost tracking
@@ -295,6 +315,8 @@ export const POST: RequestHandler = async (event) => {
  *
  * AI SDK v6 Best Practice: Save complete UIMessages from toUIMessageStreamResponse onFinish
  * The messages parameter contains the full conversation including user and assistant messages.
+ *
+ * Note: Trace data is handled separately by the OpenTelemetry PostgresSpanExporter
  */
 async function saveMessagesToSession(
 	sessionId: string,

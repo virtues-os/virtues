@@ -8,9 +8,9 @@
 
 /**
  * UI-safe agent metadata
- * Simplified 2-agent system:
- * - agent: Has all tools, handles queries requiring data/actions
- * - chat: No tools, simple conversation only
+ * 2-agent system:
+ * - agent: Has all tools, handles queries requiring data/actions (general assistant)
+ * Note: onboarding agent is not shown in UI - it's automatically selected based on axiology_complete flag
  */
 export const AGENT_UI_METADATA = [
 	{
@@ -19,14 +19,6 @@ export const AGENT_UI_METADATA = [
 		description: 'Intelligent assistant with access to all available tools. Can query data, search the web, visualize information, and help with tasks.',
 		color: '#6b7280',
 		icon: 'ri:robot-line',
-		enabled: true,
-	},
-	{
-		id: 'chat',
-		name: 'Chat',
-		description: 'Simple conversational assistant without tool access. Best for quick questions and general conversation.',
-		color: '#64748b',
-		icon: 'ri:chat-3-line',
 		enabled: true,
 	},
 ] as const;

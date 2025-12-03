@@ -57,7 +57,7 @@ pub struct UpdateStreamScheduleRequest {
 ///
 /// # Example
 /// ```rust
-/// let streams = ariata::list_source_streams(&db, source_id).await?;
+/// let streams = virtues::list_source_streams(&db, source_id).await?;
 /// for stream in streams {
 ///     println!("{}: {} (enabled: {})",
 ///         stream.stream_name,

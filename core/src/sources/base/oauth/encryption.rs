@@ -1,7 +1,7 @@
 //! Token encryption using AES-256-GCM
 //!
 //! This module provides authenticated encryption for OAuth tokens stored in the database.
-//! It uses AES-256-GCM with a key derived from the ARIATA_ENCRYPTION_KEY environment variable.
+//! It uses AES-256-GCM with a key derived from the VIRTUES_ENCRYPTION_KEY environment variable.
 
 use base64::Engine;
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM};
@@ -21,11 +21,11 @@ pub struct TokenEncryptor {
 impl TokenEncryptor {
     /// Create a new token encryptor from the environment
     ///
-    /// Expects ARIATA_ENCRYPTION_KEY to be a 32-byte base64-encoded key
+    /// Expects VIRTUES_ENCRYPTION_KEY to be a 32-byte base64-encoded key
     pub fn from_env() -> Result<Self> {
-        let key_b64 = std::env::var("ARIATA_ENCRYPTION_KEY").map_err(|_| {
+        let key_b64 = std::env::var("VIRTUES_ENCRYPTION_KEY").map_err(|_| {
             Error::Other(
-                "ARIATA_ENCRYPTION_KEY not set. Generate with: openssl rand -base64 32".to_string(),
+                "VIRTUES_ENCRYPTION_KEY not set. Generate with: openssl rand -base64 32".to_string(),
             )
         })?;
 

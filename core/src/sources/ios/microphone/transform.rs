@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::sources::base::{ChainedTransform, OntologyTransform, TransformResult};
+use crate::jobs::TransformContext;
+use crate::sources::base::{ChainedTransform, OntologyTransform, TransformRegistration, TransformResult};
 use crate::storage::Storage;
 use crate::transcription::AssemblyAIClient;
 
@@ -443,6 +444,27 @@ async fn execute_speech_transcription_batch_insert(
     // Execute batch insert
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
+}
+
+// Self-registration (requires context for API key and storage)
+struct MicrophoneTranscriptionTransformRegistration;
+
+impl TransformRegistration for MicrophoneTranscriptionTransformRegistration {
+    fn source_table(&self) -> &'static str {
+        "stream_ios_microphone"
+    }
+    fn target_table(&self) -> &'static str {
+        "speech_transcription"
+    }
+    fn create(&self, context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        let api_key = context.api_keys.assemblyai_required()?.to_string();
+        let storage = (*context.storage).clone();
+        Ok(Box::new(MicrophoneTranscriptionTransform::new(api_key, storage)))
+    }
+}
+
+inventory::submit! {
+    &MicrophoneTranscriptionTransformRegistration as &dyn TransformRegistration
 }
 
 #[cfg(test)]

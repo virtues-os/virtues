@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::database::Database;
 use crate::error::Result;
 use crate::jobs::transform_context::TransformContext;
-use crate::sources::base::{OntologyTransform, TransformResult};
+use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for database inserts
 const BATCH_SIZE: usize = 500;
@@ -1064,6 +1064,38 @@ async fn execute_imessage_batch_insert(
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
 }
+
+// Self-registrations for macOS transforms
+
+struct MacAppsTransformRegistration;
+impl TransformRegistration for MacAppsTransformRegistration {
+    fn source_table(&self) -> &'static str { "stream_mac_apps" }
+    fn target_table(&self) -> &'static str { "activity_app_usage" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(MacAppsTransform))
+    }
+}
+inventory::submit! { &MacAppsTransformRegistration as &dyn TransformRegistration }
+
+struct MacBrowserTransformRegistration;
+impl TransformRegistration for MacBrowserTransformRegistration {
+    fn source_table(&self) -> &'static str { "stream_mac_browser" }
+    fn target_table(&self) -> &'static str { "activity_web_browsing" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(MacBrowserTransform))
+    }
+}
+inventory::submit! { &MacBrowserTransformRegistration as &dyn TransformRegistration }
+
+struct MacIMessageTransformRegistration;
+impl TransformRegistration for MacIMessageTransformRegistration {
+    fn source_table(&self) -> &'static str { "stream_mac_imessage" }
+    fn target_table(&self) -> &'static str { "social_message" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(MacIMessageTransform))
+    }
+}
+inventory::submit! { &MacIMessageTransformRegistration as &dyn TransformRegistration }
 
 #[cfg(test)]
 mod tests {

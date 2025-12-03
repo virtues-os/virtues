@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO data.praxis_aspiration (\n                title,\n                description,\n                target_timeframe,\n                source_provider,\n                is_active\n            )\n            VALUES ($1, $2, $3, 'onboarding', TRUE)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d15327757817bba51c0be7c4d1c55b34d170e6301bbb8942bc2d18497e092830"
+}

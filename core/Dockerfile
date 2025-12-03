@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy the binary from builder
-COPY --from=builder /app/target/release/ariata /usr/local/bin/ariata
+COPY --from=builder /app/target/release/virtues /usr/local/bin/virtues
 COPY --from=builder /app/migrations ./migrations
 
 # Expose API port
@@ -46,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD [ "sh", "-c", "curl -f http://localhost:8000/health || exit 1" ]
 
 # Run migrations and start server
-CMD ["sh", "-c", "ariata migrate && ariata server"]
+CMD ["sh", "-c", "virtues migrate && virtues server"]

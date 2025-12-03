@@ -5,7 +5,6 @@
 import { env } from '$env/dynamic/private';
 import { getPool } from '$lib/server/db';
 import { initializeTools } from '$lib/server/tools/loader';
-import { ApiClient } from '$lib/server/apiClient';
 
 /**
  * Server initialization
@@ -20,7 +19,7 @@ async function initializeServer() {
 	}
 
 	console.log('[Server] ========================================');
-	console.log('[Server] Starting Ariata Web Server');
+	console.log('[Server] Starting Virtues Web Server');
 	console.log('[Server] ========================================');
 
 	try {
@@ -43,7 +42,7 @@ async function initializeServer() {
 
 		initialized = true;
 		console.log('[Server] ========================================');
-		console.log('[Server] ✅ Ariata Web Server Ready');
+		console.log('[Server] ✅ Virtues Web Server Ready');
 		console.log('[Server] ========================================');
 	} catch (error) {
 		console.error('[Server] ❌ Failed to initialize server:', error);
@@ -60,9 +59,6 @@ export async function handle({ event, resolve }) {
 	if (!initialized) {
 		await initializeServer();
 	}
-
-	// Attach API client to locals for use in route handlers
-	event.locals.apiClient = new ApiClient();
 
 	// Continue with request handling
 	return resolve(event);

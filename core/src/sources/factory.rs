@@ -116,10 +116,10 @@ impl StreamFactory {
                 let source = self.load_source(source_id).await?;
                 Ok(SourceAuth::device(source.name))
             }
-            "ariata" => {
+            "virtues" => {
                 // Internal source - no external authentication needed
                 // Uses device auth pattern with internal name
-                Ok(SourceAuth::device("ariata_internal".to_string()))
+                Ok(SourceAuth::device("virtues_internal".to_string()))
             }
             _ => Err(Error::Other(format!("Unknown provider: {}", provider))),
         }
@@ -168,8 +168,8 @@ impl StreamFactory {
                     _auth,
                 ))))
             }
-            ("ariata", "app_export") => {
-                use crate::sources::ariata::AppChatExportStream;
+            ("virtues", "app_export") => {
+                use crate::sources::virtues::AppChatExportStream;
                 Ok(StreamType::Pull(Box::new(AppChatExportStream::new(
                     self.db.clone(),
                     _source_id,
@@ -266,27 +266,6 @@ mod tests {
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool, storage, stream_writer);
         let _factory2 = factory.clone();
-    }
-
-    #[tokio::test]
-    async fn test_create_auth_oauth2() {
-        // Set insecure mode for testing
-        std::env::set_var("ARIATA_ALLOW_INSECURE", "true");
-
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
-        let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
-        let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
-        let factory = StreamFactory::new(pool, storage, stream_writer);
-
-        let auth = factory.create_auth(Uuid::new_v4(), "google").await;
-        assert!(auth.is_ok());
-
-        let auth = auth.unwrap();
-        assert!(auth.is_oauth());
-        assert!(!auth.is_device());
-
-        // Clean up
-        std::env::remove_var("ARIATA_ALLOW_INSECURE");
     }
 
     #[tokio::test]

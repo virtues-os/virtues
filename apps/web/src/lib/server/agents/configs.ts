@@ -5,9 +5,9 @@ import type { AgentMetadata } from './types';
 
 /**
  * Agent configurations
- * Simplified 2-agent system:
- * - agent: Has all tools, can perform actions
- * - chat: No tools, simple conversation only
+ * 2-agent system:
+ * - agent: Has all tools, can perform actions (general assistant)
+ * - onboarding: Has save_axiology tool for values discovery
  */
 export const AGENT_CONFIGS: AgentMetadata[] = [
 	{
@@ -16,18 +16,18 @@ export const AGENT_CONFIGS: AgentMetadata[] = [
 		description: 'Intelligent assistant with access to all available tools. Can query data, search the web, visualize information, and help with tasks.',
 		color: '#6b7280', // Gray
 		icon: '🤖',
-		defaultModel: 'anthropic/claude-sonnet-4.5',
+		defaultModel: 'google/gemini-3-pro-preview',
 		maxSteps: 5,
 		enabled: true,
 	},
 	{
-		id: 'chat',
-		name: 'Chat',
-		description: 'Simple conversational assistant without tool access. Best for quick questions and general conversation.',
-		color: '#64748b', // Slate
-		icon: '💬',
-		defaultModel: 'anthropic/claude-sonnet-4.5',
-		maxSteps: 1, // No tools, so only one step
+		id: 'onboarding',
+		name: 'Onboarding Guide',
+		description: 'Warm, exploratory assistant that helps users discover their values, goals, and what matters most to them through natural conversation.',
+		color: '#8b5cf6', // Purple
+		icon: '🌟',
+		defaultModel: 'google/gemini-3-pro-preview',
+		maxSteps: 5,
 		enabled: true,
 	},
 ];
