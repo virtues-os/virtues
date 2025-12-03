@@ -204,9 +204,14 @@ jobs:
             exit 0
           fi
 
-          # Only notarize if the app is signed
-          if codesign -dv Virtues.app 2>&1 | grep -q "Authority"; then
-            echo "Submitting DMG for notarization..."
+          # Debug: Show signing info
+          echo "=== Checking app signature ==="
+          codesign -dv --verbose=4 Virtues.app 2>&1 || true
+          echo "=== End signature check ==="
+
+          # Check if app has any valid signature (not just Authority)
+          if codesign -v Virtues.app 2>&1; then
+            echo "App is signed, submitting DMG for notarization..."
 
             # Submit for notarization
             xcrun notarytool submit "$DMG_FILE" \
@@ -224,7 +229,9 @@ jobs:
 
             echo "Notarization and stapling complete!"
           else
-            echo "App not signed, skipping notarization"
+            echo "ERROR: App not properly signed, cannot notarize"
+            echo "Check that APPLE_DEVELOPER_ID is set to a valid 'Developer ID Application' certificate"
+            exit 1
           fi
 
       - name: Copy installer script
