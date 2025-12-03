@@ -36,28 +36,42 @@ jobs:
           echo "Building version: $VERSION"
       
       - name: Import Code Signing Certificate
-        if: env.APPLE_CERTIFICATE_BASE64 != ''
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE_BASE64" ]; then
+            echo "No certificate provided, skipping import"
+            exit 0
+          fi
+
           # Create temporary keychain
           KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain
           KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-          
+
           # Create keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
+
           # Import certificate
           echo "$APPLE_CERTIFICATE_BASE64" | base64 -d > certificate.p12
           security import certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" \
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          
+
+          # Set as default keychain and add to search list
+          security list-keychain -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          # Allow codesign to access the key without prompting
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
           # Clean up
           rm certificate.p12
+
+          # Export keychain path for subsequent steps
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+          echo "Certificate imported successfully"
       
       - name: Build universal binary
         env:
@@ -132,35 +146,40 @@ jobs:
           zip virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip virtues-mac
       
       - name: Notarize Binary
-        if: env.APPLE_ID != '' && env.APPLE_APP_PASSWORD != ''
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           cd apps/mac
-          
+
+          # Check if we have notarization credentials
+          if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; then
+            echo "No notarization credentials provided, skipping"
+            exit 0
+          fi
+
           # Only notarize if signed
           if codesign -dv virtues-mac 2>&1 | grep -q "Authority"; then
             echo "Submitting for notarization..."
-            
+
             # Create zip for notarization
             zip virtues-mac-notarize.zip virtues-mac
-            
+
             # Submit for notarization
             xcrun notarytool submit virtues-mac-notarize.zip \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
               --wait
-            
+
             # Staple the notarization
             xcrun stapler staple virtues-mac
-            
+
             # Recreate archives with notarized binary
             tar -czf virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz virtues-mac
             zip virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip virtues-mac
-            
+
             echo "Notarization complete"
           else
             echo "Binary not signed, skipping notarization"
