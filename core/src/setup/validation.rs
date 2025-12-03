@@ -59,7 +59,7 @@ pub async fn test_local_storage(path: &str) -> Result<()> {
     storage.initialize().await?;
 
     // Test write and read
-    let test_key = ".ariata_test";
+    let test_key = ".virtues_test";
     let test_data = b"test".to_vec();
 
     storage.upload(test_key, test_data.clone()).await?;

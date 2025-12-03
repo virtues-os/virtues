@@ -144,6 +144,73 @@ export async function cancelJob(jobId: string): Promise<void> {
 	if (!res.ok) throw new Error(`Failed to cancel job: ${res.statusText}`);
 }
 
+// Activity Metrics
+export interface ActivityMetrics {
+	summary: MetricsSummary;
+	by_job_type: JobTypeStats[];
+	by_stream: StreamStats[];
+	time_windows: TimeWindowMetrics;
+	recent_errors: RecentError[];
+}
+
+export interface MetricsSummary {
+	total_jobs: number;
+	succeeded: number;
+	failed: number;
+	cancelled: number;
+	active: number;
+	success_rate_percent: number;
+	total_records_processed: number;
+	avg_duration_seconds: number | null;
+}
+
+export interface JobTypeStats {
+	job_type: string;
+	total: number;
+	succeeded: number;
+	failed: number;
+	avg_duration_seconds: number | null;
+	total_records: number;
+}
+
+export interface StreamStats {
+	stream_name: string;
+	job_count: number;
+	success_rate_percent: number;
+	last_sync_at: string | null;
+	total_records: number;
+}
+
+export interface TimeWindowMetrics {
+	last_24h: PeriodStats;
+	last_7d: PeriodStats;
+	last_30d: PeriodStats;
+}
+
+export interface PeriodStats {
+	jobs_completed: number;
+	jobs_failed: number;
+	success_rate_percent: number;
+	records_processed: number;
+}
+
+export interface RecentError {
+	job_id: string;
+	job_type: string;
+	stream_name: string | null;
+	error_message: string;
+	error_class: string | null;
+	failed_at: string;
+}
+
+export async function getActivityMetrics(): Promise<ActivityMetrics> {
+	const res = await fetch(`${API_BASE}/metrics/activity`);
+	if (!res.ok) {
+		throw new Error(`Failed to get activity metrics: ${res.statusText}`);
+	}
+	return res.json();
+}
+
 // OAuth
 export async function initiateOAuth(provider: string, redirectUri?: string, state?: string) {
 	const params = new URLSearchParams();
@@ -273,5 +340,92 @@ export async function listPendingPairings(): Promise<{ pairings: PendingPairing[
 		throw new Error(`Failed to list pending pairings: ${res.statusText}`);
 	}
 
+	return res.json();
+}
+
+// Plaid Link
+export interface PlaidLinkTokenResponse {
+	link_token: string;
+	expiration: string;
+}
+
+export interface PlaidExchangeTokenRequest {
+	public_token: string;
+	institution_id?: string;
+	institution_name?: string;
+}
+
+export interface PlaidExchangeTokenResponse {
+	source_id: string;
+	item_id: string;
+	institution_name?: string;
+}
+
+/**
+ * Create a Plaid Link token for initializing Plaid Link SDK
+ * @returns Link token and expiration time
+ */
+export async function createPlaidLinkToken(): Promise<PlaidLinkTokenResponse> {
+	const res = await fetch(`${API_BASE}/plaid/link-token`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({})
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to create Plaid link token: ${res.statusText}`);
+	}
+
+	return res.json();
+}
+
+/**
+ * Exchange a Plaid public token for an access token
+ * Called after user completes Plaid Link flow
+ * @param params - Public token and optional institution info
+ * @returns Source ID and Item ID
+ */
+export async function exchangePlaidToken(
+	params: PlaidExchangeTokenRequest
+): Promise<PlaidExchangeTokenResponse> {
+	const res = await fetch(`${API_BASE}/plaid/exchange-token`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(params)
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to exchange Plaid token: ${res.statusText}`);
+	}
+
+	return res.json();
+}
+
+// Profile
+export interface Profile {
+	preferred_name?: string | null;
+	occupation?: string | null;
+	employer?: string | null;
+	theme?: string | null;
+	home_place_id?: string | null;
+	home_city?: string | null;
+	home_country?: string | null;
+}
+
+export async function getProfile(): Promise<Profile> {
+	const res = await fetch(`${API_BASE}/profile`);
+	if (!res.ok) throw new Error(`Failed to get profile: ${res.statusText}`);
+	return res.json();
+}
+
+export async function updateProfile(profile: Partial<Profile>): Promise<Profile> {
+	const res = await fetch(`${API_BASE}/profile`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(profile)
+	});
+	if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
 	return res.json();
 }

@@ -479,7 +479,7 @@ mod tests {
         // Set up a test encryption key
         let key_bytes = b"12345678901234567890123456789012";
         let key_b64 = base64::engine::general_purpose::STANDARD.encode(key_bytes);
-        std::env::set_var("ARIATA_ENCRYPTION_KEY", &key_b64);
+        std::env::set_var("VIRTUES_ENCRYPTION_KEY", &key_b64);
 
         let encryptor = TokenEncryptor::from_env().expect("Should create encryptor");
 
@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(decrypted, original_token);
 
         // Clean up
-        std::env::remove_var("ARIATA_ENCRYPTION_KEY");
+        std::env::remove_var("VIRTUES_ENCRYPTION_KEY");
     }
 
     #[test]
@@ -509,7 +509,7 @@ mod tests {
 
         let key_bytes = b"12345678901234567890123456789012";
         let key_b64 = base64::engine::general_purpose::STANDARD.encode(key_bytes);
-        std::env::set_var("ARIATA_ENCRYPTION_KEY", &key_b64);
+        std::env::set_var("VIRTUES_ENCRYPTION_KEY", &key_b64);
 
         let encryptor = TokenEncryptor::from_env().expect("Should create encryptor");
 
@@ -531,6 +531,6 @@ mod tests {
         );
 
         // Clean up
-        std::env::remove_var("ARIATA_ENCRYPTION_KEY");
+        std::env::remove_var("VIRTUES_ENCRYPTION_KEY");
     }
 }

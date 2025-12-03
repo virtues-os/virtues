@@ -23,6 +23,12 @@ description: string,
  */
 table_name: string, 
 /**
+ * Target ontology tables this stream feeds into
+ * e.g., ["praxis_calendar"] for Google Calendar
+ * e.g., ["health_heart_rate", "health_sleep", "health_workout"] for HealthKit
+ */
+target_ontologies: Array<string>, 
+/**
  * JSON schema for configuration (serialized as JSON)
  */
 config_schema: any, 
@@ -39,6 +45,6 @@ supports_incremental: boolean,
  */
 supports_full_refresh: boolean, 
 /**
- * Default cron schedule for this stream in 6-field format: sec min hour day month dow (e.g., "0 0 *\\/6 * * *")
+ * Default cron schedule for this stream in 6-field format: sec min hour day month dow
  */
 default_cron_schedule: string | null, };

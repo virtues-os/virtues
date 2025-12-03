@@ -8,11 +8,11 @@ struct Config: Codable {
     let createdAt: Date
 
     static let configDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".ariata")
+        .appendingPathComponent(".virtues")
     static let configFile = configDir.appendingPathComponent("config.json")
 
     // Keychain constants
-    private static let keychainService = "com.ariata.mac"
+    private static let keychainService = "com.virtues.mac"
     private static let keychainAccount = "device-token"
 
     // Private struct for JSON storage (without token)
@@ -164,8 +164,8 @@ struct Config: Codable {
     
     static func validateToken(_ token: String) async throws -> (endpoint: String, deviceName: String) {
         // Check for API URL from environment variable first, then fall back to localhost
-        // This allows the installer to pass the endpoint via ARIATA_API_URL
-        let baseURL = ProcessInfo.processInfo.environment["ARIATA_API_URL"] ?? "http://localhost:3000"
+        // This allows the installer to pass the endpoint via VIRTUES_API_URL
+        let baseURL = ProcessInfo.processInfo.environment["VIRTUES_API_URL"] ?? "http://localhost:3000"
         
         guard let url = URL(string: "\(baseURL)/api/sources/device-token?token=\(token)") else {
             throw ConfigError.invalidToken
@@ -203,7 +203,7 @@ enum ConfigError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "Not configured. Run 'ariata-mac init <token>' first."
+            return "Not configured. Run 'virtues-mac init <token>' first."
         case .invalidToken:
             return "Invalid device token. Please check your token and try again."
         case .networkError(let message):

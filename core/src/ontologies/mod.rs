@@ -3,9 +3,7 @@
 //! This module provides a unified registry for all ontology tables in the system.
 //! Each ontology defines:
 //! - Table schema and metadata
-//! - Boundary detection configuration (for narrative timeline)
-//! - Narrative role (container/structure/substance)
-//! - Substance extraction logic
+//! - Embedding configuration for semantic search
 //!
 //! ## Architecture
 //!
@@ -16,6 +14,7 @@
 //! - `praxis/` - Calendar events, tasks
 //! - `activity/` - App usage, web browsing
 //! - `speech/` - Transcriptions
+//! - `knowledge/` - Documents, AI conversations
 //!
 //! ## Adding a New Ontology
 //!
@@ -23,14 +22,13 @@
 //! 2. Create the ontology module (e.g., `ontologies/health/sleep.rs`)
 //! 3. Implement `OntologyDescriptor` trait
 //! 4. Register in the domain's `registry.rs`
-//! 5. Run `cargo run --bin generate-seeds` to update configs
 
 pub mod descriptor;
-pub mod detector;
 pub mod registry;
 
 // Domain modules
 pub mod activity;
+pub mod financial;
 pub mod health;
 pub mod knowledge;
 pub mod location;
@@ -39,9 +37,5 @@ pub mod social;
 pub mod speech;
 
 // Re-export main types
-pub use descriptor::{
-    BoundaryConfig, DetectionAlgorithm, NarrativeRole, Ontology, OntologyBuilder,
-    OntologyDescriptor, SubstanceQuery,
-};
-pub use detector::BoundaryDetector;
+pub use descriptor::{EmbeddingConfig, Ontology, OntologyBuilder, OntologyDescriptor};
 pub use registry::{get_ontology, list_ontologies, ontology_registry, OntologyRegistry};

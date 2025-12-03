@@ -30,6 +30,30 @@ pub struct Task {
     pub start_date: Option<chrono::DateTime<chrono::Utc>>,
     pub target_date: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Habit fields
+    pub recurrence_rule: Option<String>,
+    pub is_habit: Option<bool>,
+    pub current_streak: Option<i32>,
+    pub best_streak: Option<i32>,
+    pub last_completed_date: Option<chrono::NaiveDate>,
+    // Hierarchical relations
+    pub initiative_id: Option<Uuid>,
+    pub parent_task_id: Option<Uuid>,
+    // Source integration
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub external_url: Option<String>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub vice_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
+    // Context
+    pub context_energy: Option<String>,
+    pub context_location: Option<String>,
+    pub estimated_minutes: Option<i32>,
+    pub actual_minutes: Option<i32>,
+    // Status
     pub is_active: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -43,6 +67,25 @@ pub struct CreateTaskRequest {
     pub topic_id: Option<Uuid>,
     pub start_date: Option<chrono::DateTime<chrono::Utc>>,
     pub target_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Hierarchical
+    pub initiative_id: Option<Uuid>,
+    pub parent_task_id: Option<Uuid>,
+    // Source integration
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub external_url: Option<String>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub vice_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
+    // Habit fields
+    pub is_habit: Option<bool>,
+    pub recurrence_rule: Option<String>,
+    // Context
+    pub context_energy: Option<String>,
+    pub context_location: Option<String>,
+    pub estimated_minutes: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,9 +99,22 @@ pub struct UpdateTaskRequest {
     pub start_date: Option<chrono::DateTime<chrono::Utc>>,
     pub target_date: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Hierarchical
+    pub initiative_id: Option<Uuid>,
+    pub parent_task_id: Option<Uuid>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub vice_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
+    // Context
+    pub context_energy: Option<String>,
+    pub context_location: Option<String>,
+    pub estimated_minutes: Option<i32>,
+    pub actual_minutes: Option<i32>,
 }
 
-// Initiative type (same structure as Task)
+// Initiative type - medium-term commitments (month-quarter)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Initiative {
     pub id: Uuid,
@@ -71,12 +127,28 @@ pub struct Initiative {
     pub start_date: Option<chrono::DateTime<chrono::Utc>>,
     pub target_date: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Hierarchical
+    pub parent_initiative_id: Option<Uuid>,
+    // Source integration
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub external_url: Option<String>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub vice_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
+    // Commitment tracking
+    pub is_commitment: Option<bool>,
+    pub success_metrics: Option<serde_json::Value>,
+    pub current_metrics: Option<serde_json::Value>,
+    // Status
     pub is_active: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-// Aspiration type (different lifecycle)
+// Aspiration type - long-term life goals (multi-year)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Aspiration {
     pub id: Uuid,
@@ -86,7 +158,20 @@ pub struct Aspiration {
     pub topic_id: Option<Uuid>,
     pub status: Option<String>,
     pub target_timeframe: Option<String>,
+    pub target_date: Option<chrono::DateTime<chrono::Utc>>,
     pub achieved_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Activation tracking
+    pub activated_date: Option<chrono::NaiveDate>,
+    pub activated_as_initiative_id: Option<Uuid>,
+    // Source integration
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub external_url: Option<String>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
+    // Status
     pub is_active: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -99,6 +184,15 @@ pub struct CreateAspirationRequest {
     pub tags: Option<Vec<String>>,
     pub topic_id: Option<Uuid>,
     pub target_timeframe: Option<String>,
+    pub target_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Source integration
+    pub source_provider: Option<String>,
+    pub external_id: Option<String>,
+    pub external_url: Option<String>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,7 +203,12 @@ pub struct UpdateAspirationRequest {
     pub topic_id: Option<Uuid>,
     pub status: Option<String>,
     pub target_timeframe: Option<String>,
+    pub target_date: Option<chrono::DateTime<chrono::Utc>>,
     pub achieved_date: Option<chrono::DateTime<chrono::Utc>>,
+    // Axiological links
+    pub virtue_ids: Option<Vec<Uuid>>,
+    pub value_ids: Option<Vec<Uuid>>,
+    pub purpose: Option<String>,
 }
 
 // ============================================================================
@@ -123,6 +222,11 @@ pub async fn list_tasks(pool: &PgPool) -> Result<Vec<Task>> {
         r#"
         SELECT id, title, description, tags, topic_id, status,
                progress_percent, start_date, target_date, completed_date,
+               recurrence_rule, is_habit, current_streak, best_streak, last_completed_date,
+               initiative_id, parent_task_id,
+               source_provider, external_id, external_url,
+               virtue_ids, vice_ids, value_ids, purpose,
+               context_energy, context_location, estimated_minutes, actual_minutes,
                is_active, created_at, updated_at
         FROM data.praxis_task
         WHERE is_active = true
@@ -143,6 +247,11 @@ pub async fn get_task(pool: &PgPool, task_id: Uuid) -> Result<Task> {
         r#"
         SELECT id, title, description, tags, topic_id, status,
                progress_percent, start_date, target_date, completed_date,
+               recurrence_rule, is_habit, current_streak, best_streak, last_completed_date,
+               initiative_id, parent_task_id,
+               source_provider, external_id, external_url,
+               virtue_ids, vice_ids, value_ids, purpose,
+               context_energy, context_location, estimated_minutes, actual_minutes,
                is_active, created_at, updated_at
         FROM data.praxis_task
         WHERE id = $1 AND is_active = true
@@ -163,10 +272,18 @@ pub async fn create_task(pool: &PgPool, req: CreateTaskRequest) -> Result<Task> 
         Task,
         r#"
         INSERT INTO data.praxis_task
-            (title, description, tags, topic_id, start_date, target_date)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (title, description, tags, topic_id, start_date, target_date,
+             initiative_id, parent_task_id, source_provider, external_id, external_url,
+             virtue_ids, vice_ids, value_ids, purpose,
+             is_habit, recurrence_rule, context_energy, context_location, estimated_minutes)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         RETURNING id, title, description, tags, topic_id, status,
                   progress_percent, start_date, target_date, completed_date,
+                  recurrence_rule, is_habit, current_streak, best_streak, last_completed_date,
+                  initiative_id, parent_task_id,
+                  source_provider, external_id, external_url,
+                  virtue_ids, vice_ids, value_ids, purpose,
+                  context_energy, context_location, estimated_minutes, actual_minutes,
                   is_active, created_at, updated_at
         "#,
         req.title,
@@ -174,7 +291,21 @@ pub async fn create_task(pool: &PgPool, req: CreateTaskRequest) -> Result<Task> 
         req.tags.as_deref(),
         req.topic_id,
         req.start_date,
-        req.target_date
+        req.target_date,
+        req.initiative_id,
+        req.parent_task_id,
+        req.source_provider,
+        req.external_id,
+        req.external_url,
+        req.virtue_ids.as_deref(),
+        req.vice_ids.as_deref(),
+        req.value_ids.as_deref(),
+        req.purpose,
+        req.is_habit,
+        req.recurrence_rule,
+        req.context_energy,
+        req.context_location,
+        req.estimated_minutes
     )
     .fetch_one(pool)
     .await
@@ -198,10 +329,25 @@ pub async fn update_task(pool: &PgPool, task_id: Uuid, req: UpdateTaskRequest) -
             start_date = COALESCE($8, start_date),
             target_date = COALESCE($9, target_date),
             completed_date = COALESCE($10, completed_date),
+            initiative_id = COALESCE($11, initiative_id),
+            parent_task_id = COALESCE($12, parent_task_id),
+            virtue_ids = COALESCE($13, virtue_ids),
+            vice_ids = COALESCE($14, vice_ids),
+            value_ids = COALESCE($15, value_ids),
+            purpose = COALESCE($16, purpose),
+            context_energy = COALESCE($17, context_energy),
+            context_location = COALESCE($18, context_location),
+            estimated_minutes = COALESCE($19, estimated_minutes),
+            actual_minutes = COALESCE($20, actual_minutes),
             updated_at = NOW()
         WHERE id = $1 AND is_active = true
         RETURNING id, title, description, tags, topic_id, status,
                   progress_percent, start_date, target_date, completed_date,
+                  recurrence_rule, is_habit, current_streak, best_streak, last_completed_date,
+                  initiative_id, parent_task_id,
+                  source_provider, external_id, external_url,
+                  virtue_ids, vice_ids, value_ids, purpose,
+                  context_energy, context_location, estimated_minutes, actual_minutes,
                   is_active, created_at, updated_at
         "#,
         task_id,
@@ -213,7 +359,17 @@ pub async fn update_task(pool: &PgPool, task_id: Uuid, req: UpdateTaskRequest) -
         req.progress_percent,
         req.start_date,
         req.target_date,
-        req.completed_date
+        req.completed_date,
+        req.initiative_id,
+        req.parent_task_id,
+        req.virtue_ids.as_deref(),
+        req.vice_ids.as_deref(),
+        req.value_ids.as_deref(),
+        req.purpose,
+        req.context_energy,
+        req.context_location,
+        req.estimated_minutes,
+        req.actual_minutes
     )
     .fetch_optional(pool)
     .await
@@ -254,6 +410,10 @@ pub async fn list_initiatives(pool: &PgPool) -> Result<Vec<Initiative>> {
         r#"
         SELECT id, title, description, tags, topic_id, status,
                progress_percent, start_date, target_date, completed_date,
+               parent_initiative_id,
+               source_provider, external_id, external_url,
+               virtue_ids, vice_ids, value_ids, purpose,
+               is_commitment, success_metrics, current_metrics,
                is_active, created_at, updated_at
         FROM data.praxis_initiative
         WHERE is_active = true
@@ -273,6 +433,10 @@ pub async fn get_initiative(pool: &PgPool, id: Uuid) -> Result<Initiative> {
         r#"
         SELECT id, title, description, tags, topic_id, status,
                progress_percent, start_date, target_date, completed_date,
+               parent_initiative_id,
+               source_provider, external_id, external_url,
+               virtue_ids, vice_ids, value_ids, purpose,
+               is_commitment, success_metrics, current_metrics,
                is_active, created_at, updated_at
         FROM data.praxis_initiative
         WHERE id = $1 AND is_active = true
@@ -292,10 +456,16 @@ pub async fn create_initiative(pool: &PgPool, req: CreateTaskRequest) -> Result<
         Initiative,
         r#"
         INSERT INTO data.praxis_initiative
-            (title, description, tags, topic_id, start_date, target_date)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (title, description, tags, topic_id, start_date, target_date,
+             source_provider, external_id, external_url,
+             virtue_ids, vice_ids, value_ids, purpose)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING id, title, description, tags, topic_id, status,
                   progress_percent, start_date, target_date, completed_date,
+                  parent_initiative_id,
+                  source_provider, external_id, external_url,
+                  virtue_ids, vice_ids, value_ids, purpose,
+                  is_commitment, success_metrics, current_metrics,
                   is_active, created_at, updated_at
         "#,
         req.title,
@@ -303,7 +473,14 @@ pub async fn create_initiative(pool: &PgPool, req: CreateTaskRequest) -> Result<
         req.tags.as_deref(),
         req.topic_id,
         req.start_date,
-        req.target_date
+        req.target_date,
+        req.source_provider,
+        req.external_id,
+        req.external_url,
+        req.virtue_ids.as_deref(),
+        req.vice_ids.as_deref(),
+        req.value_ids.as_deref(),
+        req.purpose
     )
     .fetch_one(pool)
     .await
@@ -326,10 +503,18 @@ pub async fn update_initiative(pool: &PgPool, id: Uuid, req: UpdateTaskRequest) 
             start_date = COALESCE($8, start_date),
             target_date = COALESCE($9, target_date),
             completed_date = COALESCE($10, completed_date),
+            virtue_ids = COALESCE($11, virtue_ids),
+            vice_ids = COALESCE($12, vice_ids),
+            value_ids = COALESCE($13, value_ids),
+            purpose = COALESCE($14, purpose),
             updated_at = NOW()
         WHERE id = $1 AND is_active = true
         RETURNING id, title, description, tags, topic_id, status,
                   progress_percent, start_date, target_date, completed_date,
+                  parent_initiative_id,
+                  source_provider, external_id, external_url,
+                  virtue_ids, vice_ids, value_ids, purpose,
+                  is_commitment, success_metrics, current_metrics,
                   is_active, created_at, updated_at
         "#,
         id,
@@ -341,7 +526,11 @@ pub async fn update_initiative(pool: &PgPool, id: Uuid, req: UpdateTaskRequest) 
         req.progress_percent,
         req.start_date,
         req.target_date,
-        req.completed_date
+        req.completed_date,
+        req.virtue_ids.as_deref(),
+        req.vice_ids.as_deref(),
+        req.value_ids.as_deref(),
+        req.purpose
     )
     .fetch_optional(pool)
     .await
@@ -380,7 +569,10 @@ pub async fn list_aspirations(pool: &PgPool) -> Result<Vec<Aspiration>> {
         Aspiration,
         r#"
         SELECT id, title, description, tags, topic_id, status,
-               target_timeframe, achieved_date,
+               target_timeframe, target_date, achieved_date,
+               activated_date, activated_as_initiative_id,
+               source_provider, external_id, external_url,
+               virtue_ids, value_ids, purpose,
                is_active, created_at, updated_at
         FROM data.praxis_aspiration
         WHERE is_active = true
@@ -399,7 +591,10 @@ pub async fn get_aspiration(pool: &PgPool, id: Uuid) -> Result<Aspiration> {
         Aspiration,
         r#"
         SELECT id, title, description, tags, topic_id, status,
-               target_timeframe, achieved_date,
+               target_timeframe, target_date, achieved_date,
+               activated_date, activated_as_initiative_id,
+               source_provider, external_id, external_url,
+               virtue_ids, value_ids, purpose,
                is_active, created_at, updated_at
         FROM data.praxis_aspiration
         WHERE id = $1 AND is_active = true
@@ -419,17 +614,29 @@ pub async fn create_aspiration(pool: &PgPool, req: CreateAspirationRequest) -> R
         Aspiration,
         r#"
         INSERT INTO data.praxis_aspiration
-            (title, description, tags, topic_id, target_timeframe)
-        VALUES ($1, $2, $3, $4, $5)
+            (title, description, tags, topic_id, target_timeframe, target_date,
+             source_provider, external_id, external_url,
+             virtue_ids, value_ids, purpose)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING id, title, description, tags, topic_id, status,
-                  target_timeframe, achieved_date,
+                  target_timeframe, target_date, achieved_date,
+                  activated_date, activated_as_initiative_id,
+                  source_provider, external_id, external_url,
+                  virtue_ids, value_ids, purpose,
                   is_active, created_at, updated_at
         "#,
         req.title,
         req.description,
         req.tags.as_deref(),
         req.topic_id,
-        req.target_timeframe
+        req.target_timeframe,
+        req.target_date,
+        req.source_provider,
+        req.external_id,
+        req.external_url,
+        req.virtue_ids.as_deref(),
+        req.value_ids.as_deref(),
+        req.purpose
     )
     .fetch_one(pool)
     .await
@@ -449,11 +656,18 @@ pub async fn update_aspiration(pool: &PgPool, id: Uuid, req: UpdateAspirationReq
             topic_id = COALESCE($5, topic_id),
             status = COALESCE($6, status),
             target_timeframe = COALESCE($7, target_timeframe),
-            achieved_date = COALESCE($8, achieved_date),
+            target_date = COALESCE($8, target_date),
+            achieved_date = COALESCE($9, achieved_date),
+            virtue_ids = COALESCE($10, virtue_ids),
+            value_ids = COALESCE($11, value_ids),
+            purpose = COALESCE($12, purpose),
             updated_at = NOW()
         WHERE id = $1 AND is_active = true
         RETURNING id, title, description, tags, topic_id, status,
-                  target_timeframe, achieved_date,
+                  target_timeframe, target_date, achieved_date,
+                  activated_date, activated_as_initiative_id,
+                  source_provider, external_id, external_url,
+                  virtue_ids, value_ids, purpose,
                   is_active, created_at, updated_at
         "#,
         id,
@@ -463,7 +677,11 @@ pub async fn update_aspiration(pool: &PgPool, id: Uuid, req: UpdateAspirationReq
         req.topic_id,
         req.status,
         req.target_timeframe,
-        req.achieved_date
+        req.target_date,
+        req.achieved_date,
+        req.virtue_ids.as_deref(),
+        req.value_ids.as_deref(),
+        req.purpose
     )
     .fetch_optional(pool)
     .await

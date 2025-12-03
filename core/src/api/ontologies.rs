@@ -195,7 +195,7 @@ mod tests {
             "stream_google_calendar",
             "stream_notion_pages",
             "stream_ios_microphone",
-            "stream_ariata_ai_chat",
+            "stream_virtues_ai_chat",
         ];
 
         for stream_table in known_streams {

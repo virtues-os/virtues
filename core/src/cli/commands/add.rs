@@ -1,11 +1,11 @@
 //! Add command - add new OAuth or device sources
 
-use crate::client::Ariata;
+use crate::client::Virtues;
 use std::env;
 
 /// Handle adding a new source (OAuth or device)
 pub async fn handle_add_source(
-    ariata: Ariata,
+    virtues: Virtues,
     source_type: &str,
     _device_id: Option<String>,
     name: Option<String>,
@@ -22,7 +22,7 @@ pub async fn handle_add_source(
     if is_device_source {
         // Handle device pairing flow
         let name = name.ok_or_else(|| "name is required for device sources".to_string())?;
-        return handle_device_pairing(ariata, source_type, &name).await;
+        return handle_device_pairing(virtues, source_type, &name).await;
     }
 
     // Handle OAuth flow
@@ -63,14 +63,14 @@ pub async fn handle_add_source(
     let callback_params = parse_callback_url(&redirect_url, source_type)?;
 
     // Handle callback and create source
-    let source = crate::handle_oauth_callback(ariata.database.pool(), &callback_params).await?;
+    let response = crate::handle_oauth_callback(virtues.database.pool(), &callback_params).await?;
 
     println!("\n✅ Source created successfully!");
-    println!("   Name: {}", source.name);
-    println!("   ID: {}", source.id);
+    println!("   Name: {}", response.source.name);
+    println!("   ID: {}", response.source.id);
 
     // List available streams
-    let streams = crate::list_source_streams(ariata.database.pool(), source.id).await?;
+    let streams = crate::list_source_streams(virtues.database.pool(), response.source.id).await?;
     if !streams.is_empty() {
         println!("\n📊 Available streams (all disabled by default):");
         for stream in streams {
@@ -85,8 +85,8 @@ pub async fn handle_add_source(
             );
         }
         println!(
-            "\n💡 Enable streams with: ariata stream enable {} <stream_name>",
-            source.id
+            "\n💡 Enable streams with: virtues stream enable {} <stream_name>",
+            response.source.id
         );
     }
 
@@ -140,24 +140,24 @@ fn parse_callback_url(
 
 /// Handle device pairing flow
 async fn handle_device_pairing(
-    ariata: Ariata,
+    virtues: Virtues,
     device_type: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::display::*;
 
-    let server_url = env::var("ARIATA_SERVER_URL").unwrap_or_else(|_| "localhost:8000".to_string());
+    let server_url = env::var("VIRTUES_SERVER_URL").unwrap_or_else(|_| "localhost:8000".to_string());
 
     println!("🔐 Adding {} source...", device_type);
     println!();
 
-    let pairing = crate::initiate_device_pairing(ariata.database.pool(), device_type, name).await?;
+    let pairing = crate::initiate_device_pairing(virtues.database.pool(), device_type, name).await?;
 
     display_pairing_code(&pairing.code, &server_url, &pairing.expires_at);
 
     println!("⏳ Waiting for device to connect...");
     let result = wait_for_pairing(
-        ariata.database.pool(),
+        virtues.database.pool(),
         pairing.source_id,
         pairing.expires_at,
     )
@@ -168,7 +168,7 @@ async fn handle_device_pairing(
             display_pairing_success(&device_info, pairing.source_id);
 
             let streams =
-                crate::list_source_streams(ariata.database.pool(), pairing.source_id).await?;
+                crate::list_source_streams(virtues.database.pool(), pairing.source_id).await?;
             display_available_streams(&streams, pairing.source_id);
         }
         PairingResult::Timeout => {

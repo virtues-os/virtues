@@ -12,6 +12,8 @@ impl SourceRegistry for PlaidSource {
             name: "plaid",
             display_name: "Plaid",
             description: "Connect your bank accounts and credit cards to sync transactions and balances",
+            // Plaid uses a custom Link flow rather than standard OAuth2
+            // but we model it similarly for the UI
             auth_type: AuthType::OAuth2,
             oauth_config: Some(OAuthConfig {
                 scopes: vec!["transactions", "auth"],
@@ -24,15 +26,29 @@ impl SourceRegistry for PlaidSource {
                 RegisteredStream::new("transactions")
                     .display_name("Transactions")
                     .description(
-                        "Sync bank transactions, account balances, and financial data",
+                        "Sync bank transactions with merchant and category info",
                     )
                     .table_name("stream_plaid_transactions")
-                    .target_ontologies(vec![]) // Transform not yet implemented
+                    .target_ontologies(vec!["financial_transaction"])
                     .config_schema(transactions_config_schema())
                     .config_example(transactions_config_example())
                     .supports_incremental(true)
                     .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 */6 * * *") // Every 6 hours (6-field: sec min hour day month dow)
+                    .default_cron_schedule("0 0 */6 * * *") // Every 6 hours
+                    .build(),
+                // Accounts stream
+                RegisteredStream::new("accounts")
+                    .display_name("Accounts")
+                    .description(
+                        "Sync bank accounts, credit cards, and account balances",
+                    )
+                    .table_name("stream_plaid_accounts")
+                    .target_ontologies(vec!["financial_account"])
+                    .config_schema(accounts_config_schema())
+                    .config_example(accounts_config_example())
+                    .supports_incremental(false)  // Accounts always fetched in full
+                    .supports_full_refresh(true)
+                    .default_cron_schedule("0 0 0 * * *") // Daily at midnight
                     .build(),
             ],
         }
@@ -112,6 +128,27 @@ fn transactions_config_example() -> serde_json::Value {
     })
 }
 
+/// JSON schema for Plaid accounts configuration
+fn accounts_config_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "include_balances": {
+                "type": "boolean",
+                "default": true,
+                "description": "Fetch current account balances"
+            }
+        }
+    })
+}
+
+/// Example configuration for Plaid accounts
+fn accounts_config_example() -> serde_json::Value {
+    json!({
+        "include_balances": true
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,7 +159,7 @@ mod tests {
         assert_eq!(desc.name, "plaid");
         assert_eq!(desc.auth_type, AuthType::OAuth2);
         assert!(desc.oauth_config.is_some());
-        assert_eq!(desc.streams.len(), 1);
+        assert_eq!(desc.streams.len(), 2);
     }
 
     #[test]
@@ -133,8 +170,22 @@ mod tests {
 
         let tx = transactions.unwrap();
         assert_eq!(tx.table_name, "stream_plaid_transactions");
+        assert_eq!(tx.target_ontologies, vec!["financial_transaction"]);
         assert!(tx.supports_incremental);
         assert!(tx.supports_full_refresh);
+    }
+
+    #[test]
+    fn test_accounts_stream() {
+        let desc = PlaidSource::descriptor();
+        let accounts = desc.streams.iter().find(|s| s.name == "accounts");
+        assert!(accounts.is_some());
+
+        let acc = accounts.unwrap();
+        assert_eq!(acc.table_name, "stream_plaid_accounts");
+        assert_eq!(acc.target_ontologies, vec!["financial_account"]);
+        assert!(!acc.supports_incremental);
+        assert!(acc.supports_full_refresh);
     }
 
     #[test]
@@ -143,5 +194,8 @@ mod tests {
         let tx_schema = transactions_config_schema();
         assert_eq!(tx_schema["type"], "object");
         assert!(tx_schema["properties"].is_object());
+
+        let acc_schema = accounts_config_schema();
+        assert_eq!(acc_schema["type"], "object");
     }
 }

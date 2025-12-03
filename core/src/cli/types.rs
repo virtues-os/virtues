@@ -3,8 +3,8 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "ariata")]
-#[command(version, about = "Ariata personal data platform CLI", long_about = None)]
+#[command(name = "virtues")]
+#[command(version, about = "Virtues personal data platform CLI", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

@@ -163,6 +163,7 @@ fn default_max_messages() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sources::base::ConfigSerializable;
     use chrono::Utc;
 
     #[test]

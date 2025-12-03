@@ -5,8 +5,9 @@ import type { ToolLoopAgent } from 'ai';
 
 /**
  * Agent identifiers
+ * 2-agent system: general agent with tools + onboarding agent for values discovery
  */
-export type AgentId = 'agent' | 'chat';
+export type AgentId = 'agent' | 'onboarding';
 
 /**
  * Agent metadata for UI and configuration

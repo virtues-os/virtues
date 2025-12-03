@@ -2,12 +2,25 @@
 //!
 //! Defines the interface for transforming raw stream data into normalized ontology tables.
 //! Transformations are idempotent and track progress for incremental processing.
+//!
+//! ## Self-Registration
+//!
+//! Transforms register themselves at compile time using the `inventory` crate.
+//! Each transform file calls `inventory::submit!` with a `TransformRegistration`
+//! implementation, eliminating the need for a central hardcoded factory.
+//!
+//! ```ignore
+//! inventory::submit! {
+//!     &GmailTransformRegistration as &dyn TransformRegistration
+//! }
+//! ```
 
 use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
+use crate::jobs::TransformContext;
 
 /// Result of a transformation operation
 #[derive(Debug, Clone)]
@@ -105,4 +118,66 @@ pub trait OntologyTransform: Send + Sync {
         context: &crate::jobs::transform_context::TransformContext,
         source_id: Uuid,
     ) -> Result<TransformResult>;
+}
+
+/// Registration for self-registering transforms
+///
+/// Each transform implements this trait and submits itself to the inventory.
+/// The transform factory then iterates over all registered transforms.
+///
+/// # Example
+///
+/// ```ignore
+/// struct GmailTransformRegistration;
+///
+/// impl TransformRegistration for GmailTransformRegistration {
+///     fn source_table(&self) -> &'static str { "stream_google_gmail" }
+///     fn target_table(&self) -> &'static str { "social_email" }
+///     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+///         Ok(Box::new(GmailEmailTransform))
+///     }
+/// }
+///
+/// inventory::submit! {
+///     &GmailTransformRegistration as &dyn TransformRegistration
+/// }
+/// ```
+pub trait TransformRegistration: Send + Sync {
+    /// Source stream table this transform reads from
+    fn source_table(&self) -> &'static str;
+
+    /// Target ontology table this transform writes to
+    fn target_table(&self) -> &'static str;
+
+    /// Create a transform instance
+    ///
+    /// Some transforms are stateless, others require context (API keys, storage).
+    fn create(&self, context: &TransformContext) -> Result<Box<dyn OntologyTransform>>;
+}
+
+// Collect all registered transforms at compile time
+inventory::collect!(&'static dyn TransformRegistration);
+
+/// Get all registered transforms
+pub fn registered_transforms() -> impl Iterator<Item = &'static &'static dyn TransformRegistration> {
+    inventory::iter::<&'static dyn TransformRegistration>()
+}
+
+/// Find a registered transform by source and target tables
+pub fn find_transform(
+    source_table: &str,
+    target_table: &str,
+    context: &TransformContext,
+) -> Result<Box<dyn OntologyTransform>> {
+    for registration in registered_transforms() {
+        if registration.source_table() == source_table && registration.target_table() == target_table
+        {
+            return registration.create(context);
+        }
+    }
+
+    Err(crate::error::Error::InvalidInput(format!(
+        "No registered transform for {} -> {}",
+        source_table, target_table
+    )))
 }

@@ -1,9 +1,10 @@
 //! Seed Testing API
 //!
 //! Provides endpoints to inspect the results of the Monday in Rome seed data,
-//! allowing validation of the full pipeline: Archive → Transform → Clustering → Boundary Detection
+//! allowing validation of the full pipeline: Archive → Transform → Clustering → Timeline Chunks
 
 use crate::database::Database;
+use crate::ontologies::registry::list_ontologies;
 use crate::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ pub struct PipelineStatus {
     pub archive_jobs: ArchiveJobsStatus,
     pub transform_jobs: TransformJobsStatus,
     pub location_clustering: LocationClusteringStatus,
-    pub boundary_sweeper: BoundarySweeperStatus,
+    pub timeline_chunks: TimelineChunkStatus,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,18 +43,21 @@ pub struct LocationClusteringStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BoundarySweeperStatus {
-    pub boundaries_detected: i64,
-    pub ontologies_with_boundaries: i64,
+pub struct TimelineChunkStatus {
+    pub chunks_created: i64,
+    pub location_chunks: i64,
+    pub transit_chunks: i64,
+    pub missing_data_chunks: i64,
     pub has_data: bool,
 }
 
-/// Summary of boundaries detected, grouped by ontology
+/// Summary of timeline chunks, grouped by type
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BoundariesSummary {
+pub struct ChunksSummary {
     pub date_range: DateRange,
-    pub by_ontology: Vec<OntologyBoundaries>,
-    pub total_boundaries: i64,
+    pub by_type: Vec<ChunkTypeStats>,
+    pub total_chunks: i64,
+    pub total_duration_minutes: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,36 +67,27 @@ pub struct DateRange {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct OntologyBoundaries {
-    pub ontology: String,
+pub struct ChunkTypeStats {
+    pub chunk_type: String,
     pub count: i64,
-    pub fidelity: f64,
-    pub detection_type: String,
-    pub samples: Vec<BoundarySample>,
+    pub total_duration_minutes: i64,
+    pub samples: Vec<ChunkSample>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BoundarySample {
-    pub timestamp: DateTime<Utc>,
-    pub boundary_type: String,
-    pub metadata: serde_json::Value,
+pub struct ChunkSample {
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub place_name: Option<String>,
+    pub duration_minutes: i32,
 }
 
 /// Data quality metrics for seed data
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DataQualityMetrics {
     pub total_records: i64,
-    pub boundary_coverage_percent: f64,
-    pub fidelity_distribution: FidelityDistribution,
+    pub chunk_coverage_percent: f64,
     pub time_coverage: TimeCoverage,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FidelityDistribution {
-    pub tier1_0_90_0_95: i64, // High fidelity
-    pub tier2_0_80_0_89: i64, // Medium fidelity
-    pub tier3_0_70_0_79: i64, // Low fidelity
-    pub below_0_70: i64,      // Very low fidelity
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -172,50 +167,52 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
         has_data: location_visits > 0,
     };
 
-    // Boundary sweeper status
-    let boundary_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM data.event_boundaries")
-        .fetch_one(db.pool())
-        .await
-        .unwrap_or(0);
-
-    let ontologies_with_boundaries: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT source_ontology) FROM data.event_boundaries",
+    // Timeline chunks status
+    let chunk_row = sqlx::query(
+        r#"
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE chunk_type = 'location') as location_count,
+            COUNT(*) FILTER (WHERE chunk_type = 'transit') as transit_count,
+            COUNT(*) FILTER (WHERE chunk_type = 'missing_data') as missing_count
+        FROM data.timeline_chunk
+        "#,
     )
     .fetch_one(db.pool())
-    .await
-    .unwrap_or(0);
+    .await?;
 
-    let boundary_sweeper = BoundarySweeperStatus {
-        boundaries_detected: boundary_count,
-        ontologies_with_boundaries,
-        has_data: boundary_count > 0,
+    let timeline_chunks = TimelineChunkStatus {
+        chunks_created: chunk_row.try_get("total")?,
+        location_chunks: chunk_row.try_get("location_count")?,
+        transit_chunks: chunk_row.try_get("transit_count")?,
+        missing_data_chunks: chunk_row.try_get("missing_count")?,
+        has_data: chunk_row.try_get::<i64, _>("total")? > 0,
     };
 
     Ok(PipelineStatus {
         archive_jobs,
         transform_jobs,
         location_clustering,
-        boundary_sweeper,
+        timeline_chunks,
     })
 }
 
-/// Get summary of detected boundaries grouped by ontology
-pub async fn get_boundaries_summary(
+/// Get summary of timeline chunks grouped by type
+pub async fn get_chunks_summary(
     db: &Database,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
-) -> Result<BoundariesSummary> {
-    // Get boundaries grouped by ontology with stats
+) -> Result<ChunksSummary> {
+    // Get chunks grouped by type with stats
     let rows = sqlx::query(
         r#"
         SELECT
-            source_ontology,
+            chunk_type::text as chunk_type,
             COUNT(*) as count,
-            AVG(fidelity) as avg_fidelity,
-            metadata->>'detection_type' as detection_type
-        FROM data.event_boundaries
-        WHERE timestamp >= $1 AND timestamp <= $2
-        GROUP BY source_ontology, metadata->>'detection_type'
+            COALESCE(SUM(duration_minutes), 0) as total_duration
+        FROM data.timeline_chunk
+        WHERE start_time >= $1 AND end_time <= $2
+        GROUP BY chunk_type
         ORDER BY count DESC
         "#,
     )
@@ -224,28 +221,29 @@ pub async fn get_boundaries_summary(
     .fetch_all(db.pool())
     .await?;
 
-    let mut by_ontology = Vec::new();
-    let mut total_boundaries = 0i64;
+    let mut by_type = Vec::new();
+    let mut total_chunks = 0i64;
+    let mut total_duration = 0i64;
 
     for row in rows {
-        let ontology: String = row.try_get("source_ontology")?;
+        let chunk_type: String = row.try_get("chunk_type")?;
         let count: i64 = row.try_get("count")?;
-        let fidelity: f64 = row.try_get::<f64, _>("avg_fidelity")?;
-        let detection_type: Option<String> = row.try_get("detection_type").ok();
+        let duration: i64 = row.try_get("total_duration")?;
 
-        total_boundaries += count;
+        total_chunks += count;
+        total_duration += duration;
 
-        // Fetch sample boundaries for this ontology (limit 3)
+        // Fetch sample chunks for this type (limit 3)
         let sample_rows = sqlx::query(
             r#"
-            SELECT timestamp, boundary_type, metadata
-            FROM data.event_boundaries
-            WHERE source_ontology = $1 AND timestamp >= $2 AND timestamp <= $3
-            ORDER BY timestamp
+            SELECT start_time, end_time, place_name, duration_minutes
+            FROM data.timeline_chunk
+            WHERE chunk_type::text = $1 AND start_time >= $2 AND end_time <= $3
+            ORDER BY start_time
             LIMIT 3
             "#,
         )
-        .bind(&ontology)
+        .bind(&chunk_type)
         .bind(start)
         .bind(end)
         .fetch_all(db.pool())
@@ -253,26 +251,27 @@ pub async fn get_boundaries_summary(
 
         let samples = sample_rows
             .iter()
-            .map(|r| BoundarySample {
-                timestamp: r.try_get("timestamp").unwrap(),
-                boundary_type: r.try_get("boundary_type").unwrap(),
-                metadata: r.try_get("metadata").unwrap_or(serde_json::json!({})),
+            .map(|r| ChunkSample {
+                start_time: r.try_get("start_time").unwrap(),
+                end_time: r.try_get("end_time").unwrap(),
+                place_name: r.try_get("place_name").ok(),
+                duration_minutes: r.try_get("duration_minutes").unwrap_or(0),
             })
             .collect();
 
-        by_ontology.push(OntologyBoundaries {
-            ontology,
+        by_type.push(ChunkTypeStats {
+            chunk_type,
             count,
-            fidelity,
-            detection_type: detection_type.unwrap_or_else(|| "unknown".to_string()),
+            total_duration_minutes: duration,
             samples,
         });
     }
 
-    Ok(BoundariesSummary {
+    Ok(ChunksSummary {
         date_range: DateRange { start, end },
-        by_ontology,
-        total_boundaries,
+        by_type,
+        total_chunks,
+        total_duration_minutes: total_duration,
     })
 }
 
@@ -282,75 +281,41 @@ pub async fn get_data_quality_metrics(
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> Result<DataQualityMetrics> {
-    // Total records across all seed ontologies (estimate from key tables)
-    let total_records: i64 = sqlx::query_scalar(
+    // Total records across all ontologies (dynamically discovered from registry)
+    let count_parts: Vec<String> = list_ontologies()
+        .iter()
+        .map(|o| format!("(SELECT COUNT(*) FROM data.{})", o.table_name))
+        .collect();
+
+    let total_records: i64 = if count_parts.is_empty() {
+        0
+    } else {
+        sqlx::query_scalar(&format!("SELECT {}", count_parts.join(" + ")))
+            .fetch_one(db.pool())
+            .await
+            .unwrap_or(0)
+    };
+
+    // Time coverage from timeline chunks
+    let duration = end.signed_duration_since(start);
+    let total_hours = duration.num_seconds() as f64 / 3600.0;
+
+    // Get covered hours from timeline chunks (excluding missing_data)
+    let covered_minutes: i64 = sqlx::query_scalar(
         r#"
-        SELECT
-            (SELECT COUNT(*) FROM data.praxis_calendar) +
-            (SELECT COUNT(*) FROM data.health_sleep) +
-            (SELECT COUNT(*) FROM data.location_visit) +
-            (SELECT COUNT(*) FROM data.speech_transcription) +
-            (SELECT COUNT(*) FROM data.social_message) +
-            (SELECT COUNT(*) FROM data.social_email) +
-            (SELECT COUNT(*) FROM data.axiology_value) +
-            (SELECT COUNT(*) FROM data.axiology_virtue) +
-            (SELECT COUNT(*) FROM data.praxis_task)
+        SELECT COALESCE(SUM(duration_minutes), 0)
+        FROM data.timeline_chunk
+        WHERE start_time >= $1 AND end_time <= $2
+          AND chunk_type != 'missing_data'
         "#,
     )
+    .bind(start)
+    .bind(end)
     .fetch_one(db.pool())
     .await
     .unwrap_or(0);
 
-    // Fidelity distribution
-    let fidelity_row = sqlx::query(
-        r#"
-        SELECT
-            COUNT(*) FILTER (WHERE fidelity >= 0.90 AND fidelity <= 0.95) as tier1,
-            COUNT(*) FILTER (WHERE fidelity >= 0.80 AND fidelity < 0.90) as tier2,
-            COUNT(*) FILTER (WHERE fidelity >= 0.70 AND fidelity < 0.80) as tier3,
-            COUNT(*) FILTER (WHERE fidelity < 0.70) as below
-        FROM data.event_boundaries
-        WHERE timestamp >= $1 AND timestamp <= $2
-        "#,
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_one(db.pool())
-    .await?;
-
-    let fidelity_distribution = FidelityDistribution {
-        tier1_0_90_0_95: fidelity_row.try_get("tier1")?,
-        tier2_0_80_0_89: fidelity_row.try_get("tier2")?,
-        tier3_0_70_0_79: fidelity_row.try_get("tier3")?,
-        below_0_70: fidelity_row.try_get("below")?,
-    };
-
-    // Time coverage (how much of the day has boundaries)
-    let duration = end.signed_duration_since(start);
-    let total_hours = duration.num_seconds() as f64 / 3600.0;
-
-    // Estimate covered hours from timeline blocks
-    let covered_hours: f64 = sqlx::query_scalar(
-        r#"
-        WITH blocks AS (
-            SELECT
-                b.timestamp as start_time,
-                LEAD(b.timestamp) OVER (ORDER BY b.timestamp) as end_time
-            FROM data.event_boundaries b
-            WHERE b.timestamp >= $1 AND b.timestamp <= $2
-              AND b.boundary_type = 'begin'
-        )
-        SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (end_time - start_time)) / 3600.0), 0)
-        FROM blocks
-        WHERE end_time IS NOT NULL
-        "#,
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_one(db.pool())
-    .await
-    .unwrap_or(0.0);
-
+    let covered_hours = covered_minutes as f64 / 60.0;
     let coverage_percent = if total_hours > 0.0 {
         (covered_hours / total_hours) * 100.0
     } else {
@@ -363,12 +328,9 @@ pub async fn get_data_quality_metrics(
         coverage_percent,
     };
 
-    let boundary_coverage_percent = coverage_percent;
-
     Ok(DataQualityMetrics {
         total_records,
-        boundary_coverage_percent,
-        fidelity_distribution,
+        chunk_coverage_percent: coverage_percent,
         time_coverage,
     })
 }

@@ -18,12 +18,12 @@ pub async fn seed_ontologies(db: &Database) -> Result<usize> {
     let pool = db.pool();
     let mut total_count = 0;
 
-    // Use a deterministic seed source UUID (ariata-app source from migrations)
-    let ariata_source_id =
+    // Use a deterministic seed source UUID (virtues-app source from migrations)
+    let virtues_source_id =
         Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("Valid UUID");
 
     // Get or create a test stream for seed data
-    let seed_stream_id = get_or_create_seed_stream(pool, ariata_source_id).await?;
+    let seed_stream_id = get_or_create_seed_stream(pool, virtues_source_id).await?;
 
     // Seed health data (~400 records)
     total_count += seed_health_data(pool, seed_stream_id).await?;
@@ -349,45 +349,6 @@ async fn seed_location_data(pool: &PgPool, stream_id: Uuid) -> Result<usize> {
 
             count += 1;
         }
-
-        // TODO: Location visits seeding - disabled until location_visit table is created
-        // See TODO.md for implementing location_point → location_visit transformation
-        // Once the table exists and transform is implemented, uncomment this section:
-        //
-        // // Location visits (1-2 per day = ~45 total)
-        // let visit_count = rng.random_range(1..3);
-        // for _ in 0..visit_count {
-        //     let start_time = base_time
-        //         .date_naive()
-        //         .and_hms_opt(rng.random_range(9..20), 0, 0)
-        //         .unwrap()
-        //         .and_utc();
-        //     let duration = rng.random_range(30..180); // 30 mins to 3 hours
-        //     let end_time = start_time + Duration::minutes(duration);
-        //
-        //     let lat = base_lat + rng.random_range(-0.05..0.05);
-        //     let lon = base_lon + rng.random_range(-0.05..0.05);
-        //
-        //     sqlx::query!(
-        //         r#"
-        //         INSERT INTO data.location_visit
-        //         (latitude, longitude, centroid_coordinates, start_time, end_time,
-        //          source_stream_id, source_table, source_provider)
-        //         VALUES ($1, $2, ST_GeogFromText($3), $4, $5, $6, 'stream_seed_data', 'seed')
-        //         ON CONFLICT DO NOTHING
-        //         "#,
-        //         lat,
-        //         lon,
-        //         format!("POINT({} {})", lon, lat),
-        //         start_time,
-        //         end_time,
-        //         stream_id
-        //     )
-        //     .execute(pool)
-        //     .await?;
-        //
-        //     count += 1;
-        // }
     }
 
     Ok(count)

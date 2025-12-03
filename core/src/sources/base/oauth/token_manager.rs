@@ -1,7 +1,7 @@
 //! Centralized token management for all OAuth sources
 //!
 //! This module provides a unified interface for managing OAuth tokens across all sources.
-//! It integrates with the auth.ariata.com OAuth proxy for token refresh operations.
+//! It integrates with the auth.virtues.com OAuth proxy for token refresh operations.
 
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
@@ -33,7 +33,7 @@ pub struct OAuthToken {
 /// Configuration for the OAuth proxy
 #[derive(Debug, Clone)]
 pub struct OAuthProxyConfig {
-    /// Base URL of the OAuth proxy (e.g., <https://auth.ariata.com>)
+    /// Base URL of the OAuth proxy (e.g., <https://auth.virtues.com>)
     pub base_url: String,
 }
 
@@ -41,7 +41,7 @@ impl Default for OAuthProxyConfig {
     fn default() -> Self {
         Self {
             base_url: std::env::var("OAUTH_PROXY_URL")
-                .unwrap_or_else(|_| "https://auth.ariata.com".to_string()),
+                .unwrap_or_else(|_| "https://auth.virtues.com".to_string()),
         }
     }
 }
@@ -57,7 +57,7 @@ pub struct TokenManager {
 impl TokenManager {
     /// Create a new token manager
     ///
-    /// Requires ARIATA_ENCRYPTION_KEY environment variable to be set.
+    /// Requires VIRTUES_ENCRYPTION_KEY environment variable to be set.
     /// For development/testing, use `new_insecure()` instead.
     ///
     /// # Errors
@@ -69,7 +69,7 @@ impl TokenManager {
     /// Create a new token manager with custom configuration
     ///
     /// # Security
-    /// Always requires ARIATA_ENCRYPTION_KEY to be set. Tokens are always encrypted.
+    /// Always requires VIRTUES_ENCRYPTION_KEY to be set. Tokens are always encrypted.
     ///
     /// # Errors
     /// Returns error if encryption key is not set or invalid
@@ -77,7 +77,7 @@ impl TokenManager {
         // Always require encryption - no insecure mode
         let encryptor = TokenEncryptor::from_env().map_err(|_| {
             Error::Configuration(
-                "ARIATA_ENCRYPTION_KEY environment variable is required. \
+                "VIRTUES_ENCRYPTION_KEY environment variable is required. \
                  Generate one with: openssl rand -base64 32"
                     .to_string(),
             )

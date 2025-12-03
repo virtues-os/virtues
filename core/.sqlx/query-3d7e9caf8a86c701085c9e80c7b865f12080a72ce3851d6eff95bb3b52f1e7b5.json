@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO data.axiology_preference (title, description, preference_domain, is_active)\n            VALUES ($1, $2, 'general', TRUE)\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "3d7e9caf8a86c701085c9e80c7b865f12080a72ce3851d6eff95bb3b52f1e7b5"
+}

@@ -1,7 +1,7 @@
-//! Ariata CLI - Command-line interface for the Ariata personal data platform
+//! Virtues CLI - Command-line interface for the Virtues personal data platform
 
-use ariata::cli::types::Cli;
-use ariata::AriataBuilder;
+use virtues::cli::types::Cli;
+use virtues::VirtuesBuilder;
 use clap::Parser;
 use std::env;
 
@@ -22,34 +22,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(env_filter)
         .init();
 
+    // Initialize observability (metrics)
+    // If OTEL_EXPORTER_OTLP_ENDPOINT is set, metrics will be exported
+    if let Err(e) = virtues::observability::init(virtues::observability::ObservabilityConfig::default()) {
+        tracing::warn!(error = %e, "Failed to initialize observability, continuing without metrics");
+    }
+
     let cli = Cli::parse();
 
-    // Handle Init command early (doesn't need Ariata client)
-    if matches!(cli.command, ariata::cli::types::Commands::Init) {
-        let config = ariata::setup::run_init().await?;
+    // Handle Init command early (doesn't need Virtues client)
+    if matches!(cli.command, virtues::cli::types::Commands::Init) {
+        let config = virtues::setup::run_init().await?;
 
         // Save configuration
-        ariata::setup::save_config(&config)?;
+        virtues::setup::save_config(&config)?;
 
         // Run migrations if requested
         if config.run_migrations {
             println!();
             println!("📊 Running migrations...");
-            let db = ariata::database::Database::new(&config.database_url)?;
+            let db = virtues::database::Database::new(&config.database_url)?;
             db.initialize().await?;
             println!("✅ Migrations complete");
         }
 
-        ariata::setup::display_completion();
+        virtues::setup::display_completion();
         return Ok(());
     }
 
     // Get database URL from environment
     let database_url =
-        env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/ariata".to_string());
+        env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/virtues".to_string());
 
-    // Initialize Ariata client with optional S3/MinIO configuration
-    let mut builder = AriataBuilder::new().postgres(&database_url);
+    // Initialize Virtues client with optional S3/MinIO configuration
+    let mut builder = VirtuesBuilder::new().postgres(&database_url);
 
     // Configure S3/MinIO storage if environment variables are present
     if let Ok(bucket) = env::var("S3_BUCKET") {
@@ -65,10 +71,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let ariata = builder.build().await?;
+    let virtues = builder.build().await?;
 
     // Run CLI commands
-    ariata::cli::run(cli, ariata).await?;
+    virtues::cli::run(cli, virtues).await?;
 
     Ok(())
 }

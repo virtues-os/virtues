@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
 
-use super::AriataMcpServer;
+use super::VirtuesMcpServer;
 
 /// Add MCP routes to an existing Axum router
 ///
@@ -23,13 +23,13 @@ use super::AriataMcpServer;
 /// # Example
 /// ```rust,no_run
 /// use axum::Router;
-/// use ariata::mcp::{AriataMcpServer, http::add_mcp_routes};
+/// use virtues::mcp::{VirtuesMcpServer, http::add_mcp_routes};
 ///
 /// let router = Router::new();
-/// let mcp_server = AriataMcpServer::new(pool);
+/// let mcp_server = VirtuesMcpServer::new(pool);
 /// let router = add_mcp_routes(router, mcp_server);
 /// ```
-pub fn add_mcp_routes(router: Router, server: AriataMcpServer) -> Router {
+pub fn add_mcp_routes(router: Router, server: VirtuesMcpServer) -> Router {
     info!("Configuring MCP endpoint at /mcp");
 
     // Configure the MCP service

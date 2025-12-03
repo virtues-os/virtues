@@ -5,6 +5,7 @@ use crate::jobs::models::{JobStatus, JobType};
 use crate::jobs::sync_job::execute_sync_job;
 use crate::jobs::transform_context::TransformContext;
 use crate::jobs::transform_job::execute_transform_job;
+use crate::observability::JobTimer;
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -66,6 +67,10 @@ impl JobExecutor {
         // Update job status to running
         super::update_job_status(db, job_id, JobStatus::Running, None).await?;
 
+        // Start metrics timer
+        let job_type_str = job.job_type.to_string();
+        let timer = JobTimer::start(&job_type_str);
+
         tracing::info!(
             job_id = %job_id,
             job_type = %job.job_type,
@@ -95,22 +100,13 @@ impl JobExecutor {
             }
         };
 
-        // Log result
+        // Record metrics and log result
         match &result {
             Ok(_) => {
-                tracing::info!(
-                    job_id = %job_id,
-                    job_type = %job.job_type,
-                    "Job completed successfully"
-                );
+                timer.success();
             }
             Err(e) => {
-                tracing::error!(
-                    job_id = %job_id,
-                    job_type = %job.job_type,
-                    error = %e,
-                    "Job failed"
-                );
+                timer.failure(&e.to_string());
             }
         }
 

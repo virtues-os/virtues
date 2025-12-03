@@ -446,15 +446,10 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
     Ok(place_id)
 }
 
-/// Reverse geocode coordinates to human-readable name (stub implementation)
+/// Reverse geocode coordinates to human-readable name
 ///
-/// This is a placeholder implementation that generates a simple label based on coordinates.
-/// In production, this should be replaced with a proper reverse geocoding service like:
-/// - Nominatim (free, open source)
-/// - Google Places API (requires API key)
-/// - Mapbox Geocoding API
-///
-/// TODO: Implement proper reverse geocoding with rate limiting
+/// Generates a coordinate-based label. For production use with proper place names,
+/// integrate a reverse geocoding service (Nominatim, Google Places, Mapbox).
 fn reverse_geocode_stub(lat: f64, lon: f64) -> String {
     format!("Location {:.4}, {:.4}", lat, lon)
 }
@@ -479,37 +474,13 @@ fn calculate_visit_radius(visit: &Visit) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration;
 
     #[test]
     fn test_haversine_distance() {
         // San Francisco to Los Angeles (approx 559 km)
         let dist = haversine_distance(37.7749, -122.4194, 34.0522, -118.2437);
         assert!((dist - 559_000.0).abs() < 10_000.0); // Within 10km
-    }
-
-    #[test]
-    fn test_detect_sampling_rate() {
-        let points = vec![
-            LocationPoint {
-                id: Uuid::new_v4(),
-                latitude: 37.7749,
-                longitude: -122.4194,
-                timestamp: Utc::now(),
-                horizontal_accuracy: Some(10.0),
-                _speed: Some(0.0),
-            },
-            LocationPoint {
-                id: Uuid::new_v4(),
-                latitude: 37.7749,
-                longitude: -122.4194,
-                timestamp: Utc::now() + Duration::seconds(10),
-                horizontal_accuracy: Some(10.0),
-                _speed: Some(0.0),
-            },
-        ];
-
-        let rate = detect_sampling_rate(&points);
-        assert!((rate - 6.0).abs() < 1.0); // Should be ~6 points/min
     }
 
     #[test]

@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::sources::base::{OntologyTransform, TransformResult};
+use crate::jobs::TransformContext;
+use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
@@ -1351,6 +1352,58 @@ async fn execute_workout_batch_insert(
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
 }
+
+// Self-registrations for all HealthKit transforms
+
+struct HealthKitHeartRateRegistration;
+impl TransformRegistration for HealthKitHeartRateRegistration {
+    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
+    fn target_table(&self) -> &'static str { "health_heart_rate" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(HealthKitHeartRateTransform))
+    }
+}
+inventory::submit! { &HealthKitHeartRateRegistration as &dyn TransformRegistration }
+
+struct HealthKitHRVRegistration;
+impl TransformRegistration for HealthKitHRVRegistration {
+    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
+    fn target_table(&self) -> &'static str { "health_hrv" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(HealthKitHRVTransform))
+    }
+}
+inventory::submit! { &HealthKitHRVRegistration as &dyn TransformRegistration }
+
+struct HealthKitStepsRegistration;
+impl TransformRegistration for HealthKitStepsRegistration {
+    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
+    fn target_table(&self) -> &'static str { "health_steps" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(HealthKitStepsTransform))
+    }
+}
+inventory::submit! { &HealthKitStepsRegistration as &dyn TransformRegistration }
+
+struct HealthKitSleepRegistration;
+impl TransformRegistration for HealthKitSleepRegistration {
+    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
+    fn target_table(&self) -> &'static str { "health_sleep" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(HealthKitSleepTransform))
+    }
+}
+inventory::submit! { &HealthKitSleepRegistration as &dyn TransformRegistration }
+
+struct HealthKitWorkoutRegistration;
+impl TransformRegistration for HealthKitWorkoutRegistration {
+    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
+    fn target_table(&self) -> &'static str { "health_workout" }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(HealthKitWorkoutTransform))
+    }
+}
+inventory::submit! { &HealthKitWorkoutRegistration as &dyn TransformRegistration }
 
 #[cfg(test)]
 mod tests {

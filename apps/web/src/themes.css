@@ -1,222 +1,329 @@
 /* ===================================
-   ARIATA THEME SYSTEM
+   VIRTUES THEME SYSTEM
 
    Semantic color definitions for multiple theme variants.
    These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
    and as CSS variables (e.g., var(--color-primary))
+
+   Themes: warm (default), light, dark, night
+
+   IMPORTANT: @theme must be top-level, not nested.
+   We define theme variables once, then override CSS variables per theme.
    =================================== */
 
-@theme {
-	/* ===================================
-	   LIGHT THEME (DEFAULT)
-	   =================================== */
+/* Define all theme variables at top level - these create the utility classes */
+@theme inline {
+	/* Surface Colors */
+	--color-background: var(--background);
+	--color-surface: var(--surface);
+	--color-surface-elevated: var(--surface-elevated);
+	--color-surface-overlay: var(--surface-overlay);
 
-	/* Surface Colors - Backgrounds and containers */
-	--color-background: #FAF9F5;        /* Main app background (paper) */
-	--color-surface: #FFFFFF;           /* Cards, panels, elevated surfaces */
-	--color-surface-elevated: #F3F2E9;  /* Hover states, raised elements (paper-dark) */
-	--color-surface-overlay: #FFFFFF;   /* Modals, dropdowns, tooltips */
+	/* Content Colors */
+	--color-foreground: var(--foreground);
+	--color-foreground-muted: var(--foreground-muted);
+	--color-foreground-subtle: var(--foreground-subtle);
+	--color-foreground-disabled: var(--foreground-disabled);
 
-	/* Content Colors - Text and foreground elements */
-	--color-foreground: #14283D;        /* Primary text color (navy) */
-	--color-foreground-muted: #1a3550;  /* Secondary text, less emphasis (navy-light) */
-	--color-foreground-subtle: #78716c; /* Tertiary text, placeholder text (stone-500) */
-	--color-foreground-disabled: #a8a29e; /* Disabled text (stone-400) */
+	/* Interactive Colors */
+	--color-primary: var(--primary);
+	--color-primary-hover: var(--primary-hover);
+	--color-primary-active: var(--primary-active);
+	--color-primary-subtle: var(--primary-subtle);
 
-	/* Interactive Colors - Actions and states */
-	--color-primary: #2883DE;           /* Primary actions, links, focus (blue) */
-	--color-primary-hover: #4a9ae5;     /* Primary hover state (blue-light) */
-	--color-primary-active: #1d6bb8;    /* Primary pressed/active state */
-	--color-primary-subtle: #e3f2fd;    /* Primary backgrounds, badges */
+	--color-secondary: var(--secondary);
+	--color-secondary-hover: var(--secondary-hover);
+	--color-secondary-active: var(--secondary-active);
 
-	--color-secondary: #14283D;         /* Secondary actions (navy) */
-	--color-secondary-hover: #1a3550;   /* Secondary hover state (navy-light) */
-	--color-secondary-active: #0f1e2d;  /* Secondary pressed/active state */
-
-	--color-accent: #2883DE;            /* Accents, highlights (blue) */
-	--color-accent-hover: #4a9ae5;      /* Accent hover state */
+	--color-accent: var(--accent);
+	--color-accent-hover: var(--accent-hover);
 
 	/* Status Colors */
-	--color-success: #16a34a;           /* Success states, positive actions */
-	--color-success-subtle: #dcfce7;    /* Success backgrounds */
-	--color-warning: #ea580c;           /* Warning states, caution */
-	--color-warning-subtle: #ffedd5;    /* Warning backgrounds */
-	--color-error: #dc2626;             /* Error states, destructive actions */
-	--color-error-subtle: #fee2e2;      /* Error backgrounds */
-	--color-info: #0284c7;              /* Informational states */
-	--color-info-subtle: #e0f2fe;       /* Info backgrounds */
+	--color-success: var(--success);
+	--color-success-subtle: var(--success-subtle);
+	--color-warning: var(--warning);
+	--color-warning-subtle: var(--warning-subtle);
+	--color-error: var(--error);
+	--color-error-subtle: var(--error-subtle);
+	--color-info: var(--info);
+	--color-info-subtle: var(--info-subtle);
 
 	/* Border Colors */
-	--color-border: #e7e5e4;            /* Default borders (stone-200) */
-	--color-border-subtle: #d6d3d1;     /* Subtle borders, dividers (stone-300) */
-	--color-border-strong: #a8a29e;     /* Emphasized borders (stone-400) */
-	--color-border-focus: #2883DE;      /* Focus rings (blue) */
-
-	/* Legacy Brand Colors (for backward compatibility - will be removed later) */
-	--color-navy: #14283D;
-	--color-navy-light: #1a3550;
-	--color-paper: #FAF9F5;
-	--color-paper-dark: #F3F2E9;
-	--color-white: #FFFFFF;
-	--color-blue: #2883DE;
-	--color-blue-light: #4a9ae5;
-
-	/* Stone palette for grays (keeping for utility classes) */
-	--color-stone-200: #e7e5e4;
-	--color-stone-300: #d6d3d1;
-	--color-stone-400: #a8a29e;
-	--color-stone-500: #78716c;
-	--color-stone-600: #57534e;
-	--color-stone-700: #44403c;
-	--color-stone-800: #292524;
-	--color-stone-900: #1c1917;
+	--color-border: var(--border);
+	--color-border-subtle: var(--border-subtle);
+	--color-border-strong: var(--border-strong);
+	--color-border-focus: var(--border-focus);
 
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
 	--font-serif: 'PP Writer', Lora, serif;
+
+	/* Animation Tokens */
+	--duration-fast: 150ms;
+	--duration-normal: 200ms;
+	--duration-slow: 300ms;
+	--ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
 }
 
 /* ===================================
-   DARK THEME
+   LIGHT THEME (DEFAULT)
+   Pure white with neutral grays
+   Applied to :root so it's the default
    =================================== */
-[data-theme="dark"] {
-	@theme {
-		/* Surface Colors - Darker backgrounds */
-		--color-background: #14283D;        /* Navy as main background */
-		--color-surface: #1a3550;           /* Navy-light for cards/panels */
-		--color-surface-elevated: #213d5a;  /* Lighter for hover/raised elements */
-		--color-surface-overlay: #2a4a6a;   /* Even lighter for modals/dropdowns */
+:root {
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
 
-		/* Content Colors - Light text on dark */
-		--color-foreground: #FAF9F5;        /* Paper color for primary text */
-		--color-foreground-muted: #F3F2E9;  /* Paper-dark for secondary text */
-		--color-foreground-subtle: #a8a29e; /* Stone-400 for tertiary text */
-		--color-foreground-disabled: #78716c; /* Stone-500 for disabled */
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
 
-		/* Interactive Colors - Adjusted for dark mode */
-		--color-primary: #4a9ae5;           /* Lighter blue for better contrast */
-		--color-primary-hover: #6baee9;     /* Even lighter on hover */
-		--color-primary-active: #2883DE;    /* Original blue when pressed */
-		--color-primary-subtle: #1d3d5c;    /* Darker blue background */
+	/* Interactive Colors - Blue accent */
+	--primary: #2563EB;
+	--primary-hover: #3B82F6;
+	--primary-active: #1D4ED8;
+	--primary-subtle: #EFF6FF;
 
-		--color-secondary: #FAF9F5;         /* Paper for secondary actions */
-		--color-secondary-hover: #FFFFFF;   /* White on hover */
-		--color-secondary-active: #F3F2E9;  /* Paper-dark when pressed */
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
 
-		--color-accent: #4a9ae5;            /* Lighter blue accent */
-		--color-accent-hover: #6baee9;      /* Lighter on hover */
+	--accent: #2563EB;
+	--accent-hover: #3B82F6;
 
-		/* Status Colors - Adjusted for dark backgrounds */
-		--color-success: #22c55e;           /* Brighter green */
-		--color-success-subtle: #14532d;    /* Dark green background */
-		--color-warning: #fb923c;           /* Brighter orange */
-		--color-warning-subtle: #431407;    /* Dark orange background */
-		--color-error: #ef4444;             /* Brighter red */
-		--color-error-subtle: #450a0a;      /* Dark red background */
-		--color-info: #38bdf8;              /* Brighter cyan */
-		--color-info-subtle: #082f49;       /* Dark cyan background */
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
 
-		/* Border Colors - Lighter for visibility on dark */
-		--color-border: #2a4a6a;            /* Visible border */
-		--color-border-subtle: #213d5a;     /* Subtle border */
-		--color-border-strong: #3d5a7a;     /* Strong border */
-		--color-border-focus: #4a9ae5;      /* Lighter blue focus ring */
-	}
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2563EB;
 }
 
 /* ===================================
    WARM THEME
+   Paper/cream aesthetic with navy text
    =================================== */
 [data-theme="warm"] {
-	@theme {
-		/* Surface Colors - Warm, sepia-toned */
-		--color-background: #F5F1E8;        /* Warm cream background */
-		--color-surface: #FFFCF5;           /* Slightly lighter cream */
-		--color-surface-elevated: #EBE4D5;  /* Warmer elevated surfaces */
-		--color-surface-overlay: #FFFFFF;   /* Clean white overlays */
+	/* Surface Colors - Paper/cream tones */
+	--background: #FAF9F5;
+	--surface: #FFFFFF;
+	--surface-elevated: #F3F2E9;
+	--surface-overlay: #FFFFFF;
 
-		/* Content Colors - Warm browns */
-		--color-foreground: #3D2817;        /* Dark warm brown */
-		--color-foreground-muted: #5A402D;  /* Medium warm brown */
-		--color-foreground-subtle: #8B7355; /* Light warm brown */
-		--color-foreground-disabled: #B39C7D; /* Very light brown */
+	/* Content Colors - Navy text */
+	--foreground: #14283D;
+	--foreground-muted: #1a3550;
+	--foreground-subtle: #78716c;
+	--foreground-disabled: #a8a29e;
 
-		/* Interactive Colors - Warm accent colors */
-		--color-primary: #D97706;           /* Warm amber */
-		--color-primary-hover: #F59E0B;     /* Lighter amber on hover */
-		--color-primary-active: #B45309;    /* Darker amber when pressed */
-		--color-primary-subtle: #FEF3C7;    /* Light amber background */
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #e3f2fd;
 
-		--color-secondary: #3D2817;         /* Dark brown secondary */
-		--color-secondary-hover: #5A402D;   /* Medium brown hover */
-		--color-secondary-active: #2D1E10;  /* Darker brown active */
+	--secondary: #14283D;
+	--secondary-hover: #1a3550;
+	--secondary-active: #0f1e2d;
 
-		--color-accent: #DC2626;            /* Warm red accent */
-		--color-accent-hover: #EF4444;      /* Lighter red hover */
+	--accent: #2883DE;
+	--accent-hover: #4a9ae5;
 
-		/* Status Colors - Warm tones */
-		--color-success: #059669;           /* Warm green */
-		--color-success-subtle: #D1FAE5;    /* Light green background */
-		--color-warning: #D97706;           /* Amber warning */
-		--color-warning-subtle: #FEF3C7;    /* Light amber background */
-		--color-error: #DC2626;             /* Warm red */
-		--color-error-subtle: #FEE2E2;      /* Light red background */
-		--color-info: #0891B2;              /* Warm cyan */
-		--color-info-subtle: #CFFAFE;       /* Light cyan background */
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
 
-		/* Border Colors - Warm neutral borders */
-		--color-border: #D4C4AB;            /* Warm beige border */
-		--color-border-subtle: #E6D9C3;     /* Lighter beige border */
-		--color-border-strong: #B39C7D;     /* Stronger brown border */
-		--color-border-focus: #D97706;      /* Amber focus ring */
-	}
+	/* Border Colors */
+	--border: #e7e5e4;
+	--border-subtle: #d6d3d1;
+	--border-strong: #a8a29e;
+	--border-focus: #2883DE;
 }
 
 /* ===================================
-   HIGH CONTRAST THEME
+   DARK THEME
+   True dark mode with near-black background
    =================================== */
-[data-theme="high-contrast"] {
-	@theme {
-		/* Surface Colors - Maximum contrast */
-		--color-background: #FFFFFF;        /* Pure white */
-		--color-surface: #F5F5F5;           /* Very light gray */
-		--color-surface-elevated: #E5E5E5;  /* Light gray */
-		--color-surface-overlay: #FFFFFF;   /* Pure white */
+[data-theme="dark"] {
+	/* Surface Colors */
+	--background: #0a0a0a;
+	--surface: #171717;
+	--surface-elevated: #262626;
+	--surface-overlay: #2a2a2a;
 
-		/* Content Colors - Pure black for maximum readability */
-		--color-foreground: #000000;        /* Pure black */
-		--color-foreground-muted: #1A1A1A;  /* Very dark gray */
-		--color-foreground-subtle: #4A4A4A; /* Medium gray */
-		--color-foreground-disabled: #767676; /* Light gray (WCAG AA compliant) */
+	/* Content Colors */
+	--foreground: #fafafa;
+	--foreground-muted: #e5e5e5;
+	--foreground-subtle: #a3a3a3;
+	--foreground-disabled: #737373;
 
-		/* Interactive Colors - High contrast blues */
-		--color-primary: #0066CC;           /* Strong blue */
-		--color-primary-hover: #0052A3;     /* Darker blue hover */
-		--color-primary-active: #003D7A;    /* Even darker pressed */
-		--color-primary-subtle: #E6F2FF;    /* Very light blue background */
+	/* Interactive Colors */
+	--primary: #60a5fa;
+	--primary-hover: #93c5fd;
+	--primary-active: #3b82f6;
+	--primary-subtle: #1e3a5f;
 
-		--color-secondary: #000000;         /* Pure black */
-		--color-secondary-hover: #1A1A1A;   /* Very dark gray hover */
-		--color-secondary-active: #000000;  /* Pure black active */
+	--secondary: #e5e5e5;
+	--secondary-hover: #fafafa;
+	--secondary-active: #d4d4d4;
 
-		--color-accent: #CC0000;            /* Strong red */
-		--color-accent-hover: #A30000;      /* Darker red hover */
+	--accent: #f472b6;
+	--accent-hover: #f9a8d4;
 
-		/* Status Colors - High contrast, WCAG AAA compliant */
-		--color-success: #006B3D;           /* Strong green */
-		--color-success-subtle: #E6F4ED;    /* Light green background */
-		--color-warning: #CC6600;           /* Strong orange */
-		--color-warning-subtle: #FFF4E6;    /* Light orange background */
-		--color-error: #CC0000;             /* Strong red */
-		--color-error-subtle: #FFE6E6;      /* Light red background */
-		--color-info: #0066CC;              /* Strong blue */
-		--color-info-subtle: #E6F2FF;       /* Light blue background */
+	/* Status Colors */
+	--success: #4ade80;
+	--success-subtle: #14532d;
+	--warning: #fbbf24;
+	--warning-subtle: #422006;
+	--error: #f87171;
+	--error-subtle: #450a0a;
+	--info: #38bdf8;
+	--info-subtle: #082f49;
 
-		/* Border Colors - High contrast borders */
-		--color-border: #000000;            /* Pure black border */
-		--color-border-subtle: #4A4A4A;     /* Dark gray border */
-		--color-border-strong: #000000;     /* Pure black strong */
-		--color-border-focus: #0066CC;      /* Strong blue focus (3px width recommended) */
-	}
+	/* Border Colors */
+	--border: #404040;
+	--border-subtle: #2a2a2a;
+	--border-strong: #525252;
+	--border-focus: #60a5fa;
+}
+
+/* ===================================
+   NIGHT THEME
+   Dark charcoal with warm orange accent
+   =================================== */
+[data-theme="night"] {
+	/* Surface Colors */
+	--background: #0C0E13;
+	--surface: #161820;
+	--surface-elevated: #1e2028;
+	--surface-overlay: #262830;
+
+	/* Content Colors */
+	--foreground: #FAF9F5;
+	--foreground-muted: #e5e5e5;
+	--foreground-subtle: #a8a29e;
+	--foreground-disabled: #78716c;
+
+	/* Interactive Colors */
+	--primary: #FF9141;
+	--primary-hover: #ffaa66;
+	--primary-active: #e67a2e;
+	--primary-subtle: #2d1f15;
+
+	--secondary: #FAF9F5;
+	--secondary-hover: #FFFFFF;
+	--secondary-active: #F3F2E9;
+
+	--accent: #FF9141;
+	--accent-hover: #ffaa66;
+
+	/* Status Colors */
+	--success: #22c55e;
+	--success-subtle: #14532d;
+	--warning: #fbbf24;
+	--warning-subtle: #422006;
+	--error: #ef4444;
+	--error-subtle: #450a0a;
+	--info: #38bdf8;
+	--info-subtle: #082f49;
+
+	/* Border Colors */
+	--border: #2a2c34;
+	--border-subtle: #1e2028;
+	--border-strong: #3a3c44;
+	--border-focus: #FF9141;
+}
+
+/* ===================================
+   MANUSCRIPT STYLE COMPONENTS
+   Reusable components for onboarding/manuscript aesthetic
+   Works with any theme
+   =================================== */
+
+/* Manuscript Button - Primary */
+.btn-manuscript {
+	font-family: var(--font-sans);
+	font-size: 13px;
+	font-weight: 500;
+	letter-spacing: 0.05em;
+	text-transform: uppercase;
+	padding: 14px 28px;
+	background: var(--foreground);
+	color: var(--surface);
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: background 150ms ease, opacity 150ms ease;
+}
+
+.btn-manuscript:hover:not(:disabled) {
+	opacity: 0.85;
+}
+
+.btn-manuscript:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+/* Manuscript Button - Secondary/Ghost */
+.btn-manuscript-ghost {
+	font-family: var(--font-sans);
+	font-size: 13px;
+	font-weight: 500;
+	letter-spacing: 0.02em;
+	padding: 14px 16px;
+	background: transparent;
+	color: var(--foreground-muted);
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+	transition: color 150ms ease;
+}
+
+.btn-manuscript-ghost:hover {
+	color: var(--foreground);
+}
+
+/* Manuscript Input - Underline Style */
+.input-manuscript {
+	font-family: var(--font-sans);
+	font-size: 15px;
+	width: 100%;
+	padding: 12px 0;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	color: var(--foreground);
+	outline: none;
+	transition: border-color 150ms ease;
+}
+
+.input-manuscript:focus {
+	border-bottom-color: var(--foreground);
+}
+
+.input-manuscript::placeholder {
+	color: var(--foreground-subtle);
 }

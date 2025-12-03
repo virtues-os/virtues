@@ -1,13 +1,11 @@
-//! Axiology API - Managing values and character development
+//! Axiology API - Managing the value hierarchy and character development
 //!
 //! This module provides CRUD operations for:
-//! - Values: Foundational principles
-//! - Telos: Ultimate life purpose (singular active)
-//! - Temperaments: Personality patterns and natural dispositions
+//! - Telos: Ultimate life purpose (singular active) - the ordering principle
 //! - Virtues: Positive character patterns to cultivate
 //! - Vices: Negative character patterns to resist
-//! - Habits: Daily practices
-//! - Preferences: Affinities with entities
+//! - Preferences: External affinities (people, places, things)
+//! - Temperaments: Internal dispositions (self, modes of being)
 //!
 //! These represent the "being" layer - your value system and character.
 
@@ -55,17 +53,6 @@ pub struct Vice {
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Value {
-    pub id: Uuid,
-    pub title: String,
-    pub description: Option<String>,
-    pub topic_id: Option<Uuid>,
-    pub is_active: Option<bool>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CreateSimpleRequest {
     pub title: String,
@@ -102,7 +89,6 @@ pub struct Preference {
     pub title: String,
     pub description: Option<String>,
     pub preference_domain: Option<String>,
-    pub valence: Option<String>,
     pub person_id: Option<Uuid>,
     pub place_id: Option<Uuid>,
     pub topic_id: Option<Uuid>,
@@ -116,7 +102,6 @@ pub struct CreatePreferenceRequest {
     pub title: String,
     pub description: Option<String>,
     pub preference_domain: Option<String>,
-    pub valence: Option<String>,
     pub person_id: Option<Uuid>,
     pub place_id: Option<Uuid>,
     pub topic_id: Option<Uuid>,
@@ -127,7 +112,6 @@ pub struct UpdatePreferenceRequest {
     pub title: Option<String>,
     pub description: Option<String>,
     pub preference_domain: Option<String>,
-    pub valence: Option<String>,
     pub person_id: Option<Uuid>,
     pub place_id: Option<Uuid>,
     pub topic_id: Option<Uuid>,
@@ -443,109 +427,6 @@ pub async fn delete_vice(pool: &PgPool, id: Uuid) -> Result<()> {
 }
 
 // ============================================================================
-// Value CRUD Operations
-// ============================================================================
-
-pub async fn list_values(pool: &PgPool) -> Result<Vec<Value>> {
-    let items = sqlx::query_as!(
-        Value,
-        r#"
-        SELECT id, title, description, topic_id, is_active, created_at, updated_at
-        FROM data.axiology_value
-        WHERE is_active = true
-        ORDER BY created_at DESC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list values: {}", e)))?;
-
-    Ok(items)
-}
-
-pub async fn get_value(pool: &PgPool, id: Uuid) -> Result<Value> {
-    let item = sqlx::query_as!(
-        Value,
-        r#"
-        SELECT id, title, description, topic_id, is_active, created_at, updated_at
-        FROM data.axiology_value
-        WHERE id = $1 AND is_active = true
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get value: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Value not found: {}", id)))?;
-
-    Ok(item)
-}
-
-pub async fn create_value(pool: &PgPool, req: CreateSimpleRequest) -> Result<Value> {
-    let item = sqlx::query_as!(
-        Value,
-        r#"
-        INSERT INTO data.axiology_value (title, description, topic_id)
-        VALUES ($1, $2, $3)
-        RETURNING id, title, description, topic_id, is_active, created_at, updated_at
-        "#,
-        req.title,
-        req.description,
-        req.topic_id
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create value: {}", e)))?;
-
-    Ok(item)
-}
-
-pub async fn update_value(pool: &PgPool, id: Uuid, req: UpdateSimpleRequest) -> Result<Value> {
-    let item = sqlx::query_as!(
-        Value,
-        r#"
-        UPDATE data.axiology_value
-        SET title = COALESCE($2, title),
-            description = COALESCE($3, description),
-            topic_id = COALESCE($4, topic_id),
-            updated_at = NOW()
-        WHERE id = $1 AND is_active = true
-        RETURNING id, title, description, topic_id, is_active, created_at, updated_at
-        "#,
-        id,
-        req.title,
-        req.description,
-        req.topic_id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update value: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Value not found: {}", id)))?;
-
-    Ok(item)
-}
-
-pub async fn delete_value(pool: &PgPool, id: Uuid) -> Result<()> {
-    let result = sqlx::query!(
-        r#"
-        UPDATE data.axiology_value
-        SET is_active = false, updated_at = NOW()
-        WHERE id = $1 AND is_active = true
-        "#,
-        id
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to delete value: {}", e)))?;
-
-    if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Value not found: {}", id)));
-    }
-
-    Ok(())
-}
-
-// ============================================================================
 // Telos CRUD Operations (with singular active constraint)
 // ============================================================================
 
@@ -663,7 +544,7 @@ pub async fn list_preferences(pool: &PgPool) -> Result<Vec<Preference>> {
     let items = sqlx::query_as!(
         Preference,
         r#"
-        SELECT id, title, description, preference_domain, valence,
+        SELECT id, title, description, preference_domain,
                person_id, place_id, topic_id,
                is_active, created_at, updated_at
         FROM data.axiology_preference
@@ -682,7 +563,7 @@ pub async fn get_preference(pool: &PgPool, id: Uuid) -> Result<Preference> {
     let item = sqlx::query_as!(
         Preference,
         r#"
-        SELECT id, title, description, preference_domain, valence,
+        SELECT id, title, description, preference_domain,
                person_id, place_id, topic_id,
                is_active, created_at, updated_at
         FROM data.axiology_preference
@@ -703,16 +584,15 @@ pub async fn create_preference(pool: &PgPool, req: CreatePreferenceRequest) -> R
         Preference,
         r#"
         INSERT INTO data.axiology_preference
-            (title, description, preference_domain, valence, person_id, place_id, topic_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING id, title, description, preference_domain, valence,
+            (title, description, preference_domain, person_id, place_id, topic_id)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, title, description, preference_domain,
                   person_id, place_id, topic_id,
                   is_active, created_at, updated_at
         "#,
         req.title,
         req.description,
         req.preference_domain,
-        req.valence,
         req.person_id,
         req.place_id,
         req.topic_id
@@ -732,13 +612,12 @@ pub async fn update_preference(pool: &PgPool, id: Uuid, req: UpdatePreferenceReq
         SET title = COALESCE($2, title),
             description = COALESCE($3, description),
             preference_domain = COALESCE($4, preference_domain),
-            valence = COALESCE($5, valence),
-            person_id = COALESCE($6, person_id),
-            place_id = COALESCE($7, place_id),
-            topic_id = COALESCE($8, topic_id),
+            person_id = COALESCE($5, person_id),
+            place_id = COALESCE($6, place_id),
+            topic_id = COALESCE($7, topic_id),
             updated_at = NOW()
         WHERE id = $1 AND is_active = true
-        RETURNING id, title, description, preference_domain, valence,
+        RETURNING id, title, description, preference_domain,
                   person_id, place_id, topic_id,
                   is_active, created_at, updated_at
         "#,
@@ -746,7 +625,6 @@ pub async fn update_preference(pool: &PgPool, id: Uuid, req: UpdatePreferenceReq
         req.title,
         req.description,
         req.preference_domain,
-        req.valence,
         req.person_id,
         req.place_id,
         req.topic_id

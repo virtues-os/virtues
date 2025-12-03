@@ -812,6 +812,17 @@ pub async fn update_profile_handler(
     api_response(crate::api::update_profile(state.db.pool(), request).await)
 }
 
+/// Set user's home place via Google Places Autocomplete
+pub async fn set_home_place_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::SetHomePlaceRequest>,
+) -> Response {
+    match crate::api::set_home_place(state.db.pool(), request).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
 // =============================================================================
 // Assistant Profile API
 // =============================================================================
@@ -1090,46 +1101,6 @@ pub async fn delete_vice_handler(
 }
 
 // =============================================================================
-// Axiology API - Values
-// =============================================================================
-
-pub async fn list_values_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_values(state.db.pool()).await)
-}
-
-pub async fn get_value_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    api_response(crate::api::get_value(state.db.pool(), id).await)
-}
-
-pub async fn create_value_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::create_value(state.db.pool(), request).await)
-}
-
-pub async fn update_value_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Json(request): Json<crate::api::UpdateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::update_value(state.db.pool(), id, request).await)
-}
-
-pub async fn delete_value_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    match crate::api::delete_value(state.db.pool(), id).await {
-        Ok(_) => success_message("Value deleted successfully"),
-        Err(e) => error_response(e),
-    }
-}
-
-// =============================================================================
 // Tools API
 // =============================================================================
 
@@ -1196,38 +1167,21 @@ pub async fn get_agent_handler(
 // Timeline API
 // =============================================================================
 
-#[derive(Debug, serde::Deserialize)]
-pub struct GetBoundariesQuery {
-    pub start: Option<String>, // RFC3339 timestamp
-    pub end: Option<String>,
-}
-
-/// Get boundaries within a time range
-pub async fn get_boundaries_handler(
-    State(state): State<AppState>,
-    Query(params): Query<GetBoundariesQuery>,
-) -> Response {
-    use chrono::Duration;
-
-    let end = params
-        .end
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .unwrap_or_else(chrono::Utc::now);
-
-    let start = params
-        .start
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-        .unwrap_or_else(|| end - Duration::days(1));
-
-    api_response(crate::api::get_boundaries(&state.db, start, end).await)
+/// Query parameters for day view
+#[derive(Debug, Deserialize)]
+pub struct DayViewQuery {
+    /// Timezone offset from UTC in hours (e.g., 1 for Rome, -8 for PST)
+    pub tz_offset: Option<i32>,
 }
 
 /// Get day view for a specific date
+///
+/// Query parameters:
+/// - tz_offset: Timezone offset from UTC in hours (default: 0)
 pub async fn get_day_view_handler(
     State(state): State<AppState>,
     Path(date_str): Path<String>,
+    Query(params): Query<DayViewQuery>,
 ) -> Response {
     use chrono::NaiveDate;
 
@@ -1240,28 +1194,29 @@ pub async fn get_day_view_handler(
         }
     };
 
-    api_response(crate::api::get_day_view(&state.db, date).await)
+    let tz_offset = params.tz_offset.unwrap_or(0);
+    api_response(crate::api::get_day_view(state.db.pool(), date, tz_offset).await)
 }
 
 // =============================================================================
 // Seed Testing API
 // =============================================================================
 
-/// Get pipeline status (archive, transform, clustering, boundaries)
+/// Get pipeline status (archive, transform, clustering, timeline chunks)
 pub async fn seed_pipeline_status_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::get_pipeline_status(&state.db).await)
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct BoundariesSummaryQuery {
+pub struct ChunksSummaryQuery {
     pub start: String, // RFC3339 timestamp
     pub end: String,   // RFC3339 timestamp
 }
 
-/// Get boundaries summary grouped by ontology
-pub async fn seed_boundaries_summary_handler(
+/// Get timeline chunks summary grouped by type
+pub async fn seed_chunks_summary_handler(
     State(state): State<AppState>,
-    Query(params): Query<BoundariesSummaryQuery>,
+    Query(params): Query<ChunksSummaryQuery>,
 ) -> Response {
     let start = match chrono::DateTime::parse_from_rfc3339(&params.start) {
         Ok(dt) => dt.with_timezone(&chrono::Utc),
@@ -1281,13 +1236,13 @@ pub async fn seed_boundaries_summary_handler(
         }
     };
 
-    api_response(crate::api::get_boundaries_summary(&state.db, start, end).await)
+    api_response(crate::api::get_chunks_summary(&state.db, start, end).await)
 }
 
 /// Get data quality metrics for seed data
 pub async fn seed_data_quality_handler(
     State(state): State<AppState>,
-    Query(params): Query<BoundariesSummaryQuery>,
+    Query(params): Query<ChunksSummaryQuery>,
 ) -> Response {
     let start = match chrono::DateTime::parse_from_rfc3339(&params.start) {
         Ok(dt) => dt.with_timezone(&chrono::Utc),
@@ -1308,4 +1263,150 @@ pub async fn seed_data_quality_handler(
     };
 
     api_response(crate::api::get_data_quality_metrics(&state.db, start, end).await)
+}
+
+// ============================================================================
+// Embedding handlers
+// ============================================================================
+
+/// Get embedding statistics
+pub async fn get_embedding_stats_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::search::get_embedding_stats(state.db.pool()).await)
+}
+
+/// Trigger embedding job manually
+pub async fn trigger_embedding_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::search::trigger_embedding_job(state.db.pool()).await)
+}
+
+// ============================================================================
+// Metrics handlers
+// ============================================================================
+
+/// Get activity metrics (job statistics, time windows, recent errors)
+pub async fn get_activity_metrics_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_activity_metrics(&state.db).await)
+}
+
+// ============================================================================
+// Plaid Link API
+// ============================================================================
+
+/// Create a Plaid Link token for initializing Plaid Link
+///
+/// Returns a link_token that the frontend uses to initialize Plaid Link SDK.
+pub async fn create_plaid_link_token_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreateLinkTokenRequest>,
+) -> Response {
+    api_response(crate::api::create_link_token(state.db.pool(), request).await)
+}
+
+/// Exchange a public token for an access token
+///
+/// Called after the user completes the Plaid Link flow.
+pub async fn exchange_plaid_token_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::ExchangeTokenRequest>,
+) -> Response {
+    match crate::api::exchange_public_token(state.db.pool(), request).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Get accounts for an existing Plaid connection
+pub async fn get_plaid_accounts_handler(
+    State(state): State<AppState>,
+    Path(source_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::get_plaid_accounts(state.db.pool(), source_id).await)
+}
+
+/// Remove a Plaid Item (disconnect bank account)
+pub async fn remove_plaid_item_handler(
+    State(state): State<AppState>,
+    Path(source_id): Path<Uuid>,
+) -> Response {
+    match crate::api::remove_plaid_item(state.db.pool(), source_id).await {
+        Ok(_) => success_message("Plaid item removed successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+// ============================================================================
+// Onboarding API
+// ============================================================================
+
+/// Save axiology items from onboarding review
+///
+/// Bulk creates telos, virtues, vices, temperaments, and preferences
+pub async fn save_onboarding_axiology_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::SaveAxiologyRequest>,
+) -> Response {
+    match crate::api::save_onboarding_axiology(state.db.pool(), request).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Save aspirations from onboarding
+pub async fn save_onboarding_aspirations_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::SaveAspirationsRequest>,
+) -> Response {
+    match crate::api::save_onboarding_aspirations(state.db.pool(), request).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Mark onboarding as complete
+pub async fn complete_onboarding_handler(State(state): State<AppState>) -> Response {
+    match crate::api::complete_onboarding(state.db.pool()).await {
+        Ok(_) => success_message("Onboarding completed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Get onboarding status with granular completion tracking
+pub async fn get_onboarding_status_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_onboarding_status(state.db.pool()).await)
+}
+
+/// Complete a specific onboarding step
+pub async fn complete_onboarding_step_handler(
+    State(state): State<AppState>,
+    Path(step): Path<String>,
+) -> Response {
+    let step = match crate::api::OnboardingStep::from_str(&step) {
+        Some(s) => s,
+        None => {
+            return error_response(crate::error::Error::InvalidInput(format!(
+                "Invalid step: {}. Valid steps: profile, places, tools, axiology",
+                step
+            )))
+        }
+    };
+
+    api_response(crate::api::complete_step(state.db.pool(), step).await)
+}
+
+/// Skip a specific onboarding step
+pub async fn skip_onboarding_step_handler(
+    State(state): State<AppState>,
+    Path(step): Path<String>,
+) -> Response {
+    let step = match crate::api::OnboardingStep::from_str(&step) {
+        Some(s) => s,
+        None => {
+            return error_response(crate::error::Error::InvalidInput(format!(
+                "Invalid step: {}. Valid steps: profile, places, tools, axiology",
+                step
+            )))
+        }
+    };
+
+    api_response(crate::api::skip_step(state.db.pool(), step).await)
 }

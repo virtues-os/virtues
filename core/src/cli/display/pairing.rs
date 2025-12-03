@@ -114,7 +114,7 @@ pub fn display_pairing_success(device_info: &DeviceInfo, source_id: Uuid) {
     let _ = term.write_line(&format!("  OS:        {}", device_info.os_version));
 
     if let Some(app_version) = &device_info.app_version {
-        let _ = term.write_line(&format!("  App:       Ariata v{}", app_version));
+        let _ = term.write_line(&format!("  App:       Virtues v{}", app_version));
     }
 
     let _ = term.write_line(&format!("  Source ID: {}", source_id));
@@ -153,7 +153,7 @@ pub fn display_available_streams(streams: &[crate::StreamConnection], source_id:
     let _ = term.write_line(&style("💡 Enable streams with:").dim().to_string());
     let _ = term.write_line(&format!(
         "   {} stream enable {} <stream_name>",
-        style("ariata").cyan(),
+        style("virtues").cyan(),
         style(source_id.to_string()).yellow()
     ));
     let _ = term.write_line("");
@@ -192,7 +192,7 @@ pub fn display_pairing_cancelled(code: &str) {
     let _ = term.write_line("");
     let _ = term.write_line(&format!(
         "{}",
-        style("To check status: ariata source list --pending").dim()
+        style("To check status: virtues source list --pending").dim()
     ));
     let _ = term.write_line("");
 }
@@ -237,5 +237,5 @@ pub fn display_pending_pairings(pairings: &[crate::PendingPairing]) {
     println!("└────────────────────────────────────┴───────┴──────────┴─────────────┘");
     println!();
     println!("💡 Complete pairing from your device or cancel with:");
-    println!("   ariata source delete <source-id>");
+    println!("   virtues source delete <source-id>");
 }

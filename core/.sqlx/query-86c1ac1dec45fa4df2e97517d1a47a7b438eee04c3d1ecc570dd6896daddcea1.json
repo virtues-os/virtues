@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, title, description, preference_domain,\n               person_id, place_id, topic_id,\n               is_active, created_at, updated_at\n        FROM data.axiology_preference\n        WHERE is_active = true\n        ORDER BY created_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "preference_domain",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "person_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "place_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 6,
+        "name": "topic_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "86c1ac1dec45fa4df2e97517d1a47a7b438eee04c3d1ecc570dd6896daddcea1"
+}

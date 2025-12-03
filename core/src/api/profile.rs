@@ -31,6 +31,18 @@ pub struct UpdateProfileRequest {
     // Work/Occupation
     pub occupation: Option<String>,
     pub employer: Option<String>,
+    // Preferences
+    pub theme: Option<String>,
+    // Crux - shared ethos statement from onboarding
+    pub crux: Option<String>,
+    // Onboarding (legacy)
+    pub is_onboarding: Option<bool>,
+    pub onboarding_step: Option<i32>,
+    pub axiology_complete: Option<bool>,
+    // Granular onboarding completion
+    pub onboarding_profile_complete: Option<bool>,
+    pub onboarding_places_complete: Option<bool>,
+    pub onboarding_tools_complete: Option<bool>,
 }
 
 /// Get the user's profile (singleton row)
@@ -107,6 +119,34 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.employer.is_some() {
         updates.push("employer = $13");
     }
+    // Preferences
+    if request.theme.is_some() {
+        updates.push("theme = $14");
+    }
+    // Crux
+    if request.crux.is_some() {
+        updates.push("crux = $15");
+    }
+    // Onboarding
+    if request.is_onboarding.is_some() {
+        updates.push("is_onboarding = $16");
+    }
+    if request.onboarding_step.is_some() {
+        updates.push("onboarding_step = $17");
+    }
+    if request.axiology_complete.is_some() {
+        updates.push("axiology_complete = $18");
+    }
+    // Granular onboarding completion
+    if request.onboarding_profile_complete.is_some() {
+        updates.push("onboarding_profile_complete = $19");
+    }
+    if request.onboarding_places_complete.is_some() {
+        updates.push("onboarding_places_complete = $20");
+    }
+    if request.onboarding_tools_complete.is_some() {
+        updates.push("onboarding_tools_complete = $21");
+    }
 
     if updates.is_empty() {
         // No updates requested, just return current profile
@@ -114,7 +154,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     }
 
     query.push_str(&updates.join(", "));
-    query.push_str(" WHERE id = $14 RETURNING *");
+    query.push_str(" WHERE id = $22 RETURNING *");
 
     // Execute the update with bound parameters
     let mut query_builder = sqlx::query_as::<_, UserProfile>(&query);
@@ -129,7 +169,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
             .unwrap_or_else(|_| Decimal::from_str("0").unwrap())
     });
 
-    // Bind all parameters in order ($1 through $14)
+    // Bind all parameters in order ($1 through $22)
     query_builder = query_builder
         .bind(&request.full_name)
         .bind(&request.preferred_name)
@@ -144,6 +184,14 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         .bind(&request.home_country)
         .bind(&request.occupation)
         .bind(&request.employer)
+        .bind(&request.theme)
+        .bind(&request.crux)
+        .bind(&request.is_onboarding)
+        .bind(&request.onboarding_step)
+        .bind(&request.axiology_complete)
+        .bind(&request.onboarding_profile_complete)
+        .bind(&request.onboarding_places_complete)
+        .bind(&request.onboarding_tools_complete)
         .bind(profile_id);
 
     let updated_profile = query_builder
@@ -164,4 +212,83 @@ pub async fn get_display_name(db: &PgPool) -> Result<String> {
         .preferred_name
         .or(profile.full_name)
         .unwrap_or_else(|| "the user".to_string()))
+}
+
+/// Request to set user's home place via Google Places Autocomplete
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetHomePlaceRequest {
+    pub formatted_address: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub google_place_id: Option<String>,
+}
+
+/// Response after setting home place
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetHomePlaceResponse {
+    pub place_id: Uuid,
+    pub canonical_name: String,
+}
+
+/// Set the user's home place
+///
+/// Creates an entities_place record with category='home' and links it to the user profile.
+/// If a home place already exists, it will be replaced.
+pub async fn set_home_place(db: &PgPool, request: SetHomePlaceRequest) -> Result<SetHomePlaceResponse> {
+    // The singleton profile UUID
+    let profile_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001")
+        .expect("Valid UUID constant");
+
+    // Build metadata JSON with google_place_id if provided
+    let metadata = match &request.google_place_id {
+        Some(gid) => serde_json::json!({ "google_place_id": gid }),
+        None => serde_json::json!({}),
+    };
+
+    // Create or update the home place entity
+    // Use ON CONFLICT to update if a place with category='home' already exists nearby
+    let place = sqlx::query!(
+        r#"
+        INSERT INTO data.entities_place (
+            canonical_name,
+            category,
+            geo_center,
+            cluster_radius_meters,
+            metadata
+        ) VALUES (
+            $1,
+            'home',
+            ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
+            50.0,
+            $4
+        )
+        RETURNING id, canonical_name
+        "#,
+        request.formatted_address,
+        request.longitude,
+        request.latitude,
+        metadata
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to create home place: {}", e)))?;
+
+    // Update user profile with the new home_place_id
+    sqlx::query!(
+        r#"
+        UPDATE data.user_profile
+        SET home_place_id = $1
+        WHERE id = $2
+        "#,
+        place.id,
+        profile_id
+    )
+    .execute(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update profile with home place: {}", e)))?;
+
+    Ok(SetHomePlaceResponse {
+        place_id: place.id,
+        canonical_name: place.canonical_name,
+    })
 }

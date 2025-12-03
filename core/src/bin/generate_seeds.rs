@@ -21,7 +21,7 @@
 //! Only internal sources can be seeded directly into the database.
 
 use anyhow::{Context, Result};
-use ariata::registry::{self, AuthType};
+use virtues::registry::{self, AuthType};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;

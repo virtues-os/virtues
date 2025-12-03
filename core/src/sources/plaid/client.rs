@@ -1,0 +1,533 @@
+//! Plaid API client wrapper
+//!
+//! Uses reqwest directly instead of the plaid crate due to httpclient bugs.
+//! Implements the specific endpoints we need for bank account integration.
+
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Semaphore;
+
+use crate::error::{Error, Result};
+
+/// Plaid API environment
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaidEnvironment {
+    Sandbox,
+    Development,
+    Production,
+}
+
+impl PlaidEnvironment {
+    pub fn from_env() -> Self {
+        let env_val = env::var("PLAID_ENV").unwrap_or_else(|_| "sandbox".to_string());
+        // Handle both URL format and simple name format
+        if env_val.contains("sandbox") {
+            Self::Sandbox
+        } else if env_val.contains("development") {
+            Self::Development
+        } else if env_val.contains("production") {
+            Self::Production
+        } else {
+            Self::Sandbox
+        }
+    }
+
+    fn base_url(&self) -> &'static str {
+        match self {
+            Self::Sandbox => "https://sandbox.plaid.com",
+            Self::Development => "https://development.plaid.com",
+            Self::Production => "https://production.plaid.com",
+        }
+    }
+}
+
+/// Rate limiter for Plaid API calls
+pub struct PlaidRateLimiter {
+    global_semaphore: Arc<Semaphore>,
+    min_request_interval: Duration,
+}
+
+impl PlaidRateLimiter {
+    pub fn new() -> Self {
+        Self {
+            global_semaphore: Arc::new(Semaphore::new(100)),
+            min_request_interval: Duration::from_millis(50),
+        }
+    }
+
+    pub async fn acquire(&self) -> Result<tokio::sync::SemaphorePermit<'_>> {
+        self.global_semaphore
+            .acquire()
+            .await
+            .map_err(|e| Error::Other(format!("Rate limiter error: {e}")))
+    }
+
+    pub async fn wait_interval(&self) {
+        tokio::time::sleep(self.min_request_interval).await;
+    }
+}
+
+impl Default for PlaidRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Plaid API client using reqwest
+pub struct PlaidClient {
+    http: Client,
+    pub environment: PlaidEnvironment,
+    rate_limiter: PlaidRateLimiter,
+    client_id: String,
+    secret: String,
+    version: String,
+}
+
+impl PlaidClient {
+    /// Create a new Plaid client from environment variables
+    pub fn from_env() -> Result<Self> {
+        let client_id = env::var("PLAID_CLIENT_ID")
+            .map_err(|_| Error::Configuration("PLAID_CLIENT_ID not set".to_string()))?;
+
+        let secret = env::var("PLAID_SECRET")
+            .map_err(|_| Error::Configuration("PLAID_SECRET not set".to_string()))?;
+
+        let version = env::var("PLAID_VERSION").unwrap_or_else(|_| "2020-09-14".to_string());
+
+        let environment = PlaidEnvironment::from_env();
+
+        let http = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e| Error::Other(format!("Failed to create HTTP client: {e}")))?;
+
+        Ok(Self {
+            http,
+            environment,
+            rate_limiter: PlaidRateLimiter::new(),
+            client_id,
+            secret,
+            version,
+        })
+    }
+
+    /// Get the base URL for the current environment
+    pub fn base_url(&self) -> &'static str {
+        self.environment.base_url()
+    }
+
+    /// Make a POST request to the Plaid API
+    async fn post<Req: Serialize, Res: for<'de> Deserialize<'de>>(
+        &self,
+        endpoint: &str,
+        body: &Req,
+    ) -> Result<Res> {
+        let _permit = self.rate_limiter.acquire().await?;
+
+        let url = format!("{}{}", self.base_url(), endpoint);
+
+        let response = self
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("PLAID-CLIENT-ID", &self.client_id)
+            .header("PLAID-SECRET", &self.secret)
+            .header("Plaid-Version", &self.version)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| Error::Source(format!("Plaid request failed: {e}")))?;
+
+        let status = response.status();
+        let body_text = response
+            .text()
+            .await
+            .map_err(|e| Error::Source(format!("Failed to read response: {e}")))?;
+
+        if !status.is_success() {
+            // Try to parse as Plaid error
+            if let Ok(error) = serde_json::from_str::<PlaidError>(&body_text) {
+                return Err(Error::Source(format!(
+                    "Plaid error [{}]: {}",
+                    error.error_code, error.error_message
+                )));
+            }
+            return Err(Error::Source(format!(
+                "Plaid request failed with status {}: {}",
+                status, body_text
+            )));
+        }
+
+        self.rate_limiter.wait_interval().await;
+
+        serde_json::from_str(&body_text)
+            .map_err(|e| Error::Source(format!("Failed to parse response: {e}")))
+    }
+
+    /// Create a link token for initializing Plaid Link
+    pub async fn link_token_create(
+        &self,
+        user_client_id: &str,
+        products: Vec<&str>,
+        country_codes: Vec<&str>,
+        redirect_uri: Option<&str>,
+        _webhook_url: Option<&str>,
+    ) -> Result<LinkTokenCreateResponse> {
+        let request = LinkTokenCreateRequest {
+            client_name: "Virtues".to_string(),
+            user: LinkTokenUser {
+                client_user_id: user_client_id.to_string(),
+            },
+            products: products.iter().map(|s| s.to_string()).collect(),
+            country_codes: country_codes.iter().map(|s| s.to_string()).collect(),
+            language: "en".to_string(),
+            redirect_uri: redirect_uri.map(String::from),
+        };
+
+        self.post("/link/token/create", &request).await
+    }
+
+    /// Exchange a public token for an access token
+    pub async fn item_public_token_exchange(
+        &self,
+        public_token: &str,
+    ) -> Result<ItemPublicTokenExchangeResponse> {
+        let request = ItemPublicTokenExchangeRequest {
+            public_token: public_token.to_string(),
+        };
+
+        self.post("/item/public_token/exchange", &request).await
+    }
+
+    /// Get accounts for an Item
+    pub async fn accounts_get(&self, access_token: &str) -> Result<AccountsGetResponse> {
+        let request = AccessTokenRequest {
+            access_token: access_token.to_string(),
+        };
+
+        self.post("/accounts/get", &request).await
+    }
+
+    /// Get account balances
+    pub async fn accounts_balance_get(&self, access_token: &str) -> Result<AccountsGetResponse> {
+        let request = AccessTokenRequest {
+            access_token: access_token.to_string(),
+        };
+
+        self.post("/accounts/balance/get", &request).await
+    }
+
+    /// Sync transactions using cursor-based pagination
+    pub async fn transactions_sync(
+        &self,
+        access_token: &str,
+        cursor: Option<&str>,
+        count: Option<i32>,
+    ) -> Result<TransactionsSyncResponse> {
+        let request = TransactionsSyncRequest {
+            access_token: access_token.to_string(),
+            cursor: cursor.map(String::from),
+            count,
+        };
+
+        self.post("/transactions/sync", &request).await
+    }
+
+    /// Get Item information
+    pub async fn item_get(&self, access_token: &str) -> Result<ItemGetResponse> {
+        let request = AccessTokenRequest {
+            access_token: access_token.to_string(),
+        };
+
+        self.post("/item/get", &request).await
+    }
+
+    /// Remove an Item (revoke access)
+    pub async fn item_remove(&self, access_token: &str) -> Result<ItemRemoveResponse> {
+        let request = AccessTokenRequest {
+            access_token: access_token.to_string(),
+        };
+
+        self.post("/item/remove", &request).await
+    }
+}
+
+// ============================================================================
+// Request/Response Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct PlaidError {
+    error_code: String,
+    error_message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LinkTokenCreateRequest {
+    client_name: String,
+    user: LinkTokenUser,
+    products: Vec<String>,
+    country_codes: Vec<String>,
+    language: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    redirect_uri: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct LinkTokenUser {
+    client_user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LinkTokenCreateResponse {
+    pub link_token: String,
+    pub expiration: String,
+    pub request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ItemPublicTokenExchangeRequest {
+    public_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemPublicTokenExchangeResponse {
+    pub access_token: String,
+    pub item_id: String,
+    pub request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AccessTokenRequest {
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountsGetResponse {
+    pub accounts: Vec<Account>,
+    pub item: Item,
+    pub request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Account {
+    pub account_id: String,
+    pub name: String,
+    pub official_name: Option<String>,
+    #[serde(rename = "type")]
+    pub account_type: String,
+    pub subtype: Option<String>,
+    pub mask: Option<String>,
+    pub balances: AccountBalances,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountBalances {
+    pub current: Option<f64>,
+    pub available: Option<f64>,
+    pub limit: Option<f64>,
+    pub iso_currency_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Item {
+    pub item_id: String,
+    pub institution_id: Option<String>,
+    pub webhook: Option<String>,
+    pub error: Option<serde_json::Value>,
+    pub available_products: Vec<String>,
+    pub billed_products: Vec<String>,
+    pub consent_expiration_time: Option<String>,
+    pub update_type: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TransactionsSyncRequest {
+    access_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    count: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TransactionsSyncResponse {
+    pub added: Vec<Transaction>,
+    pub modified: Vec<Transaction>,
+    pub removed: Vec<RemovedTransaction>,
+    pub next_cursor: String,
+    pub has_more: bool,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Transaction {
+    pub transaction_id: String,
+    pub account_id: String,
+    pub amount: f64,
+    pub iso_currency_code: Option<String>,
+    pub unofficial_currency_code: Option<String>,
+    pub date: String,
+    pub datetime: Option<String>,
+    pub authorized_date: Option<String>,
+    pub authorized_datetime: Option<String>,
+    pub name: String,
+    pub merchant_name: Option<String>,
+    pub merchant_entity_id: Option<String>,
+    pub logo_url: Option<String>,
+    pub website: Option<String>,
+    pub payment_channel: String,
+    pub pending: bool,
+    pub pending_transaction_id: Option<String>,
+    pub account_owner: Option<String>,
+    pub transaction_type: Option<String>,
+    pub transaction_code: Option<String>,
+    pub category: Option<Vec<String>>,
+    pub category_id: Option<String>,
+    pub personal_finance_category: Option<PersonalFinanceCategory>,
+    pub location: Option<TransactionLocation>,
+    pub payment_meta: Option<PaymentMeta>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonalFinanceCategory {
+    pub primary: String,
+    pub detailed: String,
+    pub confidence_level: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionLocation {
+    pub address: Option<String>,
+    pub city: Option<String>,
+    pub region: Option<String>,
+    pub postal_code: Option<String>,
+    pub country: Option<String>,
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
+    pub store_number: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaymentMeta {
+    pub by_order_of: Option<String>,
+    pub payee: Option<String>,
+    pub payer: Option<String>,
+    pub payment_method: Option<String>,
+    pub payment_processor: Option<String>,
+    pub ppd_id: Option<String>,
+    pub reason: Option<String>,
+    pub reference_number: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemovedTransaction {
+    pub transaction_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemGetResponse {
+    pub item: Item,
+    pub status: Option<ItemStatus>,
+    pub request_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemStatus {
+    pub investments: Option<ProductStatus>,
+    pub transactions: Option<ProductStatus>,
+    pub last_webhook: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProductStatus {
+    pub last_successful_update: Option<String>,
+    pub last_failed_update: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemRemoveResponse {
+    pub request_id: String,
+}
+
+/// Plaid error categories for retry logic
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaidErrorCategory {
+    UserActionRequired,
+    Retryable,
+    Terminal,
+    Unknown,
+}
+
+impl PlaidErrorCategory {
+    pub fn from_error_code(code: &str) -> Self {
+        match code {
+            "ITEM_LOGIN_REQUIRED" | "ACCESS_NOT_GRANTED" | "USER_SETUP_REQUIRED" => {
+                Self::UserActionRequired
+            }
+            "PRODUCT_NOT_READY" | "INSTITUTION_DOWN" | "INSTITUTION_NO_LONGER_SUPPORTED"
+            | "RATE_LIMIT_EXCEEDED" | "INTERNAL_SERVER_ERROR" | "PLANNED_MAINTENANCE" => {
+                Self::Retryable
+            }
+            "PRODUCT_NOT_SUPPORTED" | "NO_ACCOUNTS" | "INVALID_ACCESS_TOKEN"
+            | "INVALID_PUBLIC_TOKEN" | "INVALID_PRODUCT" => Self::Terminal,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_environment_detection() {
+        // Test URL format
+        std::env::set_var("PLAID_ENV", "https://sandbox.plaid.com");
+        assert_eq!(PlaidEnvironment::from_env(), PlaidEnvironment::Sandbox);
+
+        std::env::set_var("PLAID_ENV", "https://production.plaid.com");
+        assert_eq!(PlaidEnvironment::from_env(), PlaidEnvironment::Production);
+
+        // Test simple name format
+        std::env::set_var("PLAID_ENV", "sandbox");
+        assert_eq!(PlaidEnvironment::from_env(), PlaidEnvironment::Sandbox);
+
+        std::env::remove_var("PLAID_ENV");
+    }
+
+    #[test]
+    fn test_base_urls() {
+        assert_eq!(
+            PlaidEnvironment::Sandbox.base_url(),
+            "https://sandbox.plaid.com"
+        );
+        assert_eq!(
+            PlaidEnvironment::Development.base_url(),
+            "https://development.plaid.com"
+        );
+        assert_eq!(
+            PlaidEnvironment::Production.base_url(),
+            "https://production.plaid.com"
+        );
+    }
+
+    #[test]
+    fn test_error_categories() {
+        assert_eq!(
+            PlaidErrorCategory::from_error_code("ITEM_LOGIN_REQUIRED"),
+            PlaidErrorCategory::UserActionRequired
+        );
+        assert_eq!(
+            PlaidErrorCategory::from_error_code("RATE_LIMIT_EXCEEDED"),
+            PlaidErrorCategory::Retryable
+        );
+        assert_eq!(
+            PlaidErrorCategory::from_error_code("NO_ACCOUNTS"),
+            PlaidErrorCategory::Terminal
+        );
+    }
+}

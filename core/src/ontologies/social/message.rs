@@ -2,7 +2,7 @@
 //!
 //! SMS and iMessage data from macOS.
 
-use crate::ontologies::{NarrativeRole, Ontology, OntologyBuilder, OntologyDescriptor};
+use crate::ontologies::{Ontology, OntologyBuilder, OntologyDescriptor};
 
 pub struct MessageOntology;
 
@@ -14,9 +14,14 @@ impl OntologyDescriptor for MessageOntology {
             .domain("social")
             .table_name("social_message")
             .source_streams(vec!["stream_mac_imessage"])
-            .narrative_role(NarrativeRole::Substance)
-            // Could enable discrete detection for conversation sessions
-            .no_boundaries()
+            .embedding(
+                "'From ' || COALESCE(from_name, 'Unknown') || ': ' || COALESCE(body, '')",
+                "message",
+                None,
+                "LEFT(body, 200)",
+                Some("from_name"),
+                "timestamp",
+            )
             .build()
     }
 }

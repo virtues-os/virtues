@@ -1,5 +1,5 @@
 # Makefile
-# Provides simple shortcuts for managing the Ariata project services.
+# Provides simple shortcuts for managing the Virtues project services.
 
 # Default target - show help when just 'make' is run
 .DEFAULT_GOAL := help
@@ -12,7 +12,7 @@ export
 # Database Configuration (Single database with schemas)
 DB_USER := postgres
 DB_PASS := postgres
-DB_NAME := ariata
+DB_NAME := virtues
 DB_HOST := localhost
 DB_PORT := 5432
 DB_URL := postgresql://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)
@@ -39,7 +39,7 @@ STUDIO_PORT := 4983
 # === HELP ===
 help:
 	@echo ""
-	@echo "🚀 Ariata - Personal Data ELT Platform"
+	@echo "🚀 Virtues - Personal Data ELT Platform"
 	@echo ""
 	@echo "Development Commands (Native):"
 	@echo "  make dev          Start infrastructure (Postgres + MinIO)"
@@ -124,13 +124,8 @@ dev: env-check
 	@$(MAKE) migrate
 	@echo ""
 	@echo "🔍 Verifying critical tables exist..."
-	@if ! docker-compose -f docker-compose.dev.yml exec -T postgres psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT 1 FROM data.event_boundaries LIMIT 0" > /dev/null 2>&1; then \
-		echo "   ❌ event_boundaries table missing - migrations may have failed!"; \
-		echo "   💡 Try: make db-reset && make dev"; \
-		exit 1; \
-	fi
-	@if ! docker-compose -f docker-compose.dev.yml exec -T postgres psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT 1 FROM data.narrative_primitive LIMIT 0" > /dev/null 2>&1; then \
-		echo "   ❌ narrative_primitive table missing - migrations may have failed!"; \
+	@if ! docker-compose -f docker-compose.dev.yml exec -T postgres psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT 1 FROM data.timeline_chunk LIMIT 0" > /dev/null 2>&1; then \
+		echo "   ❌ timeline_chunk table missing - migrations may have failed!"; \
 		echo "   💡 Try: make db-reset && make dev"; \
 		exit 1; \
 	fi
@@ -147,6 +142,7 @@ dev: env-check
 	fi
 	@echo ""
 	@$(MAKE) minio-setup
+	@$(MAKE) ollama-setup
 	@echo ""
 	@echo "🌱 Seeding system defaults (models, agents, tools)..."
 	@$(MAKE) prod-seed
@@ -274,8 +270,8 @@ migrate-rust:
 	@# Clean up duplicate migration tracking tables that can cause conflicts
 	@docker-compose -f docker-compose.dev.yml exec postgres psql -U $(DB_USER) -d $(DB_NAME) -c "DROP TABLE IF EXISTS data._sqlx_migrations CASCADE;" 2>/dev/null || \
 		docker-compose exec postgres psql -U $(DB_USER) -d $(DB_NAME) -c "DROP TABLE IF EXISTS data._sqlx_migrations CASCADE;" 2>/dev/null || true
-	@if docker ps | grep -q ariata-core; then \
-		docker-compose exec core ariata migrate; \
+	@if docker ps | grep -q virtues-core; then \
+		docker-compose exec core virtues migrate; \
 	else \
 		cd core && sqlx migrate run --database-url "$(DB_URL)?options=-csearch_path%3Dpublic%2Cdata%2Capp"; \
 	fi
@@ -306,19 +302,19 @@ generate-seeds:
 seed:
 	@echo "🇮🇹 Seeding database with Monday in Rome reference dataset..."
 	@echo "   This tests the full pipeline: CSV → Archive → Transform → Ontology tables"
-	@cd core && SQLX_OFFLINE=false cargo run --bin ariata-seed
+	@cd core && SQLX_OFFLINE=false cargo run --bin virtues-seed
 	@echo "✅ Database seeding complete"
 
 # Seed production database with defaults (models, agents, tools, sample tags)
 prod-seed: generate-seeds
 	@echo "🌱 Seeding production database with defaults..."
 	@echo "   This seeds: LLM models, agents, tools, and sample axiology tags"
-	@cd core && SQLX_OFFLINE=false cargo run --bin ariata-prod-seed
+	@cd core && SQLX_OFFLINE=false cargo run --bin virtues-prod-seed
 	@echo "✅ Production seeding complete"
 
 # Check database status
 db-status:
-	@echo "📊 Database Status (ariata):"
+	@echo "📊 Database Status (virtues):"
 	@echo ""
 	@echo "Data Schema (data):"
 	@docker-compose -f docker-compose.dev.yml exec postgres psql -U $(DB_USER) -d $(DB_NAME) -c "\\dt data.*" 2>/dev/null || \
@@ -360,9 +356,20 @@ minio-setup:
 	@echo "🪣 Setting up MinIO..."
 	@docker-compose -f docker-compose.dev.yml exec minio mc alias set local http://localhost:9000 minioadmin minioadmin > /dev/null 2>&1 || \
 		docker-compose exec minio mc alias set local http://localhost:9000 minioadmin minioadmin > /dev/null 2>&1 || true
-	@docker-compose -f docker-compose.dev.yml exec minio mc mb local/ariata-data --ignore-existing > /dev/null 2>&1 || \
-		docker-compose exec minio mc mb local/ariata-data --ignore-existing > /dev/null 2>&1 || true
+	@docker-compose -f docker-compose.dev.yml exec minio mc mb local/virtues-data --ignore-existing > /dev/null 2>&1 || \
+		docker-compose exec minio mc mb local/virtues-data --ignore-existing > /dev/null 2>&1 || true
 	@echo "✅ MinIO bucket ready"
+
+# Setup Ollama embedding model (pulls if not present)
+ollama-setup:
+	@echo "🧠 Setting up Ollama embedding model..."
+	@if docker exec virtues-ollama ollama list 2>/dev/null | grep -q nomic-embed-text; then \
+		echo "   ✅ nomic-embed-text already installed"; \
+	else \
+		echo "   📥 Pulling nomic-embed-text (~270MB, first time only)..."; \
+		docker exec virtues-ollama ollama pull nomic-embed-text || \
+			echo "   ⚠️  Ollama model pull failed (will retry on next make dev)"; \
+	fi
 
 # === PRODUCTION COMMANDS ===
 
@@ -496,10 +503,10 @@ mac:
 		-derivedDataPath ./build \
 		clean build
 	@echo "📦 Installing to /Applications..."
-	@sudo rm -rf /Applications/ariata-mac.app
-	@sudo cp -R apps/mac/build/Build/Products/Release/mac.app /Applications/ariata-mac.app
-	@echo "✅ Installed to /Applications/ariata-mac.app"
-	@echo "💡 Launch with: open /Applications/ariata-mac.app"
+	@sudo rm -rf /Applications/virtues-mac.app
+	@sudo cp -R apps/mac/build/Build/Products/Release/mac.app /Applications/virtues-mac.app
+	@echo "✅ Installed to /Applications/virtues-mac.app"
+	@echo "💡 Launch with: open /Applications/virtues-mac.app"
 
 # Build Mac.app in Debug mode (may have code signing issues with debug dylib)
 mac-debug:
@@ -511,72 +518,72 @@ mac-debug:
 		-derivedDataPath ./build \
 		clean build
 	@echo "📦 Installing to /Applications..."
-	@sudo rm -rf /Applications/ariata-mac.app
-	@sudo cp -R apps/mac/build/Build/Products/Debug/mac.app /Applications/ariata-mac.app
+	@sudo rm -rf /Applications/virtues-mac.app
+	@sudo cp -R apps/mac/build/Build/Products/Debug/mac.app /Applications/virtues-mac.app
 	@echo "⚠️  Debug build may crash due to code signing - use 'make mac' for Release build"
-	@echo "✅ Installed to /Applications/ariata-mac.app"
-	@echo "💡 Launch with: open /Applications/ariata-mac.app"
+	@echo "✅ Installed to /Applications/virtues-mac.app"
+	@echo "💡 Launch with: open /Applications/virtues-mac.app"
 
 # Show Mac app status (daemon, pairing, queue)
 mac-status:
 	@echo "📊 Mac App Status:"
 	@echo ""
 	@echo "App Process:"
-	@if ps aux | grep -i "ariata-mac.app/Contents/MacOS/mac" | grep -v grep > /dev/null 2>&1; then \
-		echo "  ✅ Running (PID: $$(ps aux | grep -i 'ariata-mac.app/Contents/MacOS/mac' | grep -v grep | awk '{print $$2}' | head -1))"; \
+	@if ps aux | grep -i "virtues-mac.app/Contents/MacOS/mac" | grep -v grep > /dev/null 2>&1; then \
+		echo "  ✅ Running (PID: $$(ps aux | grep -i 'virtues-mac.app/Contents/MacOS/mac' | grep -v grep | awk '{print $$2}' | head -1))"; \
 	else \
 		echo "  ❌ Not running"; \
 	fi
 	@echo ""
 	@echo "Background Service:"
-	@if [ -f ~/.ariata/logs/mac-app.log ]; then \
-		if tail -50 ~/.ariata/logs/mac-app.log | grep -q "✅ Daemon started successfully"; then \
-			LAST_START=$$(tail -100 ~/.ariata/logs/mac-app.log | grep "Daemon started successfully" | tail -1 | cut -d']' -f1 | tr -d '['); \
+	@if [ -f ~/.virtues/logs/mac-app.log ]; then \
+		if tail -50 ~/.virtues/logs/mac-app.log | grep -q "✅ Daemon started successfully"; then \
+			LAST_START=$$(tail -100 ~/.virtues/logs/mac-app.log | grep "Daemon started successfully" | tail -1 | cut -d']' -f1 | tr -d '['); \
 			echo "  ✅ Running (started: $$LAST_START)"; \
-			if tail -50 ~/.ariata/logs/mac-app.log | grep -q "📤 Upload completed successfully"; then \
-				LAST_UPLOAD=$$(tail -100 ~/.ariata/logs/mac-app.log | grep "Upload completed successfully" | tail -1 | cut -d']' -f1 | tr -d '['); \
+			if tail -50 ~/.virtues/logs/mac-app.log | grep -q "📤 Upload completed successfully"; then \
+				LAST_UPLOAD=$$(tail -100 ~/.virtues/logs/mac-app.log | grep "Upload completed successfully" | tail -1 | cut -d']' -f1 | tr -d '['); \
 				echo "  📤 Last upload: $$LAST_UPLOAD"; \
 			else \
 				echo "  ⏳ No uploads yet"; \
 			fi; \
-		elif tail -50 ~/.ariata/logs/mac-app.log | grep -q "Cannot start"; then \
-			ERROR=$$(tail -100 ~/.ariata/logs/mac-app.log | grep "Cannot start" | tail -1 | cut -d']' -f2- | xargs); \
+		elif tail -50 ~/.virtues/logs/mac-app.log | grep -q "Cannot start"; then \
+			ERROR=$$(tail -100 ~/.virtues/logs/mac-app.log | grep "Cannot start" | tail -1 | cut -d']' -f2- | xargs); \
 			echo "  ❌ Failed to start: $$ERROR"; \
 		else \
-			echo "  ❓ Unknown (check log: ~/.ariata/logs/mac-app.log)"; \
+			echo "  ❓ Unknown (check log: ~/.virtues/logs/mac-app.log)"; \
 		fi; \
 	else \
 		echo "  ❓ No log file found"; \
 	fi
 	@echo ""
 	@echo "Pairing:"
-	@if [ -f ~/.ariata/config.json ]; then \
+	@if [ -f ~/.virtues/config.json ]; then \
 		echo "  ✅ Paired"; \
-		cat ~/.ariata/config.json | jq -r '"  Device: " + .deviceId, "  API: " + .apiEndpoint' 2>/dev/null || cat ~/.ariata/config.json; \
+		cat ~/.virtues/config.json | jq -r '"  Device: " + .deviceId, "  API: " + .apiEndpoint' 2>/dev/null || cat ~/.virtues/config.json; \
 	else \
 		echo "  ❌ Not paired"; \
 	fi
 	@echo ""
 	@echo "Queue:"
-	@if [ -f ~/.ariata/activity.db ]; then \
-		echo "  Events: $$(sqlite3 ~/.ariata/activity.db 'SELECT COUNT(*) FROM events WHERE uploaded = 0;' 2>/dev/null || echo 'N/A')"; \
-		echo "  Messages: $$(sqlite3 ~/.ariata/activity.db 'SELECT COUNT(*) FROM messages WHERE uploaded = 0;' 2>/dev/null || echo 'N/A')"; \
+	@if [ -f ~/.virtues/activity.db ]; then \
+		echo "  Events: $$(sqlite3 ~/.virtues/activity.db 'SELECT COUNT(*) FROM events WHERE uploaded = 0;' 2>/dev/null || echo 'N/A')"; \
+		echo "  Messages: $$(sqlite3 ~/.virtues/activity.db 'SELECT COUNT(*) FROM messages WHERE uploaded = 0;' 2>/dev/null || echo 'N/A')"; \
 	else \
 		echo "  ❌ Queue not initialized"; \
 	fi
 	@echo ""
-	@echo "💡 Tip: View full log with: tail -f ~/.ariata/logs/mac-app.log"
+	@echo "💡 Tip: View full log with: tail -f ~/.virtues/logs/mac-app.log"
 
 # Clean Mac app config and queue (for fresh testing)
 mac-clean:
 	@echo "🧹 Cleaning Mac app..."
-	@pkill -f "/Applications/ariata-mac.app" 2>/dev/null || true
-	@if launchctl list | grep -q "com.ariata.mac" 2>/dev/null; then \
-		launchctl unload ~/Library/LaunchAgents/com.ariata.mac.plist 2>/dev/null || true; \
+	@pkill -f "/Applications/virtues-mac.app" 2>/dev/null || true
+	@if launchctl list | grep -q "com.virtues.mac" 2>/dev/null; then \
+		launchctl unload ~/Library/LaunchAgents/com.virtues.mac.plist 2>/dev/null || true; \
 	fi
-	@rm -rf ~/.ariata
-	@rm -f ~/Library/LaunchAgents/com.ariata.mac.plist
-	@security delete-generic-password -s "com.ariata.mac" -a "device-token" 2>/dev/null || true
+	@rm -rf ~/.virtues
+	@rm -f ~/Library/LaunchAgents/com.virtues.mac.plist
+	@security delete-generic-password -s "com.virtues.mac" -a "device-token" 2>/dev/null || true
 	@echo "✅ Cleaned (permissions must be manually revoked in System Settings)"
 
 # === DRIZZLE STUDIO ===

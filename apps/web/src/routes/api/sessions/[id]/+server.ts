@@ -81,7 +81,8 @@ export const GET: RequestHandler = async ({ params }) => {
 
 		return json({
 			conversation,
-			messages
+			messages,
+			trace: session.trace || null
 		});
 	} catch (error) {
 		console.error('[/api/sessions/[id]] Error fetching session:', error);

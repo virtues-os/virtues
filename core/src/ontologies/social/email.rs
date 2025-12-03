@@ -2,7 +2,7 @@
 //!
 //! Email messages from Gmail and other providers.
 
-use crate::ontologies::{NarrativeRole, Ontology, OntologyBuilder, OntologyDescriptor};
+use crate::ontologies::{Ontology, OntologyBuilder, OntologyDescriptor};
 
 pub struct EmailOntology;
 
@@ -14,10 +14,14 @@ impl OntologyDescriptor for EmailOntology {
             .domain("social")
             .table_name("social_email")
             .source_streams(vec!["stream_google_gmail"])
-            .narrative_role(NarrativeRole::Substance)
-            // Email doesn't produce boundaries currently
-            // Could enable discrete detection for email sessions
-            .no_boundaries()
+            .embedding(
+                "COALESCE(subject, '') || '\n\n' || COALESCE(body_plain, '')",
+                "email",
+                Some("subject"),
+                "COALESCE(LEFT(snippet, 200), LEFT(body_plain, 200), '')",
+                Some("from_name"),
+                "timestamp",
+            )
             .build()
     }
 }

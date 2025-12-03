@@ -1,7 +1,8 @@
 /**
- * Simplified routing system for 2-agent architecture
+ * Routing system for multi-agent architecture
  * - agent: Has tools, handles all queries
  * - chat: No tools, simple conversation
+ * - onboarding: Guides users through values discovery
  */
 import type { AgentId } from '../agents/types';
 import { getDefaultAgentId } from '../agents/configs';
@@ -76,5 +77,5 @@ export function routeToAgent(context: RoutingContext): RoutingResult {
  * @returns True if valid agent ID
  */
 export function isValidAgentId(agentId: string): agentId is AgentId {
-	return ['agent', 'chat', 'auto'].includes(agentId);
+	return ['agent', 'onboarding', 'auto'].includes(agentId);
 }

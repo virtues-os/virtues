@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::sources::base::{OntologyTransform, TransformResult};
+use crate::jobs::{chain_to_people_resolution, TransformContext};
+use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
@@ -323,7 +324,8 @@ impl OntologyTransform for GoogleCalendarTransform {
             records_written,
             records_failed,
             last_processed_id,
-            chained_transforms: vec![], // Calendar transform doesn't chain to other transforms
+            // Chain to entity resolution to resolve attendees to entities_person
+            chained_transforms: vec![chain_to_people_resolution(source_id)],
         })
     }
 }
@@ -427,6 +429,25 @@ async fn execute_calendar_batch_insert(
 
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
+}
+
+// Self-registration
+struct GoogleCalendarTransformRegistration;
+
+impl TransformRegistration for GoogleCalendarTransformRegistration {
+    fn source_table(&self) -> &'static str {
+        "stream_google_calendar"
+    }
+    fn target_table(&self) -> &'static str {
+        "praxis_calendar"
+    }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(GoogleCalendarTransform))
+    }
+}
+
+inventory::submit! {
+    &GoogleCalendarTransformRegistration as &dyn TransformRegistration
 }
 
 #[cfg(test)]

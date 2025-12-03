@@ -9,7 +9,8 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::sources::base::{OntologyTransform, TransformResult};
+use crate::jobs::TransformContext;
+use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
@@ -409,6 +410,25 @@ fn extract_first_heading(markdown: &str) -> Option<String> {
         }
     }
     None
+}
+
+// Self-registration
+struct NotionPageTransformRegistration;
+
+impl TransformRegistration for NotionPageTransformRegistration {
+    fn source_table(&self) -> &'static str {
+        "stream_notion_pages"
+    }
+    fn target_table(&self) -> &'static str {
+        "knowledge_document"
+    }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(NotionPageTransform))
+    }
+}
+
+inventory::submit! {
+    &NotionPageTransformRegistration as &dyn TransformRegistration
 }
 
 #[cfg(test)]

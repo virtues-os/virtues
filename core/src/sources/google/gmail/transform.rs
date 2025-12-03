@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::sources::base::{OntologyTransform, TransformResult};
+use crate::jobs::TransformContext;
+use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
@@ -483,6 +484,25 @@ async fn execute_email_batch_insert(
 
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
+}
+
+// Self-registration
+struct GmailTransformRegistration;
+
+impl TransformRegistration for GmailTransformRegistration {
+    fn source_table(&self) -> &'static str {
+        "stream_google_gmail"
+    }
+    fn target_table(&self) -> &'static str {
+        "social_email"
+    }
+    fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
+        Ok(Box::new(GmailEmailTransform))
+    }
+}
+
+inventory::submit! {
+    &GmailTransformRegistration as &dyn TransformRegistration
 }
 
 #[cfg(test)]

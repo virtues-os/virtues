@@ -25,9 +25,9 @@ services:
     # Remove development volumes
     volumes: []
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ariata
-      ARIATA_ENCRYPTION_KEY: ${ARIATA_ENCRYPTION_KEY}
-      RUST_LOG: info,ariata=info
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/virtues
+      VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
+      RUST_LOG: info,virtues=info
       # OAuth endpoints
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
@@ -37,7 +37,7 @@ services:
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ariata-data
+      MINIO_BUCKET: virtues-data
     # Production health check
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -55,7 +55,7 @@ services:
     # Remove development volumes
     volumes: []
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ariata
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/virtues
       ELT_API_URL: http://core:8000
       PUBLIC_ELT_API_URL: ${PUBLIC_ELT_API_URL:-http://localhost:8000}
       NODE_ENV: production
@@ -71,5 +71,5 @@ volumes:
     driver: local
 
 networks:
-  ariata-network:
+  virtues-network:
     driver: bridge

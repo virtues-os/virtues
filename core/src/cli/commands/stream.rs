@@ -2,20 +2,20 @@
 
 use crate::cli::types::StreamCommands;
 use crate::storage::stream_writer::StreamWriter;
-use crate::Ariata;
+use crate::Virtues;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Handle stream management commands
 pub async fn handle_stream_command(
-    ariata: Ariata,
+    virtues: Virtues,
     stream_writer: Arc<Mutex<StreamWriter>>,
     action: StreamCommands,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         StreamCommands::List { source_id } => {
             let source_id = source_id.parse()?;
-            let streams = crate::list_source_streams(ariata.database.pool(), source_id).await?;
+            let streams = crate::list_source_streams(virtues.database.pool(), source_id).await?;
 
             if streams.is_empty() {
                 println!("No streams found for this source");
@@ -54,7 +54,7 @@ pub async fn handle_stream_command(
         } => {
             let source_id = source_id.parse()?;
             let stream =
-                crate::get_stream_info(ariata.database.pool(), source_id, &stream_name).await?;
+                crate::get_stream_info(virtues.database.pool(), source_id, &stream_name).await?;
 
             println!("Stream: {} / {}", source_id, stream.stream_name);
             println!("  Table: {}", stream.table_name);
@@ -100,8 +100,8 @@ pub async fn handle_stream_command(
 
             // Enable with default config (None = use defaults)
             crate::enable_stream(
-                ariata.database.pool(),
-                &*ariata.storage,
+                virtues.database.pool(),
+                &*virtues.storage,
                 stream_writer.clone(),
                 source_id_uuid,
                 &stream_name,
@@ -120,7 +120,7 @@ pub async fn handle_stream_command(
 
             println!("Disabling stream: {} / {}", source_id, stream_name);
 
-            crate::disable_stream(ariata.database.pool(), source_id, &stream_name).await?;
+            crate::disable_stream(virtues.database.pool(), source_id, &stream_name).await?;
 
             println!("✅ Stream disabled successfully");
         }
@@ -138,7 +138,7 @@ pub async fn handle_stream_command(
                     source_id, stream_name, cron_schedule
                 );
                 crate::update_stream_schedule(
-                    ariata.database.pool(),
+                    virtues.database.pool(),
                     source_id,
                     &stream_name,
                     Some(cron_schedule),
@@ -148,7 +148,7 @@ pub async fn handle_stream_command(
             } else {
                 println!("Clearing schedule for {} / {}", source_id, stream_name);
                 crate::update_stream_schedule(
-                    ariata.database.pool(),
+                    virtues.database.pool(),
                     source_id,
                     &stream_name,
                     None,
@@ -174,8 +174,8 @@ pub async fn handle_stream_command(
             let sync_mode = crate::SyncMode::full_refresh();
 
             let response = crate::api::jobs::trigger_stream_sync(
-                ariata.database.pool(),
-                &*ariata.storage,
+                virtues.database.pool(),
+                &*virtues.storage,
                 stream_writer.clone(),
                 source_id_uuid,
                 &stream_name,
@@ -187,7 +187,7 @@ pub async fn handle_stream_command(
             println!("  Job ID: {}", response.job_id);
             println!("  Status: {}", response.status);
             println!("  Started at: {}", response.started_at);
-            println!("\nNote: Job is running in the background. Use 'ariata jobs status {}' to monitor progress.", response.job_id);
+            println!("\nNote: Job is running in the background. Use 'virtues jobs status {}' to monitor progress.", response.job_id);
         }
 
         StreamCommands::History {
@@ -198,7 +198,7 @@ pub async fn handle_stream_command(
             let source_id = source_id.parse()?;
 
             let jobs = crate::api::jobs::get_job_history(
-                ariata.database.pool(),
+                virtues.database.pool(),
                 source_id,
                 &stream_name,
                 limit,
@@ -264,7 +264,7 @@ pub async fn handle_stream_command(
                 "   To transform data for '{}', run a sync job instead:",
                 stream_name
             );
-            eprintln!("   ariata sync {}", source_id);
+            eprintln!("   virtues sync {}", source_id);
             return Err("Manual transforms not supported".into());
         }
     }

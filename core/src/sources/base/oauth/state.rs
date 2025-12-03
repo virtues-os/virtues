@@ -48,6 +48,14 @@ pub fn generate_state(session_data: Option<&str>) -> Result<String> {
 ///
 /// Returns Ok(()) if valid, Err if expired or tampered
 pub fn validate_state(state_token: &str) -> Result<()> {
+    validate_and_extract_state(state_token)?;
+    Ok(())
+}
+
+/// Validate a signed OAuth state token and extract the session data
+///
+/// Returns Ok(Option<session_data>) if valid, Err if expired or tampered
+pub fn validate_and_extract_state(state_token: &str) -> Result<Option<String>> {
     let secret = get_signing_secret()?;
 
     // Decode base64
@@ -73,10 +81,10 @@ pub fn validate_state(state_token: &str) -> Result<()> {
         Error::InvalidInput("State token signature invalid - possible tampering".to_string())
     })?;
 
-    // Extract timestamp from payload (format: "timestamp" or "timestamp:session_data")
-    let timestamp_str = payload
-        .split(':')
-        .next()
+    // Extract timestamp and session_data from payload (format: "timestamp" or "timestamp:session_data")
+    let parts: Vec<&str> = payload.splitn(2, ':').collect();
+    let timestamp_str = parts
+        .first()
         .ok_or_else(|| Error::InvalidInput("Invalid state payload format".to_string()))?;
 
     let timestamp = timestamp_str
@@ -93,15 +101,17 @@ pub fn validate_state(state_token: &str) -> Result<()> {
         return Err(Error::InvalidInput("State token expired".to_string()));
     }
 
-    Ok(())
+    // Return session data if present
+    let session_data = parts.get(1).map(|s| s.to_string());
+    Ok(session_data)
 }
 
 /// Get the signing secret from environment
 fn get_signing_secret() -> Result<String> {
     // Reuse encryption key as signing secret for simplicity
     // In production, could use separate OAUTH_STATE_SECRET
-    std::env::var("ARIATA_ENCRYPTION_KEY").map_err(|_| {
-        Error::Configuration("ARIATA_ENCRYPTION_KEY required for OAuth state signing".to_string())
+    std::env::var("VIRTUES_ENCRYPTION_KEY").map_err(|_| {
+        Error::Configuration("VIRTUES_ENCRYPTION_KEY required for OAuth state signing".to_string())
     })
 }
 
@@ -113,7 +123,7 @@ mod tests {
 
     fn setup_test_key() {
         env::set_var(
-            "ARIATA_ENCRYPTION_KEY",
+            "VIRTUES_ENCRYPTION_KEY",
             "dGVzdC1zZWNyZXQtZm9yLWhtYWMtc2lnbmluZw==",
         );
     }
@@ -164,7 +174,7 @@ mod tests {
         let state = generate_state(None).unwrap();
 
         // Change secret and try to validate
-        env::set_var("ARIATA_ENCRYPTION_KEY", "ZGlmZmVyZW50LXNlY3JldC1rZXk=");
+        env::set_var("VIRTUES_ENCRYPTION_KEY", "ZGlmZmVyZW50LXNlY3JldC1rZXk=");
         assert!(validate_state(&state).is_err());
 
         // Restore original key for other tests

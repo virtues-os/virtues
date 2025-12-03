@@ -16,13 +16,13 @@ use tokio::sync::Mutex;
 
 use self::ingest::AppState;
 use crate::error::{Error, Result};
-use crate::mcp::{http::add_mcp_routes, AriataMcpServer};
+use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
 use crate::storage::encryption;
 use crate::storage::stream_writer::StreamWriter;
-use crate::Ariata;
+use crate::Virtues;
 
 /// Run the HTTP ingestion server with integrated scheduler
-pub async fn run(client: Ariata, host: &str, port: u16) -> Result<()> {
+pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Validate required environment variables early
     validate_environment()?;
 
@@ -42,12 +42,9 @@ pub async fn run(client: Ariata, host: &str, port: u16) -> Result<()> {
                 } else {
                     tracing::info!("Scheduler started successfully");
 
-                    // Schedule unified narrative primitive pipeline job
-                    // This replaces the old separate location clustering + boundary sweeper jobs
-                    if let Err(e) = sched.schedule_narrative_primitive_pipeline_job().await {
-                        tracing::warn!("Failed to schedule narrative primitive pipeline job: {}", e);
-                    } else {
-                        tracing::info!("Narrative primitive pipeline job scheduled successfully");
+                    // Schedule embedding job (every 30 minutes)
+                    if let Err(e) = sched.schedule_embedding_job().await {
+                        tracing::warn!("Failed to schedule embedding job: {}", e);
                     }
 
                     // Keep scheduler alive - it will be dropped when the server shuts down
@@ -170,6 +167,7 @@ pub async fn run(client: Ariata, host: &str, port: u16) -> Result<()> {
         // Profile API
         .route("/api/profile", get(api::get_profile_handler))
         .route("/api/profile", put(api::update_profile_handler))
+        .route("/api/profile/home-place", post(api::set_home_place_handler))
         // Assistant Profile API
         .route(
             "/api/assistant-profile",
@@ -227,25 +225,35 @@ pub async fn run(client: Ariata, host: &str, port: u16) -> Result<()> {
         .route("/api/axiology/vices/:id", get(api::get_vice_handler))
         .route("/api/axiology/vices/:id", put(api::update_vice_handler))
         .route("/api/axiology/vices/:id", delete(api::delete_vice_handler))
-        // Axiology API - Values
-        .route("/api/axiology/values", get(api::list_values_handler))
-        .route("/api/axiology/values", post(api::create_value_handler))
-        .route("/api/axiology/values/:id", get(api::get_value_handler))
-        .route("/api/axiology/values/:id", put(api::update_value_handler))
-        .route("/api/axiology/values/:id", delete(api::delete_value_handler))
         // Timeline API
-        .route("/api/timeline/boundaries", get(api::get_boundaries_handler))
         .route("/api/timeline/day/:date", get(api::get_day_view_handler))
         // Seed Testing API
         .route("/api/seed/pipeline-status", get(api::seed_pipeline_status_handler))
-        .route("/api/seed/boundaries-summary", get(api::seed_boundaries_summary_handler))
+        .route("/api/seed/chunks-summary", get(api::seed_chunks_summary_handler))
         .route("/api/seed/data-quality", get(api::seed_data_quality_handler))
+        // Embedding API
+        .route("/api/embeddings/stats", get(api::get_embedding_stats_handler))
+        .route("/api/embeddings/trigger", post(api::trigger_embedding_handler))
+        // Metrics API
+        .route("/api/metrics/activity", get(api::get_activity_metrics_handler))
+        // Plaid Link API (different from standard OAuth)
+        .route("/api/plaid/link-token", post(api::create_plaid_link_token_handler))
+        .route("/api/plaid/exchange-token", post(api::exchange_plaid_token_handler))
+        .route("/api/plaid/:source_id/accounts", get(api::get_plaid_accounts_handler))
+        .route("/api/plaid/:source_id", delete(api::remove_plaid_item_handler))
+        // Onboarding API
+        .route("/api/onboarding/status", get(api::get_onboarding_status_handler))
+        .route("/api/onboarding/steps/:step/complete", post(api::complete_onboarding_step_handler))
+        .route("/api/onboarding/steps/:step/skip", post(api::skip_onboarding_step_handler))
+        .route("/api/onboarding/axiology", post(api::save_onboarding_axiology_handler))
+        .route("/api/onboarding/aspirations", post(api::save_onboarding_aspirations_handler))
+        .route("/api/onboarding/complete", post(api::complete_onboarding_handler))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::disable()) // Disable default 2MB limit
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)); // Set 20MB limit for audio files
 
     // Add MCP routes to the same server
-    let mcp_server = AriataMcpServer::new(client.database.pool().clone());
+    let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());
     let app = add_mcp_routes(app, mcp_server);
 
     tracing::info!("MCP endpoint enabled at /mcp");

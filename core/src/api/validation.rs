@@ -94,9 +94,9 @@ mod tests {
 
     #[test]
     fn test_validate_redirect_uri() {
-        let allowed = &["auth.ariata.com", "localhost"];
+        let allowed = &["auth.virtues.com", "localhost"];
 
-        assert!(validate_redirect_uri("https://auth.ariata.com/callback", allowed).is_ok());
+        assert!(validate_redirect_uri("https://auth.virtues.com/callback", allowed).is_ok());
         assert!(validate_redirect_uri("http://localhost:3000/callback", allowed).is_ok());
         assert!(validate_redirect_uri("http://evil.com/callback", allowed).is_err());
         assert!(validate_redirect_uri("not-a-url", allowed).is_err());

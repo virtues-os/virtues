@@ -1,4 +1,4 @@
-# Ariata Architecture
+# Virtues Architecture
 
 ## Data Pipeline & Query Architecture
 
@@ -55,7 +55,7 @@ graph TB
 
 ## Inference Time Architecture
 
-This diagram shows what happens when a user interacts with Ariata's AI assistant at inference time:
+This diagram shows what happens when a user interacts with Virtues's AI assistant at inference time:
 
 ```mermaid
 sequenceDiagram

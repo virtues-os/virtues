@@ -7,9 +7,14 @@
 @font-face {
   font-family: 'Lora';
   src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
-  font-weight: 300;
+  font-weight: 300 700;
   font-style: normal;
   font-display: swap;
+}
+
+/* Serif font defaults to 400 weight */
+.font-serif {
+  font-weight: 400;
 }
 
 /* ===================================

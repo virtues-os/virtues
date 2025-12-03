@@ -1,5 +1,5 @@
 /**
- * MCP Client for connecting to Ariata MCP HTTP server
+ * MCP Client for connecting to Virtues MCP HTTP server
  *
  * This client handles the StreamableHTTP protocol with stateful sessions.
  */
@@ -111,7 +111,7 @@ export class McpClient {
 					protocolVersion: '2024-11-05',
 					capabilities: {},
 					clientInfo: {
-						name: 'ariata-web',
+						name: 'virtues-web',
 						version: '0.1.0'
 					}
 				}
@@ -392,6 +392,27 @@ export class McpClient {
 	 */
 	getServerInfo(): McpServerInfo | null {
 		return this.serverInfo;
+	}
+
+	/**
+	 * Reconnect to the MCP server
+	 * Clears existing session state and re-initializes the connection
+	 */
+	async reconnect(): Promise<void> {
+		console.log('[MCP Client] Reconnecting...');
+
+		// Clear existing state
+		this.sessionId = null;
+		this.serverInfo = null;
+		this.tools.clear();
+		this.resources.clear();
+
+		// Re-initialize
+		await this.initialize();
+		await this.listTools();
+		await this.listResources();
+
+		console.log('[MCP Client] Reconnection successful');
 	}
 
 	/**

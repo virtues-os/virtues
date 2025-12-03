@@ -29,7 +29,7 @@ pub fn handle_catalog_command(
             }
 
             println!();
-            println!("Use 'ariata catalog source <type>' for details about streams");
+            println!("Use 'virtues catalog source <type>' for details about streams");
         }
 
         Some(CatalogCommands::Source { name }) => {
@@ -96,8 +96,8 @@ pub fn handle_catalog_command(
             }
 
             println!();
-            println!("Use 'ariata catalog source <type>' for details about a specific source");
-            println!("Use 'ariata add <type>' to connect a source");
+            println!("Use 'virtues catalog source <type>' for details about a specific source");
+            println!("Use 'virtues add <type>' to connect a source");
         }
     }
 

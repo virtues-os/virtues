@@ -1,34 +1,34 @@
 [package]
-name = "ariata"
+name = "virtues"
 version = "0.1.0"
 edition = "2021"
-authors = ["Ariata Team <team@ariata.com>"]
+authors = ["Virtues Team <team@virtues.com>"]
 description = "Open source personal data ecosystem - High-performance Rust core"
 license = "MIT"
-repository = "https://github.com/ariata/ariata"
+repository = "https://github.com/ariata-os/ariata"
 keywords = ["etl", "data-pipeline", "personal-data", "timeseries"]
 categories = ["database", "data-structures"]
 build = "build.rs"
-default-run = "ariata"
+default-run = "virtues"
 
 [lib]
-name = "ariata"
+name = "virtues"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ariata"
+name = "virtues"
 path = "src/main.rs"
 
 [[bin]]
-name = "ariata-seed"
+name = "virtues-seed"
 path = "src/bin/seed.rs"
 
 [[bin]]
-name = "ariata-mcp-server"
+name = "virtues-mcp-server"
 path = "src/bin/mcp-server.rs"
 
 [[bin]]
-name = "ariata-prod-seed"
+name = "virtues-prod-seed"
 path = "src/bin/prod_seed.rs"
 
 [[bin]]
@@ -61,9 +61,13 @@ ts-rs = { version = "9.0", features = ["serde-compat", "chrono-impl", "uuid-impl
 anyhow = "1.0"
 thiserror = "1.0"
 
-# Logging
+# Logging & Observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.28"
+opentelemetry = { version = "0.27", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp = { version = "0.27", features = ["metrics", "grpc-tonic"] }
 
 # HTTP Server
 axum = "0.7"
@@ -77,6 +81,9 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 # OAuth
 oauth2 = "4.4"
 reqwest = { version = "0.12", features = ["json"] }
+
+# Financial integrations
+plaid = "9.0.1"
 
 # Environment
 dotenv = "0.15"
@@ -112,9 +119,16 @@ schemars = "1.0"
 # Geospatial/clustering
 geo = "0.28"  # Geospatial calculations (Haversine distance)
 
+# Embeddings (Ollama client)
+ollama-rs = { version = "0.2", features = ["stream"] }
+futures = "0.3"
+
 # Changepoint detection
 changepoint = "0.15"  # Bayesian Online Changepoint Detection
 rv = "0.19"  # Probability distributions for changepoint priors
+
+# Self-registering transforms
+inventory = "0.3"
 
 # Interactive CLI setup
 dialoguer = "0.11"

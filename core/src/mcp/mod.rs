@@ -1,6 +1,6 @@
 //! Model Context Protocol (MCP) Server
 //!
-//! This module implements an MCP server that exposes Ariata's data warehouse
+//! This module implements an MCP server that exposes Virtues data warehouse
 //! as tools and resources for AI assistants like Claude Desktop.
 //!
 //! The server provides:
@@ -14,4 +14,4 @@ pub mod schema;
 pub mod server;
 pub mod tools;
 
-pub use server::AriataMcpServer;
+pub use server::VirtuesMcpServer;

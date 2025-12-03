@@ -2,7 +2,7 @@
 //!
 //! HRV measurements indicating stress/recovery state.
 
-use crate::ontologies::{NarrativeRole, Ontology, OntologyBuilder, OntologyDescriptor};
+use crate::ontologies::{Ontology, OntologyBuilder, OntologyDescriptor};
 
 pub struct HrvOntology;
 
@@ -14,9 +14,6 @@ impl OntologyDescriptor for HrvOntology {
             .domain("health")
             .table_name("health_hrv")
             .source_streams(vec!["stream_ios_healthkit"])
-            .narrative_role(NarrativeRole::Substance)
-            // Future: Enable continuous detection
-            .no_boundaries()
             .build()
     }
 }

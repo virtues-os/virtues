@@ -2,23 +2,23 @@
 
 use crate::cli::display::display_pending_pairings;
 use crate::cli::types::SourceCommands;
-use crate::Ariata;
+use crate::Virtues;
 use std::env;
 
 /// Handle source management commands
 pub async fn handle_source_command(
-    ariata: Ariata,
+    virtues: Virtues,
     action: SourceCommands,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         SourceCommands::List { pending } => {
             if pending {
                 // Show pending pairings
-                let pairings = crate::list_pending_pairings(ariata.database.pool()).await?;
+                let pairings = crate::list_pending_pairings(virtues.database.pool()).await?;
                 display_pending_pairings(&pairings);
             } else {
                 // Show all sources
-                let sources = crate::list_sources(ariata.database.pool()).await?;
+                let sources = crate::list_sources(virtues.database.pool()).await?;
 
                 if sources.is_empty() {
                     println!("No sources configured");
@@ -48,14 +48,14 @@ pub async fn handle_source_command(
 
             // Check if this is a pending pairing
             let pairing_status =
-                crate::check_pairing_status(ariata.database.pool(), source_id).await?;
+                crate::check_pairing_status(virtues.database.pool(), source_id).await?;
 
             match pairing_status {
                 crate::PairingStatus::Pending => {
                     // Show pairing details
-                    let pairings = crate::list_pending_pairings(ariata.database.pool()).await?;
+                    let pairings = crate::list_pending_pairings(virtues.database.pool()).await?;
                     if let Some(pairing) = pairings.iter().find(|p| p.source_id == source_id) {
-                        let server_url = env::var("ARIATA_SERVER_URL")
+                        let server_url = env::var("VIRTUES_SERVER_URL")
                             .unwrap_or_else(|_| "localhost:8000".to_string());
 
                         println!("Source: {} (pending pairing)", pairing.name);
@@ -78,12 +78,12 @@ pub async fn handle_source_command(
                         println!("💡 Enter these details in your device app to complete pairing.");
                         println!();
                         println!("To cancel this pairing:");
-                        println!("   ariata source delete {}", source_id);
+                        println!("   virtues source delete {}", source_id);
                     }
                 }
                 _ => {
                     // Show regular source details
-                    let source = crate::get_source(ariata.database.pool(), source_id).await?;
+                    let source = crate::get_source(virtues.database.pool(), source_id).await?;
 
                     println!("Source Details:");
                     println!("  ID: {}", source.id);
@@ -110,7 +110,7 @@ pub async fn handle_source_command(
 
         SourceCommands::Status { id } => {
             let source_id = id.parse()?;
-            let status = crate::get_source_status(ariata.database.pool(), source_id).await?;
+            let status = crate::get_source_status(virtues.database.pool(), source_id).await?;
 
             println!("Source: {} ({})", status.name, status.source);
             println!();
@@ -138,7 +138,7 @@ pub async fn handle_source_command(
             let source_id = id.parse()?;
 
             // Get source details first
-            let source = crate::get_source(ariata.database.pool(), source_id).await?;
+            let source = crate::get_source(virtues.database.pool(), source_id).await?;
 
             if !yes {
                 println!("Are you sure you want to delete source:");
@@ -162,7 +162,7 @@ pub async fn handle_source_command(
                 }
             }
 
-            crate::delete_source(ariata.database.pool(), source_id).await?;
+            crate::delete_source(virtues.database.pool(), source_id).await?;
             println!("✅ Source deleted successfully");
         }
 
@@ -171,7 +171,7 @@ pub async fn handle_source_command(
 
             // Query jobs for this source
             let jobs = crate::api::jobs::query_jobs(
-                ariata.database.pool(),
+                virtues.database.pool(),
                 crate::api::jobs::QueryJobsRequest {
                     source_id: Some(source_id),
                     status: None,

@@ -1,4 +1,4 @@
-//! Ariata client - Main interface for the Ariata data pipeline
+//! Virtues client - Main interface for the Virtues data pipeline
 
 use std::sync::Arc;
 
@@ -9,16 +9,16 @@ use crate::database::Database;
 use crate::error::{Error, Result};
 use crate::storage::Storage;
 
-/// Main Ariata client for managing personal data
-pub struct Ariata {
+/// Main Virtues client for managing personal data
+pub struct Virtues {
     pub database: Arc<Database>,
     pub storage: Arc<Storage>,
 }
 
-impl Ariata {
-    /// Create a new Ariata client builder
-    pub fn builder() -> AriataBuilder {
-        AriataBuilder::default()
+impl Virtues {
+    /// Create a new Virtues client builder
+    pub fn builder() -> VirtuesBuilder {
+        VirtuesBuilder::default()
     }
 
     /// Initialize the client and verify connections
@@ -68,7 +68,7 @@ impl Ariata {
     }
 
     // Source management operations are now in api.rs
-    // Use ariata::list_sources(), ariata::sync_stream(), etc.
+    // Use virtues::list_sources(), virtues::sync_stream(), etc.
 
     /// Run the HTTP ingestion server
     pub async fn run_server(&self, host: &str, port: u16) -> Result<()> {
@@ -77,7 +77,7 @@ impl Ariata {
     }
 }
 
-impl Clone for Ariata {
+impl Clone for Virtues {
     fn clone(&self) -> Self {
         Self {
             database: self.database.clone(),
@@ -86,9 +86,9 @@ impl Clone for Ariata {
     }
 }
 
-/// Builder for creating Ariata clients
+/// Builder for creating Virtues clients
 #[derive(Default)]
-pub struct AriataBuilder {
+pub struct VirtuesBuilder {
     postgres_url: Option<String>,
     s3_bucket: Option<String>,
     s3_endpoint: Option<String>,
@@ -97,7 +97,7 @@ pub struct AriataBuilder {
     storage_path: Option<String>,
 }
 
-impl AriataBuilder {
+impl VirtuesBuilder {
     /// Create a new builder
     pub fn new() -> Self {
         Self::default()
@@ -146,8 +146,8 @@ impl AriataBuilder {
         self
     }
 
-    /// Build the Ariata client
-    pub async fn build(self) -> Result<Ariata> {
+    /// Build the Virtues client
+    pub async fn build(self) -> Result<Virtues> {
         let postgres_url = self
             .postgres_url
             .or_else(|| std::env::var("DATABASE_URL").ok())
@@ -168,14 +168,14 @@ impl AriataBuilder {
             Storage::local(path)?
         };
 
-        Ok(Ariata {
+        Ok(Virtues {
             database: Arc::new(database),
             storage: Arc::new(storage),
         })
     }
 }
 
-/// Status of the Ariata system
+/// Status of the Virtues system
 #[derive(Debug, Serialize)]
 pub struct Status {
     pub is_healthy: bool,
@@ -192,7 +192,7 @@ pub struct IngestResult {
 }
 
 // Source and sync types are now in api.rs
-// Use ariata::Source, ariata::SyncLog, etc.
+// Use virtues::Source, virtues::SyncLog, etc.
 
 #[cfg(test)]
 mod tests {
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_builder() {
-        let builder = AriataBuilder::new()
+        let builder = VirtuesBuilder::new()
             .postgres("postgresql://localhost/test")
             .s3_bucket("test-bucket")
             .s3_endpoint("localhost:9000");

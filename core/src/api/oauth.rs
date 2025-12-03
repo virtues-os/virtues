@@ -23,6 +23,15 @@ pub struct OAuthAuthorizeResponse {
     pub state: String,
 }
 
+/// Response from OAuth callback containing source and optional return URL
+#[derive(Debug, serde::Serialize)]
+pub struct OAuthCallbackResponse {
+    #[serde(flatten)]
+    pub source: SourceConnection,
+    /// Return URL extracted from state parameter (if provided during initiation)
+    pub return_url: Option<String>,
+}
+
 /// OAuth callback query parameters
 #[derive(Debug, serde::Deserialize)]
 pub struct OAuthCallbackParams {
@@ -85,13 +94,13 @@ pub async fn initiate_oauth_flow(
     let state_token = crate::sources::base::oauth::state::generate_state(state.as_deref())?;
 
     let proxy_url =
-        std::env::var("OAUTH_PROXY_URL").unwrap_or_else(|_| "https://auth.ariata.com".to_string());
+        std::env::var("OAUTH_PROXY_URL").unwrap_or_else(|_| "https://auth.virtues.com".to_string());
 
     let redirect_uri = redirect_uri.unwrap_or_else(|| format!("{proxy_url}/callback"));
 
     // Validate redirect URI if provided by user
     if redirect_uri != format!("{proxy_url}/callback") {
-        super::validation::validate_redirect_uri(&redirect_uri, &["auth.ariata.com", "localhost"])?;
+        super::validation::validate_redirect_uri(&redirect_uri, &["auth.virtues.com", "localhost"])?;
     }
 
     let scopes = oauth_config.scopes.join(" ");
@@ -111,15 +120,15 @@ pub async fn initiate_oauth_flow(
 
 /// Handle OAuth callback and create source
 /// Supports both direct token flow and code exchange flow
-pub async fn handle_oauth_callback(db: &PgPool, params: &OAuthCallbackParams) -> Result<SourceConnection> {
-    // SECURITY: Validate state parameter to prevent CSRF attacks
-    if let Some(ref state) = params.state {
-        crate::sources::base::oauth::state::validate_state(state)?;
+pub async fn handle_oauth_callback(db: &PgPool, params: &OAuthCallbackParams) -> Result<OAuthCallbackResponse> {
+    // SECURITY: Validate state parameter and extract return URL
+    let return_url = if let Some(ref state) = params.state {
+        crate::sources::base::oauth::state::validate_and_extract_state(state)?
     } else {
         return Err(Error::InvalidInput(
             "Missing state parameter - possible CSRF attempt".to_string(),
         ));
-    }
+    };
 
     // Validate provider exists
     super::validation::validate_provider_name(&params.provider)?;
@@ -138,7 +147,7 @@ pub async fn handle_oauth_callback(db: &PgPool, params: &OAuthCallbackParams) ->
     } else if let Some(code) = &params.code {
         // Code exchange flow
         let proxy_url = std::env::var("OAUTH_PROXY_URL")
-            .unwrap_or_else(|_| "https://auth.ariata.com".to_string());
+            .unwrap_or_else(|_| "https://auth.virtues.com".to_string());
 
         let client = reqwest::Client::new();
 
@@ -203,7 +212,8 @@ pub async fn handle_oauth_callback(db: &PgPool, params: &OAuthCallbackParams) ->
 
     super::streams::enable_default_streams(db, source_id, &params.provider).await?;
 
-    get_source(db, source_id).await
+    let source = get_source(db, source_id).await?;
+    Ok(OAuthCallbackResponse { source, return_url })
 }
 
 /// Create a source manually (for testing or direct token input)

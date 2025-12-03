@@ -4,9 +4,9 @@
 //! Jobs are tracked in the database and can be polled for status updates.
 
 pub mod archive_job;
+pub mod entity_resolution_job;
 pub mod executor;
 pub mod models;
-pub mod narrative_primitive_pipeline;
 pub mod prudent_context_job;
 pub mod sync_job;
 pub mod transform_context;
@@ -18,6 +18,7 @@ pub use archive_job::{
     create_archive_job, execute_archive_job, fetch_pending_archive_jobs, spawn_archive_job_async,
     ArchiveContext,
 };
+pub use entity_resolution_job::{chain_to_place_resolution, chain_to_people_resolution};
 pub use executor::JobExecutor;
 pub use models::{CreateJobRequest, Job, JobStatus, JobType, SyncJobMetadata};
 pub use prudent_context_job::PrudentContextJob;

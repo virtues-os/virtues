@@ -1,4 +1,4 @@
-//! Ariata - Open Source Personal Data Ecosystem
+//! Virtues - Open Source Personal Data Ecosystem
 //!
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
@@ -6,11 +6,13 @@ pub mod api;
 pub mod cli;
 pub mod client;
 pub mod database;
+pub mod embeddings;
 pub mod entity_resolution;
 pub mod error;
 pub mod jobs;
 pub mod llm;
 pub mod mcp;
+pub mod observability;
 pub mod ontologies;
 pub mod registry;
 pub mod scheduler;
@@ -23,7 +25,7 @@ pub mod timeline;
 pub mod transcription;
 
 // Re-export main types
-pub use client::{Ariata, AriataBuilder};
+pub use client::{Virtues, VirtuesBuilder};
 pub use error::{Error, Result};
 
 // Re-export OAuth types

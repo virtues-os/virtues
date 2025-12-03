@@ -1,10 +1,10 @@
-//! Ariata MCP Server Binary
+//! Virtues MCP Server Binary
 //!
-//! This binary starts the Ariata MCP server with stdio transport for AI assistants like Claude Desktop.
-//! For HTTP transport, use the main Ariata server (`cargo run serve`) which includes MCP at /mcp endpoint.
+//! This binary starts the Virtues MCP server with stdio transport for AI assistants like Claude Desktop.
+//! For HTTP transport, use the main Virtues server (`cargo run serve`) which includes MCP at /mcp endpoint.
 
 use anyhow::Result;
-use ariata::mcp::AriataMcpServer;
+use virtues::mcp::VirtuesMcpServer;
 use clap::Parser;
 use dotenv::dotenv;
 use rmcp::{transport::stdio, ServiceExt};
@@ -14,9 +14,9 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Parser, Debug)]
-#[command(name = "ariata-mcp-server")]
+#[command(name = "virtues-mcp-server")]
 #[command(
-    about = "Ariata MCP Server - Expose your personal data warehouse to AI assistants via stdio"
+    about = "Virtues MCP Server - Expose your personal data warehouse to AI assistants via stdio"
 )]
 struct Args {}
 
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
-    info!("Starting Ariata MCP Server (stdio transport)");
+    info!("Starting Virtues MCP Server (stdio transport)");
 
     // Get database URL from environment
     let database_url =
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     info!("Connected to database");
 
     // Create MCP server
-    let server = AriataMcpServer::new(pool);
+    let server = VirtuesMcpServer::new(pool);
 
     // Start server on stdio
     info!("Starting MCP server on stdio");

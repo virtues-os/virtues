@@ -291,59 +291,63 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Schedule the narrative primitive pipeline job (hourly)
+    /// Schedule the embedding job (every 30 minutes)
     ///
-    /// Unified pipeline that runs:
-    /// 1. Entity resolution (place clustering, people resolution)
-    /// 2. Changepoint detection
-    /// 3. Boundary aggregation
-    /// 4. Narrative synthesis
-    ///
-    /// Replaces BoundarySweeperJob and PeriodicClusteringJob
-    pub async fn schedule_narrative_primitive_pipeline_job(&self) -> Result<()> {
-        use crate::database::Database;
-
+    /// Processes unembedded records from ontology tables (emails, messages, calendar, AI conversations)
+    /// to generate semantic embeddings using Ollama.
+    pub async fn schedule_embedding_job(&self) -> Result<()> {
         let db = self.db.clone();
 
-        tracing::info!("Scheduling NarrativePrimitivePipelineJob (hourly)");
+        // Every 30 minutes
+        let cron_expr = "0 */30 * * * *";
 
-        let job = Job::new_async("0 0 * * * *", move |_uuid, _lock| {
-            let db_pool = db.clone();
+        tracing::info!("Scheduling EmbeddingJob every 30 minutes");
+
+        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
+            let db = db.clone();
 
             Box::pin(async move {
-                tracing::info!("Running NarrativePrimitivePipelineJob");
-                let db = Database::from_pool(db_pool);
+                tracing::info!("Running EmbeddingJob");
 
-                match crate::jobs::narrative_primitive_pipeline::run_pipeline(&db).await {
-                    Ok(stats) => {
-                        tracing::info!(
-                            "NarrativePrimitivePipelineJob completed: \
-                            places={}, people={}, boundaries={}, primitives={}",
-                            stats.places_resolved,
-                            stats.people_resolved,
-                            stats.boundaries_detected,
-                            stats.primitives_created
-                        );
-                    }
+                match crate::embeddings::EmbeddingJob::from_env(db) {
+                    Ok(job) => match job.process_all().await {
+                        Ok(results) => {
+                            let total_processed: usize =
+                                results.iter().map(|r| r.records_processed).sum();
+                            let total_failed: usize =
+                                results.iter().map(|r| r.records_failed).sum();
+
+                            if total_processed > 0 || total_failed > 0 {
+                                tracing::info!(
+                                    "EmbeddingJob completed: {} processed, {} failed",
+                                    total_processed,
+                                    total_failed
+                                );
+                            } else {
+                                tracing::debug!("EmbeddingJob: no records to process");
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!("EmbeddingJob failed: {}", e);
+                        }
+                    },
                     Err(e) => {
-                        tracing::error!("NarrativePrimitivePipelineJob failed: {}", e);
+                        tracing::warn!(
+                            "EmbeddingJob skipped: Ollama not configured or unavailable: {}",
+                            e
+                        );
                     }
                 }
             })
         })
-        .map_err(|e| {
-            Error::Other(format!(
-                "Failed to create NarrativePrimitivePipelineJob: {}",
-                e
-            ))
-        })?;
+        .map_err(|e| Error::Other(format!("Failed to create EmbeddingJob: {}", e)))?;
 
         self.scheduler
             .add(job)
             .await
-            .map_err(|e| Error::Other(format!("Failed to add NarrativePrimitivePipelineJob: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to add EmbeddingJob: {}", e)))?;
 
-        tracing::info!("NarrativePrimitivePipelineJob scheduled (runs hourly at :00)");
+        tracing::info!("EmbeddingJob scheduled every 30 minutes");
         Ok(())
     }
 

@@ -48,6 +48,7 @@ fn default_sync_strategy() -> SyncStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sources::base::ConfigSerializable;
 
     #[test]
     fn test_default_config() {

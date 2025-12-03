@@ -5,7 +5,7 @@
       "id": "query_location_map",
       "name": "Location Map",
       "description": "Visualize location data on an interactive map over a time range",
-      "tool_type": "ariata",
+      "tool_type": "virtues",
       "category": "analytics",
       "icon": "ri:map-pin-line",
       "display_order": 1
@@ -14,7 +14,7 @@
       "id": "web_search",
       "name": "Web Search",
       "description": "Search the web using Exa AI for recent information, research, and domain knowledge",
-      "tool_type": "ariata",
+      "tool_type": "virtues",
       "category": "shared",
       "icon": "ri:search-line",
       "display_order": 3
