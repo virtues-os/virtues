@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.virtues.ios.refresh</string>
+		<string>com.virtues.ios.processing</string>
+		<string>com.virtues.ios.sync</string>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>processing</string>
+		<string>fetch</string>
+		<string>audio</string>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>Virtues</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.healthcare-fitness</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Virtues reads your health data (heart rate, steps, sleep, activity) to provide comprehensive wellness insights. Your health data is stored securely and never shared without your explicit consent.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Virtues may write health data from connected devices.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Virtues needs to connect to your local server for data sync</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Virtues continuously tracks your location to provide personalized health insights based on where you spend your time. This data is collected in the background to ensure accurate daily patterns.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Virtues tracks your location continuously to provide detailed activity context.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Virtues tracks your location to provide personalized health insights based on where you spend your time.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Virtues records ambient audio in 30-second intervals to analyze your daily environment and acoustic patterns. All recordings are processed securely and you have full control over when recording is active.</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+		<string>healthkit</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

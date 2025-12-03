@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Ariata iOS app has a single purpose: **Reliable raw data collection**.
+The Virtues iOS app has a single purpose: **Reliable raw data collection**.
 
 ### Architecture
 
@@ -242,7 +242,7 @@ return await uploadWithProcessor(processor: processor, events: events)
 ### File Structure
 
 ```
-apps/ios/Ariata/
+apps/ios/Virtues/
 ├── Core/
 │   ├── ErrorHandling/
 │   │   ├── DataCollectionError.swift      # Error types & protocols
@@ -651,7 +651,7 @@ The app tracks sync health to help diagnose issues:
 
 ### HealthKit Not Syncing
 
-1. Check Settings > Privacy > Health > Ariata
+1. Check Settings > Privacy > Health > Virtues
 2. All categories must show checkmarks
 3. Force quit and restart app
 4. Check for iOS health database corruption
@@ -661,7 +661,7 @@ The app tracks sync health to help diagnose issues:
 
 ### Audio Not Recording
 
-1. Check Settings > Privacy > Microphone > Ariata
+1. Check Settings > Privacy > Microphone > Virtues
 2. Verify no other app is using microphone
 3. Check audio input device in Settings > Audio Input
 4. Select "iPhone Microphone" to prevent Bluetooth interference
