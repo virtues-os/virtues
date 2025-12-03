@@ -600,9 +600,9 @@ mac-clean:
 	@sudo rm -rf /Applications/JacesMac.app 2>/dev/null || true
 	@sudo rm -rf /Applications/mac.app 2>/dev/null || true
 	@# Delete keychain items (all variants)
-	@security delete-generic-password -s "com.virtues.mac" 2>/dev/null || true
-	@security delete-generic-password -s "com.jaces.mac" 2>/dev/null || true
-	@security delete-generic-password -s "com.ariata.mac" 2>/dev/null || true
+	@security delete-generic-password -s "com.virtues.mac" -a "device-token" 2>/dev/null || true
+	@security delete-generic-password -s "com.jaces.mac" -a "device-token" 2>/dev/null || true
+	@security delete-generic-password -s "com.ariata.mac" -a "device-token" 2>/dev/null || true
 	@echo "✅ Cleaned all Mac app artifacts"
 	@echo "💡 Note: Permissions must be manually revoked in System Settings > Privacy"
 
