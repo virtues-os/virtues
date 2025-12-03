@@ -207,7 +207,7 @@ jobs:
           
           # Download URL
           if [ "$VERSION" = "latest" ]; then
-            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/latest/download/virtues-mac-universal.tar.gz"
+            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/mac-latest/virtues-mac-universal.tar.gz"
           else
             DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/mac-v$VERSION/virtues-mac-$VERSION-universal.tar.gz"
           fi
