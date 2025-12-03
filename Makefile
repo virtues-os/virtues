@@ -574,17 +574,37 @@ mac-status:
 	@echo ""
 	@echo "💡 Tip: View full log with: tail -f ~/.virtues/logs/mac-app.log"
 
-# Clean Mac app config and queue (for fresh testing)
+# Clean Mac app config and queue (for fresh testing) - includes legacy app names
 mac-clean:
-	@echo "🧹 Cleaning Mac app..."
+	@echo "🧹 Cleaning Mac app (including legacy names)..."
+	@# Stop any running apps (current and legacy names)
+	@pkill -f "/Applications/Virtues.app" 2>/dev/null || true
 	@pkill -f "/Applications/virtues-mac.app" 2>/dev/null || true
-	@if launchctl list | grep -q "com.virtues.mac" 2>/dev/null; then \
-		launchctl unload ~/Library/LaunchAgents/com.virtues.mac.plist 2>/dev/null || true; \
-	fi
-	@rm -rf ~/.virtues
+	@pkill -f "/Applications/ariata-mac.app" 2>/dev/null || true
+	@pkill -f "/Applications/JacesMac.app" 2>/dev/null || true
+	@pkill -f "/Applications/mac.app" 2>/dev/null || true
+	@# Unload launch agents (current and legacy)
+	@launchctl unload ~/Library/LaunchAgents/com.virtues.mac.plist 2>/dev/null || true
+	@launchctl unload ~/Library/LaunchAgents/com.jaces.mac.plist 2>/dev/null || true
+	@launchctl unload ~/Library/LaunchAgents/com.ariata.mac.plist 2>/dev/null || true
+	@# Remove config directories (current and legacy)
+	@rm -rf ~/.virtues ~/.jaces ~/.ariata
+	@# Remove launch agent plists
 	@rm -f ~/Library/LaunchAgents/com.virtues.mac.plist
-	@security delete-generic-password -s "com.virtues.mac" -a "device-token" 2>/dev/null || true
-	@echo "✅ Cleaned (permissions must be manually revoked in System Settings)"
+	@rm -f ~/Library/LaunchAgents/com.jaces.mac.plist
+	@rm -f ~/Library/LaunchAgents/com.ariata.mac.plist
+	@# Remove old apps from /Applications
+	@sudo rm -rf /Applications/Virtues.app 2>/dev/null || true
+	@sudo rm -rf /Applications/virtues-mac.app 2>/dev/null || true
+	@sudo rm -rf /Applications/ariata-mac.app 2>/dev/null || true
+	@sudo rm -rf /Applications/JacesMac.app 2>/dev/null || true
+	@sudo rm -rf /Applications/mac.app 2>/dev/null || true
+	@# Delete keychain items (all variants)
+	@security delete-generic-password -s "com.virtues.mac" 2>/dev/null || true
+	@security delete-generic-password -s "com.jaces.mac" 2>/dev/null || true
+	@security delete-generic-password -s "com.ariata.mac" 2>/dev/null || true
+	@echo "✅ Cleaned all Mac app artifacts"
+	@echo "💡 Note: Permissions must be manually revoked in System Settings > Privacy"
 
 # === DRIZZLE STUDIO ===
 
