@@ -2,7 +2,7 @@
 //!
 //! Step count data from HealthKit.
 
-use crate::ontologies::{NarrativeRole, Ontology, OntologyBuilder, OntologyDescriptor};
+use crate::ontologies::{Ontology, OntologyBuilder, OntologyDescriptor};
 
 pub struct StepsOntology;
 
@@ -14,8 +14,6 @@ impl OntologyDescriptor for StepsOntology {
             .domain("health")
             .table_name("health_steps")
             .source_streams(vec!["stream_ios_healthkit"])
-            .narrative_role(NarrativeRole::Substance)
-            .no_boundaries()
             .build()
     }
 }

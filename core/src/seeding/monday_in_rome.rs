@@ -6,7 +6,7 @@
 //! - Converts them to JSON records
 //! - Triggers the full data pipeline: Archive job (S3) + Transform job (ontology tables)
 //!
-//! This tests the complete Ariata pipeline end-to-end with realistic data volumes.
+//! This tests the complete Virtues pipeline end-to-end with realistic data volumes.
 
 use crate::{
     database::Database,
@@ -1084,42 +1084,11 @@ async fn seed_email_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf) ->
 
 /// Seed axiology and actions data
 ///
-/// Loads axiology CSVs (values, telos, virtues, vices, habits, temperaments, preferences)
+/// Loads axiology CSVs (telos, virtues, vices, temperaments, preferences)
 /// and actions CSVs (tasks/goals) and seeds them into respective tables.
 async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize> {
-    info!("🎯 Seeding axiology and actions data (values, tasks, virtues, habits, etc.)...");
+    info!("🎯 Seeding axiology and actions data (telos, virtues, vices, temperaments, preferences, tasks)...");
     let mut total_count = 0;
-
-    // Seed VALUES
-    let values_path = base_path.join("axiology_values.csv");
-    if values_path.exists() {
-        info!("Seeding axiology values...");
-        let file_content = std::fs::read_to_string(&values_path)?;
-        let mut rdr = csv::Reader::from_reader(file_content.as_bytes());
-
-        for result in rdr.deserialize() {
-            let record: serde_json::Map<String, serde_json::Value> = result
-                .map_err(|e| Error::Other(format!("Failed to deserialize CSV record: {}", e)))?;
-            let title = record
-                .get("title")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| Error::Other("Missing title".into()))?;
-            let description = record.get("description").and_then(|v| v.as_str());
-
-            sqlx::query(
-                "INSERT INTO data.axiology_value (title, description, is_active)
-                 VALUES ($1, $2, true)
-                 ON CONFLICT DO NOTHING",
-            )
-            .bind(title)
-            .bind(description)
-            .execute(db.pool())
-            .await?;
-
-            total_count += 1;
-        }
-        info!("✅ Seeded values");
-    }
 
     // Seed TELOS
     let telos_path = base_path.join("axiology_telos.csv");
@@ -1335,17 +1304,15 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
                 .ok_or_else(|| Error::Other("Missing title".into()))?;
             let description = record.get("description").and_then(|v| v.as_str());
             let preference_domain = record.get("preference_domain").and_then(|v| v.as_str());
-            let valence = record.get("valence").and_then(|v| v.as_str());
 
             sqlx::query(
-                "INSERT INTO data.axiology_preference (title, description, preference_domain, valence, is_active)
-                 VALUES ($1, $2, $3, $4, true)
+                "INSERT INTO data.axiology_preference (title, description, preference_domain, is_active)
+                 VALUES ($1, $2, $3, true)
                  ON CONFLICT DO NOTHING"
             )
             .bind(title)
             .bind(description)
             .bind(preference_domain)
-            .bind(valence)
             .execute(db.pool())
             .await?;
 
@@ -1555,13 +1522,9 @@ pub async fn seed_monday_in_rome(
         }
     }
 
-    // Trigger narrative primitive pipeline to:
-    // 1. Cluster locations into visits (entity resolution)
-    // 2. Detect event boundaries from ontology data
-    // 3. Aggregate boundaries
-    // 4. Synthesize narrative primitives
-    // Use custom date range for Nov 9-10, 2025 (the "Monday in Rome" day)
-    info!("🔍 Triggering narrative primitive pipeline for Nov 9-10, 2025 (seed data range)...");
+    // Trigger entity resolution for location visits
+    // This clusters GPS points into location_visits for the day view
+    info!("🔍 Triggering entity resolution for Nov 9-10, 2025 (seed data range)...");
 
     let start = DateTime::parse_from_rfc3339("2025-11-09T00:00:00Z")
         .unwrap()
@@ -1570,19 +1533,19 @@ pub async fn seed_monday_in_rome(
         .unwrap()
         .with_timezone(&Utc);
 
-    match crate::jobs::narrative_primitive_pipeline::run_pipeline_for_range(db, start, end).await {
+    // Run entity resolution (place clustering) for the seed data time range
+    match crate::entity_resolution::resolve_entities(db, crate::entity_resolution::TimeWindow { start, end }).await {
         Ok(stats) => {
             info!(
-                "✅ Narrative primitive pipeline completed: {} places resolved, {} boundaries detected, {} primitives created",
+                "✅ Entity resolution completed: {} places resolved, {} people resolved",
                 stats.places_resolved,
-                stats.boundaries_detected,
-                stats.primitives_created
+                stats.people_resolved
             );
         }
         Err(e) => {
             warn!(
                 error = %e,
-                "⚠️  Narrative primitive pipeline failed - timeline may be empty"
+                "⚠️  Entity resolution failed - location visits may be missing"
             );
         }
     }

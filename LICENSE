@@ -1,14 +1,14 @@
-# Ariata Dual License
+# Virtues Dual License
 
-Ariata uses a dual-license model to balance open-source accessibility with project sustainability.
+Virtues uses a dual-license model to balance open-source accessibility with project sustainability.
 
 ## License Structure
 
-The Ariata monorepo uses a hierarchical licensing system:
+The Virtues monorepo uses a hierarchical licensing system:
 
 1. **Core Components (MIT License)**: Most of the codebase, including core functionality, is licensed under the permissive MIT License, allowing maximum freedom for personal and commercial use.
 
-2. **Enterprise Components (Elastic License 2.0)**: Certain enterprise features and components that could be used to offer Ariata as a managed service are licensed under ELv2 to prevent commercial exploitation while maintaining source availability.
+2. **Enterprise Components (Elastic License 2.0)**: Certain enterprise features and components that could be used to offer Virtues as a managed service are licensed under ELv2 to prevent commercial exploitation while maintaining source availability.
 
 ## How Licensing Works
 
@@ -24,7 +24,7 @@ The license for any particular file or component follows this priority:
 
 ### For Most Components: MIT License
 
-Copyright (c) 2025 Ariata Studios, Inc.
+Copyright (c) 2025 Virtues Studios, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -48,7 +48,7 @@ SOFTWARE.
 
 ### For Enterprise Components: Elastic License 2.0 (ELv2)
 
-Copyright (c) 2025 Ariata Studios, Inc.
+Copyright (c) 2025 Virtues Studios, Inc.
 
 **Acceptance**
 
@@ -109,20 +109,23 @@ _trademark_ means trademarks, service marks, and similar rights.
 This dual-license approach ensures:
 
 ✅ **You CAN**:
-- Use Ariata for personal or commercial purposes
+
+- Use Virtues for personal or commercial purposes
 - Modify and extend the platform
 - Self-host on your own infrastructure
 - Contribute back to the community
 - Build plugins and integrations
 
 ❌ **You CANNOT**:
-- Offer Ariata as a hosted/managed service to others
+
+- Offer Virtues as a hosted/managed service to others
 - Remove license key functionality
 - Remove copyright or license notices
 
 ## Questions?
 
 If you have any questions regarding licensing, please:
+
 - Open an issue on GitHub
 - Join our Discord community
-- Contact us at hello@ariata.com
+- Contact us at <hello@Virtues.com>

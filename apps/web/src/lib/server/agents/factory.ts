@@ -29,10 +29,11 @@ export function createAgent(
 
 	if (metadata.id === 'agent') {
 		// Agent mode: gets all tools (filtered by user preferences)
-		agentTools = toolPreferences ? filterToolsByPreferences(allTools, toolPreferences) : allTools;
-	} else if (metadata.id === 'chat') {
-		// Chat mode: no tools, just conversation
-		agentTools = {};
+		// Note: Using Exa web_search for all models (Google grounding can't mix with function tools)
+		agentTools = toolPreferences ? filterToolsByPreferences(allTools, toolPreferences) : { ...allTools };
+	} else if (metadata.id === 'onboarding') {
+		// Onboarding mode: only save_axiology tool for values discovery
+		agentTools = allTools.save_axiology ? { save_axiology: allTools.save_axiology } : {};
 	}
 
 	// Build agent instructions

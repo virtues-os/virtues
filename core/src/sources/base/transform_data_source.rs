@@ -2,6 +2,12 @@
 //!
 //! Provides a unified interface for transforms to read data from
 //! in-memory records (hot path). This enables direct transforms with async S3 archival.
+//!
+//! ## Chunked Processing
+//!
+//! To avoid memory pressure with large datasets, records are split into
+//! configurable chunks. Set the `TRANSFORM_CHUNK_SIZE` environment variable
+//! to control the number of records per batch (default: 10,000).
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -9,6 +15,17 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::error::Result;
+
+/// Default number of records per chunk for transform processing
+const DEFAULT_CHUNK_SIZE: usize = 10_000;
+
+/// Get chunk size from environment variable or use default
+pub fn get_chunk_size() -> usize {
+    std::env::var("TRANSFORM_CHUNK_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_CHUNK_SIZE)
+}
 
 /// Batch of records from a stream
 #[derive(Debug, Clone)]
@@ -140,14 +157,49 @@ impl TransformDataSource for MemoryDataSource {
         // Use a nil UUID as placeholder
         let object_id = Uuid::nil();
 
-        // Return all records as a single batch
-        Ok(vec![StreamBatch {
-            source_id: self.source_id,
-            stream_name: self.stream_name.clone(),
-            records: self.records.clone(),
-            object_id,
-            max_timestamp: self.max_timestamp,
-        }])
+        // Get chunk size from environment or use default
+        let chunk_size = get_chunk_size();
+
+        // If small enough, return as single batch
+        if self.records.len() <= chunk_size {
+            return Ok(vec![StreamBatch {
+                source_id: self.source_id,
+                stream_name: self.stream_name.clone(),
+                records: self.records.clone(),
+                object_id,
+                max_timestamp: self.max_timestamp,
+            }]);
+        }
+
+        // Split records into chunks to avoid memory pressure
+        let total_records = self.records.len();
+        let num_chunks = (total_records + chunk_size - 1) / chunk_size;
+
+        tracing::info!(
+            total_records,
+            chunk_size,
+            num_chunks,
+            "Splitting records into chunks to manage memory"
+        );
+
+        let batches: Vec<StreamBatch> = self
+            .records
+            .chunks(chunk_size)
+            .enumerate()
+            .map(|(i, chunk)| {
+                // Only set max_timestamp on the last chunk
+                let is_last = i == num_chunks - 1;
+                StreamBatch {
+                    source_id: self.source_id,
+                    stream_name: self.stream_name.clone(),
+                    records: chunk.to_vec(),
+                    object_id,
+                    max_timestamp: if is_last { self.max_timestamp } else { None },
+                }
+            })
+            .collect();
+
+        Ok(batches)
     }
 
     async fn update_checkpoint(
@@ -177,5 +229,40 @@ impl TransformDataSource for MemoryDataSource {
 
     fn source_type(&self) -> DataSourceType {
         DataSourceType::Memory
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_chunk_size_default() {
+        // Without env var set, should return default
+        std::env::remove_var("TRANSFORM_CHUNK_SIZE");
+        assert_eq!(get_chunk_size(), DEFAULT_CHUNK_SIZE);
+    }
+
+    #[test]
+    fn test_stream_batch_chunking() {
+        // Create a large number of records
+        let chunk_size = 100;
+        let total_records = 350;
+
+        let records: Vec<Value> = (0..total_records)
+            .map(|i| serde_json::json!({"id": i}))
+            .collect();
+
+        // Manually chunk like MemoryDataSource does
+        let num_chunks = (total_records + chunk_size - 1) / chunk_size;
+        let chunks: Vec<Vec<Value>> = records.chunks(chunk_size).map(|c| c.to_vec()).collect();
+
+        // Should have 4 chunks: 100, 100, 100, 50
+        assert_eq!(num_chunks, 4);
+        assert_eq!(chunks.len(), 4);
+        assert_eq!(chunks[0].len(), 100);
+        assert_eq!(chunks[1].len(), 100);
+        assert_eq!(chunks[2].len(), 100);
+        assert_eq!(chunks[3].len(), 50);
     }
 }

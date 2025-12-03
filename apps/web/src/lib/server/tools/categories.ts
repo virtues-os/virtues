@@ -17,16 +17,16 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
 		name: 'web_search',
 		description: 'Search the web using Exa AI for recent information, research, and domain knowledge',
 	},
-	ariata_query_narratives: {
-		name: 'ariata_query_narratives',
+	virtues_query_narratives: {
+		name: 'virtues_query_narratives',
 		description: 'Search pre-synthesized biographical narratives with semantic search',
 	},
-	ariata_query_axiology: {
-		name: 'ariata_query_axiology',
+	virtues_query_axiology: {
+		name: 'virtues_query_axiology',
 		description: 'Query values, goals, virtues, vices, habits, and preferences',
 	},
-	ariata_query_ontology: {
-		name: 'ariata_query_ontology',
+	virtues_query_ontology: {
+		name: 'virtues_query_ontology',
 		description: 'Unified ontology tool: query data (execute SQL), list tables (discover available tables), or get schema (view table structure)',
 	},
 };

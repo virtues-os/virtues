@@ -1,8 +1,8 @@
-//! Error types for Ariata
+//! Error types for Virtues
 
 use thiserror::Error;
 
-/// Main error type for Ariata
+/// Main error type for Virtues
 #[derive(Debug, Error)]
 pub enum Error {
     /// Database-related errors
@@ -112,7 +112,7 @@ impl Error {
     }
 }
 
-/// Result type alias for Ariata operations
+/// Result type alias for Virtues operations
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Macro for handling database query errors with consistent error messages
@@ -120,7 +120,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// # Examples
 ///
 /// ```rust
-/// use ariata_core::{db_query, error::Result};
+/// use virtues::{db_query, error::Result};
 /// use sqlx::PgPool;
 ///
 /// async fn get_user(db: &PgPool, id: i32) -> Result<User> {
@@ -148,7 +148,7 @@ macro_rules! db_query {
 /// # Examples
 ///
 /// ```rust
-/// use ariata_core::{db_execute, error::Result};
+/// use virtues::{db_execute, error::Result};
 /// use sqlx::PgPool;
 ///
 /// async fn delete_user(db: &PgPool, id: i32) -> Result<()> {

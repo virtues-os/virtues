@@ -20,19 +20,24 @@
 //! - `models` - LLM model configurations
 //! - `agents` - AI agent configurations
 //! - `seed_testing` - Seed data pipeline validation and inspection
+//! - `metrics` - Activity metrics and job statistics
 
 pub mod agents;
 pub mod assistant_profile;
 pub mod axiology;
 pub mod device_pairing;
 pub mod jobs;
+pub mod metrics;
 pub mod models;
 pub mod oauth;
+pub mod onboarding;
 pub mod ontologies;
+pub mod plaid;
 pub mod praxis;
 pub mod profile;
 pub mod rate_limit;
 pub mod registry;
+pub mod search;
 pub mod seed_testing;
 pub mod sources;
 pub mod streams;
@@ -52,13 +57,13 @@ pub use assistant_profile::{
     UpdateAssistantProfileRequest,
 };
 pub use axiology::{
-    create_preference, create_telos, create_temperament, create_value, create_vice, create_virtue,
-    delete_preference, delete_telos, delete_temperament, delete_value, delete_vice, delete_virtue,
-    get_preference, get_telos, get_temperament, get_value, get_vice, get_virtue, list_preferences,
-    list_telos, list_temperaments, list_values, list_vices, list_virtues, update_preference,
-    update_telos, update_temperament, update_value, update_vice, update_virtue,
+    create_preference, create_telos, create_temperament, create_vice, create_virtue,
+    delete_preference, delete_telos, delete_temperament, delete_vice, delete_virtue,
+    get_preference, get_telos, get_temperament, get_vice, get_virtue, list_preferences,
+    list_telos, list_temperaments, list_vices, list_virtues, update_preference,
+    update_telos, update_temperament, update_vice, update_virtue,
     CreatePreferenceRequest, CreateSimpleRequest, Preference, Telos, Temperament,
-    UpdatePreferenceRequest, UpdateSimpleRequest, Value, Vice, Virtue,
+    UpdatePreferenceRequest, UpdateSimpleRequest, Vice, Virtue,
 };
 pub use device_pairing::{
     check_pairing_status, complete_device_pairing, initiate_device_pairing, list_pending_pairings,
@@ -82,7 +87,10 @@ pub use praxis::{
     CreateAspirationRequest, CreateTaskRequest, Initiative, Task, UpdateAspirationRequest,
     UpdateTaskRequest,
 };
-pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
+pub use profile::{
+    get_display_name, get_profile, set_home_place, update_profile, SetHomePlaceRequest,
+    SetHomePlaceResponse, UpdateProfileRequest,
+};
 pub use rate_limit::{
     check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
     UsageStats,
@@ -91,8 +99,12 @@ pub use registry::{
     get_source_info, get_stream_descriptor, list_all_streams, list_available_sources,
 };
 pub use seed_testing::{
-    get_boundaries_summary, get_data_quality_metrics, get_pipeline_status, BoundariesSummary,
+    get_chunks_summary, get_data_quality_metrics, get_pipeline_status, ChunksSummary,
     DataQualityMetrics, PipelineStatus,
+};
+pub use metrics::{
+    get_activity_metrics, ActivityMetrics, JobTypeStats, MetricsSummary, PeriodStats,
+    RecentError, StreamStats, TimeWindowMetrics,
 };
 pub use sources::{
     delete_source, get_source, get_source_status, list_sources, pause_source, resume_source,
@@ -102,5 +114,19 @@ pub use streams::{
     update_stream_schedule, EnableStreamRequest, UpdateStreamConfigRequest,
     UpdateStreamScheduleRequest,
 };
-pub use timeline::{get_boundaries, get_day_view, TimelineBlock};
+pub use timeline::{
+    get_day_view, AttachedCalendarEvent, AttachedEmail, AttachedHealthEvent, AttachedMessage,
+    AttachedTranscript, Chunk, DayView, LocationChunk, MissingDataChunk, TransitChunk,
+};
 pub use tools::{get_tool, list_tools, update_tool, ListToolsQuery, Tool, UpdateToolRequest};
+pub use plaid::{
+    create_link_token, exchange_public_token, get_plaid_accounts, remove_plaid_item,
+    CreateLinkTokenRequest, CreateLinkTokenResponse, ExchangeTokenRequest, ExchangeTokenResponse,
+    PlaidAccount,
+};
+pub use onboarding::{
+    complete_onboarding, complete_step, get_onboarding_status, save_onboarding_aspirations,
+    save_onboarding_axiology, skip_step, ExtractedAxiologyItem, OnboardingAspiration,
+    OnboardingStatus, OnboardingStep, SaveAspirationsRequest, SaveAspirationsResponse,
+    SaveAxiologyRequest, SaveAxiologyResponse,
+};

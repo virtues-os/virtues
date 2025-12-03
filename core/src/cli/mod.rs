@@ -1,30 +1,30 @@
-//! CLI module - command-line interface for Ariata
+//! CLI module - command-line interface for Virtues
 
 pub mod commands;
 pub mod display;
 pub mod types;
 
 use crate::storage::stream_writer::StreamWriter;
-use crate::Ariata;
+use crate::Virtues;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use types::{Cli, Commands};
 
 /// Run the CLI application
-pub async fn run(cli: Cli, ariata: Ariata) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize StreamWriter (simple in-memory buffer)
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
 
     match cli.command {
         Commands::Init => {
-            // This command is handled in main.rs before the Ariata client is created
+            // This command is handled in main.rs before the Virtues client is created
             unreachable!("Init command should be handled in main.rs");
         }
 
         Commands::Migrate => {
             println!("Running database migrations...");
-            ariata.database.initialize().await?;
+            virtues.database.initialize().await?;
             println!("✅ Migrations completed successfully");
         }
 
@@ -37,15 +37,15 @@ pub async fn run(cli: Cli, ariata: Ariata) -> Result<(), Box<dyn std::error::Err
             device_id,
             name,
         } => {
-            commands::handle_add_source(ariata, &source_type, device_id, name).await?;
+            commands::handle_add_source(virtues, &source_type, device_id, name).await?;
         }
 
         Commands::Source { action } => {
-            commands::handle_source_command(ariata, action).await?;
+            commands::handle_source_command(virtues, action).await?;
         }
 
         Commands::Stream { action } => {
-            commands::handle_stream_command(ariata, stream_writer_arc.clone(), action).await?;
+            commands::handle_stream_command(virtues, stream_writer_arc.clone(), action).await?;
         }
 
         Commands::Sync { source_id } => {
@@ -54,13 +54,13 @@ pub async fn run(cli: Cli, ariata: Ariata) -> Result<(), Box<dyn std::error::Err
             println!("Syncing source: {}...", source_id);
 
             // Get all enabled streams for this source
-            let streams = crate::list_source_streams(ariata.database.pool(), source_id).await?;
+            let streams = crate::list_source_streams(virtues.database.pool(), source_id).await?;
             let enabled_streams: Vec<_> = streams.iter().filter(|s| s.is_enabled).collect();
 
             if enabled_streams.is_empty() {
                 println!("⚠️  No enabled streams for this source");
                 println!(
-                    "Enable streams with: ariata stream enable {} <stream_name>",
+                    "Enable streams with: virtues stream enable {} <stream_name>",
                     source_id
                 );
                 return Ok(());
@@ -76,8 +76,8 @@ pub async fn run(cli: Cli, ariata: Ariata) -> Result<(), Box<dyn std::error::Err
                 println!("  Creating sync job for {}...", stream.stream_name);
 
                 match crate::api::jobs::trigger_stream_sync(
-                    ariata.database.pool(),
-                    &*ariata.storage,
+                    virtues.database.pool(),
+                    &*virtues.storage,
                     stream_writer_arc.clone(),
                     source_id,
                     &stream.stream_name,
@@ -104,17 +104,17 @@ pub async fn run(cli: Cli, ariata: Ariata) -> Result<(), Box<dyn std::error::Err
             if failed_count > 0 {
                 println!("  Failed to create jobs: {}", failed_count);
             }
-            println!("\nNote: Jobs are running in the background. Use 'ariata jobs list' to monitor progress.");
+            println!("\nNote: Jobs are running in the background. Use 'virtues jobs list' to monitor progress.");
         }
 
         Commands::Server { host, port } => {
-            println!("Starting Ariata server on {}:{}", host, port);
+            println!("Starting Virtues server on {}:{}", host, port);
             println!("API available at http://{}:{}/api", host, port);
             println!("Health check: http://{}:{}/health", host, port);
             println!();
             println!("Press Ctrl+C to stop");
 
-            crate::server::run(ariata, &host, port).await?;
+            crate::server::run(virtues, &host, port).await?;
         }
     }
 

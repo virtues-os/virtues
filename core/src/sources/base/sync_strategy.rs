@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// use ariata_core::sources::base::SyncStrategy;
+/// use virtues::sources::base::SyncStrategy;
 ///
 /// // Sync last year of data
 /// let strategy = SyncStrategy::TimeWindow { days_back: 365 };

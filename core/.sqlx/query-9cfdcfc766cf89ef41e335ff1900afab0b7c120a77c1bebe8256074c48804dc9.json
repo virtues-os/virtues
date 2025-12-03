@@ -1,0 +1,221 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO data.praxis_task\n            (title, description, tags, topic_id, start_date, target_date,\n             initiative_id, parent_task_id, source_provider, external_id, external_url,\n             virtue_ids, vice_ids, value_ids, purpose,\n             is_habit, recurrence_rule, context_energy, context_location, estimated_minutes)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)\n        RETURNING id, title, description, tags, topic_id, status,\n                  progress_percent, start_date, target_date, completed_date,\n                  recurrence_rule, is_habit, current_streak, best_streak, last_completed_date,\n                  initiative_id, parent_task_id,\n                  source_provider, external_id, external_url,\n                  virtue_ids, vice_ids, value_ids, purpose,\n                  context_energy, context_location, estimated_minutes, actual_minutes,\n                  is_active, created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "tags",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "topic_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "progress_percent",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "start_date",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "target_date",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "completed_date",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "recurrence_rule",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "is_habit",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 12,
+        "name": "current_streak",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 13,
+        "name": "best_streak",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 14,
+        "name": "last_completed_date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 15,
+        "name": "initiative_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 16,
+        "name": "parent_task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 17,
+        "name": "source_provider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 18,
+        "name": "external_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 19,
+        "name": "external_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 20,
+        "name": "virtue_ids",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 21,
+        "name": "vice_ids",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 22,
+        "name": "value_ids",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 23,
+        "name": "purpose",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 24,
+        "name": "context_energy",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 25,
+        "name": "context_location",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 26,
+        "name": "estimated_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 27,
+        "name": "actual_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 28,
+        "name": "is_active",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 29,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 30,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "TextArray",
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "UuidArray",
+        "UuidArray",
+        "UuidArray",
+        "Text",
+        "Bool",
+        "Text",
+        "Text",
+        "Text",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "9cfdcfc766cf89ef41e335ff1900afab0b7c120a77c1bebe8256074c48804dc9"
+}

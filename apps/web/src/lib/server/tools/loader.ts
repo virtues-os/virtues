@@ -1,12 +1,16 @@
 /**
  * Centralized tool loading for multi-agent system
  * Tools are loaded once at startup and cached
+ *
+ * Note: Google Search grounding was removed because it can't mix with function tools.
+ * Using Exa web_search for all models instead.
  */
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { createMcpClient, type McpClient, type McpTool } from '$lib/mcp/client';
 import { createLocationMapTool } from '$lib/tools/query-location-map';
 import { createWebSearchTool } from '$lib/tools/web-search';
+import { createSaveAxiologyTool } from '$lib/tools/save-axiology';
 import type { ToolRegistry } from './types';
 
 /**
@@ -46,6 +50,10 @@ export async function initializeTools(pool: Pool, mcpServerUrl: string): Promise
 		} else {
 			console.log('[Tools] ⚠️  Skipping web_search (EXA_API_KEY not configured)');
 		}
+
+		// Load save_axiology tool (for onboarding agent)
+		tools.save_axiology = await createSaveAxiologyTool(pool);
+		console.log('[Tools] ✓ Loaded save_axiology');
 
 		// Load MCP tools (non-blocking)
 		try {
@@ -112,29 +120,44 @@ function convertMcpToolToAiSdkTool(
 		description: mcpTool.description || name,
 		inputSchema: zodSchema,
 		execute: async (args: z.infer<typeof zodSchema>) => {
-			try {
-				const result = await client.callTool(name, args);
-				const textResult = result.content.map((c) => c.text).join('\n');
-
-				// Try to parse JSON response
+			const executeWithRetry = async (retryCount = 0): Promise<any> => {
 				try {
-					return JSON.parse(textResult);
-				} catch (_e) {
-					// If not JSON, return as plain text
-					return textResult;
-				}
-			} catch (error) {
-				console.error(`[Tool Error] ${name} failed:`, error);
+					const result = await client.callTool(name, args);
+					const textResult = result.content.map((c) => c.text).join('\n');
 
-				// Return structured error instead of throwing
-				// This allows the conversation to continue with error context
-				return {
-					success: false,
-					error: error instanceof Error ? error.message : 'Unknown tool execution error',
-					tool: name,
-					arguments: args,
-				};
-			}
+					// Try to parse JSON response
+					try {
+						return JSON.parse(textResult);
+					} catch (_e) {
+						// If not JSON, return as plain text
+						return textResult;
+					}
+				} catch (error) {
+					// Check for 401 Unauthorized (session expired)
+					if (
+						error instanceof Error &&
+						error.message.includes('Unauthorized') &&
+						retryCount === 0
+					) {
+						console.log(`[Tools] Session expired for ${name}, reconnecting MCP client...`);
+						await client.reconnect();
+						return executeWithRetry(1); // Retry once after reconnect
+					}
+
+					console.error(`[Tool Error] ${name} failed:`, error);
+
+					// Return structured error instead of throwing
+					// This allows the conversation to continue with error context
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : 'Unknown tool execution error',
+						tool: name,
+						arguments: args,
+					};
+				}
+			};
+
+			return executeWithRetry();
 		},
 	};
 }

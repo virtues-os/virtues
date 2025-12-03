@@ -11,7 +11,7 @@
 //! - **StreamConnection**: A user's enabled stream with configuration (stored in `stream_connections` table)
 //!
 //! Frontends and CLIs query this registry (via the catalog API) to discover:
-//! - What sources are available (Google, Notion, iOS, Mac, Ariata)
+//! - What sources are available (Google, Notion, iOS, Mac, Virtues)
 //! - What streams each source provides (Calendar, Gmail, Pages, HealthKit, etc.)
 //! - What configuration options each stream accepts
 //! - What database schema each stream uses
@@ -278,7 +278,7 @@ fn init_registry() -> Registry {
     let mut registry = Registry::new();
 
     // Register internal sources
-    registry.register(crate::sources::ariata::registry::AriataSource::descriptor());
+    registry.register(crate::sources::virtues::registry::VirtuesSource::descriptor());
 
     // Register OAuth sources
     registry.register(crate::sources::google::registry::GoogleSource::descriptor());
@@ -333,7 +333,7 @@ pub fn get_stream_by_table_name(table_name: &str) -> Option<(&'static str, &'sta
 ///
 /// The system uses a three-tier naming architecture:
 /// 1. **Stream Name** (registered in data.streams) - e.g., "app_export", "gmail"
-/// 2. **Stream Table** (object storage) - e.g., "stream_ariata_ai_chat", "stream_google_gmail"
+/// 2. **Stream Table** (object storage) - e.g., "stream_virtues_ai_chat", "stream_google_gmail"
 /// 3. **Ontology Table** (data schema) - e.g., "knowledge_ai_conversation", "social_email"
 ///
 /// This function maps stream names (tier 1) to stream tables (tier 2).
@@ -354,21 +354,9 @@ pub fn normalize_stream_name(name: &str) -> String {
         }
     }
 
-    // Legacy fallback mappings for backwards compatibility
-    match name {
-        "app_export" => "stream_ariata_ai_chat",
-        "gmail" => "stream_google_gmail",
-        "calendar" => "stream_google_calendar",
-        "pages" => "stream_notion_pages",
-        "microphone" => "stream_ios_microphone",
-        "healthkit" => "stream_ios_healthkit",
-        "location" => "stream_ios_location",
-        "apps" => "stream_mac_apps",
-        "browser" => "stream_mac_browser",
-        "imessage" | "messages" => "stream_mac_imessage",
-        _ => name, // Return as-is if unknown
-    }
-    .to_string()
+    // Return as-is if not found (caller may have passed a full table name)
+    tracing::debug!("Stream name '{}' not found in registry, returning as-is", name);
+    name.to_string()
 }
 
 #[cfg(test)]

@@ -100,11 +100,11 @@
 		type="button"
 		onclick={toggleDropdown}
 		disabled={disabled}
-		class="flex cursor-pointer items-center gap-2 rounded-full bg-white text-sm transition-all duration-200"
+		class="flex cursor-pointer items-center gap-2 rounded-full bg-surface text-sm transition-all duration-200"
 		class:opacity-50={disabled}
 		class:cursor-not-allowed={disabled}
-		class:bg-neutral-100={disabled}
-		class:hover:bg-stone-100={!disabled}
+		class:bg-surface-elevated={disabled}
+		class:hover:bg-surface-elevated={!disabled}
 	>
 		{@render trigger(currentItem, disabled, open)}
 	</button>
@@ -112,7 +112,7 @@
 	{#if open && !disabled}
 		<div
 			bind:this={dropdownElement}
-			class="absolute z-50 left-0 {width} bg-white border border-neutral-300 shadow-lg rounded-lg overflow-hidden"
+			class="absolute z-50 left-0 {width} bg-surface border border-border shadow-lg rounded-lg overflow-hidden"
 			class:top-full={dropdownPosition === 'bottom'}
 			class:mt-2={dropdownPosition === 'bottom'}
 			class:bottom-full={dropdownPosition === 'top'}

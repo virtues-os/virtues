@@ -32,7 +32,7 @@ if filteredArgs.count > 1 && !args.contains("--daemon") {
     // CLI mode - run command and exit without launching NSApplication
     print("🔧 Running in CLI mode")
     let cliArgs = Array(filteredArgs.dropFirst())
-    AriataMac.main(cliArgs)
+    VirtuesMac.main(cliArgs)
     exit(0)
 }
 

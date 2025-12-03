@@ -1,12 +1,12 @@
-//! Ariata Production Seed - Baseline data for new deployments
+//! Virtues Production Seed - Baseline data for new deployments
 //!
 //! Seeds the database with:
 //! - System default models (LLM configurations)
 //! - System default agents (assistant configurations)
 //! - Sample axiology tags (common task categories)
 
-use ariata::database::Database;
-use ariata::seeding::prod_seed::seed_production_data;
+use virtues::database::Database;
+use virtues::seeding::prod_seed::seed_production_data;
 use std::env;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -17,12 +17,12 @@ async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "ariata_prod_seed=info".into()),
+                .unwrap_or_else(|_| "virtues_prod_seed=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("🌱 Ariata Production Seed");
+    info!("🌱 Virtues Production Seed");
     info!("Seeding models, agents, and axiology tags...");
 
     // Get database URL from environment

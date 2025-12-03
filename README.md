@@ -1,6 +1,6 @@
-![Ariata Cover](.github/images/cover2.png)
+![Virtues Cover](.github/images/cover2.png)
 
-# Ariata
+# Virtues
 
 Personal data ELT platform. Extract data from Google, iOS, Mac, Notion → Store in PostgreSQL + MinIO → Query with SQL.
 
@@ -11,7 +11,7 @@ Personal data ELT platform. Extract data from Google, iOS, Mac, Notion → Store
 
 ## What It Is
 
-Ariata is a single-user ELT pipeline for personal data:
+Virtues is a single-user ELT pipeline for personal data:
 
 - **Extract**: Pull from APIs (Google, Notion) and devices (iOS, Mac)
 - **Load**: Store raw streams in PostgreSQL + MinIO with full fidelity
@@ -21,7 +21,7 @@ Self-hosted, open source, Rust-based. Your data stays on your infrastructure.
 
 ## Why Monolithic Rust?
 
-Unlike enterprise tools (Airbyte: Docker per source), Ariata uses **one Rust package** for all sources:
+Unlike enterprise tools (Airbyte: Docker per source), Virtues uses **one Rust package** for all sources:
 
 **Personal data is different:**
 
@@ -36,7 +36,7 @@ Unlike enterprise tools (Airbyte: Docker per source), Ariata uses **one Rust pac
 
 | Source | Stream | Status |
 |--------|--------|--------|
-| Ariata | App Export | ✅ |
+| Virtues | App Export | ✅ |
 | Google | Calendar | ✅ |
 | Google | Gmail | ✅ |
 | iOS | HealthKit | ✅ |

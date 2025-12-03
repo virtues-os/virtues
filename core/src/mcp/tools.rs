@@ -1,4 +1,4 @@
-//! MCP Tool definitions for Ariata
+//! MCP Tool definitions for Virtues
 //!
 //! This module defines the tools exposed to AI assistants via the MCP protocol.
 
@@ -6,6 +6,34 @@ use crate::mcp::schema;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, PgPool, Row, TypeInfo};
+
+// ============================================================================
+// Custom Deserializer: String or Vec<String>
+// ============================================================================
+
+/// Deserializer that accepts either a single string or an array of strings.
+/// This makes tool parameters more forgiving when AI models pass "calendar" instead of ["calendar"].
+mod string_or_vec {
+    use serde::{self, Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrVec {
+            String(String),
+            Vec(Vec<String>),
+        }
+
+        let opt = Option::<StringOrVec>::deserialize(deserializer)?;
+        Ok(opt.map(|v| match v {
+            StringOrVec::String(s) => vec![s],
+            StringOrVec::Vec(v) => v,
+        }))
+    }
+}
 
 // ============================================================================
 // Shared Utilities
@@ -331,7 +359,6 @@ fn rewrite_axiology_table_names(query: &str) -> String {
         ("goals", "data.praxis_task"),  // Legacy mapping
         ("calendar", "data.praxis_calendar"),
         // Axiology tables
-        ("values", "data.axiology_value"),
         ("virtues", "data.axiology_virtue"),
         ("vices", "data.axiology_vice"),
         ("temperaments", "data.axiology_temperament"),
@@ -580,7 +607,7 @@ pub struct QueryNarrativesResponse {
     pub narrative_count: usize,
 }
 
-/// Query narrative biography summaries for a specific date
+/// Query timeline chunks (narratives) for a specific date
 pub async fn query_narratives(
     pool: &PgPool,
     request: QueryNarrativesRequest,
@@ -595,18 +622,17 @@ pub async fn query_narratives(
         .unwrap()
         .and_utc();
 
-    // Build the query dynamically based on filters
-    // Note: Uses narrative_primitive table (narrative_chunks was removed)
+    // Query timeline_chunk table (replaces narrative_primitive)
     let mut query = String::from(
-        "SELECT narrative_summary as narrative_text, primary_activity as narrative_type, \
+        "SELECT chunk_type::text as narrative_type, place_name as narrative_text, \
                 start_time as time_start, end_time as time_end \
-         FROM data.narrative_primitive \
+         FROM data.timeline_chunk \
          WHERE start_time >= $1 AND end_time <= $2",
     );
 
-    // Add activity filter if provided (maps to old narrative_type concept)
+    // Add chunk type filter if provided
     if let Some(ref nt) = request.narrative_type {
-        query.push_str(&format!(" AND primary_activity = '{}'", nt));
+        query.push_str(&format!(" AND chunk_type::text = '{}'", nt));
     }
 
     query.push_str(" ORDER BY start_time DESC LIMIT 10");
@@ -637,7 +663,7 @@ pub struct ManageAxiologyRequest {
     /// Operation to perform: create, read, update, delete, list
     pub operation: String,
 
-    /// Entity type: task, initiative, aspiration, value, telos, virtue, vice, habit, temperament, preference
+    /// Entity type: task, initiative, aspiration, telos, virtue, vice, habit, temperament, preference
     pub entity_type: String,
 
     /// Entity ID (required for read, update, delete operations)
@@ -680,7 +706,7 @@ pub async fn manage_axiology(
     }
 
     // Validate entity_type
-    let valid_entities = ["task", "initiative", "aspiration", "value", "telos", "virtue", "vice", "habit", "temperament", "preference"];
+    let valid_entities = ["task", "initiative", "aspiration", "telos", "virtue", "vice", "habit", "temperament", "preference"];
     if !valid_entities.contains(&request.entity_type.as_str()) {
         return Err(format!("Invalid entity_type '{}'. Must be one of: {}", request.entity_type, valid_entities.join(", ")));
     }
@@ -846,60 +872,6 @@ pub async fn manage_axiology(
                 entity: None,
                 entities: None,
                 message: "Aspiration deleted successfully".to_string(),
-            })
-        },
-
-        // ========== VALUES ==========
-        ("value", "list") => {
-            let items = axiology::list_values(pool).await.map_err(|e| e.to_string())?;
-            Ok(ManageAxiologyResponse {
-                success: true,
-                entity: None,
-                entities: Some(items.iter().map(|v| serde_json::to_value(v).unwrap()).collect()),
-                message: format!("Retrieved {} values", items.len()),
-            })
-        },
-        ("value", "read") => {
-            let id = parse_uuid(&request.id)?;
-            let item = axiology::get_value(pool, id).await.map_err(|e| e.to_string())?;
-            Ok(ManageAxiologyResponse {
-                success: true,
-                entity: Some(serde_json::to_value(item).unwrap()),
-                entities: None,
-                message: "Value retrieved successfully".to_string(),
-            })
-        },
-        ("value", "create") => {
-            let data = request.data.ok_or("Missing data for create operation")?;
-            let req: axiology::CreateSimpleRequest = serde_json::from_value(data).map_err(|e| e.to_string())?;
-            let item = axiology::create_value(pool, req).await.map_err(|e| e.to_string())?;
-            Ok(ManageAxiologyResponse {
-                success: true,
-                entity: Some(serde_json::to_value(item).unwrap()),
-                entities: None,
-                message: "Value created successfully".to_string(),
-            })
-        },
-        ("value", "update") => {
-            let id = parse_uuid(&request.id)?;
-            let data = request.data.ok_or("Missing data for update operation")?;
-            let req: axiology::UpdateSimpleRequest = serde_json::from_value(data).map_err(|e| e.to_string())?;
-            let item = axiology::update_value(pool, id, req).await.map_err(|e| e.to_string())?;
-            Ok(ManageAxiologyResponse {
-                success: true,
-                entity: Some(serde_json::to_value(item).unwrap()),
-                entities: None,
-                message: "Value updated successfully".to_string(),
-            })
-        },
-        ("value", "delete") => {
-            let id = parse_uuid(&request.id)?;
-            axiology::delete_value(pool, id).await.map_err(|e| e.to_string())?;
-            Ok(ManageAxiologyResponse {
-                success: true,
-                entity: None,
-                entities: None,
-                message: "Value deleted successfully".to_string(),
             })
         },
 
@@ -1185,4 +1157,106 @@ pub async fn manage_axiology(
 fn parse_uuid(id_opt: &Option<String>) -> Result<uuid::Uuid, String> {
     let id_str = id_opt.as_ref().ok_or("Missing id parameter")?;
     uuid::Uuid::parse_str(id_str).map_err(|e| format!("Invalid UUID format: {}", e))
+}
+
+// ============================================================================
+// Semantic Search Tool
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticSearchRequest {
+    /// Natural language search query (e.g., "emails about project deadline", "messages about dinner plans")
+    pub query: String,
+
+    /// Content types to search (optional). If not specified, searches all types.
+    /// Options: "email", "message", "calendar", "ai_conversation", "document"
+    /// Accepts either a single string ("calendar") or an array (["calendar", "email"])
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub content_types: Option<Vec<String>>,
+
+    /// Maximum results to return (default: 10, max: 50)
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticSearchResponse {
+    /// Search results ordered by relevance
+    pub results: Vec<SemanticSearchResult>,
+
+    /// Original query
+    pub query: String,
+
+    /// Number of results returned
+    pub total_results: usize,
+
+    /// Search execution time in milliseconds
+    pub search_time_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SemanticSearchResult {
+    /// Content type (email, message, calendar, ai_conversation)
+    pub content_type: String,
+
+    /// Record ID
+    pub id: String,
+
+    /// Title (for emails and calendar events)
+    pub title: Option<String>,
+
+    /// Content preview (first ~200 characters)
+    pub preview: String,
+
+    /// Author/sender name
+    pub author: Option<String>,
+
+    /// Timestamp
+    pub timestamp: String,
+
+    /// Similarity score (0.0-1.0, higher is more relevant)
+    pub similarity: f32,
+}
+
+/// Perform semantic search across embedded content (emails, messages, calendar, AI conversations)
+pub async fn semantic_search(
+    pool: &PgPool,
+    request: SemanticSearchRequest,
+) -> Result<SemanticSearchResponse, String> {
+    use crate::api::search;
+
+    // Map to API request
+    let api_request = search::SemanticSearchRequest {
+        query: request.query.clone(),
+        limit: request.limit.unwrap_or(10).min(50),
+        content_types: request.content_types,
+        min_similarity: 0.3,
+    };
+
+    // Execute search
+    let result = search::semantic_search(pool, api_request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Map results to tool response
+    let results: Vec<SemanticSearchResult> = result
+        .results
+        .into_iter()
+        .map(|r| SemanticSearchResult {
+            content_type: r.content_type,
+            id: r.id.to_string(),
+            title: r.title,
+            preview: r.preview,
+            author: r.author,
+            timestamp: r.timestamp.to_rfc3339(),
+            similarity: r.similarity,
+        })
+        .collect();
+
+    Ok(SemanticSearchResponse {
+        total_results: results.len(),
+        results,
+        query: result.query,
+        search_time_ms: result.search_time_ms,
+    })
 }
