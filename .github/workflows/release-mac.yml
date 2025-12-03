@@ -1,4 +1,4 @@
-name: Release Mac CLI
+name: Release Mac App
 
 on:
   push:
@@ -16,11 +16,11 @@ jobs:
     runs-on: macos-latest
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
@@ -34,7 +34,7 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
-      
+
       - name: Import Code Signing Certificate
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -78,17 +78,15 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
           echo "Certificate imported successfully"
-      
-      - name: Build universal binary
+
+      - name: Build universal app bundle
         env:
           CODESIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
-          # Debug: Show what env vars are available
-          echo "KEYCHAIN_PATH from GITHUB_ENV: ${KEYCHAIN_PATH:-<not set>}"
-          echo "KEYCHAIN_PASSWORD length: ${#KEYCHAIN_PASSWORD}"
           cd apps/mac
 
           # Build for x86_64
+          echo "Building for x86_64..."
           xcodebuild -project mac.xcodeproj \
             -scheme mac \
             -configuration Release \
@@ -101,6 +99,7 @@ jobs:
             build
 
           # Build for arm64
+          echo "Building for arm64..."
           xcodebuild -project mac.xcodeproj \
             -scheme mac \
             -configuration Release \
@@ -112,25 +111,30 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
-          # Find the built binaries
-          X86_BINARY=$(find .build/x86_64 -name "mac" -type f -perm +111 | head -1)
-          ARM_BINARY=$(find .build/arm64 -name "mac" -type f -perm +111 | head -1)
+          # Find the built .app bundles
+          X86_APP=$(find .build/x86_64 -name "mac.app" -type d | head -1)
+          ARM_APP=$(find .build/arm64 -name "mac.app" -type d | head -1)
 
-          echo "x86_64 binary: $X86_BINARY"
-          echo "arm64 binary: $ARM_BINARY"
+          echo "x86_64 app: $X86_APP"
+          echo "arm64 app: $ARM_APP"
 
-          # Create universal binary
-          lipo -create "$X86_BINARY" "$ARM_BINARY" -output virtues-mac
+          # Copy arm64 app as base (preserves all resources, Info.plist, etc.)
+          cp -R "$ARM_APP" Virtues.app
 
-          # Make it executable
-          chmod +x virtues-mac
+          # Create universal binary by merging both architectures
+          echo "Creating universal binary..."
+          lipo -create \
+            "$X86_APP/Contents/MacOS/mac" \
+            "$ARM_APP/Contents/MacOS/mac" \
+            -output Virtues.app/Contents/MacOS/mac
 
-          # Strip debug symbols
-          strip virtues-mac
+          # Verify universal binary
+          echo "Binary architectures:"
+          lipo -info Virtues.app/Contents/MacOS/mac
 
           # Sign if certificate is available
           if [ -n "$CODESIGN_IDENTITY" ] && [ -n "$KEYCHAIN_PATH" ]; then
-            echo "Signing with identity: $CODESIGN_IDENTITY"
+            echo "Signing app bundle with identity: $CODESIGN_IDENTITY"
 
             # Unlock keychain for this step
             security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -139,40 +143,51 @@ jobs:
             echo "Available signing identities:"
             security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-            # Sign with explicit keychain
+            # Sign the entire .app bundle with entitlements
             codesign --force --deep \
                      --sign "$CODESIGN_IDENTITY" \
                      --keychain "$KEYCHAIN_PATH" \
+                     --entitlements mac/mac.entitlements \
                      --options runtime \
                      --timestamp \
-                     virtues-mac || { echo "ERROR: codesign failed!"; exit 1; }
+                     Virtues.app || { echo "ERROR: codesign failed!"; exit 1; }
 
             # Verify signature
-            codesign --verify --verbose virtues-mac || { echo "ERROR: signature verification failed!"; exit 1; }
-            echo "Binary signed successfully"
+            codesign --verify --verbose=4 Virtues.app || { echo "ERROR: signature verification failed!"; exit 1; }
+            echo "App bundle signed successfully"
           else
-            echo "No signing identity provided, binary will be unsigned"
+            echo "No signing identity provided, app will be unsigned"
             echo "CODESIGN_IDENTITY: ${CODESIGN_IDENTITY:-<empty>}"
             echo "KEYCHAIN_PATH: ${KEYCHAIN_PATH:-<empty>}"
           fi
 
-          # Verify universal binary
-          echo "Binary architectures:"
-          lipo -info virtues-mac
+      - name: Create DMG
+        run: |
+          cd apps/mac
 
-          # Create tarball
-          tar -czf virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz virtues-mac
+          VERSION="${{ steps.version.outputs.VERSION }}"
 
-          # Create zip for easier download
-          zip virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip virtues-mac
-      
-      - name: Notarize Binary
+          # Create DMG
+          echo "Creating DMG..."
+          hdiutil create \
+            -volname "Virtues" \
+            -srcfolder Virtues.app \
+            -ov \
+            -format UDZO \
+            "Virtues-${VERSION}.dmg"
+
+          echo "DMG created: Virtues-${VERSION}.dmg"
+          ls -la "Virtues-${VERSION}.dmg"
+
+      - name: Notarize DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           cd apps/mac
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          DMG_FILE="Virtues-${VERSION}.dmg"
 
           # Check if we have notarization credentials
           if [ -z "$APPLE_ID" ] || [ -z "$APPLE_APP_PASSWORD" ]; then
@@ -180,168 +195,100 @@ jobs:
             exit 0
           fi
 
-          # Only notarize if signed
-          if codesign -dv virtues-mac 2>&1 | grep -q "Authority"; then
-            echo "Submitting for notarization..."
-
-            # Create zip for notarization using ditto (required for CLI tools)
-            ditto -c -k --keepParent virtues-mac virtues-mac-notarize.zip
+          # Only notarize if the app is signed
+          if codesign -dv Virtues.app 2>&1 | grep -q "Authority"; then
+            echo "Submitting DMG for notarization..."
 
             # Submit for notarization
-            xcrun notarytool submit virtues-mac-notarize.zip \
+            xcrun notarytool submit "$DMG_FILE" \
               --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
               --wait
 
-            # Note: stapler doesn't work on bare binaries (only app bundles/DMGs)
-            # The notarization ticket is stored in Apple's servers and checked at runtime
+            # Staple the notarization ticket to the DMG
+            echo "Stapling notarization ticket..."
+            xcrun stapler staple "$DMG_FILE"
 
-            # Recreate archives with notarized binary
-            tar -czf virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz virtues-mac
-            zip virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip virtues-mac
+            # Verify stapling
+            xcrun stapler validate "$DMG_FILE"
 
-            echo "Notarization complete"
+            echo "Notarization and stapling complete!"
           else
-            echo "Binary not signed, skipping notarization"
+            echo "App not signed, skipping notarization"
           fi
-      
-      - name: Copy installer scripts
+
+      - name: Copy installer script
         run: |
-          # Copy the enhanced installer with GUI
+          # Copy the installer script (updated for DMG)
           cp apps/mac/Scripts/installer.sh installer.sh
           chmod +x installer.sh
-          
-          # Create simple install script for backward compatibility
-          cat > install-simple.sh << 'EOF'
-          #!/bin/bash
-          set -e
-          
-          VERSION="${1:-latest}"
-          INSTALL_DIR="/usr/local/bin"
-          
-          echo "Installing virtues-mac $VERSION..."
-          
-          # Detect architecture
-          ARCH=$(uname -m)
-          echo "Detected architecture: $ARCH"
-          
-          # Download URL
-          if [ "$VERSION" = "latest" ]; then
-            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/mac-latest/virtues-mac-universal.tar.gz"
-          else
-            DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/mac-v$VERSION/virtues-mac-$VERSION-universal.tar.gz"
-          fi
-          
-          # Download and extract
-          echo "Downloading from $DOWNLOAD_URL..."
-          curl -L -o /tmp/virtues-mac.tar.gz "$DOWNLOAD_URL"
-          tar -xzf /tmp/virtues-mac.tar.gz -C /tmp/
-          
-          # Install binary
-          echo "Installing to $INSTALL_DIR..."
-          sudo mv /tmp/virtues-mac "$INSTALL_DIR/virtues-mac"
-          sudo chmod +x "$INSTALL_DIR/virtues-mac"
-          
-          # Clean up
-          rm -f /tmp/virtues-mac.tar.gz
-          
-          echo "✅ Installation complete!"
-          echo ""
-          echo "Run 'virtues-mac --help' to get started"
-          echo ""
-          echo "Quick start:"
-          echo "  1. Get a device token from https://virtues.com"
-          echo "  2. Run: virtues-mac init <token>"
-          echo "  3. Run: virtues-mac daemon"
-          EOF
-          
-          chmod +x install-simple.sh
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Mac CLI v${{ steps.version.outputs.VERSION }}
+          name: Virtues for Mac v${{ steps.version.outputs.VERSION }}
           body: |
-            ## Virtues Mac CLI v${{ steps.version.outputs.VERSION }}
-            
+            ## Virtues for Mac v${{ steps.version.outputs.VERSION }}
+
             ### Installation
-            
-            #### Option 1: Interactive Installer (Recommended)
+
+            #### Option 1: Download DMG (Recommended)
+            1. Download `Virtues-${{ steps.version.outputs.VERSION }}.dmg`
+            2. Double-click to mount
+            3. Drag **Virtues** to your Applications folder
+            4. Launch from Applications
+
+            #### Option 2: Command Line Installer
             ```bash
-            # With GUI dialogs and automatic setup
             curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/installer.sh | bash
             ```
-            
-            #### Option 2: Quick Install with Parameters
-            ```bash
-            # Provide token and endpoint directly
-            curl -sSL https://github.com/${{ github.repository }}/releases/latest/download/installer.sh | \
-              bash -s -- --token YOUR_TOKEN --endpoint https://your-server.com
-            ```
-            
-            #### Option 3: Manual Download
-            1. Download `virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz`
-            2. Extract: `tar -xzf virtues-mac-*.tar.gz`
-            3. Move to PATH: `sudo mv virtues-mac /usr/local/bin/`
-            4. Make executable: `sudo chmod +x /usr/local/bin/virtues-mac`
-            
-            ### Usage
-            ```bash
-            # Initialize with token from web UI
-            virtues-mac init <token>
-            
-            # Install as background service (auto-starts on login)
-            virtues-mac daemon
-            
-            # Check status
-            virtues-mac status
-            
-            # Stop service
-            virtues-mac stop
-            ```
-            
-            ### What's New
+
+            ### First Run
+            1. Launch Virtues from Applications
+            2. Click the menu bar icon
+            3. Select "Pair with Virtues..."
+            4. Enter your pairing code from the web app
+
+            ### Features
             - Universal binary (Intel + Apple Silicon)
+            - Menu bar app with status indicator
             - Automatic startup on login
-            - Simplified data collection (app focus events only)
+            - Activity tracking (app focus events)
             - 5-minute batch uploads
             - Local SQLite queue for reliability
-            
+
             ### Requirements
             - macOS 11.0 or later
             - Accessibility permissions (prompted on first run)
           files: |
-            apps/mac/virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz
-            apps/mac/virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip
+            apps/mac/Virtues-${{ steps.version.outputs.VERSION }}.dmg
             installer.sh
-            install-simple.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Update latest release
+
+      - name: Prepare latest release files
         if: success()
         run: |
-          # Copy files for latest tag
           cd apps/mac
-          cp virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz virtues-mac-universal.tar.gz
-          cp virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip virtues-mac-universal.zip
-      
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          # Copy DMG for latest tag
+          cp "Virtues-${VERSION}.dmg" Virtues.dmg
+
       - name: Upload latest artifacts
         if: success()
         uses: softprops/action-gh-release@v1
         with:
           tag_name: mac-latest
-          name: Mac CLI Latest
+          name: Virtues for Mac (Latest)
           body: |
             This release is automatically updated with the latest stable version.
             Current version: v${{ steps.version.outputs.VERSION }}
-            
+
             For specific versions, see [all releases](https://github.com/${{ github.repository }}/releases).
           files: |
-            apps/mac/virtues-mac-universal.tar.gz
-            apps/mac/virtues-mac-universal.zip
+            apps/mac/Virtues.dmg
             installer.sh
-            install-simple.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

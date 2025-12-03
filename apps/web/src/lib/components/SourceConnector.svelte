@@ -228,7 +228,7 @@
 			</p>
 
 			<a
-				href="https://github.com/virtues-os/virtues/releases/download/mac-latest/virtues-mac-universal.zip"
+				href="https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.dmg"
 				target="_blank"
 				rel="noopener noreferrer"
 				class="download-link"
