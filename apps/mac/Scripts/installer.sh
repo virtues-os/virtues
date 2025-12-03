@@ -146,7 +146,7 @@ detect_arch() {
 install_binary() {
     log_info "Downloading Virtues Mac..."
 
-    local download_url="https://github.com/$REPO/releases/latest/download/virtues-mac-universal.tar.gz"
+    local download_url="https://github.com/$REPO/releases/download/mac-latest/virtues-mac-universal.tar.gz"
     local temp_dir=$(mktemp -d)
 
     # Download
