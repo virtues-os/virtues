@@ -20,7 +20,7 @@ struct StartCommand: ParsableCommand {
             throw ConfigError.notConfigured
         }
         
-        print("Starting Ariata Mac Monitor...")
+        print("Starting Virtues Mac Monitor...")
         print("Device ID: \(config.deviceId)")
         print("API Endpoint: \(config.apiEndpoint)")
         print("Press Ctrl+C to stop\n")

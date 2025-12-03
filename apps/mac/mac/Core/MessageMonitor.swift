@@ -76,8 +76,8 @@ class MessageMonitor {
                 } else {
                     if permissionCheckAttempts == 1 {
                         print("⚠️ Cannot read Messages database - Full Disk Access required")
-                        print("   To enable: System Settings → Privacy & Security → Full Disk Access → Add ariata-mac")
-                        print("   Ariata will automatically detect when permission is granted (checking every 5 minutes)")
+                        print("   To enable: System Settings → Privacy & Security → Full Disk Access → Add virtues-mac")
+                        print("   Virtues will automatically detect when permission is granted (checking every 5 minutes)")
                     } else if permissionCheckAttempts % 12 == 0 { // Log every hour
                         print("⏳ Still waiting for Full Disk Access (checked \(permissionCheckAttempts) times)")
                     }
@@ -365,7 +365,7 @@ class MessageMonitor {
     
     private func loadLastSyncDate() {
         // Load from UserDefaults or local storage
-        if let storedDate = UserDefaults.standard.object(forKey: "ariata.messages.lastSyncDate") as? Date {
+        if let storedDate = UserDefaults.standard.object(forKey: "virtues.messages.lastSyncDate") as? Date {
             // Validate the date is reasonable (between 2000 and 2100)
             let calendar = Calendar.current
             let year = calendar.component(.year, from: storedDate)
@@ -376,7 +376,7 @@ class MessageMonitor {
             } else {
                 print("⚠️ Discarding invalid stored sync date (year \(year)). Will perform initial sync.")
                 // Clear the corrupted value
-                UserDefaults.standard.removeObject(forKey: "ariata.messages.lastSyncDate")
+                UserDefaults.standard.removeObject(forKey: "virtues.messages.lastSyncDate")
                 lastSyncDate = nil
             }
         }
@@ -389,7 +389,7 @@ class MessageMonitor {
             let year = calendar.component(.year, from: date)
             
             if year >= 2000 && year <= 2100 {
-                UserDefaults.standard.set(date, forKey: "ariata.messages.lastSyncDate")
+                UserDefaults.standard.set(date, forKey: "virtues.messages.lastSyncDate")
                 print("Saved last sync date: \(ISO8601DateFormatter().string(from: date))")
             } else {
                 print("⚠️ Refusing to save invalid sync date (year \(year))")

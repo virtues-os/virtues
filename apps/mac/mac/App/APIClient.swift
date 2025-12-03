@@ -1,6 +1,6 @@
 import Foundation
 
-/// API client for communicating with the Ariata backend
+/// API client for communicating with the Virtues backend
 class APIClient {
 
     static let shared = APIClient()

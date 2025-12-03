@@ -52,6 +52,6 @@ struct ResetCommand: ParsableCommand {
             }
         }
         
-        print("\nReset complete. Run 'ariata-mac init <token>' to reconfigure.")
+        print("\nReset complete. Run 'virtues-mac init <token>' to reconfigure.")
     }
 }

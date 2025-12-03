@@ -31,7 +31,7 @@ class DeviceIdentifier {
 
     /// Get or create fallback UUID
     private static func getFallbackUUID() -> String {
-        let key = "com.ariata.mac.device-uuid"
+        let key = "com.virtues.mac.device-uuid"
 
         // Check if we already generated one
         if let existing = UserDefaults.standard.string(forKey: key) {

@@ -14,7 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Logger.setup()
 
         // Log app information at startup
-        Logger.log("🚀 Ariata Mac starting up")
+        Logger.log("🚀 Virtues Mac starting up")
         Logger.log("   Bundle path: \(Bundle.main.bundlePath)")
         Logger.log("   Executable: \(Bundle.main.executablePath ?? "unknown")")
         Logger.log("   Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
@@ -107,13 +107,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func showPermissionsAlert() {
         let alert = NSAlert()
-        alert.messageText = "Ariata Needs Permissions"
+        alert.messageText = "Virtues Needs Permissions"
 
         // Check which specific permissions are missing
         let needsAccessibility = !(permissionsManager?.checkAccessibility() ?? false)
         let needsFullDisk = !(permissionsManager?.checkFullDiskAccess() ?? false)
 
-        var instructions = "To track your activity and messages, Ariata needs:\n\n"
+        var instructions = "To track your activity and messages, Virtues needs:\n\n"
 
         if needsAccessibility {
             instructions += "✓ Accessibility Access\n   (for monitoring app usage)\n\n"
@@ -128,11 +128,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         1. Click 'Open System Settings' below
         2. Click the lock icon and enter your password
         3. Click the '+' button
-        4. Select 'Ariata' from Applications folder
+        4. Select 'Virtues' from Applications folder
         5. Toggle the switch ON
         6. Return to this window
 
-        Ariata will automatically detect when permissions are granted.
+        Virtues will automatically detect when permissions are granted.
         """
 
         alert.informativeText = instructions
@@ -169,7 +169,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
                     // Show brief success notification using modern API
                     self.menuBarController?.showNotification(
-                        title: "Ariata Ready",
+                        title: "Virtues Ready",
                         message: "Now monitoring your activity and messages"
                     )
 

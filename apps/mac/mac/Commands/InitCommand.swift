@@ -7,7 +7,7 @@ struct InitCommand: ParsableCommand {
         abstract: "Initialize with a device token from the web UI"
     )
     
-    @Argument(help: "Device token from the Ariata web UI")
+    @Argument(help: "Device token from the Virtues web UI")
     var token: String
     
     func run() throws {
@@ -45,10 +45,10 @@ struct InitCommand: ParsableCommand {
                 
                 try config.save()
                 
-                print("✓ Configuration saved to ~/.ariata/config.json")
+                print("✓ Configuration saved to ~/.virtues/config.json")
                 print("\nReady to start monitoring!")
-                print("Run 'ariata-mac start' to begin monitoring")
-                print("Run 'ariata-mac daemon' to install as background service")
+                print("Run 'virtues-mac start' to begin monitoring")
+                print("Run 'virtues-mac daemon' to install as background service")
                 
                 holder.config = config
             } catch {

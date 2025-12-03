@@ -3,7 +3,7 @@ import Foundation
 /// Manages LaunchAgent installation for auto-start on login
 class LaunchAgentManager {
 
-    private let plistName = "com.ariata.daemon.plist"
+    private let plistName = "com.virtues.daemon.plist"
 
     private var launchAgentPath: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -25,9 +25,9 @@ class LaunchAgentManager {
             withIntermediateDirectories: true
         )
 
-        // Get path to Ariata.app
+        // Get path to Virtues.app
         let appPath = Bundle.main.bundlePath
-        let executablePath = "\(appPath)/Contents/MacOS/Ariata"
+        let executablePath = "\(appPath)/Contents/MacOS/Virtues"
 
         // Create plist content
         let plistContent = """
@@ -36,7 +36,7 @@ class LaunchAgentManager {
         <plist version="1.0">
         <dict>
             <key>Label</key>
-            <string>com.ariata.daemon</string>
+            <string>com.virtues.daemon</string>
 
             <key>ProgramArguments</key>
             <array>
@@ -51,10 +51,10 @@ class LaunchAgentManager {
             <true/>
 
             <key>StandardOutPath</key>
-            <string>/tmp/ariata.log</string>
+            <string>/tmp/virtues.log</string>
 
             <key>StandardErrorPath</key>
-            <string>/tmp/ariata.err</string>
+            <string>/tmp/virtues.err</string>
         </dict>
         </plist>
         """

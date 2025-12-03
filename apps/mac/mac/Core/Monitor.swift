@@ -115,7 +115,7 @@ class Monitor {
         let bundleId = app.bundleIdentifier
         
         // Skip our own app
-        if bundleId == "com.ariata.mac" || appName == "ariata-mac" {
+        if bundleId == "com.virtues.mac" || appName == "virtues-mac" {
             return
         }
         
