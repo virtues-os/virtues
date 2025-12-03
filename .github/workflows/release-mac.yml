@@ -21,11 +21,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
-      - name: Set up Swift
-        uses: swift-actions/setup-swift@v2
-        with:
-          swift-version: '6.0'
-      
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
       - name: Get version
         id: version
         run: |
@@ -66,25 +64,47 @@ jobs:
           CODESIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           cd apps/mac
-          
+
           # Build for x86_64
-          swift build -c release --arch x86_64
-          
+          xcodebuild -project mac.xcodeproj \
+            -scheme mac \
+            -configuration Release \
+            -arch x86_64 \
+            -derivedDataPath .build/x86_64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
           # Build for arm64
-          swift build -c release --arch arm64
-          
+          xcodebuild -project mac.xcodeproj \
+            -scheme mac \
+            -configuration Release \
+            -arch arm64 \
+            -derivedDataPath .build/arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+          # Find the built binaries
+          X86_BINARY=$(find .build/x86_64 -name "mac" -type f -perm +111 | head -1)
+          ARM_BINARY=$(find .build/arm64 -name "mac" -type f -perm +111 | head -1)
+
+          echo "x86_64 binary: $X86_BINARY"
+          echo "arm64 binary: $ARM_BINARY"
+
           # Create universal binary
-          lipo -create \
-            .build/x86_64-apple-macosx/release/virtues-mac \
-            .build/arm64-apple-macosx/release/virtues-mac \
-            -output virtues-mac
-          
+          lipo -create "$X86_BINARY" "$ARM_BINARY" -output virtues-mac
+
           # Make it executable
           chmod +x virtues-mac
-          
+
           # Strip debug symbols
           strip virtues-mac
-          
+
           # Sign if certificate is available
           if [ -n "$CODESIGN_IDENTITY" ]; then
             echo "Signing with identity: $CODESIGN_IDENTITY"
@@ -93,21 +113,21 @@ jobs:
                      --options runtime \
                      --timestamp \
                      virtues-mac
-            
+
             # Verify signature
             codesign --verify --verbose virtues-mac
             echo "Binary signed successfully"
           else
             echo "No signing identity provided, binary will be unsigned"
           fi
-          
+
           # Verify universal binary
           echo "Binary architectures:"
           lipo -info virtues-mac
-          
+
           # Create tarball
           tar -czf virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz virtues-mac
-          
+
           # Create zip for easier download
           zip virtues-mac-${{ steps.version.outputs.VERSION }}-universal.zip virtues-mac
       
