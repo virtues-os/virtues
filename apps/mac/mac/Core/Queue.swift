@@ -7,7 +7,7 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 class Queue {
     private var db: OpaquePointer?
     private let dbPath: String
-    private let queue = DispatchQueue(label: "com.ariata.mac.queue", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "com.virtues.mac.queue", attributes: .concurrent)
     
     init() throws {
         let dbDir = Config.configDir

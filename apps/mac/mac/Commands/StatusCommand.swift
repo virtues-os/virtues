@@ -8,7 +8,7 @@ struct StatusCommand: ParsableCommand {
     )
     
     func run() throws {
-        print("Ariata Mac Monitor Status")
+        print("Virtues Mac Monitor Status")
         print("=" * 30)
         
         // Check config
@@ -19,7 +19,7 @@ struct StatusCommand: ParsableCommand {
             print("  Created: \(config.createdAt)")
         } else {
             print("✗ Not configured")
-            print("  Run 'ariata-mac init <token>' to configure")
+            print("  Run 'virtues-mac init <token>' to configure")
             return
         }
         
@@ -64,22 +64,22 @@ struct StatusCommand: ParsableCommand {
         
         // Check if daemon is installed
         let launchAgentPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents/com.ariata.mac.plist")
+            .appendingPathComponent("Library/LaunchAgents/com.virtues.mac.plist")
         
         if FileManager.default.fileExists(atPath: launchAgentPath.path) {
             print("LaunchAgent: ✓ Installed")
             
             // Check if running
-            let result = shell("launchctl list | grep com.ariata.mac")
+            let result = shell("launchctl list | grep com.virtues.mac")
             if !result.isEmpty {
                 print("  Status: Running")
             } else {
                 print("  Status: Not running")
-                print("  Run 'ariata-mac daemon' to restart")
+                print("  Run 'virtues-mac daemon' to restart")
             }
         } else {
             print("LaunchAgent: ✗ Not installed")
-            print("  Run 'ariata-mac daemon' to install")
+            print("  Run 'virtues-mac daemon' to install")
         }
     }
     

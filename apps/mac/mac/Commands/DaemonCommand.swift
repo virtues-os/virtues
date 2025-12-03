@@ -18,7 +18,7 @@ struct DaemonCommand: ParsableCommand {
         // Get paths
         let launchAgentsDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents")
-        let plistPath = launchAgentsDir.appendingPathComponent("com.ariata.mac.plist")
+        let plistPath = launchAgentsDir.appendingPathComponent("com.virtues.mac.plist")
         
         // Create LaunchAgents directory if needed
         try FileManager.default.createDirectory(
@@ -37,7 +37,7 @@ struct DaemonCommand: ParsableCommand {
         <plist version="1.0">
         <dict>
             <key>Label</key>
-            <string>com.ariata.mac</string>
+            <string>com.virtues.mac</string>
             
             <key>ProgramArguments</key>
             <array>
@@ -60,10 +60,10 @@ struct DaemonCommand: ParsableCommand {
             <string>Background</string>
             
             <key>StandardOutPath</key>
-            <string>\(Config.configDir.path)/ariata-mac.log</string>
-            
+            <string>\(Config.configDir.path)/virtues-mac.log</string>
+
             <key>StandardErrorPath</key>
-            <string>\(Config.configDir.path)/ariata-mac.error.log</string>
+            <string>\(Config.configDir.path)/virtues-mac.error.log</string>
             
             <key>WorkingDirectory</key>
             <string>\(FileManager.default.homeDirectoryForCurrentUser.path)</string>
@@ -92,14 +92,14 @@ struct DaemonCommand: ParsableCommand {
         
         // Verify it's running
         Thread.sleep(forTimeInterval: 1)
-        let listResult = shell("launchctl list | grep com.ariata.mac")
+        let listResult = shell("launchctl list | grep com.virtues.mac")
         if !listResult.isEmpty {
             print("✓ Service is running")
             print("\nMonitoring started in background!")
-            print("Logs: ~/.ariata/ariata-mac.log")
-            print("To stop: ariata-mac stop")
+            print("Logs: ~/.virtues/virtues-mac.log")
+            print("To stop: virtues-mac stop")
         } else {
-            print("⚠️  Service may not have started. Check logs at ~/.ariata/ariata-mac.error.log")
+            print("⚠️  Service may not have started. Check logs at ~/.virtues/virtues-mac.error.log")
         }
     }
     

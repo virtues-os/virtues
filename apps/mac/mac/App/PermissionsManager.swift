@@ -2,7 +2,7 @@ import Cocoa
 import ApplicationServices
 import SQLite3
 
-/// Manages macOS permissions required by Ariata
+/// Manages macOS permissions required by Virtues
 class PermissionsManager {
 
     private let appPathKey = "LastKnownAppPath"
@@ -116,7 +116,7 @@ class PermissionsManager {
 
             App Location: \(appPath)
 
-            Ariata will automatically detect when permissions are granted and start monitoring.
+            Virtues will automatically detect when permissions are granted and start monitoring.
             """
             alert.addButton(withTitle: "OK")
             alert.addButton(withTitle: "Copy App Path")

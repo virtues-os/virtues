@@ -143,7 +143,7 @@ class MenuBarController: NSObject, NSMenuDelegate {
             menu.addItem(NSMenuItem.separator())
 
             let quitItem = menu.addItem(
-                withTitle: "Quit Ariata",
+                withTitle: "Quit Virtues",
                 action: #selector(quit),
                 keyEquivalent: "q"
             )
@@ -435,7 +435,7 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func openDashboard() {
         // TODO: Get dashboard URL from config or environment variable
-        let dashboardURL = ProcessInfo.processInfo.environment["ARIATA_DASHBOARD_URL"] ?? "http://localhost:5173"
+        let dashboardURL = ProcessInfo.processInfo.environment["VIRTUES_DASHBOARD_URL"] ?? "http://localhost:5173"
 
         if let url = URL(string: dashboardURL) {
             NSWorkspace.shared.open(url)
@@ -610,7 +610,7 @@ class MenuBarController: NSObject, NSMenuDelegate {
 
             // Show success notification
             showNotification(title: "Paired Successfully!",
-                           message: "Your Mac is now connected to Ariata")
+                           message: "Your Mac is now connected to Virtues")
 
             // Start daemon asynchronously to avoid blocking main thread
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in

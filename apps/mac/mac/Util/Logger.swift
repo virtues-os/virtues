@@ -10,7 +10,7 @@ class Logger {
         guard !isSetup else { return }
 
         let fileManager = FileManager.default
-        let logDir = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".ariata/logs")
+        let logDir = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".virtues/logs")
 
         try? fileManager.createDirectory(at: logDir, withIntermediateDirectories: true)
 

@@ -24,7 +24,7 @@ class DaemonController {
             Logger.log("   Device ID: \(config.deviceId)", level: .debug)
             Logger.log("   API Endpoint: \(config.apiEndpoint)", level: .debug)
         } else {
-            Logger.log("❌ Failed to load config from ~/.ariata/config.json", level: .error)
+            Logger.log("❌ Failed to load config from ~/.virtues/config.json", level: .error)
         }
 
         // Initialize queue
@@ -123,7 +123,7 @@ class DaemonController {
 
         guard let config = config else {
             Logger.log("❌ Cannot start: config is nil", level: .error)
-            Logger.log("   Config file not found at ~/.ariata/config.json", level: .error)
+            Logger.log("   Config file not found at ~/.virtues/config.json", level: .error)
             Logger.log("   Run pairing flow to create config", level: .error)
             return
         }
