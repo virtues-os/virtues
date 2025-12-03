@@ -167,14 +167,23 @@ jobs:
 
           VERSION="${{ steps.version.outputs.VERSION }}"
 
-          # Create DMG
+          # Create staging folder with app and Applications symlink
+          echo "Creating DMG staging folder..."
+          mkdir -p dmg-staging
+          cp -R Virtues.app dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          # Create DMG from staging folder
           echo "Creating DMG..."
           hdiutil create \
             -volname "Virtues" \
-            -srcfolder Virtues.app \
+            -srcfolder dmg-staging \
             -ov \
             -format UDZO \
             "Virtues-${VERSION}.dmg"
+
+          # Cleanup staging
+          rm -rf dmg-staging
 
           echo "DMG created: Virtues-${VERSION}.dmg"
           ls -la "Virtues-${VERSION}.dmg"
