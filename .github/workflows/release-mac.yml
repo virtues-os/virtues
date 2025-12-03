@@ -82,8 +82,10 @@ jobs:
       - name: Build universal binary
         env:
           CODESIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
-          KEYCHAIN_PASSWORD: ${{ env.KEYCHAIN_PASSWORD }}
         run: |
+          # Debug: Show what env vars are available
+          echo "KEYCHAIN_PATH from GITHUB_ENV: ${KEYCHAIN_PATH:-<not set>}"
+          echo "KEYCHAIN_PASSWORD length: ${#KEYCHAIN_PASSWORD}"
           cd apps/mac
 
           # Build for x86_64
