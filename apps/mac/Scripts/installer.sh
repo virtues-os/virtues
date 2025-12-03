@@ -106,7 +106,11 @@ prompt_dialog() {
     local title="${3:-Virtues Installer}"
 
     if $INTERACTIVE && command -v osascript &> /dev/null; then
-        result=$(osascript -e "display dialog \"$message\" default answer \"$default_value\" with title \"$title\" buttons {\"Cancel\", \"OK\"} default button \"OK\"" -e "text returned of result" 2>/dev/null) || return 1
+        result=$(osascript <<EOF
+display dialog "$message" default answer "$default_value" with title "$title" buttons {"Cancel", "OK"} default button "OK"
+text returned of result
+EOF
+) || return 1
         echo "$result"
     else
         read -p "$message [$default_value]: " result
@@ -120,7 +124,12 @@ confirm_dialog() {
     local title="${2:-Virtues Installer}"
 
     if $INTERACTIVE && command -v osascript &> /dev/null; then
-        osascript -e "display dialog \"$message\" with title \"$title\" buttons {\"No\", \"Yes\"} default button \"Yes\"" -e "button returned of result" 2>/dev/null | grep -q "Yes"
+        result=$(osascript <<EOF
+display dialog "$message" with title "$title" buttons {"No", "Yes"} default button "Yes"
+button returned of result
+EOF
+) 2>/dev/null
+        [[ "$result" == "Yes" ]]
     else
         read -p "$message [y/N]: " result
         [[ "$result" =~ ^[Yy]$ ]]

@@ -59,7 +59,7 @@
 	// Modal state
 	let activeSource = $state<CatalogSource | null>(null);
 	let showModal = $state(false);
-	let modalStep = $state<"connect" | "streams">("connect");
+	let modalStep = $state<"download" | "connect" | "streams">("connect");
 
 	// Connection state
 	let isLoading = $state(false);
@@ -78,7 +78,7 @@
 	function openConnectModal(source: CatalogSource) {
 		activeSource = source;
 		sourceName = `${source.display_name} Account`;
-		modalStep = "connect";
+		modalStep = source.name === "mac" ? "download" : "connect";
 		error = null;
 		showModal = true;
 	}
@@ -213,11 +213,45 @@
 <Modal
 	open={showModal && !!activeSource}
 	onClose={closeModal}
-	title={modalStep === "connect" ? `Connect ${activeSource?.display_name}` : "Enable streams"}
+	title={modalStep === "download"
+		? `Download ${activeSource?.display_name}`
+		: modalStep === "connect"
+			? `Connect ${activeSource?.display_name}`
+			: "Enable streams"}
 	subtitle={modalStep === "streams" ? "Choose which data to sync:" : undefined}
 	variant={isManifest ? "manuscript" : "default"}
 >
-	{#if modalStep === "connect" && activeSource}
+	{#if modalStep === "download" && activeSource}
+		<div class="download-step">
+			<p class="modal-description">
+				Download and install the Virtues Mac app to connect your computer.
+			</p>
+
+			<a
+				href="https://github.com/virtues-os/virtues/releases/latest/download/virtues-mac-universal.zip"
+				target="_blank"
+				rel="noopener noreferrer"
+				class="download-link"
+			>
+				<Button variant={isManifest ? "manuscript" : "primary"}>
+					Download for macOS
+				</Button>
+			</a>
+
+			<p class="download-hint">
+				Universal build for Intel and Apple Silicon
+			</p>
+		</div>
+
+		<div class="modal-actions">
+			<Button variant={isManifest ? "manuscript-ghost" : "ghost"} onclick={closeModal}>
+				Cancel
+			</Button>
+			<Button variant={isManifest ? "manuscript-ghost" : "ghost"} onclick={() => modalStep = "connect"}>
+				I have it installed
+			</Button>
+		</div>
+	{:else if modalStep === "connect" && activeSource}
 		{#if error}
 			<p class="error-text">{error}</p>
 		{/if}
@@ -420,4 +454,22 @@
 		max-width: 280px;
 	}
 
+	/* Download Step */
+	.download-step {
+		text-align: center;
+		padding: 16px 0;
+	}
+
+	.download-link {
+		display: inline-block;
+		margin: 24px 0 16px;
+		text-decoration: none;
+	}
+
+	.download-hint {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--foreground-subtle);
+		letter-spacing: 0.03em;
+	}
 </style>
