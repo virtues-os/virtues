@@ -1,4 +1,4 @@
-![Virtues Cover](.github/images/cover2.png)
+![Virtues Cover](.github/images/cover3.png)
 
 # Virtues
 
