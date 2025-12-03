@@ -184,8 +184,8 @@ jobs:
           if codesign -dv virtues-mac 2>&1 | grep -q "Authority"; then
             echo "Submitting for notarization..."
 
-            # Create zip for notarization
-            zip virtues-mac-notarize.zip virtues-mac
+            # Create zip for notarization using ditto (required for CLI tools)
+            ditto -c -k --keepParent virtues-mac virtues-mac-notarize.zip
 
             # Submit for notarization
             xcrun notarytool submit virtues-mac-notarize.zip \
@@ -194,8 +194,8 @@ jobs:
               --team-id "$APPLE_TEAM_ID" \
               --wait
 
-            # Staple the notarization
-            xcrun stapler staple virtues-mac
+            # Note: stapler doesn't work on bare binaries (only app bundles/DMGs)
+            # The notarization ticket is stored in Apple's servers and checked at runtime
 
             # Recreate archives with notarized binary
             tar -czf virtues-mac-${{ steps.version.outputs.VERSION }}-universal.tar.gz virtues-mac
