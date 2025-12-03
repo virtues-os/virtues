@@ -69,13 +69,20 @@ jobs:
           # Clean up
           rm certificate.p12
 
-          # Export keychain path for subsequent steps
+          # Export keychain path and password for subsequent steps
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> $GITHUB_ENV
+          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> $GITHUB_ENV
+
+          # Verify certificate is accessible for code signing
+          echo "Verifying certificate is accessible..."
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
           echo "Certificate imported successfully"
       
       - name: Build universal binary
         env:
           CODESIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
+          KEYCHAIN_PASSWORD: ${{ env.KEYCHAIN_PASSWORD }}
         run: |
           cd apps/mac
 
@@ -120,19 +127,31 @@ jobs:
           strip virtues-mac
 
           # Sign if certificate is available
-          if [ -n "$CODESIGN_IDENTITY" ]; then
+          if [ -n "$CODESIGN_IDENTITY" ] && [ -n "$KEYCHAIN_PATH" ]; then
             echo "Signing with identity: $CODESIGN_IDENTITY"
+
+            # Unlock keychain for this step
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+            # Verify certificate is still accessible
+            echo "Available signing identities:"
+            security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+            # Sign with explicit keychain
             codesign --force --deep \
                      --sign "$CODESIGN_IDENTITY" \
+                     --keychain "$KEYCHAIN_PATH" \
                      --options runtime \
                      --timestamp \
-                     virtues-mac
+                     virtues-mac || { echo "ERROR: codesign failed!"; exit 1; }
 
             # Verify signature
-            codesign --verify --verbose virtues-mac
+            codesign --verify --verbose virtues-mac || { echo "ERROR: signature verification failed!"; exit 1; }
             echo "Binary signed successfully"
           else
             echo "No signing identity provided, binary will be unsigned"
+            echo "CODESIGN_IDENTITY: ${CODESIGN_IDENTITY:-<empty>}"
+            echo "KEYCHAIN_PATH: ${KEYCHAIN_PATH:-<empty>}"
           fi
 
           # Verify universal binary
