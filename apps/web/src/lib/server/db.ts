@@ -14,7 +14,17 @@ export function getPool(): pg.Pool {
 		if (!databaseUrl) {
 			throw new Error('DATABASE_URL environment variable is not set');
 		}
-		pool = new Pool({ connectionString: databaseUrl });
+		pool = new Pool({
+			connectionString: databaseUrl,
+			max: 20, // Maximum pool size
+			idleTimeoutMillis: 30000, // Close idle connections after 30s
+			connectionTimeoutMillis: 5000 // Fail fast on connection issues
+		});
+
+		// Handle connection errors
+		pool.on('error', (err) => {
+			console.error('[DB] Unexpected pool error:', err);
+		});
 	}
 	return pool;
 }
@@ -24,4 +34,30 @@ export function getDb(): NodePgDatabase<typeof schema> {
 		db = drizzle(getPool(), { schema });
 	}
 	return db;
+}
+
+/**
+ * Gracefully close the database connection pool
+ * Call this during server shutdown to prevent connection leaks
+ */
+export async function closePool(): Promise<void> {
+	if (pool) {
+		console.log('[DB] Closing connection pool...');
+		await pool.end();
+		pool = null;
+		db = null;
+		console.log('[DB] Connection pool closed');
+	}
+}
+
+// Handle process termination signals for graceful shutdown
+if (typeof process !== 'undefined') {
+	const shutdown = async (signal: string) => {
+		console.log(`[DB] Received ${signal}, initiating graceful shutdown...`);
+		await closePool();
+		process.exit(0);
+	};
+
+	process.on('SIGTERM', () => shutdown('SIGTERM'));
+	process.on('SIGINT', () => shutdown('SIGINT'));
 }

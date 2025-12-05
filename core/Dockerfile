@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.88-slim as builder
+FROM rust:1.88-slim AS builder
 
 # Install required dependencies
 RUN apt-get update && apt-get install -y \
@@ -25,11 +25,12 @@ RUN cargo build --release
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies (wget for healthcheck)
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     libpq5 \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -41,9 +42,9 @@ COPY --from=builder /app/migrations ./migrations
 # Expose API port
 EXPOSE 8000
 
-# Health check
+# Health check (using wget to verify /health endpoint responds correctly)
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD [ "sh", "-c", "curl -f http://localhost:8000/health || exit 1" ]
+    CMD wget -qO- http://localhost:8000/health || exit 1
 
 # Run migrations and start server
 CMD ["sh", "-c", "virtues migrate && virtues server"]
