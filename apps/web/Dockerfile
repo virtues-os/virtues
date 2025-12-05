@@ -1,5 +1,5 @@
 # Development stage
-FROM node:20-slim as development
+FROM node:20-slim AS development
 
 # Install pnpm
 RUN npm install -g pnpm
@@ -22,7 +22,7 @@ EXPOSE 5173
 CMD ["pnpm", "dev", "--host", "0.0.0.0"]
 
 # Build stage
-FROM node:20-slim as builder
+FROM node:20-slim AS builder
 
 # Install pnpm
 RUN npm install -g pnpm
@@ -38,24 +38,16 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY . .
 
-# Build the app
+# Build the app with Node adapter for Docker deployment
+ENV ADAPTER=node
 RUN pnpm build
 
 # Production stage
-FROM node:20-slim as production
-
-# Install pnpm
-RUN npm install -g pnpm
+FROM node:20-slim AS production
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
-
-# Install only production dependencies
-RUN pnpm install --prod --frozen-lockfile
-
-# Copy built app from builder
+# Copy built app from builder (adapter-node outputs to /build)
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/package.json ./
 

@@ -404,9 +404,23 @@ pub async fn spawn_archive_job_async(
         .fetch_one(db)
         .await?;
 
+    // Get subdomain from environment (for multi-tenant S3 storage)
+    // Note: SUBDOMAIN is validated at VPS provisioning time in setup.sh
+    let subdomain = std::env::var("SUBDOMAIN").ok();
+
     // Generate S3 key for archival
     let date = Utc::now().date_naive();
-    let key_builder = crate::storage::models::StreamKeyBuilder::new(&source, source_id, stream_name, date);
+    let key_builder = crate::storage::models::StreamKeyBuilder::new(
+        subdomain.as_deref(),
+        &source,
+        source_id,
+        stream_name,
+        date,
+    )
+    .map_err(|e| {
+        error!(subdomain = ?subdomain, error = %e, "Invalid SUBDOMAIN format");
+        crate::error::Error::Configuration(format!("Invalid SUBDOMAIN: {}", e))
+    })?;
     let s3_key = key_builder.build();
 
     // Create archive job in database

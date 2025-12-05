@@ -326,9 +326,31 @@ fn validate_environment() -> Result<()> {
     Ok(())
 }
 
-async fn health() -> impl IntoResponse {
-    Json(serde_json::json!({
-        "status": "healthy",
-        "version": env!("CARGO_PKG_VERSION"),
-    }))
+async fn health(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> impl IntoResponse {
+    // Check database connectivity with a simple query
+    let db_status = match sqlx::query("SELECT 1")
+        .execute(state.db.pool())
+        .await
+    {
+        Ok(_) => "connected",
+        Err(_) => "disconnected",
+    };
+
+    let is_healthy = db_status == "connected";
+    let status_code = if is_healthy {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status_code,
+        Json(serde_json::json!({
+            "status": if is_healthy { "healthy" } else { "unhealthy" },
+            "version": env!("CARGO_PKG_VERSION"),
+            "database": db_status,
+        })),
+    )
 }
