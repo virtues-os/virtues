@@ -33,9 +33,9 @@
 			knows your facts and values so you can live your story more purposefully.
 			Because this requires deep intimacy, your data is fully sovereign—single-tenant
 			and never shared, not even with us. While other technology platforms
-			extract your attention and productize your attention, your Personal AI
-			will help you author your life. In an age of extraction, this is subsidiarity
-			technology designed to empower.
+			extract and productize your attention, your Personal AI will help you
+			author your life. In an age of extraction, this is subsidiarity technology
+			designed to empower.
 		</p>
 		<p class="mt-4">Let's get started!</p>
 	</section>
@@ -102,7 +102,7 @@
 
 		<p class="mb-4">
 			This correspondence is the only data shared with our team to help
-			shape the roadmap.We would value your vision: How do you hope this
+			shape the roadmap. We would value your vision: How do you hope this
 			technology augments your life? What goals are you striving for? What
 			does the future of Personal AI look like to you?
 		</p>
