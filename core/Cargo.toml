@@ -135,6 +135,9 @@ dialoguer = "0.11"
 console = "0.15"
 indicatif = "0.17"
 
+[build-dependencies]
+chrono = "0.4"
+
 [dev-dependencies]
 # Testing
 tempfile = "3.12"
