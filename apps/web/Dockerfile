@@ -45,11 +45,19 @@ RUN pnpm build
 # Production stage
 FROM node:20-slim AS production
 
+# Install pnpm for production dependency installation
+RUN npm install -g pnpm
+
 WORKDIR /app
+
+# Copy package files and install production dependencies only
+# This ensures runtime dependencies like @auth/core are available
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
 
 # Copy built app from builder (adapter-node outputs to /build)
 COPY --from=builder /app/build ./build
-COPY --from=builder /app/package.json ./
 
 # Expose production port
 EXPOSE 3000
