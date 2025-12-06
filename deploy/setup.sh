@@ -162,7 +162,7 @@ log "Creating docker-compose.yml..."
 cat > /opt/virtues/docker-compose.yml << 'COMPOSE'
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ghcr.io/virtues-os/virtues-postgres:latest
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -216,6 +216,7 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-Virtues <noreply@virtues.com>}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      AUTH_URL: https://${SUBDOMAIN}.virtues.com
     ports:
       - "127.0.0.1:3000:3000"
 

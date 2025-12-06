@@ -54,6 +54,7 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-Virtues <noreply@virtues.com>}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY}
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY}
+      AUTH_URL: ${AUTH_URL}
     ports:
       - "3000:3000"
 
