@@ -46,6 +46,7 @@ if (!OWNER_EMAIL) {
 
 export const { handle, signIn, signOut } = SvelteKitAuth({
 	trustHost: true,
+	basePath: '/auth',
 	adapter: createPostgresAdapter(),
 	providers: [
 		{
