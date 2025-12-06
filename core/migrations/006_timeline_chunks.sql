@@ -5,11 +5,19 @@
 -- Design: Single table with chunk_type discriminator, using nullable fields
 -- for type-specific data. JSONB for attached ontology data (snapshots).
 
--- Enum for chunk types
-CREATE TYPE data.chunk_type AS ENUM ('location', 'transit', 'missing_data');
+-- Enum for chunk types (idempotent - handles re-runs gracefully)
+DO $$ BEGIN
+    CREATE TYPE data.chunk_type AS ENUM ('location', 'transit', 'missing_data');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
--- Enum for missing data reasons
-CREATE TYPE data.missing_reason AS ENUM ('sleep', 'indoors', 'phone_off', 'unknown');
+-- Enum for missing data reasons (idempotent - handles re-runs gracefully)
+DO $$ BEGIN
+    CREATE TYPE data.missing_reason AS ENUM ('sleep', 'indoors', 'phone_off', 'unknown');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS data.timeline_chunk (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
