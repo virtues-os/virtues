@@ -5,7 +5,7 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ghcr.io/virtues-os/virtues-postgres:latest
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
