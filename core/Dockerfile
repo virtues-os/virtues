@@ -1,6 +1,9 @@
 # Build stage
 FROM rust:1.88-slim AS builder
 
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 # Install required dependencies
 RUN apt-get update && apt-get install -y \
     pkg-config \

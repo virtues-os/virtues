@@ -350,6 +350,8 @@ async fn health(
         Json(serde_json::json!({
             "status": if is_healthy { "healthy" } else { "unhealthy" },
             "version": env!("CARGO_PKG_VERSION"),
+            "commit": env!("GIT_COMMIT"),
+            "built_at": env!("BUILD_TIME"),
             "database": db_status,
         })),
     )
