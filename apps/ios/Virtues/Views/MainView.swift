@@ -75,6 +75,7 @@ struct MainView: View {
                 SettingsView()
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
     
     private func performManualSync() {
