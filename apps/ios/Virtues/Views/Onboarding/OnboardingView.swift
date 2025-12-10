@@ -74,6 +74,7 @@ struct OnboardingView: View {
             }
             .navigationBarHidden(true)
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
     
     // MARK: - Actions
