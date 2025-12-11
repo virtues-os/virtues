@@ -192,6 +192,7 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       RUST_LOG: ${RUST_LOG:-warn}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
