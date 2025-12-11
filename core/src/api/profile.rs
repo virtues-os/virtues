@@ -22,12 +22,6 @@ pub struct UpdateProfileRequest {
     pub height_cm: Option<f64>,
     pub weight_kg: Option<f64>,
     pub ethnicity: Option<String>,
-    // Home Address
-    pub home_street: Option<String>,
-    pub home_city: Option<String>,
-    pub home_state: Option<String>,
-    pub home_postal_code: Option<String>,
-    pub home_country: Option<String>,
     // Work/Occupation
     pub occupation: Option<String>,
     pub employer: Option<String>,
@@ -96,56 +90,40 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.ethnicity.is_some() {
         updates.push("ethnicity = $6");
     }
-    // Address fields
-    if request.home_street.is_some() {
-        updates.push("home_street = $7");
-    }
-    if request.home_city.is_some() {
-        updates.push("home_city = $8");
-    }
-    if request.home_state.is_some() {
-        updates.push("home_state = $9");
-    }
-    if request.home_postal_code.is_some() {
-        updates.push("home_postal_code = $10");
-    }
-    if request.home_country.is_some() {
-        updates.push("home_country = $11");
-    }
     // Work fields
     if request.occupation.is_some() {
-        updates.push("occupation = $12");
+        updates.push("occupation = $7");
     }
     if request.employer.is_some() {
-        updates.push("employer = $13");
+        updates.push("employer = $8");
     }
     // Preferences
     if request.theme.is_some() {
-        updates.push("theme = $14");
+        updates.push("theme = $9");
     }
     // Crux
     if request.crux.is_some() {
-        updates.push("crux = $15");
+        updates.push("crux = $10");
     }
     // Onboarding
     if request.is_onboarding.is_some() {
-        updates.push("is_onboarding = $16");
+        updates.push("is_onboarding = $11");
     }
     if request.onboarding_step.is_some() {
-        updates.push("onboarding_step = $17");
+        updates.push("onboarding_step = $12");
     }
     if request.axiology_complete.is_some() {
-        updates.push("axiology_complete = $18");
+        updates.push("axiology_complete = $13");
     }
     // Granular onboarding completion
     if request.onboarding_profile_complete.is_some() {
-        updates.push("onboarding_profile_complete = $19");
+        updates.push("onboarding_profile_complete = $14");
     }
     if request.onboarding_places_complete.is_some() {
-        updates.push("onboarding_places_complete = $20");
+        updates.push("onboarding_places_complete = $15");
     }
     if request.onboarding_tools_complete.is_some() {
-        updates.push("onboarding_tools_complete = $21");
+        updates.push("onboarding_tools_complete = $16");
     }
 
     if updates.is_empty() {
@@ -154,7 +132,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     }
 
     query.push_str(&updates.join(", "));
-    query.push_str(" WHERE id = $22 RETURNING *");
+    query.push_str(" WHERE id = $17 RETURNING *");
 
     // Execute the update with bound parameters
     let mut query_builder = sqlx::query_as::<_, UserProfile>(&query);
@@ -169,7 +147,7 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
             .unwrap_or_else(|_| Decimal::from_str("0").unwrap())
     });
 
-    // Bind all parameters in order ($1 through $22)
+    // Bind all parameters in order ($1 through $17)
     query_builder = query_builder
         .bind(&request.full_name)
         .bind(&request.preferred_name)
@@ -177,11 +155,6 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
         .bind(&height_decimal)
         .bind(&weight_decimal)
         .bind(&request.ethnicity)
-        .bind(&request.home_street)
-        .bind(&request.home_city)
-        .bind(&request.home_state)
-        .bind(&request.home_postal_code)
-        .bind(&request.home_country)
         .bind(&request.occupation)
         .bind(&request.employer)
         .bind(&request.theme)
@@ -212,83 +185,4 @@ pub async fn get_display_name(db: &PgPool) -> Result<String> {
         .preferred_name
         .or(profile.full_name)
         .unwrap_or_else(|| "the user".to_string()))
-}
-
-/// Request to set user's home place via Google Places Autocomplete
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetHomePlaceRequest {
-    pub formatted_address: String,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub google_place_id: Option<String>,
-}
-
-/// Response after setting home place
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetHomePlaceResponse {
-    pub place_id: Uuid,
-    pub canonical_name: String,
-}
-
-/// Set the user's home place
-///
-/// Creates an entities_place record with category='home' and links it to the user profile.
-/// If a home place already exists, it will be replaced.
-pub async fn set_home_place(db: &PgPool, request: SetHomePlaceRequest) -> Result<SetHomePlaceResponse> {
-    // The singleton profile UUID
-    let profile_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001")
-        .expect("Valid UUID constant");
-
-    // Build metadata JSON with google_place_id if provided
-    let metadata = match &request.google_place_id {
-        Some(gid) => serde_json::json!({ "google_place_id": gid }),
-        None => serde_json::json!({}),
-    };
-
-    // Create or update the home place entity
-    // Use ON CONFLICT to update if a place with category='home' already exists nearby
-    let place = sqlx::query!(
-        r#"
-        INSERT INTO data.entities_place (
-            canonical_name,
-            category,
-            geo_center,
-            cluster_radius_meters,
-            metadata
-        ) VALUES (
-            $1,
-            'home',
-            ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
-            50.0,
-            $4
-        )
-        RETURNING id, canonical_name
-        "#,
-        request.formatted_address,
-        request.longitude,
-        request.latitude,
-        metadata
-    )
-    .fetch_one(db)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create home place: {}", e)))?;
-
-    // Update user profile with the new home_place_id
-    sqlx::query!(
-        r#"
-        UPDATE data.user_profile
-        SET home_place_id = $1
-        WHERE id = $2
-        "#,
-        place.id,
-        profile_id
-    )
-    .execute(db)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update profile with home place: {}", e)))?;
-
-    Ok(SetHomePlaceResponse {
-        place_id: place.id,
-        canonical_name: place.canonical_name,
-    })
 }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE data.user_profile\n        SET home_place_id = NULL\n        WHERE id = $1 AND home_place_id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "13de811a0c1d758474de09c49923b81f259bff6ced0e7b568152dac606e2de52"
+}

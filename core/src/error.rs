@@ -41,6 +41,10 @@ pub enum Error {
     #[error("HTTP error: {0}")]
     Http(String),
 
+    /// External API errors (Google, etc.)
+    #[error("External API error: {0}")]
+    ExternalApi(String),
+
     /// Network errors
     #[error("Network error: {0}")]
     Network(String),

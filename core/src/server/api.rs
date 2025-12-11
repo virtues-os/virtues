@@ -812,17 +812,6 @@ pub async fn update_profile_handler(
     api_response(crate::api::update_profile(state.db.pool(), request).await)
 }
 
-/// Set user's home place via Google Places Autocomplete
-pub async fn set_home_place_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::SetHomePlaceRequest>,
-) -> Response {
-    match crate::api::set_home_place(state.db.pool(), request).await {
-        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
 // =============================================================================
 // Assistant Profile API
 // =============================================================================
@@ -1409,4 +1398,285 @@ pub async fn skip_onboarding_step_handler(
     };
 
     api_response(crate::api::skip_step(state.db.pool(), step).await)
+}
+
+// =============================================================================
+// Places API Handlers (Google Places proxy)
+// =============================================================================
+
+/// Get autocomplete predictions for an address query
+pub async fn places_autocomplete_handler(
+    State(state): State<AppState>,
+    Query(request): Query<crate::api::AutocompleteRequest>,
+) -> Response {
+    // Check usage limit first
+    if let Err(e) =
+        crate::api::check_limit(state.db.pool(), crate::api::Service::GooglePlaces).await
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "usage_limit_exceeded",
+                "service": e.service,
+                "used": e.used,
+                "limit": e.limit,
+                "unit": e.unit,
+                "resets_at": e.resets_at,
+                "message": format!("Monthly Google Places limit reached. Resets at {}", e.resets_at)
+            })),
+        )
+            .into_response();
+    }
+
+    match crate::api::autocomplete(request).await {
+        Ok(response) => {
+            // Record usage on success - warn but don't fail if recording fails
+            // The user already received their response, so this is a billing/tracking issue only
+            if let Err(e) =
+                crate::api::record_service_usage(state.db.pool(), crate::api::Service::GooglePlaces, 1)
+                    .await
+            {
+                tracing::warn!(
+                    service = "google_places",
+                    error = %e,
+                    "Usage recording failed - request succeeded but usage may be undercounted"
+                );
+            }
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+/// Get details for a specific place by ID
+pub async fn places_details_handler(
+    State(state): State<AppState>,
+    Query(request): Query<crate::api::PlaceDetailsRequest>,
+) -> Response {
+    // Check usage limit first
+    if let Err(e) =
+        crate::api::check_limit(state.db.pool(), crate::api::Service::GooglePlaces).await
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "usage_limit_exceeded",
+                "service": e.service,
+                "used": e.used,
+                "limit": e.limit,
+                "unit": e.unit,
+                "resets_at": e.resets_at,
+                "message": format!("Monthly Google Places limit reached. Resets at {}", e.resets_at)
+            })),
+        )
+            .into_response();
+    }
+
+    match crate::api::get_place_details(request).await {
+        Ok(response) => {
+            // Record usage on success - warn but don't fail if recording fails
+            if let Err(e) =
+                crate::api::record_service_usage(state.db.pool(), crate::api::Service::GooglePlaces, 1)
+                    .await
+            {
+                tracing::warn!(
+                    service = "google_places",
+                    error = %e,
+                    "Usage recording failed - request succeeded but usage may be undercounted"
+                );
+            }
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+// =============================================================================
+// Usage API Handlers
+// =============================================================================
+
+/// Get usage summary for all services
+pub async fn usage_handler(State(state): State<AppState>) -> Response {
+    match crate::api::get_all_usage(state.db.pool()).await {
+        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Failed to get usage: {}", e) })),
+        )
+            .into_response(),
+    }
+}
+
+/// Check remaining usage for a service
+#[derive(Debug, Deserialize)]
+pub struct UsageCheckQuery {
+    pub service: String,
+}
+
+pub async fn usage_check_handler(
+    State(state): State<AppState>,
+    Query(query): Query<UsageCheckQuery>,
+) -> Response {
+    let service = match query.service.as_str() {
+        "ai_gateway" => crate::api::Service::AiGateway,
+        "assemblyai" => crate::api::Service::AssemblyAi,
+        "google_places" => crate::api::Service::GooglePlaces,
+        "exa" => crate::api::Service::Exa,
+        _ => {
+            return error_response(crate::error::Error::InvalidInput(format!(
+                "Invalid service: {}. Valid services: ai_gateway, assemblyai, google_places, exa",
+                query.service
+            )))
+        }
+    };
+
+    match crate::api::check_limit(state.db.pool(), service).await {
+        Ok(remaining) => (StatusCode::OK, Json(remaining)).into_response(),
+        Err(e) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "usage_limit_exceeded",
+                "service": e.service,
+                "used": e.used,
+                "limit": e.limit,
+                "unit": e.unit,
+                "resets_at": e.resets_at,
+                "message": format!("Monthly {} limit reached. Resets at {}", e.service, e.resets_at)
+            })),
+        )
+            .into_response(),
+    }
+}
+
+// =============================================================================
+// Exa Search API Handlers
+// =============================================================================
+
+/// Perform a web search using Exa AI
+pub async fn exa_search_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::ExaSearchRequest>,
+) -> Response {
+    // Check usage limit first
+    if let Err(e) = crate::api::check_limit(state.db.pool(), crate::api::Service::Exa).await {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": "usage_limit_exceeded",
+                "service": e.service,
+                "used": e.used,
+                "limit": e.limit,
+                "unit": e.unit,
+                "resets_at": e.resets_at,
+                "message": format!("Monthly Exa search limit reached. Resets at {}", e.resets_at)
+            })),
+        )
+            .into_response();
+    }
+
+    // Perform the search
+    match crate::api::exa_search(request).await {
+        Ok(response) => {
+            // Record usage on success - warn but don't fail if recording fails
+            if let Err(e) =
+                crate::api::record_service_usage(state.db.pool(), crate::api::Service::Exa, 1).await
+            {
+                tracing::warn!(
+                    service = "exa",
+                    error = %e,
+                    "Usage recording failed - request succeeded but usage may be undercounted"
+                );
+            }
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+// =============================================================================
+// Storage API Handlers
+// =============================================================================
+
+/// Query parameters for listing storage objects
+#[derive(Debug, Deserialize)]
+pub struct ListStorageObjectsParams {
+    pub limit: Option<i64>,
+}
+
+/// List recent storage objects
+pub async fn list_storage_objects_handler(
+    State(state): State<AppState>,
+    Query(params): Query<ListStorageObjectsParams>,
+) -> Response {
+    let limit = params.limit.unwrap_or(10);
+    api_response(crate::api::list_recent_objects(state.db.pool(), limit).await)
+}
+
+/// Get decrypted content of a storage object
+pub async fn get_storage_object_content_handler(
+    State(state): State<AppState>,
+    Path(object_id): Path<Uuid>,
+) -> Response {
+    api_response(
+        crate::api::get_object_content(state.db.pool(), &*state.storage, object_id).await,
+    )
+}
+
+// =============================================================================
+// Entities API - Places
+// =============================================================================
+
+/// List all known places
+pub async fn list_places_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_places(state.db.pool()).await)
+}
+
+/// Get a specific place by ID
+pub async fn get_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::get_place(state.db.pool(), place_id).await)
+}
+
+/// Create a new place
+pub async fn create_place_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreatePlaceRequest>,
+) -> Response {
+    match crate::api::create_place(state.db.pool(), request).await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Update an existing place
+pub async fn update_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdatePlaceRequest>,
+) -> Response {
+    api_response(crate::api::update_place(state.db.pool(), place_id, request).await)
+}
+
+/// Delete a place
+pub async fn delete_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<Uuid>,
+) -> Response {
+    match crate::api::delete_place(state.db.pool(), place_id).await {
+        Ok(_) => success_message("Place deleted successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Set a place as the user's home
+pub async fn set_place_as_home_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<Uuid>,
+) -> Response {
+    match crate::api::set_home_place_entity(state.db.pool(), place_id).await {
+        Ok(_) => success_message("Home place updated"),
+        Err(e) => error_response(e),
+    }
 }

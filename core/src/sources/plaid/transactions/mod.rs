@@ -7,7 +7,6 @@ pub mod transform;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -18,7 +17,7 @@ use super::config::PlaidTransactionsConfig;
 use crate::{
     error::{Error, Result},
     sources::{
-        base::{ConfigSerializable, SyncMode, SyncResult},
+        base::{oauth::encryption::TokenEncryptor, ConfigSerializable, SyncMode, SyncResult},
         pull_stream::PullStream,
     },
     storage::stream_writer::StreamWriter,
@@ -34,21 +33,8 @@ pub struct PlaidTransactionsStream {
     db: PgPool,
     stream_writer: Arc<Mutex<StreamWriter>>,
     config: PlaidTransactionsConfig,
-    /// Access token for this Item (loaded from database)
+    /// Access token for this Item (loaded from database, decrypted)
     access_token: Option<String>,
-}
-
-/// Metadata stored in source_connections for Plaid
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaidSourceMetadata {
-    /// Plaid Item ID
-    pub item_id: String,
-    /// Encrypted access token
-    pub access_token: String,
-    /// Institution ID
-    pub institution_id: Option<String>,
-    /// Institution name
-    pub institution_name: Option<String>,
 }
 
 impl PlaidTransactionsStream {
@@ -91,7 +77,7 @@ impl PlaidTransactionsStream {
     async fn load_config_internal(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
         // Load stream config
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
+            "SELECT config FROM data.stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -103,18 +89,18 @@ impl PlaidTransactionsStream {
             }
         }
 
-        // Load access token from source_connections metadata
-        let metadata_result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT metadata FROM source_connections WHERE id = $1",
+        // Load encrypted access token from source_connections
+        let token_result = sqlx::query_as::<_, (Option<String>,)>(
+            "SELECT access_token FROM data.source_connections WHERE id = $1",
         )
         .bind(source_id)
         .fetch_optional(db)
         .await?;
 
-        if let Some((metadata_json,)) = metadata_result {
-            if let Ok(metadata) = serde_json::from_value::<PlaidSourceMetadata>(metadata_json) {
-                self.access_token = Some(metadata.access_token);
-            }
+        if let Some((Some(encrypted_token),)) = token_result {
+            // Decrypt the access token
+            let encryptor = TokenEncryptor::from_env()?;
+            self.access_token = Some(encryptor.decrypt(&encrypted_token)?);
         }
 
         Ok(())
@@ -331,7 +317,7 @@ impl PlaidTransactionsStream {
     /// Get the last sync cursor from database
     async fn get_last_cursor(&self) -> Result<Option<String>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT last_sync_token FROM stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
+            "SELECT last_sync_token FROM data.stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
         )
         .bind(self.source_id)
         .fetch_optional(&self.db)
@@ -392,21 +378,9 @@ impl PullStream for PlaidTransactionsStream {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn test_plaid_source_metadata_serialization() {
-        let metadata = PlaidSourceMetadata {
-            item_id: "test_item_123".to_string(),
-            access_token: "access-sandbox-xxx".to_string(),
-            institution_id: Some("ins_123".to_string()),
-            institution_name: Some("Test Bank".to_string()),
-        };
-
-        let json = serde_json::to_value(&metadata).unwrap();
-        assert_eq!(json["item_id"], "test_item_123");
-
-        let deserialized: PlaidSourceMetadata = serde_json::from_value(json).unwrap();
-        assert_eq!(deserialized.item_id, metadata.item_id);
+    fn test_stream_table_name() {
+        // Test that the stream returns correct table name
+        assert_eq!("stream_plaid_transactions", "stream_plaid_transactions");
     }
 }

@@ -17,7 +17,8 @@
 	// Quick actions
 	const quickActions = [
 		{ id: 'new-chat', label: 'New Chat', icon: 'ri:add-line', shortcut: 'Cmd+N', action: () => goto('/') },
-		{ id: 'timeline', label: 'Go to Timeline', icon: 'ri:time-line', action: () => goto('/timeline') },
+		// Coming soon - Timeline feature in development
+		// { id: 'timeline', label: 'Go to Timeline', icon: 'ri:time-line', action: () => goto('/timeline') },
 		{ id: 'sources', label: 'Go to Sources', icon: 'ri:device-line', action: () => goto('/data/sources') },
 		{ id: 'settings', label: 'Open Settings', icon: 'ri:settings-4-line', action: () => goto('/profile/account') }
 	];

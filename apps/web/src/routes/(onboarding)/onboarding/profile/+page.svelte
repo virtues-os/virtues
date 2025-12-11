@@ -15,7 +15,7 @@
 
 	let name = $state(initialData?.profile?.preferred_name || "");
 	let occupation = $state(initialData?.profile?.employer || "");
-	let assistantName = $state(initialData?.assistantProfile?.assistant_name || "");
+	let assistantName = $state(initialData?.assistantProfile?.assistant_name || "Ari");
 	let currentTheme = $state<Theme>(initialData?.profile?.theme || "light");
 
 	// AI assistant name suggestions with etymologies

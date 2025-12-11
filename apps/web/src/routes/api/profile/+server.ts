@@ -12,6 +12,11 @@ interface ProfilePayload {
 	crux?: string;
 	is_onboarding?: boolean;
 	onboarding_step?: number | null;
+	// Technology onboarding step fields
+	technology_vision?: string;
+	pain_point_primary?: string;
+	pain_point_secondary?: string | null;
+	excited_features?: string[];
 }
 
 const SINGLETON_ID = '00000000-0000-0000-0000-000000000001';
@@ -39,6 +44,10 @@ export const GET: RequestHandler = async () => {
 				onboarding_step,
 				axiology_complete,
 				home_place_id,
+				technology_vision,
+				pain_point_primary,
+				pain_point_secondary,
+				excited_features,
 				created_at,
 				updated_at
 			FROM data.user_profile
@@ -122,6 +131,27 @@ export const PUT: RequestHandler = async ({ request }) => {
 		if (body.onboarding_step !== undefined) {
 			updates.push(`onboarding_step = $${paramIndex++}`);
 			values.push(body.onboarding_step);
+		}
+
+		// Technology onboarding step fields
+		if (body.technology_vision !== undefined) {
+			updates.push(`technology_vision = $${paramIndex++}`);
+			values.push(body.technology_vision || null);
+		}
+
+		if (body.pain_point_primary !== undefined) {
+			updates.push(`pain_point_primary = $${paramIndex++}`);
+			values.push(body.pain_point_primary || null);
+		}
+
+		if (body.pain_point_secondary !== undefined) {
+			updates.push(`pain_point_secondary = $${paramIndex++}`);
+			values.push(body.pain_point_secondary || null);
+		}
+
+		if (body.excited_features !== undefined) {
+			updates.push(`excited_features = $${paramIndex++}`);
+			values.push(body.excited_features || null);
 		}
 
 		if (updates.length === 0) {

@@ -159,15 +159,16 @@ impl StreamFactory {
                     _auth,
                 ))))
             }
-            ("notion", "pages") => {
-                use crate::sources::notion::NotionPagesStream;
-                Ok(StreamType::Pull(Box::new(NotionPagesStream::new(
-                    _source_id,
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                    _auth,
-                ))))
-            }
+            // TODO: Re-enable incrementally as we publish
+            // ("notion", "pages") => {
+            //     use crate::sources::notion::NotionPagesStream;
+            //     Ok(StreamType::Pull(Box::new(NotionPagesStream::new(
+            //         _source_id,
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //         _auth,
+            //     ))))
+            // }
             ("virtues", "app_export") => {
                 use crate::sources::virtues::AppChatExportStream;
                 Ok(StreamType::Pull(Box::new(AppChatExportStream::new(
@@ -176,51 +177,69 @@ impl StreamFactory {
                     self.stream_writer.clone(),
                 ))))
             }
+            // TODO: Re-enable incrementally as we publish
+            // ("plaid", "transactions") => {
+            //     use crate::sources::plaid::transactions::PlaidTransactionsStream;
+            //     Ok(StreamType::Pull(Box::new(PlaidTransactionsStream::new(
+            //         _source_id,
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     )?)))
+            // }
+            // ("plaid", "accounts") => {
+            //     use crate::sources::plaid::accounts::PlaidAccountsStream;
+            //     Ok(StreamType::Pull(Box::new(PlaidAccountsStream::new(
+            //         _source_id,
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     )?)))
+            // }
 
             // Push streams (client-initiated from devices)
-            ("mac", "apps") => {
-                use crate::sources::mac::MacAppsStream;
-                Ok(StreamType::Push(Box::new(MacAppsStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("mac", "imessage") => {
-                use crate::sources::mac::MacIMessageStream;
-                Ok(StreamType::Push(Box::new(MacIMessageStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("mac", "browser") => {
-                use crate::sources::mac::MacBrowserStream;
-                Ok(StreamType::Push(Box::new(MacBrowserStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "location") => {
-                use crate::sources::ios::IosLocationStream;
-                Ok(StreamType::Push(Box::new(IosLocationStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "healthkit") => {
-                use crate::sources::ios::IosHealthKitStream;
-                Ok(StreamType::Push(Box::new(IosHealthKitStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "microphone") => {
-                use crate::sources::ios::IosMicrophoneStream;
-                Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
-                    self.db.clone(),
-                    self.storage.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
+            // TODO: Re-enable incrementally as we publish
+            // ("mac", "apps") => {
+            //     use crate::sources::mac::MacAppsStream;
+            //     Ok(StreamType::Push(Box::new(MacAppsStream::new(
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     ))))
+            // }
+            // ("mac", "imessage") => {
+            //     use crate::sources::mac::MacIMessageStream;
+            //     Ok(StreamType::Push(Box::new(MacIMessageStream::new(
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     ))))
+            // }
+            // ("mac", "browser") => {
+            //     use crate::sources::mac::MacBrowserStream;
+            //     Ok(StreamType::Push(Box::new(MacBrowserStream::new(
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     ))))
+            // }
+            // ("ios", "location") => {
+            //     use crate::sources::ios::IosLocationStream;
+            //     Ok(StreamType::Push(Box::new(IosLocationStream::new(
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     ))))
+            // }
+            // ("ios", "healthkit") => {
+            //     use crate::sources::ios::IosHealthKitStream;
+            //     Ok(StreamType::Push(Box::new(IosHealthKitStream::new(
+            //         self.db.clone(),
+            //         self.stream_writer.clone(),
+            //     ))))
+            // }
+            // ("ios", "microphone") => {
+            //     use crate::sources::ios::IosMicrophoneStream;
+            //     Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
+            //         self.db.clone(),
+            //         self.storage.clone(),
+            //         self.stream_writer.clone(),
+            //     ))))
+            // }
 
             _ => Err(Error::Other(format!(
                 "Unknown stream: {}/{}",

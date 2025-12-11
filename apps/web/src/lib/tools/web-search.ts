@@ -1,20 +1,18 @@
 import { z } from 'zod';
+import { env } from '$env/dynamic/private';
 
 /**
  * Exa Web Search Tool for AI SDK v6
  *
- * Provides web search capabilities using Exa AI's search API.
- * Exa specializes in AI-optimized web search with neural and keyword search.
+ * Proxies web search through virtues-core which handles:
+ * - Exa API calls
+ * - Usage metering and rate limiting
  *
  * @see https://docs.exa.ai for API documentation
  */
 export async function createWebSearchTool() {
-	const apiKey = process.env.EXA_API_KEY;
-
-	if (!apiKey) {
-		console.warn('[webSearch] EXA_API_KEY not configured - tool will not be available');
-		return null;
-	}
+	// Get the API URL from env (defaults to localhost for dev)
+	const apiUrl = env.ELT_API_URL || 'http://localhost:8000';
 
 	const inputSchema = z.object({
 		query: z.string().describe('The search query to find relevant web content'),
@@ -64,24 +62,17 @@ export async function createWebSearchTool() {
 			startPublishedDate,
 			endPublishedDate
 		}: z.infer<typeof inputSchema>) => {
-			console.log('[webSearch] Executing search:', { query, numResults, type, category });
+			console.log('[webSearch] Executing search via core:', { query, numResults, type, category });
 
 			try {
-				// Build the Exa API request
-				const requestBody: any = {
+				// Build the request body for core's /api/search/web endpoint
+				const requestBody: Record<string, unknown> = {
 					query,
 					numResults,
-					type,
-					contents: {
-						text: {
-							maxCharacters: 1000,
-							includeHtmlTags: false
-						},
-						summary: true
-					}
+					searchType: type
 				};
 
-				// Add optional filters
+				// Add optional filters (using camelCase to match Rust serde)
 				if (category) requestBody.category = category;
 				if (includeDomains && includeDomains.length > 0) {
 					requestBody.includeDomains = includeDomains;
@@ -92,26 +83,39 @@ export async function createWebSearchTool() {
 				if (startPublishedDate) requestBody.startPublishedDate = startPublishedDate;
 				if (endPublishedDate) requestBody.endPublishedDate = endPublishedDate;
 
-				// Call Exa API
-				const response = await fetch('https://api.exa.ai/search', {
+				// Call core's search endpoint (handles Exa API + usage tracking)
+				const response = await fetch(`${apiUrl}/api/search/web`, {
 					method: 'POST',
 					headers: {
-						'Content-Type': 'application/json',
-						'x-api-key': apiKey
+						'Content-Type': 'application/json'
 					},
 					body: JSON.stringify(requestBody)
 				});
 
 				if (!response.ok) {
-					const errorText = await response.text();
-					console.error('[webSearch] API error:', response.status, errorText);
-					throw new Error(`Exa API error (${response.status}): ${errorText}`);
+					const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+					console.error('[webSearch] API error:', response.status, errorData);
+
+					// Handle rate limit errors specifically
+					if (response.status === 429) {
+						return {
+							success: false,
+							error: errorData.message || 'Monthly search limit reached',
+							limitExceeded: true,
+							resetsAt: errorData.resets_at,
+							query,
+							resultsCount: 0,
+							results: []
+						};
+					}
+
+					throw new Error(errorData.error || `API error (${response.status})`);
 				}
 
 				const data = await response.json();
-				console.log(`[webSearch] Found ${data.results?.length || 0} results`);
+				console.log(`[webSearch] Found ${data.resultsCount || 0} results`);
 
-				// Format results for the AI
+				// Format results for the AI (core already returns formatted results)
 				const formattedResults = (data.results || []).map((result: any, index: number) => ({
 					position: index + 1,
 					title: result.title,
@@ -119,7 +123,7 @@ export async function createWebSearchTool() {
 					publishedDate: result.publishedDate,
 					author: result.author,
 					summary: result.summary,
-					text: result.text?.substring(0, 500), // Truncate to 500 chars for context
+					text: result.text?.substring(0, 500),
 					score: result.score
 				}));
 
@@ -128,10 +132,10 @@ export async function createWebSearchTool() {
 					type: 'web_search_results',
 					query,
 					resultsCount: formattedResults.length,
-					searchType: type,
+					searchType: data.searchType || type,
 					results: formattedResults,
 					metadata: {
-						autopromptString: data.autopromptString, // Exa's query refinement suggestion
+						autopromptString: data.autopromptString,
 						requestId: data.requestId
 					}
 				};

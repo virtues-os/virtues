@@ -1,17 +1,9 @@
--- Axiology and identity tables in data schema
--- Note: search_path is set at database level, so we use qualified names
+-- Identity: Axiology, praxis, and user profile
+-- Consolidates: 004, 011, 013, 014, 015 (aspiration parts), 016, 017, 018, 020, 023
 
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE IF NOT EXISTS data.axiology_value (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    title TEXT NOT NULL,
-    description TEXT,
-    topic_id UUID REFERENCES data.entities_topic(id),
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+--------------------------------------------------------------------------------
+-- AXIOLOGY: TELOS (purpose/ultimate aim)
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.axiology_telos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,13 +11,27 @@ CREATE TABLE IF NOT EXISTS data.axiology_telos (
     description TEXT,
     is_active BOOLEAN DEFAULT true,
     topic_id UUID REFERENCES data.entities_topic(id),
+    -- Embedding for semantic search (from 014)
+    embedding vector(768),
+    embedded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Add embedding columns if they don't exist
+ALTER TABLE data.axiology_telos ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE data.axiology_telos ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_axiology_telos_single_active
     ON data.axiology_telos(is_active)
     WHERE is_active = true;
+
+CREATE INDEX IF NOT EXISTS idx_axiology_telos_embedding
+    ON data.axiology_telos USING hnsw (embedding vector_cosine_ops);
+
+--------------------------------------------------------------------------------
+-- AXIOLOGY: VIRTUE
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.axiology_virtue (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -33,9 +39,21 @@ CREATE TABLE IF NOT EXISTS data.axiology_virtue (
     description TEXT,
     topic_id UUID REFERENCES data.entities_topic(id),
     is_active BOOLEAN DEFAULT true,
+    embedding vector(768),
+    embedded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE data.axiology_virtue ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE data.axiology_virtue ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_axiology_virtue_embedding
+    ON data.axiology_virtue USING hnsw (embedding vector_cosine_ops);
+
+--------------------------------------------------------------------------------
+-- AXIOLOGY: VICE
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.axiology_vice (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -43,11 +61,21 @@ CREATE TABLE IF NOT EXISTS data.axiology_vice (
     description TEXT,
     topic_id UUID REFERENCES data.entities_topic(id),
     is_active BOOLEAN DEFAULT true,
+    embedding vector(768),
+    embedded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Removed axiology_habit table - habits are now recurring tasks in praxis_task
+ALTER TABLE data.axiology_vice ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE data.axiology_vice ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_axiology_vice_embedding
+    ON data.axiology_vice USING hnsw (embedding vector_cosine_ops);
+
+--------------------------------------------------------------------------------
+-- AXIOLOGY: TEMPERAMENT
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.axiology_temperament (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -56,23 +84,47 @@ CREATE TABLE IF NOT EXISTS data.axiology_temperament (
     temperament_type TEXT,
     topic_id UUID REFERENCES data.entities_topic(id),
     is_active BOOLEAN DEFAULT true,
+    embedding vector(768),
+    embedded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE data.axiology_temperament ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE data.axiology_temperament ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_axiology_temperament_embedding
+    ON data.axiology_temperament USING hnsw (embedding vector_cosine_ops);
+
+--------------------------------------------------------------------------------
+-- AXIOLOGY: PREFERENCE
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.axiology_preference (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
     description TEXT,
     preference_domain TEXT,
-    valence TEXT,
+    -- Note: valence column removed per 014 cleanup (valence implicit in table choice)
     person_id UUID REFERENCES data.entities_person(id),
     place_id UUID REFERENCES data.entities_place(id),
     topic_id UUID REFERENCES data.entities_topic(id),
     is_active BOOLEAN DEFAULT true,
+    embedding vector(768),
+    embedded_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE data.axiology_preference ADD COLUMN IF NOT EXISTS embedding vector(768);
+ALTER TABLE data.axiology_preference ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_axiology_preference_embedding
+    ON data.axiology_preference USING hnsw (embedding vector_cosine_ops);
+
+--------------------------------------------------------------------------------
+-- PRAXIS: TASK (including habits as recurring tasks)
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.praxis_task (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -94,7 +146,7 @@ CREATE TABLE IF NOT EXISTS data.praxis_task (
     last_completed_date DATE,          -- for streak calculation
 
     -- Hierarchical relations
-    initiative_id UUID,                -- References praxis_initiative (will add FK after table creation)
+    initiative_id UUID,                -- References praxis_initiative (FK added below)
     parent_task_id UUID,               -- References praxis_task (self-referential)
 
     -- Source integration
@@ -105,7 +157,7 @@ CREATE TABLE IF NOT EXISTS data.praxis_task (
     -- Axiological links
     virtue_ids UUID[],                 -- Links to axiology_virtue
     vice_ids UUID[],                   -- Links to axiology_vice
-    value_ids UUID[],                  -- Links to axiology_value
+    value_ids UUID[],                  -- Links to axiology_value (legacy)
     purpose TEXT,                      -- Why am I doing this?
 
     -- Context
@@ -123,6 +175,10 @@ CREATE INDEX IF NOT EXISTS idx_praxis_task_tags ON data.praxis_task USING GIN (t
 CREATE INDEX IF NOT EXISTS idx_praxis_task_status ON data.praxis_task(status) WHERE is_active = true;
 CREATE INDEX IF NOT EXISTS idx_praxis_task_habits ON data.praxis_task(is_habit) WHERE is_habit = true;
 CREATE INDEX IF NOT EXISTS idx_praxis_task_recurrence ON data.praxis_task(recurrence_rule) WHERE recurrence_rule IS NOT NULL;
+
+--------------------------------------------------------------------------------
+-- PRAXIS: INITIATIVE
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.praxis_initiative (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -163,6 +219,10 @@ CREATE TABLE IF NOT EXISTS data.praxis_initiative (
 CREATE INDEX IF NOT EXISTS idx_praxis_initiative_tags ON data.praxis_initiative USING GIN (tags);
 CREATE INDEX IF NOT EXISTS idx_praxis_initiative_status ON data.praxis_initiative(status) WHERE is_active = true;
 
+--------------------------------------------------------------------------------
+-- PRAXIS: ASPIRATION
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.praxis_aspiration (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     title TEXT NOT NULL,
@@ -175,22 +235,41 @@ CREATE TABLE IF NOT EXISTS data.praxis_aspiration (
 
     -- When activated
     activated_date DATE,                -- When moved from someday to active
-    activated_as_initiative_id UUID,    -- References praxis_initiative (will add FK below)
+    activated_as_initiative_id UUID,    -- References praxis_initiative (FK added below)
 
     -- Axiological links (aspirations are usually values-aligned)
     virtue_ids UUID[],
     value_ids UUID[],
     purpose TEXT,
 
+    -- From 015: Additional aspiration fields
+    target_date TIMESTAMPTZ,            -- Specific target date (vs relative target_timeframe)
+    source_provider TEXT DEFAULT 'internal',  -- 'internal', 'todoist', 'notion', etc.
+    external_id TEXT,
+    external_url TEXT,
+
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Add columns from 015 if they don't exist
+ALTER TABLE data.praxis_aspiration ADD COLUMN IF NOT EXISTS target_date TIMESTAMPTZ;
+ALTER TABLE data.praxis_aspiration ADD COLUMN IF NOT EXISTS source_provider TEXT DEFAULT 'internal';
+ALTER TABLE data.praxis_aspiration ADD COLUMN IF NOT EXISTS external_id TEXT;
+ALTER TABLE data.praxis_aspiration ADD COLUMN IF NOT EXISTS external_url TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_praxis_aspiration_tags ON data.praxis_aspiration USING GIN (tags);
 CREATE INDEX IF NOT EXISTS idx_praxis_aspiration_status ON data.praxis_aspiration(status) WHERE is_active = true;
 
--- Add foreign key constraints after all tables are created (with existence checks)
+-- Comments from 015
+COMMENT ON COLUMN data.praxis_aspiration.target_date IS 'Specific target date for aspiration (vs relative target_timeframe)';
+COMMENT ON COLUMN data.praxis_aspiration.source_provider IS 'Source of aspiration: internal (created in app), or external provider name';
+
+--------------------------------------------------------------------------------
+-- FOREIGN KEY CONSTRAINTS (after all tables created)
+--------------------------------------------------------------------------------
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -239,7 +318,7 @@ BEGIN
     END IF;
 END $$;
 
--- Add foreign key constraints for praxis_calendar (table defined in 003_entities_and_ontology.sql)
+-- FK constraints for praxis_calendar (table defined in 002_ontology.sql)
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -251,6 +330,7 @@ BEGIN
             FOREIGN KEY (task_id) REFERENCES data.praxis_task(id) ON DELETE SET NULL;
     END IF;
 END $$;
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -263,7 +343,9 @@ BEGIN
     END IF;
 END $$;
 
--- Note: narrative_chunks table removed - superseded by narrative_primitive in migration 006
+--------------------------------------------------------------------------------
+-- PRUDENT CONTEXT SNAPSHOT
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.prudent_context_snapshot (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -285,6 +367,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+--------------------------------------------------------------------------------
+-- USER PROFILE (singleton)
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.user_profile (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name TEXT,
@@ -293,28 +379,89 @@ CREATE TABLE IF NOT EXISTS data.user_profile (
     height_cm NUMERIC(5,2),
     weight_kg NUMERIC(5,2),
     ethnicity TEXT,
-    home_street TEXT,
-    home_city TEXT,
-    home_state TEXT,
-    home_postal_code TEXT,
-    home_country TEXT,
     occupation TEXT,
     employer TEXT,
     is_onboarding BOOLEAN NOT NULL DEFAULT true,
+    -- From 011: Theme preference
+    theme TEXT DEFAULT 'light',
+    -- From 013: Onboarding step
+    onboarding_step INTEGER DEFAULT 0,
+    -- From 016: Axiology completion
+    axiology_complete BOOLEAN DEFAULT FALSE,
+    -- From 017: Home place reference
+    home_place_id UUID REFERENCES data.entities_place(id),
+    -- From 018: Granular onboarding flags
+    onboarding_profile_complete BOOLEAN DEFAULT false,
+    onboarding_places_complete BOOLEAN DEFAULT false,
+    onboarding_tools_complete BOOLEAN DEFAULT false,
+    -- From 020: Crux (shared ethos statement)
+    crux TEXT,
+    -- From 023: Update schedule
+    update_check_hour INTEGER DEFAULT 8,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT user_profile_singleton CHECK (id = '00000000-0000-0000-0000-000000000001'::uuid)
 );
 
+-- Add columns if they don't exist (for idempotency)
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT 'light';
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS onboarding_step INTEGER DEFAULT 0;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS axiology_complete BOOLEAN DEFAULT FALSE;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS home_place_id UUID REFERENCES data.entities_place(id);
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS onboarding_profile_complete BOOLEAN DEFAULT false;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS onboarding_places_complete BOOLEAN DEFAULT false;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS onboarding_tools_complete BOOLEAN DEFAULT false;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS crux TEXT;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS update_check_hour INTEGER DEFAULT 8;
+-- From technology onboarding step
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS technology_vision TEXT;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS pain_point_primary TEXT;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS pain_point_secondary TEXT;
+ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS excited_features TEXT[];
+
+-- Constraints (idempotent)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'valid_theme') THEN
+        ALTER TABLE data.user_profile
+        ADD CONSTRAINT valid_theme CHECK (theme IN ('warm', 'light', 'dark', 'night'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'user_profile_update_check_hour_range') THEN
+        ALTER TABLE data.user_profile ADD CONSTRAINT user_profile_update_check_hour_range
+            CHECK (update_check_hour >= 0 AND update_check_hour <= 23);
+    END IF;
+END $$;
+
+-- Comments
+COMMENT ON COLUMN data.user_profile.onboarding_step IS 'Current step in onboarding wizard (0-5). NULL or 0 means not started, cleared on completion.';
+COMMENT ON COLUMN data.user_profile.axiology_complete IS 'Whether the user has completed axiology discovery through chat conversation with the onboarding agent';
+COMMENT ON COLUMN data.user_profile.onboarding_profile_complete IS 'Whether the user has completed profile setup (name required)';
+COMMENT ON COLUMN data.user_profile.onboarding_places_complete IS 'Whether the user has added places or skipped this step';
+COMMENT ON COLUMN data.user_profile.onboarding_tools_complete IS 'Whether the user has connected tools or skipped this step';
+COMMENT ON COLUMN data.user_profile.crux IS 'Shared ethos statement from onboarding - user''s vision and goals for Personal AI';
+COMMENT ON COLUMN data.user_profile.update_check_hour IS 'Hour (0-23 UTC) when the system checks for updates. Default 8 (3 AM Central). User can configure via settings.';
+COMMENT ON COLUMN data.user_profile.technology_vision IS 'User''s vision for how AI/technology should augment human life';
+COMMENT ON COLUMN data.user_profile.pain_point_primary IS 'Primary pain point that brought user to Virtues (e.g., chaos, direction, self_knowledge)';
+COMMENT ON COLUMN data.user_profile.pain_point_secondary IS 'Optional secondary pain point';
+COMMENT ON COLUMN data.user_profile.excited_features IS 'Array of feature keys user is most excited about (e.g., autobiography, praxis, axiology)';
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_user_profile_preferred_name ON data.user_profile(preferred_name);
+CREATE INDEX IF NOT EXISTS idx_user_profile_full_name ON data.user_profile(full_name);
+CREATE INDEX IF NOT EXISTS idx_user_profile_home_place ON data.user_profile(home_place_id) WHERE home_place_id IS NOT NULL;
+
+-- Insert singleton row
 INSERT INTO data.user_profile (id)
 VALUES ('00000000-0000-0000-0000-000000000001'::uuid)
 ON CONFLICT (id) DO NOTHING;
 
+-- Trigger
 DROP TRIGGER IF EXISTS user_profile_updated_at ON data.user_profile;
 CREATE TRIGGER user_profile_updated_at
     BEFORE UPDATE ON data.user_profile
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
-
-CREATE INDEX IF NOT EXISTS idx_user_profile_preferred_name ON data.user_profile(preferred_name);
-CREATE INDEX IF NOT EXISTS idx_user_profile_full_name ON data.user_profile(full_name);

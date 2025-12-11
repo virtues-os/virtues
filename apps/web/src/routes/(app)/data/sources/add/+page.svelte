@@ -7,6 +7,7 @@
 	import { onMount } from "svelte";
 	import type { PageData } from "./$types";
 	import type { DeviceInfo } from "$lib/types/device-pairing";
+	import type { ConnectedAccountSummary } from "$lib/api/client";
 	import * as api from "$lib/api/client";
 	import { toast } from "svelte-sonner";
 
@@ -53,6 +54,7 @@
 	// Plaid Link state
 	let plaidSourceId: string | null = $state(null);
 	let plaidInstitutionName: string | null = $state(null);
+	let plaidConnectedAccounts: ConnectedAccountSummary[] = $state([]);
 
 	// Configure mode state (when coming from OAuth callback)
 	let isConfigureMode = $state(!!data.existingSource);
@@ -163,11 +165,13 @@
 	}
 
 	// Handle Plaid Link success
-	async function handlePlaidSuccess(sourceId: string, institutionName?: string) {
+	async function handlePlaidSuccess(sourceId: string, institutionName?: string, connectedAccounts?: ConnectedAccountSummary[]) {
 		plaidSourceId = sourceId;
 		plaidInstitutionName = institutionName || 'Bank Account';
+		plaidConnectedAccounts = connectedAccounts || [];
 
 		// Fetch available streams for this Plaid source
+		// Note: streams are now filtered based on connected account types
 		try {
 			const streams = await api.listStreams(sourceId);
 			availableStreams = streams;
@@ -189,6 +193,7 @@
 		currentStep = 1;
 		plaidSourceId = null;
 		plaidInstitutionName = null;
+		plaidConnectedAccounts = [];
 	}
 
 	function toggleStream(streamName: string) {
@@ -438,9 +443,26 @@
 									/>
 								{:else}
 									<div class="pt-6 border-t border-border">
-										<p class="text-sm text-foreground-muted">
+										<p class="text-sm text-foreground-muted mb-3">
 											✓ Connected to {plaidInstitutionName}
 										</p>
+										{#if plaidConnectedAccounts.length > 0}
+											<div class="p-4 bg-surface-elevated rounded-lg">
+												<h4 class="text-sm font-medium text-foreground mb-2">Connected Accounts</h4>
+												<ul class="space-y-1 text-sm text-foreground-muted">
+													{#each plaidConnectedAccounts as account}
+														<li class="flex items-center gap-2">
+															<span class="text-success">•</span>
+															<span>{account.name}</span>
+															<span class="text-foreground-subtle">
+																({account.subtype || account.account_type})
+																{#if account.mask}****{account.mask}{/if}
+															</span>
+														</li>
+													{/each}
+												</ul>
+											</div>
+										{/if}
 									</div>
 								{/if}
 							</div>

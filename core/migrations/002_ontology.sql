@@ -1,5 +1,9 @@
--- Entities and ontology tables in data schema
--- Note: search_path is set at database level, so we use qualified names
+-- Ontology: All entity and activity data tables
+-- Consolidates: 003, 010
+
+--------------------------------------------------------------------------------
+-- ENTITIES: PERSON
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.entities_person (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -30,6 +34,10 @@ CREATE TRIGGER entities_person_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+--------------------------------------------------------------------------------
+-- ENTITIES: PLACE
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.entities_place (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -58,6 +66,10 @@ CREATE TRIGGER entities_place_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+--------------------------------------------------------------------------------
+-- ENTITIES: TOPIC
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.entities_topic (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -84,6 +96,10 @@ CREATE TRIGGER entities_topic_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+--------------------------------------------------------------------------------
+-- HEALTH: HEART RATE
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.health_heart_rate (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -105,6 +121,10 @@ CREATE TABLE IF NOT EXISTS data.health_heart_rate (
 );
 
 CREATE INDEX IF NOT EXISTS idx_health_heart_rate_timestamp ON data.health_heart_rate(timestamp DESC);
+
+--------------------------------------------------------------------------------
+-- HEALTH: HRV
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.health_hrv (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -128,6 +148,10 @@ CREATE TABLE IF NOT EXISTS data.health_hrv (
 
 CREATE INDEX IF NOT EXISTS idx_health_hrv_timestamp ON data.health_hrv(timestamp DESC);
 
+--------------------------------------------------------------------------------
+-- HEALTH: STEPS
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.health_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -148,6 +172,10 @@ CREATE TABLE IF NOT EXISTS data.health_steps (
 );
 
 CREATE INDEX IF NOT EXISTS idx_health_steps_timestamp ON data.health_steps(timestamp DESC);
+
+--------------------------------------------------------------------------------
+-- HEALTH: SLEEP
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.health_sleep (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -172,6 +200,10 @@ CREATE TABLE IF NOT EXISTS data.health_sleep (
 );
 
 CREATE INDEX IF NOT EXISTS idx_health_sleep_start_time ON data.health_sleep(start_time DESC);
+
+--------------------------------------------------------------------------------
+-- HEALTH: WORKOUT
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.health_workout (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -204,6 +236,10 @@ CREATE TABLE IF NOT EXISTS data.health_workout (
 CREATE INDEX IF NOT EXISTS idx_health_workout_start_time ON data.health_workout(start_time DESC);
 CREATE INDEX IF NOT EXISTS idx_health_workout_place ON data.health_workout(place_id);
 
+--------------------------------------------------------------------------------
+-- LOCATION: POINT
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.location_point (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -232,6 +268,10 @@ CREATE TABLE IF NOT EXISTS data.location_point (
 
 CREATE INDEX IF NOT EXISTS idx_location_point_coords ON data.location_point USING GIST(coordinates);
 CREATE INDEX IF NOT EXISTS idx_location_point_timestamp ON data.location_point(timestamp DESC);
+
+--------------------------------------------------------------------------------
+-- LOCATION: VISIT
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.location_visit (
     id UUID PRIMARY KEY,
@@ -266,6 +306,10 @@ CREATE TRIGGER location_visit_updated_at
     BEFORE UPDATE ON data.location_visit
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- SOCIAL: EMAIL
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.social_email (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -310,13 +354,32 @@ CREATE TABLE IF NOT EXISTS data.social_email (
     source_provider TEXT NOT NULL,
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT social_email_direction_check CHECK (direction IN ('sent', 'received')),
-    CONSTRAINT social_email_unique_source UNIQUE (source_table, message_id),
-    -- Required for ON CONFLICT in Gmail transform (maps stream records to ontology)
-    CONSTRAINT social_email_unique_stream_id UNIQUE (source_stream_id)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'social_email_direction_check') THEN
+        ALTER TABLE data.social_email
+        ADD CONSTRAINT social_email_direction_check CHECK (direction IN ('sent', 'received'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'social_email_unique_source') THEN
+        ALTER TABLE data.social_email
+        ADD CONSTRAINT social_email_unique_source UNIQUE (source_table, message_id);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'social_email_unique_stream_id') THEN
+        ALTER TABLE data.social_email
+        ADD CONSTRAINT social_email_unique_stream_id UNIQUE (source_stream_id);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_social_email_from_person ON data.social_email(from_person_id);
 CREATE INDEX IF NOT EXISTS idx_social_email_timestamp ON data.social_email(timestamp DESC);
@@ -326,6 +389,10 @@ CREATE TRIGGER social_email_updated_at
     BEFORE UPDATE ON data.social_email
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- SOCIAL: MESSAGE
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.social_message (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -379,6 +446,10 @@ CREATE TRIGGER social_message_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+--------------------------------------------------------------------------------
+-- PRAXIS: CALENDAR
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.praxis_calendar (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -416,10 +487,9 @@ CREATE TABLE IF NOT EXISTS data.praxis_calendar (
     -- Recurrence
     recurrence_rule TEXT,                -- RRULE if recurring
 
-    -- Links to praxis items (will add FKs in 004_identity.sql)
-    task_id UUID,                       -- What task this time block is for (including habits which are tasks with is_habit=true)
+    -- Links to praxis items (FKs added in 003_identity.sql)
+    task_id UUID,                       -- What task this time block is for
     initiative_id UUID,                 -- What initiative this time block is for
-    -- Note: habit_id removed since habits are now tasks with is_habit=true
 
     -- Axiological links (optional)
     purpose TEXT,                       -- Why this matters
@@ -448,6 +518,10 @@ CREATE TRIGGER praxis_calendar_updated_at
     BEFORE UPDATE ON data.praxis_calendar
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- ACTIVITY: APP USAGE
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.activity_app_usage (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -489,6 +563,10 @@ CREATE TRIGGER activity_app_usage_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+--------------------------------------------------------------------------------
+-- ACTIVITY: WEB BROWSING
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.activity_web_browsing (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -526,6 +604,10 @@ CREATE TRIGGER activity_web_browsing_updated_at
     BEFORE UPDATE ON data.activity_web_browsing
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- KNOWLEDGE: DOCUMENT
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.knowledge_document (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -569,6 +651,10 @@ CREATE TRIGGER knowledge_document_updated_at
     BEFORE UPDATE ON data.knowledge_document
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- KNOWLEDGE: AI CONVERSATION
+--------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data.knowledge_ai_conversation (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -614,6 +700,10 @@ CREATE TRIGGER knowledge_ai_conversation_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
 
+--------------------------------------------------------------------------------
+-- SPEECH: TRANSCRIPTION
+--------------------------------------------------------------------------------
+
 CREATE TABLE IF NOT EXISTS data.speech_transcription (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 
@@ -648,5 +738,291 @@ CREATE INDEX IF NOT EXISTS idx_speech_transcription_search ON data.speech_transc
 DROP TRIGGER IF EXISTS speech_transcription_updated_at ON data.speech_transcription;
 CREATE TRIGGER speech_transcription_updated_at
     BEFORE UPDATE ON data.speech_transcription
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- FINANCIAL: ACCOUNT (from 010)
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data.financial_account (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- External identifiers
+    account_id_external TEXT NOT NULL,              -- Provider's account ID (e.g., Plaid account_id)
+    persistent_account_id TEXT,                     -- Plaid's persistent_account_id (stable across items)
+
+    -- Account details
+    account_name TEXT NOT NULL,
+    official_name TEXT,                             -- Bank's official name for the account
+    account_type TEXT NOT NULL,                     -- depository, credit, loan, investment, brokerage, other
+    account_subtype TEXT,                           -- checking, savings, credit_card, mortgage, etc.
+    mask TEXT,                                      -- Last 4 digits
+
+    -- Balances (updated on each sync)
+    current_balance NUMERIC(28,10),
+    available_balance NUMERIC(28,10),
+    credit_limit NUMERIC(28,10),
+    currency_code TEXT DEFAULT 'USD',
+
+    -- Institution info
+    institution_id TEXT,
+    institution_name TEXT,
+
+    -- Status
+    is_active BOOLEAN DEFAULT true,
+
+    -- Standard ontology fields
+    timestamp TIMESTAMPTZ NOT NULL,                 -- When this account was linked/last updated
+
+    source_stream_id UUID NOT NULL,
+    source_table TEXT NOT NULL DEFAULT 'stream_plaid_accounts',
+    source_provider TEXT NOT NULL DEFAULT 'plaid',
+
+    metadata JSONB DEFAULT '{}',
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT financial_account_unique_source UNIQUE (source_stream_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_account_external_id
+    ON data.financial_account(account_id_external);
+CREATE INDEX IF NOT EXISTS idx_financial_account_type
+    ON data.financial_account(account_type);
+CREATE INDEX IF NOT EXISTS idx_financial_account_institution
+    ON data.financial_account(institution_id);
+CREATE INDEX IF NOT EXISTS idx_financial_account_timestamp
+    ON data.financial_account(timestamp DESC);
+
+DROP TRIGGER IF EXISTS financial_account_updated_at ON data.financial_account;
+CREATE TRIGGER financial_account_updated_at
+    BEFORE UPDATE ON data.financial_account
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- FINANCIAL: TRANSACTION (from 010)
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data.financial_transaction (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- External identifiers
+    transaction_id_external TEXT NOT NULL,          -- Provider's transaction ID (e.g., Plaid transaction_id)
+
+    -- Account reference (resolved after account sync)
+    account_id UUID REFERENCES data.financial_account(id),
+    account_id_external TEXT NOT NULL,              -- For matching before account_id is resolved
+
+    -- Amount (positive = money in, negative = money out)
+    amount NUMERIC(28,10) NOT NULL,
+    currency_code TEXT DEFAULT 'USD',
+
+    -- Dates
+    transaction_date DATE NOT NULL,                 -- Date transaction occurred
+    authorized_date DATE,                           -- When authorized (may differ from transaction_date)
+    posted_date DATE,                               -- When posted to account
+
+    -- Description
+    name TEXT NOT NULL,                             -- Original transaction description
+    merchant_name TEXT,                             -- Cleaned merchant name (if available)
+
+    -- Categorization
+    category TEXT,                                  -- Normalized category (e.g., 'dining', 'groceries')
+    category_detailed TEXT,                         -- Provider's detailed category
+    personal_finance_category TEXT,                 -- Plaid's personal finance category
+
+    -- Transaction type
+    transaction_type TEXT,                          -- digital, place, special, unresolved
+    payment_channel TEXT,                           -- online, in store, other
+
+    -- Status
+    is_pending BOOLEAN DEFAULT false,
+
+    -- Location (optional, for in-store transactions)
+    location_address TEXT,
+    location_city TEXT,
+    location_region TEXT,
+    location_postal_code TEXT,
+    location_country TEXT,
+    location_lat FLOAT,
+    location_lon FLOAT,
+
+    -- Merchant info
+    merchant_entity_id TEXT,                        -- Plaid merchant entity ID
+
+    -- Standard ontology fields
+    timestamp TIMESTAMPTZ NOT NULL,                 -- transaction_date as timestamp
+
+    source_stream_id UUID NOT NULL,
+    source_table TEXT NOT NULL DEFAULT 'stream_plaid_transactions',
+    source_provider TEXT NOT NULL DEFAULT 'plaid',
+
+    metadata JSONB DEFAULT '{}',
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT financial_transaction_unique_source UNIQUE (source_stream_id)
+);
+
+-- Primary indexes for queries
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_date
+    ON data.financial_transaction(transaction_date DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_account_date
+    ON data.financial_transaction(account_id, transaction_date DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_category
+    ON data.financial_transaction(category);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_merchant
+    ON data.financial_transaction(merchant_name) WHERE merchant_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_pending
+    ON data.financial_transaction(is_pending) WHERE is_pending = true;
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_external_id
+    ON data.financial_transaction(transaction_id_external);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_account_external
+    ON data.financial_transaction(account_id_external);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_timestamp
+    ON data.financial_transaction(timestamp DESC);
+
+-- Full-text search on transaction names
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_search
+    ON data.financial_transaction USING GIN(to_tsvector('english', coalesce(name, '') || ' ' || coalesce(merchant_name, '')));
+
+DROP TRIGGER IF EXISTS financial_transaction_updated_at ON data.financial_transaction;
+CREATE TRIGGER financial_transaction_updated_at
+    BEFORE UPDATE ON data.financial_transaction
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- FINANCIAL: ASSET (Investment Holdings)
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data.financial_asset (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- Account reference
+    account_id UUID REFERENCES data.financial_account(id),
+    account_id_external TEXT NOT NULL,
+
+    -- Security identifiers
+    security_id_external TEXT NOT NULL,
+    ticker_symbol TEXT,
+    cusip TEXT,
+    isin TEXT,
+    security_name TEXT NOT NULL,
+    security_type TEXT,  -- equity, etf, mutual_fund, bond, option, cryptocurrency
+
+    -- Holdings
+    quantity NUMERIC(28,10) NOT NULL,
+    cost_basis NUMERIC(28,10),
+    institution_value NUMERIC(28,10),
+    close_price NUMERIC(28,10),
+    currency_code TEXT DEFAULT 'USD',
+
+    -- Timing
+    as_of_date DATE NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+
+    -- Standard ontology fields
+    source_stream_id UUID NOT NULL,
+    source_table TEXT NOT NULL DEFAULT 'stream_plaid_investments',
+    source_provider TEXT NOT NULL DEFAULT 'plaid',
+    metadata JSONB DEFAULT '{}',
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT financial_asset_unique_source UNIQUE (source_stream_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_asset_account
+    ON data.financial_asset(account_id);
+CREATE INDEX IF NOT EXISTS idx_financial_asset_account_external
+    ON data.financial_asset(account_id_external);
+CREATE INDEX IF NOT EXISTS idx_financial_asset_security
+    ON data.financial_asset(security_id_external);
+CREATE INDEX IF NOT EXISTS idx_financial_asset_ticker
+    ON data.financial_asset(ticker_symbol) WHERE ticker_symbol IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_financial_asset_timestamp
+    ON data.financial_asset(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_asset_type
+    ON data.financial_asset(security_type);
+
+DROP TRIGGER IF EXISTS financial_asset_updated_at ON data.financial_asset;
+CREATE TRIGGER financial_asset_updated_at
+    BEFORE UPDATE ON data.financial_asset
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+--------------------------------------------------------------------------------
+-- FINANCIAL: LIABILITY (Credit Cards, Mortgages, Loans)
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data.financial_liability (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- Account reference
+    account_id UUID REFERENCES data.financial_account(id),
+    account_id_external TEXT NOT NULL,
+
+    -- Liability type
+    liability_type TEXT NOT NULL,  -- credit_card, mortgage, student_loan
+
+    -- Interest/APR
+    apr_percentage NUMERIC(10,4),
+    apr_type TEXT,  -- variable, fixed
+    interest_rate_percentage NUMERIC(10,4),
+
+    -- Payment info
+    minimum_payment NUMERIC(28,10),
+    last_payment_amount NUMERIC(28,10),
+    last_payment_date DATE,
+    next_payment_due_date DATE,
+    next_payment_amount NUMERIC(28,10),
+
+    -- Loan specifics
+    original_loan_amount NUMERIC(28,10),
+    outstanding_balance NUMERIC(28,10),
+    loan_term_months INTEGER,
+    origination_date DATE,
+    maturity_date DATE,
+
+    -- Mortgage specifics
+    property_address TEXT,
+    property_city TEXT,
+    property_region TEXT,
+    property_postal_code TEXT,
+    escrow_balance NUMERIC(28,10),
+
+    -- Standard ontology fields
+    timestamp TIMESTAMPTZ NOT NULL,
+    source_stream_id UUID NOT NULL,
+    source_table TEXT NOT NULL DEFAULT 'stream_plaid_liabilities',
+    source_provider TEXT NOT NULL DEFAULT 'plaid',
+    metadata JSONB DEFAULT '{}',
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT financial_liability_unique_source UNIQUE (source_stream_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_liability_account
+    ON data.financial_liability(account_id);
+CREATE INDEX IF NOT EXISTS idx_financial_liability_account_external
+    ON data.financial_liability(account_id_external);
+CREATE INDEX IF NOT EXISTS idx_financial_liability_type
+    ON data.financial_liability(liability_type);
+CREATE INDEX IF NOT EXISTS idx_financial_liability_timestamp
+    ON data.financial_liability(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_liability_next_payment
+    ON data.financial_liability(next_payment_due_date) WHERE next_payment_due_date IS NOT NULL;
+
+DROP TRIGGER IF EXISTS financial_liability_updated_at ON data.financial_liability;
+CREATE TRIGGER financial_liability_updated_at
+    BEFORE UPDATE ON data.financial_liability
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();

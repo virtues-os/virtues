@@ -282,12 +282,14 @@ fn init_registry() -> Registry {
 
     // Register OAuth sources
     registry.register(crate::sources::google::registry::GoogleSource::descriptor());
-    registry.register(crate::sources::notion::registry::NotionSource::descriptor());
-    registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
+    // TODO: Re-enable incrementally as we publish
+    // registry.register(crate::sources::notion::registry::NotionSource::descriptor());
+    // registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
 
     // Register device sources
-    registry.register(crate::sources::ios::registry::IosSource::descriptor());
-    registry.register(crate::sources::mac::registry::MacSource::descriptor());
+    // TODO: Re-enable incrementally as we publish
+    // registry.register(crate::sources::ios::registry::IosSource::descriptor());
+    // registry.register(crate::sources::mac::registry::MacSource::descriptor());
 
     registry
 }

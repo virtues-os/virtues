@@ -1,0 +1,87 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE data.entities_place\n        SET\n            canonical_name = COALESCE($2, canonical_name),\n            category = COALESCE($3, category),\n            geo_center = CASE\n                WHEN $4::float8 IS NOT NULL AND $5::float8 IS NOT NULL\n                THEN ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography\n                ELSE geo_center\n            END,\n            metadata = $6,\n            updated_at = NOW()\n        WHERE id = $1\n        RETURNING\n            id,\n            canonical_name,\n            category,\n            ST_Y(geo_center::geometry) as latitude,\n            ST_X(geo_center::geometry) as longitude,\n            cluster_radius_meters,\n            visit_count,\n            total_time_minutes,\n            metadata,\n            created_at,\n            updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "canonical_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "category",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "latitude",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "longitude",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 5,
+        "name": "cluster_radius_meters",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 6,
+        "name": "visit_count",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "total_time_minutes",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 8,
+        "name": "metadata",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 9,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 10,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Float8",
+        "Float8",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null,
+      null,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c5e7ed6b8ff3f2fa87b84e2bef56e6c0cf2c8128b30b9f2913186c87cdf38af0"
+}

@@ -113,14 +113,15 @@
 			icon: "ri:brain-line",
 			defaultExpanded: false,
 			items: [
-				{
-					id: "timeline",
-					type: "link",
-					label: "Timeline",
-					href: "/timeline",
-					icon: "ri:time-line",
-					pagespace: "timeline",
-				},
+				// Coming soon - Timeline feature in development
+				// {
+				// 	id: "timeline",
+				// 	type: "link",
+				// 	label: "Timeline",
+				// 	href: "/timeline",
+				// 	icon: "ri:time-line",
+				// 	pagespace: "timeline",
+				// },
 				{
 					id: "entities",
 					type: "link",
@@ -144,6 +145,14 @@
 					href: "/data/jobs",
 					icon: "ri:history-line",
 					pagespace: "data/jobs",
+				},
+				{
+					id: "storage",
+					type: "link",
+					label: "Object Storage",
+					href: "/storage",
+					icon: "ri:database-2-line",
+					pagespace: "storage",
 				},
 			],
 		});
@@ -220,20 +229,24 @@
 			onToggle={() => toggleSection("history")}
 			animationDelay={animationIndices.historyLabelIndex * 30}
 		>
-			{#each recentChats as session, i}
-				<SidebarNavItem
-					item={{
-						id: session.conversation_id,
-						type: "link",
-						label: session.title || "Untitled",
-						href: `/?conversationId=${session.conversation_id}`,
-						icon: "ri:chat-1-line",
-						pagespace: session.conversation_id,
-					}}
-					collapsed={isCollapsed}
-					animationDelay={(animationIndices.chatStartIndex + i) * 30}
-				/>
-			{/each}
+			{#if recentChats.length === 0}
+				<div class="empty-state">No chat history</div>
+			{:else}
+				{#each recentChats as session, i}
+					<SidebarNavItem
+						item={{
+							id: session.conversation_id,
+							type: "link",
+							label: session.title || "Untitled",
+							href: `/?conversationId=${session.conversation_id}`,
+							icon: "ri:chat-1-line",
+							pagespace: session.conversation_id,
+						}}
+						collapsed={isCollapsed}
+						animationDelay={(animationIndices.chatStartIndex + i) * 30}
+					/>
+				{/each}
+			{/if}
 		</SidebarAccordion>
 
 		<!-- Accordion sections (Onboarding, Memory) -->
@@ -397,6 +410,15 @@
 	.sidebar.collapsed .sections {
 		padding: 12px 8px;
 		@apply flex flex-col items-center;
+	}
+
+	/* ==============================================
+	   EMPTY STATE
+	   ============================================== */
+	.empty-state {
+		@apply text-xs;
+		color: var(--text-tertiary);
+		padding: 8px 12px;
 	}
 
 </style>
