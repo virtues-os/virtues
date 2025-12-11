@@ -101,8 +101,8 @@ struct GoogleLatLng {
 
 /// Get autocomplete predictions for a query
 pub async fn autocomplete(request: AutocompleteRequest) -> Result<AutocompleteResponse> {
-    let api_key = std::env::var("GOOGLE_MAPS_API_KEY").map_err(|_| {
-        Error::Configuration("GOOGLE_MAPS_API_KEY environment variable not set".into())
+    let api_key = std::env::var("GOOGLE_API_KEY").map_err(|_| {
+        Error::Configuration("GOOGLE_API_KEY environment variable not set".into())
     })?;
 
     if request.query.trim().is_empty() {
@@ -157,8 +157,8 @@ pub async fn autocomplete(request: AutocompleteRequest) -> Result<AutocompleteRe
 
 /// Get details for a specific place
 pub async fn get_place_details(request: PlaceDetailsRequest) -> Result<PlaceDetailsResponse> {
-    let api_key = std::env::var("GOOGLE_MAPS_API_KEY").map_err(|_| {
-        Error::Configuration("GOOGLE_MAPS_API_KEY environment variable not set".into())
+    let api_key = std::env::var("GOOGLE_API_KEY").map_err(|_| {
+        Error::Configuration("GOOGLE_API_KEY environment variable not set".into())
     })?;
 
     let client = reqwest::Client::new();
