@@ -30,12 +30,13 @@
 	let connectedSources = $state<ConnectedSource[]>([]);
 	let isLoading = $state(true);
 
-	// Check if minimum connection is met: iOS (mobile)
-	let hasMobile = $derived(connectedSources.some((s) => s.source === "ios"));
+	// TODO: Re-enable requirements as we publish more sources
+	// // Check if minimum connection is met: iOS (mobile)
+	// let hasMobile = $derived(connectedSources.some((s) => s.source === "ios"));
 
-	// Update continue button state
+	// Always allow continue for now (only Google available)
 	$effect(() => {
-		setCanContinue(hasMobile);
+		setCanContinue(true);
 	});
 
 	onMount(async () => {
@@ -107,8 +108,8 @@
 			onSourceConnected={handleSourceConnected}
 		/>
 
-		<!-- Connection requirement indicator -->
-		<div class="requirement-section">
+		<!-- TODO: Re-enable requirement indicator as we publish more sources -->
+		<!-- <div class="requirement-section">
 			<div class="requirement-status">
 				<span class="status-text">
 					Connect your mobile device to continue. At a minimum, you
@@ -122,7 +123,7 @@
 					</div>
 				</div>
 			</div>
-		</div>
+		</div> -->
 	{/if}
 </div>
 

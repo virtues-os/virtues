@@ -76,12 +76,7 @@ pub struct UserProfile {
     #[serde(with = "decimal_serde")]
     pub weight_kg: Option<Decimal>,
     pub ethnicity: Option<String>,
-    // Home Address
-    pub home_street: Option<String>,
-    pub home_city: Option<String>,
-    pub home_state: Option<String>,
-    pub home_postal_code: Option<String>,
-    pub home_country: Option<String>,
+    // Home place (FK to entities_place)
     pub home_place_id: Option<Uuid>,
     // Work/Occupation
     pub occupation: Option<String>,

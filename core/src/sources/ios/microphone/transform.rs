@@ -243,6 +243,17 @@ impl OntologyTransform for MicrophoneTranscriptionTransform {
                     "Transcription completed"
                 );
 
+                // Record AssemblyAI usage
+                if let Err(e) = crate::api::record_service_usage(
+                    db.pool(),
+                    crate::api::Service::AssemblyAi,
+                    1,
+                )
+                .await
+                {
+                    tracing::warn!("Failed to record AssemblyAI usage: {}", e);
+                }
+
                 // Create speech_transcription record with real transcript
                 let transcription_id = Uuid::new_v4();
 

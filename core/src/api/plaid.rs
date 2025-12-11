@@ -10,15 +10,31 @@
 //! 3. User authenticates with their bank in Plaid's UI
 //! 4. Plaid returns a public_token to the frontend
 //! 5. Frontend calls `POST /api/plaid/exchange-token` with the public_token
-//! 6. Backend exchanges public_token for access_token and stores it
+//! 6. Backend exchanges public_token for access_token and stores it (encrypted)
 
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
+use crate::sources::base::oauth::encryption::TokenEncryptor;
 use crate::sources::plaid::client::PlaidClient;
-use crate::sources::plaid::transactions::PlaidSourceMetadata;
+
+/// Plaid source metadata stored in source_connections.metadata
+/// Note: access_token is stored separately in the encrypted access_token column
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaidSourceMetadata {
+    /// Plaid Item ID
+    pub item_id: String,
+    /// Institution ID
+    pub institution_id: Option<String>,
+    /// Institution name
+    pub institution_name: Option<String>,
+    /// Connected account types (e.g., ["depository", "credit", "investment"])
+    /// Used to filter which streams are relevant for this connection
+    #[serde(default)]
+    pub connected_account_types: Vec<String>,
+}
 
 /// Request to create a Plaid Link token
 #[derive(Debug, Deserialize)]
@@ -55,6 +71,21 @@ pub struct ExchangeTokenResponse {
     pub item_id: String,
     /// Institution name if available
     pub institution_name: Option<String>,
+    /// Summary of connected accounts (for UI display)
+    pub connected_accounts: Vec<ConnectedAccountSummary>,
+}
+
+/// Summary of a connected Plaid account
+#[derive(Debug, Clone, Serialize)]
+pub struct ConnectedAccountSummary {
+    pub account_id: String,
+    pub name: String,
+    /// Plaid's standardized account type: depository, credit, loan, investment, brokerage, other
+    pub account_type: String,
+    /// More specific subtype: checking, savings, credit card, mortgage, 401k, etc.
+    pub subtype: Option<String>,
+    /// Last 4 digits of account number
+    pub mask: Option<String>,
 }
 
 /// Create a Plaid Link token for initializing Plaid Link
@@ -70,9 +101,10 @@ pub async fn create_link_token(
     // In a multi-user system, this would be the actual user ID
     let user_client_id = format!("virtues-user-{}", Uuid::new_v4());
 
-    // Request transactions product (primary use case)
+    // Request financial products (investments/liabilities require additional Plaid approval)
+    // Note: We use accounts_get() instead of accounts_balance_get() to avoid $0.10/call balance fees
     let products = vec!["transactions"];
-    let country_codes = vec!["US", "CA", "GB"];
+    let country_codes = vec!["US"];
 
     // Get redirect URI from environment (optional - only needed for OAuth-based institutions)
     // In sandbox mode, we can skip this. In production, configure in Plaid dashboard.
@@ -97,7 +129,8 @@ pub async fn create_link_token(
 /// Exchange a public token for an access token
 ///
 /// Called after the user completes the Plaid Link flow.
-/// Creates a new source connection with the access token.
+/// Creates a new source connection with the access token (encrypted).
+/// Also fetches connected accounts to determine which streams are relevant.
 pub async fn exchange_public_token(
     db: &PgPool,
     request: ExchangeTokenRequest,
@@ -112,6 +145,41 @@ pub async fn exchange_public_token(
     let access_token = exchange_response.access_token;
     let item_id = exchange_response.item_id;
 
+    // Fetch connected accounts to analyze types
+    let accounts_response = client.accounts_get(&access_token).await?;
+
+    // Extract unique account types for stream filtering
+    let connected_account_types: Vec<String> = accounts_response
+        .accounts
+        .iter()
+        .map(|a| a.account_type.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Build account summaries for frontend display
+    let connected_accounts: Vec<ConnectedAccountSummary> = accounts_response
+        .accounts
+        .iter()
+        .map(|acc| ConnectedAccountSummary {
+            account_id: acc.account_id.clone(),
+            name: acc.name.clone(),
+            account_type: acc.account_type.clone(),
+            subtype: acc.subtype.clone(),
+            mask: acc.mask.clone(),
+        })
+        .collect();
+
+    tracing::info!(
+        account_types = ?connected_account_types,
+        account_count = connected_accounts.len(),
+        "Analyzed connected Plaid accounts"
+    );
+
+    // Encrypt the access token before storing
+    let encryptor = TokenEncryptor::from_env()?;
+    let encrypted_token = encryptor.encrypt(&access_token)?;
+
     // Create source connection
     let source_id = Uuid::new_v4();
     let source_name = request
@@ -119,26 +187,27 @@ pub async fn exchange_public_token(
         .clone()
         .unwrap_or_else(|| "Plaid Account".to_string());
 
-    // Store metadata with access token
+    // Store metadata with account types for stream filtering
     let metadata = PlaidSourceMetadata {
         item_id: item_id.clone(),
-        access_token: access_token.clone(),
         institution_id: request.institution_id.clone(),
         institution_name: request.institution_name.clone(),
+        connected_account_types,
     };
 
     let metadata_json = serde_json::to_value(&metadata)
         .map_err(|e| Error::Other(format!("Failed to serialize metadata: {e}")))?;
 
-    // Insert source connection
+    // Insert source connection with encrypted access token
     sqlx::query(
         r#"
-        INSERT INTO data.source_connections (id, source, name, auth_type, is_active, is_internal, metadata, created_at, updated_at)
-        VALUES ($1, 'plaid', $2, 'plaid', true, false, $3, NOW(), NOW())
+        INSERT INTO data.source_connections (id, source, name, auth_type, access_token, is_active, is_internal, metadata, created_at, updated_at)
+        VALUES ($1, 'plaid', $2, 'plaid', $3, true, false, $4, NOW(), NOW())
         "#,
     )
     .bind(source_id)
     .bind(&source_name)
+    .bind(&encrypted_token)
     .bind(&metadata_json)
     .execute(db)
     .await
@@ -151,13 +220,14 @@ pub async fn exchange_public_token(
         source_id = %source_id,
         item_id = %item_id,
         institution = ?request.institution_name,
-        "Plaid source connection created"
+        "Plaid source connection created with encrypted token"
     );
 
     Ok(ExchangeTokenResponse {
         source_id,
         item_id,
         institution_name: request.institution_name,
+        connected_accounts,
     })
 }
 
@@ -165,20 +235,25 @@ pub async fn exchange_public_token(
 ///
 /// Useful for showing the user which accounts are connected.
 pub async fn get_plaid_accounts(db: &PgPool, source_id: Uuid) -> Result<Vec<PlaidAccount>> {
-    // Load access token from source metadata
-    let row = sqlx::query_as::<_, (serde_json::Value,)>(
-        "SELECT metadata FROM data.source_connections WHERE id = $1 AND source = 'plaid'",
+    // Load encrypted access token from source_connections
+    let row = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT access_token FROM data.source_connections WHERE id = $1 AND source = 'plaid'",
     )
     .bind(source_id)
     .fetch_optional(db)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {source_id}")))?;
 
-    let metadata: PlaidSourceMetadata = serde_json::from_value(row.0)
-        .map_err(|e| Error::Other(format!("Invalid Plaid metadata: {e}")))?;
+    let encrypted_token = row.0.ok_or_else(|| {
+        Error::Configuration("Plaid source has no access token".to_string())
+    })?;
+
+    // Decrypt the access token
+    let encryptor = TokenEncryptor::from_env()?;
+    let access_token = encryptor.decrypt(&encrypted_token)?;
 
     let client = PlaidClient::from_env()?;
-    let response = client.accounts_get(&metadata.access_token).await?;
+    let response = client.accounts_get(&access_token).await?;
 
     let accounts = response
         .accounts
@@ -215,21 +290,26 @@ pub struct PlaidAccount {
 
 /// Remove a Plaid Item (disconnect bank account)
 pub async fn remove_plaid_item(db: &PgPool, source_id: Uuid) -> Result<()> {
-    // Load access token
-    let row = sqlx::query_as::<_, (serde_json::Value,)>(
-        "SELECT metadata FROM data.source_connections WHERE id = $1 AND source = 'plaid'",
+    // Load encrypted access token
+    let row = sqlx::query_as::<_, (Option<String>,)>(
+        "SELECT access_token FROM data.source_connections WHERE id = $1 AND source = 'plaid'",
     )
     .bind(source_id)
     .fetch_optional(db)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {source_id}")))?;
 
-    let metadata: PlaidSourceMetadata = serde_json::from_value(row.0)
-        .map_err(|e| Error::Other(format!("Invalid Plaid metadata: {e}")))?;
+    let encrypted_token = row.0.ok_or_else(|| {
+        Error::Configuration("Plaid source has no access token".to_string())
+    })?;
+
+    // Decrypt the access token
+    let encryptor = TokenEncryptor::from_env()?;
+    let access_token = encryptor.decrypt(&encrypted_token)?;
 
     // Revoke access with Plaid
     let client = PlaidClient::from_env()?;
-    client.item_remove(&metadata.access_token).await?;
+    client.item_remove(&access_token).await?;
 
     // Delete source connection
     super::sources::delete_source(db, source_id).await?;

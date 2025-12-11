@@ -1,6 +1,4 @@
 //! Configuration types for Plaid streams
-//!
-//! These will be expanded when the actual Plaid client and streams are implemented.
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +26,42 @@ fn default_max_transactions() -> i32 {
     500
 }
 
+/// Configuration for Plaid accounts stream
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaidAccountsConfig {
+    /// Whether to fetch current account balances
+    #[serde(default = "default_include_balances")]
+    pub include_balances: bool,
+}
+
+fn default_include_balances() -> bool {
+    true
+}
+
+impl Default for PlaidAccountsConfig {
+    fn default() -> Self {
+        Self {
+            include_balances: true,
+        }
+    }
+}
+
+/// Configuration for Plaid investments stream
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlaidInvestmentsConfig {
+    /// List of account IDs to sync (empty = all investment accounts)
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+}
+
+/// Configuration for Plaid liabilities stream
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PlaidLiabilitiesConfig {
+    /// List of account IDs to sync (empty = all liability accounts)
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +80,23 @@ mod tests {
         assert_eq!(config.account_ids, vec!["acc_123"]);
         assert!(!config.include_pending);
         assert_eq!(config.max_transactions_per_sync, 500); // default
+    }
+
+    #[test]
+    fn test_accounts_config() {
+        let config = PlaidAccountsConfig::default();
+        assert!(config.include_balances);
+    }
+
+    #[test]
+    fn test_investments_config() {
+        let config = PlaidInvestmentsConfig::default();
+        assert!(config.account_ids.is_empty());
+    }
+
+    #[test]
+    fn test_liabilities_config() {
+        let config = PlaidLiabilitiesConfig::default();
+        assert!(config.account_ids.is_empty());
     }
 }

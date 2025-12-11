@@ -27,6 +27,11 @@
 			author: "Delphic maxim",
 			source: "Temple of Apollo at Delphi",
 		},
+		"/onboarding/technology": {
+			text: "Technology is neither good nor bad; nor is it neutral.",
+			author: "Melvin Kranzberg",
+			source: "Kranzberg's First Law",
+		},
 		"/onboarding/profile": {
 			text: "The privilege of a lifetime is to become who you truly are.",
 			author: "Carl Jung",
@@ -51,16 +56,17 @@
 		string,
 		{ number: number; total: number; image: string }
 	> = {
-		"/onboarding/welcome": { number: 1, total: 5, image: libraryImg },
-		"/onboarding/profile": { number: 2, total: 5, image: familyImg },
-		"/onboarding/places": { number: 3, total: 5, image: greeceImg },
-		"/onboarding/tools": { number: 4, total: 5, image: paintingImg },
-		"/onboarding/axiology": { number: 5, total: 5, image: waterfallImg },
+		"/onboarding/welcome": { number: 1, total: 6, image: libraryImg },
+		"/onboarding/technology": { number: 2, total: 6, image: paintingImg },
+		"/onboarding/profile": { number: 3, total: 6, image: familyImg },
+		"/onboarding/places": { number: 4, total: 6, image: greeceImg },
+		"/onboarding/tools": { number: 5, total: 6, image: waterfallImg },
+		"/onboarding/axiology": { number: 6, total: 6, image: libraryImg },
 	};
 
 	// Convert to Roman numerals
 	function toRoman(num: number): string {
-		const romans = ["I", "II", "III", "IV", "V"];
+		const romans = ["I", "II", "III", "IV", "V", "VI"];
 		return romans[num - 1] || num.toString();
 	}
 

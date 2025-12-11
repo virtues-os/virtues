@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use super::plaid::PlaidSourceMetadata;
 use super::sources::get_source;
 use crate::error::{Error, Result};
 use crate::storage::stream_writer::StreamWriter;
@@ -125,6 +126,45 @@ pub async fn list_source_streams(db: &PgPool, source_id: Uuid) -> Result<Vec<Str
         });
     }
 
+    // For Plaid sources, filter streams based on connected account types
+    if provider == "plaid" {
+        // Fetch metadata separately since SourceConnection doesn't include it
+        let metadata_row: Option<(Option<serde_json::Value>,)> = sqlx::query_as(
+            "SELECT metadata FROM source_connections WHERE id = $1",
+        )
+        .bind(source_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some((Some(metadata),)) = metadata_row {
+            if let Ok(plaid_meta) = serde_json::from_value::<PlaidSourceMetadata>(metadata) {
+                let account_types = &plaid_meta.connected_account_types;
+
+                // Only filter if we have account type info (backward compat for existing connections)
+                if !account_types.is_empty() {
+                    result.retain(|stream| {
+                        match stream.stream_name.as_str() {
+                            // Transactions and accounts are always available
+                            "transactions" | "accounts" => true,
+                            // Investments require investment or brokerage accounts
+                            "investments" => account_types
+                                .iter()
+                                .any(|t| t == "investment" || t == "brokerage"),
+                            // Liabilities require credit or loan accounts
+                            "liabilities" => {
+                                account_types.iter().any(|t| t == "credit" || t == "loan")
+                            }
+                            // Unknown streams pass through
+                            _ => true,
+                        }
+                    });
+                }
+            }
+        }
+    }
+
     Ok(result)
 }
 
@@ -206,9 +246,9 @@ pub async fn enable_stream(
     .await
     .map_err(|e| Error::Database(format!("Failed to enable stream: {e}")))?;
 
-    // Only trigger initial sync for OAuth sources (they pull data from external APIs)
+    // Only trigger initial sync for pull-based sources (they pull data from external APIs)
     // Device sources (iOS, Mac) push data themselves via ingest endpoint
-    if source.auth_type == "oauth2" {
+    if source.auth_type == "oauth2" || source.auth_type == "plaid" {
         let db_clone = db.clone();
         let storage_clone = storage.clone();
         let stream_writer_clone = stream_writer.clone();

@@ -15,6 +15,21 @@
 		if (percentage < 90) return '#f97316'; // orange
 		return '#ef4444'; // red
 	}
+
+	// Format reset date
+	function formatResetDate(dateStr: string | null): string {
+		if (!dateStr) return 'Next month';
+		const date = new Date(dateStr);
+		return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	}
+
+	// Service display names
+	const serviceNames: Record<string, string> = {
+		ai_gateway: 'AI Gateway',
+		assemblyai: 'Speech Transcription',
+		google_places: 'Google Places',
+		exa: 'Web Search'
+	};
 </script>
 
 <svelte:head>
@@ -84,6 +99,50 @@
 			</div>
 		</div>
 	</div>
+
+	<!-- Monthly Service Usage Section -->
+	{#if data.monthly?.services}
+		<div class="section-header">
+			<h2>Monthly Service Usage</h2>
+			<span class="tier-badge {data.monthly.tier}">{data.monthly.tier}</span>
+			<span class="reset-info">Resets {formatResetDate(data.monthly.resetsAt)}</span>
+		</div>
+
+		<div class="services-grid">
+			{#each Object.entries(data.monthly.services) as [key, service]}
+				<div class="service-card {service.limitType === 'soft' ? 'soft-limit' : ''}">
+					<div class="service-header">
+						<h3>{serviceNames[key] || key}</h3>
+						<div class="service-badges">
+							{#if service.limitType === 'soft'}
+								<span class="limit-type-badge soft">soft</span>
+							{/if}
+							<span class="unit-text">{service.unit}</span>
+						</div>
+					</div>
+					<div class="service-value">
+						<span class="used">{formatNumber(service.used)}</span>
+						<span class="divider">/</span>
+						<span class="limit">{formatNumber(service.limit)}</span>
+					</div>
+					<div class="progress-bar">
+						<div
+							class="progress-fill"
+							style="width: {Math.min(service.percentage, 100)}%; background-color: {getProgressColor(
+								service.percentage
+							)}"
+						/>
+					</div>
+					<div class="percentage">
+						{service.percentage}% used
+						{#if service.percentage > 100 && service.limitType === 'soft'}
+							<span class="over-budget-text">(over budget)</span>
+						{/if}
+					</div>
+				</div>
+			{/each}
+		</div>
+	{/if}
 
 	<div class="info-section">
 		<h2>Rate Limits</h2>
@@ -306,6 +365,133 @@
 		color: var(--text-primary, #1f2937);
 	}
 
+	/* Monthly Services Section */
+	.section-header {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1.5rem;
+		margin-top: 1rem;
+	}
+
+	.section-header h2 {
+		font-size: 1.5rem;
+		font-weight: 600;
+		color: var(--text-primary, #1f2937);
+		margin: 0;
+	}
+
+	.tier-badge {
+		padding: 0.25rem 0.75rem;
+		border-radius: 9999px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.tier-badge.starter {
+		background-color: #dbeafe;
+		color: #1d4ed8;
+	}
+
+	.tier-badge.pro {
+		background-color: #fef3c7;
+		color: #b45309;
+	}
+
+	.reset-info {
+		font-size: 0.875rem;
+		color: var(--text-tertiary, #9ca3af);
+		margin-left: auto;
+	}
+
+	.services-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+		gap: 1rem;
+		margin-bottom: 2rem;
+	}
+
+	.service-card {
+		background: var(--card-bg, #ffffff);
+		border: 1px solid var(--border, #e5e7eb);
+		border-radius: 12px;
+		padding: 1.25rem;
+	}
+
+	.service-card.soft-limit {
+		border-style: dashed;
+		border-color: var(--border-soft, #d1d5db);
+	}
+
+	.service-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.75rem;
+	}
+
+	.service-header h3 {
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--text-primary, #1f2937);
+		margin: 0;
+	}
+
+	.service-badges {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.limit-type-badge {
+		font-size: 0.625rem;
+		padding: 0.125rem 0.375rem;
+		border-radius: 4px;
+		text-transform: uppercase;
+		font-weight: 600;
+		letter-spacing: 0.03em;
+	}
+
+	.limit-type-badge.soft {
+		background-color: #fef3c7;
+		color: #92400e;
+	}
+
+	.unit-text {
+		font-size: 0.75rem;
+		color: var(--text-tertiary, #9ca3af);
+	}
+
+	.over-budget-text {
+		color: #f59e0b;
+		font-weight: 500;
+	}
+
+	.service-value {
+		display: flex;
+		align-items: baseline;
+		gap: 0.25rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.service-value .used {
+		font-size: 1.5rem;
+		font-weight: 700;
+		color: var(--text-primary, #1f2937);
+	}
+
+	.service-value .divider {
+		font-size: 1rem;
+		color: var(--text-tertiary, #9ca3af);
+	}
+
+	.service-value .limit {
+		font-size: 1rem;
+		color: var(--text-tertiary, #9ca3af);
+	}
+
 	@media (max-width: 768px) {
 		.usage-page {
 			padding: 1rem;
@@ -321,6 +507,20 @@
 
 		.big-number {
 			font-size: 2rem;
+		}
+
+		.section-header {
+			flex-wrap: wrap;
+		}
+
+		.reset-info {
+			width: 100%;
+			margin-left: 0;
+			margin-top: 0.5rem;
+		}
+
+		.services-grid {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>
