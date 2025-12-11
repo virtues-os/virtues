@@ -24,11 +24,6 @@ export function getTheme(): Theme {
 		return stored;
 	}
 
-	// Fall back to system preference for dark mode
-	if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-		return 'dark';
-	}
-
 	return DEFAULT_THEME;
 }
 
@@ -78,30 +73,6 @@ export function initTheme(): void {
 	document.documentElement.setAttribute('data-theme', theme);
 }
 
-/**
- * Listen to system theme preference changes
- */
-export function watchSystemTheme(callback: (isDark: boolean) => void): () => void {
-	if (typeof window === 'undefined') {
-		return () => {};
-	}
-
-	const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-
-	const handler = (e: MediaQueryListEvent) => {
-		callback(e.matches);
-	};
-
-	// Modern browsers
-	if (mediaQuery.addEventListener) {
-		mediaQuery.addEventListener('change', handler);
-		return () => mediaQuery.removeEventListener('change', handler);
-	}
-
-	// Older browsers
-	mediaQuery.addListener(handler);
-	return () => mediaQuery.removeListener(handler);
-}
 
 /**
  * Type guard to check if a string is a valid theme

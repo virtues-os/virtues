@@ -6,7 +6,7 @@
 	import { getTheme, setTheme, type Theme } from "$lib/utils/theme";
 
 	let loading = $state(true);
-	let currentTheme = $state<Theme>("warm");
+	let currentTheme = $state<Theme>("light");
 	let saving = $state(false);
 	let saveSuccess = $state(false);
 

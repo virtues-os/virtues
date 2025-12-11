@@ -355,10 +355,23 @@ export interface PlaidExchangeTokenRequest {
 	institution_name?: string;
 }
 
+export interface ConnectedAccountSummary {
+	account_id: string;
+	name: string;
+	/** Plaid's standardized account type: depository, credit, loan, investment, brokerage, other */
+	account_type: string;
+	/** More specific subtype: checking, savings, credit card, mortgage, 401k, etc. */
+	subtype?: string;
+	/** Last 4 digits of account number */
+	mask?: string;
+}
+
 export interface PlaidExchangeTokenResponse {
 	source_id: string;
 	item_id: string;
 	institution_name?: string;
+	/** Summary of connected accounts for display */
+	connected_accounts: ConnectedAccountSummary[];
 }
 
 /**
@@ -427,5 +440,55 @@ export async function updateProfile(profile: Partial<Profile>): Promise<Profile>
 		body: JSON.stringify(profile)
 	});
 	if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
+	return res.json();
+}
+
+// Storage Objects
+export interface StreamObject {
+	id: string;
+	source_connection_id: string;
+	source_name: string;
+	source_type: string;
+	stream_name: string;
+	s3_key: string;
+	record_count: number;
+	size_bytes: number;
+	min_timestamp: string | null;
+	max_timestamp: string | null;
+	created_at: string;
+}
+
+export interface ObjectContent {
+	id: string;
+	s3_key: string;
+	records: unknown[];
+	record_count: number;
+}
+
+/**
+ * List recent storage objects
+ * @param limit - Maximum number of objects to return (default: 10)
+ * @returns Array of stream object summaries
+ */
+export async function listStorageObjects(limit?: number): Promise<StreamObject[]> {
+	const params = new URLSearchParams();
+	if (limit) params.set('limit', limit.toString());
+
+	const res = await fetch(`${API_BASE}/storage/objects?${params}`);
+	if (!res.ok) throw new Error(`Failed to list storage objects: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Get decrypted content of a storage object
+ * @param objectId - UUID of the stream object
+ * @returns Decrypted JSONL records
+ */
+export async function getStorageObjectContent(objectId: string): Promise<ObjectContent> {
+	const res = await fetch(`${API_BASE}/storage/objects/${objectId}/content`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to get object content: ${res.statusText}`);
+	}
 	return res.json();
 }

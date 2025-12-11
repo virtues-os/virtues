@@ -64,6 +64,15 @@ export const { handle, signIn, signOut } = SvelteKitAuth({
 					return; // Silent return - UI will still show "check your email"
 				}
 
+				// Dev mode: log magic link to console instead of sending email
+				if (env.ENVIRONMENT === 'development') {
+					console.log('\n========================================');
+					console.log('[Auth Dev] Magic link (click to sign in):');
+					console.log(url);
+					console.log('========================================\n');
+					return;
+				}
+
 				const resend = new Resend(env.RESEND_API_KEY);
 				await resend.emails.send({
 					from: env.EMAIL_FROM || 'Virtues <noreply@virtues.com>',

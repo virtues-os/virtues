@@ -28,6 +28,7 @@
 	// Navigation configuration with titles
 	const STEPS = [
 		{ path: "/onboarding/welcome", title: "Welcome" },
+		{ path: "/onboarding/technology", title: "Technology" },
 		{ path: "/onboarding/profile", title: "Profile" },
 		{ path: "/onboarding/places", title: "Places" },
 		{ path: "/onboarding/tools", title: "Tools" },
@@ -50,17 +51,24 @@
 		const path = $page.url.pathname;
 
 		try {
-			// Step 1: Welcome - save crux
-			if (path === "/onboarding/welcome") {
+			// Step 1: Welcome - no data to save (video only)
+
+			// Step 2: Technology - save technology vision, pain points, and features
+			if (path === "/onboarding/technology") {
 				const res = await fetch("/api/profile", {
 					method: "PUT",
 					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ crux: stepData.crux })
+					body: JSON.stringify({
+						technology_vision: stepData.vision,
+						pain_point_primary: stepData.painPointPrimary,
+						pain_point_secondary: stepData.painPointSecondary || null,
+						excited_features: stepData.excitedFeatures
+					})
 				});
-				if (!res.ok) throw new Error("Failed to save crux");
+				if (!res.ok) throw new Error("Failed to save technology preferences");
 			}
 
-			// Step 2: Profile - save profile and assistant name
+			// Step 3: Profile - save profile and assistant name
 			if (path === "/onboarding/profile") {
 				// Save user profile
 				const profileRes = await fetch("/api/profile", {
@@ -83,40 +91,44 @@
 				if (!assistantRes.ok) throw new Error("Failed to save assistant name");
 			}
 
-			// Step 3: Places - save locations
+			// Step 4: Places - save locations via entities API
 			if (path === "/onboarding/places") {
 				const homePlace = stepData.homePlace as { address: string; latitude?: number; longitude?: number; google_place_id?: string } | null;
 				const additionalPlaces = (stepData.additionalPlaces as Array<{ label: string; address: string; latitude?: number; longitude?: number; google_place_id?: string }>) || [];
 
+				// Save home place first (with set_as_home flag)
 				if (homePlace && homePlace.latitude != null && homePlace.longitude != null) {
-					// Transform to API format (formatted_address instead of address)
-					const locations = [
-						{
+					const homeRes = await fetch("/api/entities/places", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							label: "Home",
 							formatted_address: homePlace.address,
 							latitude: homePlace.latitude,
 							longitude: homePlace.longitude,
 							google_place_id: homePlace.google_place_id,
-							label: "Home"
-						},
-						// Only include additional places that have coordinates
-						...additionalPlaces
-							.filter((p): p is typeof p & { latitude: number; longitude: number } =>
-								p.latitude != null && p.longitude != null)
-							.map(p => ({
-								formatted_address: p.address,
-								latitude: p.latitude,
-								longitude: p.longitude,
-								google_place_id: p.google_place_id,
-								label: p.label
-							}))
-					];
-
-					const res = await fetch("/api/profile/locations", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ locations })
+							set_as_home: true
+						})
 					});
-					if (!res.ok) throw new Error("Failed to save locations");
+					if (!homeRes.ok) throw new Error("Failed to save home location");
+				}
+
+				// Save additional places
+				for (const place of additionalPlaces) {
+					if (place.latitude != null && place.longitude != null) {
+						const res = await fetch("/api/entities/places", {
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({
+								label: place.label,
+								formatted_address: place.address,
+								latitude: place.latitude,
+								longitude: place.longitude,
+								google_place_id: place.google_place_id
+							})
+						});
+						if (!res.ok) throw new Error(`Failed to save location: ${place.label}`);
+					}
 				}
 			}
 

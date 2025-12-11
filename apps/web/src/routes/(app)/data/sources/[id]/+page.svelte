@@ -23,14 +23,15 @@
 	let enablingStreams = $state(new Set<string>());
 	let pollingIntervals = new Map<string, number>(); // job_id -> interval_id
 
-	// Determine if this source should show sync button (OAuth2 and None, but not Device)
+	// Determine if this source should show sync button (pull-based sources, not Device)
 	const shouldShowSyncButton = $derived(() => {
 		if (!data.catalog || !data.source) return false;
 		const catalogSource = data.catalog.find(
-			(c: any) => c.name === data.source.type,
+			(c: any) => c.name === data.source.source,
 		);
 		const authType = catalogSource?.auth_type;
-		// Show sync button for OAuth2 and None (ariata), but not for Device
+		// Show sync button for pull-based sources (OAuth2, None), but not for Device
+		// Plaid uses OAuth2 auth_type in the registry
 		return authType === "oauth2" || authType === "none";
 	});
 

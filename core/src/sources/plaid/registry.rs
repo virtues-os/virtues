@@ -46,7 +46,35 @@ impl SourceRegistry for PlaidSource {
                     .target_ontologies(vec!["financial_account"])
                     .config_schema(accounts_config_schema())
                     .config_example(accounts_config_example())
-                    .supports_incremental(false)  // Accounts always fetched in full
+                    .supports_incremental(false) // Accounts always fetched in full
+                    .supports_full_refresh(true)
+                    .default_cron_schedule("0 0 0 * * *") // Daily at midnight
+                    .build(),
+                // Investments stream
+                RegisteredStream::new("investments")
+                    .display_name("Investments")
+                    .description(
+                        "Sync investment holdings, securities, and 401k/IRA/brokerage data",
+                    )
+                    .table_name("stream_plaid_investments")
+                    .target_ontologies(vec!["financial_asset"])
+                    .config_schema(investments_config_schema())
+                    .config_example(investments_config_example())
+                    .supports_incremental(false) // Holdings always fetched in full
+                    .supports_full_refresh(true)
+                    .default_cron_schedule("0 0 0 * * *") // Daily at midnight
+                    .build(),
+                // Liabilities stream
+                RegisteredStream::new("liabilities")
+                    .display_name("Liabilities")
+                    .description(
+                        "Sync credit card APRs, mortgages, student loans, and loan details",
+                    )
+                    .table_name("stream_plaid_liabilities")
+                    .target_ontologies(vec!["financial_liability"])
+                    .config_schema(liabilities_config_schema())
+                    .config_example(liabilities_config_example())
+                    .supports_incremental(false) // Liabilities always fetched in full
                     .supports_full_refresh(true)
                     .default_cron_schedule("0 0 0 * * *") // Daily at midnight
                     .build(),
@@ -149,6 +177,48 @@ fn accounts_config_example() -> serde_json::Value {
     })
 }
 
+/// JSON schema for Plaid investments configuration
+fn investments_config_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "account_ids": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "List of account IDs to sync (leave empty to sync all investment accounts)"
+            }
+        }
+    })
+}
+
+/// Example configuration for Plaid investments
+fn investments_config_example() -> serde_json::Value {
+    json!({
+        "account_ids": []
+    })
+}
+
+/// JSON schema for Plaid liabilities configuration
+fn liabilities_config_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "account_ids": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "List of account IDs to sync (leave empty to sync all liability accounts)"
+            }
+        }
+    })
+}
+
+/// Example configuration for Plaid liabilities
+fn liabilities_config_example() -> serde_json::Value {
+    json!({
+        "account_ids": []
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,7 +229,7 @@ mod tests {
         assert_eq!(desc.name, "plaid");
         assert_eq!(desc.auth_type, AuthType::OAuth2);
         assert!(desc.oauth_config.is_some());
-        assert_eq!(desc.streams.len(), 2);
+        assert_eq!(desc.streams.len(), 4); // transactions, accounts, investments, liabilities
     }
 
     #[test]
@@ -189,6 +259,32 @@ mod tests {
     }
 
     #[test]
+    fn test_investments_stream() {
+        let desc = PlaidSource::descriptor();
+        let investments = desc.streams.iter().find(|s| s.name == "investments");
+        assert!(investments.is_some());
+
+        let inv = investments.unwrap();
+        assert_eq!(inv.table_name, "stream_plaid_investments");
+        assert_eq!(inv.target_ontologies, vec!["financial_asset"]);
+        assert!(!inv.supports_incremental);
+        assert!(inv.supports_full_refresh);
+    }
+
+    #[test]
+    fn test_liabilities_stream() {
+        let desc = PlaidSource::descriptor();
+        let liabilities = desc.streams.iter().find(|s| s.name == "liabilities");
+        assert!(liabilities.is_some());
+
+        let liab = liabilities.unwrap();
+        assert_eq!(liab.table_name, "stream_plaid_liabilities");
+        assert_eq!(liab.target_ontologies, vec!["financial_liability"]);
+        assert!(!liab.supports_incremental);
+        assert!(liab.supports_full_refresh);
+    }
+
+    #[test]
     fn test_config_schemas_valid() {
         // Ensure schemas are valid JSON
         let tx_schema = transactions_config_schema();
@@ -197,5 +293,11 @@ mod tests {
 
         let acc_schema = accounts_config_schema();
         assert_eq!(acc_schema["type"], "object");
+
+        let inv_schema = investments_config_schema();
+        assert_eq!(inv_schema["type"], "object");
+
+        let liab_schema = liabilities_config_schema();
+        assert_eq!(liab_schema["type"], "object");
     }
 }

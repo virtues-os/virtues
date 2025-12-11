@@ -253,6 +253,27 @@ impl PlaidClient {
 
         self.post("/item/remove", &request).await
     }
+
+    /// Get investment holdings for an Item
+    pub async fn investments_holdings_get(
+        &self,
+        access_token: &str,
+    ) -> Result<InvestmentsHoldingsResponse> {
+        let request = AccessTokenRequest {
+            access_token: access_token.to_string(),
+        };
+
+        self.post("/investments/holdings/get", &request).await
+    }
+
+    /// Get liabilities for an Item (credit cards, mortgages, student loans)
+    pub async fn liabilities_get(&self, access_token: &str) -> Result<LiabilitiesResponse> {
+        let request = AccessTokenRequest {
+            access_token: access_token.to_string(),
+        };
+
+        self.post("/liabilities/get", &request).await
+    }
 }
 
 // ============================================================================
@@ -451,6 +472,195 @@ pub struct ProductStatus {
 #[derive(Debug, Deserialize)]
 pub struct ItemRemoveResponse {
     pub request_id: String,
+}
+
+// ============================================================================
+// Investments Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct InvestmentsHoldingsResponse {
+    pub accounts: Vec<Account>,
+    pub holdings: Vec<Holding>,
+    pub securities: Vec<Security>,
+    pub item: Item,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Holding {
+    pub account_id: String,
+    pub security_id: String,
+    pub institution_price: Option<f64>,
+    pub institution_price_as_of: Option<String>,
+    pub institution_price_datetime: Option<String>,
+    pub institution_value: Option<f64>,
+    pub cost_basis: Option<f64>,
+    pub quantity: f64,
+    pub iso_currency_code: Option<String>,
+    pub unofficial_currency_code: Option<String>,
+    pub vested_quantity: Option<f64>,
+    pub vested_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Security {
+    pub security_id: String,
+    pub isin: Option<String>,
+    pub cusip: Option<String>,
+    pub sedol: Option<String>,
+    pub institution_security_id: Option<String>,
+    pub institution_id: Option<String>,
+    pub proxy_security_id: Option<String>,
+    pub name: String,
+    pub ticker_symbol: Option<String>,
+    #[serde(rename = "type")]
+    pub security_type: Option<String>,
+    pub close_price: Option<f64>,
+    pub close_price_as_of: Option<String>,
+    pub iso_currency_code: Option<String>,
+    pub unofficial_currency_code: Option<String>,
+    pub is_cash_equivalent: Option<bool>,
+    pub market_identifier_code: Option<String>,
+    pub sector: Option<String>,
+    pub industry: Option<String>,
+    pub option_contract: Option<serde_json::Value>,
+}
+
+// ============================================================================
+// Liabilities Types
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct LiabilitiesResponse {
+    pub accounts: Vec<Account>,
+    pub liabilities: LiabilitiesData,
+    pub item: Item,
+    pub request_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LiabilitiesData {
+    pub credit: Option<Vec<CreditLiability>>,
+    pub mortgage: Option<Vec<MortgageLiability>>,
+    pub student: Option<Vec<StudentLoanLiability>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreditLiability {
+    pub account_id: Option<String>,
+    pub aprs: Vec<Apr>,
+    pub is_overdue: Option<bool>,
+    pub last_payment_amount: Option<f64>,
+    pub last_payment_date: Option<String>,
+    pub last_statement_issue_date: Option<String>,
+    pub last_statement_balance: Option<f64>,
+    pub minimum_payment_amount: Option<f64>,
+    pub next_payment_due_date: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Apr {
+    pub apr_percentage: f64,
+    pub apr_type: String,
+    pub balance_subject_to_apr: Option<f64>,
+    pub interest_charge_amount: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MortgageLiability {
+    pub account_id: String,
+    pub account_number: String,
+    pub current_late_fee: Option<f64>,
+    pub escrow_balance: Option<f64>,
+    pub has_pmi: Option<bool>,
+    pub has_prepayment_penalty: Option<bool>,
+    pub interest_rate: Option<MortgageInterestRate>,
+    pub last_payment_amount: Option<f64>,
+    pub last_payment_date: Option<String>,
+    pub loan_type_description: Option<String>,
+    pub loan_term: Option<String>,
+    pub maturity_date: Option<String>,
+    pub next_monthly_payment: Option<f64>,
+    pub next_payment_due_date: Option<String>,
+    pub origination_date: Option<String>,
+    pub origination_principal_amount: Option<f64>,
+    pub past_due_amount: Option<f64>,
+    pub property_address: Option<MortgagePropertyAddress>,
+    pub ytd_interest_paid: Option<f64>,
+    pub ytd_principal_paid: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MortgageInterestRate {
+    pub percentage: Option<f64>,
+    #[serde(rename = "type")]
+    pub rate_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MortgagePropertyAddress {
+    pub city: Option<String>,
+    pub country: Option<String>,
+    pub postal_code: Option<String>,
+    pub region: Option<String>,
+    pub street: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StudentLoanLiability {
+    pub account_id: Option<String>,
+    pub account_number: Option<String>,
+    pub disbursement_dates: Option<Vec<String>>,
+    pub expected_payoff_date: Option<String>,
+    pub guarantor: Option<String>,
+    pub interest_rate_percentage: f64,
+    pub is_overdue: Option<bool>,
+    pub last_payment_amount: Option<f64>,
+    pub last_payment_date: Option<String>,
+    pub last_statement_issue_date: Option<String>,
+    pub loan_name: Option<String>,
+    pub loan_status: Option<StudentLoanStatus>,
+    pub minimum_payment_amount: Option<f64>,
+    pub next_payment_due_date: Option<String>,
+    pub origination_date: Option<String>,
+    pub origination_principal_amount: Option<f64>,
+    pub outstanding_interest_amount: Option<f64>,
+    pub pslf_status: Option<PslfStatus>,
+    pub repayment_plan: Option<StudentLoanRepaymentPlan>,
+    pub servicer_address: Option<ServicerAddress>,
+    pub ytd_interest_paid: Option<f64>,
+    pub ytd_principal_paid: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StudentLoanStatus {
+    pub end_date: Option<String>,
+    #[serde(rename = "type")]
+    pub status_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PslfStatus {
+    pub estimated_eligibility_date: Option<String>,
+    pub payments_made: Option<i32>,
+    pub payments_remaining: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StudentLoanRepaymentPlan {
+    pub description: Option<String>,
+    #[serde(rename = "type")]
+    pub plan_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServicerAddress {
+    pub city: Option<String>,
+    pub country: Option<String>,
+    pub postal_code: Option<String>,
+    pub region: Option<String>,
+    pub street: Option<String>,
 }
 
 /// Plaid error categories for retry logic

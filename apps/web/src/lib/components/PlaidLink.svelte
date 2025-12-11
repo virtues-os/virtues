@@ -2,9 +2,10 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { Button } from '$lib';
 	import * as api from '$lib/api/client';
+	import type { ConnectedAccountSummary } from '$lib/api/client';
 
 	interface Props {
-		onSuccess: (sourceId: string, institutionName?: string) => void;
+		onSuccess: (sourceId: string, institutionName?: string, connectedAccounts?: ConnectedAccountSummary[]) => void;
 		onCancel?: () => void;
 	}
 
@@ -50,7 +51,7 @@
 							institution_id: metadata.institution?.institution_id,
 							institution_name: metadata.institution?.name
 						});
-						onSuccess(result.source_id, result.institution_name);
+						onSuccess(result.source_id, result.institution_name, result.connected_accounts);
 					} catch (err) {
 						error = err instanceof Error ? err.message : 'Failed to connect account';
 						isLoading = false;

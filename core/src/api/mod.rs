@@ -26,12 +26,15 @@ pub mod agents;
 pub mod assistant_profile;
 pub mod axiology;
 pub mod device_pairing;
+pub mod entities;
+pub mod exa;
 pub mod jobs;
 pub mod metrics;
 pub mod models;
 pub mod oauth;
 pub mod onboarding;
 pub mod ontologies;
+pub mod places;
 pub mod plaid;
 pub mod praxis;
 pub mod profile;
@@ -40,10 +43,12 @@ pub mod registry;
 pub mod search;
 pub mod seed_testing;
 pub mod sources;
+pub mod storage;
 pub mod streams;
 pub mod timeline;
 pub mod tools;
 pub mod types;
+pub mod usage;
 pub mod validation;
 
 // Re-export commonly used types
@@ -87,10 +92,7 @@ pub use praxis::{
     CreateAspirationRequest, CreateTaskRequest, Initiative, Task, UpdateAspirationRequest,
     UpdateTaskRequest,
 };
-pub use profile::{
-    get_display_name, get_profile, set_home_place, update_profile, SetHomePlaceRequest,
-    SetHomePlaceResponse, UpdateProfileRequest,
-};
+pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
 pub use rate_limit::{
     check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
     UsageStats,
@@ -129,4 +131,21 @@ pub use onboarding::{
     save_onboarding_axiology, skip_step, ExtractedAxiologyItem, OnboardingAspiration,
     OnboardingStatus, OnboardingStep, SaveAspirationsRequest, SaveAspirationsResponse,
     SaveAxiologyRequest, SaveAxiologyResponse,
+};
+pub use places::{
+    autocomplete, get_place_details, AutocompleteRequest, AutocompletePrediction,
+    AutocompleteResponse, PlaceDetailsRequest, PlaceDetailsResponse,
+};
+pub use exa::{search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse};
+pub use usage::{
+    check_and_record_usage, check_limit, get_all_usage, init_limits_from_tier,
+    record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
+    UsageLimitError, UsageSummary,
+};
+pub use storage::{
+    get_object_content, list_recent_objects, ObjectContent, StreamObjectSummary,
+};
+pub use entities::{
+    create_place, delete_place, get_place, list_places, set_home_place as set_home_place_entity,
+    update_place, CreatePlaceRequest, CreatePlaceResponse, Place, UpdatePlaceRequest,
 };

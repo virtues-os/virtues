@@ -26,6 +26,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Validate required environment variables early
     validate_environment()?;
 
+    // Initialize usage limits from TIER env var
+    if let Err(e) = crate::api::init_limits_from_tier(client.database.pool()).await {
+        tracing::warn!("Failed to initialize usage limits: {}", e);
+    }
+
     // Initialize StreamWriter (simple in-memory buffer)
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
@@ -167,7 +172,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Profile API
         .route("/api/profile", get(api::get_profile_handler))
         .route("/api/profile", put(api::update_profile_handler))
-        .route("/api/profile/home-place", post(api::set_home_place_handler))
+        // Entities API - Places
+        .route("/api/entities/places", get(api::list_places_handler).post(api::create_place_handler))
+        .route("/api/entities/places/:id", get(api::get_place_handler).put(api::update_place_handler).delete(api::delete_place_handler))
+        .route("/api/entities/places/:id/set-home", post(api::set_place_as_home_handler))
+        // Places API (Google Places proxy)
+        .route("/api/places/autocomplete", get(api::places_autocomplete_handler))
+        .route("/api/places/details", get(api::places_details_handler))
         // Assistant Profile API
         .route(
             "/api/assistant-profile",
@@ -248,6 +259,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/onboarding/axiology", post(api::save_onboarding_axiology_handler))
         .route("/api/onboarding/aspirations", post(api::save_onboarding_aspirations_handler))
         .route("/api/onboarding/complete", post(api::complete_onboarding_handler))
+        // Usage API
+        .route("/api/usage", get(api::usage_handler))
+        .route("/api/usage/check", get(api::usage_check_handler))
+        // Search API (Exa)
+        .route("/api/search/web", post(api::exa_search_handler))
+        // Storage API
+        .route("/api/storage/objects", get(api::list_storage_objects_handler))
+        .route("/api/storage/objects/:id/content", get(api::get_storage_object_content_handler))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::disable()) // Disable default 2MB limit
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)); // Set 20MB limit for audio files
@@ -278,27 +297,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
 /// Validate required environment variables at startup
 fn validate_environment() -> Result<()> {
-    // Check encryption key
-    let master_key = env::var("STREAM_ENCRYPTION_MASTER_KEY")
-        .map_err(|_| Error::Configuration(
-            "STREAM_ENCRYPTION_MASTER_KEY environment variable is required. Generate with: openssl rand -hex 32".into()
-        ))?;
-
-    // Validate key format (should be 64 hex characters = 32 bytes)
-    if master_key.len() != 64 {
-        return Err(Error::Configuration(format!(
-            "STREAM_ENCRYPTION_MASTER_KEY must be 64 hex characters (32 bytes), got {} characters",
-            master_key.len()
-        )));
+    // Check encryption key (optional - only needed for archive jobs)
+    match env::var("STREAM_ENCRYPTION_MASTER_KEY") {
+        Ok(master_key) => {
+            if master_key.len() != 64 {
+                tracing::warn!(
+                    "STREAM_ENCRYPTION_MASTER_KEY should be 64 hex characters, got {}. Archive jobs will fail.",
+                    master_key.len()
+                );
+            } else if encryption::parse_master_key_hex(&master_key).is_err() {
+                tracing::warn!("STREAM_ENCRYPTION_MASTER_KEY is not valid hex. Archive jobs will fail.");
+            }
+        }
+        Err(_) => {
+            tracing::warn!(
+                "STREAM_ENCRYPTION_MASTER_KEY not set. Archive jobs disabled. Generate with: openssl rand -hex 32"
+            );
+        }
     }
-
-    // Try to parse to ensure it's valid hex
-    encryption::parse_master_key_hex(&master_key).map_err(|e| {
-        Error::Configuration(format!(
-            "Invalid STREAM_ENCRYPTION_MASTER_KEY format: {}",
-            e
-        ))
-    })?;
 
     // Check S3 config if S3_BUCKET is set
     if let Ok(bucket) = env::var("S3_BUCKET") {
