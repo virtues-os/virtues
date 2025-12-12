@@ -30,6 +30,21 @@ export function isToolCallPart(part: unknown): part is ToolCallPart {
 }
 
 /**
+ * Extract tool name from a tool call part
+ * During streaming, AI SDK provides type: 'tool-{toolName}' but may not include toolName property
+ * This function derives toolName from type when not explicitly provided
+ */
+export function getToolName(part: ToolCallPart): string {
+	// If toolName is explicitly provided, use it
+	if (part.toolName) return part.toolName;
+	// Otherwise derive from type (format: 'tool-{toolName}')
+	if (part.type?.startsWith('tool-')) {
+		return part.type.slice(5); // Remove 'tool-' prefix
+	}
+	return '';
+}
+
+/**
  * Extract tool call parts from message parts array
  */
 export function extractToolCallParts(parts: unknown[]): ToolCallPart[] {
@@ -133,8 +148,8 @@ function buildPreview(toolName: string, output: unknown): string {
 /**
  * Extract URL from web search result (for citation linking)
  */
-function extractUrl(part: ToolCallPart): string | undefined {
-	if (part.toolName !== 'web_search' || !part.output) return undefined;
+function extractUrl(part: ToolCallPart, toolName: string): string | undefined {
+	if (toolName !== 'web_search' || !part.output) return undefined;
 
 	const result = part.output as Record<string, unknown>;
 	const results = result.results as Array<{ url?: string }> | undefined;
@@ -146,8 +161,8 @@ function extractUrl(part: ToolCallPart): string | undefined {
 /**
  * Extract title from web search result
  */
-function extractTitle(part: ToolCallPart): string | undefined {
-	if (part.toolName !== 'web_search' || !part.output) return undefined;
+function extractTitle(part: ToolCallPart, toolName: string): string | undefined {
+	if (toolName !== 'web_search' || !part.output) return undefined;
 
 	const result = part.output as Record<string, unknown>;
 	const results = result.results as Array<{ title?: string }> | undefined;
@@ -173,15 +188,17 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 			// Only include completed tool calls
 			if (part.state !== 'output-available') continue;
 
+			// Derive toolName from type if not explicitly provided (happens during streaming)
+			const toolName = getToolName(part);
+
 			// Validate required fields
-			if (!part.toolName || !part.toolCallId) {
-				console.warn('[buildCitationContext] Skipping invalid tool part: missing toolName or toolCallId', part);
+			if (!toolName || !part.toolCallId) {
 				continue;
 			}
 
 			// Special handling for web_search: expand results into individual citations
 			// This allows [1], [2], [3] markers to map to individual search results
-			if (part.toolName === 'web_search' && part.output) {
+			if (toolName === 'web_search' && part.output) {
 				const output = part.output as Record<string, unknown>;
 				const results = output.results as Array<{
 					position: number;
@@ -196,7 +213,7 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 						const citation: Citation = {
 							id: String(index),
 							tool_call_id: `${part.toolCallId}-${result.position}`,
-							tool_name: 'web_search',
+							tool_name: toolName,
 							source_type: 'web_search',
 							icon: 'ri:global-line',
 							label: result.title?.slice(0, 40) || 'Web Result',
@@ -218,14 +235,14 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 				}
 			}
 
-			const display = getDisplayInfo(part.toolName, part.input);
-			const preview = buildPreview(part.toolName, part.output);
-			const sourceType = inferSourceType(part.toolName);
+			const display = getDisplayInfo(toolName, part.input);
+			const preview = buildPreview(toolName, part.output);
+			const sourceType = inferSourceType(toolName);
 
 			const citation: Citation = {
 				id: String(index),
 				tool_call_id: part.toolCallId,
-				tool_name: part.toolName,
+				tool_name: toolName,
 				source_type: sourceType,
 				icon: display.icon,
 				label: display.label,
@@ -233,8 +250,8 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 				preview,
 				data: part.output,
 				args: part.input,
-				url: extractUrl(part),
-				title: extractTitle(part),
+				url: extractUrl(part, toolName),
+				title: extractTitle(part, toolName),
 				timestamp: new Date().toISOString()
 			};
 

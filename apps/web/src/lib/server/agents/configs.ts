@@ -1,13 +1,14 @@
 /**
  * Agent configuration definitions
+ *
+ * NOTE: This is a fallback. Primary agent config should come from
+ * config/seeds/agents.json which is seeded to the database.
  */
 import type { AgentMetadata } from './types';
 
 /**
  * Agent configurations
- * 2-agent system:
- * - agent: Has all tools, can perform actions (general assistant)
- * - onboarding: Has save_axiology tool for values discovery
+ * Single agent system for now - onboarding agent disabled
  */
 export const AGENT_CONFIGS: AgentMetadata[] = [
 	{
@@ -20,16 +21,17 @@ export const AGENT_CONFIGS: AgentMetadata[] = [
 		maxSteps: 5,
 		enabled: true,
 	},
-	{
-		id: 'onboarding',
-		name: 'Onboarding Guide',
-		description: 'Warm, exploratory assistant that helps users discover their values, goals, and what matters most to them through natural conversation.',
-		color: '#8b5cf6', // Purple
-		icon: '🌟',
-		defaultModel: 'google/gemini-3-pro-preview',
-		maxSteps: 5,
-		enabled: true,
-	},
+	// Onboarding agent disabled - save_axiology tool not ready
+	// {
+	// 	id: 'onboarding',
+	// 	name: 'Onboarding Guide',
+	// 	description: 'Warm, exploratory assistant that helps users discover their values, goals, and what matters most to them through natural conversation.',
+	// 	color: '#8b5cf6', // Purple
+	// 	icon: '🌟',
+	// 	defaultModel: 'google/gemini-3-pro-preview',
+	// 	maxSteps: 5,
+	// 	enabled: true,
+	// },
 ];
 
 /**

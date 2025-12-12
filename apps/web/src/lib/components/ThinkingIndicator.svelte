@@ -7,38 +7,56 @@
 
 	let { label }: Props = $props();
 
+	// Track displayed label and transition state
+	let displayLabel = $state("");
+	let isTransitioning = $state(false);
+	let initialized = $state(false);
+
 	// Animated dots that cycle: . → .. → ...
 	let dots = $state("");
 
 	onMount(() => {
+		// Initialize with first label
+		displayLabel = label;
+		initialized = true;
+
 		const interval = setInterval(() => {
 			dots = dots.length >= 3 ? "" : dots + ".";
-		}, 800);
+		}, 500);
 
 		return () => clearInterval(interval);
 	});
+
+	// Handle label changes with y-slide animation
+	$effect(() => {
+		if (initialized && label !== displayLabel && !isTransitioning) {
+			isTransitioning = true;
+			// After exit animation, swap label and animate in
+			setTimeout(() => {
+				displayLabel = label;
+				setTimeout(() => {
+					isTransitioning = false;
+				}, 200);
+			}, 150);
+		}
+	});
 </script>
 
-<div class="thinking-indicator py-2 pl-3.5">
-	<div class="therefore-spinner">
-		<div class="dot dot-1"></div>
-		<div class="dot dot-2"></div>
-		<div class="dot dot-3"></div>
-	</div>
-	<div class="thinking-text">
-		<span
-			class="thinking-text-content font-serif font-light text-base text-primary"
-		>
-			{label}{dots}
+<div class="thinking-indicator">
+	<span class="label-container" class:transitioning={isTransitioning}>
+		<span class="shimmer-text text-base">
+			{displayLabel}{dots}
 		</span>
-	</div>
+	</span>
 </div>
 
 <style>
 	.thinking-indicator {
 		position: relative;
+		padding: 0.75rem 0; /* Match message-wrapper: py-3 */
 		opacity: 0;
 		animation: fadeIn 0.3s ease-out forwards;
+		overflow: hidden;
 	}
 
 	@keyframes fadeIn {
@@ -52,58 +70,42 @@
 		}
 	}
 
-	.therefore-spinner {
-		position: absolute;
-		left: -0.5rem;
-		top: 50%;
-		transform: translateY(-50%);
-		width: 12px;
-		height: 12px;
-		animation: rotate 2s ease-in-out infinite;
+	/* Label container for y-slide transition */
+	.label-container {
+		display: inline-block;
+		transition:
+			transform 0.15s ease-out,
+			opacity 0.15s ease-out;
 	}
 
-	.dot {
-		position: absolute;
-		width: 4px;
-		height: 4px;
-		background-color: var(--color-primary);
-		border-radius: 50%;
+	.label-container.transitioning {
+		transform: translateY(-8px);
+		opacity: 0;
 	}
 
-	/* Top dot */
-	.dot-1 {
-		top: 0;
-		left: 50%;
-		transform: translateX(-50%);
+	/* Shimmer text effect */
+	.shimmer-text {
+		background: linear-gradient(
+			90deg,
+			var(--color-foreground-subtle) 0%,
+			var(--color-foreground-subtle) 35%,
+			var(--color-foreground) 50%,
+			var(--color-foreground-subtle) 65%,
+			var(--color-foreground-subtle) 100%
+		);
+		background-size: 200% 100%;
+		-webkit-background-clip: text;
+		background-clip: text;
+		color: transparent;
+		animation: shimmer 2.5s linear infinite;
 	}
 
-	/* Bottom left dot */
-	.dot-2 {
-		bottom: 0;
-		left: 0;
-	}
-
-	/* Bottom right dot */
-	.dot-3 {
-		bottom: 0;
-		right: 0;
-	}
-
-	@keyframes rotate {
+	@keyframes shimmer {
 		0% {
-			transform: translateY(-50%) rotate(0deg) scale(1);
-		}
-		25% {
-			transform: translateY(-50%) rotate(90deg) scale(0.75);
-		}
-		50% {
-			transform: translateY(-50%) rotate(180deg) scale(1);
-		}
-		75% {
-			transform: translateY(-50%) rotate(270deg) scale(0.75);
+			background-position: 100% 0;
 		}
 		100% {
-			transform: translateY(-50%) rotate(360deg) scale(1);
+			background-position: -100% 0;
 		}
 	}
 
@@ -114,12 +116,14 @@
 			opacity: 1;
 		}
 
-		.therefore-spinner {
-			animation: none;
+		.label-container {
+			transition: none;
 		}
 
-		.dot {
+		.shimmer-text {
 			animation: none;
+			color: var(--color-foreground-subtle);
+			background: none;
 		}
 	}
 </style>

@@ -1,13 +1,9 @@
 <script lang="ts">
-	import type { Citation } from '$lib/types/Citation';
-	import CitationTooltip from './CitationTooltip.svelte';
-	import 'iconify-icon';
+	import type { Citation } from "$lib/types/Citation";
+	import CitationTooltip from "./CitationTooltip.svelte";
+	import "iconify-icon";
 
-	let {
-		citationId,
-		citation,
-		onPanelOpen
-	} = $props<{
+	let { citationId, citation, onPanelOpen } = $props<{
 		citationId: string;
 		citation?: Citation;
 		onPanelOpen?: (citation: Citation) => void;
@@ -42,7 +38,7 @@
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
-		if ((e.key === 'Enter' || e.key === ' ') && citation) {
+		if ((e.key === "Enter" || e.key === " ") && citation) {
 			e.preventDefault();
 			handleClick();
 		}
@@ -56,7 +52,7 @@
 	{#if isActive && citation}
 		<!-- Active citation with data - show icon -->
 		<button
-			class="citation-badge active {citation.color}"
+			class="citation-badge active"
 			onmouseenter={handleMouseEnter}
 			onmouseleave={handleMouseLeave}
 			onfocus={handleFocus}
@@ -64,9 +60,12 @@
 			onclick={handleClick}
 			onkeydown={handleKeyDown}
 			aria-label="View source: {citation.label}"
-			aria-describedby={showTooltip ? `tooltip-${citation.id}` : undefined}
+			aria-describedby={showTooltip
+				? `tooltip-${citation.id}`
+				: undefined}
 		>
-			<iconify-icon icon={citation.icon} width="14" height="14"></iconify-icon>
+			<iconify-icon icon={citation.icon} width="12" height="12"
+			></iconify-icon>
 		</button>
 
 		{#if showTooltip}
@@ -88,18 +87,26 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		min-width: 20px;
-		height: 20px;
-		padding: 2px 6px;
+		width: 17px;
+		height: 17px;
+		padding: 0;
 		margin: 0 1px;
-		font-size: 0.75rem;
+		font-size: 0.65rem;
 		font-weight: 500;
-		background: var(--color-surface-elevated, #f5f5f5);
-		border: 1px solid var(--color-border, #e5e5e5);
+		color: var(--color-foreground-subtle);
+		background: var(--color-surface-elevated);
+		border: 1px solid var(--color-border);
 		border-radius: 9999px;
-		vertical-align: middle;
+		vertical-align: text-bottom;
+		position: relative;
+		top: -4px;
 		line-height: 1;
 		font-family: inherit;
+	}
+
+	.citation-badge iconify-icon {
+		display: flex;
+		margin: auto;
 	}
 
 	/* Active badge (has citation data) - interactive */
@@ -109,18 +116,18 @@
 	}
 
 	.citation-badge.active:hover {
-		background: var(--color-primary-subtle, #eff6ff);
-		border-color: var(--color-primary, #3b82f6);
+		background: var(--color-primary-subtle);
+		border-color: var(--color-primary);
 	}
 
 	.citation-badge.active:focus {
 		outline: none;
-		box-shadow: 0 0 0 2px var(--color-primary, #3b82f6);
+		box-shadow: 0 0 0 2px var(--color-primary);
 	}
 
 	/* Pending badge (no data yet) - non-interactive */
 	.citation-badge.pending {
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		cursor: default;
 	}
 

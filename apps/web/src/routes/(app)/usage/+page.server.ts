@@ -58,13 +58,13 @@ export const load: PageServerLoad = async ({ fetch }) => {
 					},
 					assemblyai: {
 						used: data.services?.assemblyai?.used || 0,
-						limit: data.services?.assemblyai?.limit || 100,
-						unit: data.services?.assemblyai?.unit || 'requests',
+						limit: data.services?.assemblyai?.limit || 9000,
+						unit: data.services?.assemblyai?.unit || 'minutes',
 						percentage: Math.round(
 							((data.services?.assemblyai?.used || 0) / (data.services?.assemblyai?.limit || 1)) *
 								100
 						),
-						limitType: data.services?.assemblyai?.limit_type || 'soft'
+						limitType: data.services?.assemblyai?.limit_type || 'hard'
 					},
 					google_places: {
 						used: data.services?.google_places?.used || 0,

@@ -4,8 +4,12 @@
 	 * Minimal design: white background, large code, simple timer
 	 */
 	import { onMount, onDestroy } from "svelte";
+	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
-	import type { PairingInitResponse, DeviceInfo } from "$lib/types/device-pairing";
+	import type {
+		PairingInitResponse,
+		DeviceInfo,
+	} from "$lib/types/device-pairing";
 
 	interface Props {
 		deviceType: string;
@@ -112,7 +116,9 @@
 
 		const expiresAt = new Date(pairingData.expires_at);
 		const now = new Date();
-		const secondsRemaining = Math.floor((expiresAt.getTime() - now.getTime()) / 1000);
+		const secondsRemaining = Math.floor(
+			(expiresAt.getTime() - now.getTime()) / 1000,
+		);
 
 		timeRemaining = Math.max(0, secondsRemaining);
 
@@ -143,7 +149,10 @@
 			startPolling();
 			startTimer();
 		} catch (err) {
-			error = err instanceof Error ? err.message : "Failed to initiate pairing";
+			error =
+				err instanceof Error
+					? err.message
+					: "Failed to initiate pairing";
 		} finally {
 			isInitiating = false;
 		}
@@ -184,10 +193,12 @@
 	{:else if hasTimedOut}
 		<div class="timeout-state">
 			<p class="timeout-title">Code Expired</p>
-			<p class="timeout-description">The pairing code expired. No device connected.</p>
+			<p class="timeout-description">
+				The pairing code expired. No device connected.
+			</p>
 			<div class="actions">
-				<button class="text-btn" onclick={handleCancel}>Cancel</button>
-				<button class="primary-btn" onclick={retry}>Try Again</button>
+				<Button variant="ghost" onclick={handleCancel}>Cancel</Button>
+				<Button variant="primary" onclick={retry}>Try Again</Button>
 			</div>
 		</div>
 	{:else if pairingData}
@@ -210,13 +221,17 @@
 					{apiEndpoint}
 				{/if}
 			</p>
-			<button class="copy-btn" onclick={copyEndpoint} disabled={isLoadingEndpoint}>
+			<button
+				class="copy-btn"
+				onclick={copyEndpoint}
+				disabled={isLoadingEndpoint}
+			>
 				Copy endpoint
 			</button>
 		</div>
 
 		<div class="actions">
-			<button class="text-btn" onclick={handleCancel}>Cancel</button>
+			<Button variant="ghost" onclick={handleCancel}>Cancel</Button>
 		</div>
 
 		{#if isPolling}
@@ -334,31 +349,6 @@
 		justify-content: center;
 		gap: 16px;
 		padding-top: 16px;
-	}
-
-	.text-btn {
-		font-family: var(--font-sans);
-		font-size: 14px;
-		color: var(--foreground-muted);
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 8px 0;
-	}
-
-	.text-btn:hover {
-		color: var(--foreground);
-	}
-
-	.primary-btn {
-		font-family: var(--font-sans);
-		font-size: 14px;
-		font-weight: 500;
-		padding: 12px 24px;
-		background: var(--foreground);
-		color: var(--surface);
-		border: none;
-		cursor: pointer;
 	}
 
 	/* Polling Status */

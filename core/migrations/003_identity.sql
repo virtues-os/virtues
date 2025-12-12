@@ -420,11 +420,12 @@ ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS pain_point_secondary TEXT
 ALTER TABLE data.user_profile ADD COLUMN IF NOT EXISTS excited_features TEXT[];
 
 -- Constraints (idempotent)
+-- Remove valid_theme constraint - theme validation is handled at the application layer
+-- This allows adding new themes without database migrations
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'valid_theme') THEN
-        ALTER TABLE data.user_profile
-        ADD CONSTRAINT valid_theme CHECK (theme IN ('warm', 'light', 'dark', 'night'));
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'valid_theme') THEN
+        ALTER TABLE data.user_profile DROP CONSTRAINT valid_theme;
     END IF;
 END $$;
 

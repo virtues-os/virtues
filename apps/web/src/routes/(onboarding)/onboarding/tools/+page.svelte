@@ -2,6 +2,7 @@
 	import { getContext, onMount } from "svelte";
 	import { toast } from "svelte-sonner";
 
+	import { replaceState } from "$app/navigation";
 	import { page } from "$app/stores";
 	import * as api from "$lib/api/client";
 	import SourceConnector from "$lib/components/SourceConnector.svelte";
@@ -56,10 +57,7 @@
 			if (params.get("connected") === "true") {
 				toast.success("Source connected successfully");
 				// Clean up URL params
-				const url = new URL(window.location.href);
-				url.searchParams.delete("connected");
-				url.searchParams.delete("source_id");
-				window.history.replaceState({}, "", url.pathname);
+				replaceState($page.url.pathname, {});
 			}
 		} catch (e) {
 			console.error("Failed to load sources:", e);

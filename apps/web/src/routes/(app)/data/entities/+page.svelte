@@ -1,9 +1,9 @@
 <script lang="ts">
-	import { page } from '$app/stores';
-	import { goto, invalidateAll } from '$app/navigation';
-	import { Button, Page } from '$lib';
-	import PlacesAutocomplete from '$lib/components/PlacesAutocomplete.svelte';
-	import 'iconify-icon';
+	import { page } from "$app/stores";
+	import { goto, invalidateAll } from "$app/navigation";
+	import { Button, Page, Input } from "$lib";
+	import PlacesAutocomplete from "$lib/components/PlacesAutocomplete.svelte";
+	import "iconify-icon";
 
 	interface Place {
 		id?: string;
@@ -17,127 +17,196 @@
 	let { data } = $props();
 
 	// Tab state from URL
-	const activeTab = $derived($page.url.searchParams.get('tab') || 'places');
-	const isOnboarding = $derived($page.url.searchParams.get('onboarding') === 'true');
-
-	// Initialize places from load data
-	const homePlace = $derived(
-		data.locations.find((loc: Place) => loc.id === data.homePlaceId) || null
-	);
-	const otherPlaces = $derived(
-		data.locations.filter((loc: Place) => loc.id !== data.homePlaceId)
+	const activeTab = $derived($page.url.searchParams.get("tab") || "places");
+	const isOnboarding = $derived(
+		$page.url.searchParams.get("onboarding") === "true",
 	);
 
-	// Places state for editing
-	let saving = $state(false);
-	let homeAddress = $state('');
-	let existingHomePlace = $state<Place | null>(null);
+	// All places and current home ID
 	let places = $state<Place[]>([]);
+	let homePlaceId = $state<string | null>(null);
 
 	// Initialize from load data
 	$effect(() => {
-		if (homePlace) {
-			existingHomePlace = homePlace;
-		}
-		places = otherPlaces;
+		places = data.locations;
+		homePlaceId = data.homePlaceId;
 	});
 
-	// New place form
-	let newPlaceLabel = $state('');
+	// State
+	let saving = $state(false);
 	let showAddForm = $state(false);
+	let editingPlaceId = $state<string | null>(null);
+	let newPlaceLabel = $state("");
+	let newPlaceAddress = $state("");
+	let newPlaceData = $state<{
+		formatted_address: string;
+		latitude: number;
+		longitude: number;
+		google_place_id?: string;
+	} | null>(null);
 
-	async function handleHomeSelect(place: { formatted_address: string; latitude: number; longitude: number; google_place_id?: string }) {
-		saving = true;
-		try {
-			const response = await fetch('/api/entities/places', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					label: 'Home',
-					formatted_address: place.formatted_address,
-					latitude: place.latitude,
-					longitude: place.longitude,
-					google_place_id: place.google_place_id,
-					set_as_home: true
-				})
-			});
-
-			if (response.ok) {
-				const result = await response.json();
-				existingHomePlace = {
-					id: result.id,
-					label: 'Home',
-					formatted_address: place.formatted_address,
-					latitude: place.latitude,
-					longitude: place.longitude,
-					google_place_id: place.google_place_id
-				};
-				homeAddress = place.formatted_address;
-				// Refresh data
-				await invalidateAll();
-			}
-		} catch (error) {
-			console.error('Failed to save home place:', error);
-		} finally {
-			saving = false;
-		}
+	async function handleNewPlaceSelect(place: {
+		formatted_address: string;
+		latitude: number;
+		longitude: number;
+		google_place_id?: string;
+	}) {
+		newPlaceAddress = place.formatted_address;
+		newPlaceData = place;
 	}
 
-	async function handleNewPlaceSelect(place: { formatted_address: string; latitude: number; longitude: number; google_place_id?: string }) {
-		if (!newPlaceLabel.trim()) return;
+	async function addPlace() {
+		if (!newPlaceLabel.trim() || !newPlaceData) return;
 
 		saving = true;
 		try {
-			const response = await fetch('/api/entities/places', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+			const response = await fetch("/api/entities/places", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					label: newPlaceLabel.trim(),
-					formatted_address: place.formatted_address,
-					latitude: place.latitude,
-					longitude: place.longitude,
-					google_place_id: place.google_place_id
-				})
+					formatted_address: newPlaceData.formatted_address,
+					latitude: newPlaceData.latitude,
+					longitude: newPlaceData.longitude,
+					google_place_id: newPlaceData.google_place_id,
+				}),
 			});
 
 			if (response.ok) {
 				const result = await response.json();
-				places = [...places, {
-					id: result.id,
-					label: newPlaceLabel.trim(),
-					formatted_address: place.formatted_address,
-					latitude: place.latitude,
-					longitude: place.longitude,
-					google_place_id: place.google_place_id
-				}];
-				newPlaceLabel = '';
+				places = [
+					...places,
+					{
+						id: result.id,
+						label: newPlaceLabel.trim(),
+						formatted_address: newPlaceData.formatted_address,
+						latitude: newPlaceData.latitude,
+						longitude: newPlaceData.longitude,
+						google_place_id: newPlaceData.google_place_id,
+					},
+				];
+				newPlaceLabel = "";
+				newPlaceAddress = "";
+				newPlaceData = null;
 				showAddForm = false;
 			}
 		} catch (error) {
-			console.error('Failed to save place:', error);
+			console.error("Failed to save place:", error);
 		} finally {
 			saving = false;
 		}
 	}
 
-	async function removePlace(index: number) {
-		const place = places[index];
-		if (!place.id) {
-			places = places.filter((_, i) => i !== index);
-			return;
-		}
+	async function removePlace(placeId: string, placeLabel: string) {
+		const confirmed = confirm(
+			`Are you sure you want to remove "${placeLabel}"? This action cannot be undone.`,
+		);
+		if (!confirmed) return;
 
 		saving = true;
 		try {
-			const response = await fetch(`/api/entities/places/${place.id}`, {
-				method: 'DELETE'
+			const response = await fetch(`/api/entities/places/${placeId}`, {
+				method: "DELETE",
 			});
 
 			if (response.ok) {
-				places = places.filter((_, i) => i !== index);
+				places = places.filter((p) => p.id !== placeId);
+				// If we removed the home, clear the reference
+				if (homePlaceId === placeId) {
+					homePlaceId = null;
+					await fetch("/api/profile", {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ home_place_id: null }),
+					});
+				}
 			}
 		} catch (error) {
-			console.error('Failed to delete place:', error);
+			console.error("Failed to delete place:", error);
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function togglePrimaryResidence(placeId: string) {
+		const newHomePlaceId = homePlaceId === placeId ? null : placeId;
+
+		saving = true;
+		try {
+			const response = await fetch("/api/profile", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ home_place_id: newHomePlaceId }),
+			});
+
+			if (response.ok) {
+				homePlaceId = newHomePlaceId;
+			}
+		} catch (error) {
+			console.error("Failed to update primary residence:", error);
+		} finally {
+			saving = false;
+		}
+	}
+
+	function startEditPlace(place: Place) {
+		editingPlaceId = place.id || null;
+		newPlaceLabel = place.label;
+		newPlaceAddress = place.formatted_address;
+		newPlaceData = {
+			formatted_address: place.formatted_address,
+			latitude: place.latitude,
+			longitude: place.longitude,
+			google_place_id: place.google_place_id,
+		};
+		showAddForm = false;
+	}
+
+	function cancelEdit() {
+		editingPlaceId = null;
+		newPlaceLabel = "";
+		newPlaceAddress = "";
+		newPlaceData = null;
+	}
+
+	async function saveEditPlace() {
+		if (!editingPlaceId || !newPlaceLabel.trim() || !newPlaceData) return;
+
+		const placeId = editingPlaceId;
+		const label = newPlaceLabel.trim();
+		const placeData = newPlaceData;
+
+		saving = true;
+		try {
+			const response = await fetch(`/api/entities/places/${placeId}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					label,
+					formatted_address: placeData.formatted_address,
+					latitude: placeData.latitude,
+					longitude: placeData.longitude,
+					google_place_id: placeData.google_place_id,
+				}),
+			});
+
+			if (response.ok) {
+				places = places.map((p) =>
+					p.id === placeId
+						? {
+								...p,
+								label,
+								formatted_address: placeData.formatted_address,
+								latitude: placeData.latitude,
+								longitude: placeData.longitude,
+								google_place_id: placeData.google_place_id,
+							}
+						: p,
+				);
+				cancelEdit();
+			}
+		} catch (error) {
+			console.error("Failed to update place:", error);
 		} finally {
 			saving = false;
 		}
@@ -145,14 +214,14 @@
 
 	function setTab(tab: string) {
 		const url = new URL($page.url);
-		url.searchParams.set('tab', tab);
+		url.searchParams.set("tab", tab);
 		goto(url.toString(), { replaceState: true });
 	}
 
 	async function completeOnboardingStep() {
 		saving = true;
 		try {
-			goto('/');
+			goto("/");
 		} finally {
 			saving = false;
 		}
@@ -164,7 +233,7 @@
 </svelte:head>
 
 <Page>
-	<div class="max-w-2xl">
+	<div class="max-w-3xl">
 		<!-- Onboarding header -->
 		{#if isOnboarding}
 			<p class="text-sm text-primary mb-6">Step 2 of 4</p>
@@ -172,7 +241,7 @@
 
 		<!-- Header -->
 		<div class="mb-8">
-			<h1 class="text-2xl font-serif font-medium text-foreground mb-2">
+			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
 				Entities
 			</h1>
 			<p class="text-foreground-muted">
@@ -183,8 +252,11 @@
 		<!-- Tab navigation -->
 		<div class="flex gap-6 border-b border-border mb-8">
 			<button
-				onclick={() => setTab('places')}
-				class="pb-2 text-sm font-medium border-b-2 -mb-px transition-colors {activeTab === 'places' ? 'border-foreground text-foreground' : 'border-transparent text-foreground-muted hover:text-foreground'}"
+				onclick={() => setTab("places")}
+				class="pb-2 text-sm font-medium border-b-2 -mb-px transition-colors {activeTab ===
+				'places'
+					? 'border-foreground text-foreground'
+					: 'border-transparent text-foreground-muted hover:text-foreground'}"
 			>
 				Places
 			</button>
@@ -203,104 +275,233 @@
 		</div>
 
 		<!-- Tab content -->
-		{#if activeTab === 'places'}
-			<div class="space-y-8">
-				<!-- Home section -->
-				<section>
-					<h2 class="text-sm font-medium text-foreground-muted uppercase tracking-wide mb-3">Home</h2>
-					{#if existingHomePlace}
-						<div class="flex items-center justify-between py-2">
-							<span class="text-foreground">{existingHomePlace.formatted_address}</span>
-							<button
-								type="button"
-								onclick={() => existingHomePlace = null}
-								class="text-sm text-foreground-muted hover:text-foreground"
-							>
-								Edit
-							</button>
-						</div>
-					{:else}
-						<PlacesAutocomplete
-							value={homeAddress}
-							placeholder="Search for your home address..."
-							onSelect={handleHomeSelect}
-							class="w-full px-3 py-2 bg-surface border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-						/>
-					{/if}
-				</section>
-
-				<!-- Other places section -->
-				<section>
-					<div class="flex items-center justify-between mb-3">
-						<h2 class="text-sm font-medium text-foreground-muted uppercase tracking-wide">Other Places</h2>
-						{#if !showAddForm}
-							<button
-								type="button"
-								onclick={() => showAddForm = true}
-								class="text-sm text-primary hover:underline"
+		{#if activeTab === "places"}
+			<div class="space-y-6">
+				<div class="bg-surface border border-border rounded-lg p-6">
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-lg font-medium text-foreground">
+							Your Places
+						</h2>
+						{#if !showAddForm && places.length > 0}
+							<Button
+								variant="ghost"
+								size="sm"
+								onclick={() => (showAddForm = true)}
 							>
 								+ Add
-							</button>
+							</Button>
 						{/if}
 					</div>
 
 					{#if places.length > 0}
-						<ul class="divide-y divide-border">
-							{#each places as place, index}
-								<li class="flex items-center justify-between py-3">
-									<div>
-										<p class="text-foreground font-medium">{place.label}</p>
-										<p class="text-sm text-foreground-muted">{place.formatted_address}</p>
-									</div>
-									<button
-										type="button"
-										onclick={() => removePlace(index)}
-										disabled={saving}
-										class="text-sm text-foreground-muted hover:text-error disabled:opacity-50"
+						<ul class="space-y-3">
+							{#each places as place}
+								{#if editingPlaceId === place.id}
+									<!-- Edit form inline -->
+									<li
+										class="space-y-4 p-4 bg-surface-elevated rounded-lg"
 									>
-										Remove
-									</button>
-								</li>
+										<div
+											class="grid grid-cols-1 sm:grid-cols-3 gap-4"
+										>
+											<div class="sm:col-span-2">
+												<label
+													for="edit-place-address"
+													class="block text-sm font-medium text-foreground-muted mb-2"
+												>
+													Address
+												</label>
+												<PlacesAutocomplete
+													value={newPlaceAddress}
+													placeholder="Search for address..."
+													onSelect={handleNewPlaceSelect}
+												/>
+											</div>
+											<div>
+												<label
+													for="edit-place-label"
+													class="block text-sm font-medium text-foreground-muted mb-2"
+												>
+													Label
+												</label>
+												<Input
+													id="edit-place-label"
+													type="text"
+													bind:value={newPlaceLabel}
+													placeholder="Home, Work, Gym..."
+												/>
+											</div>
+										</div>
+										<div class="flex items-center gap-3">
+											<Button
+												variant="primary"
+												size="sm"
+												onclick={saveEditPlace}
+												disabled={saving ||
+													!newPlaceLabel.trim() ||
+													!newPlaceData}
+											>
+												{saving ? "Saving..." : "Save"}
+											</Button>
+											<Button
+												variant="ghost"
+												size="sm"
+												onclick={cancelEdit}
+											>
+												Cancel
+											</Button>
+										</div>
+									</li>
+								{:else}
+									<li
+										class="flex items-center justify-between"
+									>
+										<div class="min-w-0 flex-1">
+											<div
+												class="flex items-center gap-2"
+											>
+												<p
+													class="text-foreground font-medium truncate"
+												>
+													{place.label}
+												</p>
+												{#if homePlaceId === place.id}
+													<span
+														class="text-xs text-primary font-medium"
+														>Primary</span
+													>
+												{/if}
+											</div>
+											<p
+												class="text-sm text-foreground-muted truncate"
+											>
+												{place.formatted_address}
+											</p>
+										</div>
+										<div
+											class="flex items-center gap-1 shrink-0 ml-4"
+										>
+											{#if homePlaceId !== place.id}
+												<Button
+													variant="ghost"
+													size="sm"
+													onclick={() =>
+														place.id &&
+														togglePrimaryResidence(
+															place.id,
+														)}
+													disabled={saving ||
+														!place.id}
+												>
+													Set as primary
+												</Button>
+											{/if}
+											<Button
+												variant="ghost"
+												size="sm"
+												onclick={() =>
+													startEditPlace(place)}
+												disabled={saving}
+											>
+												Edit
+											</Button>
+											<Button
+												variant="ghost"
+												size="sm"
+												onclick={() =>
+													place.id &&
+													removePlace(
+														place.id,
+														place.label,
+													)}
+												disabled={saving}
+											>
+												Remove
+											</Button>
+										</div>
+									</li>
+								{/if}
 							{/each}
 						</ul>
-					{:else if !showAddForm}
-						<p class="text-foreground-subtle py-2">No places added yet.</p>
+					{:else if !showAddForm && !editingPlaceId}
+						<p class="text-foreground-subtle">
+							No places added yet. Add your first place to get
+							started.
+						</p>
 					{/if}
 
-					{#if showAddForm}
-						<div class="space-y-3 py-3 border-t border-border mt-3">
-							<div>
-								<label for="place-label" class="block text-sm text-foreground-muted mb-1">Label</label>
-								<input
-									id="place-label"
-									type="text"
-									bind:value={newPlaceLabel}
-									placeholder="Work, Gym, etc."
-									class="w-full px-3 py-2 bg-surface border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-								/>
+					<!-- Add form - always shown when empty or when showAddForm is true -->
+					{#if (showAddForm || places.length === 0) && !editingPlaceId}
+						<div
+							class="space-y-4 p-4 bg-surface-elevated rounded-lg {places.length >
+							0
+								? 'mt-3'
+								: ''}"
+						>
+							<div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+								<div class="sm:col-span-2">
+									<label
+										for="place-address"
+										class="block text-sm font-medium text-foreground-muted mb-2"
+									>
+										Address
+									</label>
+									<PlacesAutocomplete
+										value={newPlaceAddress}
+										placeholder="Search for address..."
+										onSelect={handleNewPlaceSelect}
+									/>
+								</div>
+								<div>
+									<label
+										for="place-label"
+										class="block text-sm font-medium text-foreground-muted mb-2"
+									>
+										Label
+									</label>
+									<Input
+										id="place-label"
+										type="text"
+										bind:value={newPlaceLabel}
+										placeholder="Home, Work, Gym..."
+									/>
+								</div>
 							</div>
-							<div>
-								<label for="place-address" class="block text-sm text-foreground-muted mb-1">Address</label>
-								<PlacesAutocomplete
-									placeholder="Search for address..."
-									onSelect={handleNewPlaceSelect}
-									class="w-full px-3 py-2 bg-surface border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary"
-								/>
+							<div class="flex items-center gap-3">
+								<Button
+									variant="primary"
+									size="sm"
+									onclick={addPlace}
+									disabled={saving ||
+										!newPlaceLabel.trim() ||
+										!newPlaceData}
+								>
+									{saving ? "Saving..." : "Add Place"}
+								</Button>
+								{#if places.length > 0}
+									<Button
+										variant="ghost"
+										size="sm"
+										onclick={() => {
+											showAddForm = false;
+											newPlaceLabel = "";
+											newPlaceAddress = "";
+											newPlaceData = null;
+										}}
+									>
+										Cancel
+									</Button>
+								{/if}
 							</div>
-							<button
-								type="button"
-								onclick={() => { showAddForm = false; newPlaceLabel = ''; }}
-								class="text-sm text-foreground-muted hover:text-foreground"
-							>
-								Cancel
-							</button>
 						</div>
 					{/if}
-				</section>
+				</div>
 
 				<!-- Onboarding actions -->
 				{#if isOnboarding}
-					<div class="flex items-center justify-between pt-6 border-t border-border">
+					<div
+						class="flex items-center justify-between pt-6 border-t border-border"
+					>
 						<a
 							href="/onboarding"
 							class="text-sm text-foreground-muted hover:text-foreground"
@@ -312,17 +513,17 @@
 							onclick={completeOnboardingStep}
 							disabled={saving}
 						>
-							{saving ? 'Saving...' : 'Continue'}
+							{saving ? "Saving..." : "Continue"}
 						</Button>
 					</div>
 				{/if}
 			</div>
-		{:else if activeTab === 'people'}
-			<div class="py-8">
+		{:else if activeTab === "people"}
+			<div class="bg-surface border border-border rounded-lg p-6">
 				<p class="text-foreground-muted">Coming soon.</p>
 			</div>
-		{:else if activeTab === 'things'}
-			<div class="py-8">
+		{:else if activeTab === "things"}
+			<div class="bg-surface border border-border rounded-lg p-6">
 				<p class="text-foreground-muted">Coming soon.</p>
 			</div>
 		{/if}

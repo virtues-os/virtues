@@ -176,6 +176,19 @@ ON data.knowledge_document USING hnsw (embedding vector_cosine_ops)
 WITH (m = 16, ef_construction = 64);
 
 --------------------------------------------------------------------------------
+-- EMBEDDINGS: FINANCIAL TRANSACTION
+--------------------------------------------------------------------------------
+
+-- Financial Transaction embeddings
+ALTER TABLE data.financial_transaction
+ADD COLUMN IF NOT EXISTS embedding vector(768),
+ADD COLUMN IF NOT EXISTS embedded_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_embedding
+ON data.financial_transaction USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+--------------------------------------------------------------------------------
 -- EMBEDDING SETTINGS IN ASSISTANT PROFILE (from 007)
 --------------------------------------------------------------------------------
 

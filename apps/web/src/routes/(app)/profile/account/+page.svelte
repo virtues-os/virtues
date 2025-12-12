@@ -1,14 +1,13 @@
 <script lang="ts">
-	import { Page } from "$lib";
+	import { Page, Input } from "$lib";
 	import ThemePicker from "$lib/components/ThemePicker.svelte";
 	import "iconify-icon";
 	import { onMount } from "svelte";
 	import { getTheme, setTheme, type Theme } from "$lib/utils/theme";
+	import { invalidate } from "$app/navigation";
 
 	let loading = $state(true);
 	let currentTheme = $state<Theme>("light");
-	let saving = $state(false);
-	let saveSuccess = $state(false);
 
 	// Profile fields
 	let fullName = $state("");
@@ -17,24 +16,22 @@
 	let heightCm = $state("");
 	let weightKg = $state("");
 	let ethnicity = $state("");
-	let homeStreet = $state("");
-	let homeCity = $state("");
-	let homeState = $state("");
-	let homePostalCode = $state("");
-	let homeCountry = $state("");
 	let occupation = $state("");
 	let employer = $state("");
 
 	async function handleThemeChange(newTheme: Theme) {
 		currentTheme = newTheme;
 
-		// Also save to profile API (fire-and-forget)
+		// Immediately persist theme to profile and localStorage
 		try {
+			setTheme(newTheme);
 			await fetch("/api/profile", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ theme: newTheme })
+				body: JSON.stringify({ theme: newTheme }),
 			});
+			// Refresh profile data in background so re-open uses latest
+			invalidate("/api/profile");
 		} catch (error) {
 			console.error("Failed to save theme preference:", error);
 		}
@@ -55,15 +52,13 @@
 				// Populate fields from profile
 				fullName = profile.full_name || "";
 				preferredName = profile.preferred_name || "";
-				birthDate = profile.birth_date || "";
+				// Format birth_date for HTML date input (requires YYYY-MM-DD format)
+				birthDate = profile.birth_date
+					? profile.birth_date.split("T")[0]
+					: "";
 				heightCm = profile.height_cm || "";
 				weightKg = profile.weight_kg || "";
 				ethnicity = profile.ethnicity || "";
-				homeStreet = profile.home_street || "";
-				homeCity = profile.home_city || "";
-				homeState = profile.home_state || "";
-				homePostalCode = profile.home_postal_code || "";
-				homeCountry = profile.home_country || "";
 				occupation = profile.occupation || "";
 				employer = profile.employer || "";
 
@@ -80,44 +75,23 @@
 		}
 	}
 
-	async function saveProfile() {
-		saving = true;
-		saveSuccess = false;
+	async function saveField(field: string, value: string | number | null) {
 		try {
 			const response = await fetch("/api/profile", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					full_name: fullName || null,
-					preferred_name: preferredName || null,
-					birth_date: birthDate || null,
-					height_cm: heightCm ? parseFloat(heightCm) : null,
-					weight_kg: weightKg ? parseFloat(weightKg) : null,
-					ethnicity: ethnicity || null,
-					home_street: homeStreet || null,
-					home_city: homeCity || null,
-					home_state: homeState || null,
-					home_postal_code: homePostalCode || null,
-					home_country: homeCountry || null,
-					occupation: occupation || null,
-					employer: employer || null,
-					theme: currentTheme,
-				}),
+				body: JSON.stringify({ [field]: value }),
 			});
 
-			if (response.ok) {
-				saveSuccess = true;
-				setTimeout(() => {
-					saveSuccess = false;
-				}, 3000);
-			} else {
-				throw new Error("Failed to save profile");
+			if (!response.ok) {
+				throw new Error(`Failed to save ${field}`);
 			}
+
+			// Refresh profile data in background
+			invalidate("/api/profile");
 		} catch (error) {
-			console.error("Failed to save profile:", error);
-			alert("Failed to save profile. Please try again.");
-		} finally {
-			saving = false;
+			console.error(`Failed to save ${field}:`, error);
+			throw error; // Re-throw so Input component can show error state
 		}
 	}
 </script>
@@ -145,11 +119,14 @@
 					<h2 class="text-lg font-medium text-foreground mb-4">
 						Appearance
 					</h2>
-					<ThemePicker value={currentTheme} onchange={handleThemeChange} />
+					<ThemePicker
+						value={currentTheme}
+						onchange={handleThemeChange}
+					/>
 				</div>
 			</div>
 
-			<form onsubmit={(e) => { e.preventDefault(); saveProfile(); }} class="space-y-6">
+			<div class="space-y-6">
 				<!-- Identity Section -->
 				<div class="bg-surface border border-border rounded-lg p-6">
 					<h2 class="text-lg font-medium text-foreground mb-4">
@@ -163,12 +140,14 @@
 							>
 								Full Name
 							</label>
-							<input
+							<Input
 								type="text"
 								id="fullName"
 								bind:value={fullName}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 								placeholder="Your full legal name"
+								autoSave
+								onSave={(val) =>
+									saveField("full_name", val || null)}
 							/>
 						</div>
 
@@ -179,17 +158,15 @@
 							>
 								Preferred Name
 							</label>
-							<input
+							<Input
 								type="text"
 								id="preferredName"
 								bind:value={preferredName}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 								placeholder="How should the assistant address you?"
+								autoSave
+								onSave={(val) =>
+									saveField("preferred_name", val || null)}
 							/>
-							<p class="text-xs text-foreground-subtle mt-1">
-								This will be used in conversations if set,
-								otherwise your full name will be used
-							</p>
 						</div>
 
 						<div>
@@ -199,11 +176,13 @@
 							>
 								Birth Date
 							</label>
-							<input
+							<Input
 								type="date"
 								id="birthDate"
 								bind:value={birthDate}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+								autoSave
+								onSave={(val) =>
+									saveField("birth_date", val || null)}
 							/>
 						</div>
 					</div>
@@ -223,13 +202,22 @@
 								>
 									Height (cm)
 								</label>
-								<input
+								<Input
 									type="number"
 									step="0.01"
 									id="heightCm"
 									bind:value={heightCm}
-									class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 									placeholder="175.5"
+									autoSave
+									onSave={(val) => {
+										const num = parseFloat(
+											String(val ?? ""),
+										);
+										saveField(
+											"height_cm",
+											isNaN(num) ? null : num,
+										);
+									}}
 								/>
 							</div>
 
@@ -240,13 +228,22 @@
 								>
 									Weight (kg)
 								</label>
-								<input
+								<Input
 									type="number"
 									step="0.01"
 									id="weightKg"
 									bind:value={weightKg}
-									class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 									placeholder="70.5"
+									autoSave
+									onSave={(val) => {
+										const num = parseFloat(
+											String(val ?? ""),
+										);
+										saveField(
+											"weight_kg",
+											isNaN(num) ? null : num,
+										);
+									}}
 								/>
 							</div>
 						</div>
@@ -258,105 +255,15 @@
 							>
 								Ethnicity
 							</label>
-							<input
+							<Input
 								type="text"
 								id="ethnicity"
 								bind:value={ethnicity}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 								placeholder="Optional"
+								autoSave
+								onSave={(val) =>
+									saveField("ethnicity", val || null)}
 							/>
-						</div>
-					</div>
-				</div>
-
-				<!-- Home Address Section -->
-				<div class="bg-surface border border-border rounded-lg p-6">
-					<h2 class="text-lg font-medium text-foreground mb-4">
-						Home Address
-					</h2>
-					<div class="space-y-4">
-						<div>
-							<label
-								for="homeStreet"
-								class="block text-sm font-medium text-foreground-muted mb-2"
-							>
-								Street Address
-							</label>
-							<input
-								type="text"
-								id="homeStreet"
-								bind:value={homeStreet}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-								placeholder="123 Main St"
-							/>
-						</div>
-
-						<div class="grid grid-cols-2 gap-4">
-							<div>
-								<label
-									for="homeCity"
-									class="block text-sm font-medium text-foreground-muted mb-2"
-								>
-									City
-								</label>
-								<input
-									type="text"
-									id="homeCity"
-									bind:value={homeCity}
-									class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-									placeholder="San Francisco"
-								/>
-							</div>
-
-							<div>
-								<label
-									for="homeState"
-									class="block text-sm font-medium text-foreground-muted mb-2"
-								>
-									State/Province
-								</label>
-								<input
-									type="text"
-									id="homeState"
-									bind:value={homeState}
-									class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-									placeholder="CA"
-								/>
-							</div>
-						</div>
-
-						<div class="grid grid-cols-2 gap-4">
-							<div>
-								<label
-									for="homePostalCode"
-									class="block text-sm font-medium text-foreground-muted mb-2"
-								>
-									Postal Code
-								</label>
-								<input
-									type="text"
-									id="homePostalCode"
-									bind:value={homePostalCode}
-									class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-									placeholder="94102"
-								/>
-							</div>
-
-							<div>
-								<label
-									for="homeCountry"
-									class="block text-sm font-medium text-foreground-muted mb-2"
-								>
-									Country
-								</label>
-								<input
-									type="text"
-									id="homeCountry"
-									bind:value={homeCountry}
-									class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-									placeholder="United States"
-								/>
-							</div>
 						</div>
 					</div>
 				</div>
@@ -374,12 +281,14 @@
 							>
 								Occupation
 							</label>
-							<input
+							<Input
 								type="text"
 								id="occupation"
 								bind:value={occupation}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 								placeholder="Software Engineer, Designer, Student, etc."
+								autoSave
+								onSave={(val) =>
+									saveField("occupation", val || null)}
 							/>
 						</div>
 
@@ -390,12 +299,14 @@
 							>
 								Employer
 							</label>
-							<input
+							<Input
 								type="text"
 								id="employer"
 								bind:value={employer}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 								placeholder="Company name (optional)"
+								autoSave
+								onSave={(val) =>
+									saveField("employer", val || null)}
 							/>
 							<p class="text-xs text-foreground-subtle mt-1">
 								Leave blank if self-employed or not applicable
@@ -403,27 +314,7 @@
 						</div>
 					</div>
 				</div>
-
-				<!-- Save Button -->
-				<div class="flex items-center gap-3 pt-2">
-					<button
-						type="submit"
-						disabled={saving}
-						class="px-6 py-2 btn-primary rounded-md hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-					>
-						{saving ? "Saving..." : "Save Profile"}
-					</button>
-					{#if saveSuccess}
-						<span
-							class="text-sm text-success flex items-center gap-1"
-						>
-							<iconify-icon icon="mdi:check-circle" width="16"
-							></iconify-icon>
-							Saved successfully
-						</span>
-					{/if}
-				</div>
-			</form>
+			</div>
 		{/if}
 	</div>
 </Page>
