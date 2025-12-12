@@ -2,10 +2,6 @@
 	import Page from "$lib/components/Page.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import TableOfContents from "$lib/components/TableOfContents.svelte";
-	import {
-		ObservabilityPanel,
-		ObservabilityToggle,
-	} from "$lib/components/observability";
 	import type { ModelOption } from "$lib/config/models";
 	import {
 		getSelectedModel,
@@ -50,30 +46,6 @@
 	// Citation panel state
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
-
-	// Observability panel state
-	let observabilityOpen = $state(false);
-
-	// Load observability state from localStorage on mount
-	$effect(() => {
-		if (typeof window !== "undefined") {
-			const saved = localStorage.getItem("observability-panel-open");
-			if (saved === "true") {
-				observabilityOpen = true;
-			}
-		}
-	});
-
-	// Persist observability state to localStorage
-	function toggleObservability() {
-		observabilityOpen = !observabilityOpen;
-		if (typeof window !== "undefined") {
-			localStorage.setItem(
-				"observability-panel-open",
-				String(observabilityOpen),
-			);
-		}
-	}
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -624,15 +596,9 @@
 	<!-- Table of Contents -->
 	<TableOfContents {exchanges} />
 
-	<div class="split-container" class:observability-open={observabilityOpen}>
+	<div class="chat-container">
 		<!-- Main chat area -->
 		<div class="chat-area">
-			<!-- Observability toggle button -->
-			<ObservabilityToggle
-				isOpen={observabilityOpen}
-				onToggle={toggleObservability}
-			/>
-
 			<div class="page-container" class:is-empty={isEmpty}>
 				<!-- Messages area - scrollable, fades in when not empty -->
 				<div
@@ -883,16 +849,6 @@
 				</div>
 			</div>
 		</div>
-
-		<!-- Observability panel -->
-		{#if observabilityOpen}
-			<div class="observability-area">
-				<ObservabilityPanel
-					messages={uniqueMessages}
-					trace={data.trace}
-				/>
-			</div>
-		{/if}
 	</div>
 </Page>
 
@@ -904,8 +860,8 @@
 />
 
 <style>
-	/* Split container for chat + observability layout */
-	.split-container {
+	/* Chat container layout */
+	.chat-container {
 		display: flex;
 		height: 100%;
 		width: 100%;
@@ -916,31 +872,7 @@
 		flex: 1;
 		height: 100%;
 		position: relative;
-		transition: flex 0.3s ease;
 		overflow: hidden;
-	}
-
-	.split-container.observability-open .chat-area {
-		flex: 1;
-	}
-
-	.observability-area {
-		flex: 1;
-		height: 100%;
-		border-left: 1px solid var(--color-border);
-		overflow: hidden;
-		animation: slide-in-right 0.3s ease;
-	}
-
-	@keyframes slide-in-right {
-		from {
-			opacity: 0;
-			transform: translateX(20px);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(0);
-		}
 	}
 
 	.page-container {

@@ -99,8 +99,11 @@
 		expandedSections = newSet;
 	}
 
-	// Recent chats for display (last 6)
-	const recentChats = $derived(chatSessions.sessions.slice(0, 6));
+	// Recent chats for display (last 5)
+	const recentChats = $derived(chatSessions.sessions.slice(0, 5));
+	
+	// Check if there are more chats beyond what's shown
+	const hasMoreChats = $derived(chatSessions.sessions.length > 5);
 
 	// Build accordion sections (Memory only - onboarding is handled separately)
 	const sections = $derived.by(() => {
@@ -316,6 +319,22 @@
 								STAGGER_DELAY}
 						/>
 					{/each}
+					{#if hasMoreChats}
+						<SidebarNavItem
+							item={{
+								id: "history",
+								type: "link",
+								label: "View all",
+								href: "/history",
+								icon: "ri:history-line",
+								pagespace: "history",
+							}}
+							collapsed={isCollapsed}
+							animationDelay={(animationIndices.chatStartIndex +
+								recentChats.length) *
+								STAGGER_DELAY}
+						/>
+					{/if}
 				{/if}
 			</SidebarAccordion>
 
