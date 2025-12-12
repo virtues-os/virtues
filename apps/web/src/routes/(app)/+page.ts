@@ -54,7 +54,6 @@ export const load: PageLoad = async ({ url, fetch }) => {
 			conversationId,
 			conversation: data.conversation,
 			messages: data.messages || [],
-			trace: data.trace || null,
 			isNew: false
 		};
 	} catch (error) {

@@ -13,7 +13,6 @@
 
 import { boolean, integer, jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
-import type { ConversationTrace } from '$lib/types/Trace';
 
 // App schema namespace
 export const appSchema = pgSchema('app');
@@ -84,7 +83,8 @@ export const chatSessions = appSchema.table('chat_sessions', {
 	id: uuid('id').primaryKey().defaultRandom(),
 	title: text('title').notNull(),
 	messages: jsonb('messages').$type<ChatMessage[]>().notNull().default(sql`'[]'::jsonb`),
-	trace: jsonb('trace').$type<ConversationTrace>(),
+	// trace column exists in DB but is no longer used (kept for backward compatibility)
+	trace: jsonb('trace'),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 	messageCount: integer('message_count').notNull().default(0)
