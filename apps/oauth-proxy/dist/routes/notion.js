@@ -186,7 +186,7 @@ function isValidReturnUrl(url) {
         }
         // Allow specific domains
         const allowedPatterns = [
-            /^.*\.ariata\.com$/,
+            /^.*\.virtues\.com$/,
             /^.*\.local$/,
             /^.*\.localhost$/
         ];
