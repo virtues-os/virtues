@@ -1,10 +1,7 @@
 <script lang="ts">
-	import 'iconify-icon';
+	import "iconify-icon";
 
-	let {
-		isOpen = false,
-		onToggle
-	} = $props<{
+	let { isOpen = false, onToggle } = $props<{
 		isOpen: boolean;
 		onToggle: () => void;
 	}>();
@@ -14,11 +11,13 @@
 	class="observability-toggle"
 	class:active={isOpen}
 	onclick={onToggle}
-	aria-label={isOpen ? 'Hide observability panel' : 'Show observability panel'}
+	aria-label={isOpen
+		? "Hide observability panel"
+		: "Show observability panel"}
 	aria-pressed={isOpen}
-	title={isOpen ? 'Hide trace' : 'Show trace'}
+	title={isOpen ? "Hide trace" : "Show trace"}
 >
-	<iconify-icon icon="ri:pulse-line" width="18" height="18"></iconify-icon>
+	<iconify-icon icon="ri:pulse-line" width="14" height="14"></iconify-icon>
 </button>
 
 <style>
@@ -30,25 +29,38 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
-		background: var(--color-surface-elevated, #fafafa);
-		border: 1px solid var(--color-border, #e5e5e5);
-		border-radius: 8px;
+		width: 30px;
+		height: 30px;
+		background: var(--color-surface-elevated);
+		border: 1px solid
+			color-mix(in srgb, var(--color-border) 60%, transparent);
+		border-radius: 9999px;
 		cursor: pointer;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		transition: all 0.15s ease;
 	}
 
+	.observability-toggle iconify-icon {
+		color: var(--color-foreground-muted);
+	}
+
 	.observability-toggle:hover {
-		background: var(--color-surface, #ffffff);
-		border-color: var(--color-foreground-muted, #a3a3a3);
-		color: var(--color-foreground, #171717);
+		background: var(--color-surface);
+		border-color: color-mix(in srgb, var(--color-border) 80%, transparent);
+		color: var(--color-foreground);
 	}
 
 	.observability-toggle.active {
-		background: var(--color-primary-subtle, #eff6ff);
-		border-color: var(--color-primary, #3b82f6);
-		color: var(--color-primary, #3b82f6);
+		background: color-mix(
+			in srgb,
+			var(--color-primary-subtle) 80%,
+			transparent
+		);
+		border-color: color-mix(in srgb, var(--color-primary) 70%, transparent);
+		color: var(--color-primary);
+
+		iconify-icon {
+			color: var(--color-primary);
+		}
 	}
 </style>

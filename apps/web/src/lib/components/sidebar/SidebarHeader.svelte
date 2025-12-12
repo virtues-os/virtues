@@ -6,6 +6,8 @@
 		onNewChat: () => void;
 		onToggleCollapse: () => void;
 		onSearch?: () => void;
+		logoAnimationDelay?: number;
+		actionsAnimationDelay?: number;
 	}
 
 	let {
@@ -13,6 +15,8 @@
 		onNewChat,
 		onToggleCollapse,
 		onSearch,
+		logoAnimationDelay = 0,
+		actionsAnimationDelay = 30,
 	}: Props = $props();
 
 	// Static dot positions for triangle logo
@@ -29,13 +33,18 @@
 	}
 </script>
 
-<div class="header-container" class:collapsed style="--stagger-delay: 400ms">
+<div class="header-container" class:collapsed>
 	<!-- Row 1: Logo (clickable to toggle sidebar) -->
-	<div class="workspace-row">
+	<div
+		class="workspace-row animate-row"
+		style="animation-delay: {logoAnimationDelay}ms; --stagger-delay: {logoAnimationDelay}ms"
+	>
 		<button
 			class="logo-area"
 			onclick={onToggleCollapse}
-			title={collapsed ? "Expand sidebar (Cmd+[)" : "Collapse sidebar (Cmd+[)"}
+			title={collapsed
+				? "Expand sidebar (Cmd+[)"
+				: "Collapse sidebar (Cmd+[)"}
 		>
 			<!-- Static Triangle Logo -->
 			<div class="logo">
@@ -57,7 +66,10 @@
 
 	<!-- Row 2: Action Layer (Search + New) -->
 	{#if !collapsed}
-		<div class="action-layer">
+		<div
+			class="action-layer animate-row"
+			style="animation-delay: {actionsAnimationDelay}ms; --stagger-delay: {actionsAnimationDelay}ms"
+		>
 			<button
 				class="action-btn search-btn"
 				onclick={handleSearch}
@@ -83,33 +95,54 @@
 
 	/* Premium easing - heavy friction feel */
 	:root {
-		--ease-premium: cubic-bezier(0.2, 0.0, 0, 1.0);
+		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	/* Staggered fade-slide animation with premium easing */
+	@keyframes fadeSlideIn {
+		from {
+			opacity: 0;
+			transform: translateX(-8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
 	}
 
 	.header-container {
 		@apply flex flex-col;
 		padding: 14px 8px 16px 8px;
 		gap: 14px;
-		/* Staggered expand transition - uses --stagger-delay CSS var */
-		opacity: 1;
-		transform: translateX(0);
-		transition:
-			opacity 200ms var(--ease-premium) var(--stagger-delay, 400ms),
-			transform 200ms var(--ease-premium) var(--stagger-delay, 400ms);
 	}
 
 	.header-container.collapsed {
-		@apply items-center;
-		padding: 12px 4px;
+		opacity: 0;
+		transform: translateX(-8px);
+		transition:
+			opacity 150ms var(--ease-premium),
+			transform 150ms var(--ease-premium);
+	}
+
+	.header-container.collapsed .animate-row {
+		opacity: 0;
+	}
+
+	/* Animated rows - staggered entrance */
+	.animate-row {
+		/* Staggered load animation (initial mount) */
+		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
+		/* Staggered expand transition (sidebar open) */
+		opacity: 1;
+		transform: translateX(0);
+		transition:
+			opacity 200ms var(--ease-premium) var(--stagger-delay, 0ms),
+			transform 200ms var(--ease-premium) var(--stagger-delay, 0ms);
 	}
 
 	/* Row 1: Workspace */
 	.workspace-row {
 		@apply flex items-center justify-between;
-	}
-
-	.header-container.collapsed .workspace-row {
-		@apply justify-center;
 	}
 
 	.logo-area {
@@ -119,13 +152,6 @@
 		border-radius: 8px;
 		background: transparent;
 		transition: all 200ms var(--ease-premium);
-	}
-
-	.header-container.collapsed .logo-area {
-		@apply justify-center;
-		width: 32px;
-		height: 32px;
-		padding: 0;
 	}
 
 	.logo-area:hover .app-name {
@@ -158,7 +184,7 @@
 	}
 
 	.app-name {
-		font-family: 'Charter', 'Georgia', 'Times New Roman', serif;
+		font-family: "Charter", "Georgia", "Times New Roman", serif;
 		color: var(--foreground);
 		font-size: 17px;
 		font-weight: 400;
@@ -177,25 +203,18 @@
 		gap: 6px;
 		padding: 6px 10px;
 		font-size: 13px;
-		color: rgba(0, 0, 0, 0.45);
+		color: var(--color-foreground-muted);
 		background: transparent;
 		transition: all 200ms var(--ease-premium);
 	}
 
-	:global([data-theme="dark"]) .action-btn,
-	:global([data-theme="night"]) .action-btn {
-		color: rgba(255, 255, 255, 0.45);
-	}
-
 	.action-btn:hover {
-		background: rgba(0, 0, 0, 0.05);
-		color: rgba(0, 0, 0, 0.8);
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
 	}
 
-	:global([data-theme="dark"]) .action-btn:hover,
-	:global([data-theme="night"]) .action-btn:hover {
-		background: rgba(255, 255, 255, 0.08);
-		color: rgba(255, 255, 255, 0.8);
+	.action-btn iconify-icon {
+		color: currentColor;
 	}
 
 	.action-btn:active {
@@ -204,6 +223,7 @@
 
 	.action-label {
 		font-weight: 400;
+		color: inherit;
 	}
 
 	.search-btn {

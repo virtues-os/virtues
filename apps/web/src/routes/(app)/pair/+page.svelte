@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from "$app/stores";
 	import { onMount } from "svelte";
+	import { Input, Button } from "$lib";
 
 	let deviceId = $derived($page.url.searchParams.get("device_id") || "");
 	let deviceName = $state("");
@@ -56,7 +57,9 @@
 	}
 </script>
 
-<div class="min-h-screen flex items-center justify-center bg-surface-elevated p-4">
+<div
+	class="min-h-screen flex items-center justify-center bg-surface-elevated p-4"
+>
 	<div class="max-w-md w-full bg-surface rounded-lg shadow-lg p-8">
 		{#if !deviceId}
 			<div class="text-center">
@@ -79,7 +82,9 @@
 					Your Mac is now connected to Ariata. You can close this
 					window and return to your Mac.
 				</p>
-				<div class="bg-success-subtle border border-success rounded-lg p-4">
+				<div
+					class="bg-success-subtle border border-success rounded-lg p-4"
+				>
 					<p class="text-sm text-success">
 						<strong>{deviceName || "Your Mac"}</strong> is now syncing
 						data.
@@ -99,8 +104,12 @@
 				<div
 					class="bg-surface-elevated border border-border rounded-lg p-4 mb-6 text-left"
 				>
-					<div class="text-sm text-foreground-subtle mb-2">Device ID</div>
-					<div class="font-mono text-xs text-foreground-muted break-all">
+					<div class="text-sm text-foreground-subtle mb-2">
+						Device ID
+					</div>
+					<div
+						class="font-mono text-xs text-foreground-muted break-all"
+					>
 						{deviceId}
 					</div>
 				</div>
@@ -112,12 +121,11 @@
 					>
 						Device Name (optional)
 					</label>
-					<input
+					<Input
 						id="device-name"
 						type="text"
 						bind:value={deviceName}
 						placeholder="My MacBook Pro"
-						class="w-full px-4 py-2 border border-border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary"
 					/>
 				</div>
 
@@ -129,13 +137,14 @@
 					</div>
 				{/if}
 
-				<button
+				<Button
+					variant="primary"
 					onclick={confirmPairing}
 					disabled={pairing}
-					class="w-full bg-primary hover:bg-primary/90 disabled:bg-foreground-subtle text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+					class="w-full"
 				>
 					{pairing ? "Pairing..." : "Confirm Pairing"}
-				</button>
+				</Button>
 
 				<p class="text-xs text-foreground-subtle mt-4">
 					By pairing this device, you authorize it to sync your

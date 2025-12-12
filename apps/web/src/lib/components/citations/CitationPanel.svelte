@@ -1,11 +1,11 @@
 <script lang="ts">
-	import type { Citation } from '$lib/types/Citation';
-	import 'iconify-icon';
+	import type { Citation } from "$lib/types/Citation";
+	import "iconify-icon";
 
 	let {
 		citation = null,
 		open = false,
-		onClose
+		onClose,
 	} = $props<{
 		citation: Citation | null;
 		open: boolean;
@@ -28,78 +28,88 @@
 	// Format source type for display
 	function formatSourceType(type: string): string {
 		switch (type) {
-			case 'ontology':
-				return 'Personal Data';
-			case 'axiology':
-				return 'Values & Goals';
-			case 'web_search':
-				return 'Web Search';
-			case 'narratives':
-				return 'Life Narratives';
-			case 'location':
-				return 'Location Data';
+			case "ontology":
+				return "Personal Data";
+			case "axiology":
+				return "Values & Goals";
+			case "web_search":
+				return "Web Search";
+			case "narratives":
+				return "Life Narratives";
+			case "location":
+				return "Location Data";
 			default:
-				return 'Data Source';
+				return "Data Source";
 		}
 	}
 
 	// Format tool name for display
 	function formatToolName(name: string): string {
 		return name
-			.replace('virtues_', '')
-			.replace(/_/g, ' ')
+			.replace("virtues_", "")
+			.replace(/_/g, " ")
 			.replace(/\b\w/g, (l) => l.toUpperCase());
 	}
 
 	// Check if data is tabular (has rows)
-	function isTabularData(data: unknown): data is { rows: Record<string, unknown>[] } {
-		if (!data || typeof data !== 'object') return false;
+	function isTabularData(
+		data: unknown,
+	): data is { rows: Record<string, unknown>[] } {
+		if (!data || typeof data !== "object") return false;
 		const d = data as Record<string, unknown>;
 		return Array.isArray(d.rows) && d.rows.length > 0;
 	}
 
 	// Check if data is web search results
 	function isWebSearchData(
-		data: unknown
-	): data is { results: Array<{ title: string; url: string; summary?: string }> } {
-		if (!data || typeof data !== 'object') return false;
+		data: unknown,
+	): data is {
+		results: Array<{ title: string; url: string; summary?: string }>;
+	} {
+		if (!data || typeof data !== "object") return false;
 		const d = data as Record<string, unknown>;
 		return Array.isArray(d.results) && d.results.length > 0;
 	}
 
 	// Check if data is axiology data
 	function isAxiologyData(data: unknown): boolean {
-		if (!data || typeof data !== 'object') return false;
+		if (!data || typeof data !== "object") return false;
 		const d = data as Record<string, unknown>;
-		return 'values' in d || 'virtues' in d || 'vices' in d || 'aspirations' in d;
+		return (
+			"values" in d ||
+			"virtues" in d ||
+			"vices" in d ||
+			"aspirations" in d
+		);
 	}
 
 	// Get table headers from first row
 	function getTableHeaders(rows: Record<string, unknown>[]): string[] {
 		if (rows.length === 0) return [];
-		return Object.keys(rows[0]).filter((key) => !key.startsWith('_'));
+		return Object.keys(rows[0]).filter((key) => !key.startsWith("_"));
 	}
 
 	// Format cell value for display
 	function formatCellValue(value: unknown): string {
-		if (value === null || value === undefined) return '-';
-		if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-		if (typeof value === 'number') {
+		if (value === null || value === undefined) return "-";
+		if (typeof value === "boolean") return value ? "Yes" : "No";
+		if (typeof value === "number") {
 			// Format numbers nicely
 			if (Number.isInteger(value)) return value.toLocaleString();
 			return value.toFixed(2);
 		}
 		if (value instanceof Date) return value.toLocaleDateString();
-		if (typeof value === 'string') {
+		if (typeof value === "string") {
 			// Check if it's an ISO date
 			if (/^\d{4}-\d{2}-\d{2}T/.test(value)) {
 				return new Date(value).toLocaleString();
 			}
 			// Truncate long strings
-			if (value.length > 100) return value.slice(0, 100) + '...';
+			if (value.length > 100) return value.slice(0, 100) + "...";
 			return value;
 		}
-		if (typeof value === 'object') return JSON.stringify(value).slice(0, 100);
+		if (typeof value === "object")
+			return JSON.stringify(value).slice(0, 100);
 		return String(value);
 	}
 
@@ -112,15 +122,15 @@
 
 	// Handle keyboard navigation (Escape to close, Tab to trap focus)
 	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
+		if (e.key === "Escape") {
 			onClose();
 			return;
 		}
 
 		// Focus trap: keep Tab within panel
-		if (e.key === 'Tab' && panelEl) {
+		if (e.key === "Tab" && panelEl) {
 			const focusableElements = panelEl.querySelectorAll<HTMLElement>(
-				'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+				'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
 			);
 			const firstElement = focusableElements[0];
 			const lastElement = focusableElements[focusableElements.length - 1];
@@ -139,7 +149,7 @@
 	function isValidUrl(url: string): boolean {
 		try {
 			const parsed = new URL(url);
-			return ['http:', 'https:'].includes(parsed.protocol);
+			return ["http:", "https:"].includes(parsed.protocol);
 		} catch {
 			return false;
 		}
@@ -150,21 +160,43 @@
 
 {#if open && citation}
 	<!-- Backdrop -->
-	<div class="panel-backdrop" onclick={handleBackdropClick} role="presentation">
+	<div
+		class="panel-backdrop"
+		onclick={handleBackdropClick}
+		role="presentation"
+	>
 		<!-- Panel -->
-		<aside bind:this={panelEl} class="citation-panel" role="dialog" aria-label="Citation details" aria-modal="true">
+		<aside
+			bind:this={panelEl}
+			class="citation-panel"
+			role="dialog"
+			aria-label="Citation details"
+			aria-modal="true"
+		>
 			<!-- Header -->
 			<header class="panel-header">
 				<div class="header-content">
-					<iconify-icon icon={citation.icon} class={citation.color} width="24" height="24"
+					<iconify-icon
+						icon={citation.icon}
+						class={citation.color}
+						width="24"
+						height="24"
 					></iconify-icon>
 					<div class="header-text">
 						<h2 class="panel-title">{citation.label}</h2>
-						<span class="panel-subtitle">{formatSourceType(citation.source_type)}</span>
+						<span class="panel-subtitle"
+							>{formatSourceType(citation.source_type)}</span
+						>
 					</div>
 				</div>
-				<button bind:this={closeButtonEl} class="close-button" onclick={onClose} aria-label="Close panel">
-					<iconify-icon icon="ri:close-line" width="20" height="20"></iconify-icon>
+				<button
+					bind:this={closeButtonEl}
+					class="close-button"
+					onclick={onClose}
+					aria-label="Close panel"
+				>
+					<iconify-icon icon="ri:close-line" width="20" height="20"
+					></iconify-icon>
 				</button>
 			</header>
 
@@ -182,13 +214,17 @@
 					<div class="detail-grid">
 						<div class="detail-item">
 							<span class="detail-label">Tool</span>
-							<span class="detail-value">{formatToolName(citation.tool_name)}</span>
+							<span class="detail-value"
+								>{formatToolName(citation.tool_name)}</span
+							>
 						</div>
 						{#if citation.timestamp}
 							<div class="detail-item">
 								<span class="detail-label">Retrieved</span>
 								<span class="detail-value"
-									>{new Date(citation.timestamp).toLocaleTimeString()}</span
+									>{new Date(
+										citation.timestamp,
+									).toLocaleTimeString()}</span
 								>
 							</div>
 						{/if}
@@ -203,18 +239,32 @@
 							{#each citation.data.results as result, i}
 								<li class="search-result">
 									{#if isValidUrl(result.url)}
-										<a href={result.url} target="_blank" rel="noopener noreferrer">
-											<span class="result-title">{result.title}</span>
-											<span class="result-url">{result.url}</span>
+										<a
+											href={result.url}
+											target="_blank"
+											rel="noopener noreferrer"
+										>
+											<span class="result-title"
+												>{result.title}</span
+											>
+											<span class="result-url"
+												>{result.url}</span
+											>
 										</a>
 									{:else}
 										<div class="invalid-url">
-											<span class="result-title">{result.title}</span>
-											<span class="result-url invalid">Invalid URL</span>
+											<span class="result-title"
+												>{result.title}</span
+											>
+											<span class="result-url invalid"
+												>Invalid URL</span
+											>
 										</div>
 									{/if}
 									{#if result.summary}
-										<p class="result-summary">{result.summary}</p>
+										<p class="result-summary">
+											{result.summary}
+										</p>
 									{/if}
 								</li>
 							{/each}
@@ -228,16 +278,17 @@
 					{@const rows = citation.data.rows.slice(0, 20)}
 					<div class="section">
 						<h3 class="section-title">
-							Data ({citation.data.rows.length} record{citation.data.rows.length !== 1
-								? 's'
-								: ''})
+							Data ({citation.data.rows.length} record{citation
+								.data.rows.length !== 1
+								? "s"
+								: ""})
 						</h3>
 						<div class="table-wrapper">
 							<table class="data-table">
 								<thead>
 									<tr>
 										{#each headers as header}
-											<th>{header.replace(/_/g, ' ')}</th>
+											<th>{header.replace(/_/g, " ")}</th>
 										{/each}
 									</tr>
 								</thead>
@@ -245,7 +296,11 @@
 									{#each rows as row}
 										<tr>
 											{#each headers as header}
-												<td>{formatCellValue(row[header])}</td>
+												<td
+													>{formatCellValue(
+														row[header],
+													)}</td
+												>
 											{/each}
 										</tr>
 									{/each}
@@ -253,23 +308,34 @@
 							</table>
 						</div>
 						{#if citation.data.rows.length > 20}
-							<p class="table-note">Showing first 20 of {citation.data.rows.length} records</p>
+							<p class="table-note">
+								Showing first 20 of {citation.data.rows.length} records
+							</p>
 						{/if}
 					</div>
 				{/if}
 
 				<!-- Axiology data -->
 				{#if isAxiologyData(citation.data)}
-					{@const axiologyData = citation.data as Record<string, unknown>}
+					{@const axiologyData = citation.data as Record<
+						string,
+						unknown
+					>}
 					<div class="section">
 						<h3 class="section-title">Values Data</h3>
 						{#each Object.entries(axiologyData) as [key, value]}
-							{#if Array.isArray(value) && value.length > 0 && !['success', 'error'].includes(key)}
+							{#if Array.isArray(value) && value.length > 0 && !["success", "error"].includes(key)}
 								<div class="axiology-group">
-									<h4 class="axiology-title">{key.replace(/_/g, ' ')}</h4>
+									<h4 class="axiology-title">
+										{key.replace(/_/g, " ")}
+									</h4>
 									<ul class="axiology-list">
 										{#each value as item}
-											<li>{typeof item === 'string' ? item : JSON.stringify(item)}</li>
+											<li>
+												{typeof item === "string"
+													? item
+													: JSON.stringify(item)}
+											</li>
 										{/each}
 									</ul>
 								</div>
@@ -281,7 +347,9 @@
 				<!-- Raw query (for debugging) -->
 				{#if citation.args?.query}
 					<details class="section query-section">
-						<summary class="section-title clickable">Query Used</summary>
+						<summary class="section-title clickable"
+							>Query Used</summary
+						>
 						<pre class="query-code">{citation.args.query}</pre>
 					</details>
 				{/if}
@@ -314,8 +382,8 @@
 		width: 100%;
 		max-width: 480px;
 		height: 100%;
-		background: var(--color-surface, #ffffff);
-		border-left: 1px solid var(--color-border, #e5e5e5);
+		background: var(--color-surface);
+		border-left: 1px solid var(--color-border);
 		display: flex;
 		flex-direction: column;
 		animation: panel-slide-in 0.25s ease-out;
@@ -336,8 +404,8 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 16px 20px;
-		border-bottom: 1px solid var(--color-border, #e5e5e5);
-		background: var(--color-surface-elevated, #fafafa);
+		border-bottom: 1px solid var(--color-border);
+		background: var(--color-surface-elevated);
 	}
 
 	.header-content {
@@ -354,13 +422,13 @@
 	.panel-title {
 		font-size: 1rem;
 		font-weight: 600;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 		margin: 0;
 	}
 
 	.panel-subtitle {
 		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
@@ -369,15 +437,15 @@
 		padding: 8px;
 		border: none;
 		background: transparent;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		cursor: pointer;
 		border-radius: 6px;
 		transition: all 0.15s;
 	}
 
 	.close-button:hover {
-		background: var(--color-border, #e5e5e5);
-		color: var(--color-foreground, #171717);
+		background: var(--color-border-subtle);
+		color: var(--color-foreground);
 	}
 
 	.panel-content {
@@ -393,7 +461,7 @@
 	.section-title {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		margin: 0 0 8px 0;
@@ -405,7 +473,7 @@
 
 	.preview-text {
 		font-size: 0.875rem;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 		line-height: 1.6;
 		margin: 0;
 	}
@@ -424,14 +492,14 @@
 
 	.detail-label {
 		font-size: 0.6875rem;
-		color: var(--color-foreground-muted, #a3a3a3);
+		color: var(--color-foreground-subtle);
 		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
 
 	.detail-value {
 		font-size: 0.8125rem;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 	}
 
 	/* Search results */
@@ -446,9 +514,9 @@
 
 	.search-result {
 		padding: 12px;
-		background: var(--color-surface-elevated, #fafafa);
+		background: var(--color-surface-elevated);
 		border-radius: 8px;
-		border: 1px solid var(--color-border, #e5e5e5);
+		border: 1px solid var(--color-border);
 	}
 
 	.search-result a {
@@ -461,17 +529,17 @@
 	.result-title {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--color-primary, #3b82f6);
+		color: var(--color-primary);
 	}
 
 	.result-url {
 		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		word-break: break-all;
 	}
 
 	.result-url.invalid {
-		color: var(--color-error, #ef4444);
+		color: var(--color-error);
 	}
 
 	.invalid-url {
@@ -482,7 +550,7 @@
 
 	.result-summary {
 		font-size: 0.8125rem;
-		color: var(--color-foreground-muted, #525252);
+		color: var(--color-foreground-muted);
 		margin: 8px 0 0 0;
 		line-height: 1.5;
 	}
@@ -490,7 +558,7 @@
 	/* Table */
 	.table-wrapper {
 		overflow-x: auto;
-		border: 1px solid var(--color-border, #e5e5e5);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 	}
 
@@ -504,16 +572,16 @@
 	.data-table td {
 		padding: 8px 12px;
 		text-align: left;
-		border-bottom: 1px solid var(--color-border, #e5e5e5);
+		border-bottom: 1px solid var(--color-border);
 		white-space: nowrap;
 	}
 
 	.data-table th {
-		background: var(--color-surface-elevated, #fafafa);
+		background: var(--color-surface-elevated);
 		font-weight: 600;
 		font-size: 0.75rem;
 		text-transform: capitalize;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 	}
 
 	.data-table tr:last-child td {
@@ -522,7 +590,7 @@
 
 	.table-note {
 		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #a3a3a3);
+		color: var(--color-foreground-subtle);
 		margin: 8px 0 0 0;
 		text-align: center;
 	}
@@ -535,7 +603,7 @@
 	.axiology-title {
 		font-size: 0.8125rem;
 		font-weight: 500;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 		margin: 0 0 8px 0;
 		text-transform: capitalize;
 	}
@@ -547,13 +615,13 @@
 
 	.axiology-list li {
 		font-size: 0.8125rem;
-		color: var(--color-foreground-muted, #525252);
+		color: var(--color-foreground-muted);
 		margin-bottom: 4px;
 	}
 
 	/* Query section */
 	.query-section {
-		border: 1px solid var(--color-border, #e5e5e5);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		padding: 12px;
 	}
@@ -567,9 +635,9 @@
 	}
 
 	.query-code {
-		font-family: 'IBM Plex Mono', monospace;
+		font-family: "IBM Plex Mono", monospace;
 		font-size: 0.75rem;
-		background: var(--color-surface-elevated, #fafafa);
+		background: var(--color-surface-elevated);
 		padding: 12px;
 		border-radius: 6px;
 		overflow-x: auto;

@@ -24,10 +24,8 @@ async function loadModels() {
 
 	try {
 		modelsCache = await fetchModels();
-		console.log('[models.svelte.ts] Loaded models:', modelsCache.length);
 	} catch (err) {
 		error = err instanceof Error ? err.message : 'Failed to load models';
-		console.error('Failed to load models:', err);
 	} finally {
 		loading = false;
 	}
@@ -77,7 +75,6 @@ export function getSelectedModel(): ModelOption | undefined {
  */
 export function setSelectedModel(model: ModelOption | undefined) {
 	selectedModel = model;
-	console.log('[models.svelte.ts] Selected model:', model?.displayName);
 }
 
 /**

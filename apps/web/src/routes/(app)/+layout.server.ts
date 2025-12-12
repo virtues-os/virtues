@@ -12,6 +12,11 @@ export const load: LayoutServerLoad = async (event) => {
 		throw redirect(303, '/login');
 	}
 
+	// Skip onboarding redirect for OAuth callback (it handles its own redirect)
+	if (event.url.pathname.startsWith('/oauth/')) {
+		return { session };
+	}
+
 	// Check if user needs to complete onboarding
 	const pool = getPool();
 	const result = await pool.query(
