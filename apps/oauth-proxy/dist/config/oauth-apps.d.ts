@@ -47,6 +47,14 @@ export declare const oauthConfigs: {
         readonly authUrl: "https://www.strava.com/oauth/authorize";
         readonly tokenUrl: "https://www.strava.com/oauth/token";
     };
+    readonly plaid: {
+        readonly clientId: string;
+        readonly clientSecret: string;
+        readonly redirectUri: string;
+        readonly scopes: readonly [];
+        readonly authUrl: "https://cdn.plaid.com/link/v2/stable/link.html";
+        readonly tokenUrl: "https://production.plaid.com/link/token/exchange";
+    };
 };
 export type OAuthProvider = keyof typeof oauthConfigs;
 //# sourceMappingURL=oauth-apps.d.ts.map

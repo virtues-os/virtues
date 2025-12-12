@@ -14,7 +14,7 @@ exports.oauthConfigs = {
     google: {
         clientId: process.env.GOOGLE_CLIENT_ID || '',
         clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-        redirectUri: process.env.GOOGLE_REDIRECT_URI || 'https://auth.ariata.com/google/callback',
+        redirectUri: process.env.GOOGLE_REDIRECT_URI || 'https://auth.virtues.com/google/callback',
         scopes: [
             'https://www.googleapis.com/auth/calendar.readonly',
             'https://www.googleapis.com/auth/gmail.readonly',
@@ -26,7 +26,7 @@ exports.oauthConfigs = {
     notion: {
         clientId: process.env.NOTION_CLIENT_ID || '',
         clientSecret: process.env.NOTION_CLIENT_SECRET || '',
-        redirectUri: process.env.NOTION_REDIRECT_URI || 'https://auth.ariata.com/notion/callback',
+        redirectUri: process.env.NOTION_REDIRECT_URI || 'https://auth.virtues.com/notion/callback',
         scopes: [], // Notion doesn't use scopes in OAuth URL
         authUrl: 'https://api.notion.com/v1/oauth/authorize',
         tokenUrl: 'https://api.notion.com/v1/oauth/token'
@@ -34,7 +34,7 @@ exports.oauthConfigs = {
     microsoft: {
         clientId: process.env.MICROSOFT_CLIENT_ID || '',
         clientSecret: process.env.MICROSOFT_CLIENT_SECRET || '',
-        redirectUri: process.env.MICROSOFT_REDIRECT_URI || 'https://auth.ariata.com/microsoft/callback',
+        redirectUri: process.env.MICROSOFT_REDIRECT_URI || 'https://auth.virtues.com/microsoft/callback',
         scopes: [
             'https://graph.microsoft.com/calendars.read',
             'https://graph.microsoft.com/mail.read',
@@ -46,7 +46,7 @@ exports.oauthConfigs = {
     github: {
         clientId: process.env.GITHUB_CLIENT_ID || '',
         clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
-        redirectUri: process.env.GITHUB_REDIRECT_URI || 'https://auth.ariata.com/github/callback',
+        redirectUri: process.env.GITHUB_REDIRECT_URI || 'https://auth.virtues.com/github/callback',
         scopes: ['repo', 'user:email'],
         authUrl: 'https://github.com/login/oauth/authorize',
         tokenUrl: 'https://github.com/login/oauth/access_token'
@@ -54,10 +54,18 @@ exports.oauthConfigs = {
     strava: {
         clientId: process.env.STRAVA_CLIENT_ID || '',
         clientSecret: process.env.STRAVA_CLIENT_SECRET || '',
-        redirectUri: process.env.STRAVA_REDIRECT_URI || 'https://auth.ariata.com/strava/callback',
+        redirectUri: process.env.STRAVA_REDIRECT_URI || 'https://auth.virtues.com/strava/callback',
         scopes: ['read,activity:read_all'], // Strava uses comma-separated scopes
         authUrl: 'https://www.strava.com/oauth/authorize',
         tokenUrl: 'https://www.strava.com/oauth/token'
+    },
+    plaid: {
+        clientId: process.env.PLAID_CLIENT_ID || '',
+        clientSecret: process.env.PLAID_SECRET || '',
+        redirectUri: process.env.PLAID_REDIRECT_URI || 'https://auth.virtues.com/plaid/callback',
+        scopes: [], // Plaid uses Link instead of traditional OAuth scopes
+        authUrl: 'https://cdn.plaid.com/link/v2/stable/link.html',
+        tokenUrl: 'https://production.plaid.com/link/token/exchange'
     }
 };
 //# sourceMappingURL=oauth-apps.js.map
