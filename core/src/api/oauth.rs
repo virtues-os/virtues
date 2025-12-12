@@ -100,7 +100,7 @@ pub async fn initiate_oauth_flow(
 
     // Validate redirect URI if provided by user
     if redirect_uri != format!("{proxy_url}/callback") {
-        super::validation::validate_redirect_uri(&redirect_uri, &["auth.virtues.com", "localhost"])?;
+        super::validation::validate_redirect_uri(&redirect_uri, &["virtues.com", "localhost"])?;
     }
 
     let scopes = oauth_config.scopes.join(" ");
