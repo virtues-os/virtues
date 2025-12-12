@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { signIn } from "@auth/sveltekit/client";
 	import { page } from "$app/stores";
+	import { Button } from "$lib";
 
 	let email = $state("");
 	let isLoading = $state(false);
@@ -19,7 +20,7 @@
 			const result = await signIn("resend", {
 				email,
 				redirect: false,
-				callbackUrl: "/"
+				callbackUrl: "/",
 			});
 
 			if (result?.error) {
@@ -51,19 +52,19 @@
 				Check your email
 			</h1>
 			<p class="text-foreground-muted text-sm mb-6">
-				We sent a magic link to <span class="font-medium text-foreground"
-					>{email}</span
+				We sent a magic link to <span
+					class="font-medium text-foreground">{email}</span
 				>. Click the link to sign in.
 			</p>
-			<button
+			<Button
+				variant="ghost"
 				onclick={() => {
 					emailSent = false;
 					email = "";
 				}}
-				class="text-sm text-foreground-muted hover:text-foreground transition-colors"
 			>
 				Use a different email
-			</button>
+			</Button>
 		</div>
 	{:else}
 		<!-- Login form -->
@@ -112,21 +113,20 @@
 				/>
 			</div>
 
-			<button
+			<Button
 				type="submit"
+				variant="primary"
 				disabled={isLoading || !email}
-				class="w-full px-4 py-3 rounded-lg bg-foreground text-background font-medium hover:bg-foreground/90 focus:outline-none focus:ring-2 focus:ring-accent/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+				class="w-full"
 			>
 				{#if isLoading}
-					<iconify-icon
-						icon="lucide:loader-2"
-						class="animate-spin"
+					<iconify-icon icon="lucide:loader-2" class="animate-spin"
 					></iconify-icon>
 					Sending...
 				{:else}
 					Continue with Email
 				{/if}
-			</button>
+			</Button>
 		</form>
 	{/if}
 </div>

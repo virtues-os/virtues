@@ -18,7 +18,7 @@ class AgentRegistry {
 	private agents: Map<AgentId, AgentRegistryEntry> = new Map();
 	private initialized: boolean = false;
 	private defaultUserName: string = 'User'; // Fallback username
-	private defaultAssistantName: string = 'Ariata'; // Fallback assistant name
+	private defaultAssistantName: string = 'Ari'; // Fallback assistant name
 	private cacheKey: string = ''; // Cache invalidation key based on user/assistant names
 
 	/**
@@ -31,7 +31,7 @@ class AgentRegistry {
 	 * @param userName - Default username for agent instructions (can be overridden per-request)
 	 * @param assistantName - Default assistant name for agent instructions
 	 */
-	async initialize(userName: string = 'User', assistantName: string = 'Ariata'): Promise<void> {
+	async initialize(userName: string = 'User', assistantName: string = 'Ari'): Promise<void> {
 		try {
 			// Load tool preferences
 			const toolPreferences = await loadUserToolPreferences(getPool());
@@ -203,7 +203,7 @@ class AgentRegistry {
 	 * @param userName - Username for agent instructions
 	 * @param assistantName - Assistant name for agent instructions
 	 */
-	async reinitialize(userName: string = 'User', assistantName: string = 'Ariata'): Promise<void> {
+	async reinitialize(userName: string = 'User', assistantName: string = 'Ari'): Promise<void> {
 		console.log('[AgentRegistry] Reinitializing agents...');
 		this.agents.clear();
 		this.initialized = false;
@@ -222,7 +222,7 @@ export const agentRegistry = new AgentRegistry();
  * @param userName - Default username
  * @param assistantName - Default assistant name
  */
-export async function initializeAgents(userName: string = 'User', assistantName: string = 'Ariata'): Promise<void> {
+export async function initializeAgents(userName: string = 'User', assistantName: string = 'Ari'): Promise<void> {
 	await agentRegistry.initialize(userName, assistantName);
 }
 

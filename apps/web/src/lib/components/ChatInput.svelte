@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from "svelte";
+	import { animate } from "motion";
 
 	let {
 		value = $bindable(""),
@@ -14,17 +15,39 @@
 
 	let textarea: HTMLTextAreaElement;
 	let isFocused = $state(false);
+	let isMultiline = $state(false);
 
 	// Sync internal focus state with external bindable prop
 	$effect(() => {
 		focused = isFocused;
 	});
 
-	function autoResize() {
-		if (textarea) {
-			textarea.style.height = "auto";
-			textarea.style.height = textarea.scrollHeight + "px";
-		}
+	// Svelte action to animate border-radius
+	function animateRadius(node: HTMLElement) {
+		let currentMultiline = false;
+
+		return {
+			update(multiline: boolean) {
+				if (multiline === currentMultiline) return;
+				currentMultiline = multiline;
+
+				const targetRadius = multiline ? "12px" : "24px";
+
+				animate(
+					node,
+					{ borderRadius: targetRadius },
+					{ duration: 0.3, easing: [0.4, 0, 0.2, 1] },
+				);
+			},
+		};
+	}
+
+	function syncSize() {
+		if (!textarea) return;
+		textarea.style.height = "auto";
+		const nextHeight = Math.min(textarea.scrollHeight, 220);
+		textarea.style.height = `${nextHeight}px`;
+		isMultiline = nextHeight > 60 || value.includes("\n");
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -38,7 +61,7 @@
 		if (!value.trim() || disabled) return;
 		dispatch("submit", value);
 		value = "";
-		// Reset to single row height
+		isMultiline = false;
 		if (textarea) {
 			textarea.style.height = "auto";
 		}
@@ -50,7 +73,6 @@
 		if (
 			target.tagName === "BUTTON" ||
 			target.closest("button") ||
-			target.closest(".pickers-slot") || // Don't focus when clicking in the pickers area
 			target.classList.contains("z-50") || // Don't focus when clicking dropdown menus
 			target.closest(".z-50") // Don't focus when clicking inside dropdown menus
 		) {
@@ -65,24 +87,25 @@
 
 <div class="chat-input-container {maxWidth} w-full">
 	<div
+		use:animateRadius={isMultiline}
 		aria-label="Chat input"
-		class="chat-input-wrapper bg-surface border border-border rounded-xl shadow-sm transition-all duration-300 hover:border-primary/50 hover:shadow-primary/30 cursor-text"
+		class="chat-input-wrapper bg-surface border border-border-strong hover:border-primary/60 cursor-text"
 		class:focused={isFocused}
 		onclick={handleWrapperClick}
 		role="button"
 		tabindex="-1"
 	>
-		<!-- Textarea Area -->
-		<div class="textarea-section pt-4 px-4 pb-1">
-			<label for="chat-input" class="sr-only">Message</label>
+		<label for="chat-input" class="sr-only">Message</label>
+		<div class="input-row relative flex items-center w-full">
 			<textarea
 				id="chat-input"
 				bind:this={textarea}
 				bind:value
-				oninput={autoResize}
+				oninput={syncSize}
 				onkeydown={handleKeydown}
 				onfocus={() => {
 					isFocused = true;
+					syncSize();
 				}}
 				onblur={() => {
 					isFocused = false;
@@ -90,36 +113,27 @@
 				{placeholder}
 				{disabled}
 				rows="1"
-				class="chat-textarea w-full resize-none outline-none text-foreground placeholder:text-foreground-subtle font-sans text-base bg-transparent"
-				style="max-height: 200px; overflow-y: auto;"
+				class="chat-textarea w-full resize-none outline-none text-foreground placeholder:text-foreground-subtle font-sans text-base bg-transparent pl-4 pr-12 py-3"
 			></textarea>
-		</div>
-
-		<!-- Bottom Action Bar -->
-		<div
-			class="action-bar flex items-center justify-between px-2 pb-2 pt-2"
-		>
-			<div class="pickers-slot flex items-center gap-2">
-				<slot name="agentPicker" />
-				<slot name="contextIndicator" />
-			</div>
 			<button
 				type="button"
 				onclick={handleSubmit}
 				disabled={!value.trim() || sendDisabled}
-				class="send-button w-8 h-8 btn-primary cursor-pointer rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
+				class="send-button absolute right-0 bottom-2 w-8 h-8 btn-primary cursor-pointer rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
 			>
 				{#if sendDisabled}
 					<iconify-icon
 						icon="ri:loader-4-line"
-						class="animate-spin text-white"
+						class="animate-spin"
+						style="color: inherit"
 						width="16"
 					></iconify-icon>
 				{:else}
 					<iconify-icon
 						icon="ri:arrow-up-line"
 						width="16"
-						class="text-white transition-transform duration-300 group-hover:rotate-45"
+						class="transition-transform duration-300 group-hover:rotate-45"
+						style="color: inherit"
 					></iconify-icon>
 				{/if}
 			</button>
@@ -142,7 +156,6 @@
 
 	textarea {
 		font-family: var(--font-sans);
-		transition: height 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
 	/* Custom scrollbar for textarea */
@@ -164,17 +177,24 @@
 	}
 
 	.chat-input-wrapper {
-		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		border-radius: 24px;
+		transition:
+			border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+			box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		min-height: 48px;
+		padding-right: 0.75rem;
 	}
 
 	.chat-input-wrapper.focused {
 		border-color: var(--color-primary) !important;
 		box-shadow:
 			0 1px 2px 0 rgb(0 0 0 / 0.05),
-			0 0 0 3px color-mix(in srgb, var(--color-primary) 30%, transparent) !important;
+			0 0 0 3px color-mix(in srgb, var(--color-primary) 40%, transparent) !important;
 	}
 
-	.textarea-section {
-		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+	.chat-textarea {
+		min-height: 48px;
+		max-height: 220px;
+		line-height: 1.5;
 	}
 </style>

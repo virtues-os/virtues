@@ -6,12 +6,16 @@ interface ProfilePayload {
 	full_name?: string;
 	preferred_name?: string;
 	birth_date?: string;
+	height_cm?: number | null;
+	weight_kg?: number | null;
+	ethnicity?: string;
 	occupation?: string;
 	employer?: string;
 	theme?: string;
 	crux?: string;
 	is_onboarding?: boolean;
 	onboarding_step?: number | null;
+	home_place_id?: string | null;
 	// Technology onboarding step fields
 	technology_vision?: string;
 	pain_point_primary?: string;
@@ -36,6 +40,9 @@ export const GET: RequestHandler = async () => {
 				full_name,
 				preferred_name,
 				birth_date,
+				height_cm,
+				weight_kg,
+				ethnicity,
 				occupation,
 				employer,
 				theme,
@@ -103,6 +110,21 @@ export const PUT: RequestHandler = async ({ request }) => {
 			values.push(body.birth_date || null);
 		}
 
+		if (body.height_cm !== undefined) {
+			updates.push(`height_cm = $${paramIndex++}`);
+			values.push(body.height_cm);
+		}
+
+		if (body.weight_kg !== undefined) {
+			updates.push(`weight_kg = $${paramIndex++}`);
+			values.push(body.weight_kg);
+		}
+
+		if (body.ethnicity !== undefined) {
+			updates.push(`ethnicity = $${paramIndex++}`);
+			values.push(body.ethnicity || null);
+		}
+
 		if (body.occupation !== undefined) {
 			updates.push(`occupation = $${paramIndex++}`);
 			values.push(body.occupation || null);
@@ -131,6 +153,11 @@ export const PUT: RequestHandler = async ({ request }) => {
 		if (body.onboarding_step !== undefined) {
 			updates.push(`onboarding_step = $${paramIndex++}`);
 			values.push(body.onboarding_step);
+		}
+
+		if (body.home_place_id !== undefined) {
+			updates.push(`home_place_id = $${paramIndex++}`);
+			values.push(body.home_place_id);
 		}
 
 		// Technology onboarding step fields

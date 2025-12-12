@@ -4,6 +4,17 @@
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";
 
+/* Global text selection/highlight styling */
+::selection {
+	background-color: var(--color-highlight);
+	color: var(--color-highlight-foreground);
+}
+
+::-moz-selection {
+	background-color: var(--color-highlight);
+	color: var(--color-highlight-foreground);
+}
+
 @font-face {
   font-family: 'Lora';
   src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
@@ -30,40 +41,41 @@ h1, h2, h3, h4, h5, h6 {
 .markdown {
 	color: var(--color-foreground);
 	line-height: 1.5;
+	width: 100%;
 }
 
 .markdown h1 {
-	@apply text-2xl font-light font-serif mb-6;
+	@apply text-3xl font-normal font-serif mb-6;
 	color: var(--color-foreground);
 	line-height: 1.5;
 }
 
 .markdown h2 {
-	@apply text-xl font-light font-serif mb-5;
+	@apply text-2xl font-normal font-serif mb-5;
 	color: var(--color-foreground);
 	line-height: 1.5;
 }
 
 .markdown h3 {
-	@apply text-xl font-light font-serif mb-4;
+	@apply text-xl font-normal font-serif mb-4;
 	color: var(--color-foreground);
 	line-height: 1.5;
 }
 
 .markdown h4 {
-	@apply text-lg font-light font-serif mb-2;
+	@apply text-lg font-normal font-serif mb-2;
 	color: var(--color-foreground-muted);
 	line-height: 1.5;
 }
 
 .markdown h5 {
-	@apply text-base font-light font-serif mb-1;
+	@apply text-base font-normal font-serif mb-1;
 	color: var(--color-foreground-muted);
 	line-height: 1.5;
 }
 
 .markdown h6 {
-	@apply text-sm font-light font-serif mb-1;
+	@apply text-sm font-normal font-serif mb-1;
 	color: var(--color-foreground-subtle);
 	line-height: 1.5;
 }
@@ -71,6 +83,7 @@ h1, h2, h3, h4, h5, h6 {
 .markdown p {
 	@apply mb-4;
 	line-height: 1.5;
+	color: var(--color-foreground);
 }
 
 .markdown strong {

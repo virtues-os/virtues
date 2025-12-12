@@ -1,6 +1,10 @@
 import type { LayoutLoad } from './$types';
 
-export const load: LayoutLoad = async ({ fetch }) => {
+export const load: LayoutLoad = async ({ fetch, depends }) => {
+	// Register dependencies for invalidation
+	depends('/api/entities/places');
+	depends('/api/profile');
+
 	try {
 		const [profileRes, assistantRes, placesRes] = await Promise.all([
 			fetch('/api/profile'),

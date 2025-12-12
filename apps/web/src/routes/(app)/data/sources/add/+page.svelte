@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { Button, Page } from "$lib";
+	/**
+	 * Add Source Page - Full wizard for OAuth sources, stream configuration, and source naming.
+	 * For quick device pairing during onboarding, use the SourceConnector modal component.
+	 */
+	import { Button, Page, Badge, Input } from "$lib";
 	import TypedSelect from "$lib/components/TypedSelect.svelte";
 	import DevicePairing from "$lib/components/DevicePairing.svelte";
 	import PlaidLink from "$lib/components/PlaidLink.svelte";
@@ -63,7 +67,10 @@
 
 	$effect(() => {
 		if (data.catalog) {
-			allSources = data.catalog;
+			// Filter out internal sources (auth_type: none) from all lists
+			allSources = data.catalog.filter(
+				(s: CatalogSource) => s.auth_type !== "none",
+			);
 			oauthSources = data.catalog.filter(
 				(s: CatalogSource) => s.auth_type === "oauth2",
 			);
@@ -165,9 +172,13 @@
 	}
 
 	// Handle Plaid Link success
-	async function handlePlaidSuccess(sourceId: string, institutionName?: string, connectedAccounts?: ConnectedAccountSummary[]) {
+	async function handlePlaidSuccess(
+		sourceId: string,
+		institutionName?: string,
+		connectedAccounts?: ConnectedAccountSummary[],
+	) {
 		plaidSourceId = sourceId;
-		plaidInstitutionName = institutionName || 'Bank Account';
+		plaidInstitutionName = institutionName || "Bank Account";
 		plaidConnectedAccounts = connectedAccounts || [];
 
 		// Fetch available streams for this Plaid source
@@ -244,7 +255,8 @@
 
 	async function handleEnableStreams() {
 		// For device sources, use devicePairingSourceId; for Plaid, use plaidSourceId; for OAuth, use createdSourceId
-		const sourceId = devicePairingSourceId || plaidSourceId || createdSourceId;
+		const sourceId =
+			devicePairingSourceId || plaidSourceId || createdSourceId;
 		if (!sourceId) return;
 
 		isLoading = true;
@@ -313,9 +325,7 @@
 		<div class="space-y-12">
 			<!-- Step 1: Select Provider -->
 			<div>
-				<h2
-					class="text-xl font-serif font-normal text-foreground mb-6"
-				>
+				<h2 class="text-xl font-serif font-normal text-foreground mb-6">
 					{#if isConfigureMode}
 						<span class="text-success">✓</span>
 					{/if}
@@ -341,11 +351,9 @@
 											{source.display_name}
 										</span>
 										{#if source.auth_type === "device"}
-											<span
-												class="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded"
+											<Badge variant="primary"
+												>Device</Badge
 											>
-												Device
-											</span>
 										{/if}
 									</div>
 									<div class="text-sm text-foreground-muted">
@@ -376,9 +384,7 @@
 
 			<!-- Step 2: Authorize (OAuth), Pair (Device), or Connect Bank (Plaid) -->
 			<div>
-				<h2
-					class="text-xl font-serif font-normal text-foreground mb-6"
-				>
+				<h2 class="text-xl font-serif font-normal text-foreground mb-6">
 					{#if isConfigureMode || devicePairingInfo || plaidSourceId}
 						<span class="text-success">✓</span>
 					{/if}
@@ -400,22 +406,21 @@
 									>
 										Device Name
 									</label>
-									<input
+									<Input
 										type="text"
 										bind:value={sourceName}
 										placeholder="e.g., My {selectedSource.display_name}"
-										class="w-full px-4 py-2 rounded border border-border bg-surface text-foreground focus:outline-none focus:border-foreground"
 										disabled={!!devicePairingInfo}
 									/>
-									<p class="text-sm text-foreground-subtle mt-2">
+									<p
+										class="text-sm text-foreground-subtle mt-2"
+									>
 										A memorable name for this device
 									</p>
 								</div>
 
 								{#if !devicePairingInfo && sourceName.trim()}
-									<div
-										class="pt-6 border-t border-border"
-									>
+									<div class="pt-6 border-t border-border">
 										<DevicePairing
 											deviceType={selectedSource.name}
 											deviceName={sourceName}
@@ -424,10 +429,10 @@
 										/>
 									</div>
 								{:else if devicePairingInfo}
-									<div
-										class="pt-6 border-t border-border"
-									>
-										<p class="text-sm text-foreground-muted">
+									<div class="pt-6 border-t border-border">
+										<p
+											class="text-sm text-foreground-muted"
+										>
 											✓ Device paired: {devicePairingInfo.device_name}
 										</p>
 									</div>
@@ -443,19 +448,39 @@
 									/>
 								{:else}
 									<div class="pt-6 border-t border-border">
-										<p class="text-sm text-foreground-muted mb-3">
+										<p
+											class="text-sm text-foreground-muted mb-3"
+										>
 											✓ Connected to {plaidInstitutionName}
 										</p>
 										{#if plaidConnectedAccounts.length > 0}
-											<div class="p-4 bg-surface-elevated rounded-lg">
-												<h4 class="text-sm font-medium text-foreground mb-2">Connected Accounts</h4>
-												<ul class="space-y-1 text-sm text-foreground-muted">
+											<div
+												class="p-4 bg-surface-elevated rounded-lg"
+											>
+												<h4
+													class="text-sm font-medium text-foreground mb-2"
+												>
+													Connected Accounts
+												</h4>
+												<ul
+													class="space-y-1 text-sm text-foreground-muted"
+												>
 													{#each plaidConnectedAccounts as account}
-														<li class="flex items-center gap-2">
-															<span class="text-success">•</span>
-															<span>{account.name}</span>
-															<span class="text-foreground-subtle">
-																({account.subtype || account.account_type})
+														<li
+															class="flex items-center gap-2"
+														>
+															<span
+																class="text-success"
+																>•</span
+															>
+															<span
+																>{account.name}</span
+															>
+															<span
+																class="text-foreground-subtle"
+															>
+																({account.subtype ||
+																	account.account_type})
 																{#if account.mask}****{account.mask}{/if}
 															</span>
 														</li>
@@ -475,21 +500,20 @@
 									>
 										Source Name
 									</label>
-									<input
+									<Input
 										type="text"
 										bind:value={sourceName}
 										placeholder="e.g., My {selectedSource.display_name} Account"
-										class="w-full px-4 py-2 rounded border border-border bg-surface text-foreground focus:outline-none focus:border-foreground"
 									/>
-									<p class="text-sm text-foreground-subtle mt-2">
+									<p
+										class="text-sm text-foreground-subtle mt-2"
+									>
 										A memorable name for this connection
 									</p>
 								</div>
 
 								{#if currentStep === 2}
-									<div
-										class="pt-6 border-t border-border"
-									>
+									<div class="pt-6 border-t border-border">
 										<p
 											class="text-sm text-foreground-muted mb-4 leading-relaxed"
 										>
@@ -510,10 +534,10 @@
 										</Button>
 									</div>
 								{:else if currentStep > 2}
-									<div
-										class="pt-6 border-t border-border"
-									>
-										<p class="text-sm text-foreground-muted">
+									<div class="pt-6 border-t border-border">
+										<p
+											class="text-sm text-foreground-muted"
+										>
 											✓ Connected as "{sourceName}"
 										</p>
 									</div>
@@ -530,14 +554,14 @@
 
 			<!-- Step 3: Enable Streams -->
 			<div>
-				<h2
-					class="text-xl font-serif font-normal text-foreground mb-6"
-				>
+				<h2 class="text-xl font-serif font-normal text-foreground mb-6">
 					3. Enable Streams
 				</h2>
 
 				{#if isConfigureMode}
-					<p class="text-sm text-foreground-muted mb-6 leading-relaxed">
+					<p
+						class="text-sm text-foreground-muted mb-6 leading-relaxed"
+					>
 						Choose which data streams to enable. All streams are
 						selected by default.
 					</p>
@@ -557,9 +581,7 @@
 									class="mt-1 w-4 h-4 border-border"
 								/>
 								<div class="flex-1">
-									<h3
-										class="font-serif text-foreground mb-1"
-									>
+									<h3 class="font-serif text-foreground mb-1">
 										{stream.display_name}
 									</h3>
 									<p
@@ -568,7 +590,9 @@
 										{stream.description}
 									</p>
 									{#if stream.default_cron_schedule}
-										<p class="text-xs text-foreground-subtle">
+										<p
+											class="text-xs text-foreground-subtle"
+										>
 											Default schedule: {formatCron(
 												stream.default_cron_schedule,
 											)}
@@ -595,7 +619,9 @@
 						</Button>
 					</div>
 				{:else if currentStep >= 3}
-					<p class="text-sm text-foreground-muted mb-6 leading-relaxed">
+					<p
+						class="text-sm text-foreground-muted mb-6 leading-relaxed"
+					>
 						Choose which data streams to enable. All streams are
 						selected by default.
 					</p>

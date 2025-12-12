@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import {
 	isTextUIPart,
 	isToolOrDynamicToolUIPart,
+	isReasoningUIPart,
 	createAgentUIStreamResponse,
 	createIdGenerator,
 	type UIMessage
@@ -175,7 +176,7 @@ export const POST: RequestHandler = async (event) => {
 
 		// Load assistant profile for AI personalization
 		const assistantProfiles = await db.select().from(assistantProfile).limit(1);
-		const assistantName = assistantProfiles[0]?.assistantName || 'Ariata';
+		const assistantName = assistantProfiles[0]?.assistantName || 'Ari';
 
 		// Initialize agents with assistant name from database
 		// Note: userName could be loaded from data.user_profile.preferred_name via Rust API if needed
@@ -242,6 +243,7 @@ export const POST: RequestHandler = async (event) => {
 
 		// Stream response using agent
 		console.log('[API] Streaming response with', selectedAgentId, 'agent');
+
 		return createAgentUIStreamResponse({
 			agent,
 			messages: messagesWithContext,
@@ -253,6 +255,15 @@ export const POST: RequestHandler = async (event) => {
 				prefix: 'msg',
 				size: 16
 			}),
+			// Enable streaming of tool call events to client
+			// This allows the ThinkingBlock to show tool calls as they happen
+			sendStepStartEvents: true,
+			sendToolCallEvents: true,
+			// AI SDK v6: Enable streaming of reasoning/thinking tokens to client
+			// Without this, reasoning from the model won't be sent to the UI!
+			sendReasoning: true,
+			// Note: providerOptions are set on the ToolLoopAgent, not here
+			// The agent already has the correct providerOptions for thinking/reasoning
 			// Enable AI SDK telemetry for observability
 			// Spans are automatically exported to our PostgreSQL via custom SpanExporter
 			experimental_telemetry: {
@@ -363,11 +374,22 @@ async function saveMessagesToSession(
 				model: null
 			});
 		} else if (msg.role === 'assistant') {
-			// Extract text content and tool calls from assistant message parts
+			// Extract text content, tool calls, and reasoning from assistant message parts
 			const textParts = Array.isArray(msg.parts) ? msg.parts.filter(isTextUIPart) : [];
 			const toolCallParts = Array.isArray(msg.parts) ? msg.parts.filter(isToolOrDynamicToolUIPart) : [];
+			const reasoningParts = Array.isArray(msg.parts) ? msg.parts.filter(isReasoningUIPart) : [];
+
+			// Debug: Log all part types to see what we're receiving
+			const partTypes = msg.parts?.map((p: any) => p.type) || [];
+			console.log('[saveMessages] Assistant parts:', partTypes);
+			console.log('[saveMessages] Reasoning parts found:', reasoningParts.length);
 
 			const textContent = textParts.map(p => p.text).join('');
+			const reasoningContent = reasoningParts.map(p => p.text).join('\n');
+			
+			if (reasoningContent) {
+				console.log('[saveMessages] Saving reasoning:', reasoningContent.slice(0, 100) + '...');
+			}
 
 			// Extract provider from model string
 			const provider = model.includes('/') ? model.split('/')[0] : 'unknown';
@@ -379,6 +401,7 @@ async function saveMessagesToSession(
 				model,
 				provider,
 				agentId, // Track which agent handled this message
+				reasoning: reasoningContent || undefined, // Model's thinking/reasoning
 				tool_calls: toolCallParts.length > 0
 					? toolCallParts.map(tc => ({
 							tool_name: tc.type.startsWith('tool-')

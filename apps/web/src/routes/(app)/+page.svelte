@@ -1,10 +1,11 @@
 <script lang="ts">
 	import Page from "$lib/components/Page.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
-	import AgentPicker from "$lib/components/AgentPicker.svelte";
-	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 	import TableOfContents from "$lib/components/TableOfContents.svelte";
-	import { ObservabilityPanel, ObservabilityToggle } from "$lib/components/observability";
+	import {
+		ObservabilityPanel,
+		ObservabilityToggle,
+	} from "$lib/components/observability";
 	import type { ModelOption } from "$lib/config/models";
 	import {
 		getSelectedModel,
@@ -12,12 +13,11 @@
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
 	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
-	import { CitationPanel, SourcesFooter } from "$lib/components/citations";
+	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
 	import type { Citation, CitationContext } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
-	import ThinkingIndicator from "$lib/components/ThinkingIndicator.svelte";
-	import { getRandomThinkingLabel } from "$lib/utils/thinkingLabels";
+	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import { onMount } from "svelte";
 	import { goto } from "$app/navigation";
 	import type { PageData } from "./$types";
@@ -42,10 +42,6 @@
 		};
 	}>({});
 
-	// Thinking state - label will be derived from chat status
-	let thinkingLabel = $state(getRandomThinkingLabel());
-	let labelRotationInterval: ReturnType<typeof setInterval> | null = null;
-
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
 	let messageMetadata = $state<
 		Map<string, { agentId?: string; provider?: string }>
@@ -60,9 +56,9 @@
 
 	// Load observability state from localStorage on mount
 	$effect(() => {
-		if (typeof window !== 'undefined') {
-			const saved = localStorage.getItem('observability-panel-open');
-			if (saved === 'true') {
+		if (typeof window !== "undefined") {
+			const saved = localStorage.getItem("observability-panel-open");
+			if (saved === "true") {
 				observabilityOpen = true;
 			}
 		}
@@ -71,8 +67,11 @@
 	// Persist observability state to localStorage
 	function toggleObservability() {
 		observabilityOpen = !observabilityOpen;
-		if (typeof window !== 'undefined') {
-			localStorage.setItem('observability-panel-open', String(observabilityOpen));
+		if (typeof window !== "undefined") {
+			localStorage.setItem(
+				"observability-panel-open",
+				String(observabilityOpen),
+			);
 		}
 	}
 
@@ -101,6 +100,19 @@
 
 		const parts: any[] = [];
 
+		// Add reasoning content if present (for historical messages)
+		if (msg.reasoning) {
+			console.log(
+				"[convertMessageToParts] Found reasoning in DB:",
+				msg.reasoning.slice(0, 50),
+			);
+			parts.push({
+				type: "reasoning" as const,
+				text: msg.reasoning,
+				state: "done" as const,
+			});
+		}
+
 		// Add text content
 		if (msg.content) {
 			parts.push({
@@ -112,18 +124,7 @@
 		// Add tool calls if they exist
 		// Tool calls from DB are already completed, so state is always "output-available"
 		if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-			console.log(
-				"[convertMessageToParts] Processing message with",
-				msg.tool_calls.length,
-				"tool_calls",
-			);
 			for (const toolCall of msg.tool_calls) {
-				console.log("[convertMessageToParts] Tool call:", {
-					tool_name: toolCall.tool_name,
-					has_tool_call_id: !!toolCall.tool_call_id,
-					tool_call_id: toolCall.tool_call_id,
-					has_result: !!toolCall.result,
-				});
 				parts.push({
 					type: `tool-${toolCall.tool_name}` as const,
 					toolCallId:
@@ -147,7 +148,10 @@
 		const seen = new Set<string>();
 		return messages.filter((msg) => {
 			if (seen.has(msg.id)) {
-				console.warn('[deduplicateMessages] Duplicate message ID detected:', msg.id);
+				console.warn(
+					"[deduplicateMessages] Duplicate message ID detected:",
+					msg.id,
+				);
 				return false;
 			}
 			seen.add(msg.id);
@@ -161,15 +165,6 @@
 		transport: new DefaultChatTransport({
 			api: "/api/chat",
 			prepareSendMessagesRequest: ({ id, messages }) => {
-				console.log(
-					"[prepareSendMessagesRequest] Preparing request with:",
-					{
-						conversationId,
-						selectedModelId: selectedModel?.id,
-						selectedAgentId: selectedAgent,
-						messageCount: messages.length,
-					},
-				);
 				return {
 					body: {
 						sessionId: conversationId,
@@ -180,12 +175,11 @@
 				};
 			},
 		}),
-		messages:
-			deduplicateMessages(data.messages || []).map((msg: any) => ({
-				id: msg.id,
-				role: msg.role as "user" | "assistant",
-				parts: convertMessageToParts(msg),
-			})),
+		messages: deduplicateMessages(data.messages || []).map((msg: any) => ({
+			id: msg.id,
+			role: msg.role as "user" | "assistant",
+			parts: convertMessageToParts(msg),
+		})),
 		// Error handling callback
 		onError: (error) => {
 			console.error("[Chat] Error occurred:", error);
@@ -193,22 +187,68 @@
 		},
 	});
 
-// Derive thinking state from chat status (single source of truth)
-const isThinking = $derived.by(() => {
-	const status = chat.status;
-	const thinking = status === 'submitted' || status === 'streaming';
+	// Derive thinking state from chat status (single source of truth)
+	const isThinking = $derived.by(() => {
+		const status = chat.status;
+		const thinking = status === "submitted" || status === "streaming";
 
-	// Defensive logging for unexpected states
-	if (!['ready', 'submitted', 'streaming', 'error'].includes(status)) {
-		console.warn('[isThinking] Unexpected chat status:', status);
-	}
+		// Defensive logging for unexpected states
+		if (!["ready", "submitted", "streaming", "error"].includes(status)) {
+			console.warn("[isThinking] Unexpected chat status:", status);
+		}
 
-	return thinking;
-});
+		return thinking;
+	});
 
-// Local input state for ChatInput component
-let input = $state("");
-let inputFocused = $state(false);
+	// Deduplicated messages for rendering - prevents each_key_duplicate errors
+	// This handles duplicates that may appear during streaming
+	const uniqueMessages = $derived.by(() => {
+		const seen = new Set<string>();
+		return chat.messages.filter((msg) => {
+			if (seen.has(msg.id)) {
+				return false;
+			}
+			seen.add(msg.id);
+			return true;
+		});
+	});
+
+	// Get the last assistant message (for checking streaming state)
+	const lastAssistantMessage = $derived.by(() => {
+		for (let i = uniqueMessages.length - 1; i >= 0; i--) {
+			if (uniqueMessages[i].role === "assistant") {
+				return uniqueMessages[i];
+			}
+		}
+		return null;
+	});
+
+	// Check if actual text content is streaming (not just tool calls)
+	const isStreamingContent = $derived.by(() => {
+		if (chat.status !== "streaming") return false;
+		if (!lastAssistantMessage) return false;
+		// Check if there's actual text content beyond just tool calls
+		return lastAssistantMessage.parts.some(
+			(p: any) => p.type === "text" && p.text && p.text.trim().length > 0,
+		);
+	});
+
+	// Track thinking duration
+	let thinkingStartTime = $state<number | null>(null);
+	let thinkingDuration = $state(0);
+
+	$effect(() => {
+		if (isThinking && !thinkingStartTime) {
+			thinkingStartTime = Date.now();
+		} else if (!isThinking && thinkingStartTime) {
+			thinkingDuration = (Date.now() - thinkingStartTime) / 1000;
+			thinkingStartTime = null;
+		}
+	});
+
+	// Local input state for ChatInput component
+	let input = $state("");
+	let inputFocused = $state(false);
 
 	// Track the last loaded conversation ID to avoid overwriting messages during active chat
 	// Initialize to null to ensure first load always triggers the effect
@@ -216,27 +256,11 @@ let inputFocused = $state(false);
 
 	// Update when conversation changes (navigation to different conversation)
 	$effect(() => {
-		console.log("[Page] Data changed:", {
-			conversationId: data.conversationId,
-			messageCount: data.messages?.length || 0,
-			isNew: data.isNew,
-			lastLoaded: lastLoadedConversationId,
-		});
-
 		// Only reload messages if we're navigating to a DIFFERENT conversation
 		// Don't overwrite messages during active streaming in the same conversation
 		if (data.conversationId !== lastLoadedConversationId) {
-			console.log(
-				"[Page] Loading new conversation:",
-				data.conversationId,
-			);
-
-			// CRITICAL: Abort any pending chat requests to prevent race condition
-			// This prevents Conversation A's response from overwriting Conversation B's messages
+			// Abort any pending chat requests to prevent race condition
 			if (chat.status === "streaming" || chat.status === "submitted") {
-				console.warn("[Page] Aborting pending chat request due to conversation switch");
-				// Note: AI SDK v6 Chat class doesn't expose abort method directly
-				// We need to clear the error state to reset status
 				if (chat.clearError) {
 					chat.clearError();
 				}
@@ -251,32 +275,25 @@ let inputFocused = $state(false);
 
 			// Note: Chat.id is read-only and was already set during initialization
 
-			// Clear all thinking-related timers when switching conversations
-			if (labelRotationInterval) {
-				clearInterval(labelRotationInterval);
-				labelRotationInterval = null;
-			}
+			// Clear thinking timeout when switching conversations
 			if (thinkingTimeout) {
 				clearTimeout(thinkingTimeout);
 				thinkingTimeout = null;
 			}
 
 			// Update messages in Chat instance only when switching conversations
-			chat.messages =
-				deduplicateMessages(data.messages || []).map((msg: any) => ({
+			chat.messages = deduplicateMessages(data.messages || []).map(
+				(msg: any) => ({
 					id: msg.id,
 					role: msg.role as "user" | "assistant",
 					parts: convertMessageToParts(msg),
-				}));
+				}),
+			);
 
 			// Re-enable transitions after a brief moment
 			setTimeout(() => {
 				enableTransitions = true;
 			}, 50);
-		} else {
-			console.log(
-				"[Page] Same conversation, keeping existing messages to preserve streaming state",
-			);
 		}
 	});
 
@@ -292,7 +309,6 @@ let inputFocused = $state(false);
 	// Initialize selectedModel once loaded
 	$effect(() => {
 		if (!selectedModel) {
-			console.log("[+page.svelte] Initializing selected model");
 			initializeSelectedModel(data.conversation?.model);
 		}
 	});
@@ -381,10 +397,6 @@ let inputFocused = $state(false);
 			if (response.ok) {
 				const sessionData = await response.json();
 				messagesWithSubjects = sessionData.messages || [];
-				console.log(
-					"[refreshSessionData] Updated messages with subjects:",
-					messagesWithSubjects.filter((m: any) => m.subject).length,
-				);
 			}
 		} catch (error) {
 			console.error("[refreshSessionData] Error:", error);
@@ -414,10 +426,7 @@ let inputFocused = $state(false);
 					}
 
 					// Apply default model if set
-					if (
-						profile.default_model_id &&
-						!selectedModel
-					) {
+					if (profile.default_model_id && !selectedModel) {
 						initializeSelectedModel(
 							data.conversation?.model,
 							profile.default_model_id,
@@ -431,90 +440,38 @@ let inputFocused = $state(false);
 		}
 	});
 
-	// Watch chat.status for debugging (only in development)
-	$effect(() => {
-		if (import.meta.env.DEV) {
-			const status = chat.status;
-			console.log("[effect] Chat status changed to:", status);
-		}
-	});
-
-	// Label rotation effect - starts/stops based on isThinking
-	$effect(() => {
-		if (isThinking) {
-			console.log("[effect] Starting label rotation");
-			// Rotate label every 5 seconds while thinking
-			labelRotationInterval = setInterval(() => {
-				thinkingLabel = getRandomThinkingLabel();
-			}, 5000);
-
-			// Cleanup function that only runs when effect re-runs or component unmounts
-			return () => {
-				if (labelRotationInterval) {
-					console.log("[effect] Stopping label rotation");
-					clearInterval(labelRotationInterval);
-					labelRotationInterval = null;
-				}
-			};
-		} else if (labelRotationInterval) {
-			// Clear interval when not thinking
-			console.log("[effect] Stopping label rotation");
-			clearInterval(labelRotationInterval);
-			labelRotationInterval = null;
-		}
-	});
-
 	// Safety timeout - keep as failsafe but should rarely trigger
 	let thinkingTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
 		if (isThinking) {
-			console.log("[effect] Setting 30s safety timeout");
 			thinkingTimeout = setTimeout(() => {
-				console.error(
-					"[timeout] Safety timeout triggered - forcing abort",
-					"Chat stuck in", chat.status, "state for 30s",
-				);
-
 				// Try to abort the stream if possible
-				// Note: AI SDK v6 Chat class may not have direct abort method
-				// We can try to clear error state which sets status to "ready"
 				if (chat.status === "error") {
 					chat.clearError();
-				} else if (chat.status === "streaming" || chat.status === "submitted") {
-					// Log telemetry data for debugging
-					console.error("[timeout] Debug info:", {
-						status: chat.status,
-						messageCount: chat.messages.length,
-						lastMessage: chat.messages[chat.messages.length - 1]?.role,
-					});
-
-					// Try to force clear by triggering error state
-					// This is a last resort - ideally the AI SDK would provide an abort method
-					console.error("[timeout] Unable to abort - AI SDK may not support direct abortion");
-					// Force clear error state as a workaround
+				} else if (
+					chat.status === "streaming" ||
+					chat.status === "submitted"
+				) {
 					if (chat.clearError) {
 						chat.clearError();
 					}
 				}
 			}, 30000);
 
-			// Cleanup function for when effect re-runs or unmounts
 			return () => {
 				if (thinkingTimeout) {
-					console.log("[effect] Clearing safety timeout");
 					clearTimeout(thinkingTimeout);
 					thinkingTimeout = null;
 				}
 			};
 		} else if (thinkingTimeout) {
-			console.log("[effect] Clearing safety timeout (normal)");
 			clearTimeout(thinkingTimeout);
 			thinkingTimeout = null;
 		}
 	});
 
 	// Derived state for layout mode
-	let isEmpty = $derived(chat.messages.length === 0);
+	let isEmpty = $derived(uniqueMessages.length === 0);
 
 	// Time-based greeting
 	function getTimeBasedGreeting(): string {
@@ -552,13 +509,11 @@ let inputFocused = $state(false);
 			});
 
 			if (response.ok) {
-				const { title } = await response.json();
-				console.log("Generated title:", title);
+				await response.json();
 				titleGenerated = true;
-				// Optionally update UI or trigger sidebar refresh
 			}
 		} catch (error) {
-			console.error("Error generating title:", error);
+			// Title generation is non-critical, fail silently
 		}
 	}
 
@@ -571,7 +526,6 @@ let inputFocused = $state(false);
 		// Only set timer if we already have a title and messages
 		if (titleGenerated && chat.messages.length > 0) {
 			inactivityTimer = setTimeout(async () => {
-				console.log("15 minutes of inactivity - refining title");
 				// Regenerate title with full conversation context
 				try {
 					const response = await fetch("/api/sessions/title", {
@@ -591,12 +545,10 @@ let inputFocused = $state(false);
 					});
 
 					if (response.ok) {
-						const { title } = await response.json();
-						console.log("Refined title after inactivity:", title);
-						// Optionally trigger sidebar refresh
+						await response.json();
 					}
 				} catch (error) {
-					console.error("Error refining title:", error);
+					// Title refinement is non-critical, fail silently
 				}
 			}, INACTIVITY_TIMEOUT);
 		}
@@ -610,10 +562,6 @@ let inputFocused = $state(false);
 		// Block submission if chat is not in ready state
 		// (prevents multiple submissions during "submitted", "streaming", or "error" states)
 		if (chat.status !== "ready") {
-			console.warn(
-				"[handleChatSubmit] Blocked: chat not ready, status:",
-				chat.status,
-			);
 			return;
 		}
 
@@ -623,23 +571,9 @@ let inputFocused = $state(false);
 		// Reset inactivity timer on user activity
 		resetInactivityTimer();
 
-		// Refresh thinking label for new message
-		thinkingLabel = getRandomThinkingLabel();
-
 		try {
-			console.log(
-				"[handleChatSubmit] Starting message send with model:",
-				selectedModel?.id || "loading...",
-			);
-
 			// Send message using Chat class (handles streaming automatically)
-			// Thinking indicator will automatically show when status becomes 'submitted'
 			await chat.sendMessage({ text: messageToSend });
-
-			console.log(
-				"[handleChatSubmit] Message send completed, status:",
-				chat.status,
-			);
 
 			// Generate title after first exchange
 			if (chat.messages.length === 2) {
@@ -664,8 +598,7 @@ let inputFocused = $state(false);
 				refreshDataTimeout = null;
 			}, 2000); // Wait 2 seconds for subject generation to complete
 		} catch (error) {
-			console.error("[handleChatSubmit] Error sending message:", error);
-			console.error("[handleChatSubmit] Error details:", error);
+			console.error("[handleChatSubmit] Error:", error);
 			// Clear input even on error so user can try again
 			input = "";
 		}
@@ -673,7 +606,7 @@ let inputFocused = $state(false);
 	}
 
 	// Cleanup timers on unmount
-	// Note: labelRotationInterval and thinkingTimeout are cleaned up by their own effects
+	// Note: thinkingTimeout is cleaned up by its own effect
 	onMount(() => {
 		return () => {
 			// Only clean up timers not managed by effects
@@ -695,225 +628,269 @@ let inputFocused = $state(false);
 		<!-- Main chat area -->
 		<div class="chat-area">
 			<!-- Observability toggle button -->
-			<ObservabilityToggle isOpen={observabilityOpen} onToggle={toggleObservability} />
+			<ObservabilityToggle
+				isOpen={observabilityOpen}
+				onToggle={toggleObservability}
+			/>
 
 			<div class="page-container" class:is-empty={isEmpty}>
-		<!-- Messages area - scrollable, fades in when not empty -->
-		<div
-			bind:this={scrollContainer}
-			class="flex-1 overflow-y-auto chat-layout"
-			class:visible={!isEmpty}
-		>
-			<div class="messages-container">
-				{#each chat.messages as message, messageIndex (message.id)}
-					{@const isUserMessage = message.role === "user"}
-					{@const exchangeIndex = isUserMessage
-						? chat.messages
-								.slice(0, messageIndex)
-								.filter((m) => m.role === "user").length
-						: -1}
-					<div
-						class="flex justify-start"
-						id={isUserMessage
-							? `exchange-${exchangeIndex}`
-							: undefined}
-					>
-						<div
-							class="message-wrapper"
-							data-role={message.role}
-							data-agent-id={messageMetadata.get(message.id)
-								?.agentId || "general"}
-							data-loading={message.role === "assistant" &&
-								!message.parts.some(
-									(p) => p.type === "text" && p.text,
-								)}
-						>
-							{#if message.role === "assistant"}
-								<!-- Build citation context from tool calls -->
-								{@const citationContext = buildCitationContextFromParts(message.parts)}
-								{@const isLastMessage = message.id === chat.messages[chat.messages.length - 1]?.id}
-								{@const isStreaming = chat.status === "streaming" && isLastMessage}
+				<!-- Messages area - scrollable, fades in when not empty -->
+				<div
+					bind:this={scrollContainer}
+					class="flex-1 overflow-y-auto chat-layout"
+					class:visible={!isEmpty}
+				>
+					<div class="messages-container">
+						{#each uniqueMessages as message, messageIndex (message.id)}
+							{@const isUserMessage = message.role === "user"}
+							{@const exchangeIndex = isUserMessage
+								? uniqueMessages
+										.slice(0, messageIndex)
+										.filter((m) => m.role === "user").length
+								: -1}
+							<div
+								class="flex justify-start"
+								id={isUserMessage
+									? `exchange-${exchangeIndex}`
+									: undefined}
+							>
+								<div
+									class="message-wrapper"
+									data-role={message.role}
+									data-agent-id={messageMetadata.get(
+										message.id,
+									)?.agentId || "general"}
+									data-loading={message.role ===
+										"assistant" &&
+										!message.parts.some(
+											(p) => p.type === "text" && p.text,
+										)}
+								>
+									{#if message.role === "assistant"}
+										<!-- Build citation context from tool calls -->
+										{@const citationContext =
+											buildCitationContextFromParts(
+												message.parts,
+											)}
+										{@const isLastMessage =
+											message.id ===
+											uniqueMessages[
+												uniqueMessages.length - 1
+											]?.id}
+										{@const isStreaming =
+											chat.status === "streaming" &&
+											isLastMessage}
+										{@const messageReasoningParts =
+											message.parts.filter(
+												(p: any) =>
+													p.type === "reasoning",
+											)}
+										{@const messageToolParts =
+											message.parts.filter((p: any) =>
+												p.type.startsWith("tool-"),
+											)}
+										{@const messageReasoning =
+											messageReasoningParts
+												.map((p: any) => p.text || "")
+												.filter(Boolean)
+												.join("\n")}
+										{@const hasThinkingContent =
+											messageReasoning ||
+											messageToolParts.length > 0}
 
-								<!-- Render text parts with inline citations -->
-								{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
-									{#if part.type === "text"}
-										<div class="text-base text-neutral-900">
-											<CitedMarkdown
-												content={part.text}
+										<!-- ThinkingBlock at top of assistant message (persists with message) -->
+										{#if hasThinkingContent}
+											<ThinkingBlock
+												isThinking={isStreaming &&
+													isLastMessage &&
+													chat.status === "streaming"}
+												toolCalls={messageToolParts}
+												reasoningContent={messageReasoning}
 												{isStreaming}
-												citations={citationContext}
-												onCitationClick={openCitationPanel}
+												duration={isLastMessage
+													? thinkingDuration
+													: 0}
 											/>
+										{/if}
+
+										<!-- Render text parts with inline citations -->
+										{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
+											{#if part.type === "text"}
+												<div
+													class="text-base text-neutral-900"
+												>
+													<CitedMarkdown
+														content={part.text}
+														{isStreaming}
+														citations={citationContext}
+														onCitationClick={openCitationPanel}
+													/>
+												</div>
+											{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
+												<!-- Only show tool errors, not successful tool calls -->
+												<div
+													class="tool-error mb-3 text-sm text-red-600 p-3 bg-red-50 rounded-lg"
+												>
+													<span class="font-medium"
+														>Error:</span
+													>
+													{(part as any).toolName} failed
+													{#if (part as any).errorText}
+														- {(part as any)
+															.errorText}
+													{/if}
+												</div>
+											{/if}
+										{/each}
+									{:else}
+										<!-- User messages: collapsible for long messages -->
+										<UserMessage
+											text={message.parts
+												.filter(
+													(p) => p.type === "text",
+												)
+												.map((p) => p.text)
+												.join("")}
+										/>
+									{/if}
+								</div>
+							</div>
+						{/each}
+
+						<!-- Show thinking indicator for new streaming message before any parts arrive -->
+						{#if isThinking && (!lastAssistantMessage || lastAssistantMessage.parts.length === 0)}
+							<div class="flex justify-start">
+								<div class="w-full">
+									<ThinkingBlock
+										{isThinking}
+										toolCalls={[]}
+										reasoningContent=""
+										isStreaming={false}
+										duration={thinkingDuration}
+									/>
+								</div>
+							</div>
+						{/if}
+
+						<!-- Error message with retry button -->
+						{#if chat.error}
+							{@const isRateLimitError =
+								chat.error.message?.includes(
+									"Rate limit exceeded",
+								) ||
+								chat.error.message?.includes("rate limit") ||
+								chat.error.message?.includes("429")}
+							<div class="flex justify-start">
+								<div
+									class="error-container"
+									class:rate-limit-error={isRateLimitError}
+								>
+									<div class="error-icon">
+										<iconify-icon
+											icon={isRateLimitError
+												? "ri:time-line"
+												: "ri:error-warning-line"}
+											width="20"
+										></iconify-icon>
+									</div>
+									<div class="error-content">
+										<div class="error-title">
+											{isRateLimitError
+												? "Rate Limit Reached"
+												: "An error occurred"}
 										</div>
-									{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
-										<!-- Only show tool errors, not successful tool calls -->
-										<div class="tool-error mb-3 text-sm text-red-600 p-3 bg-red-50 rounded-lg">
-											<span class="font-medium">Error:</span> {(part as any).toolName} failed
-											{#if (part as any).errorText}
-												- {(part as any).errorText}
+										<div class="error-message">
+											{#if isRateLimitError}
+												You've reached your API usage
+												limit. Please wait for the limit
+												to reset or check your usage
+												dashboard for details.
+											{:else}
+												{chat.error.message ||
+													"Something went wrong. Please try again."}
 											{/if}
 										</div>
-									{/if}
-								{/each}
-
-								<!-- Sources footer after assistant message (only if has citations and not streaming) -->
-								{#if citationContext.citations.length > 0 && !isStreaming}
-									<SourcesFooter
-										context={citationContext}
-										onCitationClick={openCitationPanel}
-									/>
-								{/if}
-							{:else}
-								<!-- User messages: collapsible for long messages -->
-								<UserMessage
-									text={message.parts
-										.filter((p) => p.type === "text")
-										.map((p) => p.text)
-										.join("")}
-								/>
-							{/if}
-						</div>
-					</div>
-				{/each}
-
-				<!-- Show thinking indicator while AI is processing -->
-				{#if isThinking}
-					<div class="flex justify-start">
-						<div class="w-full py-3">
-							<ThinkingIndicator label={thinkingLabel} />
-						</div>
-					</div>
-				{/if}
-
-				<!-- Error message with retry button -->
-				{#if chat.error}
-					{@const isRateLimitError =
-						chat.error.message?.includes("Rate limit exceeded") ||
-						chat.error.message?.includes("rate limit") ||
-						chat.error.message?.includes("429")}
-					<div class="flex justify-start">
-						<div
-							class="error-container"
-							class:rate-limit-error={isRateLimitError}
-						>
-							<div class="error-icon">
-								<iconify-icon
-									icon={isRateLimitError
-										? "ri:time-line"
-										: "ri:error-warning-line"}
-									width="20"
-								></iconify-icon>
-							</div>
-							<div class="error-content">
-								<div class="error-title">
-									{isRateLimitError
-										? "Rate Limit Reached"
-										: "An error occurred"}
-								</div>
-								<div class="error-message">
-									{#if isRateLimitError}
-										You've reached your API usage limit.
-										Please wait for the limit to reset or
-										check your usage dashboard for details.
-									{:else}
-										{chat.error.message ||
-											"Something went wrong. Please try again."}
-									{/if}
-								</div>
-								<div class="error-actions">
-									{#if isRateLimitError}
-										<a href="/usage" class="usage-link">
-											<iconify-icon
-												icon="ri:bar-chart-line"
-												width="16"
-											></iconify-icon>
-											View Usage Dashboard
-										</a>
-									{:else}
-										<button
-											type="button"
-											class="retry-button"
-											onclick={() => {
-												// Clear error and retry last message
-												chat.regenerate();
-											}}
-										>
-											<iconify-icon
-												icon="ri:refresh-line"
-												width="16"
-											></iconify-icon>
-											Retry
-										</button>
-									{/if}
+										<div class="error-actions">
+											{#if isRateLimitError}
+												<a
+													href="/usage"
+													class="usage-link"
+												>
+													<iconify-icon
+														icon="ri:bar-chart-line"
+														width="16"
+													></iconify-icon>
+													View Usage Dashboard
+												</a>
+											{:else}
+												<button
+													type="button"
+													class="retry-button"
+													onclick={() => {
+														// Clear error and retry last message
+														chat.regenerate();
+													}}
+												>
+													<iconify-icon
+														icon="ri:refresh-line"
+														width="16"
+													></iconify-icon>
+													Retry
+												</button>
+											{/if}
+										</div>
+									</div>
 								</div>
 							</div>
-						</div>
+						{/if}
 					</div>
-				{/if}
-			</div>
-		</div>
+				</div>
 
-		<!-- ChatInput - animates from center to bottom -->
-		<div
-			class="chat-input-wrapper"
-			class:is-empty={isEmpty}
-			class:has-messages={!isEmpty}
-			class:transitions-enabled={enableTransitions}
-			class:focused={inputFocused}
-		>
-			<!-- Hero section - fades out when chat starts -->
-			<div
-				class="hero-section"
-				class:visible={isEmpty}
-				class:transitions-enabled={enableTransitions}
-			>
-				<h1
-					class="hero-title shiny-title font-serif text-4xl text-navy mb-6"
+				<!-- ChatInput - animates from center to bottom -->
+				<div
+					class="chat-input-wrapper"
+					class:is-empty={isEmpty}
+					class:has-messages={!isEmpty}
+					class:transitions-enabled={enableTransitions}
+					class:focused={inputFocused}
 				>
-					{greeting}, Adam
-				</h1>
-			</div>
+					<!-- Hero section - fades out when chat starts -->
+					<div
+						class="hero-section"
+						class:visible={isEmpty}
+						class:transitions-enabled={enableTransitions}
+					>
+						<h1
+							class="hero-title shiny-title font-serif text-4xl text-navy mb-6"
+						>
+							{greeting}, Adam
+						</h1>
+					</div>
 
-			<ChatInput
-				bind:value={input}
-				bind:focused={inputFocused}
-				disabled={false}
-				sendDisabled={chat.status !== "ready"}
-				placeholder="Message..."
-				maxWidth="max-w-3xl"
-				on:submit={(e) => {
-					if (chat.status === "ready") {
-						handleChatSubmit(e.detail);
-					}
-				}}
-			>
-				{#snippet agentPicker()}
-					<AgentPicker
-						bind:value={selectedAgent}
-						disabled={chat.status !== "ready"}
+					<ChatInput
+						bind:value={input}
+						bind:focused={inputFocused}
+						disabled={false}
+						sendDisabled={chat.status !== "ready"}
+						placeholder="Message..."
+						maxWidth="max-w-3xl"
+						on:submit={(e) => {
+							if (chat.status === "ready") {
+								handleChatSubmit(e.detail);
+							}
+						}}
 					/>
-				{/snippet}
-				{#snippet contextIndicator()}
-					{#if selectedModel}
-						<ContextIndicator
-							{cumulativeTokens}
-							contextWindow={selectedModel.contextWindow}
-							alwaysVisible={uiPreferences.contextIndicator
-								?.alwaysVisible ?? false}
-							showThreshold={uiPreferences.contextIndicator
-								?.showThreshold ?? 70}
-						/>
-					{/if}
-				{/snippet}
-			</ChatInput>
-		</div>
-	</div>
+				</div>
+			</div>
 		</div>
 
 		<!-- Observability panel -->
 		{#if observabilityOpen}
 			<div class="observability-area">
-				<ObservabilityPanel messages={chat.messages} trace={data.trace} />
+				<ObservabilityPanel
+					messages={uniqueMessages}
+					trace={data.trace}
+				/>
 			</div>
 		{/if}
 	</div>
@@ -950,7 +927,7 @@ let inputFocused = $state(false);
 	.observability-area {
 		flex: 1;
 		height: 100%;
-		border-left: 1px solid var(--color-border, #e5e5e5);
+		border-left: 1px solid var(--color-border);
 		overflow: hidden;
 		animation: slide-in-right 0.3s ease;
 	}
@@ -985,6 +962,24 @@ let inputFocused = $state(false);
 		pointer-events: auto;
 	}
 
+	/* Custom scrollbar for chat messages - always visible */
+	.chat-layout::-webkit-scrollbar {
+		width: 6px;
+	}
+
+	.chat-layout::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	.chat-layout::-webkit-scrollbar-thumb {
+		background-color: var(--color-border);
+		border-radius: 3px;
+	}
+
+	.chat-layout::-webkit-scrollbar-thumb:hover {
+		background-color: var(--color-border-strong);
+	}
+
 	.messages-container {
 		max-width: 48rem; /* max-w-3xl */
 		margin: 0 auto;
@@ -1006,7 +1001,7 @@ let inputFocused = $state(false);
 		width: 100%;
 		max-width: 48rem; /* max-w-3xl */
 		padding: 0 3rem 3rem 3rem;
-		background: var(--color-paper);
+		background: var(--color-background);
 		box-sizing: border-box;
 		z-index: 10;
 	}
@@ -1061,18 +1056,26 @@ let inputFocused = $state(false);
 	.message-wrapper {
 		position: relative;
 		width: 100%;
-		padding: 0.75rem 0 0.75rem 0.875rem; /* py-3 pl-3.5 */
+		padding: 0.75rem 0; /* py-3 */
+	}
+
+	/* Remove top offsets on headings so content starts at wrapper top */
+	.message-wrapper :global(h1),
+	.message-wrapper :global(h2),
+	.message-wrapper :global(h3),
+	.message-wrapper :global(h4) {
+		margin-top: 0;
 	}
 
 	/* Colored dot indicator for messages */
 	.message-wrapper::before {
 		content: "";
 		position: absolute;
-		width: 0.5rem;
-		height: 0.5rem;
+		width: 0.375rem;
+		height: 0.375rem;
 		border-radius: 9999px;
-		left: -0.5rem;
-		top: 1.3rem;
+		left: -1.2rem;
+		top: 1.35rem;
 	}
 
 	/* Hide dot when message is still loading */
@@ -1080,31 +1083,14 @@ let inputFocused = $state(false);
 		display: none;
 	}
 
-	/* Blue dot for user messages - simple alignment */
+	/* Blue dot for user messages only */
 	.message-wrapper[data-role="user"]::before {
-		background-color: rgb(59 130 246); /* blue-500 */
+		background-color: var(--color-primary);
 	}
 
-	/* Agent-specific colors for assistant messages */
-	.message-wrapper[data-role="assistant"][data-agent-id="analytics"]::before {
-		background-color: #3b82f6; /* Analytics blue */
-	}
-
-	.message-wrapper[data-role="assistant"][data-agent-id="research"]::before {
-		background-color: #8b5cf6; /* Research purple */
-	}
-
-	.message-wrapper[data-role="assistant"][data-agent-id="general"]::before {
-		background-color: #6b7280; /* General gray */
-	}
-
-	.message-wrapper[data-role="assistant"][data-agent-id="action"]::before {
-		background-color: #10b981; /* Action green */
-	}
-
-	/* Fallback for assistant messages without agentId */
+	/* Hide dot for assistant messages */
 	.message-wrapper[data-role="assistant"]::before {
-		background-color: rgb(41 37 36); /* stone-800 */
+		display: none;
 	}
 
 	/* Error container styles */
@@ -1112,8 +1098,8 @@ let inputFocused = $state(false);
 		display: flex;
 		gap: 0.75rem;
 		padding: 1rem;
-		background-color: rgb(254 242 242); /* red-50 */
-		border: 1px solid rgb(254 226 226); /* red-100 */
+		background-color: var(--color-error-subtle);
+		border: 1px solid var(--color-error);
 		border-radius: 0.5rem;
 		width: 100%;
 		max-width: 100%;
@@ -1121,7 +1107,7 @@ let inputFocused = $state(false);
 
 	.error-icon {
 		flex-shrink: 0;
-		color: rgb(220 38 38); /* red-600 */
+		color: var(--color-error);
 		margin-top: 0.125rem;
 	}
 
@@ -1134,32 +1120,32 @@ let inputFocused = $state(false);
 
 	.error-title {
 		font-weight: 600;
-		color: rgb(153 27 27); /* red-900 */
+		color: var(--color-error);
 		font-size: 0.875rem;
 	}
 
 	.error-message {
-		color: rgb(127 29 29); /* red-950 */
+		color: var(--color-foreground-muted);
 		font-size: 0.875rem;
 		line-height: 1.5;
 	}
 
 	/* Rate limit specific error styles */
 	.error-container.rate-limit-error {
-		background-color: rgb(254 252 232); /* yellow-50 */
-		border-color: rgb(254 249 195); /* yellow-100 */
+		background-color: var(--color-warning-subtle);
+		border-color: var(--color-warning);
 	}
 
 	.error-container.rate-limit-error .error-icon {
-		color: rgb(202 138 4); /* yellow-700 */
+		color: var(--color-warning);
 	}
 
 	.error-container.rate-limit-error .error-title {
-		color: rgb(120 53 15); /* yellow-900 */
+		color: var(--color-warning);
 	}
 
 	.error-container.rate-limit-error .error-message {
-		color: rgb(113 63 18); /* yellow-950 */
+		color: var(--color-foreground-muted);
 	}
 
 	.error-actions {
@@ -1171,10 +1157,10 @@ let inputFocused = $state(false);
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.375rem 0.75rem;
-		background-color: var(--color-white);
-		border: 1px solid rgb(252 165 165); /* red-300 */
+		background-color: var(--color-surface);
+		border: 1px solid var(--color-error);
 		border-radius: 0.375rem;
-		color: rgb(153 27 27); /* red-900 */
+		color: var(--color-error);
 		font-size: 0.875rem;
 		font-weight: 500;
 		cursor: pointer;
@@ -1183,8 +1169,8 @@ let inputFocused = $state(false);
 	}
 
 	.retry-button:hover {
-		background-color: rgb(254 242 242); /* red-50 */
-		border-color: rgb(248 113 113); /* red-400 */
+		background-color: var(--color-error-subtle);
+		border-color: var(--color-error);
 	}
 
 	.retry-button:active {
@@ -1196,10 +1182,10 @@ let inputFocused = $state(false);
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.375rem 0.75rem;
-		background-color: var(--color-white);
-		border: 1px solid rgb(253 224 71); /* yellow-300 */
+		background-color: var(--color-surface);
+		border: 1px solid var(--color-warning);
 		border-radius: 0.375rem;
-		color: rgb(120 53 15); /* yellow-900 */
+		color: var(--color-warning);
 		font-size: 0.875rem;
 		font-weight: 500;
 		text-decoration: none;
@@ -1209,8 +1195,8 @@ let inputFocused = $state(false);
 	}
 
 	.usage-link:hover {
-		background-color: rgb(254 252 232); /* yellow-50 */
-		border-color: rgb(250 204 21); /* yellow-400 */
+		background-color: var(--color-warning-subtle);
+		border-color: var(--color-warning);
 	}
 
 	.usage-link:active {
@@ -1247,14 +1233,14 @@ let inputFocused = $state(false);
 		color: var(--color-foreground);
 		-webkit-text-fill-color: transparent;
 		text-fill-color: transparent;
-		animation: shiny-title 1.3s ease-out forwards;
+		animation: shiny-title 1.18s cubic-bezier(0.3, 0.9, 0.4, 1) forwards;
 	}
 
 	@keyframes shiny-title {
 		0% {
 			background-position: 100% center;
 		}
-		5% {
+		3% {
 			background-position: 100% center;
 		}
 		100% {

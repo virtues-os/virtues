@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { page } from '$app/state';
-	import 'iconify-icon';
-	import type { SidebarNavItemData } from './types';
+	import { page } from "$app/state";
+	import "iconify-icon";
+	import type { SidebarNavItemData } from "./types";
 
 	interface Props {
 		item: SidebarNavItemData;
@@ -16,7 +16,8 @@
 
 		// For chat routes with conversationId query param
 		if (pagespace) {
-			const currentConversationId = page.url.searchParams.get('conversationId');
+			const currentConversationId =
+				page.url.searchParams.get("conversationId");
 			if (currentConversationId === pagespace) {
 				return true;
 			}
@@ -26,8 +27,8 @@
 			return true;
 		}
 
-		if (pagespace === '') {
-			return page.url.pathname === '/';
+		if (pagespace === "") {
+			return page.url.pathname === "/";
 		}
 
 		if (pagespace) {
@@ -40,16 +41,18 @@
 	const active = $derived(isActive(item.href, item.pagespace));
 </script>
 
-{#if item.type === 'action'}
+{#if item.type === "action"}
 	<button
 		onclick={item.onclick}
 		class="nav-item"
 		class:collapsed
 		title={collapsed ? item.label : undefined}
-		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay + 400}ms"
+		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay +
+			400}ms"
 	>
 		{#if item.icon}
-			<iconify-icon icon={item.icon} width="16" class="nav-icon"></iconify-icon>
+			<iconify-icon icon={item.icon} width="16" class="nav-icon"
+			></iconify-icon>
 		{/if}
 		{#if !collapsed}
 			<span class="nav-label">{item.label}</span>
@@ -62,7 +65,8 @@
 		class:active
 		class:collapsed
 		title={collapsed ? item.label : undefined}
-		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay + 400}ms"
+		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay +
+			400}ms"
 	>
 		{#if item.statusIcon}
 			<iconify-icon
@@ -71,7 +75,8 @@
 				class="nav-icon status-icon"
 			></iconify-icon>
 		{:else if item.icon}
-			<iconify-icon icon={item.icon} width="16" class="nav-icon"></iconify-icon>
+			<iconify-icon icon={item.icon} width="16" class="nav-icon"
+			></iconify-icon>
 		{/if}
 		{#if !collapsed}
 			<span class="nav-label">{item.label}</span>
@@ -84,7 +89,7 @@
 
 	/* Premium easing - heavy friction feel */
 	:root {
-		--ease-premium: cubic-bezier(0.2, 0.0, 0, 1.0);
+		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 	}
 
 	/* Staggered fade-slide animation with premium easing */
@@ -105,7 +110,7 @@
 		gap: 10px;
 		padding: 6px 10px; /* More vertical padding for breathing room */
 		font-size: 13px;
-		color: rgba(0, 0, 0, 0.55);
+		color: var(--color-foreground-muted);
 		/* Staggered load animation (initial mount) */
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 		/* Staggered expand transition (sidebar open) - uses --stagger-delay CSS var */
@@ -118,24 +123,11 @@
 			color 200ms var(--ease-premium);
 	}
 
-	/* Dark mode inactive text */
-	:global([data-theme="dark"]) .nav-item,
-	:global([data-theme="night"]) .nav-item {
-		color: rgba(255, 255, 255, 0.55);
-	}
-
 	/* Smooth hover with micro-interaction */
 	.nav-item:hover {
-		background: rgba(0, 0, 0, 0.05);
-		color: rgba(0, 0, 0, 0.8);
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
 		transform: translateX(2px); /* Subtle rightward shift */
-	}
-
-	/* Dark mode hover */
-	:global([data-theme="dark"]) .nav-item:hover,
-	:global([data-theme="night"]) .nav-item:hover {
-		background: rgba(255, 255, 255, 0.08);
-		color: rgba(255, 255, 255, 0.8);
 	}
 
 	/* Active/pressed state */
@@ -145,16 +137,9 @@
 
 	/* Active state - Zinc shadow style, NOT blue highlight */
 	.nav-item.active {
-		background: rgba(0, 0, 0, 0.07); /* Zinc-200/50 equivalent */
-		color: rgba(0, 0, 0, 0.9); /* Near-black text */
+		background: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		color: var(--color-foreground);
 		font-weight: 500;
-	}
-
-	/* Dark mode active */
-	:global([data-theme="dark"]) .nav-item.active,
-	:global([data-theme="night"]) .nav-item.active {
-		background: rgba(255, 255, 255, 0.12);
-		color: rgba(255, 255, 255, 0.95);
 	}
 
 	.nav-item.collapsed {
@@ -169,31 +154,16 @@
 	/* Icon opacity strategy: light by default, darken on hover/active */
 	.nav-icon {
 		@apply shrink-0;
-		color: rgba(0, 0, 0, 0.4); /* Light gray default - reduces visual clutter */
+		color: var(--color-foreground-subtle);
 		transition: all 200ms var(--ease-premium);
 	}
 
-	:global([data-theme="dark"]) .nav-icon,
-	:global([data-theme="night"]) .nav-icon {
-		color: rgba(255, 255, 255, 0.4);
-	}
-
 	.nav-item:hover .nav-icon {
-		color: rgba(0, 0, 0, 0.7); /* Darken on hover */
-	}
-
-	:global([data-theme="dark"]) .nav-item:hover .nav-icon,
-	:global([data-theme="night"]) .nav-item:hover .nav-icon {
-		color: rgba(255, 255, 255, 0.7);
+		color: var(--color-foreground);
 	}
 
 	.nav-item.active .nav-icon {
-		color: rgba(0, 0, 0, 0.75); /* Darkest on active */
-	}
-
-	:global([data-theme="dark"]) .nav-item.active .nav-icon,
-	:global([data-theme="night"]) .nav-item.active .nav-icon {
-		color: rgba(255, 255, 255, 0.8);
+		color: var(--color-foreground);
 	}
 
 	.status-icon {

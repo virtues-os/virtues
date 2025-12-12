@@ -1,6 +1,5 @@
 <script lang="ts">
-	import 'iconify-icon';
-	import type { Snippet } from 'svelte';
+	import type { Snippet } from "svelte";
 
 	interface Props {
 		title: string;
@@ -21,7 +20,7 @@
 		collapsed = false,
 		onToggle,
 		animationDelay = 0,
-		children
+		children,
 	}: Props = $props();
 </script>
 
@@ -35,18 +34,13 @@
 			class:expanded
 			onclick={onToggle}
 			aria-expanded={expanded}
-			style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay + 400}ms"
+			style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay +
+				400}ms"
 		>
 			<span class="section-title">{title}</span>
 			{#if badge}
 				<span class="badge">{badge}</span>
 			{/if}
-			<iconify-icon
-				icon="ri:arrow-right-s-line"
-				width="14"
-				class="chevron"
-				class:expanded
-			></iconify-icon>
 		</button>
 
 		<div class="accordion-content" class:expanded>
@@ -62,7 +56,7 @@
 
 	/* Premium easing - heavy friction feel */
 	:root {
-		--ease-premium: cubic-bezier(0.2, 0.0, 0, 1.0);
+		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 	}
 
 	/* Staggered fade-slide animation with premium easing */
@@ -84,15 +78,14 @@
 	.accordion.collapsed {
 		@apply flex justify-center;
 		width: 100%;
+		opacity: 0;
+		transition: opacity 150ms var(--ease-premium);
 	}
 
 	.accordion-header {
-		@apply flex items-center w-full rounded-md;
-		@apply cursor-pointer;
-		gap: 6px;
-		/* Align section title with list item text: 10px + 16px + 10px = 36px */
-		padding: 4px 10px 4px 36px;
-		margin-bottom: 4px;
+		@apply flex w-full cursor-pointer items-center gap-2 rounded-lg;
+		@apply px-2.5 py-1.5;
+		margin-bottom: 2px;
 		/* Staggered load animation (initial mount) */
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 		/* Staggered expand transition - uses --stagger-delay CSS var */
@@ -101,41 +94,22 @@
 		transition:
 			opacity 200ms var(--ease-premium) var(--stagger-delay, 400ms),
 			transform 200ms var(--ease-premium) var(--stagger-delay, 400ms),
-			background-color 200ms var(--ease-premium);
+			background-color 200ms var(--ease-premium),
+			color 200ms var(--ease-premium);
+		background: transparent;
 	}
 
-	/* Subtle hover effect on section headers */
-	.accordion-header:hover .chevron {
-		opacity: 0.6;
-	}
-
-	.chevron {
-		@apply shrink-0 ml-auto;
-		color: rgba(0, 0, 0, 0.3);
-		transition: all 200ms var(--ease-premium);
-	}
-
-	:global([data-theme="dark"]) .chevron,
-	:global([data-theme="night"]) .chevron {
-		color: rgba(255, 255, 255, 0.3);
-	}
-
-	.chevron.expanded {
-		transform: rotate(90deg);
+	.accordion-header:hover {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 	}
 
 	/* Section label - Academic serif style */
 	.section-title {
-		font-family: 'Charter', 'Georgia', 'Times New Roman', serif;
+		font-family: "Charter", "Georgia", "Times New Roman", serif;
 		font-size: 13px;
 		font-weight: 400;
 		letter-spacing: 0.02em;
-		color: rgba(0, 0, 0, 0.55);
-	}
-
-	:global([data-theme="dark"]) .section-title,
-	:global([data-theme="night"]) .section-title {
-		color: rgba(255, 255, 255, 0.55);
+		color: var(--color-foreground-muted);
 	}
 
 	.badge {

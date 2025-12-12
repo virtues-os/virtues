@@ -132,6 +132,20 @@ impl OntologyTransform for MicrophoneTranscriptionTransform {
                     "Processing audio file for transcription"
                 );
 
+                // Check AssemblyAI usage limit before transcription (hard limit)
+                if let Err(e) = crate::api::check_limit(db.pool(), crate::api::Service::AssemblyAi).await {
+                    tracing::warn!(
+                        stream_id = %stream_id,
+                        service = "assemblyai",
+                        used = e.used,
+                        limit = e.limit,
+                        resets_at = %e.resets_at,
+                        "AssemblyAI monthly limit exceeded, skipping transcription"
+                    );
+                    records_failed += 1;
+                    continue;
+                }
+
                 tracing::debug!(
                     stream_id = %stream_id,
                     "About to generate presigned URL"
@@ -243,15 +257,19 @@ impl OntologyTransform for MicrophoneTranscriptionTransform {
                     "Transcription completed"
                 );
 
-                // Record AssemblyAI usage
+                // Record AssemblyAI usage in minutes (round up to nearest minute, minimum 1)
+                let duration_minutes = duration_seconds
+                    .map(|s| ((s as f64) / 60.0).ceil() as i64)
+                    .unwrap_or(1)
+                    .max(1);
                 if let Err(e) = crate::api::record_service_usage(
                     db.pool(),
                     crate::api::Service::AssemblyAi,
-                    1,
+                    duration_minutes,
                 )
                 .await
                 {
-                    tracing::warn!("Failed to record AssemblyAI usage: {}", e);
+                    tracing::warn!("Failed to record AssemblyAI usage: {} minutes, error: {}", duration_minutes, e);
                 }
 
                 // Create speech_transcription record with real transcript

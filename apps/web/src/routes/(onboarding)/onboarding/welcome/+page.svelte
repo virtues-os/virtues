@@ -14,7 +14,7 @@
 
 <div class="markdown w-full max-w-xl mx-auto">
 	<header class="">
-		<h1 class="text-4xl!">Welcome to Virtues</h1>
+		<h1 class="text-4xl! font-serif">Welcome to Virtues</h1>
 		<span
 			class="inline-block mt-2 mb-4 px-3 py-1.5 font-mono text-[10px] font-medium tracking-widest uppercase text-foreground-subtle border border-border rounded-full"
 		>

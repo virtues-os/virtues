@@ -5,7 +5,7 @@
  * Themes are stored in localStorage and applied via data-theme attribute on <html>.
  */
 
-export type Theme = 'warm' | 'light' | 'dark' | 'night';
+export type Theme = 'light' | 'warm' | 'dark' | 'night' | 'ember' | 'contrast' | 'monokai' | 'atom';
 
 const THEME_STORAGE_KEY = 'virtues-theme';
 const DEFAULT_THEME: Theme = 'light';
@@ -78,14 +78,14 @@ export function initTheme(): void {
  * Type guard to check if a string is a valid theme
  */
 function isValidTheme(theme: string): theme is Theme {
-	return ['warm', 'light', 'dark', 'night'].includes(theme);
+	return ['light', 'warm', 'dark', 'night', 'ember', 'contrast', 'monokai', 'atom'].includes(theme);
 }
 
 /**
  * Get all available themes
  */
 export function getAvailableThemes(): Theme[] {
-	return ['warm', 'light', 'dark', 'night'];
+	return ['light', 'warm', 'dark', 'night', 'ember', 'contrast', 'monokai', 'atom'];
 }
 
 /**
@@ -93,10 +93,14 @@ export function getAvailableThemes(): Theme[] {
  */
 export function getThemeDisplayName(theme: Theme): string {
 	const names: Record<Theme, string> = {
+		light: 'Light',
 		warm: 'Warm',
-		light: 'Light (default)',
 		dark: 'Dark',
-		night: 'Night'
+		night: 'Night',
+		ember: 'Ember',
+		contrast: 'Contrast',
+		monokai: 'Monokai',
+		atom: 'Atom'
 	};
 	return names[theme];
 }
@@ -117,15 +121,6 @@ export const themePreviewColors: Record<
 		syntax: string[];
 	}
 > = {
-	warm: {
-		background: '#FAF9F5',
-		surface: '#FFFFFF',
-		surfaceElevated: '#F3F2E9',
-		foreground: '#14283D',
-		foregroundMuted: '#1a3550',
-		primary: '#2883DE',
-		syntax: ['#7C3AED', '#DC2626', '#059669', '#D97706', '#2563EB', '#DB2777']
-	},
 	light: {
 		background: '#FFFFFF',
 		surface: '#FAFAFA',
@@ -134,6 +129,15 @@ export const themePreviewColors: Record<
 		foregroundMuted: '#525252',
 		primary: '#2563EB',
 		syntax: ['#6366F1', '#7C3AED', '#EC4899', '#EF4444', '#F59E0B', '#10B981']
+	},
+	warm: {
+		background: '#FAF9F5',
+		surface: '#FFFFFF',
+		surfaceElevated: '#F3F2E9',
+		foreground: '#14283D',
+		foregroundMuted: '#1a3550',
+		primary: '#2883DE',
+		syntax: ['#7C3AED', '#DC2626', '#059669', '#D97706', '#2563EB', '#DB2777']
 	},
 	dark: {
 		background: '#0a0a0a',
@@ -152,6 +156,42 @@ export const themePreviewColors: Record<
 		foregroundMuted: '#9CA3AF',
 		primary: '#FF9141',
 		syntax: ['#7DD3FC', '#A78BFA', '#F472B6', '#FB923C', '#4ADE80', '#FBBF24']
+	},
+	ember: {
+		background: '#14120B',
+		surface: '#1B1913',
+		surfaceElevated: '#221E15',
+		foreground: '#EDECEC',
+		foregroundMuted: '#CFCAC4',
+		primary: '#E4B873',
+		syntax: ['#F2C98D', '#E4B873', '#D97706', '#F59E0B', '#A855F7', '#60A5FA']
+	},
+	contrast: {
+		background: '#000000',
+		surface: '#000000',
+		surfaceElevated: '#1a1a1a',
+		foreground: '#FFFFFF',
+		foregroundMuted: '#999999',
+		primary: '#FFFFFF',
+		syntax: ['#FFFFFF', '#CCCCCC', '#999999', '#FFFFFF', '#CCCCCC', '#999999']
+	},
+	monokai: {
+		background: '#272822',
+		surface: '#2d2a2e',
+		surfaceElevated: '#3e3d32',
+		foreground: '#F8F8F2',
+		foregroundMuted: '#908E82',
+		primary: '#F92672',
+		syntax: ['#F92672', '#A6E22E', '#66D9EF', '#FD971F', '#AE81FF', '#E6DB74']
+	},
+	atom: {
+		background: '#292d34',
+		surface: '#2f333d',
+		surfaceElevated: '#383e4a',
+		foreground: '#c8cdd6',
+		foregroundMuted: '#abb2bf',
+		primary: '#61afef',
+		syntax: ['#61afef', '#90b061', '#c678dd', '#be8a59', '#c16266', '#56b6c2']
 	}
 };
 
@@ -165,13 +205,13 @@ export const themeMetadata: Record<
 		description: string;
 	}
 > = {
-	warm: {
-		icon: 'ph:sun-horizon-bold',
-		description: 'Warm sepia tones, easy on the eyes'
-	},
 	light: {
 		icon: 'ph:sun-bold',
 		description: 'Clean and bright, paper-like'
+	},
+	warm: {
+		icon: 'ph:sun-horizon-bold',
+		description: 'Warm sepia tones, easy on the eyes'
 	},
 	dark: {
 		icon: 'ph:moon-bold',
@@ -180,5 +220,21 @@ export const themeMetadata: Record<
 	night: {
 		icon: 'ph:moon-stars-bold',
 		description: 'Dark with warm orange accents'
+	},
+	ember: {
+		icon: 'ph:flame-bold',
+		description: 'Warm, brown-toned dark theme'
+	},
+	contrast: {
+		icon: 'ph:eye-bold',
+		description: 'Pure black and white'
+	},
+	monokai: {
+		icon: 'ph:code-bold',
+		description: 'Classic Sublime Text palette'
+	},
+	atom: {
+		icon: 'ph:atom-bold',
+		description: 'Atom One Dark inspired'
 	}
 };

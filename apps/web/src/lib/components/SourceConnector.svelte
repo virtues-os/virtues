@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * SourceConnector - "Manifest" list design
-	 * Text-forward list with modal for auth flows
+	 * SourceConnector - Lightweight modal for device pairing during onboarding.
+	 * For full source management (OAuth, stream config, naming), use /data/sources/add page.
 	 */
 	import DevicePairing from "./DevicePairing.svelte";
 	import PlaidLink from "./PlaidLink.svelte";
@@ -50,7 +50,9 @@
 	const isManifest = variant === "manifest";
 
 	// Connection type badge helper
-	function getConnectionBadge(authType: string): { label: string; type: "cloud" | "device" } | null {
+	function getConnectionBadge(
+		authType: string,
+	): { label: string; type: "cloud" | "device" } | null {
 		if (authType === "oauth2") return { label: "CLOUD", type: "cloud" };
 		if (authType === "device") return { label: "DEVICE", type: "device" };
 		return null;
@@ -106,7 +108,11 @@
 			const callbackUrl = `${window.location.origin}/oauth/callback`;
 			// Encode return URL in state for redirect after OAuth
 			const returnUrl = window.location.pathname;
-			const oauthResponse = await api.initiateOAuth(activeSource.name, callbackUrl, returnUrl);
+			const oauthResponse = await api.initiateOAuth(
+				activeSource.name,
+				callbackUrl,
+				returnUrl,
+			);
 			window.location.href = oauthResponse.authorization_url;
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Authorization failed";
@@ -115,14 +121,19 @@
 	}
 
 	// Device pairing success
-	async function handleDevicePairingSuccess(sourceId: string, deviceInfo: DeviceInfo) {
+	async function handleDevicePairingSuccess(
+		sourceId: string,
+		deviceInfo: DeviceInfo,
+	) {
 		connectedSourceId = sourceId;
 		sourceName = deviceInfo.device_name;
 
 		try {
 			const streams = await api.listStreams(sourceId);
 			availableStreams = streams;
-			selectedStreams = new Set(streams.map((s: Stream) => s.stream_name));
+			selectedStreams = new Set(
+				streams.map((s: Stream) => s.stream_name),
+			);
 			modalStep = "streams";
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to load streams";
@@ -130,14 +141,19 @@
 	}
 
 	// Plaid success
-	async function handlePlaidSuccess(sourceId: string, institutionName?: string) {
+	async function handlePlaidSuccess(
+		sourceId: string,
+		institutionName?: string,
+	) {
 		connectedSourceId = sourceId;
 		sourceName = institutionName || "Bank Account";
 
 		try {
 			const streams = await api.listStreams(sourceId);
 			availableStreams = streams;
-			selectedStreams = new Set(streams.map((s: Stream) => s.stream_name));
+			selectedStreams = new Set(
+				streams.map((s: Stream) => s.stream_name),
+			);
 			modalStep = "streams";
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to load streams";
@@ -189,9 +205,13 @@
 		<div class="source-row" class:manifest={isManifest}>
 			<div class="source-info">
 				<div class="source-name-row">
-					<span class="source-name" class:manifest={isManifest}>{source.display_name}</span>
+					<span class="source-name" class:manifest={isManifest}
+						>{source.display_name}</span
+					>
 					{#if isManifest && badge}
-						<span class="connection-badge {badge.type}">{badge.label}</span>
+						<span class="connection-badge {badge.type}"
+							>{badge.label}</span
+						>
 					{/if}
 				</div>
 				{#if isManifest && source.description}
@@ -201,7 +221,11 @@
 			{#if isConnected(source)}
 				<span class="source-status connected">Connected</span>
 			{:else}
-				<Button variant={isManifest ? "manuscript-ghost" : "secondary"} size="sm" onclick={() => openConnectModal(source)}>
+				<Button
+					variant="secondary"
+					size="sm"
+					onclick={() => openConnectModal(source)}
+				>
 					Connect
 				</Button>
 			{/if}
@@ -218,13 +242,15 @@
 		: modalStep === "connect"
 			? `Connect ${activeSource?.display_name}`
 			: "Enable streams"}
-	subtitle={modalStep === "streams" ? "Choose which data to sync:" : undefined}
-	variant={isManifest ? "manuscript" : "default"}
+	subtitle={modalStep === "streams"
+		? "Choose which data to sync:"
+		: undefined}
 >
 	{#if modalStep === "download" && activeSource}
 		<div class="download-step">
 			<p class="modal-description">
-				Download and install the Virtues Mac app to connect your computer.
+				Download and install the Virtues Mac app to connect your
+				computer.
 			</p>
 
 			<a
@@ -233,9 +259,7 @@
 				rel="noopener noreferrer"
 				class="download-link"
 			>
-				<Button variant={isManifest ? "manuscript" : "primary"}>
-					Download for macOS
-				</Button>
+				<Button variant="primary">Download for macOS</Button>
 			</a>
 
 			<p class="download-hint">
@@ -244,10 +268,8 @@
 		</div>
 
 		<div class="modal-actions">
-			<Button variant={isManifest ? "manuscript-ghost" : "ghost"} onclick={closeModal}>
-				Cancel
-			</Button>
-			<Button variant={isManifest ? "manuscript-ghost" : "ghost"} onclick={() => modalStep = "connect"}>
+			<Button variant="ghost" onclick={closeModal}>Cancel</Button>
+			<Button variant="ghost" onclick={() => (modalStep = "connect")}>
 				I have it installed
 			</Button>
 		</div>
@@ -270,12 +292,13 @@
 		{:else}
 			<!-- OAuth -->
 			<p class="modal-description">
-				You'll be redirected to {activeSource.display_name} to authorize access.
+				You'll be redirected to {activeSource.display_name} to authorize
+				access.
 			</p>
 			<div class="modal-actions">
-				<Button variant={isManifest ? "manuscript-ghost" : "ghost"} onclick={closeModal}>Cancel</Button>
+				<Button variant="ghost" onclick={closeModal}>Cancel</Button>
 				<Button
-					variant={isManifest ? "manuscript" : "primary"}
+					variant="primary"
 					onclick={handleOAuthAuthorize}
 					disabled={isLoading}
 				>
@@ -298,9 +321,9 @@
 		</div>
 
 		<div class="modal-actions">
-			<Button variant={isManifest ? "manuscript-ghost" : "ghost"} onclick={closeModal}>Cancel</Button>
+			<Button variant="ghost" onclick={closeModal}>Cancel</Button>
 			<Button
-				variant={isManifest ? "manuscript" : "primary"}
+				variant="primary"
 				onclick={handleEnableStreams}
 				disabled={isLoading || selectedStreams.size === 0}
 			>

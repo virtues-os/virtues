@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
 	 * Modal - Universal modal component
-	 * Supports default and manuscript variants
+	 * Reusable dialog with backdrop, escape-to-close, and body scroll lock
 	 */
 	import type { Snippet } from "svelte";
 
@@ -11,7 +11,6 @@
 		title?: string;
 		subtitle?: string;
 		size?: "sm" | "md" | "lg";
-		variant?: "default" | "manuscript";
 		children: Snippet;
 		footer?: Snippet;
 	}
@@ -22,12 +21,9 @@
 		title,
 		subtitle,
 		size = "md",
-		variant = "default",
 		children,
 		footer,
 	}: Props = $props();
-
-	const isManuscript = variant === "manuscript";
 
 	// Size mappings
 	const sizeClasses = {
@@ -69,20 +65,18 @@
 {#if open}
 	<div
 		class="modal-backdrop"
-		class:manuscript={isManuscript}
 		onclick={handleBackdropClick}
 		role="presentation"
 	>
 		<div
 			class="modal {sizeClasses[size]}"
-			class:manuscript={isManuscript}
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby={title ? "modal-title" : undefined}
 		>
 			{#if title}
 				<header class="modal-header">
-					<h2 id="modal-title" class="modal-title" class:manuscript={isManuscript}>
+					<h2 id="modal-title" class="modal-title">
 						{title}
 					</h2>
 					{#if subtitle}
@@ -108,16 +102,12 @@
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.4);
+		background: rgba(0, 0, 0, 0.5);
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		z-index: 1000;
 		animation: fadeIn 150ms ease-out;
-	}
-
-	.modal-backdrop.manuscript {
-		background: rgba(0, 0, 0, 0.5);
 	}
 
 	@keyframes fadeIn {
@@ -132,16 +122,12 @@
 	.modal {
 		background: var(--surface);
 		border: 1px solid var(--border);
-		border-radius: 8px;
+		border-radius: 12px;
 		width: 100%;
 		padding: 32px;
 		margin: 24px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 		animation: scaleIn 150ms ease-out;
-	}
-
-	.modal.manuscript {
-		border-radius: 0;
-		border-color: var(--foreground);
 	}
 
 	@keyframes scaleIn {
@@ -161,16 +147,11 @@
 
 	.modal-title {
 		font-family: var(--font-serif);
-		font-size: 20px;
-		font-weight: 500;
-		color: var(--foreground);
-		margin: 0;
-	}
-
-	.modal-title.manuscript {
 		font-size: 22px;
 		font-weight: 400;
 		letter-spacing: -0.01em;
+		color: var(--foreground);
+		margin: 0;
 	}
 
 	.modal-subtitle {
@@ -179,10 +160,6 @@
 		color: var(--foreground-muted);
 		margin: 8px 0 0 0;
 		line-height: 1.5;
-	}
-
-	.modal-content {
-		/* Content styles handled by children */
 	}
 
 	.modal-footer {

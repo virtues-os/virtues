@@ -109,7 +109,7 @@
 		// Memory section (merged Data + Views)
 		result.push({
 			id: "memory",
-			title: "Memory",
+			title: "Data",
 			icon: "ri:brain-line",
 			defaultExpanded: false,
 			items: [
@@ -123,14 +123,6 @@
 				// 	pagespace: "timeline",
 				// },
 				{
-					id: "entities",
-					type: "link",
-					label: "Entities",
-					href: "/data/entities",
-					icon: "ri:map-pin-user-line",
-					pagespace: "data/entities",
-				},
-				{
 					id: "sources",
 					type: "link",
 					label: "Sources",
@@ -139,12 +131,28 @@
 					pagespace: "data/sources",
 				},
 				{
+					id: "entities",
+					type: "link",
+					label: "Entities",
+					href: "/data/entities",
+					icon: "ri:map-pin-user-line",
+					pagespace: "data/entities",
+				},
+				{
 					id: "activity",
 					type: "link",
 					label: "Activity",
 					href: "/data/jobs",
 					icon: "ri:history-line",
 					pagespace: "data/jobs",
+				},
+				{
+					id: "usage",
+					type: "link",
+					label: "Usage",
+					href: "/usage",
+					icon: "ri:dashboard-2-line",
+					pagespace: "usage",
 				},
 				{
 					id: "storage",
@@ -160,15 +168,22 @@
 		return result;
 	});
 
+	// Stagger delay per item (ms)
+	const STAGGER_DELAY = 30;
+
 	// Compute global animation indices for all sidebar items (top to bottom)
-	// Includes: history label, chat items, section headers, section items
+	// Order: logo, actions, chats header, chat items, section headers, section items, footer
 	const animationIndices = $derived.by(() => {
 		let globalIndex = 0;
 
-		// Chats label gets index 0
+		// Header elements
+		const logoIndex = globalIndex++;
+		const actionsIndex = globalIndex++;
+
+		// Chats accordion header
 		const historyLabelIndex = globalIndex++;
 
-		// Then each chat
+		// Then each chat item
 		const chatStartIndex = globalIndex;
 		globalIndex += recentChats.length;
 
@@ -183,7 +198,18 @@
 			globalIndex += section.items.length;
 		}
 
-		return { historyLabelIndex, chatStartIndex, sectionHeaderIndices, sectionItemStartIndices };
+		// Footer comes last
+		const footerIndex = globalIndex++;
+
+		return {
+			logoIndex,
+			actionsIndex,
+			historyLabelIndex,
+			chatStartIndex,
+			sectionHeaderIndices,
+			sectionItemStartIndices,
+			footerIndex,
+		};
 	});
 
 	// Initialize expanded state from section defaults
@@ -194,231 +220,138 @@
 			}
 		}
 	});
+
+	// Tailwind utility class strings
+	const sidebarClass = $derived.by(() =>
+		[
+			"relative h-full overflow-hidden bg-[var(--surface-elevated)]",
+			"transition-[width] ease-[cubic-bezier(0.34,1.56,0.64,1)]",
+			isCollapsed
+				? [
+						"w-8 border-r border-black/5",
+						"duration-400 delay-0",
+						"data-[theme=dark]:border-white/10 data-[theme=night]:border-white/10",
+					].join(" ")
+				: ["w-60", "duration-300 delay-100"].join(" "),
+		].join(" "),
+	);
+
+	const sidebarInnerClass = $derived.by(() =>
+		[
+			"flex h-full min-w-60 w-60 flex-col",
+			isCollapsed ? "pointer-events-none" : "",
+		].join(" "),
+	);
+
+	const sectionsClass = $derived.by(() =>
+		[
+			"flex-1 overflow-y-auto overflow-x-hidden px-2 py-3",
+			isCollapsed ? "flex flex-col items-center" : "",
+		].join(" "),
+	);
 </script>
 
-<aside class="sidebar" class:collapsed={isCollapsed}>
+<aside class={sidebarClass}>
 	<!-- Book Spine: When collapsed, the entire sidebar IS the clickable spine -->
 	{#if isCollapsed}
 		<button
-			class="book-spine"
+			class="group absolute inset-0 z-10 flex h-full w-full cursor-pointer items-center justify-center border-none bg-transparent"
 			onclick={toggleCollapse}
 			aria-label="Expand sidebar"
 		>
-			<svg class="spine-icon" viewBox="0 0 16 16" fill="currentColor">
-				<path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h7A2.5 2.5 0 0 1 14 2.5v11a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 13.5v-11zM4.5 1A1.5 1.5 0 0 0 3 2.5v11A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 11.5 1h-7z"/>
-				<path d="M5 4h6v1H5V4zm0 2h6v1H5V6zm0 2h3v1H5V8z"/>
+			<svg
+				class="h-4 w-4 -translate-x-1 opacity-0 transition-all duration-200 ease-[cubic-bezier(0.2,0,0,1)] group-hover:translate-x-0 group-hover:opacity-100 group-active:scale-95"
+				style="color: var(--color-foreground-subtle)"
+				viewBox="0 0 16 16"
+				fill="currentColor"
+			>
+				<path
+					d="M2 2.5A2.5 2.5 0 0 1 4.5 0h7A2.5 2.5 0 0 1 14 2.5v11a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 13.5v-11zM4.5 1A1.5 1.5 0 0 0 3 2.5v11A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 11.5 1h-7z"
+				/>
+				<path d="M5 4h6v1H5V4zm0 2h6v1H5V6zm0 2h3v1H5V8z" />
 			</svg>
 		</button>
 	{/if}
 
-	<div class="sidebar-inner" class:collapsed={isCollapsed}>
+	<div class={sidebarInnerClass}>
 		<SidebarHeader
 			collapsed={isCollapsed}
 			onNewChat={handleNewChat}
 			onToggleCollapse={toggleCollapse}
 			onSearch={handleSearch}
+			logoAnimationDelay={animationIndices.logoIndex * STAGGER_DELAY}
+			actionsAnimationDelay={animationIndices.actionsIndex *
+				STAGGER_DELAY}
 		/>
 
-		<nav class="sections">
-		<!-- Chats accordion -->
-		<SidebarAccordion
-			title="Chats"
-			icon="ri:chat-1-line"
-			expanded={expandedSections.has("history")}
-			collapsed={isCollapsed}
-			onToggle={() => toggleSection("history")}
-			animationDelay={animationIndices.historyLabelIndex * 30}
-		>
-			{#if recentChats.length === 0}
-				<div class="empty-state">No chat history</div>
-			{:else}
-				{#each recentChats as session, i}
-					<SidebarNavItem
-						item={{
-							id: session.conversation_id,
-							type: "link",
-							label: session.title || "Untitled",
-							href: `/?conversationId=${session.conversation_id}`,
-							icon: "ri:chat-1-line",
-							pagespace: session.conversation_id,
-						}}
-						collapsed={isCollapsed}
-						animationDelay={(animationIndices.chatStartIndex + i) * 30}
-					/>
-				{/each}
-			{/if}
-		</SidebarAccordion>
-
-		<!-- Accordion sections (Onboarding, Memory) -->
-		{#each sections as section}
+		<nav class={sectionsClass}>
+			<!-- Chats accordion -->
 			<SidebarAccordion
-				title={section.title}
-				icon={section.icon}
-				badge={section.badge}
-				expanded={expandedSections.has(section.id)}
+				title="Chats"
+				icon="ri:chat-1-line"
+				expanded={expandedSections.has("history")}
 				collapsed={isCollapsed}
-				onToggle={() => toggleSection(section.id)}
-				animationDelay={(animationIndices.sectionHeaderIndices.get(section.id) ?? 0) * 30}
+				onToggle={() => toggleSection("history")}
+				animationDelay={animationIndices.historyLabelIndex *
+					STAGGER_DELAY}
 			>
-				{#each section.items as item, i}
-					<SidebarNavItem
-						{item}
-						collapsed={isCollapsed}
-						animationDelay={((animationIndices.sectionItemStartIndices.get(section.id) ?? 0) + i) * 30}
-					/>
-				{/each}
+				{#if recentChats.length === 0}
+					<div class="px-3 py-2 text-xs text-foreground-muted">
+						No chat history
+					</div>
+				{:else}
+					{#each recentChats as session, i}
+						<SidebarNavItem
+							item={{
+								id: session.conversation_id,
+								type: "link",
+								label: session.title || "Untitled",
+								href: `/?conversationId=${session.conversation_id}`,
+								icon: "ri:chat-1-line",
+								pagespace: session.conversation_id,
+							}}
+							collapsed={isCollapsed}
+							animationDelay={(animationIndices.chatStartIndex +
+								i) *
+								STAGGER_DELAY}
+						/>
+					{/each}
+				{/if}
 			</SidebarAccordion>
-		{/each}
+
+			<!-- Accordion sections (Onboarding, Memory) -->
+			{#each sections as section}
+				<SidebarAccordion
+					title={section.title}
+					icon={section.icon}
+					badge={section.badge}
+					expanded={expandedSections.has(section.id)}
+					collapsed={isCollapsed}
+					onToggle={() => toggleSection(section.id)}
+					animationDelay={(animationIndices.sectionHeaderIndices.get(
+						section.id,
+					) ?? 0) * STAGGER_DELAY}
+				>
+					{#each section.items as item, i}
+						<SidebarNavItem
+							{item}
+							collapsed={isCollapsed}
+							animationDelay={((animationIndices.sectionItemStartIndices.get(
+								section.id,
+							) ?? 0) +
+								i) *
+								STAGGER_DELAY}
+						/>
+					{/each}
+				</SidebarAccordion>
+			{/each}
 		</nav>
 
-		<SidebarFooter collapsed={isCollapsed} />
+		<SidebarFooter
+			collapsed={isCollapsed}
+			animationDelay={animationIndices.footerIndex * STAGGER_DELAY}
+		/>
 	</div>
 </aside>
 
 <SearchModal open={isSearchOpen} onClose={closeSearch} />
-
-<style>
-	@reference "../../../app.css";
-
-	/* ==============================================
-	   EASING CURVES
-	   ============================================== */
-	:root {
-		/* Heavy friction feel */
-		--ease-premium: cubic-bezier(0.2, 0.0, 0, 1.0);
-		/* Spring with slight bounce - heavy mass */
-		--ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-	}
-
-	/* ==============================================
-	   SIDEBAR CONTAINER - "Book Spine" Metaphor
-	   Collapsed state IS the spine - solid background, never 0
-	   ============================================== */
-	.sidebar {
-		@apply relative h-full;
-		width: 260px;
-		overflow: hidden;
-		background: var(--surface-elevated);
-		/* CLOSING: Width slides after content fades (100ms delay) */
-		transition: width 300ms var(--ease-spring) 100ms;
-	}
-
-	.sidebar.collapsed {
-		width: 32px;
-		/* Keep background solid - the spine of a closed book */
-		border-right: 1px solid rgba(0, 0, 0, 0.06);
-		/* OPENING: Spring animation, immediate start */
-		transition: width 400ms var(--ease-spring) 0ms;
-	}
-
-	:global([data-theme="dark"]) .sidebar.collapsed,
-	:global([data-theme="night"]) .sidebar.collapsed {
-		border-right: 1px solid rgba(255, 255, 255, 0.08);
-	}
-
-	/* ==============================================
-	   INNER CONTENT WRAPPER - "The Slip" & "The Flow"
-	   ============================================== */
-	.sidebar-inner {
-		@apply flex flex-col h-full;
-		min-width: 260px;
-		width: 260px;
-		/* No opacity transition on wrapper - items handle their own fade with stagger */
-	}
-
-	.sidebar-inner.collapsed {
-		pointer-events: none; /* Prevent clicking invisible links */
-	}
-
-	/* ==============================================
-	   WATERFALL STAGGER - Items fade individually
-	   Items use --stagger-delay CSS variable from inline style
-	   ============================================== */
-	/* Items hidden when sidebar collapsed */
-	.sidebar-inner.collapsed :global(.nav-item),
-	.sidebar-inner.collapsed :global(.accordion-header),
-	.sidebar-inner.collapsed :global(.header-container),
-	.sidebar-inner.collapsed :global(.footer) {
-		opacity: 0;
-		transform: translateX(-8px);
-		/* CLOSING: All fade out together, no stagger */
-		transition:
-			opacity 100ms var(--ease-premium) 0ms,
-			transform 100ms var(--ease-premium) 0ms;
-	}
-
-	/* Items visible with stagger when sidebar expanded */
-	.sidebar-inner:not(.collapsed) :global(.nav-item),
-	.sidebar-inner:not(.collapsed) :global(.accordion-header) {
-		opacity: 1;
-		transform: translateX(0);
-		/* OPENING: Uses --stagger-delay from inline style for waterfall effect */
-	}
-
-	/* ==============================================
-	   BOOK SPINE - Full-height clickable area
-	   The entire collapsed sidebar IS the button
-	   ============================================== */
-	.book-spine {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		background: transparent;
-		border: none;
-		cursor: pointer;
-		z-index: 10;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	/* Icon hidden by default, fades in on hover */
-	.spine-icon {
-		width: 16px;
-		height: 16px;
-		color: rgba(0, 0, 0, 0.25);
-		opacity: 0;
-		transform: translateX(-4px);
-		transition:
-			opacity 200ms var(--ease-premium),
-			transform 250ms var(--ease-spring);
-	}
-
-	:global([data-theme="dark"]) .spine-icon,
-	:global([data-theme="night"]) .spine-icon {
-		color: rgba(255, 255, 255, 0.3);
-	}
-
-	.book-spine:hover .spine-icon {
-		opacity: 1;
-		transform: translateX(0);
-	}
-
-	.book-spine:active .spine-icon {
-		transform: scale(0.95);
-	}
-
-	/* ==============================================
-	   SECTIONS NAV
-	   ============================================== */
-	.sections {
-		@apply flex-1 overflow-y-auto overflow-x-hidden;
-		padding: 12px 8px;
-	}
-
-	.sidebar.collapsed .sections {
-		padding: 12px 8px;
-		@apply flex flex-col items-center;
-	}
-
-	/* ==============================================
-	   EMPTY STATE
-	   ============================================== */
-	.empty-state {
-		@apply text-xs;
-		color: var(--text-tertiary);
-		padding: 8px 12px;
-	}
-
-</style>

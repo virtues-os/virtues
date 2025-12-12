@@ -273,35 +273,37 @@
 						</div>
 					</div>
 
-					<div class="flex items-center gap-2">
-						<Button
-							variant="ghost"
-							class="flex items-center gap-2 border border-border"
-							onclick={handleTogglePause}
-							disabled={isPausing}
-						>
-							<iconify-icon
-								icon={data.source.is_active
-									? "ri:pause-line"
-									: "ri:play-line"}
-							></iconify-icon>
-							<span
-								>{data.source.is_active
-									? "Pause"
-									: "Resume"}</span
+					{#if !data.source.is_internal}
+						<div class="flex items-center gap-2">
+							<Button
+								variant="ghost"
+								class="flex items-center gap-2 border border-border"
+								onclick={handleTogglePause}
+								disabled={isPausing}
 							>
-						</Button>
-						<Button
-							variant="danger"
-							class="flex items-center gap-2"
-							onclick={handleDelete}
-							disabled={isDeleting}
-						>
-							<iconify-icon icon="ri:delete-bin-line"
-							></iconify-icon>
-							<span>Delete</span>
-						</Button>
-					</div>
+								<iconify-icon
+									icon={data.source.is_active
+										? "ri:pause-line"
+										: "ri:play-line"}
+								></iconify-icon>
+								<span
+									>{data.source.is_active
+										? "Pause"
+										: "Resume"}</span
+								>
+							</Button>
+							<Button
+								variant="danger"
+								class="flex items-center gap-2"
+								onclick={handleDelete}
+								disabled={isDeleting}
+							>
+								<iconify-icon icon="ri:delete-bin-line"
+								></iconify-icon>
+								<span>Delete</span>
+							</Button>
+						</div>
+					{/if}
 				</div>
 			</div>
 
@@ -325,9 +327,7 @@
 
 			<!-- Streams Section -->
 			<div class="mb-8">
-				<h2
-					class="text-xl font-serif font-medium text-foreground mb-4"
-				>
+				<h2 class="text-xl font-serif font-medium text-foreground mb-4">
 					Streams
 				</h2>
 

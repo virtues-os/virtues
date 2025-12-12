@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Button, Page } from "$lib";
+	import { Button, Page, Badge } from "$lib";
 
 	import "iconify-icon";
 	import type { PageData } from "./$types";
@@ -27,6 +27,11 @@
 	function isSourceConnected(catalogSourceName: string): boolean {
 		return data.sources.some((s: any) => s.type === catalogSourceName);
 	}
+
+	// Filter out internal sources (auth_type: none) from catalog
+	$: availableCatalog = data.catalog.filter(
+		(s: any) => s.auth_type !== "none",
+	);
 </script>
 
 <Page>
@@ -116,7 +121,8 @@
 							<!-- Stats -->
 							<div class="space-y-2 text-sm">
 								<div class="flex items-center justify-between">
-									<span class="text-foreground-muted">Streams</span
+									<span class="text-foreground-muted"
+										>Streams</span
 									>
 									<span class="font-medium text-foreground">
 										{source.enabled_streams_count} of {source.total_streams_count}
@@ -150,15 +156,17 @@
 		<!-- Available Sources Catalog -->
 		<div class="pt-8">
 			<h2 class="text-xl font-serif font-medium text-foreground mb-2">
-				Available Sources <span class="text-foreground-subtle font-normal">
+				Available Sources <span
+					class="text-foreground-subtle font-normal"
+				>
 					<span class="text-foreground-subtle text-sm font-normal">
-						( {data.catalog.length} )
+						( {availableCatalog.length} )
 					</span>
 				</span>
 			</h2>
 
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-				{#each data.catalog as catalogSource}
+			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+				{#each availableCatalog as catalogSource}
 					{@const connected = isSourceConnected(catalogSource.name)}
 					<div
 						class="p-6 bg-surface border border-border rounded-lg hover:border-border-subtle transition-all duration-200"
@@ -175,17 +183,17 @@
 
 							<!-- Connected Badge -->
 							{#if connected}
-								<span
-									class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-success-subtle text-success rounded-full"
-								>
+								<Badge variant="success">
 									<iconify-icon icon="ri:check-line"
 									></iconify-icon>
 									Connected
-								</span>
+								</Badge>
 							{/if}
 						</div>
 
-						<p class="text-sm text-foreground-muted mb-4 line-clamp-2">
+						<p
+							class="text-sm text-foreground-muted mb-4 line-clamp-2"
+						>
 							{catalogSource.description}
 						</p>
 
@@ -202,13 +210,11 @@
 										? "stream"
 										: "streams"}
 								</span>
-								<span
-									class="inline-block px-2 py-0.5 bg-surface-elevated text-foreground-muted rounded-full capitalize"
-								>
+								<Badge class="capitalize">
 									{catalogSource.auth_type === "oauth2"
 										? "OAuth"
 										: catalogSource.auth_type}
-								</span>
+								</Badge>
 							</div>
 							<a
 								href="/data/sources/add?type={catalogSource.name}"

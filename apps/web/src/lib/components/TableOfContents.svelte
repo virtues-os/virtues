@@ -37,16 +37,19 @@
 	}
 
 	.toc-item {
-		font-family: ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif;
-		color: rgb(41 37 36); /* text-stone-800 */
+		font-family: inherit;
+		color: var(--color-foreground);
 		font-size: 0.875rem;
-		line-height: 1.25rem;
+		line-height: 1.5;
 		text-decoration: none;
-		transition: color 150ms ease-in-out;
+		transition:
+			color 150ms ease,
+			text-decoration-color 150ms ease;
 		display: block;
 	}
 
 	.toc-item:hover {
-		color: rgb(59 130 246); /* text-blue-500 */
+		color: var(--color-primary);
+		text-decoration: underline;
 	}
 </style>

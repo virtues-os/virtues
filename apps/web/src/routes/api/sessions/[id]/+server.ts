@@ -67,16 +67,21 @@ export const GET: RequestHandler = async ({ params }) => {
 			timestamp: msg.timestamp,
 			model: msg.model || undefined,
 			tool_calls: msg.tool_calls || undefined,
+			reasoning: msg.reasoning || undefined,
 			subject: msg.subject || undefined
 		}));
 
-		// TEMP DEBUG: Log tool_calls for debugging persistence
+		// TEMP DEBUG: Log tool_calls and reasoning for debugging persistence
 		const messagesWithTools = messages.filter(m => m.tool_calls && m.tool_calls.length > 0);
+		const messagesWithReasoning = messages.filter(m => m.reasoning);
 		if (messagesWithTools.length > 0) {
 			console.log('[/api/sessions/[id]] Found', messagesWithTools.length, 'messages with tool_calls');
-			console.log('[/api/sessions/[id]] First tool call sample:', JSON.stringify(messagesWithTools[0]?.tool_calls?.[0], null, 2));
+		}
+		if (messagesWithReasoning.length > 0) {
+			console.log('[/api/sessions/[id]] Found', messagesWithReasoning.length, 'messages with reasoning');
+			console.log('[/api/sessions/[id]] Reasoning preview:', messagesWithReasoning[0]?.reasoning?.slice(0, 100));
 		} else {
-			console.log('[/api/sessions/[id]] NO messages with tool_calls found');
+			console.log('[/api/sessions/[id]] NO messages with reasoning found');
 		}
 
 		return json({

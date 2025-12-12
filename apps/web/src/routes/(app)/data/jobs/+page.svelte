@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Page, Button } from "$lib";
+	import { Page, Button, Badge } from "$lib";
 	import type { Job } from "$lib/api/client";
 	import { goto, invalidateAll } from "$app/navigation";
 	import { cancelJob } from "$lib/api/client";
@@ -26,18 +26,20 @@
 		return date.toLocaleDateString();
 	}
 
-	function getStatusBadgeClass(status: Job["status"]): string {
-		const classes: Record<Job["status"], string> = {
-			succeeded: "bg-success-subtle text-success border border-success",
-			failed: "bg-error-subtle text-error border border-error",
-			cancelled: "bg-warning-subtle text-warning border border-warning",
-			running: "bg-primary/10 text-primary border border-primary",
-			pending: "bg-surface-elevated text-foreground-muted border border-border",
+	function getStatusVariant(
+		status: Job["status"],
+	): "success" | "error" | "warning" | "primary" | "muted" {
+		const variants: Record<
+			Job["status"],
+			"success" | "error" | "warning" | "primary" | "muted"
+		> = {
+			succeeded: "success",
+			failed: "error",
+			cancelled: "warning",
+			running: "primary",
+			pending: "muted",
 		};
-		return (
-			classes[status] ||
-			"bg-surface-elevated text-foreground-muted border border-border"
-		);
+		return variants[status] || "muted";
 	}
 
 	function getJobTypeLabel(
@@ -89,20 +91,31 @@
 		total: jobs.length,
 		succeeded: jobs.filter((j) => j.status === "succeeded").length,
 		failed: jobs.filter((j) => j.status === "failed").length,
-		active: jobs.filter((j) => j.status === "pending" || j.status === "running").length,
+		active: jobs.filter(
+			(j) => j.status === "pending" || j.status === "running",
+		).length,
 		cancelled: jobs.filter((j) => j.status === "cancelled").length,
-		recordsProcessed: jobs.reduce((sum, j) => sum + (j.records_processed || 0), 0),
+		recordsProcessed: jobs.reduce(
+			(sum, j) => sum + (j.records_processed || 0),
+			0,
+		),
 	};
 
-	$: successRate = jobStats.total > 0
-		? Math.round((jobStats.succeeded / (jobStats.succeeded + jobStats.failed)) * 100) || 0
-		: 0;
+	$: successRate =
+		jobStats.total > 0
+			? Math.round(
+					(jobStats.succeeded /
+						(jobStats.succeeded + jobStats.failed)) *
+						100,
+				) || 0
+			: 0;
 
-	$: successRateColor = successRate >= 95
-		? "text-success"
-		: successRate >= 80
-			? "text-warning"
-			: "text-error";
+	$: successRateColor =
+		successRate >= 95
+			? "text-success"
+			: successRate >= 80
+				? "text-warning"
+				: "text-error";
 
 	function formatNumber(num: number): string {
 		if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
@@ -138,7 +151,9 @@
 			<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
 				<!-- Success Rate -->
 				<div class="bg-surface border border-border rounded-lg p-4">
-					<div class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1">
+					<div
+						class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1"
+					>
 						Success Rate
 					</div>
 					<div class="flex items-baseline gap-1">
@@ -155,7 +170,9 @@
 
 				<!-- Jobs Completed -->
 				<div class="bg-surface border border-border rounded-lg p-4">
-					<div class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1">
+					<div
+						class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1"
+					>
 						Jobs Completed
 					</div>
 					<div class="flex items-baseline gap-1">
@@ -170,7 +187,9 @@
 
 				<!-- Records Processed -->
 				<div class="bg-surface border border-border rounded-lg p-4">
-					<div class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1">
+					<div
+						class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1"
+					>
 						Records Processed
 					</div>
 					<div class="text-2xl font-semibold text-foreground">
@@ -180,11 +199,17 @@
 
 				<!-- Active Jobs -->
 				<div class="bg-surface border border-border rounded-lg p-4">
-					<div class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1">
+					<div
+						class="text-xs font-medium text-foreground-subtle uppercase tracking-wide mb-1"
+					>
 						Active Jobs
 					</div>
 					<div class="flex items-baseline gap-2">
-						<span class="text-2xl font-semibold {jobStats.active > 0 ? 'text-primary' : 'text-foreground'}">
+						<span
+							class="text-2xl font-semibold {jobStats.active > 0
+								? 'text-primary'
+								: 'text-foreground'}"
+						>
 							{jobStats.active}
 						</span>
 						{#if jobStats.active > 0}
@@ -201,21 +226,25 @@
 		<!-- Time Window Comparison -->
 		{#if data.metrics?.time_windows}
 			<div class="mb-8">
-				<h3 class="text-sm font-medium text-foreground-muted mb-3">Trends</h3>
+				<h3 class="text-sm font-medium text-foreground-muted mb-3">
+					Trends
+				</h3>
 				<div class="grid grid-cols-3 gap-4">
-					{#each [
-						{ label: 'Last 24h', stats: data.metrics.time_windows.last_24h },
-						{ label: 'Last 7d', stats: data.metrics.time_windows.last_7d },
-						{ label: 'Last 30d', stats: data.metrics.time_windows.last_30d }
-					] as period}
-						<div class="bg-surface border border-border rounded-lg p-4">
-							<div class="text-xs text-foreground-subtle mb-2">{period.label}</div>
+					{#each [{ label: "Last 24h", stats: data.metrics.time_windows.last_24h }, { label: "Last 7d", stats: data.metrics.time_windows.last_7d }, { label: "Last 30d", stats: data.metrics.time_windows.last_30d }] as period}
+						<div
+							class="bg-surface border border-border rounded-lg p-4"
+						>
+							<div class="text-xs text-foreground-subtle mb-2">
+								{period.label}
+							</div>
 							<div class="text-lg font-semibold text-foreground">
 								{period.stats.jobs_completed} jobs
 							</div>
 							<div class="text-sm text-foreground-muted">
-								{period.stats.success_rate_percent.toFixed(0)}% success
-								· {formatNumber(period.stats.records_processed)} records
+								{period.stats.success_rate_percent.toFixed(0)}%
+								success · {formatNumber(
+									period.stats.records_processed,
+								)} records
 							</div>
 						</div>
 					{/each}
@@ -226,18 +255,33 @@
 		<!-- Job Type Breakdown -->
 		{#if data.metrics?.by_job_type && data.metrics.by_job_type.length > 0}
 			<div class="mb-8">
-				<h3 class="text-sm font-medium text-foreground-muted mb-3">By Job Type</h3>
+				<h3 class="text-sm font-medium text-foreground-muted mb-3">
+					By Job Type
+				</h3>
 				<div class="grid grid-cols-2 md:grid-cols-3 gap-4">
 					{#each data.metrics.by_job_type as typeStats}
-						<div class="bg-surface border border-border rounded-lg p-4">
-							<div class="text-sm font-medium capitalize text-foreground-muted">{typeStats.job_type}</div>
-							<div class="text-2xl font-semibold text-foreground">{typeStats.total}</div>
+						<div
+							class="bg-surface border border-border rounded-lg p-4"
+						>
+							<div
+								class="text-sm font-medium capitalize text-foreground-muted"
+							>
+								{typeStats.job_type}
+							</div>
+							<div class="text-2xl font-semibold text-foreground">
+								{typeStats.total}
+							</div>
 							<div class="text-xs text-foreground-subtle">
-								{typeStats.succeeded} succeeded · {typeStats.failed} failed
+								{typeStats.succeeded} succeeded · {typeStats.failed}
+								failed
 							</div>
 							{#if typeStats.avg_duration_seconds}
-								<div class="text-xs text-foreground-subtle mt-1">
-									Avg: {Math.round(typeStats.avg_duration_seconds)}s
+								<div
+									class="text-xs text-foreground-subtle mt-1"
+								>
+									Avg: {Math.round(
+										typeStats.avg_duration_seconds,
+									)}s
 								</div>
 							{/if}
 						</div>
@@ -249,19 +293,29 @@
 		<!-- Recent Errors -->
 		{#if data.metrics?.recent_errors && data.metrics.recent_errors.length > 0}
 			<div class="mb-8">
-				<h3 class="text-sm font-medium text-foreground-muted mb-3">Recent Errors</h3>
-				<div class="bg-error-subtle border border-error rounded-lg divide-y divide-error">
+				<h3 class="text-sm font-medium text-foreground-muted mb-3">
+					Recent Errors
+				</h3>
+				<div
+					class="bg-error-subtle border border-error rounded-lg divide-y divide-error"
+				>
 					{#each data.metrics.recent_errors.slice(0, 5) as error}
 						<div class="p-3">
 							<div class="flex items-center justify-between">
 								<div class="text-sm text-error font-medium">
-									{error.job_type} {error.stream_name ? `· ${error.stream_name}` : ''}
+									{error.job_type}
+									{error.stream_name
+										? `· ${error.stream_name}`
+										: ""}
 								</div>
 								<div class="text-xs text-error/70">
 									{formatRelativeTime(error.failed_at)}
 								</div>
 							</div>
-							<div class="text-xs text-error/80 truncate mt-1" title={error.error_message}>
+							<div
+								class="text-xs text-error/80 truncate mt-1"
+								title={error.error_message}
+							>
 								{error.error_message}
 							</div>
 						</div>
@@ -331,7 +385,9 @@
 					</thead>
 					<tbody class="divide-y divide-border">
 						{#each jobs as job}
-							<tr class="hover:bg-surface-elevated transition-colors">
+							<tr
+								class="hover:bg-surface-elevated transition-colors"
+							>
 								<!-- Type -->
 								<td class="px-6 py-4 whitespace-nowrap">
 									<span class="text-sm text-foreground">
@@ -352,7 +408,8 @@
 											{job.source_name || job.source_id}
 										</a>
 									{:else}
-										<span class="text-sm text-foreground-subtle"
+										<span
+											class="text-sm text-foreground-subtle"
 											>—</span
 										>
 									{/if}
@@ -360,10 +417,10 @@
 
 								<!-- Status -->
 								<td class="px-6 py-4 whitespace-nowrap">
-									<span
-										class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full capitalize {getStatusBadgeClass(
-											job.status,
-										)}"
+									<Badge
+										variant={getStatusVariant(job.status)}
+										outline
+										class="capitalize"
 									>
 										{#if job.status === "failed" && job.error_message}
 											<iconify-icon
@@ -378,7 +435,7 @@
 											></iconify-icon>
 										{/if}
 										{job.status.replace("_", " ")}
-									</span>
+									</Badge>
 								</td>
 
 								<!-- Duration -->
@@ -398,11 +455,14 @@
 									class="px-6 py-4 whitespace-nowrap text-right"
 								>
 									{#if job.records_processed > 0}
-										<span class="text-sm text-foreground-muted">
+										<span
+											class="text-sm text-foreground-muted"
+										>
 											{job.records_processed.toLocaleString()}
 										</span>
 									{:else}
-										<span class="text-sm text-foreground-subtle"
+										<span
+											class="text-sm text-foreground-subtle"
 											>—</span
 										>
 									{/if}

@@ -5,7 +5,7 @@
    These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
    and as CSS variables (e.g., var(--color-primary))
 
-   Themes: warm (default), light, dark, night
+   Themes: warm (default), light, dark, night, ember
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.
@@ -53,6 +53,13 @@
 	--color-border-subtle: var(--border-subtle);
 	--color-border-strong: var(--border-strong);
 	--color-border-focus: var(--border-focus);
+
+	/* Selection/Highlight Colors */
+	--color-highlight: var(--highlight);
+	--color-highlight-foreground: var(--highlight-foreground);
+
+	/* Background Inverse - For intentionally dark backgrounds */
+	--color-background-inverse: var(--background-inverse);
 
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
@@ -113,6 +120,13 @@
 	--border-subtle: #f5f5f5;
 	--border-strong: #d4d4d4;
 	--border-focus: #2563EB;
+
+	/* Selection/Highlight - Light amber (amber-100 at 75% opacity) */
+	--highlight: rgba(254, 243, 199, 0.50);
+	--highlight-foreground: #171717;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
 }
 
 /* ===================================
@@ -155,11 +169,18 @@
 	--info: #0284c7;
 	--info-subtle: #e0f2fe;
 
-	/* Border Colors */
+	/* Border Colors - Fixed: border-subtle should be lighter than border */
 	--border: #e7e5e4;
-	--border-subtle: #d6d3d1;
+	--border-subtle: #f0eeeb;
 	--border-strong: #a8a29e;
 	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Warm amber (amber-50) */
+	--highlight: #fffbeb;
+	--highlight-foreground: #14283D;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
 }
 
 /* ===================================
@@ -207,6 +228,13 @@
 	--border-subtle: #2a2a2a;
 	--border-strong: #525252;
 	--border-focus: #60a5fa;
+
+	/* Selection/Highlight - Muted blue */
+	--highlight: #1e3a5f;
+	--highlight-foreground: #fafafa;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
 }
 
 /* ===================================
@@ -227,17 +255,17 @@
 	--foreground-disabled: #78716c;
 
 	/* Interactive Colors */
-	--primary: #FF9141;
-	--primary-hover: #ffaa66;
-	--primary-active: #e67a2e;
+	--primary: #FF9D52;
+	--primary-hover: #ffb070;
+	--primary-active: #e68840;
 	--primary-subtle: #2d1f15;
 
 	--secondary: #FAF9F5;
 	--secondary-hover: #FFFFFF;
 	--secondary-active: #F3F2E9;
 
-	--accent: #FF9141;
-	--accent-hover: #ffaa66;
+	--accent: #FF9D52;
+	--accent-hover: #ffb070;
 
 	/* Status Colors */
 	--success: #22c55e;
@@ -253,58 +281,237 @@
 	--border: #2a2c34;
 	--border-subtle: #1e2028;
 	--border-strong: #3a3c44;
-	--border-focus: #FF9141;
+	--border-focus: #FF9D52;
+
+	/* Selection/Highlight - Warm orange tint */
+	--highlight: #3d2a1a;
+	--highlight-foreground: #FAF9F5;
+
+	/* Background Inverse */
+	--background-inverse: #0C0E13;
+}
+
+/* ===================================
+   EMBER THEME
+   Dark, warm brown palette (Cursor-inspired)
+   =================================== */
+[data-theme="ember"] {
+	/* Surface Colors */
+	--background: #14120B;
+	--surface: #1B1913;
+	--surface-elevated: #221E15;
+	--surface-overlay: #261F14;
+
+	/* Content Colors */
+	--foreground: #EDECEC;
+	--foreground-muted: #D0CCC7;
+	--foreground-subtle: #A9A39A;
+	--foreground-disabled: #6E695F;
+
+	/* Interactive Colors */
+	--primary: #E4B873;
+	--primary-hover: #F2C98D;
+	--primary-active: #C99B55;
+	--primary-subtle: #2B2115;
+
+	--secondary: #EDECEC;
+	--secondary-hover: #F7F5F2;
+	--secondary-active: #DCD8D2;
+
+	--accent: #E4B873;
+	--accent-hover: #F2C98D;
+
+	/* Status Colors */
+	--success: #4ade80;
+	--success-subtle: #1A2A1B;
+	--warning: #f59e0b;
+	--warning-subtle: #2B220F;
+	--error: #ef4444;
+	--error-subtle: #2C1818;
+	--info: #38bdf8;
+	--info-subtle: #0B1F2A;
+
+	/* Border Colors */
+	--border: #2A2418;
+	--border-subtle: #1D180F;
+	--border-strong: #3A3123;
+	--border-focus: #E4B873;
+
+	/* Selection/Highlight - Warm gold tint */
+	--highlight: #3d3220;
+	--highlight-foreground: #EDECEC;
+
+	/* Background Inverse */
+	--background-inverse: #14120B;
+}
+
+/* ===================================
+   CONTRAST THEME
+   Pure black and white only
+   =================================== */
+[data-theme="contrast"] {
+	/* Surface Colors - Pure black */
+	--background: #000000;
+	--surface: #000000;
+	--surface-elevated: #1a1a1a;
+	--surface-overlay: #1a1a1a;
+
+	/* Content Colors - Pure white */
+	--foreground: #FFFFFF;
+	--foreground-muted: #CCCCCC;
+	--foreground-subtle: #999999;
+	--foreground-disabled: #666666;
+
+	/* Interactive Colors - White */
+	--primary: #FFFFFF;
+	--primary-hover: #CCCCCC;
+	--primary-active: #E5E5E5;
+	--primary-subtle: #1a1a1a;
+
+	--secondary: #FFFFFF;
+	--secondary-hover: #CCCCCC;
+	--secondary-active: #E5E5E5;
+
+	--accent: #FFFFFF;
+	--accent-hover: #CCCCCC;
+
+	/* Status Colors - Grayscale */
+	--success: #FFFFFF;
+	--success-subtle: #1a1a1a;
+	--warning: #CCCCCC;
+	--warning-subtle: #1a1a1a;
+	--error: #FFFFFF;
+	--error-subtle: #1a1a1a;
+	--info: #CCCCCC;
+	--info-subtle: #1a1a1a;
+
+	/* Border Colors - White on black */
+	--border: #333333;
+	--border-subtle: #1a1a1a;
+	--border-strong: #FFFFFF;
+	--border-focus: #FFFFFF;
+
+	/* Selection/Highlight */
+	--highlight: #333333;
+	--highlight-foreground: #FFFFFF;
+
+	/* Background Inverse */
+	--background-inverse: #000000;
+}
+
+/* ===================================
+   MONOKAI THEME
+   Classic Sublime Text palette
+   =================================== */
+[data-theme="monokai"] {
+	/* Surface Colors - Dark olive-gray */
+	--background: #272822;
+	--surface: #2d2a2e;
+	--surface-elevated: #3e3d32;
+	--surface-overlay: #414339;
+
+	/* Content Colors */
+	--foreground: #F8F8F2;
+	--foreground-muted: #CFCFC2;
+	--foreground-subtle: #908E82;
+	--foreground-disabled: #75715E;
+
+	/* Interactive Colors - Monokai pink */
+	--primary: #F92672;
+	--primary-hover: #FA4D8A;
+	--primary-active: #E01E5E;
+	--primary-subtle: #3D1528;
+
+	--secondary: #F8F8F2;
+	--secondary-hover: #FFFFFF;
+	--secondary-active: #E8E8E2;
+
+	--accent: #A6E22E;
+	--accent-hover: #B8E85A;
+
+	/* Status Colors */
+	--success: #A6E22E;
+	--success-subtle: #2A3D0E;
+	--warning: #E6DB74;
+	--warning-subtle: #3D3820;
+	--error: #F92672;
+	--error-subtle: #3D1528;
+	--info: #66D9EF;
+	--info-subtle: #1A363D;
+
+	/* Border Colors */
+	--border: #49483E;
+	--border-subtle: #3E3D32;
+	--border-strong: #5E5D50;
+	--border-focus: #F92672;
+
+	/* Selection/Highlight - Yellow tinted */
+	--highlight: #49483E;
+	--highlight-foreground: #F8F8F2;
+
+	/* Background Inverse */
+	--background-inverse: #272822;
+}
+
+/* ===================================
+   ATOM THEME
+   Atom One Dark inspired palette
+   =================================== */
+[data-theme="atom"] {
+	/* Surface Colors - Distinctive gray-blue */
+	--background: #292d34;
+	--surface: #2f333d;
+	--surface-elevated: #383e4a;
+	--surface-overlay: #3e4451;
+
+	/* Content Colors - Slightly lighter for readability */
+	--foreground: #c8cdd6;
+	--foreground-muted: #abb2bf;
+	--foreground-subtle: #7c8490;
+	--foreground-disabled: #5c6370;
+
+	/* Interactive Colors - Atom blue */
+	--primary: #61afef;
+	--primary-hover: #7ec0f2;
+	--primary-active: #4fa3e8;
+	--primary-subtle: #1e2d3d;
+
+	--secondary: #abb2bf;
+	--secondary-hover: #c8cdd5;
+	--secondary-active: #9199a6;
+
+	--accent: #c678dd;
+	--accent-hover: #d490e6;
+
+	/* Status Colors - Atom palette */
+	--success: #90b061;
+	--success-subtle: #242d1a;
+	--warning: #be8a59;
+	--warning-subtle: #302419;
+	--error: #c16266;
+	--error-subtle: #30191a;
+	--info: #56b6c2;
+	--info-subtle: #172d30;
+
+	/* Border Colors */
+	--border: #3e4451;
+	--border-subtle: #343842;
+	--border-strong: #4d5566;
+	--border-focus: #61afef;
+
+	/* Selection/Highlight - Blue tinted */
+	--highlight: #3e4451;
+	--highlight-foreground: #abb2bf;
+
+	/* Background Inverse */
+	--background-inverse: #292d34;
 }
 
 /* ===================================
    MANUSCRIPT STYLE COMPONENTS
-   Reusable components for onboarding/manuscript aesthetic
+   Reusable components for onboarding aesthetic
    Works with any theme
    =================================== */
-
-/* Manuscript Button - Primary */
-.btn-manuscript {
-	font-family: var(--font-sans);
-	font-size: 13px;
-	font-weight: 500;
-	letter-spacing: 0.05em;
-	text-transform: uppercase;
-	padding: 14px 28px;
-	background: var(--foreground);
-	color: var(--surface);
-	border: none;
-	border-radius: 8px;
-	cursor: pointer;
-	transition: background 150ms ease, opacity 150ms ease;
-}
-
-.btn-manuscript:hover:not(:disabled) {
-	opacity: 0.85;
-}
-
-.btn-manuscript:disabled {
-	opacity: 0.4;
-	cursor: not-allowed;
-}
-
-/* Manuscript Button - Secondary/Ghost */
-.btn-manuscript-ghost {
-	font-family: var(--font-sans);
-	font-size: 13px;
-	font-weight: 500;
-	letter-spacing: 0.02em;
-	padding: 14px 16px;
-	background: transparent;
-	color: var(--foreground-muted);
-	border: none;
-	border-radius: 8px;
-	cursor: pointer;
-	transition: color 150ms ease;
-}
-
-.btn-manuscript-ghost:hover {
-	color: var(--foreground);
-}
 
 /* Manuscript Input - Underline Style */
 .input-manuscript {

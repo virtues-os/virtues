@@ -1,11 +1,15 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
-	import { Button } from '$lib';
-	import * as api from '$lib/api/client';
-	import type { ConnectedAccountSummary } from '$lib/api/client';
+	import { onMount, onDestroy } from "svelte";
+	import { Button } from "$lib";
+	import * as api from "$lib/api/client";
+	import type { ConnectedAccountSummary } from "$lib/api/client";
 
 	interface Props {
-		onSuccess: (sourceId: string, institutionName?: string, connectedAccounts?: ConnectedAccountSummary[]) => void;
+		onSuccess: (
+			sourceId: string,
+			institutionName?: string,
+			connectedAccounts?: ConnectedAccountSummary[],
+		) => void;
 		onCancel?: () => void;
 	}
 
@@ -29,45 +33,59 @@
 			const { link_token } = await api.createPlaidLinkToken();
 
 			// 2. Check if Plaid SDK is loaded
-			if (typeof (window as any).Plaid === 'undefined') {
-				throw new Error('Plaid SDK not loaded');
+			if (typeof (window as any).Plaid === "undefined") {
+				throw new Error("Plaid SDK not loaded");
 			}
 
 			// 3. Check if this is an OAuth redirect
 			const currentUrl = new URL(window.location.href);
-			const hasOAuthParams = currentUrl.searchParams.has('oauth_state_id');
+			const hasOAuthParams =
+				currentUrl.searchParams.has("oauth_state_id");
 
 			// 4. Initialize Plaid Link
 			plaidHandler = (window as any).Plaid.create({
 				token: link_token,
 				// Pass current URL if resuming OAuth, otherwise undefined
-				receivedRedirectUri: hasOAuthParams ? window.location.href : undefined,
+				receivedRedirectUri: hasOAuthParams
+					? window.location.href
+					: undefined,
 				onSuccess: async (public_token: string, metadata: any) => {
 					isLoading = true;
 					try {
 						// Exchange token via backend
 						const result = await api.exchangePlaidToken({
 							public_token,
-							institution_id: metadata.institution?.institution_id,
-							institution_name: metadata.institution?.name
+							institution_id:
+								metadata.institution?.institution_id,
+							institution_name: metadata.institution?.name,
 						});
-						onSuccess(result.source_id, result.institution_name, result.connected_accounts);
+						onSuccess(
+							result.source_id,
+							result.institution_name,
+							result.connected_accounts,
+						);
 					} catch (err) {
-						error = err instanceof Error ? err.message : 'Failed to connect account';
+						error =
+							err instanceof Error
+								? err.message
+								: "Failed to connect account";
 						isLoading = false;
 					}
 				},
 				onExit: (err: any, metadata: any) => {
 					if (err) {
 						// User didn't complete flow, but there was an error
-						error = err.display_message || err.error_message || 'Connection failed';
+						error =
+							err.display_message ||
+							err.error_message ||
+							"Connection failed";
 					}
 					// If no error, user just cancelled - don't show error
 					isLoading = false;
 				},
 				onEvent: (eventName: string, metadata: any) => {
-					console.log('Plaid event:', eventName, metadata);
-				}
+					console.log("Plaid event:", eventName, metadata);
+				},
 			});
 
 			isLinkReady = true;
@@ -78,7 +96,10 @@
 				plaidHandler.open();
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to initialize Plaid';
+			error =
+				err instanceof Error
+					? err.message
+					: "Failed to initialize Plaid";
 		} finally {
 			isLoading = false;
 		}
@@ -100,18 +121,18 @@
 	// Load Plaid SDK script
 	onMount(() => {
 		// Check if already loaded
-		if (typeof (window as any).Plaid !== 'undefined') {
+		if (typeof (window as any).Plaid !== "undefined") {
 			initializePlaidLink();
 			return;
 		}
 
 		// Load the script
-		const script = document.createElement('script');
-		script.src = 'https://cdn.plaid.com/link/v2/stable/link-initialize.js';
+		const script = document.createElement("script");
+		script.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
 		script.async = true;
 		script.onload = () => initializePlaidLink();
 		script.onerror = () => {
-			error = 'Failed to load Plaid SDK';
+			error = "Failed to load Plaid SDK";
 			isLoading = false;
 		};
 		document.head.appendChild(script);
@@ -128,15 +149,17 @@
 	{#if error}
 		<div class="p-4 border border-red-300 bg-red-50">
 			<p class="text-sm font-serif text-red-900">{error}</p>
-			<button
+			<Button
+				variant="ghost"
+				size="sm"
 				onclick={() => {
 					error = null;
 					initializePlaidLink();
 				}}
-				class="mt-2 text-sm text-red-700 underline hover:text-red-900"
+				class="mt-2"
 			>
 				Try again
-			</button>
+			</Button>
 		</div>
 	{/if}
 
@@ -150,9 +173,12 @@
 	{:else}
 		<div class="space-y-6">
 			<div class="text-center">
-				<p class="text-neutral-900 font-serif text-lg mb-2">Connect Your Bank Account</p>
+				<p class="text-neutral-900 font-serif text-lg mb-2">
+					Connect Your Bank Account
+				</p>
 				<p class="text-neutral-600 text-sm">
-					Securely connect your bank account using Plaid. Your credentials are never shared with us.
+					Securely connect your bank account using Plaid. Your
+					credentials are never shared with us.
 				</p>
 			</div>
 
@@ -171,7 +197,9 @@
 				</Button>
 
 				{#if onCancel}
-					<Button variant="ghost" onclick={handleCancel}>Cancel</Button>
+					<Button variant="ghost" onclick={handleCancel}
+						>Cancel</Button
+					>
 				{/if}
 			</div>
 
@@ -192,10 +220,13 @@
 						/>
 					</svg>
 					<div>
-						<p class="font-medium text-neutral-900">Secure Connection</p>
+						<p class="font-medium text-neutral-900">
+							Secure Connection
+						</p>
 						<p>
-							Plaid uses bank-level encryption to securely connect your accounts. We never see your
-							bank login credentials.
+							Plaid uses bank-level encryption to securely connect
+							your accounts. We never see your bank login
+							credentials.
 						</p>
 					</div>
 				</div>

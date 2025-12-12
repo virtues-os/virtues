@@ -8,9 +8,9 @@
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { createMcpClient, type McpClient, type McpTool } from '$lib/mcp/client';
-import { createLocationMapTool } from '$lib/tools/query-location-map';
+// import { createLocationMapTool } from '$lib/tools/query-location-map';
 import { createWebSearchTool } from '$lib/tools/web-search';
-import { createSaveAxiologyTool } from '$lib/tools/save-axiology';
+// import { createSaveAxiologyTool } from '$lib/tools/save-axiology';
 import type { ToolRegistry } from './types';
 
 /**
@@ -27,7 +27,7 @@ let mcpClient: McpClient | null = null;
  * @param mcpServerUrl - URL of the MCP server
  * @returns Promise that resolves when all tools are loaded
  */
-export async function initializeTools(pool: Pool, mcpServerUrl: string): Promise<void> {
+export async function initializeTools(_pool: Pool, mcpServerUrl: string): Promise<void> {
 	if (cachedTools) {
 		console.log('[Tools] Already initialized, skipping...');
 		return;
@@ -39,8 +39,10 @@ export async function initializeTools(pool: Pool, mcpServerUrl: string): Promise
 	try {
 		// Load custom tools
 		console.log('[Tools] Loading custom tools...');
-		tools.query_location_map = await createLocationMapTool(pool);
-		console.log('[Tools] ✓ Loaded query_location_map');
+
+		// Note: query_location_map disabled for now
+		// tools.query_location_map = await createLocationMapTool(pool);
+		// console.log('[Tools] ✓ Loaded query_location_map');
 
 		// Load web search tool (if API key is configured)
 		const webSearchTool = await createWebSearchTool();
@@ -51,9 +53,9 @@ export async function initializeTools(pool: Pool, mcpServerUrl: string): Promise
 			console.log('[Tools] ⚠️  Skipping web_search (EXA_API_KEY not configured)');
 		}
 
-		// Load save_axiology tool (for onboarding agent)
-		tools.save_axiology = await createSaveAxiologyTool(pool);
-		console.log('[Tools] ✓ Loaded save_axiology');
+		// Note: save_axiology disabled for now
+		// tools.save_axiology = await createSaveAxiologyTool(pool);
+		// console.log('[Tools] ✓ Loaded save_axiology');
 
 		// Load MCP tools (non-blocking)
 		try {

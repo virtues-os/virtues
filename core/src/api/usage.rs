@@ -132,22 +132,23 @@ impl Tier {
         match (self, service) {
             // Starter tier
             (Tier::Starter, Service::AiGateway) => 1_000_000,
-            (Tier::Starter, Service::AssemblyAi) => 100,
+            (Tier::Starter, Service::AssemblyAi) => 9_000,  // 150 hours in minutes
             (Tier::Starter, Service::GooglePlaces) => 1_000,
             (Tier::Starter, Service::Exa) => 1_000,
             // Pro tier
             (Tier::Pro, Service::AiGateway) => 5_000_000,
-            (Tier::Pro, Service::AssemblyAi) => 500,
+            (Tier::Pro, Service::AssemblyAi) => 27_000,  // 450 hours in minutes
             (Tier::Pro, Service::GooglePlaces) => 5_000,
             (Tier::Pro, Service::Exa) => 5_000,
         }
     }
 
     /// Get the limit type for a service
-    /// AI Gateway is hard-limited (expensive), others are soft-limited
+    /// AI Gateway and AssemblyAI are hard-limited (expensive), others are soft-limited
     pub fn limit_type_for(&self, service: Service) -> LimitType {
         match service {
             Service::AiGateway => LimitType::Hard,
+            Service::AssemblyAi => LimitType::Hard,
             _ => LimitType::Soft,
         }
     }
@@ -189,6 +190,7 @@ pub async fn init_limits_from_tier(pool: &PgPool) -> Result<(), sqlx::Error> {
         let limit_type = tier.limit_type_for(*service);
         let unit = match service {
             Service::AiGateway => "tokens",
+            Service::AssemblyAi => "minutes",
             _ => "requests",
         };
 
@@ -265,6 +267,7 @@ async fn get_limit(pool: &PgPool, service: Service) -> Result<(i64, String, Limi
             let tier = Tier::from_env();
             let unit = match service {
                 Service::AiGateway => "tokens".to_string(),
+                Service::AssemblyAi => "minutes".to_string(),
                 _ => "requests".to_string(),
             };
             Ok((tier.limit_for(service), unit, tier.limit_type_for(service)))

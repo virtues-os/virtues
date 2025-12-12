@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Page } from "$lib";
+	import { Page, Input } from "$lib";
 	import type { ModelOption } from "$lib/config/models";
 	import { getModels } from "$lib/stores/models.svelte";
 	import { getEnabledAgents } from "$lib/config/agents";
@@ -23,7 +23,9 @@
 
 	// Get models from store
 	const models = $derived(getModels());
-	const DEFAULT_MODEL = $derived(models.find(m => m.isDefault) || models[0]);
+	const DEFAULT_MODEL = $derived(
+		models.find((m) => m.isDefault) || models[0],
+	);
 
 	// Assistant profile fields
 	let assistantName = $state("");
@@ -61,7 +63,7 @@
 			// Fetch profile and tools in parallel
 			const [profileResponse, toolsResponse] = await Promise.all([
 				fetch("/api/assistant-profile"),
-				fetch("/api/tools")
+				fetch("/api/tools"),
 			]);
 
 			console.log(
@@ -80,13 +82,18 @@
 				// Populate fields from profile
 				assistantName = profile.assistant_name || "";
 				defaultAgentId = profile.default_agent_id || "auto";
-				defaultModelId = profile.default_model_id || DEFAULT_MODEL?.id || "";
+				defaultModelId =
+					profile.default_model_id || DEFAULT_MODEL?.id || "";
 				enabledTools = profile.enabled_tools || {};
 
 				// Load UI preferences
 				if (profile.ui_preferences?.contextIndicator) {
-					contextIndicatorAlwaysVisible = profile.ui_preferences.contextIndicator.alwaysVisible ?? false;
-					contextIndicatorShowThreshold = profile.ui_preferences.contextIndicator.showThreshold ?? 70;
+					contextIndicatorAlwaysVisible =
+						profile.ui_preferences.contextIndicator.alwaysVisible ??
+						false;
+					contextIndicatorShowThreshold =
+						profile.ui_preferences.contextIndicator.showThreshold ??
+						70;
 				}
 
 				// Update selected model
@@ -108,7 +115,11 @@
 
 			if (toolsResponse.ok) {
 				tools = await toolsResponse.json();
-				console.log("[Assistant Settings] Loaded", tools.length, "tools");
+				console.log(
+					"[Assistant Settings] Loaded",
+					tools.length,
+					"tools",
+				);
 
 				// Ensure all tools have explicit enabled/disabled values
 				// Default to true if not set
@@ -186,30 +197,46 @@
 				Loading settings...
 			</div>
 		{:else}
-			<form onsubmit={(e) => { e.preventDefault(); saveProfile(); }} class="space-y-6">
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					saveProfile();
+				}}
+				class="space-y-6"
+			>
 				<!-- Display Preferences Section -->
 				<div class="bg-surface border border-border rounded-lg p-6">
 					<h2 class="text-lg font-medium text-foreground mb-4">
 						Display Preferences
 					</h2>
 					<p class="text-sm text-foreground-muted mb-6">
-						Customize how the context indicator is displayed in the chat interface.
+						Customize how the context indicator is displayed in the
+						chat interface.
 					</p>
 
 					<div class="space-y-4">
 						<!-- Always visible toggle -->
-						<label class="flex items-start gap-3 cursor-pointer group">
+						<label
+							class="flex items-start gap-3 cursor-pointer group"
+						>
 							<input
 								type="checkbox"
 								bind:checked={contextIndicatorAlwaysVisible}
 								class="mt-0.5 w-4 h-4 border-border rounded text-foreground focus:ring-2 focus:ring-primary cursor-pointer"
 							/>
 							<div class="flex-1">
-								<div class="text-sm font-medium text-foreground group-hover:text-foreground-muted">
+								<div
+									class="text-sm font-medium text-foreground group-hover:text-foreground-muted"
+								>
 									Always show context indicator
 								</div>
-								<div class="text-xs text-foreground-muted mt-0.5">
-									When enabled, the context indicator will always be visible. When disabled, it will only appear when usage exceeds the threshold below.
+								<div
+									class="text-xs text-foreground-muted mt-0.5"
+								>
+									When enabled, the context indicator will
+									always be visible. When disabled, it will
+									only appear when usage exceeds the threshold
+									below.
 								</div>
 							</div>
 						</label>
@@ -222,23 +249,29 @@
 							>
 								Show warning at threshold (%)
 							</label>
-							<input
+							<Input
 								type="number"
 								id="contextThreshold"
 								bind:value={contextIndicatorShowThreshold}
 								min="0"
 								max="100"
-								class="w-32 px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+								class="w-32"
 							/>
 							<p class="text-xs text-foreground-subtle mt-1">
-								The context indicator will turn yellow when usage exceeds this percentage (default: 70%)
+								The context indicator will turn yellow when
+								usage exceeds this percentage (default: 70%)
 							</p>
 						</div>
 					</div>
 
-					<div class="mt-4 p-3 bg-surface-elevated border border-border rounded-md">
+					<div
+						class="mt-4 p-3 bg-surface-elevated border border-border rounded-md"
+					>
 						<p class="text-xs text-foreground-muted">
-							<strong>Tip:</strong> The context indicator shows how much of your model's context window is being used. It helps you know when to start a new conversation to avoid running out of space.
+							<strong>Tip:</strong> The context indicator shows how
+							much of your model's context window is being used. It
+							helps you know when to start a new conversation to avoid
+							running out of space.
 						</p>
 					</div>
 				</div>
@@ -249,27 +282,41 @@
 						Tool & Widget Preferences
 					</h2>
 					<p class="text-sm text-foreground-muted mb-6">
-						Enable or disable specific tools and widgets. This is useful to prevent conflicts with MCP integrations (e.g., disable the Pursuits widget if using Todoist MCP).
+						Enable or disable specific tools and widgets. This is
+						useful to prevent conflicts with MCP integrations (e.g.,
+						disable the Pursuits widget if using Todoist MCP).
 					</p>
 
 					<div class="space-y-3">
 						{#each tools as tool}
-							<label class="flex items-start gap-3 cursor-pointer group">
+							<label
+								class="flex items-start gap-3 cursor-pointer group"
+							>
 								<input
 									type="checkbox"
 									bind:checked={enabledTools[tool.id]}
 									class="mt-0.5 w-4 h-4 border-border rounded text-foreground focus:ring-2 focus:ring-primary cursor-pointer"
 								/>
-								<div class="flex-1 min-w-0 flex items-center gap-2">
+								<div
+									class="flex-1 min-w-0 flex items-center gap-2"
+								>
 									{#if tool.icon}
-										<iconify-icon icon={tool.icon} width="16" class="text-foreground-subtle"></iconify-icon>
+										<iconify-icon
+											icon={tool.icon}
+											width="16"
+											class="text-foreground-subtle"
+										></iconify-icon>
 									{/if}
 									<div class="flex-1">
-										<div class="text-sm font-medium text-foreground group-hover:text-foreground-muted">
+										<div
+											class="text-sm font-medium text-foreground group-hover:text-foreground-muted"
+										>
 											{tool.name}
 										</div>
 										{#if tool.description}
-											<div class="text-xs text-foreground-muted mt-0.5">
+											<div
+												class="text-xs text-foreground-muted mt-0.5"
+											>
 												{tool.description}
 											</div>
 										{/if}
@@ -279,9 +326,14 @@
 						{/each}
 					</div>
 
-					<div class="mt-4 p-3 bg-surface-elevated border border-border rounded-md">
+					<div
+						class="mt-4 p-3 bg-surface-elevated border border-border rounded-md"
+					>
 						<p class="text-xs text-foreground-muted">
-							<strong>Note:</strong> Disabling a tool will prevent the assistant from using it in all conversations. This is useful to prevent conflicts with MCP integrations (e.g., disable the Pursuits widget if using Todoist MCP).
+							<strong>Note:</strong> Disabling a tool will prevent
+							the assistant from using it in all conversations. This
+							is useful to prevent conflicts with MCP integrations
+							(e.g., disable the Pursuits widget if using Todoist MCP).
 						</p>
 					</div>
 				</div>
@@ -299,11 +351,10 @@
 							>
 								Name
 							</label>
-							<input
+							<Input
 								type="text"
 								id="assistantName"
 								bind:value={assistantName}
-								class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
 								placeholder="Assistant"
 							/>
 							<p class="text-xs text-foreground-subtle mt-1">

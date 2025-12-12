@@ -20,9 +20,13 @@
 	let stepData = $state<Record<string, unknown>>({});
 
 	setContext("onboarding", {
-		setCanContinue: (value: boolean) => { canContinue = value; },
-		registerStepData: (formData: Record<string, unknown>) => { stepData = formData; },
-		initialData: data
+		setCanContinue: (value: boolean) => {
+			canContinue = value;
+		},
+		registerStepData: (formData: Record<string, unknown>) => {
+			stepData = formData;
+		},
+		initialData: data,
 	});
 
 	// Navigation configuration with titles
@@ -32,15 +36,19 @@
 		{ path: "/onboarding/profile", title: "Profile" },
 		{ path: "/onboarding/places", title: "Places" },
 		{ path: "/onboarding/tools", title: "Tools" },
-		{ path: "/onboarding/axiology", title: "Values" },
+		// { path: "/onboarding/axiology", title: "Values" },
 	];
 
 	// Get current step index
-	let currentIndex = $derived(STEPS.findIndex(s => s.path === $page.url.pathname));
+	let currentIndex = $derived(
+		STEPS.findIndex((s) => s.path === $page.url.pathname),
+	);
 	let isFirstStep = $derived(currentIndex === 0);
 	let isLastStep = $derived(currentIndex === STEPS.length - 1);
 	let prevStep = $derived(currentIndex > 0 ? STEPS[currentIndex - 1] : null);
-	let nextStep = $derived(currentIndex < STEPS.length - 1 ? STEPS[currentIndex + 1] : null);
+	let nextStep = $derived(
+		currentIndex < STEPS.length - 1 ? STEPS[currentIndex + 1] : null,
+	);
 
 	function handleBack() {
 		if (isNavigating || !prevStep) return;
@@ -53,84 +61,11 @@
 		try {
 			// Step 1: Welcome - no data to save (video only)
 
-			// Step 2: Technology - save technology vision, pain points, and features
-			if (path === "/onboarding/technology") {
-				const res = await fetch("/api/profile", {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						technology_vision: stepData.vision,
-						pain_point_primary: stepData.painPointPrimary,
-						pain_point_secondary: stepData.painPointSecondary || null,
-						excited_features: stepData.excitedFeatures
-					})
-				});
-				if (!res.ok) throw new Error("Failed to save technology preferences");
-			}
+			// Step 2: Technology - auto-saves via Textarea/button handlers
 
-			// Step 3: Profile - save profile and assistant name
-			if (path === "/onboarding/profile") {
-				// Save user profile
-				const profileRes = await fetch("/api/profile", {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						preferred_name: stepData.name,
-						employer: stepData.occupation,
-						theme: stepData.currentTheme
-					})
-				});
-				if (!profileRes.ok) throw new Error("Failed to save profile");
+			// Step 3: Profile - auto-saves via Input components
 
-				// Save assistant name
-				const assistantRes = await fetch("/api/assistant-profile", {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ assistant_name: stepData.assistantName })
-				});
-				if (!assistantRes.ok) throw new Error("Failed to save assistant name");
-			}
-
-			// Step 4: Places - save locations via entities API
-			if (path === "/onboarding/places") {
-				const homePlace = stepData.homePlace as { address: string; latitude?: number; longitude?: number; google_place_id?: string } | null;
-				const additionalPlaces = (stepData.additionalPlaces as Array<{ label: string; address: string; latitude?: number; longitude?: number; google_place_id?: string }>) || [];
-
-				// Save home place first (with set_as_home flag)
-				if (homePlace && homePlace.latitude != null && homePlace.longitude != null) {
-					const homeRes = await fetch("/api/entities/places", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							label: "Home",
-							formatted_address: homePlace.address,
-							latitude: homePlace.latitude,
-							longitude: homePlace.longitude,
-							google_place_id: homePlace.google_place_id,
-							set_as_home: true
-						})
-					});
-					if (!homeRes.ok) throw new Error("Failed to save home location");
-				}
-
-				// Save additional places
-				for (const place of additionalPlaces) {
-					if (place.latitude != null && place.longitude != null) {
-						const res = await fetch("/api/entities/places", {
-							method: "POST",
-							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify({
-								label: place.label,
-								formatted_address: place.address,
-								latitude: place.latitude,
-								longitude: place.longitude,
-								google_place_id: place.google_place_id
-							})
-						});
-						if (!res.ok) throw new Error(`Failed to save location: ${place.label}`);
-					}
-				}
-			}
+			// Step 4: Places - auto-saves via place handlers
 
 			return true;
 		} catch (error) {
@@ -152,7 +87,12 @@
 		if (nextStep) {
 			goto(nextStep.path);
 		} else {
-			// Last step - complete onboarding
+			// Last step - mark onboarding complete and redirect
+			await fetch("/api/profile", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ is_onboarding: false }),
+			});
 			goto("/");
 		}
 	}
@@ -181,19 +121,22 @@
 
 	<footer class="step-footer">
 		{#if !isFirstStep}
-			<button
-				type="button"
+			<Button
+				variant="secondary"
 				onclick={handleBack}
 				disabled={isNavigating}
-				class="px-4 py-2 text-sm font-medium rounded-lg bg-surface-elevated text-foreground hover:bg-accent/10 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
 			>
 				Back
-			</button>
+			</Button>
 		{:else}
 			<div></div>
 		{/if}
 
-		<Button variant="primary" onclick={handleContinue} disabled={isNavigating || isSaving || !canContinue}>
+		<Button
+			variant="primary"
+			onclick={handleContinue}
+			disabled={isNavigating || isSaving || !canContinue}
+		>
 			{isSaving ? "Saving..." : isLastStep ? "Complete" : "Continue"}
 		</Button>
 	</footer>
@@ -214,27 +157,39 @@
 
 	/* View Transition animations */
 	@keyframes fade-in {
-		from { opacity: 0; }
+		from {
+			opacity: 0;
+		}
 	}
 
 	@keyframes fade-out {
-		to { opacity: 0; }
+		to {
+			opacity: 0;
+		}
 	}
 
 	@keyframes slide-from-right {
-		from { transform: translateX(20px); }
+		from {
+			transform: translateX(20px);
+		}
 	}
 
 	@keyframes slide-to-left {
-		to { transform: translateX(-20px); }
+		to {
+			transform: translateX(-20px);
+		}
 	}
 
 	:global(::view-transition-old(onboarding-content)) {
-		animation: 200ms ease-out both fade-out, 200ms ease-out both slide-to-left;
+		animation:
+			200ms ease-out both fade-out,
+			200ms ease-out both slide-to-left;
 	}
 
 	:global(::view-transition-new(onboarding-content)) {
-		animation: 200ms ease-out both fade-in, 200ms ease-out both slide-from-right;
+		animation:
+			200ms ease-out both fade-in,
+			200ms ease-out both slide-from-right;
 	}
 
 	.step-footer {

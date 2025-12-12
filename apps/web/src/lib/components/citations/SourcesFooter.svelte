@@ -1,11 +1,8 @@
 <script lang="ts">
-	import type { Citation, CitationContext } from '$lib/types/Citation';
-	import 'iconify-icon';
+	import type { Citation, CitationContext } from "$lib/types/Citation";
+	import "iconify-icon";
 
-	let {
-		context,
-		onCitationClick
-	} = $props<{
+	let { context, onCitationClick } = $props<{
 		context: CitationContext | undefined;
 		onCitationClick?: (citation: Citation) => void;
 	}>();
@@ -29,7 +26,7 @@
 	}
 
 	function handleKeyDown(e: KeyboardEvent, citation: Citation) {
-		if (e.key === 'Enter' || e.key === ' ') {
+		if (e.key === "Enter" || e.key === " ") {
 			e.preventDefault();
 			handleCitationClick(citation);
 		}
@@ -38,28 +35,34 @@
 	// Format source type for grouping display
 	function formatSourceType(type: string): string {
 		switch (type) {
-			case 'ontology':
-				return 'Personal Data';
-			case 'axiology':
-				return 'Values';
-			case 'web_search':
-				return 'Web';
-			case 'narratives':
-				return 'Narratives';
-			case 'location':
-				return 'Location';
+			case "ontology":
+				return "Personal Data";
+			case "axiology":
+				return "Values";
+			case "web_search":
+				return "Web";
+			case "narratives":
+				return "Narratives";
+			case "location":
+				return "Location";
 			default:
-				return 'Data';
+				return "Data";
 		}
 	}
 </script>
 
 {#if context && context.citations.length > 0}
 	<div class="sources-footer" class:expanded>
-		<button class="sources-header" onclick={toggleExpanded} aria-expanded={expanded}>
+		<button
+			class="sources-header"
+			onclick={toggleExpanded}
+			aria-expanded={expanded}
+		>
 			<div class="header-left">
 				<iconify-icon
-					icon={expanded ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'}
+					icon={expanded
+						? "ri:arrow-down-s-line"
+						: "ri:arrow-right-s-line"}
 					width="16"
 					height="16"
 				></iconify-icon>
@@ -72,11 +75,17 @@
 				<div class="pills-preview">
 					{#each context.citations.slice(0, 4) as citation}
 						<span class="preview-pill {citation.color}">
-							<iconify-icon icon={citation.icon} width="12" height="12"></iconify-icon>
+							<iconify-icon
+								icon={citation.icon}
+								width="12"
+								height="12"
+							></iconify-icon>
 						</span>
 					{/each}
 					{#if context.citations.length > 4}
-						<span class="more-count">+{context.citations.length - 4}</span>
+						<span class="more-count"
+							>+{context.citations.length - 4}</span
+						>
 					{/if}
 				</div>
 			{/if}
@@ -92,14 +101,26 @@
 							onkeydown={(e) => handleKeyDown(e, citation)}
 						>
 							<div class="source-icon {citation.color}">
-								<iconify-icon icon={citation.icon} width="16" height="16"></iconify-icon>
+								<iconify-icon
+									icon={citation.icon}
+									width="16"
+									height="16"
+								></iconify-icon>
 							</div>
 							<div class="source-content">
 								<div class="source-header">
-									<span class="source-label">{citation.label}</span>
-									<span class="source-type">{formatSourceType(citation.source_type)}</span>
+									<span class="source-label"
+										>{citation.label}</span
+									>
+									<span class="source-type"
+										>{formatSourceType(
+											citation.source_type,
+										)}</span
+									>
 								</div>
-								<span class="source-preview">{citation.preview}</span>
+								<span class="source-preview"
+									>{citation.preview}</span
+								>
 							</div>
 							<iconify-icon
 								icon="ri:arrow-right-s-line"
@@ -118,10 +139,10 @@
 <style>
 	.sources-footer {
 		margin-top: 16px;
-		border: 1px solid var(--color-border, #e5e5e5);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		overflow: hidden;
-		background: var(--color-surface, #ffffff);
+		background: var(--color-surface);
 	}
 
 	.sources-header {
@@ -130,7 +151,7 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 10px 12px;
-		background: var(--color-surface-elevated, #fafafa);
+		background: var(--color-surface-elevated);
 		border: none;
 		cursor: pointer;
 		transition: background 0.15s;
@@ -138,25 +159,25 @@
 	}
 
 	.sources-header:hover {
-		background: var(--color-border, #f0f0f0);
+		background: var(--color-border-subtle);
 	}
 
 	.header-left {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 	}
 
 	.header-title {
 		font-size: 0.8125rem;
 		font-weight: 500;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 	}
 
 	.citation-count {
 		font-size: 0.75rem;
-		color: var(--color-foreground-muted, #a3a3a3);
+		color: var(--color-foreground-subtle);
 	}
 
 	.pills-preview {
@@ -171,14 +192,14 @@
 		justify-content: center;
 		width: 24px;
 		height: 24px;
-		background: var(--color-surface, #ffffff);
-		border: 1px solid var(--color-border, #e5e5e5);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: 50%;
 	}
 
 	.more-count {
 		font-size: 0.6875rem;
-		color: var(--color-foreground-muted, #a3a3a3);
+		color: var(--color-foreground-subtle);
 		padding-left: 4px;
 	}
 
@@ -186,11 +207,11 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
-		border-top: 1px solid var(--color-border, #e5e5e5);
+		border-top: 1px solid var(--color-border);
 	}
 
 	.source-item {
-		border-bottom: 1px solid var(--color-border, #e5e5e5);
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.source-item:last-child {
@@ -212,7 +233,7 @@
 	}
 
 	.source-button:hover {
-		background: var(--color-surface-elevated, #fafafa);
+		background: var(--color-surface-elevated);
 	}
 
 	.source-icon {
@@ -221,7 +242,7 @@
 		justify-content: center;
 		width: 32px;
 		height: 32px;
-		background: var(--color-surface-elevated, #fafafa);
+		background: var(--color-surface-elevated);
 		border-radius: 8px;
 		flex-shrink: 0;
 	}
@@ -243,26 +264,26 @@
 	.source-label {
 		font-size: 0.875rem;
 		font-weight: 500;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 	}
 
 	.source-type {
 		font-size: 0.6875rem;
-		color: var(--color-foreground-muted, #a3a3a3);
+		color: var(--color-foreground-subtle);
 		text-transform: uppercase;
 		letter-spacing: 0.025em;
 	}
 
 	.source-preview {
 		font-size: 0.8125rem;
-		color: var(--color-foreground-muted, #737373);
+		color: var(--color-foreground-muted);
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
 	.arrow-icon {
-		color: var(--color-foreground-muted, #a3a3a3);
+		color: var(--color-foreground-subtle);
 		flex-shrink: 0;
 	}
 

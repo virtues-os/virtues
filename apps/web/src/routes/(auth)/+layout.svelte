@@ -19,7 +19,8 @@
 <div class="flex min-h-screen overscroll-none">
 	<!-- Left: Visual Panel (33%) - Fixed -->
 	<aside
-		class="w-1/3 fixed top-0 left-0 h-screen bg-[#0a0a0a] overflow-hidden max-md:relative max-md:w-full max-md:h-auto max-md:min-h-[200px]"
+		class="w-1/3 fixed top-0 left-0 h-screen overflow-hidden max-md:relative max-md:w-full max-md:h-auto max-md:min-h-[200px]"
+		style="background-color: var(--color-background-inverse)"
 	>
 		<img
 			src={libraryImg}
@@ -39,7 +40,8 @@
 		<div
 			class="relative z-2 h-full flex flex-col justify-between p-12 text-white max-md:p-8"
 		>
-			<span class="font-serif text-xl font-normal tracking-wide opacity-90"
+			<span
+				class="font-serif text-xl font-normal tracking-wide opacity-90"
 				>Virtues</span
 			>
 

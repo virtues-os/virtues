@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Citation } from '$lib/types/Citation';
-	import 'iconify-icon';
+	import type { Citation } from "$lib/types/Citation";
+	import "iconify-icon";
 
 	let { citation } = $props<{
 		citation: Citation;
@@ -9,20 +9,20 @@
 	// Extract domain from URL for display
 	function extractDomain(url: string): string {
 		try {
-			return new URL(url).hostname.replace('www.', '');
+			return new URL(url).hostname.replace("www.", "");
 		} catch {
 			return url;
 		}
 	}
 </script>
 
-<div
-	class="citation-tooltip"
-	id="tooltip-{citation.id}"
-	role="tooltip"
->
+<div class="citation-tooltip" id="tooltip-{citation.id}" role="tooltip">
 	<div class="tooltip-header">
-		<iconify-icon icon={citation.icon} class={citation.color} width="16" height="16"
+		<iconify-icon
+			icon={citation.icon}
+			class={citation.color}
+			width="16"
+			height="16"
 		></iconify-icon>
 		<span class="tooltip-title">{citation.label}</span>
 	</div>
@@ -35,7 +35,8 @@
 	{/if}
 
 	<div class="tooltip-hint">
-		<iconify-icon icon="ri:cursor-line" width="12" height="12"></iconify-icon>
+		<iconify-icon icon="ri:cursor-line" width="12" height="12"
+		></iconify-icon>
 		<span>Click for details</span>
 	</div>
 </div>
@@ -50,8 +51,8 @@
 		min-width: 220px;
 		max-width: 320px;
 		padding: 12px;
-		background: var(--color-surface, #ffffff);
-		border: 1px solid var(--color-border, #e5e5e5);
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		box-shadow:
 			0 4px 6px -1px rgba(0, 0, 0, 0.1),
@@ -73,23 +74,23 @@
 
 	/* Arrow pointing down */
 	.citation-tooltip::after {
-		content: '';
+		content: "";
 		position: absolute;
 		top: 100%;
 		left: 50%;
 		transform: translateX(-50%);
 		border: 6px solid transparent;
-		border-top-color: var(--color-surface, #ffffff);
+		border-top-color: var(--color-surface);
 	}
 
 	.citation-tooltip::before {
-		content: '';
+		content: "";
 		position: absolute;
 		top: 100%;
 		left: 50%;
 		transform: translateX(-50%);
 		border: 7px solid transparent;
-		border-top-color: var(--color-border, #e5e5e5);
+		border-top-color: var(--color-border);
 	}
 
 	.tooltip-header {
@@ -102,7 +103,7 @@
 	.tooltip-title {
 		font-weight: 500;
 		font-size: 0.8125rem;
-		color: var(--color-foreground, #171717);
+		color: var(--color-foreground);
 	}
 
 	.tooltip-url {
@@ -110,7 +111,7 @@
 		align-items: center;
 		gap: 4px;
 		font-size: 0.75rem;
-		color: var(--color-primary, #3b82f6);
+		color: var(--color-primary);
 		margin-bottom: 8px;
 	}
 
@@ -119,8 +120,8 @@
 		align-items: center;
 		gap: 4px;
 		font-size: 0.6875rem;
-		color: var(--color-foreground-muted, #a3a3a3);
-		border-top: 1px solid var(--color-border, #e5e5e5);
+		color: var(--color-foreground-subtle);
+		border-top: 1px solid var(--color-border);
 		padding-top: 8px;
 		margin-top: 4px;
 	}

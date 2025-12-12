@@ -36,6 +36,7 @@ export interface ChatMessage {
 	provider?: string; // AI provider (e.g., "anthropic")
 	agentId?: string; // Agent that handled this message (e.g., "analytics", "research", "general")
 	tool_calls?: ToolCall[]; // Record tool invocations
+	reasoning?: string; // Model's thinking/reasoning text (assistant messages only)
 	intent?: IntentMetadata; // Intent classification metadata (assistant messages only)
 	subject?: string; // Auto-generated subject for this exchange (user messages only)
 }
