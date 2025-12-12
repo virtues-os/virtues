@@ -12,6 +12,7 @@
 # - RESEND_API_KEY (required)
 # - GOOGLE_API_KEY (optional)
 # - AI_GATEWAY_API_KEY (optional)
+# - EXA_API_KEY (optional, for web search)
 # - GHCR_REPO (required: GitHub Container Registry repository)
 
 set -euo pipefail
@@ -217,6 +218,7 @@ services:
       EMAIL_FROM: ${EMAIL_FROM:-Virtues <noreply@virtues.com>}
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      EXA_API_KEY: ${EXA_API_KEY:-}
       AUTH_URL: https://${SUBDOMAIN}.virtues.com
     ports:
       - "127.0.0.1:3000:3000"
