@@ -16,7 +16,6 @@ import {
 } from 'ai';
 import type { AgentId } from '$lib/server/agents/types';
 import { checkRateLimit, recordUsage, RateLimitError } from '$lib/server/rate-limit';
-import { getTracer } from '$lib/server/telemetry/setup';
 
 // Constants
 const MAX_TITLE_LENGTH = 50;
@@ -238,9 +237,6 @@ export const POST: RequestHandler = async (event) => {
 		// Prepend context to original UIMessages
 		const messagesWithContext = [contextMessage, ...(messages as UIMessage[])];
 
-		// Build telemetry metadata for observability (passed to AI SDK experimental_telemetry)
-		const exchangeIndex = messages.filter((m: UIMessage) => m.role === 'user').length - 1;
-
 		// Stream response using agent
 		console.log('[API] Streaming response with', selectedAgentId, 'agent');
 
@@ -264,23 +260,9 @@ export const POST: RequestHandler = async (event) => {
 			sendReasoning: true,
 			// Note: providerOptions are set on the ToolLoopAgent, not here
 			// The agent already has the correct providerOptions for thinking/reasoning
-			// Enable AI SDK telemetry for observability
-			// Spans are automatically exported to our PostgreSQL via custom SpanExporter
-			experimental_telemetry: {
-				isEnabled: true,
-				tracer: getTracer(),
-				functionId: `chat-${sessionId}`,
-				metadata: {
-					sessionId,
-					exchangeIndex: String(exchangeIndex),
-					agentId: selectedAgentId,
-					routingReason,
-					wasExplicit: String(agentId !== 'auto'),
-				},
-			},
 			onFinish: async ({ messages: completeMessages, usage }) => {
 				try {
-					// Save messages (trace is handled separately by telemetry exporter)
+					// Save messages to session
 					await saveMessagesToSession(sessionId, completeMessages, model, selectedAgentId);
 
 					// Record API usage for rate limiting and cost tracking
@@ -326,8 +308,6 @@ export const POST: RequestHandler = async (event) => {
  *
  * AI SDK v6 Best Practice: Save complete UIMessages from toUIMessageStreamResponse onFinish
  * The messages parameter contains the full conversation including user and assistant messages.
- *
- * Note: Trace data is handled separately by the OpenTelemetry PostgresSpanExporter
  */
 async function saveMessagesToSession(
 	sessionId: string,

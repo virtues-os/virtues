@@ -39,9 +39,10 @@
 		duration = 0,
 	}: Props = $props();
 
-	// Expansion state - starts expanded, collapses when content arrives
-	let expanded = $state(true);
+	// Expansion state - starts collapsed for completed messages, expanded for active thinking
+	let expanded = $state(isThinking);
 	let hasAutoCollapsed = $state(false);
+	let hasInitialized = $state(false);
 
 	// Track thinking duration
 	let thinkingStartTime = $state<number | null>(null);
