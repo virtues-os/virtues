@@ -211,6 +211,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/virtues
       RUST_API_URL: http://core:8000
+      ELT_API_URL: http://core:8000
       AUTH_SECRET: ${AUTH_SECRET}
       OWNER_EMAIL: ${OWNER_EMAIL}
       TIER: ${TIER:-starter}
