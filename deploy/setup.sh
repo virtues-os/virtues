@@ -245,6 +245,33 @@ ${SUBDOMAIN}.virtues.com {
         reverse_proxy localhost:8000
     }
 
+    # SvelteKit API routes (must match vite.config.ts bypass rules)
+    handle /api/app* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/chat* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/sessions* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/preferences* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/assistant-profile* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/narrative* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/ontologies* {
+        reverse_proxy localhost:3000
+    }
+    handle /api/pairing* {
+        reverse_proxy localhost:3000
+    }
+
+    # All other API routes -> Rust core
     handle /api/* {
         reverse_proxy localhost:8000
     }
