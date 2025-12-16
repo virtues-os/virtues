@@ -11,41 +11,29 @@ struct PermissionIssuesBanner: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
+            Image(systemName: "info.circle.fill")
                 .font(.title2)
-                .foregroundColor(.red)
+                .foregroundColor(.orange)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("\(issue.type.rawValue) Permission Issue")
+                Text("\(issue.type.rawValue) Limited")
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Text(issue.message)
+                Text("Some features may not work without this permission")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer()
-
-            Button(action: {
-                PermissionMonitor.shared.openSettings()
-            }) {
-                Text(issue.action)
-                    .font(.caption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color.red)
-                    .cornerRadius(8)
-            }
         }
         .padding()
-        .background(Color.red.opacity(0.15))
+        .background(Color.orange.opacity(0.1))
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                .stroke(Color.orange.opacity(0.2), lineWidth: 1)
         )
     }
 }
