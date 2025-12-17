@@ -334,6 +334,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       const body = req.body as CompletePairingRequest;
 
+      // Handle static App Store review code
+      if (body.code === 'REVIEW') {
+        const response: CompletePairingResponse = {
+          source_id: 'apple-review-source',
+          device_token: 'APPLE_REVIEW_STATIC_TOKEN_2024',
+          available_streams: getAvailableStreams()
+        };
+        console.log(`[COMPLETE] App Store Review device paired`);
+        return res.status(200).json(response);
+      }
+
       const pairing = pairingCodes.get(body.code);
       if (!pairing) {
         return res.status(400).json({ error: 'Invalid or expired pairing code' });
