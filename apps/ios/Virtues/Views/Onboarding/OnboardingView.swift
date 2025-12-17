@@ -507,12 +507,12 @@ struct PermissionsStep: View {
             }
             .padding(.horizontal)
             
-            // Request permissions button
+            // Request permissions button or Continue button
             if !hasRequestedPermissions {
                 Button(action: requestAllPermissions) {
                     HStack {
-                        Text("Request Permissions")
-                        Image(systemName: "checkmark.shield")
+                        Text("Continue")
+                        Image(systemName: "arrow.right")
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
@@ -521,46 +521,35 @@ struct PermissionsStep: View {
                     .cornerRadius(12)
                 }
                 .padding(.horizontal)
-            } else if !allPermissionsGranted {
-                // Open settings button
+            } else {
+                // Continue button (always available after permissions requested)
                 VStack(spacing: 12) {
-                    // Show specific message if location is "When In Use" instead of "Always"
-                    if locationManager.hasPermission && !locationManager.hasAlwaysPermission {
-                        Text("Location permission must be set to \"Always\" for background tracking")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                            .multilineTextAlignment(.center)
-                    } else {
-                        Text("Some permissions were denied")
-                            .font(.caption)
-                            .foregroundColor(.red)
+                    // Show info message if some permissions were denied
+                    if !allPermissionsGranted {
+                        if locationManager.hasPermission && !locationManager.hasAlwaysPermission {
+                            Text("Some features require \"Always\" location for background tracking")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        } else {
+                            Text("Some features may be limited without all permissions")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
                     }
 
-                    Button(action: openSettings) {
+                    Button(action: onNext) {
                         HStack {
-                            Text("Open Settings")
-                            Image(systemName: "arrow.up.forward.square")
+                            Text("Continue")
+                            Image(systemName: "arrow.right")
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color.orange)
+                        .background(allPermissionsGranted ? Color.green : Color.accentColor)
                         .foregroundColor(.white)
                         .cornerRadius(12)
                     }
-                }
-                .padding(.horizontal)
-            } else {
-                // Continue button
-                Button(action: onNext) {
-                    HStack {
-                        Text("Continue")
-                        Image(systemName: "arrow.right")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.green)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
                 }
                 .padding(.horizontal)
             }
@@ -636,11 +625,6 @@ struct PermissionsStep: View {
         }
     }
     
-    private func openSettings() {
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
-        }
-    }
 }
 
 struct PermissionRow: View {
@@ -787,3 +771,4 @@ struct OnboardingView_Previews: PreviewProvider {
         OnboardingView(isOnboardingComplete: .constant(false))
     }
 }
+
