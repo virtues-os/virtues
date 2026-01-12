@@ -33,6 +33,11 @@ class PermissionMonitor: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
+    // MARK: - Timers
+
+    private var microphoneCheckTimer: ReliableTimer?
+    private var healthKitCheckTimer: ReliableTimer?
+
     // MARK: - Previous States
 
     private var previousLocationAuthorized: Bool?
@@ -64,20 +69,26 @@ class PermissionMonitor: ObservableObject {
         // Monitor Microphone permission changes
         // Note: microphoneAuthorizationStatus is AVAudioSession.RecordPermission (UInt enum)
         // We monitor it by checking periodically since it's not a standard observable type
-        Timer.publish(every: 5.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.checkMicrophonePermission()
+        microphoneCheckTimer = ReliableTimer.builder()
+            .interval(5.0)
+            .qos(.utility)
+            .handler { [weak self] in
+                DispatchQueue.main.async {
+                    self?.checkMicrophonePermission()
+                }
             }
-            .store(in: &cancellables)
+            .build()
 
         // Monitor HealthKit permission changes (check every 30 seconds)
-        Timer.publish(every: 30.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.checkHealthKitPermission()
+        healthKitCheckTimer = ReliableTimer.builder()
+            .interval(30.0)
+            .qos(.utility)
+            .handler { [weak self] in
+                DispatchQueue.main.async {
+                    self?.checkHealthKitPermission()
+                }
             }
-            .store(in: &cancellables)
+            .build()
     }
 
     // MARK: - Permission Change Handlers

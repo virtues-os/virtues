@@ -10,13 +10,16 @@ import Combine
 
 enum NetworkError: LocalizedError {
     case invalidURL
-    case invalidToken
-    case serverError(Int)
-    case timeout
-    case noConnection
+    case invalidToken              // 401 - requires re-auth
+    case serverError(Int)          // 5xx - transient, retry with backoff
+    case timeout                   // transient, retry
+    case noConnection              // transient, retry when online
     case decodingError
+    case rateLimited(retryAfter: TimeInterval)  // 429 - back off, don't break circuit
+    case badRequest(message: String)            // 400 - permanent fail, don't retry
+    case forbidden                              // 403 - permanent fail, don't retry
     case unknown(Error)
-    
+
     var errorDescription: String? {
         switch self {
         case .invalidURL:
@@ -31,17 +34,46 @@ enum NetworkError: LocalizedError {
             return "No internet connection"
         case .decodingError:
             return "Failed to decode response"
+        case .rateLimited(let retryAfter):
+            return "Rate limited - retry after \(Int(retryAfter))s (E004)"
+        case .badRequest(let message):
+            return "Bad request: \(message) (E005)"
+        case .forbidden:
+            return "Access forbidden (E006)"
         case .unknown(let error):
             return "Unknown error: \(error.localizedDescription)"
         }
     }
-    
+
     var errorCode: String {
         switch self {
         case .timeout: return "E001"
         case .invalidToken: return "E002"
         case .serverError: return "E003"
+        case .rateLimited: return "E004"
+        case .badRequest: return "E005"
+        case .forbidden: return "E006"
         default: return "E000"
+        }
+    }
+
+    /// Whether this error should be retried
+    var isRetryable: Bool {
+        switch self {
+        case .serverError, .timeout, .noConnection, .rateLimited:
+            return true
+        case .invalidToken, .badRequest, .forbidden, .invalidURL, .decodingError, .unknown:
+            return false
+        }
+    }
+
+    /// Whether this error should count toward circuit breaker
+    var countsTowardCircuitBreaker: Bool {
+        switch self {
+        case .serverError, .timeout:
+            return true
+        case .rateLimited, .badRequest, .forbidden, .invalidToken, .noConnection, .invalidURL, .decodingError, .unknown:
+            return false
         }
     }
 }
@@ -91,6 +123,29 @@ class NetworkManager: ObservableObject {
                 return try JSONDecoder().decode(UploadResponse.self, from: data)
             case 401:
                 throw NetworkError.invalidToken
+            case 400:
+                // Parse error message from response if available
+                let message: String
+                if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                    message = errorResponse.error
+                } else if let bodyString = String(data: data, encoding: .utf8) {
+                    message = bodyString
+                } else {
+                    message = "Invalid request data"
+                }
+                throw NetworkError.badRequest(message: message)
+            case 403:
+                throw NetworkError.forbidden
+            case 429:
+                // Parse Retry-After header or use default
+                let retryAfter: TimeInterval
+                if let retryAfterHeader = httpResponse.value(forHTTPHeaderField: "Retry-After"),
+                   let seconds = TimeInterval(retryAfterHeader) {
+                    retryAfter = seconds
+                } else {
+                    retryAfter = 60  // Default to 60 seconds
+                }
+                throw NetworkError.rateLimited(retryAfter: retryAfter)
             case 500...599:
                 throw NetworkError.serverError(httpResponse.statusCode)
             default:
@@ -116,186 +171,6 @@ class NetworkManager: ObservableObject {
         }
     }
     
-    // MARK: - Device Verification
-    
-    struct StreamConfiguration {
-        let enabled: Bool
-        let initialSyncDays: Int
-        let displayName: String
-    }
-    
-    struct VerificationResponse {
-        let success: Bool
-        let configurationComplete: Bool
-        let message: String?
-        let configuredStreamCount: Int
-        let streamConfigurations: [String: StreamConfiguration]
-        let deviceToken: String?  // Returned from pairing completion
-        let sourceId: String?     // Returned from pairing completion
-    }
-    
-    func completePairing(endpoint: URL, pairingCode: String, deviceInfo: [String: Any]) async -> VerificationResponse {
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 10.0
-
-        // Build request body matching Rust API: { "code": "...", "device_info": {...} }
-        let requestBody: [String: Any] = [
-            "code": pairingCode,
-            "device_info": deviceInfo
-        ]
-
-        do {
-            // Encode request body
-            request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-
-            let (data, response) = try await session.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                lastError = .unknown(NSError(domain: "Invalid response", code: 0))
-                return VerificationResponse(success: false, configurationComplete: false, message: nil, configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            }
-
-            switch httpResponse.statusCode {
-            case 200...299:
-                // Parse response: { "source_id": "...", "device_token": "...", "available_streams": [...] }
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    // Extract device_token and source_id from response
-                    let deviceToken = json["device_token"] as? String
-                    let sourceId = json["source_id"] as? String
-
-                    return VerificationResponse(
-                        success: true,
-                        configurationComplete: false, // Will be true after stream configuration
-                        message: nil,
-                        configuredStreamCount: 0,
-                        streamConfigurations: [:],
-                        deviceToken: deviceToken,
-                        sourceId: sourceId
-                    )
-                }
-                return VerificationResponse(success: true, configurationComplete: false, message: nil, configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            case 400:
-                lastError = .unknown(NSError(domain: "Invalid pairing code or expired", code: 400))
-                return VerificationResponse(success: false, configurationComplete: false, message: "Invalid or expired code", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            case 404:
-                lastError = .unknown(NSError(domain: "Pairing code not found. Please generate a new code in the web app.", code: 404))
-                return VerificationResponse(success: false, configurationComplete: false, message: "Code not found", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            default:
-                lastError = .serverError(httpResponse.statusCode)
-                return VerificationResponse(success: false, configurationComplete: false, message: "Server error", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            }
-        } catch {
-            print("❌ Pairing request failed: \(error)")
-            print("   URL: \(endpoint)")
-
-            if let urlError = error as? URLError {
-                switch urlError.code {
-                case .timedOut:
-                    lastError = .timeout
-                case .notConnectedToInternet, .networkConnectionLost:
-                    lastError = .noConnection
-                case .cannotConnectToHost:
-                    lastError = .unknown(NSError(domain: "Cannot connect to \(endpoint.absoluteString). Please check the URL and ensure the server is running.", code: urlError.code.rawValue))
-                case .cannotFindHost:
-                    lastError = .unknown(NSError(domain: "Cannot find host \(endpoint.host ?? ""). Please check the URL.", code: urlError.code.rawValue))
-                default:
-                    lastError = .unknown(error)
-                }
-            } else {
-                lastError = .unknown(error)
-            }
-
-            return VerificationResponse(success: false, configurationComplete: false, message: nil, configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-        }
-    }
-
-    func verifyDeviceToken(endpoint: URL, deviceToken: String) async -> VerificationResponse {
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 10.0
-
-        do {
-            let (data, response) = try await session.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                lastError = .unknown(NSError(domain: "Invalid response", code: 0))
-                return VerificationResponse(success: false, configurationComplete: false, message: nil, configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            }
-
-            switch httpResponse.statusCode {
-            case 200...299:
-                // Parse response: { "source_id": "...", "configuration_complete": bool, "enabled_streams": [...] }
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    let configurationComplete = json["configuration_complete"] as? Bool ?? false
-                    let enabledStreams = json["enabled_streams"] as? [[String: Any]] ?? []
-
-                    // Parse stream configurations
-                    var streamConfigs: [String: StreamConfiguration] = [:]
-                    for stream in enabledStreams {
-                        if let streamName = stream["stream_name"] as? String,
-                           let displayName = stream["display_name"] as? String,
-                           let isEnabled = stream["is_enabled"] as? Bool,
-                           isEnabled {
-                            // For now, use default initialSyncDays
-                            // TODO: Add this to the API response if needed
-                            streamConfigs[streamName] = StreamConfiguration(
-                                enabled: isEnabled,
-                                initialSyncDays: 30,
-                                displayName: displayName
-                            )
-                        }
-                    }
-
-                    return VerificationResponse(
-                        success: true,
-                        configurationComplete: configurationComplete,
-                        message: nil,
-                        configuredStreamCount: streamConfigs.count,
-                        streamConfigurations: streamConfigs,
-                        deviceToken: nil,
-                        sourceId: nil
-                    )
-                }
-                return VerificationResponse(success: true, configurationComplete: false, message: nil, configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            case 401:
-                lastError = .invalidToken
-                return VerificationResponse(success: false, configurationComplete: false, message: "Invalid token", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            case 404:
-                // Token not found in database
-                lastError = .unknown(NSError(domain: "Device token not found. Please generate a new token in the web app.", code: 404))
-                return VerificationResponse(success: false, configurationComplete: false, message: "Token not found", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            default:
-                lastError = .serverError(httpResponse.statusCode)
-                return VerificationResponse(success: false, configurationComplete: false, message: "Server error", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-            }
-        } catch {
-            print("❌ Network request failed: \(error)")
-            print("   URL: \(endpoint)")
-            
-            if let urlError = error as? URLError {
-                switch urlError.code {
-                case .timedOut:
-                    lastError = .timeout
-                case .notConnectedToInternet, .networkConnectionLost:
-                    lastError = .noConnection
-                case .cannotConnectToHost:
-                    lastError = .unknown(NSError(domain: "Cannot connect to \(endpoint.absoluteString). Please check the URL and ensure the server is running.", code: urlError.code.rawValue))
-                case .cannotFindHost:
-                    lastError = .unknown(NSError(domain: "Cannot find host \(endpoint.host ?? ""). Please check the URL.", code: urlError.code.rawValue))
-                default:
-                    lastError = .unknown(error)
-                }
-            } else {
-                lastError = .unknown(error)
-            }
-            return VerificationResponse(success: false, configurationComplete: false, message: "Network error", configuredStreamCount: 0, streamConfigurations: [:], deviceToken: nil, sourceId: nil)
-        }
-    }
-
     // MARK: - Connection Test
     
     func testConnection(endpoint: String) async -> Bool {

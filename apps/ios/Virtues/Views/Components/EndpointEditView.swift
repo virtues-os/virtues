@@ -42,10 +42,10 @@ struct EndpointEditView: View {
                 Section(header: Text("Current Endpoint")) {
                     HStack {
                         Image(systemName: "network")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.warmForegroundMuted)
                         Text(currentEndpoint)
                             .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.warmForegroundMuted)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -57,11 +57,11 @@ struct EndpointEditView: View {
                             .font(.system(size: 17))
                             .padding()
                             .frame(minHeight: 52)
-                            .background(Color(.systemGray6))
+                            .background(Color.warmSurfaceElevated)
                             .cornerRadius(10)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color(.systemGray4), lineWidth: 0.5)
+                                    .stroke(Color.warmBorder, lineWidth: 0.5)
                             )
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
@@ -74,13 +74,13 @@ struct EndpointEditView: View {
                         if !newEndpoint.isEmpty && !isValidURL {
                             Label("Invalid URL format", systemImage: "exclamationmark.triangle")
                                 .font(.caption)
-                                .foregroundColor(.orange)
+                                .foregroundColor(.warmWarning)
                         }
-                        
+
                         if validationPassed {
                             Label("Connection successful", systemImage: "checkmark.circle")
                                 .font(.caption)
-                                .foregroundColor(.green)
+                                .foregroundColor(.warmSuccess)
                         }
                     }
                 }
@@ -89,16 +89,19 @@ struct EndpointEditView: View {
                     Section {
                         HStack {
                             Image(systemName: "exclamationmark.triangle")
-                                .foregroundColor(.red)
+                                .foregroundColor(.warmError)
                             Text(error)
                                 .font(.caption)
-                                .foregroundColor(.red)
+                                .foregroundColor(.warmError)
                         }
                     }
                 }
                 
                 Section {
-                    Button(action: validateConnection) {
+                    Button(action: {
+                        Haptics.light()
+                        validateConnection()
+                    }) {
                         HStack {
                             if isValidating {
                                 ProgressView()
@@ -111,19 +114,20 @@ struct EndpointEditView: View {
                             }
                         }
                     }
+                    .tint(.warmPrimary)
                     .disabled(!isValidURL || newEndpoint.isEmpty || isValidating)
                     
                     if hasPendingUploads {
                         HStack {
                             Image(systemName: "info.circle")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.warmInfo)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Pending Uploads")
                                     .font(.footnote)
                                     .fontWeight(.medium)
                                 Text("\(uploadCoordinator.uploadStats.pending) events will be uploaded to the current endpoint before switching")
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .foregroundColor(.warmForegroundMuted)
                             }
                         }
                         .padding(.vertical, 4)
@@ -131,7 +135,10 @@ struct EndpointEditView: View {
                 }
                 
                 Section(footer: Text("The endpoint URL must be reachable and running a Virtues server")) {
-                    Button(action: { showingUploadWarning = true }) {
+                    Button(action: {
+                        Haptics.medium()
+                        showingUploadWarning = true
+                    }) {
                         HStack {
                             if isSaving {
                                 ProgressView()
@@ -146,16 +153,20 @@ struct EndpointEditView: View {
                         }
                     }
                     .disabled(!hasChanges || !validationPassed || isSaving)
-                    .foregroundColor(hasChanges && validationPassed ? .accentColor : .gray)
+                    .foregroundColor(hasChanges && validationPassed ? .warmPrimary : .warmForegroundDisabled)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.warmBackground)
             .navigationTitle("Edit Endpoint")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
+                        Haptics.light()
                         dismiss()
                     }
+                    .foregroundColor(.warmForegroundMuted)
                 }
             }
             .onAppear {
@@ -189,11 +200,13 @@ struct EndpointEditView: View {
             
             await MainActor.run {
                 isValidating = false
-                
+
                 if isReachable {
+                    Haptics.success()
                     validationPassed = true
                     errorMessage = nil
                 } else {
+                    Haptics.error()
                     validationPassed = false
                     errorMessage = "Cannot reach the server. Please check the URL and your internet connection."
                 }

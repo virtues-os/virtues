@@ -30,6 +30,10 @@ protocol StorageProvider {
     /// - Parameter id: The event ID
     func incrementRetry(id: Int64)
 
+    /// Mark an event as permanently failed (will not be retried)
+    /// - Parameter id: The event ID
+    func markAsFailed(id: Int64)
+
     /// Get queue statistics
     func getQueueStats() -> (pending: Int, failed: Int, total: Int, totalSize: Int64)
 
@@ -44,6 +48,9 @@ protocol StorageProvider {
 
     /// Clean up bad events
     func cleanupBadEvents() -> Int
+
+    /// Reset uploads stuck in 'uploading' state for more than 10 minutes
+    func resetStaleUploads() -> Int
 }
 
 // MARK: - SQLiteManager Extension

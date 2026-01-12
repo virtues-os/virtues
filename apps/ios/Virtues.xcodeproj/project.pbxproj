@@ -77,8 +77,6 @@
 				5644C5F42E3B03D50043F3CA /* Virtues */,
 			);
 			name = Virtues;
-			packageProductDependencies = (
-			);
 			productName = Virtues;
 			productReference = 5644C5F22E3B03D50043F3CA /* Virtues.app */;
 			productType = "com.apple.product-type.application";
@@ -269,20 +267,21 @@
 				CODE_SIGN_ENTITLEMENTS = Virtues/Virtues.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4YV9K677RY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Virtues/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Virtues;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Virtues syncs your contacts to help identify people in your life story and connect conversations to relationships.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Virtues reads your health data (heart rate, steps, sleep, activity) to provide comprehensive wellness insights. Your health data is stored securely and never shared without your explicit consent.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Virtues may write health data from connected devices.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Virtues needs to connect to your local server for data sync";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Virtues continuously tracks your location to provide personalized health insights based on where you spend your time. This data is collected in the background to ensure accurate daily patterns.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Virtues tracks your location continuously to provide detailed activity context.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Virtues tracks your location to provide personalized health insights based on where you spend your time.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues records ambient audio in 30-second intervals to analyze your daily environment and acoustic patterns. All recordings are processed securely and you have full control over when recording is active.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues continuously records audio to capture and transcribe your conversations. Recording pauses during silent periods to save battery. All recordings are processed securely and you have full control over when recording is active.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -312,20 +311,21 @@
 				CODE_SIGN_ENTITLEMENTS = Virtues/Virtues.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 4;
 				DEVELOPMENT_TEAM = 4YV9K677RY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Virtues/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Virtues;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Virtues syncs your contacts to help identify people in your life story and connect conversations to relationships.";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "Virtues reads your health data (heart rate, steps, sleep, activity) to provide comprehensive wellness insights. Your health data is stored securely and never shared without your explicit consent.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Virtues may write health data from connected devices.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Virtues needs to connect to your local server for data sync";
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Virtues continuously tracks your location to provide personalized health insights based on where you spend your time. This data is collected in the background to ensure accurate daily patterns.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Virtues tracks your location continuously to provide detailed activity context.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Virtues tracks your location to provide personalized health insights based on where you spend your time.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues records ambient audio in 30-second intervals to analyze your daily environment and acoustic patterns. All recordings are processed securely and you have full control over when recording is active.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues continuously records audio to capture and transcribe your conversations. Recording pauses during silent periods to save battery. All recordings are processed securely and you have full control over when recording is active.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

@@ -7,13 +7,17 @@
 
 import SwiftUI
 import BackgroundTasks
+import UIKit
 
 @main
 struct VirtuesApp: App {
-    @AppStorage("isOnboardingComplete") private var isOnboardingComplete = false
     @StateObject private var lifecycleObserver = AppLifecycleObserver()
+    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
 
     init() {
+        // Configure navigation bar appearance with serif fonts
+        configureNavigationBarAppearance()
+
         // Register background tasks on app launch
         registerBackgroundTasks()
 
@@ -24,22 +28,65 @@ struct VirtuesApp: App {
         _ = HealthKitManager.shared
         _ = LocationManager.shared
         _ = AudioManager.shared
+        _ = BatteryManager.shared
+        _ = ContactsManager.shared
         _ = PermissionMonitor.shared
         _ = LowPowerModeMonitor.shared
+    }
+
+    private func configureNavigationBarAppearance() {
+        // iOS 26: Use default Liquid Glass appearance, only customize fonts
+        // Don't set background - let the system handle the glass effect
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()  // Let Liquid Glass show through
+
+        // Warm foreground color for navigation text
+        let warmForeground = UIColor(red: 0x26/255.0, green: 0x25/255.0, blue: 0x1E/255.0, alpha: 1.0)
+
+        // Serif font for inline title (compact mode)
+        appearance.titleTextAttributes = [
+            .font: UIFont(descriptor: UIFontDescriptor.preferredFontDescriptor(withTextStyle: .headline).withDesign(.serif)!, size: 0),
+            .foregroundColor: warmForeground
+        ]
+
+        // Serif font for large title
+        appearance.largeTitleTextAttributes = [
+            .font: UIFont(descriptor: UIFontDescriptor.preferredFontDescriptor(withTextStyle: .largeTitle).withDesign(.serif)!, size: 0),
+            .foregroundColor: warmForeground
+        ]
+
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
+
+        // Set tint color for navigation bar items (back button, etc.)
+        UINavigationBar.appearance().tintColor = UIColor(red: 0xEB/255.0, green: 0x56/255.0, blue: 0x01/255.0, alpha: 1.0)
+
+        // Prefer inline (compact) titles by default
+        UINavigationBar.appearance().prefersLargeTitles = false
     }
 
     var body: some Scene {
         WindowGroup {
             Group {
-                if isOnboardingComplete {
-                    MainView()
-                        .onAppear {
-                            // Start all background services
-                            startAllServices()
-                        }
+                if hasSeenWelcome {
+                    ContentView()
                 } else {
-                    OnboardingView(isOnboardingComplete: $isOnboardingComplete)
+                    WelcomeView(onComplete: {
+                        // Auto-enable permission-free sensors
+                        BatteryManager.shared.startMonitoring()
+                        if BarometerManager.isAvailable {
+                            BarometerManager.shared.startMonitoring()
+                        }
+                        hasSeenWelcome = true
+                    })
                 }
+            }
+            .preferredColorScheme(.light)  // Force light mode for warm color palette
+            .background(Color.warmBackground)
+            .onAppear {
+                // Start services based on current configuration
+                startAllServices()
             }
         }
     }
@@ -116,6 +163,8 @@ struct VirtuesApp: App {
         let locationManager = LocationManager.shared
         let audioManager = AudioManager.shared
         let healthKitManager = HealthKitManager.shared
+        let batteryManager = BatteryManager.shared
+        let contactsManager = ContactsManager.shared
 
         // Schedule background refresh task (required for background execution)
         scheduleBackgroundRefresh()
@@ -145,10 +194,19 @@ struct VirtuesApp: App {
 
         // Start HealthKit monitoring if authorized AND enabled
         if healthKitManager.isAuthorized && config.isStreamEnabled("healthkit") {
-            // Check if we have anchors (meaning initial sync was done)
-            _ = !healthKitManager.anchors.isEmpty
-
             healthKitManager.startMonitoring()
+        }
+
+        // Start battery monitoring if enabled (no permission required)
+        if config.isStreamEnabled("battery") {
+            batteryManager.startMonitoring()
+        }
+
+        // Sync contacts if authorized AND enabled
+        if contactsManager.isAuthorized && config.isStreamEnabled("contacts") {
+            Task {
+                await contactsManager.syncIfNeeded()
+            }
         }
     }
 }

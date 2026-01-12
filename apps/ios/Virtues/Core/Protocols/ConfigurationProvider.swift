@@ -54,16 +54,10 @@ extension DeviceConfiguration: ConfigurationProvider {
 // MARK: - DeviceManager Extension
 
 extension DeviceManager: ObservableConfigurationProvider {
-    var deviceId: String {
-        configuration.deviceId
-    }
+    // deviceId and deviceToken are already defined in DeviceManager
 
     var apiEndpoint: String {
         configuration.apiEndpoint
-    }
-
-    var deviceToken: String {
-        configuration.deviceToken
     }
 
     var ingestURL: URL? {

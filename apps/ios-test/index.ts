@@ -377,6 +377,63 @@ const server = Bun.serve({
       }
     }
 
+    // Link device manually endpoint (Web app uses this for iOS flow)
+    if (url.pathname === '/api/devices/pairing/link' && req.method === 'POST') {
+      try {
+        const body = await req.json() as { device_id: string, name: string, device_type: string };
+
+        if (!body.device_id || !body.device_type) {
+          return new Response(
+            JSON.stringify({ error: 'Missing required fields' }),
+            {
+              status: 400,
+              headers: {
+                'Content-Type': 'application/json',
+                ...corsHeaders(origin || undefined)
+              }
+            }
+          );
+        }
+
+        // In test mode, we just echo back success use the ID as valid
+        const sourceId = generateUUID();
+
+        // Register this ID as "verified" in memory so Verify endpoint works later
+        // Note: The verify endpoint in this test server blindly accepts all tokens anyway,
+        // so we don't strictly need to store it, but it's good practice.
+
+        const response: CompletePairingResponse = {
+          source_id: sourceId,
+          device_token: body.device_id, // The ID is the token in this flow
+          available_streams: getAvailableStreams()
+        };
+
+        console.log(`[LINK] Device linked manually: ${body.name} (${body.device_id})`);
+
+        return new Response(JSON.stringify(response), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            ...corsHeaders(origin || undefined)
+          }
+        });
+      } catch (error) {
+        return new Response(
+          JSON.stringify({
+            error: 'Invalid request body',
+            message: error instanceof Error ? error.message : 'Unknown error'
+          }),
+          {
+            status: 400,
+            headers: {
+              'Content-Type': 'application/json',
+              ...corsHeaders(origin || undefined)
+            }
+          }
+        );
+      }
+    }
+
     // Complete pairing endpoint (iOS app uses this with code + device_info)
     if (url.pathname === '/api/devices/pairing/complete' && req.method === 'POST') {
       try {

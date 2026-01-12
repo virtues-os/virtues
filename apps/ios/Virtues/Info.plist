@@ -11,9 +11,10 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
-		<string>audio</string>
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<key>NSMotionUsageDescription</key>
+	<string>Virtues uses motion sensors to track barometric pressure and altitude changes for activity context.</string>
 </dict>
 </plist>
