@@ -14,7 +14,7 @@ class AudioManager: NSObject, ObservableObject {
     static let shared = AudioManager()
 
     // MARK: - Constants
-    private let chunkDurationSeconds = 30.0
+    private let chunkDurationSeconds = 300.0  // 5 minutes per chunk
     private let healthCheckIntervalSeconds = 30.0
     private let interruptionRecoveryDelay = 0.5
 
@@ -22,8 +22,11 @@ class AudioManager: NSObject, ObservableObject {
     @Published var microphoneAuthorizationStatus: AVAudioApplication.recordPermission = .undetermined
     @Published var isRecording = false
     @Published var lastSaveDate: Date?
-    @Published var availableAudioInputs: [AVAudioSessionPortDescription] = []
-    @Published var selectedAudioInput: AVAudioSessionPortDescription?
+    @Published var currentDbLevel: Float = -160  // For real-time VU meter (dB scale: -160 to 0)
+
+    // MARK: - dB Metering
+    private var dbMeteringTimer: ReliableTimer?
+    private var accumulatedDbSamples: [Float] = []  // For historical chart
 
     // MARK: - Dependencies
     private let configProvider: ConfigurationProvider
@@ -49,9 +52,7 @@ class AudioManager: NSObject, ObservableObject {
         super.init()
 
         checkAuthorizationStatus()
-        setupAudioInputMonitoring()
-        updateAvailableInputs()
-        loadSelectedInput()
+        setupNotificationObservers()
 
         // Register with centralized health check coordinator
         HealthCheckCoordinator.shared.register(self)
@@ -75,7 +76,9 @@ class AudioManager: NSObject, ObservableObject {
     
     func requestAuthorization() async -> Bool {
         let granted = await AVAudioApplication.requestRecordPermission()
-        DispatchQueue.main.async {
+        // Use await MainActor.run to ensure status is updated before returning
+        // This fixes race condition where hasPermission was checked before status was updated
+        await MainActor.run {
             self.checkAuthorizationStatus()
         }
         return granted
@@ -89,26 +92,10 @@ class AudioManager: NSObject, ObservableObject {
         return microphoneAuthorizationStatus == .granted
     }
     
-    // MARK: - Audio Input Management
-    
-    private func setupAudioInputMonitoring() {
-        // Listen for audio route changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleRouteChange),
-            name: AVAudioSession.routeChangeNotification,
-            object: audioSession
-        )
+    // MARK: - Notification Observers
 
-        // Listen for available inputs changes
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleInputsChange),
-            name: AVAudioSession.mediaServicesWereResetNotification,
-            object: audioSession
-        )
-
-        // Listen for audio interruptions (phone calls, etc.)
+    private func setupNotificationObservers() {
+        // Listen for audio interruptions (phone calls, Siri, etc.)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleInterruption),
@@ -125,21 +112,12 @@ class AudioManager: NSObject, ObservableObject {
         )
 
         // Listen for app becoming active (returning from background)
-        // This helps resume recording after music apps release audio session
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppBecameActive),
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
-    }
-    
-    @objc private func handleRouteChange(notification: Notification) {
-        updateAvailableInputs()
-    }
-    
-    @objc private func handleInputsChange(notification: Notification) {
-        updateAvailableInputs()
     }
 
     @objc private func handleAppBecameActive(notification: Notification) {
@@ -275,153 +253,12 @@ class AudioManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Audio Input Management
-
-    /// Refresh available audio inputs (call when opening Settings)
-    func refreshAvailableInputs() {
-        // Temporarily activate audio session to get full list of inputs
-        do {
-            // Use both A2DP and HFP to see all Bluetooth devices (AirPods, headsets, car audio)
-            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetoothA2DP, .allowBluetoothHFP])
-            try audioSession.setActive(true)
-
-            // Update the list
-            updateAvailableInputs()
-
-            // If not recording, deactivate to save resources
-            if !isRecording {
-                try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
-            }
-        } catch {
-            print("Failed to refresh audio inputs: \(error)")
-        }
-    }
-
-    private func updateAvailableInputs() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
-            // Get all available inputs
-            self.availableAudioInputs = self.audioSession.availableInputs ?? []
-
-            #if DEBUG
-            print("🎙️ Available audio inputs: \(self.availableAudioInputs.count)")
-            for input in self.availableAudioInputs {
-                print("   - \(input.portName) (\(input.portType.rawValue))")
-            }
-            #endif
-
-            // Check if we have a saved preference
-            if let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInputUID") {
-                // Try to find the saved device in available inputs
-                if let matchingInput = self.availableAudioInputs.first(where: { $0.uid == savedUID }) {
-                    // Saved device is available - update UI state but DON'T auto-switch
-                    // Only apply when user explicitly starts/restarts recording
-                    self.selectedAudioInput = matchingInput
-                    #if DEBUG
-                    print("   Preferred audio input available: \(self.getDisplayName(for: matchingInput))")
-                    print("   Will be used on next recording start (no auto-switch to avoid interrupting other apps)")
-                    #endif
-                } else {
-                    // Saved device not available (disconnected) - use built-in mic temporarily
-                    // BUT keep the preference in UserDefaults for when it reconnects
-                    self.selectedAudioInput = self.availableAudioInputs.first(where: {
-                        $0.portType == .builtInMic
-                    })
-                    #if DEBUG
-                    print("Preferred audio input not available (temporarily using iPhone mic)")
-                    #endif
-                }
-            } else {
-                // No saved preference - default to built-in mic
-                self.selectedAudioInput = self.availableAudioInputs.first(where: {
-                    $0.portType == .builtInMic
-                })
-            }
-        }
-    }
-    
-    func selectAudioInput(_ input: AVAudioSessionPortDescription?) {
-        selectedAudioInput = input
-        saveSelectedInput()
-
-        // Apply the selection if currently recording
-        // This happens when user EXPLICITLY selects in Settings
-        if isRecording {
-            do {
-                try audioSession.setPreferredInput(input)
-                #if DEBUG
-                print("   Switched recording input to: \(input.map { getDisplayName(for: $0) } ?? "default")")
-                #endif
-            } catch {
-                print("❌ Failed to set preferred audio input: \(error)")
-            }
-        }
-    }
-    
-    private func loadSelectedInput() {
-        guard let savedInputUID = UserDefaults.standard.string(forKey: "selectedAudioInputUID") else {
-            return
-        }
-
-        // Try to find saved input in available inputs
-        if let matchingInput = availableAudioInputs.first(where: { $0.uid == savedInputUID }) {
-            selectedAudioInput = matchingInput
-            #if DEBUG
-            print("Restored saved audio input: \(getDisplayName(for: matchingInput))")
-            #endif
-        } else {
-            #if DEBUG
-            print("Saved audio input not available (UID: \(savedInputUID))")
-            print("   Device may be disconnected. Preference preserved for next connection.")
-            #endif
-            // Don't reset preference - keep it for when device reconnects
-            // Just use built-in mic temporarily
-            selectedAudioInput = availableAudioInputs.first(where: { $0.portType == .builtInMic })
-        }
-    }
-    
-    private func saveSelectedInput() {
-        UserDefaults.standard.set(selectedAudioInput?.uid, forKey: "selectedAudioInputUID")
-    }
-    
-    func getDisplayName(for input: AVAudioSessionPortDescription) -> String {
-        // Return user-friendly names for common port types
-        switch input.portType {
-        case .builtInMic:
-            return "iPhone Microphone"
-        case .bluetoothHFP, .bluetoothA2DP:
-            return input.portName // Use the actual device name for Bluetooth
-        case .headsetMic:
-            return "Wired Headset"
-        case .usbAudio:
-            return "USB Microphone"
-        case .carAudio:
-            return "Car Audio"
-        default:
-            return input.portName
-        }
-    }
-    
     // MARK: - Audio Session Setup
-    
+
     func setupAudioSession() throws {
-        // DO NOT use .mixWithOthers - it degrades audio quality to mono
-        // Instead, we auto-pause recording when other audio plays (see handleSilenceSecondaryAudioHint)
-        // This preserves full audio quality for both recording and music playback
-        //
-        // Use both A2DP and HFP:
-        // - A2DP: High-quality playback (music stops our recording to preserve quality)
-        // - HFP: Bluetooth microphones (AirPods, headsets can be used for recording)
-        let options: AVAudioSession.CategoryOptions = [.allowBluetoothA2DP, .allowBluetoothHFP]
-
-        try audioSession.setCategory(.playAndRecord, mode: .default, options: options)
-
-        // Set preferred input to control which device records
-        if let selectedInput = selectedAudioInput {
-            try audioSession.setPreferredInput(selectedInput)
-        }
-
+        // Simple setup - iPhone built-in mic only
+        // No Bluetooth options to avoid AirPods interference when connected to other devices
+        try audioSession.setCategory(.playAndRecord, mode: .default)
         try audioSession.setActive(true)
     }
     
@@ -433,23 +270,14 @@ class AudioManager: NSObject, ObservableObject {
             return
         }
 
-        // Check if audio is enabled in configuration
-        let isEnabled = configProvider.isStreamEnabled("microphone")
-        #if DEBUG
-        print("🎙️ startRecording() called: hasPermission=\(hasPermission), isEnabled=\(isEnabled), isRecording=\(isRecording)")
-        #endif
-
-        guard isEnabled else {
-            #if DEBUG
-            print("❌ Audio stream 'microphone' is disabled in configuration")
-            #endif
-            return
-        }
-
         // Don't start if already recording
         guard !isRecording else {
             return
         }
+
+        #if DEBUG
+        print("🎙️ startRecording() called: hasPermission=\(hasPermission), isRecording=\(isRecording)")
+        #endif
 
         do {
             try setupAudioSession()
@@ -467,6 +295,7 @@ class AudioManager: NSObject, ObservableObject {
     func stopRecording() {
         recordingTimer?.cancel()
         recordingTimer = nil
+        stopDbMetering()
 
         // Save any partial chunk before stopping
         savePartialChunkIfNeeded()
@@ -475,6 +304,37 @@ class AudioManager: NSObject, ObservableObject {
         currentChunkStartTime = nil
         isRecording = false
     }
+
+    // MARK: - dB Metering
+
+    private func startDbMetering() {
+        dbMeteringTimer = ReliableTimer.builder()
+            .interval(0.5)  // Poll every 500ms
+            .queue(timerQueue)
+            .handler { [weak self] in
+                self?.updateDbLevel()
+            }
+            .build()
+    }
+
+    private func stopDbMetering() {
+        dbMeteringTimer?.cancel()
+        dbMeteringTimer = nil
+    }
+
+    private func updateDbLevel() {
+        guard let recorder = audioRecorder, recorder.isRecording else { return }
+
+        recorder.updateMeters()
+        let db = recorder.averagePower(forChannel: 0)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.currentDbLevel = db
+            self.accumulatedDbSamples.append(db)
+        }
+    }
+
 }
 
 // MARK: - Chunk Recording
@@ -521,9 +381,14 @@ extension AudioManager {
         do {
             audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
             audioRecorder?.delegate = self
+            audioRecorder?.isMeteringEnabled = true  // Enable dB metering
             audioRecorder?.record()
 
             currentChunkStartTime = Date()
+            accumulatedDbSamples.removeAll()
+
+            // Start dB metering timer (polls every 500ms for VU meter updates)
+            startDbMetering()
 
             // Use ReliableTimer for background execution
             recordingTimer = ReliableTimer.builder()
@@ -550,24 +415,57 @@ extension AudioManager {
         let wasRecording = recorder.isRecording
         recorder.stop()
         let endTime = Date()
+        let recorderUrl = recorder.url
 
-        print("📊 Finishing chunk: wasRecording=\(wasRecording), duration=\(endTime.timeIntervalSince(startTime))s")
+        // Calculate average dB for this chunk from accumulated samples
+        let avgDb = accumulatedDbSamples.isEmpty ? currentDbLevel : accumulatedDbSamples.reduce(0, +) / Float(accumulatedDbSamples.count)
+        accumulatedDbSamples.removeAll()
+
+        let duration = endTime.timeIntervalSince(startTime)
+        #if DEBUG
+        print("📊 Finishing chunk: wasRecording=\(wasRecording), duration=\(duration)s, avgDb=\(avgDb)")
+        #endif
 
         // Process the recorded audio
-        if let audioData = try? Data(contentsOf: recorder.url) {
-            // Create chunk object
-            let chunk = AudioChunk(
-                startDate: startTime,
-                endDate: endTime,
-                audioData: audioData,
-                overlapDuration: 0.0
-            )
+        do {
+            let audioData = try Data(contentsOf: recorderUrl)
 
-            // Save directly to SQLite
-            saveAudioChunk(chunk)
+            // Validate audio data - minimum ~1KB for valid audio
+            guard audioData.count > 1000 else {
+                print("❌ Audio file too small (\(audioData.count) bytes), discarding chunk")
+                try? FileManager.default.removeItem(at: recorderUrl)
+                if isRecording { startRecordingChunk() }
+                return
+            }
 
-            // Clean up temporary file
-            try? FileManager.default.removeItem(at: recorder.url)
+            #if DEBUG
+            print("💾 Saving audio chunk: \(audioData.count) bytes, duration=\(duration)s")
+            #endif
+
+            let chunkStartTime = startTime
+            let chunkEndTime = endTime
+
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+
+                // Create chunk object with 2-second overlap for transcription continuity
+                let chunk = AudioChunk(
+                    startDate: chunkStartTime,
+                    endDate: chunkEndTime,
+                    audioData: audioData,
+                    overlapDuration: 2.0,
+                    averageDbLevel: avgDb
+                )
+
+                // Save directly to SQLite
+                self.saveAudioChunk(chunk)
+
+                // Clean up temporary file
+                try? FileManager.default.removeItem(at: recorderUrl)
+            }
+        } catch {
+            print("❌ Failed to read audio file: \(error)")
+            try? FileManager.default.removeItem(at: recorderUrl)
         }
 
         // Continue recording if still active
@@ -580,28 +478,30 @@ extension AudioManager {
         // Begin background task
         beginBackgroundTask()
 
-        // Ensure background task ends no matter what
-        defer { endBackgroundTask() }
-
         let deviceId = configProvider.deviceId
 
-        // Attempt to save with retry mechanism
-        let result = saveWithRetry(chunk: chunk, deviceId: deviceId, maxAttempts: 3)
+        // Attempt to save with retry mechanism (async)
+        Task {
+            let result = await saveWithRetry(chunk: chunk, deviceId: deviceId, maxAttempts: 3)
 
-        switch result {
-        case .success:
-            Task { @MainActor in
-                self.lastSaveDate = Date()
+            switch result {
+            case .success:
+                await MainActor.run {
+                    self.lastSaveDate = Date()
+                }
+                dataUploader.updateUploadStats()
+
+            case .failure(let error):
+                ErrorLogger.shared.log(error, deviceId: deviceId)
             }
-            dataUploader.updateUploadStats()
 
-        case .failure(let error):
-            ErrorLogger.shared.log(error, deviceId: deviceId)
+            // End background task when done
+            endBackgroundTask()
         }
     }
 
     /// Attempts to save audio chunk with exponential backoff retry
-    private func saveWithRetry(chunk: AudioChunk, deviceId: String, maxAttempts: Int) -> Result<Void, AnyDataCollectionError> {
+    private func saveWithRetry(chunk: AudioChunk, deviceId: String, maxAttempts: Int) async -> Result<Void, AnyDataCollectionError> {
         let streamData = AudioStreamData(
             deviceId: deviceId,
             chunks: [chunk]
@@ -634,10 +534,10 @@ extension AudioManager {
                 return .success
             }
 
-            // If not last attempt, wait before retrying
+            // If not last attempt, wait before retrying (non-blocking async sleep)
             if attempt < maxAttempts {
                 let delay = Double(attempt) * 0.5  // 0.5s, 1.0s backoff
-                Thread.sleep(forTimeInterval: delay)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
 

@@ -12,8 +12,10 @@ struct AudioChunk: Codable {
     let timestampStart: String
     let timestampEnd: String
     let duration: Double
-    let audioData: String  // Base64 encoded Opus audio
+    let audioData: String  // Base64 encoded AAC audio
     let overlapDuration: Double
+    let averageDbLevel: Float?  // Average dB level for this chunk (negative scale: -60 quiet, -20 loud)
+    let isSilent: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -22,11 +24,18 @@ struct AudioChunk: Codable {
         case duration
         case audioData = "audio_data"
         case overlapDuration = "overlap_duration"
+        case averageDbLevel = "average_db_level"
+        case isSilent = "is_silent"
     }
 
     init(
-        id: String = UUID().uuidString, startDate: Date, endDate: Date, audioData: Data,
-        overlapDuration: Double = 2.0
+        id: String = UUID().uuidString,
+        startDate: Date,
+        endDate: Date,
+        audioData: Data,
+        overlapDuration: Double = 2.0,
+        averageDbLevel: Float? = nil,
+        isSilent: Bool = false
     ) {
         self.id = id
         self.timestampStart = ISO8601DateFormatter().string(from: startDate)
@@ -34,6 +43,8 @@ struct AudioChunk: Codable {
         self.duration = endDate.timeIntervalSince(startDate)
         self.audioData = audioData.base64EncodedString()
         self.overlapDuration = overlapDuration
+        self.averageDbLevel = averageDbLevel
+        self.isSilent = isSilent
     }
 }
 

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import AVFoundation
 
 struct SettingsView: View {
     @ObservedObject private var deviceManager = DeviceManager.shared
@@ -14,48 +13,96 @@ struct SettingsView: View {
     @ObservedObject private var uploadCoordinator = BatchUploadCoordinator.shared
     @ObservedObject private var locationManager = LocationManager.shared
     @ObservedObject private var audioManager = AudioManager.shared
+    @ObservedObject private var contactsManager = ContactsManager.shared
     
-    @Environment(\.dismiss) var dismiss
-    @AppStorage("isOnboardingComplete") private var isOnboardingComplete = false
     @State private var showingResetAlert = false
     @State private var showingStorageDetails = false
     @State private var showingEndpointEdit = false
+    @State private var showCopiedToast = false
     
     var body: some View {
         NavigationView {
             Form {
-                // Device Section
-                Section(header: Text("Device")) {
-                    HStack {
-                        Text("Device ID")
-                        Spacer()
-                        Text(String(deviceManager.configuration.deviceId.suffix(8)))
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
-                    
+                // Server Section
+                Section(header: Text("Server")) {
+                    // Connection Status
                     HStack {
                         Text("Status")
                         Spacer()
-                        Text(deviceManager.statusMessage)
-                            .foregroundColor(.secondary)
+                        if deviceManager.isConfigured {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.warmSuccess)
+                                Text("Connected")
+                                    .foregroundColor(.warmSuccess)
+                            }
+                        } else {
+                            HStack(spacing: 4) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.warmError)
+                                Text("Not Connected")
+                                    .foregroundColor(.warmError)
+                            }
+                        }
                     }
-                    
-                    if deviceManager.isConfigured {
-                        HStack {
-                            Text("API Endpoint")
-                            Spacer()
+
+                    // Server URL
+                    HStack {
+                        Text("Server URL")
+                        Spacer()
+                        if deviceManager.isConfigured {
                             Text(deviceManager.configuration.apiEndpoint)
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.warmForegroundMuted)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
+                        } else {
+                            Text("Not set")
+                                .foregroundColor(.warmForegroundMuted)
+                        }
+                    }
+
+                    // Device ID (copyable)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Device ID")
+                            Spacer()
+                            Button(action: {
+                                Haptics.light()
+                                UIPasteboard.general.string = deviceManager.configuration.deviceId
+                                showCopiedToast = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    showCopiedToast = false
+                                }
+                            }) {
+                                Image(systemName: "doc.on.doc")
+                                    .foregroundColor(.warmPrimary)
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
                         
-                        Button(action: { showingEndpointEdit = true }) {
-                            Label("Edit Endpoint", systemImage: "pencil")
-                                .foregroundColor(.accentColor)
-                        }
+                        Text(deviceManager.configuration.deviceId)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.warmForegroundMuted)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(Color.warmSurface)
+                            .cornerRadius(6)
+                    }
+                    .padding(.vertical, 4)
+
+                    // Edit/Connect button
+                    Button(action: {
+                        Haptics.light()
+                        showingEndpointEdit = true
+                    }) {
+                        Label(
+                            deviceManager.isConfigured ? "Edit Server" : "Connect to Server",
+                            systemImage: "link"
+                        )
+                        .foregroundColor(.warmPrimary)
                     }
                 }
                 
@@ -75,8 +122,16 @@ struct SettingsView: View {
                         title: "Microphone",
                         isGranted: audioManager.hasPermission
                     )
-                    
-                    Button(action: openAppSettings) {
+
+                    PermissionStatusRow(
+                        title: "Contacts",
+                        isGranted: contactsManager.isAuthorized
+                    )
+
+                    Button(action: {
+                        Haptics.light()
+                        openAppSettings()
+                    }) {
                         Label("Open iOS Settings", systemImage: "gear")
                     }
                 }
@@ -84,98 +139,17 @@ struct SettingsView: View {
                 // Storage Section
                 Section(header: Text("Storage")) {
                     HStack {
-                        Text("Queue Size")
+                        Text("Pending")
                         Spacer()
-                        Text(uploadCoordinator.getQueueSizeString())
-                            .foregroundColor(.secondary)
+                        Text("\(uploadCoordinator.uploadStats.pending) records (\(uploadCoordinator.getQueueSizeString()))")
+                            .foregroundColor(.warmForegroundMuted)
                     }
-                    
-                    HStack {
-                        Text("Pending Uploads")
-                        Spacer()
-                        Text("\(uploadCoordinator.uploadStats.pending)")
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    Button(action: { showingStorageDetails = true }) {
+
+                    Button(action: {
+                        Haptics.light()
+                        showingStorageDetails = true
+                    }) {
                         Label("Storage Details", systemImage: "info.circle")
-                    }
-                }
-                
-                // Data Collection Settings
-                Section(header: Text("Data Collection")) {
-                    Toggle("Location Tracking", isOn: Binding(
-                        get: { locationManager.isTracking },
-                        set: { enabled in
-                            if enabled && locationManager.hasPermission {
-                                locationManager.startTracking()
-                            } else {
-                                locationManager.stopTracking()
-                            }
-                        }
-                    ))
-                    .disabled(!locationManager.hasPermission)
-                    
-                    Toggle("Audio Recording", isOn: Binding(
-                        get: { audioManager.isRecording },
-                        set: { enabled in
-                            if enabled && audioManager.hasPermission {
-                                audioManager.startRecording()
-                            } else {
-                                audioManager.stopRecording()
-                            }
-                        }
-                    ))
-                    .disabled(!audioManager.hasPermission)
-                }
-                
-                // Audio Input Settings
-                if audioManager.hasPermission && !audioManager.availableAudioInputs.isEmpty {
-                    Section(header: Text("Audio Input")) {
-                        Picker("Microphone", selection: Binding(
-                            get: {
-                                audioManager.selectedAudioInput ?? audioManager.availableAudioInputs.first
-                            },
-                            set: { newInput in
-                                audioManager.selectAudioInput(newInput)
-                            }
-                        )) {
-                            ForEach(audioManager.availableAudioInputs, id: \.uid) { input in
-                                Text(audioManager.getDisplayName(for: input))
-                                    .tag(input as AVAudioSessionPortDescription?)
-                            }
-                        }
-                        .pickerStyle(MenuPickerStyle())
-                        
-                        if let selectedInput = audioManager.selectedAudioInput {
-                            HStack {
-                                Text("Current Input")
-                                Spacer()
-                                Text(audioManager.getDisplayName(for: selectedInput))
-                                    .foregroundColor(.secondary)
-                                    .font(.caption)
-                            }
-                        }
-
-                        // Show saved preference if device is disconnected
-                        if let savedUID = UserDefaults.standard.string(forKey: "selectedAudioInputUID"),
-                           audioManager.selectedAudioInput?.uid != savedUID {
-                            HStack {
-                                Text("Preferred Device")
-                                Spacer()
-                                Text("Disconnected")
-                                    .foregroundColor(.orange)
-                                    .font(.caption)
-                            }
-
-                            Text("Your preferred audio device will be used automatically when connected")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Text("Select 'iPhone Microphone' to prevent Bluetooth devices from being used")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
                     }
                 }
                 
@@ -185,57 +159,51 @@ struct SettingsView: View {
                         Text("Auto Sync")
                         Spacer()
                         Text("Every 5 minutes")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.warmForegroundMuted)
                     }
-                    
+
                     if let lastUpload = uploadCoordinator.lastUploadDate {
                         HStack {
                             Text("Last Upload")
                             Spacer()
                             Text(lastUpload, style: .relative)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.warmForegroundMuted)
                         }
                     }
                 }
-                
+
                 // About Section
                 Section(header: Text("About")) {
                     HStack {
                         Text("Version")
                         Spacer()
                         Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.warmForegroundMuted)
                     }
-                    
+
                     HStack {
                         Text("Build")
                         Spacer()
                         Text(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.warmForegroundMuted)
                     }
                 }
                 
                 // Actions Section
                 Section {
-                    Button(action: { showingResetAlert = true }) {
+                    Button(action: {
+                        Haptics.warning()
+                        showingResetAlert = true
+                    }) {
                         Label("Reset App", systemImage: "exclamationmark.triangle")
-                            .foregroundColor(.red)
+                            .foregroundColor(.warmError)
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.warmBackground)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-            .onAppear {
-                // Refresh audio inputs when Settings opens (to detect Bluetooth devices)
-                audioManager.refreshAvailableInputs()
-            }
             .alert("Reset App?", isPresented: $showingResetAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Reset", role: .destructive) {
@@ -250,7 +218,22 @@ struct SettingsView: View {
             .sheet(isPresented: $showingEndpointEdit) {
                 EndpointEditView()
             }
+            .overlay(alignment: .bottom) {
+                if showCopiedToast {
+                    Text("Device ID copied to clipboard")
+                        .font(.subheadline)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color.warmSurface)
+                        .cornerRadius(8)
+                        .shadow(radius: 4)
+                        .padding(.bottom, 20)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        .animation(.easeInOut(duration: 0.2), value: showCopiedToast)
+                }
+            }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
     }
     
     private func openAppSettings() {
@@ -267,19 +250,13 @@ struct SettingsView: View {
         locationManager.stopTracking()
         audioManager.stopRecording()
 
-        // Clear configuration
+        // Clear configuration (disconnects from server)
         deviceManager.clearConfiguration()
 
         // Clear UserDefaults
         if let bundleId = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleId)
         }
-
-        // Reset onboarding flag - this will trigger app to show onboarding screen
-        isOnboardingComplete = false
-
-        // Close settings view - app will show onboarding
-        dismiss()
     }
 }
 
@@ -288,13 +265,18 @@ struct SettingsView: View {
 struct PermissionStatusRow: View {
     let title: String
     let isGranted: Bool
-    
+
     var body: some View {
         HStack {
             Text(title)
             Spacer()
-            Image(systemName: isGranted ? "checkmark.circle.fill" : "xmark.circle")
-                .foregroundColor(isGranted ? .green : .red)
+            HStack(spacing: 4) {
+                Image(systemName: isGranted ? "checkmark.circle.fill" : "xmark.circle")
+                    .foregroundColor(isGranted ? .warmSuccess : .warmError)
+                Text(isGranted ? "Granted" : "Denied")
+                    .font(.caption)
+                    .foregroundColor(isGranted ? .warmSuccess : .warmError)
+            }
         }
     }
 }
@@ -304,12 +286,12 @@ struct PermissionStatusRow: View {
 struct StorageDetailsView: View {
     @ObservedObject private var uploadCoordinator = BatchUploadCoordinator.shared
     @Environment(\.dismiss) var dismiss
-    
+
     private let sqliteManager = SQLiteManager.shared
-    
+
     @State private var databaseSize: String = "Calculating..."
     @State private var availableStorage: String = "Calculating..."
-    
+
     var body: some View {
         NavigationView {
             List {
@@ -345,17 +327,19 @@ struct StorageDetailsView: View {
                 Section(header: Text("Cleanup Policy")) {
                     Text("• Uploaded data is retained for 3 days")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    
+                        .foregroundColor(.warmForegroundMuted)
+
                     Text("• Failed uploads are retried up to 5 times")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    
+                        .foregroundColor(.warmForegroundMuted)
+
                     Text("• Storage warnings appear below 100MB")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.warmBackground)
             .navigationTitle("Storage Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -396,13 +380,13 @@ struct StorageDetailsView: View {
 struct DetailRow: View {
     let label: String
     let value: String
-    
+
     var body: some View {
         HStack {
             Text(label)
             Spacer()
             Text(value)
-                .foregroundColor(.secondary)
+                .foregroundColor(.warmForegroundMuted)
         }
     }
 }

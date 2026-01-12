@@ -15,6 +15,7 @@ class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore()
 
     @Published var isAuthorized = false
+    @Published var isMonitoring = false
     @Published var authorizationStatus: [String: Bool] = [:]
     @Published var lastSyncDate: Date?
     @Published var isSyncing = false
@@ -76,19 +77,12 @@ class HealthKitManager: ObservableObject {
     
     func startMonitoring() {
         print("🏥 startMonitoring called, isAuthorized: \(isAuthorized)")
-        
+
         guard isAuthorized else {
             print("❌ HealthKit not authorized, cannot start monitoring")
             return
         }
-        
-        // Check if HealthKit is enabled in configuration
-        let isEnabled = configProvider.isStreamEnabled("healthkit")
-        guard isEnabled else {
-            print("⏸️ HealthKit stream disabled in web app configuration")
-            return
-        }
-        
+
         // Stop any existing timer
         stopMonitoring()
 
@@ -110,10 +104,11 @@ class HealthKitManager: ObservableObject {
         Task {
             await collectNewData()
         }
-        
+
+        isMonitoring = true
         print("🏥 Started HealthKit monitoring with 5-minute intervals")
     }
-    
+
     func stopMonitoring() {
         if let timer = healthTimer {
             print("🛑 Cancelling HealthKit timer")
@@ -121,9 +116,15 @@ class HealthKitManager: ObservableObject {
             healthTimer = nil
         }
 
+        isMonitoring = false
         print("🛑 Stopped HealthKit monitoring")
     }
-    
+
+    /// Manual sync trigger for UI "Force Sync" button
+    func performSync() async {
+        await collectNewData()
+    }
+
     // MARK: - Authorization
     
     func requestAuthorization() async -> Bool {
@@ -139,7 +140,7 @@ class HealthKitManager: ObservableObject {
             hasRequestedAuthorization = true
 
             // After requesting, test if we actually have access
-            let hasAccess = testHealthKitAccess()
+            let hasAccess = await testHealthKitAccess()
 
             await MainActor.run {
                 self.isAuthorized = hasAccess
@@ -155,10 +156,12 @@ class HealthKitManager: ObservableObject {
     func checkAuthorizationStatus() {
         // Check authorization status for all HealthKit types we need
         print("🏥 Checking HealthKit authorization status...")
-        let hasAccess = testHealthKitAccess()
-        print("🏥 HealthKit access test result: \(hasAccess)")
-        Task { @MainActor in
-            self.isAuthorized = hasAccess
+        Task {
+            let hasAccess = await testHealthKitAccess()
+            print("🏥 HealthKit access test result: \(hasAccess)")
+            await MainActor.run {
+                self.isAuthorized = hasAccess
+            }
         }
     }
 
@@ -170,7 +173,7 @@ class HealthKitManager: ObservableObject {
     // NOTE: Due to provisioning profile issues, authorizationStatus() may lie and return .sharingDenied
     // even when the user has granted permission (visible in Settings). This method tests ACTUAL access
     // by attempting to query data, which is more reliable than trusting the status API.
-    private func testHealthKitAccess() -> Bool {
+    private func testHealthKitAccess() async -> Bool {
         // First, check if we've even requested authorization
         if !hasRequestedAuthorization {
             print("🏥 Result: NOT GRANTED (never requested)")
@@ -190,42 +193,28 @@ class HealthKitManager: ObservableObject {
         let startDate = Calendar.current.date(byAdding: .day, value: -1, to: endDate)!
         let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
 
-        // Use a semaphore to make this synchronous (we're calling from sync context)
-        var result = false
-        let semaphore = DispatchSemaphore(value: 0)
-
-        let query = HKSampleQuery(sampleType: stepType, predicate: predicate, limit: 1, sortDescriptors: nil) { _, samples, error in
-            if let error = error as NSError? {
-                // Check if error is permission-related
-                if error.domain == "com.apple.healthkit" && error.code == 5 { // HKError.errorAuthorizationDenied
-                    print("🏥 Actual query test: DENIED (permission error: \(error.localizedDescription))")
-                    result = false
+        // Use async/await instead of semaphore to avoid blocking the main thread
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(sampleType: stepType, predicate: predicate, limit: 1, sortDescriptors: nil) { _, samples, error in
+                if let error = error as NSError? {
+                    // Check if error is permission-related
+                    if error.domain == "com.apple.healthkit" && error.code == 5 { // HKError.errorAuthorizationDenied
+                        print("🏥 Actual query test: DENIED (permission error: \(error.localizedDescription))")
+                        continuation.resume(returning: false)
+                    } else {
+                        // Other errors mean we have permission but something else failed
+                        print("🏥 Actual query test: GRANTED (non-permission error: \(error.localizedDescription))")
+                        continuation.resume(returning: true)
+                    }
                 } else {
-                    // Other errors mean we have permission but something else failed
-                    print("🏥 Actual query test: GRANTED (non-permission error: \(error.localizedDescription))")
-                    result = true
+                    // No error = we have permission (even if samples is empty/nil)
+                    let sampleCount = samples?.count ?? 0
+                    print("🏥 Actual query test: GRANTED (query succeeded, returned \(sampleCount) samples)")
+                    continuation.resume(returning: true)
                 }
-            } else {
-                // No error = we have permission (even if samples is empty/nil)
-                let sampleCount = samples?.count ?? 0
-                print("🏥 Actual query test: GRANTED (query succeeded, returned \(sampleCount) samples)")
-                result = true
             }
-            semaphore.signal()
+            self.healthStore.execute(query)
         }
-
-        healthStore.execute(query)
-
-        // Wait for query to complete (with timeout)
-        _ = semaphore.wait(timeout: .now() + 5.0)
-
-        if result {
-            print("🏥 Result: GRANTED (actual data access confirmed)")
-        } else {
-            print("🏥 Result: DENIED (actual data access blocked)")
-        }
-
-        return result
     }
     
     // MARK: - Initial Sync
@@ -311,16 +300,18 @@ class HealthKitManager: ObservableObject {
             if allSuccess {
                 print("✅ All \(totalBatches) batches saved successfully")
                 saveLastSyncDate(endDate)
-                
-                // Set anchors after successful initial sync
+
+                // Capture current anchors for future incremental syncs
+                // This must be done via anchored queries - HKQueryAnchor(fromValue:) is not valid
+                print("📍 Capturing anchors for incremental sync...")
                 for type in healthKitTypes {
-                    let typeKey = getAnchorKey(for: type)
-                    // Create a new anchor representing "now" to avoid re-syncing this data
-                    let newAnchor = HKQueryAnchor(fromValue: Int.max)
-                    anchors[typeKey] = newAnchor
-                    saveAnchor(newAnchor, for: typeKey)
+                    if let newAnchor = await captureCurrentAnchor(for: type) {
+                        let typeKey = getAnchorKey(for: type)
+                        anchors[typeKey] = newAnchor
+                        saveAnchor(newAnchor, for: typeKey)
+                    }
                 }
-                print("✅ Anchors set for future incremental syncs")
+                print("✅ Anchors captured for future incremental syncs")
             } else {
                 print("⚠️ Some batches failed to save")
             }
@@ -356,18 +347,15 @@ class HealthKitManager: ObservableObject {
     }
     
     private func collectNewData(for type: HKSampleType, anchor: HKQueryAnchor?) async -> ([HealthKitMetric], HKQueryAnchor?)? {
-        return await withCheckedContinuation { continuation in
+        // First, fetch the raw samples using a Sendable-safe closure
+        let queryResult: ([HKSample], HKQueryAnchor?)? = await withCheckedContinuation { continuation in
             let query = HKAnchoredObjectQuery(
                 type: type,
                 predicate: nil, // Get all new samples
                 anchor: anchor,
                 limit: HKObjectQueryNoLimit
-            ) { [weak self] query, samplesOrNil, deletedObjectsOrNil, newAnchor, error in
-                guard let self = self else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                
+            ) { _, samplesOrNil, _, newAnchor, error in
+                // This closure doesn't capture self, avoiding Sendable issues
                 guard let samples = samplesOrNil, error == nil else {
                     if let error = error {
                         print("❌ HealthKit query error for \(type.identifier): \(error)")
@@ -375,60 +363,65 @@ class HealthKitManager: ObservableObject {
                     continuation.resume(returning: nil)
                     return
                 }
-                
-                var metrics: [HealthKitMetric] = []
-                
-                // Process quantity samples
-                if let quantitySamples = samples as? [HKQuantitySample], 
-                   let quantityType = type as? HKQuantityType {
-                    metrics = quantitySamples.compactMap { sample in
-                        let metricType = self.getMetricType(for: quantityType)
-                        let unit = self.getUnit(for: quantityType)
-                        let value = self.getValue(from: sample, type: quantityType).roundedForHealthKit(metricType: metricType)
-                        
-                        var metadata: [String: Any] = [:]
-                        if quantityType.identifier == HKQuantityType.quantityType(forIdentifier: .heartRate)!.identifier {
-                            metadata["activity_context"] = self.getActivityContext(from: sample)
-                        }
-                        
-                        return HealthKitMetric(
-                            timestamp: sample.startDate,
-                            metricType: metricType,
-                            value: value,
-                            unit: unit,
-                            metadata: metadata.isEmpty ? nil : metadata
-                        )
-                    }
-                }
-                
-                // Process category samples
-                else if let categorySamples = samples as? [HKCategorySample],
-                        let categoryType = type as? HKCategoryType {
-                    metrics = categorySamples.map { sample in
-                        let metricType = self.getMetricType(for: categoryType)
-                        let value = Double(sample.value)
-                        
-                        var metadata: [String: Any] = [:]
-                        if categoryType.identifier == HKCategoryType.categoryType(forIdentifier: .sleepAnalysis)!.identifier {
-                            metadata["sleep_state"] = self.getSleepState(from: sample.value)
-                            metadata["duration_minutes"] = Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
-                        }
-                        
-                        return HealthKitMetric(
-                            timestamp: sample.startDate,
-                            metricType: metricType,
-                            value: value,
-                            unit: "category",
-                            metadata: metadata.isEmpty ? nil : metadata
-                        )
-                    }
-                }
-                
-                continuation.resume(returning: (metrics, newAnchor))
+                continuation.resume(returning: (samples, newAnchor))
             }
-            
             healthStore.execute(query)
         }
+
+        // Process samples outside the closure where we can safely use self
+        guard let (samples, newAnchor) = queryResult else {
+            return nil
+        }
+
+        var metrics: [HealthKitMetric] = []
+
+        // Process quantity samples
+        if let quantitySamples = samples as? [HKQuantitySample],
+           let quantityType = type as? HKQuantityType {
+            metrics = quantitySamples.compactMap { sample in
+                let metricType = self.getMetricType(for: quantityType)
+                let unit = self.getUnit(for: quantityType)
+                let value = self.getValue(from: sample, type: quantityType).roundedForHealthKit(metricType: metricType)
+
+                var metadata: [String: Any] = [:]
+                if quantityType.identifier == HKQuantityType.quantityType(forIdentifier: .heartRate)!.identifier {
+                    metadata["activity_context"] = self.getActivityContext(from: sample)
+                }
+
+                return HealthKitMetric(
+                    timestamp: sample.startDate,
+                    metricType: metricType,
+                    value: value,
+                    unit: unit,
+                    metadata: metadata.isEmpty ? nil : metadata
+                )
+            }
+        }
+
+        // Process category samples
+        else if let categorySamples = samples as? [HKCategorySample],
+                let categoryType = type as? HKCategoryType {
+            metrics = categorySamples.map { sample in
+                let metricType = self.getMetricType(for: categoryType)
+                let value = Double(sample.value)
+
+                var metadata: [String: Any] = [:]
+                if categoryType.identifier == HKCategoryType.categoryType(forIdentifier: .sleepAnalysis)!.identifier {
+                    metadata["sleep_state"] = self.getSleepState(from: sample.value)
+                    metadata["duration_minutes"] = Int(sample.endDate.timeIntervalSince(sample.startDate) / 60)
+                }
+
+                return HealthKitMetric(
+                    timestamp: sample.startDate,
+                    metricType: metricType,
+                    value: value,
+                    unit: "category",
+                    metadata: metadata.isEmpty ? nil : metadata
+                )
+            }
+        }
+
+        return (metrics, newAnchor)
     }
     
     private func collectQuantityData(type: HKQuantityType, predicate: NSPredicate, completion: @escaping ([HealthKitMetric]) -> Void) {
@@ -774,6 +767,35 @@ class HealthKitManager: ObservableObject {
     private func saveAnchor(_ anchor: HKQueryAnchor, for key: String) {
         if let anchorData = try? NSKeyedArchiver.archivedData(withRootObject: anchor, requiringSecureCoding: true) {
             UserDefaults.standard.set(anchorData, forKey: key)
+        }
+    }
+
+    /// Capture the current anchor for a sample type by performing a quick anchored query.
+    /// This is used after initial sync to establish a baseline for incremental syncs.
+    ///
+    /// **Why limit=0?**
+    /// Apple's HealthKit API requires running an actual anchored query to get a valid anchor.
+    /// HKQueryAnchor cannot be created directly from arbitrary values (HKQueryAnchor(fromValue:)
+    /// with Int.max would skip all existing samples). Using limit=0 executes a minimal query
+    /// that returns the current anchor position without fetching any data.
+    private func captureCurrentAnchor(for type: HKSampleType) async -> HKQueryAnchor? {
+        await withCheckedContinuation { continuation in
+            // Create an anchored query with nil anchor and limit=0
+            // This returns the anchor without fetching sample data
+            let query = HKAnchoredObjectQuery(
+                type: type,
+                predicate: nil,
+                anchor: nil,
+                limit: 0  // We don't need data, just the anchor
+            ) { _, _, _, newAnchor, error in
+                if let error = error {
+                    print("⚠️ Error capturing anchor for \(type.identifier): \(error)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: newAnchor)
+            }
+            healthStore.execute(query)
         }
     }
 }

@@ -37,10 +37,37 @@ struct AnyDataCollectionError: Error {
 }
 
 /// Stream types in the application
-enum StreamType: String {
+enum StreamType: String, CaseIterable, Codable {
     case audio = "ios_mic"
     case location = "ios_location"
     case healthKit = "ios_healthkit"
+    case battery = "ios_battery"
+    case contacts = "ios_contacts"
+    case barometer = "ios_barometer"
+
+    /// User-friendly display name for UI
+    var displayName: String {
+        switch self {
+        case .healthKit: return "HealthKit"
+        case .location: return "Location"
+        case .audio: return "Audio"
+        case .battery: return "Battery"
+        case .contacts: return "Contacts"
+        case .barometer: return "Barometer"
+        }
+    }
+
+    /// SF Symbol icon name for UI
+    var iconName: String {
+        switch self {
+        case .healthKit: return "heart.fill"
+        case .location: return "location.fill"
+        case .audio: return "mic.fill"
+        case .battery: return "battery.100"
+        case .contacts: return "person.crop.circle.fill"
+        case .barometer: return "barometer"
+        }
+    }
 }
 
 /// Data encoding errors when preparing data for storage

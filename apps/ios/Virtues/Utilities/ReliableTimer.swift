@@ -147,10 +147,11 @@ extension ReliableTimer {
             return self
         }
 
-        /// Builds and starts the timer
-        func build() -> ReliableTimer {
+        /// Builds and starts the timer. Returns nil if interval or handler not set.
+        func build() -> ReliableTimer? {
             guard let interval = interval, let handler = handler else {
-                fatalError("ReliableTimer.Builder: interval and handler must be set")
+                assertionFailure("ReliableTimer.Builder: interval and handler must be set")
+                return nil
             }
 
             let timer = ReliableTimer(queue: queue, qos: qos)

@@ -14,40 +14,47 @@ struct StreamConfig: Codable {
     let displayName: String
 }
 
+/// Device configuration including API endpoint, device ID, and stream settings.
+///
+/// **Authentication Design:**
+/// The device ID is used directly as the Bearer token for all API calls.
+/// Users copy their device ID from the iOS app and enter it in the web app
+/// to associate the device with their account.
 struct DeviceConfiguration: Codable {
     let deviceId: String
-    var deviceToken: String // Device token provided by user from web app
     var apiEndpoint: String
     let deviceName: String
     var configuredDate: Date?
     var streamConfigurations: [String: StreamConfig] // Stream configurations from web app
-    
+
     private enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
-        case deviceToken = "device_token"
         case apiEndpoint = "api_endpoint"
         case deviceName = "device_name"
         case configuredDate = "configured_date"
         case streamConfigurations = "stream_configurations"
     }
-    
+
     init(deviceId: String = UUID().uuidString,
-         deviceToken: String = "",
          apiEndpoint: String = "",
          deviceName: String = UIDevice.current.name,
          configuredDate: Date? = nil,
          streamConfigurations: [String: StreamConfig] = [:]) {
         self.deviceId = deviceId
-        self.deviceToken = deviceToken
         self.apiEndpoint = apiEndpoint
         self.deviceName = deviceName
         self.configuredDate = configuredDate
         self.streamConfigurations = streamConfigurations
     }
-    
-    // Helper to check if device is configured
+
+    /// Device ID is used as the authentication token
+    var deviceToken: String {
+        deviceId
+    }
+
+    // Helper to check if device is configured (has a server URL)
     var isConfigured: Bool {
-        return !deviceToken.isEmpty && !apiEndpoint.isEmpty
+        return !apiEndpoint.isEmpty
     }
     
     // Helper to check if a specific stream is enabled

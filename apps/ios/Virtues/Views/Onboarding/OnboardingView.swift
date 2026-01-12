@@ -10,15 +10,14 @@ import SwiftUI
 struct OnboardingView: View {
     @ObservedObject private var deviceManager = DeviceManager.shared
     @ObservedObject private var healthKitManager = HealthKitManager.shared
-    
+
     @State private var currentStep = 1
     @State private var apiEndpoint = ""
-    @State private var deviceToken = ""
     @State private var isVerifying = false
     @State private var errorMessage: String?
     @State private var syncProgress: Double = 0
     @State private var hasRequestedPermissions = false
-    
+
     @Binding var isOnboardingComplete: Bool
     
     var body: some View {
@@ -41,15 +40,12 @@ struct OnboardingView: View {
                 Group {
                     switch currentStep {
                     case 1:
-                        EndpointConfigurationStep(
+                        ServerConfigurationStep(
                             apiEndpoint: $apiEndpoint,
-                            deviceToken: $deviceToken,
                             isVerifying: $isVerifying,
                             errorMessage: $errorMessage,
-                            configurationState: $deviceManager.configurationState,
-                            configuredStreamCount: $deviceManager.configuredStreamCount,
-                            onNext: verifyConfiguration,
-                            onRefresh: checkConfigurationStatus
+                            deviceId: deviceManager.deviceId,
+                            onNext: verifyConfiguration
                         )
                     case 2:
                         PermissionsStep(
@@ -78,63 +74,29 @@ struct OnboardingView: View {
     }
     
     // MARK: - Actions
-    
+
     private func verifyConfiguration() {
         Task {
             await MainActor.run {
                 isVerifying = true
                 errorMessage = nil
-                
-                // Update device configuration with the device token
-                deviceManager.updateConfiguration(
-                    apiEndpoint: apiEndpoint,
-                    deviceToken: deviceToken
-                )
+
+                // Update device configuration with the server URL
+                deviceManager.updateConfiguration(apiEndpoint: apiEndpoint)
             }
-            
-            // Verify the configuration
+
+            // Verify the connection
             let success = await deviceManager.verifyConfiguration()
-            
+
             await MainActor.run {
                 isVerifying = false
-                
+
                 if success {
-                    // Check if configuration is complete
-                    if deviceManager.configurationState == .fullyConfigured {
-                        // Streams are configured, move to permissions
-                        withAnimation {
-                            currentStep = 2
-                        }
-                    } else if deviceManager.configurationState == .tokenValid {
-                        // Token valid but waiting for streams
-                        // Stay on current step but show waiting UI
-                        errorMessage = nil
-                    }
-                } else {
-                    errorMessage = deviceManager.lastError
-                }
-            }
-        }
-    }
-    
-    private func checkConfigurationStatus() {
-        Task {
-            await MainActor.run {
-                isVerifying = true
-            }
-            
-            // Re-verify to check if streams are now configured
-            let success = await deviceManager.verifyConfiguration()
-            
-            await MainActor.run {
-                isVerifying = false
-                
-                if success && deviceManager.configurationState == .fullyConfigured {
-                    // Configuration is complete, move to permissions
+                    // Connection successful, move to permissions
                     withAnimation {
                         currentStep = 2
                     }
-                } else if !success {
+                } else {
                     errorMessage = deviceManager.lastError
                 }
             }
@@ -214,17 +176,17 @@ struct OnboardingView: View {
 struct ProgressIndicator: View {
     let currentStep: Int
     let totalSteps: Int
-    
+
     var body: some View {
         HStack(spacing: 8) {
             ForEach(1...totalSteps, id: \.self) { step in
                 Circle()
-                    .fill(step <= currentStep ? Color.accentColor : Color.gray.opacity(0.3))
+                    .fill(step <= currentStep ? Color.warmPrimary : Color.warmBorder)
                     .frame(width: 10, height: 10)
-                
+
                 if step < totalSteps {
                     Rectangle()
-                        .fill(step < currentStep ? Color.accentColor : Color.gray.opacity(0.3))
+                        .fill(step < currentStep ? Color.warmPrimary : Color.warmBorder)
                         .frame(height: 2)
                 }
             }
@@ -233,215 +195,153 @@ struct ProgressIndicator: View {
     }
 }
 
-// MARK: - Step 1: Endpoint Configuration
+// MARK: - Step 1: Server Configuration
 
-struct EndpointConfigurationStep: View {
+struct ServerConfigurationStep: View {
     @Binding var apiEndpoint: String
-    @Binding var deviceToken: String
     @Binding var isVerifying: Bool
     @Binding var errorMessage: String?
-    @Binding var configurationState: DeviceConfigurationState
-    @Binding var configuredStreamCount: Int
+    let deviceId: String
     let onNext: () -> Void
-    let onRefresh: () -> Void
-    
-    @State private var showTokenHelp = false
-    @State private var refreshTimer: Timer?
-    
+
+    @State private var showCopiedToast = false
+
     var isValid: Bool {
-        !apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        deviceToken.count >= 6
+        !apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("Connect to Server")
                 .h2Style()
                 .padding(.horizontal)
-            
+
             VStack(alignment: .leading, spacing: 16) {
-                // API Endpoint
+                // Server URL
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("API Endpoint", systemImage: "network")
+                    Label("Server URL", systemImage: "network")
                         .font(.headline)
-                    
+
                     TextField("https://your-server.com", text: $apiEndpoint)
                         .font(.system(size: 17))
                         .padding()
                         .frame(minHeight: 52)
-                        .background(Color(.systemGray6))
+                        .background(Color.warmSurfaceElevated)
                         .cornerRadius(10)
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color(.systemGray4), lineWidth: 0.5)
+                                .stroke(Color.warmBorder, lineWidth: 0.5)
                         )
                         .autocapitalization(.none)
                         .disableAutocorrection(true)
                         .keyboardType(.URL)
-                    
+
                     Text("The URL of your Virtues server")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                 }
-                
-                // Device Token
+
+                // Device ID (read-only, copyable)
                 VStack(alignment: .leading, spacing: 8) {
+                    Label("Device ID", systemImage: "iphone")
+                        .font(.headline)
+
                     HStack {
-                        Label("Device Token", systemImage: "key.fill")
-                            .font(.headline)
-                        
-                        Button(action: { showTokenHelp.toggle() }) {
-                            Image(systemName: "questionmark.circle")
-                                .foregroundColor(.secondary)
+                        Text(deviceId)
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .foregroundColor(.warmForegroundMuted)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer()
+
+                        Button(action: {
+                            Haptics.light()
+                            UIPasteboard.general.string = deviceId
+                            showCopiedToast = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                showCopiedToast = false
+                            }
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "doc.on.doc")
+                                Text("Copy")
+                                    .font(.caption)
+                            }
+                            .foregroundColor(.warmPrimary)
                         }
+                        .buttonStyle(PlainButtonStyle())
                     }
-                    
-                    TextField("A7K2P9X4", text: $deviceToken)
-                        .font(.system(size: 20, weight: .medium, design: .monospaced))
-                        .padding()
-                        .frame(minHeight: 52)
-                        .background(Color(.systemGray6))
-                        .cornerRadius(10)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(Color(.systemGray4), lineWidth: 0.5)
-                        )
-                        .autocapitalization(.allCharacters)  // Auto-uppercase all input
-                        .disableAutocorrection(true)
-                        .onChange(of: deviceToken) { oldValue, newValue in
-                            // Ensure token is always uppercase
-                            deviceToken = newValue.uppercased()
-                        }
-                    
-                    if showTokenHelp {
-                        Text("Generate a device token in the web app when adding this iOS device as a data source.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.vertical, 4)
-                            .transition(.opacity)
-                    }
+                    .padding()
+                    .frame(minHeight: 52)
+                    .background(Color.warmSurfaceElevated)
+                    .cornerRadius(10)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.warmBorder, lineWidth: 0.5)
+                    )
+
+                    Text("Copy this ID and enter it in the web app to link this device")
+                        .font(.caption)
+                        .foregroundColor(.warmForegroundMuted)
                 }
             }
             .padding(.horizontal)
-            
+
             // Error message
             if let error = errorMessage {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
-                        .foregroundColor(.red)
+                        .foregroundColor(.warmError)
                     Text(error)
                         .font(.caption)
-                        .foregroundColor(.red)
+                        .foregroundColor(.warmError)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-                .background(Color.red.opacity(0.1))
+                .background(Color.warmErrorSubtle)
                 .cornerRadius(8)
                 .padding(.horizontal)
             }
-            
-            // Show different UI based on configuration state
-            if configurationState == .tokenValid {
-                // Token is valid but waiting for stream configuration
-                VStack(spacing: 16) {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                        Text("Token Verified")
-                            .font(.headline)
-                            .foregroundColor(.green)
-                    }
-                    .padding(.horizontal)
-                    
-                    VStack(spacing: 8) {
+
+            // Connect button
+            Button(action: onNext) {
+                HStack {
+                    if isVerifying {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle())
-                        
-                        Text("Waiting for stream configuration")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        Text("Please complete the configuration in your web browser")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Connect")
+                        Image(systemName: "arrow.right")
                     }
-                    .padding()
-                    .background(Color.orange.opacity(0.1))
-                    .cornerRadius(12)
-                    .padding(.horizontal)
-                    
-                    Button(action: onRefresh) {
-                        HStack {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Check Configuration Status")
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.accentColor)
-                        .foregroundColor(.white)
-                        .cornerRadius(12)
-                    }
-                    .disabled(isVerifying)
-                    .padding(.horizontal)
                 }
-            } else {
-                // Normal verify button
-                Button(action: onNext) {
-                    HStack {
-                        if isVerifying {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle())
-                                .scaleEffect(0.8)
-                        } else {
-                            Text("Verify Connection")
-                            Image(systemName: "arrow.right")
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(isValid ? Color.accentColor : Color.gray.opacity(0.3))
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
-                }
-                .disabled(!isValid || isVerifying)
-                .padding(.horizontal)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(isValid ? Color.warmPrimary : Color.warmBorder)
+                .foregroundColor(.white)
+                .cornerRadius(12)
             }
-            
+            .disabled(!isValid || isVerifying)
+            .padding(.horizontal)
+
             Spacer()
         }
         .padding(.top)
-        .onAppear {
-            // Start auto-refresh timer if waiting for configuration
-            if configurationState == .tokenValid {
-                startRefreshTimer()
+        .overlay(alignment: .bottom) {
+            if showCopiedToast {
+                Text("Device ID copied to clipboard")
+                    .font(.subheadline)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.warmSurface)
+                    .cornerRadius(8)
+                    .shadow(radius: 4)
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.2), value: showCopiedToast)
             }
         }
-        .onDisappear {
-            stopRefreshTimer()
-        }
-        .onChange(of: configurationState) { oldState, newState in
-            if newState == .tokenValid {
-                startRefreshTimer()
-            } else {
-                stopRefreshTimer()
-            }
-        }
-    }
-    
-    private func startRefreshTimer() {
-        stopRefreshTimer()
-        // Auto-check every 5 seconds
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
-            if !isVerifying {
-                onRefresh()
-            }
-        }
-    }
-    
-    private func stopRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
     }
 }
 
@@ -477,7 +377,7 @@ struct PermissionsStep: View {
             
             Text("Virtues needs the following permissions to track your data:")
                 .font(.body)
-                .foregroundColor(.secondary)
+                .foregroundColor(.warmForegroundMuted)
                 .padding(.horizontal)
             
             VStack(spacing: 16) {
@@ -516,7 +416,7 @@ struct PermissionsStep: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.accentColor)
+                    .background(Color.warmPrimary)
                     .foregroundColor(.white)
                     .cornerRadius(12)
                 }
@@ -529,12 +429,12 @@ struct PermissionsStep: View {
                         if locationManager.hasPermission && !locationManager.hasAlwaysPermission {
                             Text("Some features require \"Always\" location for background tracking")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.warmForegroundMuted)
                                 .multilineTextAlignment(.center)
                         } else {
                             Text("Some features may be limited without all permissions")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.warmForegroundMuted)
                                 .multilineTextAlignment(.center)
                         }
                     }
@@ -546,7 +446,7 @@ struct PermissionsStep: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(allPermissionsGranted ? Color.green : Color.accentColor)
+                        .background(allPermissionsGranted ? Color.warmSuccess : Color.warmPrimary)
                         .foregroundColor(.white)
                         .cornerRadius(12)
                     }
@@ -632,30 +532,30 @@ struct PermissionRow: View {
     let title: String
     let description: String
     let isGranted: Bool
-    
+
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundColor(isGranted ? .green : .orange)
+                .foregroundColor(isGranted ? .warmSuccess : .warmWarning)
                 .frame(width: 30)
-            
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
                 Text(description)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.warmForegroundMuted)
             }
-            
+
             Spacer()
-            
+
             Image(systemName: isGranted ? "checkmark.circle.fill" : "xmark.circle")
-                .foregroundColor(isGranted ? .green : .red)
+                .foregroundColor(isGranted ? .warmSuccess : .warmError)
                 .font(.title2)
         }
         .padding()
-        .background(Color.gray.opacity(0.1))
+        .background(Color.warmSurfaceElevated)
         .cornerRadius(12)
     }
 }
@@ -686,54 +586,54 @@ struct InitialSyncStep: View {
             
             Text(isComplete ? "Sync complete! Ready to start tracking." : "Fetching the last \(syncDays) days of health data...")
                 .font(.body)
-                .foregroundColor(.secondary)
+                .foregroundColor(.warmForegroundMuted)
                 .multilineTextAlignment(.center)
-            
+
             // Progress circle
             ZStack {
                 Circle()
-                    .stroke(Color.gray.opacity(0.3), lineWidth: 20)
+                    .stroke(Color.warmBorder, lineWidth: 20)
                     .frame(width: 200, height: 200)
-                
+
                 Circle()
                     .trim(from: 0, to: syncProgress)
-                    .stroke(isComplete ? Color.green : Color.accentColor, style: StrokeStyle(lineWidth: 20, lineCap: .round))
+                    .stroke(isComplete ? Color.warmSuccess : Color.warmPrimary, style: StrokeStyle(lineWidth: 20, lineCap: .round))
                     .frame(width: 200, height: 200)
                     .rotationEffect(.degrees(-90))
                     .animation(.easeInOut(duration: 0.5), value: syncProgress)
-                
+
                 VStack {
                     if isComplete {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 60))
-                            .foregroundColor(.green)
+                            .foregroundColor(.warmSuccess)
                     } else {
                         Text("\(progressPercentage)%")
                             .font(.system(size: 48, weight: .bold, design: .rounded))
                         Text("Complete")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.warmForegroundMuted)
                     }
                 }
             }
-            
+
             if !isComplete {
                 VStack(spacing: 8) {
                     Image(systemName: "info.circle")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.warmInfo)
                     Text("Keep the app open during initial sync")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                     Text("This ensures all data is uploaded successfully")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                 }
                 .padding()
-                .background(Color.blue.opacity(0.1))
+                .background(Color.warmInfoSubtle)
                 .cornerRadius(12)
                 .padding(.horizontal)
             }
-            
+
             if isComplete {
                 Button(action: onComplete) {
                     HStack {
@@ -742,7 +642,7 @@ struct InitialSyncStep: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.green)
+                    .background(Color.warmSuccess)
                     .foregroundColor(.white)
                     .cornerRadius(12)
                 }
