@@ -150,18 +150,11 @@ class LocationManager: NSObject, ObservableObject {
     // MARK: - Location Tracking
     
     func startTracking() {
-        guard authorizationStatus == .authorizedAlways else {
-            print("❌ Location tracking requires Always authorization")
+        guard hasPermission else {
+            print("❌ Location tracking requires authorization")
             return
         }
-        
-        // Check if location is enabled in configuration
-        let isEnabled = configProvider.isStreamEnabled("location")
-        guard isEnabled else {
-            print("⏸️ Location stream disabled in web app configuration")
-            return
-        }
-        
+
         print("📍 Starting location tracking")
         isTracking = true
         locationManager.startUpdatingLocation()
@@ -187,9 +180,9 @@ class LocationManager: NSObject, ObservableObject {
 
 extension LocationManager: CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        DispatchQueue.main.async {
-            self.authorizationStatus = manager.authorizationStatus
-        }
+        // Delegate is always called on main thread, so update synchronously
+        // This fixes race condition where authorizationStatus wasn't updated before checks
+        authorizationStatus = manager.authorizationStatus
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -259,6 +252,12 @@ extension LocationManager {
             return
         }
 
+        // Validate coordinates are within valid bounds
+        guard isValidCoordinate(location) else {
+            print("⚠️ Invalid coordinates: lat=\(location.coordinate.latitude), lon=\(location.coordinate.longitude)")
+            return
+        }
+
         // Create location data
         let locationData = LocationData(location: location)
 
@@ -267,6 +266,14 @@ extension LocationManager {
         // Save directly to SQLite
         saveLocationSample(locationData)
     }
+
+    /// Validate that coordinates are within valid geographic bounds
+    private func isValidCoordinate(_ location: CLLocation) -> Bool {
+        let lat = location.coordinate.latitude
+        let lon = location.coordinate.longitude
+        // Valid latitude: -90 to 90, valid longitude: -180 to 180
+        return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
+    }
     
     private func saveLocationSample(_ locationData: LocationData) {
         // Begin background task to ensure save completes
@@ -274,26 +281,28 @@ extension LocationManager {
 
         let deviceId = configProvider.deviceId
 
-        // Attempt to save with retry mechanism
-        let result = saveWithRetry(location: locationData, deviceId: deviceId, maxAttempts: 3)
+        // Attempt to save with async retry mechanism
+        Task {
+            let result = await saveWithRetry(location: locationData, deviceId: deviceId, maxAttempts: 3)
 
-        switch result {
-        case .success:
-            print("✅ Saved location sample to SQLite queue")
-            Task { @MainActor in
-                self.lastSaveDate = Date()
+            switch result {
+            case .success:
+                print("✅ Saved location sample to SQLite queue")
+                await MainActor.run {
+                    self.lastSaveDate = Date()
+                }
+                dataUploader.updateUploadStats()
+
+            case .failure(let error):
+                ErrorLogger.shared.log(error, deviceId: deviceId)
             }
-            dataUploader.updateUploadStats()
 
-        case .failure(let error):
-            ErrorLogger.shared.log(error, deviceId: deviceId)
+            endBackgroundTask()
         }
-
-        endBackgroundTask()
     }
 
-    /// Attempts to save location sample with exponential backoff retry
-    private func saveWithRetry(location: LocationData, deviceId: String, maxAttempts: Int) -> Result<Void, AnyDataCollectionError> {
+    /// Attempts to save location sample with exponential backoff retry (async, non-blocking)
+    private func saveWithRetry(location: LocationData, deviceId: String, maxAttempts: Int) async -> Result<Void, AnyDataCollectionError> {
         let streamData = CoreLocationStreamData(
             deviceId: deviceId,
             locations: [location]
@@ -323,13 +332,13 @@ extension LocationManager {
                 if attempt > 1 {
                     ErrorLogger.shared.logSuccessfulRetry(streamType: .location, attemptNumber: attempt)
                 }
-                return .success
+                return .success(())
             }
 
-            // If not last attempt, wait before retrying
+            // If not last attempt, wait before retrying using async sleep (non-blocking)
             if attempt < maxAttempts {
-                let delay = Double(attempt) * 0.5  // 0.5s, 1.0s backoff
-                Thread.sleep(forTimeInterval: delay)
+                let delayNanoseconds = UInt64(Double(attempt) * 0.5 * 1_000_000_000)  // 0.5s, 1.0s backoff
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
             }
         }
 

@@ -101,15 +101,15 @@ struct MainView: View {
 /// Timer container with guaranteed cleanup via deinit
 class CountdownTimerContainer: ObservableObject {
     @Published var secondsUntilSync: Int = 0
-    var timer: Timer?
+    var timer: ReliableTimer?
 
     deinit {
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
     }
 
     func invalidate() {
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
     }
 }
@@ -121,11 +121,11 @@ struct StatusCard: View {
     
     var statusColor: Color {
         if !deviceManager.isConfigured {
-            return .red
+            return .warmError
         } else if uploadCoordinator.isUploading {
-            return .blue
+            return .warmInfo
         } else {
-            return .green
+            return .warmSuccess
         }
     }
     
@@ -160,7 +160,7 @@ struct StatusCard: View {
                 if deviceManager.isConfigured && !uploadCoordinator.isUploading {
                     Text(countdownText)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                 }
             }
             
@@ -168,20 +168,20 @@ struct StatusCard: View {
                 HStack {
                     Label(deviceManager.configuration.deviceName, systemImage: "iphone")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    
+                        .foregroundColor(.warmForegroundMuted)
+
                     Spacer()
-                    
+
                     Text(deviceManager.configuration.apiEndpoint)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
         }
         .padding()
-        .background(Color.gray.opacity(0.1))
+        .background(Color.warmSurfaceElevated)
         .cornerRadius(12)
         .onAppear {
             startCountdownTimer()
@@ -193,23 +193,32 @@ struct StatusCard: View {
 
     private func startCountdownTimer() {
         updateCountdown()
-        timerContainer.timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [timerContainer, uploadCoordinator] _ in
-            // Update countdown - uses captured values safely
-            let syncInterval: TimeInterval = 300
+        timerContainer.timer = ReliableTimer.builder()
+            .interval(1.0)
+            .qos(.utility)
+            .handler { [weak timerContainer, weak uploadCoordinator] in
+                guard let timerContainer = timerContainer,
+                      let uploadCoordinator = uploadCoordinator else { return }
 
-            if let lastUpload = uploadCoordinator.lastUploadDate {
-                let nextSyncTime = lastUpload.addingTimeInterval(syncInterval)
-                let remainingTime = nextSyncTime.timeIntervalSince(Date())
+                // Update countdown - uses captured values safely
+                let syncInterval: TimeInterval = 300
 
-                if remainingTime > 0 {
-                    timerContainer.secondsUntilSync = Int(remainingTime)
-                } else {
-                    timerContainer.secondsUntilSync = 0
+                DispatchQueue.main.async {
+                    if let lastUpload = uploadCoordinator.lastUploadDate {
+                        let nextSyncTime = lastUpload.addingTimeInterval(syncInterval)
+                        let remainingTime = nextSyncTime.timeIntervalSince(Date())
+
+                        if remainingTime > 0 {
+                            timerContainer.secondsUntilSync = Int(remainingTime)
+                        } else {
+                            timerContainer.secondsUntilSync = 0
+                        }
+                    } else {
+                        timerContainer.secondsUntilSync = Int(syncInterval)
+                    }
                 }
-            } else {
-                timerContainer.secondsUntilSync = Int(syncInterval)
             }
-        }
+            .build()
     }
 
     private func updateCountdown() {
@@ -235,28 +244,28 @@ struct StatusCard: View {
 
 struct QuickStatsView: View {
     @ObservedObject private var uploadCoordinator = BatchUploadCoordinator.shared
-    
+
     var body: some View {
         HStack(spacing: 16) {
             StatCard(
                 title: "HealthKit",
                 value: "\(uploadCoordinator.streamCounts.healthkit)",
                 icon: "heart.fill",
-                color: .red
+                color: .warmError
             )
-            
+
             StatCard(
                 title: "Location",
                 value: "\(uploadCoordinator.streamCounts.location)",
                 icon: "location.fill",
-                color: .blue
+                color: .warmInfo
             )
-            
+
             StatCard(
                 title: "Audio",
                 value: "\(uploadCoordinator.streamCounts.audio)",
                 icon: "mic.fill",
-                color: .green
+                color: .warmSuccess
             )
         }
     }
@@ -282,12 +291,12 @@ struct StatCard: View {
             
             Text(title)
                 .font(.caption2)
-                .foregroundColor(.secondary)
+                .foregroundColor(.warmForegroundMuted)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
-        .background(color.opacity(0.1))
+        .background(color.opacity(0.15))
         .cornerRadius(12)
     }
 }
@@ -314,7 +323,7 @@ struct ManualSyncButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding()
-            .background(Color.accentColor)
+            .background(Color.warmPrimary)
             .foregroundColor(.white)
             .cornerRadius(12)
         }
@@ -355,7 +364,7 @@ struct DataCollectionStatus: View {
             }
         }
         .padding()
-        .background(Color.gray.opacity(0.1))
+        .background(Color.warmSurfaceElevated)
         .cornerRadius(12)
     }
 }
@@ -364,18 +373,18 @@ struct DataStreamRow: View {
     let name: String
     let isActive: Bool
     let lastSync: Date?
-    
+
     var body: some View {
         HStack {
             Label(name, systemImage: isActive ? "checkmark.circle.fill" : "xmark.circle")
-                .foregroundColor(isActive ? .green : .red)
-            
+                .foregroundColor(isActive ? .warmSuccess : .warmError)
+
             Spacer()
-            
+
             if let lastSync = lastSync {
                 Text(lastSync, style: .relative)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.warmForegroundMuted)
             }
         }
     }
@@ -388,27 +397,27 @@ struct LowPowerModeWarningBanner: View {
         HStack(spacing: 12) {
             Image(systemName: "bolt.slash.fill")
                 .font(.title2)
-                .foregroundColor(.orange)
+                .foregroundColor(.warmWarning)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Low Power Mode Active")
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.warmForeground)
 
                 Text("Uploads paused to save battery. Disable Low Power Mode to resume syncing.")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.warmForegroundMuted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer()
         }
         .padding()
-        .background(Color.orange.opacity(0.15))
+        .background(Color.warmWarningSubtle)
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                .stroke(Color.warmWarning.opacity(0.3), lineWidth: 1)
         )
     }
 }
@@ -430,7 +439,7 @@ struct DebugInfoSection: View {
                     Spacer()
 
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                 }
             }
 
@@ -439,26 +448,26 @@ struct DebugInfoSection: View {
                     // Network info
                     Text("Network Quality: \(networkMonitor.networkQualityDescription)")
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
 
                     Text("Batch Size: \(networkMonitor.currentBatchSize) events")
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
 
                     Divider()
 
                     // Device info
                     Text(deviceManager.getDebugInfo())
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.warmForegroundMuted)
                 }
                 .padding()
-                .background(Color.black.opacity(0.05))
+                .background(Color.warmBorderSubtle)
                 .cornerRadius(8)
             }
         }
         .padding()
-        .background(Color.gray.opacity(0.1))
+        .background(Color.warmSurfaceElevated)
         .cornerRadius(12)
     }
 }

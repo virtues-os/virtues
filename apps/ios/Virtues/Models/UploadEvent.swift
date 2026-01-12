@@ -8,7 +8,7 @@
 import Foundation
 import SQLite3
 
-struct UploadEvent {
+struct UploadEvent: Identifiable {
     let id: Int64
     let streamName: String
     let dataBlob: Data
@@ -40,16 +40,20 @@ struct UploadEvent {
         self.status = status
     }
     
-    // Calculate next retry delay based on attempts
+    // Calculate next retry delay based on attempts with jitter to prevent thundering herd
     var nextRetryDelay: TimeInterval {
+        let baseDelay: TimeInterval
         switch uploadAttempts {
-        case 0: return 0
-        case 1: return 30
-        case 2: return 60
-        case 3: return 120
-        case 4: return 240
-        default: return 300 // Max 5 minutes
+        case 0: baseDelay = 0
+        case 1: baseDelay = 30
+        case 2: baseDelay = 60
+        case 3: baseDelay = 120
+        case 4: baseDelay = 240
+        default: baseDelay = 300 // Max 5 minutes
         }
+        // Add up to 20% random jitter to prevent thundering herd
+        let jitter = baseDelay > 0 ? Double.random(in: 0...(baseDelay * 0.2)) : 0
+        return baseDelay + jitter
     }
     
     // Check if event should be retried
