@@ -14,6 +14,8 @@ impl OntologyDescriptor for AppUsageOntology {
             .domain("activity")
             .table_name("activity_app_usage")
             .source_streams(vec!["stream_mac_apps"])
+            .timestamp_column("start_time")
+            .end_timestamp_column("end_time")
             .build()
     }
 }

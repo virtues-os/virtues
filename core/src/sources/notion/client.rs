@@ -57,7 +57,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_creation() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
         let _client = NotionApiClient::new(Uuid::new_v4(), token_manager);
     }

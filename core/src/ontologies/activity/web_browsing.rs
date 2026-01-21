@@ -14,6 +14,7 @@ impl OntologyDescriptor for WebBrowsingOntology {
             .domain("activity")
             .table_name("activity_web_browsing")
             .source_streams(vec!["stream_mac_browser"])
+            .timestamp_column("timestamp")
             .build()
     }
 }

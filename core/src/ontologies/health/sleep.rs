@@ -14,6 +14,8 @@ impl OntologyDescriptor for SleepOntology {
             .domain("health")
             .table_name("health_sleep")
             .source_streams(vec!["stream_ios_healthkit"])
+            .timestamp_column("start_time")
+            .end_timestamp_column("end_time")
             .build()
     }
 }

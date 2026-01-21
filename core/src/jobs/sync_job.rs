@@ -6,22 +6,29 @@ use crate::jobs::{JobExecutor, TransformContext};
 use crate::sources::base::SyncMode;
 use crate::sources::StreamFactory;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Execute a sync job
 ///
 /// This function is called by the job executor to perform the actual sync work.
 /// It updates the job status in the database as it progresses.
 pub async fn execute_sync_job(
-    db: &PgPool,
+    db: &SqlitePool,
     executor: &JobExecutor,
     context: &Arc<TransformContext>,
     job: &Job,
 ) -> Result<()> {
-    let source_id = job
+    let source_id_str = job
         .source_connection_id
+        .as_ref()
         .ok_or_else(|| crate::Error::InvalidInput("Sync job missing source_id".to_string()))?;
+    let source_id = Uuid::parse_str(source_id_str)
+        .map_err(|e| crate::Error::InvalidInput(format!("Invalid source_id: {}", e)))?;
+
+    let job_id = Uuid::parse_str(&job.id)
+        .map_err(|e| crate::Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
 
     let stream_name = job
         .stream_name
@@ -58,9 +65,7 @@ pub async fn execute_sync_job(
         context.storage.clone(),
         context.stream_writer.clone(),
     );
-    let mut stream_type = factory
-        .create_stream_typed(source_id, stream_name)
-        .await?;
+    let mut stream_type = factory.create_stream_typed(source_id, stream_name).await?;
 
     // Ensure we got a PullStream (sync jobs should only work with pull streams)
     let pull_stream = match stream_type.as_pull_mut() {
@@ -103,7 +108,7 @@ pub async fn execute_sync_job(
                 let archive_id = crate::jobs::spawn_archive_job_async(
                     db,
                     context.storage.as_ref(),
-                    Some(job.id), // Parent sync job
+                    Some(job_id), // Parent sync job
                     source_id,
                     stream_name,
                     records.clone(),
@@ -138,15 +143,16 @@ pub async fn execute_sync_job(
                 "archive_job_id": archive_job_id
             });
 
-            // Update the stream_connections table with last sync timestamp
+            // Update the stream_connections table with last sync timestamp and cursor
             sqlx::query(
                 r#"
-                UPDATE data.stream_connections
-                SET last_sync_at = $1, updated_at = NOW()
-                WHERE source_connection_id = $2 AND stream_name = $3
+                UPDATE data_stream_connections
+                SET last_sync_at = $1, last_sync_token = $2, updated_at = datetime('now')
+                WHERE source_connection_id = $3 AND stream_name = $4
                 "#,
             )
             .bind(sync_result.completed_at)
+            .bind(&sync_result.next_cursor)
             .bind(source_id)
             .bind(stream_name)
             .execute(db)
@@ -155,9 +161,9 @@ pub async fn execute_sync_job(
             // Update job with final stats and metadata
             sqlx::query(
                 r#"
-                UPDATE data.jobs
+                UPDATE data_jobs
                 SET status = 'succeeded',
-                    completed_at = NOW(),
+                    completed_at = datetime('now'),
                     records_processed = $1,
                     metadata = $2
                 WHERE id = $3
@@ -165,7 +171,7 @@ pub async fn execute_sync_job(
             )
             .bind(sync_result.records_written as i64)
             .bind(metadata)
-            .bind(job.id)
+            .bind(&job.id)
             .execute(db)
             .await?;
 
@@ -222,9 +228,9 @@ pub async fn execute_sync_job(
             // Update job with error
             sqlx::query(
                 r#"
-                UPDATE data.jobs
+                UPDATE data_jobs
                 SET status = 'failed',
-                    completed_at = NOW(),
+                    completed_at = datetime('now'),
                     error_message = $1,
                     error_class = $2,
                     metadata = $3
@@ -234,7 +240,7 @@ pub async fn execute_sync_job(
             .bind(e.to_string())
             .bind(error_class)
             .bind(metadata)
-            .bind(job.id)
+            .bind(&job.id)
             .execute(db)
             .await?;
 

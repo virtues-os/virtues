@@ -144,7 +144,7 @@ struct ActivityLogView: View {
     }
 
     private func refreshEvents() {
-        events = SQLiteManager.shared.getRecentEvents()
+        events = SQLiteManager.shared.getRecentEvents(limit: 100)
     }
 }
 

@@ -4,15 +4,6 @@ version: '3.8'
 # docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 services:
-  postgres:
-    restart: always
-    # Use persistent volume with backup strategy
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-schemas.sh:/docker-entrypoint-initdb.d/init-schemas.sh
-    # Production settings
-    command: postgres -c max_connections=200 -c shared_buffers=2GB
-
   minio:
     restart: always
 
@@ -22,10 +13,11 @@ services:
       dockerfile: Dockerfile
       target: ""  # Use default (production) target
     restart: always
-    # Remove development volumes
-    volumes: []
+    # Remove development volumes, keep sqlite data
+    volumes:
+      - sqlite_data:/data
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/virtues
+      DATABASE_URL: sqlite:/data/virtues.db
       VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
       RUST_LOG: info,virtues=info
       # OAuth endpoints
@@ -55,7 +47,6 @@ services:
     # Remove development volumes
     volumes: []
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/virtues
       ELT_API_URL: http://core:8000
       PUBLIC_ELT_API_URL: ${PUBLIC_ELT_API_URL:-http://localhost:8000}
       NODE_ENV: production
@@ -65,7 +56,7 @@ services:
     command: node build
 
 volumes:
-  postgres_data:
+  sqlite_data:
     driver: local
   minio_data:
     driver: local

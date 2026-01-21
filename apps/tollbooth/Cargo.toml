@@ -1,0 +1,70 @@
+[package]
+name = "tollbooth"
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "Open source API proxy with prepaid budget enforcement"
+license = "MIT"
+repository = "https://github.com/virtues-os/tollbooth"
+keywords = ["api-proxy", "rate-limiting", "budget", "openai", "anthropic"]
+
+[[bin]]
+name = "tollbooth"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# HTTP Server
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# HTTP Client (for proxying)
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Streaming support
+futures = "0.3"
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Bytes (for request/response bodies)
+bytes = "1.5"
+
+
+# Concurrent HashMap for budget tracking
+dashmap = "6.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Environment
+dotenvy = "0.15"
+
+# Google Cloud authentication (for Vertex AI)
+gcp_auth = "0.12"
+
+# Atomics for lock-free budget updates
+portable-atomic = { version = "1.6", features = ["float"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

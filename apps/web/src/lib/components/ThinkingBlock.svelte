@@ -42,27 +42,30 @@
 	// Expansion state - starts collapsed for completed messages, expanded for active thinking
 	let expanded = $state(isThinking);
 	let hasAutoCollapsed = $state(false);
-	let hasInitialized = $state(false);
+	let hasManuallyCollapsed = $state(false);
 
 	// Track thinking duration
 	let thinkingStartTime = $state<number | null>(null);
 	let calculatedDuration = $state(0);
+	let hasStartedThinking = $state(false);
 
-	// Rotating thinking label
+	// Rotating thinking label - set once on mount
 	let thinkingLabel = $state(getRandomThinkingLabel());
 
 	// Animated ellipsis
 	let dots = $state("");
 
 	onMount(() => {
-		// Animate dots
+		// Animate dots every 400ms
 		const dotsInterval = setInterval(() => {
 			dots = dots.length >= 3 ? "" : dots + ".";
 		}, 400);
 
-		// Rotate label every 4 seconds
+		// Rotate label every 4 seconds (only if still thinking)
 		const labelInterval = setInterval(() => {
-			thinkingLabel = getRandomThinkingLabel();
+			if (isThinking) {
+				thinkingLabel = getRandomThinkingLabel();
+			}
 		}, 4000);
 
 		return () => {
@@ -71,14 +74,15 @@
 		};
 	});
 
-	// Track thinking start time
+	// Track thinking start time - only trigger once per thinking session
 	$effect(() => {
-		if (isThinking && !thinkingStartTime) {
+		if (isThinking && !hasStartedThinking) {
+			hasStartedThinking = true;
 			thinkingStartTime = Date.now();
-			thinkingLabel = getRandomThinkingLabel();
-		} else if (!isThinking && thinkingStartTime) {
-			calculatedDuration = (Date.now() - thinkingStartTime) / 1000;
+		} else if (!isThinking && hasStartedThinking) {
+			calculatedDuration = thinkingStartTime ? (Date.now() - thinkingStartTime) / 1000 : 0;
 			thinkingStartTime = null;
+			hasStartedThinking = false;
 		}
 	});
 
@@ -92,11 +96,18 @@
 		}
 	});
 
-	// Reset on new thinking session
+	// Reset on new thinking session (but respect manual collapse)
 	$effect(() => {
-		if (isThinking && hasAutoCollapsed) {
+		if (isThinking && hasAutoCollapsed && !hasManuallyCollapsed) {
 			hasAutoCollapsed = false;
 			expanded = true;
+		}
+	});
+
+	// Reset manual collapse state when thinking ends (for next session)
+	$effect(() => {
+		if (!isThinking) {
+			hasManuallyCollapsed = false;
 		}
 	});
 
@@ -162,21 +173,29 @@
 	<button
 		type="button"
 		class="block-header"
-		onclick={() => (expanded = !expanded)}
-		aria-expanded={expanded}
+		class:has-content={hasContent}
+		onclick={() => {
+			if (hasContent) {
+				expanded = !expanded;
+				if (!expanded) hasManuallyCollapsed = true;
+			}
+		}}
+		aria-expanded={hasContent ? expanded : undefined}
 	>
-		<span class="chevron" class:rotated={expanded}>
-			<svg width="12" height="12" viewBox="0 0 12 12">
-				<path
-					d="M4 2.5L7.5 6L4 9.5"
-					stroke="currentColor"
-					stroke-width="1.25"
-					fill="none"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				/>
-			</svg>
-		</span>
+		{#if hasContent}
+			<span class="chevron" class:rotated={expanded}>
+				<svg width="12" height="12" viewBox="0 0 12 12">
+					<path
+						d="M4 2.5L7.5 6L4 9.5"
+						stroke="currentColor"
+						stroke-width="1.25"
+						fill="none"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
+				</svg>
+			</span>
+		{/if}
 
 		<span class="header-content">
 			{#if isThinking}
@@ -243,7 +262,7 @@
 
 <style>
 	.thinking-block {
-		margin-bottom: 16px;
+		margin-bottom: 10px;
 	}
 
 	/* Header with hover effect */
@@ -251,12 +270,12 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 10px;
-		margin: -6px -10px;
+		padding: 4px 8px;
+		margin: 0;
 		background: transparent;
 		border: none;
 		border-radius: 6px;
-		cursor: pointer;
+		cursor: default;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
 		line-height: 1.5;
@@ -266,7 +285,11 @@
 			color 0.15s ease;
 	}
 
-	.block-header:hover {
+	.block-header.has-content {
+		cursor: pointer;
+	}
+
+	.block-header.has-content:hover {
 		background-color: var(--color-surface-elevated);
 		color: var(--color-foreground);
 	}
@@ -289,7 +312,7 @@
 		transform: rotate(90deg);
 	}
 
-	.block-header:hover .chevron {
+	.block-header.has-content:hover .chevron {
 		opacity: 1;
 	}
 

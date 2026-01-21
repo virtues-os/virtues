@@ -5,7 +5,7 @@
 
 use chrono::Utc;
 use serde_json::Value;
-use sqlx::{PgPool, Row};
+use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -14,11 +14,12 @@ use crate::storage::Storage;
 use crate::storage::{encryption, EncryptionKey};
 
 /// Archive job model from database
+/// Note: UUIDs and timestamps are stored as TEXT in SQLite
 #[derive(Debug, sqlx::FromRow)]
 pub struct ArchiveJob {
-    pub id: Uuid,
-    pub sync_job_id: Option<Uuid>,
-    pub source_connection_id: Uuid,
+    pub id: String,
+    pub sync_job_id: Option<String>,
+    pub source_connection_id: String,
     pub stream_name: String,
     pub s3_key: String,
     pub status: String,
@@ -26,8 +27,8 @@ pub struct ArchiveJob {
     pub max_retries: i32,
     pub record_count: i32,
     pub size_bytes: i64,
-    pub min_timestamp: Option<chrono::DateTime<Utc>>,
-    pub max_timestamp: Option<chrono::DateTime<Utc>>,
+    pub min_timestamp: Option<String>,
+    pub max_timestamp: Option<String>,
 }
 
 /// Archive job execution context
@@ -49,7 +50,7 @@ pub struct ArchiveContext {
 ///
 /// Result indicating success or failure
 pub async fn execute_archive_job(
-    db: &PgPool,
+    db: &SqlitePool,
     context: &ArchiveContext,
     archive_job_id: Uuid,
     records: Vec<Value>,
@@ -112,12 +113,12 @@ pub async fn execute_archive_job(
 }
 
 /// Fetch archive job from database
-async fn fetch_archive_job(db: &PgPool, archive_job_id: Uuid) -> Result<ArchiveJob> {
+async fn fetch_archive_job(db: &SqlitePool, archive_job_id: Uuid) -> Result<ArchiveJob> {
     let job = sqlx::query_as::<_, ArchiveJob>(
         "SELECT id, sync_job_id, source_connection_id, stream_name, s3_key, status,
                 retry_count, max_retries, record_count, size_bytes,
                 min_timestamp, max_timestamp
-         FROM data.archive_jobs
+         FROM data_archive_jobs
          WHERE id = $1",
     )
     .bind(archive_job_id)
@@ -129,7 +130,7 @@ async fn fetch_archive_job(db: &PgPool, archive_job_id: Uuid) -> Result<ArchiveJ
 
 /// Execute the actual archival: upload to S3 and update metadata
 async fn execute_archival(
-    db: &PgPool,
+    db: &SqlitePool,
     context: &ArchiveContext,
     archive_job: &ArchiveJob,
     records: Vec<Value>,
@@ -137,13 +138,19 @@ async fn execute_archival(
     // Extract date from stream name for key derivation
     let date = archive_job
         .max_timestamp
-        .unwrap_or_else(Utc::now)
-        .date_naive();
+        .as_ref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.date_naive())
+        .unwrap_or_else(|| Utc::now().date_naive());
+
+    // Parse source_connection_id for encryption key derivation
+    let source_conn_uuid = Uuid::parse_str(&archive_job.source_connection_id)
+        .map_err(|e| crate::error::Error::Database(format!("Invalid source_connection_id: {e}")))?;
 
     // Derive encryption key for this stream/date
     let encryption_key_bytes = encryption::derive_stream_key(
         &context.master_key,
-        archive_job.source_connection_id,
+        source_conn_uuid,
         &archive_job.stream_name,
         date,
     )?;
@@ -172,20 +179,22 @@ async fn execute_archival(
         .sum::<i64>();
 
     // Record metadata in stream_objects table
+    let stream_object_id = Uuid::new_v4().to_string();
     sqlx::query(
-        "INSERT INTO data.stream_objects
-         (source_connection_id, stream_name, s3_key, record_count, size_bytes,
+        "INSERT INTO data_stream_objects
+         (id, source_connection_id, stream_name, s3_key, record_count, size_bytes,
           min_timestamp, max_timestamp, archive_job_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, datetime('now'))",
     )
-    .bind(archive_job.source_connection_id)
+    .bind(&stream_object_id)
+    .bind(&archive_job.source_connection_id)
     .bind(&archive_job.stream_name)
     .bind(&archive_job.s3_key)
     .bind(records.len() as i32)
     .bind(size_bytes)
-    .bind(archive_job.min_timestamp)
-    .bind(archive_job.max_timestamp)
-    .bind(archive_job.id)
+    .bind(&archive_job.min_timestamp)
+    .bind(&archive_job.max_timestamp)
+    .bind(&archive_job.id)
     .execute(db)
     .await?;
 
@@ -200,11 +209,11 @@ async fn execute_archival(
 }
 
 /// Mark archive job as in progress
-async fn mark_job_in_progress(db: &PgPool, archive_job_id: Uuid) -> Result<()> {
+async fn mark_job_in_progress(db: &SqlitePool, archive_job_id: Uuid) -> Result<()> {
     sqlx::query(
-        "UPDATE data.archive_jobs
+        "UPDATE data_archive_jobs
          SET status = 'in_progress',
-             started_at = NOW()
+             started_at = datetime('now')
          WHERE id = $1",
     )
     .bind(archive_job_id)
@@ -215,11 +224,11 @@ async fn mark_job_in_progress(db: &PgPool, archive_job_id: Uuid) -> Result<()> {
 }
 
 /// Mark archive job as completed
-async fn mark_job_completed(db: &PgPool, archive_job_id: Uuid) -> Result<()> {
+async fn mark_job_completed(db: &SqlitePool, archive_job_id: Uuid) -> Result<()> {
     sqlx::query(
-        "UPDATE data.archive_jobs
+        "UPDATE data_archive_jobs
          SET status = 'completed',
-             completed_at = NOW()
+             completed_at = datetime('now')
          WHERE id = $1",
     )
     .bind(archive_job_id)
@@ -231,12 +240,12 @@ async fn mark_job_completed(db: &PgPool, archive_job_id: Uuid) -> Result<()> {
 
 /// Mark archive job as failed with retry
 async fn mark_job_failed_with_retry(
-    db: &PgPool,
+    db: &SqlitePool,
     archive_job_id: Uuid,
     error_message: &str,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE data.archive_jobs
+        "UPDATE data_archive_jobs
          SET status = 'pending',
              retry_count = retry_count + 1,
              error_message = $2
@@ -252,15 +261,15 @@ async fn mark_job_failed_with_retry(
 
 /// Mark archive job as permanently failed
 async fn mark_job_failed_permanent(
-    db: &PgPool,
+    db: &SqlitePool,
     archive_job_id: Uuid,
     error_message: &str,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE data.archive_jobs
+        "UPDATE data_archive_jobs
          SET status = 'failed',
              error_message = $2,
-             completed_at = NOW()
+             completed_at = datetime('now')
          WHERE id = $1",
     )
     .bind(archive_job_id)
@@ -286,7 +295,7 @@ async fn mark_job_failed_permanent(
 ///
 /// UUID of the created archive job
 pub async fn create_archive_job(
-    db: &PgPool,
+    db: &SqlitePool,
     sync_job_id: Option<Uuid>,
     source_id: Uuid,
     stream_name: &str,
@@ -301,13 +310,14 @@ pub async fn create_archive_job(
         .map(|r| serde_json::to_string(r).unwrap_or_default().len() as i64)
         .sum::<i64>();
 
-    let row = sqlx::query(
-        "INSERT INTO data.archive_jobs
-         (sync_job_id, source_connection_id, stream_name, s3_key, status,
+    let archive_job_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO data_archive_jobs
+         (id, sync_job_id, source_connection_id, stream_name, s3_key, status,
           record_count, size_bytes, min_timestamp, max_timestamp, created_at)
-         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, NOW())
-         RETURNING id",
+         VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $8, $9, datetime('now'))",
     )
+    .bind(archive_job_id)
     .bind(sync_job_id)
     .bind(source_id)
     .bind(stream_name)
@@ -316,10 +326,8 @@ pub async fn create_archive_job(
     .bind(size_bytes)
     .bind(min_timestamp)
     .bind(max_timestamp)
-    .fetch_one(db)
+    .execute(db)
     .await?;
-
-    let archive_job_id: Uuid = row.get("id");
 
     info!(
         archive_job_id = %archive_job_id,
@@ -380,7 +388,7 @@ pub async fn create_archive_job(
 /// ).await?;
 /// ```
 pub async fn spawn_archive_job_async(
-    db: &PgPool,
+    db: &SqlitePool,
     storage: &Storage,
     parent_job_id: Option<Uuid>,
     source_id: Uuid,
@@ -399,10 +407,11 @@ pub async fn spawn_archive_job_async(
     );
 
     // Get source type from source connection
-    let source: String = sqlx::query_scalar("SELECT source FROM source_connections WHERE id = $1")
-        .bind(source_id)
-        .fetch_one(db)
-        .await?;
+    let source: String =
+        sqlx::query_scalar("SELECT source FROM data_source_connections WHERE id = $1")
+            .bind(source_id)
+            .fetch_one(db)
+            .await?;
 
     // Get subdomain from environment (for multi-tenant S3 storage)
     // Note: SUBDOMAIN is validated at VPS provisioning time in setup.sh
@@ -501,12 +510,12 @@ pub async fn spawn_archive_job_async(
 }
 
 /// Fetch pending archive jobs for execution
-pub async fn fetch_pending_archive_jobs(db: &PgPool, limit: i32) -> Result<Vec<ArchiveJob>> {
+pub async fn fetch_pending_archive_jobs(db: &SqlitePool, limit: i32) -> Result<Vec<ArchiveJob>> {
     let jobs = sqlx::query_as::<_, ArchiveJob>(
         "SELECT id, sync_job_id, source_connection_id, stream_name, s3_key, status,
                 retry_count, max_retries, record_count, size_bytes,
                 min_timestamp, max_timestamp
-         FROM data.archive_jobs
+         FROM data_archive_jobs
          WHERE status IN ('pending', 'failed')
          ORDER BY created_at ASC
          LIMIT $1",

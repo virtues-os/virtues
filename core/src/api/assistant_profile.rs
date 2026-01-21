@@ -6,8 +6,7 @@
 use crate::error::{Error, Result};
 use crate::storage::models::AssistantProfile;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
-use uuid::Uuid;
+use sqlx::SqlitePool;
 
 /// Request to update assistant profile
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +14,7 @@ pub struct UpdateAssistantProfileRequest {
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
     pub default_model_id: Option<String>,
+    pub background_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
 }
@@ -22,11 +22,11 @@ pub struct UpdateAssistantProfileRequest {
 /// Get the assistant profile (singleton row)
 ///
 /// This will always return a profile, as the migration creates an empty row by default.
-pub async fn get_assistant_profile(db: &PgPool) -> Result<AssistantProfile> {
+pub async fn get_assistant_profile(db: &SqlitePool) -> Result<AssistantProfile> {
     let profile = sqlx::query_as::<_, AssistantProfile>(
         r#"
         SELECT *
-        FROM app.assistant_profile
+        FROM app_assistant_profile
         LIMIT 1
         "#,
     )
@@ -42,16 +42,15 @@ pub async fn get_assistant_profile(db: &PgPool) -> Result<AssistantProfile> {
 /// Only updates fields that are present in the request (not None).
 /// Returns the updated profile.
 pub async fn update_assistant_profile(
-    db: &PgPool,
+    db: &SqlitePool,
     request: UpdateAssistantProfileRequest,
 ) -> Result<AssistantProfile> {
-    // The singleton UUID
-    let profile_id =
-        Uuid::parse_str("00000000-0000-0000-0000-000000000001").expect("Valid UUID constant");
+    // The singleton ID (stored as TEXT in SQLite)
+    let profile_id = "00000000-0000-0000-0000-000000000001";
 
     // Build dynamic UPDATE query based on which fields are present
     let mut updates = Vec::new();
-    let mut query = "UPDATE app.assistant_profile SET ".to_string();
+    let mut query = "UPDATE app_assistant_profile SET ".to_string();
 
     if request.assistant_name.is_some() {
         updates.push("assistant_name = $1");
@@ -75,7 +74,7 @@ pub async fn update_assistant_profile(
     }
 
     query.push_str(&updates.join(", "));
-    query.push_str(", updated_at = NOW() WHERE id = $6 RETURNING *");
+    query.push_str(", updated_at = datetime('now') WHERE id = $6 RETURNING *");
 
     // Execute the update with bound parameters
     let updated_profile = sqlx::query_as::<_, AssistantProfile>(&query)
@@ -95,7 +94,7 @@ pub async fn update_assistant_profile(
 /// Helper to get the assistant's name for system prompts
 ///
 /// Returns assistant_name if set, otherwise "Assistant"
-pub async fn get_assistant_name(db: &PgPool) -> Result<String> {
+pub async fn get_assistant_name(db: &SqlitePool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
@@ -103,3 +102,13 @@ pub async fn get_assistant_name(db: &PgPool) -> Result<String> {
         .unwrap_or_else(|| "Assistant".to_string()))
 }
 
+/// Helper to get the background model for cheap tasks (titles, summaries)
+///
+/// Returns background_model_id if set, otherwise falls back to "cerebras/llama-3.3-70b"
+pub async fn get_background_model(db: &SqlitePool) -> Result<String> {
+    let profile = get_assistant_profile(db).await?;
+
+    Ok(profile
+        .background_model_id
+        .unwrap_or_else(|| "cerebras/llama-3.3-70b".to_string()))
+}

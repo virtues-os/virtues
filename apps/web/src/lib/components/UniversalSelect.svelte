@@ -11,6 +11,7 @@
 		maxHeight?: string;
 		getKey: (item: T) => string | number;
 		getValue?: (item: T) => V;
+		onSelect?: (item: T) => void;
 	}
 
 	let {
@@ -21,6 +22,7 @@
 		maxHeight = 'max-h-80',
 		getKey,
 		getValue,
+		onSelect,
 		trigger,
 		item,
 	}: Props & {
@@ -29,7 +31,9 @@
 	} = $props();
 
 	// If getValue is not provided, assume T and V are the same type
-	const extractValue = getValue || ((item: T) => item as unknown as V);
+	function extractValue(item: T): V {
+		return getValue ? getValue(item) : (item as unknown as V);
+	}
 
 	// Find the current item based on the value
 	const currentItem = $derived(
@@ -38,12 +42,13 @@
 
 	let open = $state(false);
 	let dropdownPosition = $state<'top' | 'bottom'>('bottom');
-	let buttonElement: HTMLButtonElement;
-	let dropdownElement: HTMLDivElement;
+	let buttonElement = $state<HTMLButtonElement | null>(null);
+	let dropdownElement = $state<HTMLDivElement | null>(null);
 
 	function selectItem(selectedItem: T) {
 		value = extractValue(selectedItem);
 		open = false;
+		onSelect?.(selectedItem);
 	}
 
 	function toggleDropdown() {
@@ -100,7 +105,7 @@
 		type="button"
 		onclick={toggleDropdown}
 		disabled={disabled}
-		class="flex cursor-pointer items-center gap-2 rounded-full bg-surface text-sm transition-all duration-200"
+		class="flex cursor-pointer items-center gap-2 rounded bg-surface text-sm transition-all duration-200"
 		class:opacity-50={disabled}
 		class:cursor-not-allowed={disabled}
 		class:bg-surface-elevated={disabled}
@@ -128,9 +133,9 @@
 					{@const isSelected = extractValue(listItem) === value}
 					<button
 						type="button"
-						class="w-full text-left transition-colors border-b border-neutral-100 last:border-b-0"
-						class:bg-neutral-50={isSelected}
-						class:hover:bg-neutral-50={!isSelected}
+						class="w-full text-left transition-colors border-b border-border-subtle last:border-b-0"
+						class:bg-surface-elevated={isSelected}
+						class:hover:bg-surface-elevated={!isSelected}
 						onclick={() => selectItem(listItem)}
 					>
 						{@render item(listItem, isSelected)}

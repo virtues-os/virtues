@@ -71,8 +71,8 @@ async fn setup_database() -> Result<String> {
     println!("{}", style("📦 Database Configuration").bold());
 
     let database_url: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("PostgreSQL connection string")
-        .default("postgresql://postgres:postgres@localhost/virtues".to_string())
+        .with_prompt("SQLite database path")
+        .default("sqlite:./data/virtues.db".to_string())
         .interact_text()
         .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
 

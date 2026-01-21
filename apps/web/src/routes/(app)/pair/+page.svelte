@@ -3,43 +3,43 @@
 	import { onMount } from "svelte";
 	import { Input, Button } from "$lib";
 
-	let deviceId = $derived($page.url.searchParams.get("device_id") || "");
+	// Check if this is a magic link visit (mac app)
+	const isMagicLink = $page.url.searchParams.has("device_id");
+
+	// Initialize from URL param, but allow editing
+	let deviceId = $state($page.url.searchParams.get("device_id") || "");
 	let deviceName = $state("");
 	let pairing = $state(false);
 	let paired = $state(false);
 	let error = $state("");
 
-	// Get computer name on mount
-	onMount(async () => {
-		if (!deviceId) {
-			error = "Missing device_id parameter";
+	// Determine if valid UUID
+	let isValidId = $derived(
+		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+			deviceId.trim(),
+		),
+	);
+
+	async function confirmPairing() {
+		if (!isValidId) {
+			error = "Please enter a valid Device ID format (UUID)";
 			return;
 		}
 
-		// Check if device already exists
-		const checkRes = await fetch(
-			`/api/pairing/check?device_id=${deviceId}`,
-		);
-		if (checkRes.ok) {
-			const data = await checkRes.json();
-			if (data.exists) {
-				deviceName = data.deviceName || "Your Mac";
-			}
-		}
-	});
-
-	async function confirmPairing() {
 		pairing = true;
 		error = "";
 
 		try {
-			const res = await fetch("/api/pairing/confirm", {
+			// Call the Rust backend directly
+			const res = await fetch("/api/devices/pairing/link", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					device_id: deviceId,
-					device_name: deviceName || "My Mac",
-					device_type: "mac",
+					device_id: deviceId.trim(),
+					name:
+						deviceName ||
+						(isMagicLink ? "My Mac" : "My iOS Device"),
+					device_type: isMagicLink ? "mac" : "ios",
 				}),
 			});
 
@@ -61,63 +61,54 @@
 	class="min-h-screen flex items-center justify-center bg-surface-elevated p-4"
 >
 	<div class="max-w-md w-full bg-surface rounded-lg shadow-lg p-8">
-		{#if !deviceId}
-			<div class="text-center">
-				<div class="text-error text-4xl mb-4">⚠️</div>
-				<h1 class="text-2xl font-bold text-foreground mb-2">
-					Invalid Request
-				</h1>
-				<p class="text-foreground-muted">
-					Missing device identifier. Please try again from your Mac
-					app.
-				</p>
-			</div>
-		{:else if paired}
+		{#if paired}
 			<div class="text-center">
 				<div class="text-success text-6xl mb-4">✅</div>
 				<h1 class="text-2xl font-bold text-foreground mb-2">
 					Pairing Successful!
 				</h1>
 				<p class="text-foreground-muted mb-6">
-					Your Mac is now connected to Ariata. You can close this
-					window and return to your Mac.
+					Your device is now connected to Ariata.
 				</p>
 				<div
 					class="bg-success-subtle border border-success rounded-lg p-4"
 				>
 					<p class="text-sm text-success">
-						<strong>{deviceName || "Your Mac"}</strong> is now syncing
+						<strong>{deviceName || "Your Device"}</strong> is now syncing
 						data.
 					</p>
 				</div>
 			</div>
 		{:else}
 			<div class="text-center mb-6">
-				<div class="text-primary text-4xl mb-4">💻</div>
+				<div class="text-primary text-4xl mb-4">📱</div>
 				<h1 class="text-2xl font-bold text-foreground mb-2">
-					Pair Your Mac
+					Pair Your Device
 				</h1>
 				<p class="text-foreground-muted mb-4">
-					Confirm pairing for this device:
+					Enter the Device ID found in your app settings:
 				</p>
 
-				<div
-					class="bg-surface-elevated border border-border rounded-lg p-4 mb-6 text-left"
-				>
-					<div class="text-sm text-foreground-subtle mb-2">
-						Device ID
-					</div>
-					<div
-						class="font-mono text-xs text-foreground-muted break-all"
+				<div class="mb-4 text-left">
+					<label
+						for="device-id"
+						class="block text-sm font-medium text-foreground-muted mb-2"
 					>
-						{deviceId}
-					</div>
+						Device ID (UUID)
+					</label>
+					<Input
+						id="device-id"
+						type="text"
+						bind:value={deviceId}
+						placeholder="e.g. 123e4567-e89b-..."
+						class="font-mono"
+					/>
 				</div>
 
-				<div class="mb-6">
+				<div class="mb-6 text-left">
 					<label
 						for="device-name"
-						class="block text-sm font-medium text-foreground-muted mb-2 text-left"
+						class="block text-sm font-medium text-foreground-muted mb-2"
 					>
 						Device Name (optional)
 					</label>
@@ -125,7 +116,7 @@
 						id="device-name"
 						type="text"
 						bind:value={deviceName}
-						placeholder="My MacBook Pro"
+						placeholder="My iPhone"
 					/>
 				</div>
 
@@ -140,14 +131,14 @@
 				<Button
 					variant="primary"
 					onclick={confirmPairing}
-					disabled={pairing}
+					disabled={pairing || !isValidId}
 					class="w-full"
 				>
-					{pairing ? "Pairing..." : "Confirm Pairing"}
+					{pairing ? "Pairing..." : "Link Device"}
 				</Button>
 
 				<p class="text-xs text-foreground-subtle mt-4">
-					By pairing this device, you authorize it to sync your
+					By linking this device, you authorize it to sync your
 					personal data to Ariata.
 				</p>
 			</div>

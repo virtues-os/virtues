@@ -7,5 +7,5 @@
 mod client;
 mod job;
 
-pub use client::{format_embedding_for_pg, EmbeddingClient};
+pub use client::{format_embedding, EmbeddingClient};
 pub use job::{EmbeddingJob, EmbeddingJobResult, EmbeddingStats, TableEmbeddingStats};

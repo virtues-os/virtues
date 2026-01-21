@@ -38,6 +38,22 @@
 				400}ms"
 		>
 			<span class="section-title">{title}</span>
+			<svg
+				class="chevron"
+				class:expanded
+				width="10"
+				height="10"
+				viewBox="0 0 12 12"
+				fill="none"
+			>
+				<path
+					d="M4.5 3L7.5 6L4.5 9"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				/>
+			</svg>
 			{#if badge}
 				<span class="badge">{badge}</span>
 			{/if}
@@ -72,7 +88,11 @@
 	}
 
 	.accordion {
-		margin-bottom: 16px; /* More breathing room between sections */
+		margin-bottom: 8px; /* Tighter spacing when section is closed */
+	}
+
+	.accordion:has(.accordion-content.expanded) {
+		margin-bottom: 16px; /* More breathing room when section is open */
 	}
 
 	.accordion.collapsed {
@@ -101,6 +121,17 @@
 
 	.accordion-header:hover {
 		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	}
+
+	.chevron {
+		flex-shrink: 0;
+		margin-left: auto;
+		color: var(--color-foreground-muted);
+		transition: transform 200ms var(--ease-premium);
+	}
+
+	.chevron.expanded {
+		transform: rotate(90deg);
 	}
 
 	/* Section label - Academic serif style */

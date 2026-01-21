@@ -5,48 +5,46 @@
 
 use crate::error::{Error, Result};
 use crate::storage::models::UserProfile;
-use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
-use sqlx::{types::Decimal, PgPool};
-use std::str::FromStr;
-use uuid::Uuid;
+use sqlx::SqlitePool;
 
 /// Request to update user profile
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UpdateProfileRequest {
     // Identity
     pub full_name: Option<String>,
     pub preferred_name: Option<String>,
-    pub birth_date: Option<NaiveDate>,
-    // Physical/Biometric (use f64 for JSON, convert to Decimal for DB)
+    pub birth_date: Option<String>,
+    // Physical/Biometric
     pub height_cm: Option<f64>,
     pub weight_kg: Option<f64>,
     pub ethnicity: Option<String>,
     // Work/Occupation
     pub occupation: Option<String>,
     pub employer: Option<String>,
+    // Home
+    pub home_place_id: Option<String>,
+    // Onboarding - single status field
+    pub onboarding_status: Option<String>,
     // Preferences
     pub theme: Option<String>,
-    // Crux - shared ethos statement from onboarding
+    pub update_check_hour: Option<i32>,
+    // Discovery context
     pub crux: Option<String>,
-    // Onboarding (legacy)
-    pub is_onboarding: Option<bool>,
-    pub onboarding_step: Option<i32>,
-    pub axiology_complete: Option<bool>,
-    // Granular onboarding completion
-    pub onboarding_profile_complete: Option<bool>,
-    pub onboarding_places_complete: Option<bool>,
-    pub onboarding_tools_complete: Option<bool>,
+    pub technology_vision: Option<String>,
+    pub pain_point_primary: Option<String>,
+    pub pain_point_secondary: Option<String>,
+    pub excited_features: Option<String>,
 }
 
 /// Get the user's profile (singleton row)
 ///
 /// This will always return a profile, as the migration creates an empty row by default.
-pub async fn get_profile(db: &PgPool) -> Result<UserProfile> {
+pub async fn get_profile(db: &SqlitePool) -> Result<UserProfile> {
     let profile = sqlx::query_as::<_, UserProfile>(
         r#"
         SELECT *
-        FROM data.user_profile
+        FROM data_user_profile
         LIMIT 1
         "#,
     )
@@ -61,124 +59,144 @@ pub async fn get_profile(db: &PgPool) -> Result<UserProfile> {
 ///
 /// Only updates fields that are present in the request (not None).
 /// Returns the updated profile.
-pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Result<UserProfile> {
-    // The singleton UUID
-    let profile_id = Uuid::parse_str("00000000-0000-0000-0000-000000000001")
-        .expect("Valid UUID constant");
+pub async fn update_profile(db: &SqlitePool, request: UpdateProfileRequest) -> Result<UserProfile> {
+    // Build dynamic UPDATE using a simpler approach
+    let mut set_clauses = Vec::new();
 
-    // Build dynamic UPDATE query based on which fields are present
-    let mut updates = Vec::new();
-    let mut query = "UPDATE data.user_profile SET ".to_string();
-
-    // Identity fields
     if request.full_name.is_some() {
-        updates.push("full_name = $1");
+        set_clauses.push("full_name = ?");
     }
     if request.preferred_name.is_some() {
-        updates.push("preferred_name = $2");
+        set_clauses.push("preferred_name = ?");
     }
     if request.birth_date.is_some() {
-        updates.push("birth_date = $3");
+        set_clauses.push("birth_date = ?");
     }
-    // Physical fields
     if request.height_cm.is_some() {
-        updates.push("height_cm = $4");
+        set_clauses.push("height_cm = ?");
     }
     if request.weight_kg.is_some() {
-        updates.push("weight_kg = $5");
+        set_clauses.push("weight_kg = ?");
     }
     if request.ethnicity.is_some() {
-        updates.push("ethnicity = $6");
+        set_clauses.push("ethnicity = ?");
     }
-    // Work fields
     if request.occupation.is_some() {
-        updates.push("occupation = $7");
+        set_clauses.push("occupation = ?");
     }
     if request.employer.is_some() {
-        updates.push("employer = $8");
+        set_clauses.push("employer = ?");
     }
-    // Preferences
+    if request.home_place_id.is_some() {
+        set_clauses.push("home_place_id = ?");
+    }
+    if request.onboarding_status.is_some() {
+        set_clauses.push("onboarding_status = ?");
+    }
     if request.theme.is_some() {
-        updates.push("theme = $9");
+        set_clauses.push("theme = ?");
     }
-    // Crux
+    if request.update_check_hour.is_some() {
+        set_clauses.push("update_check_hour = ?");
+    }
     if request.crux.is_some() {
-        updates.push("crux = $10");
+        set_clauses.push("crux = ?");
     }
-    // Onboarding
-    if request.is_onboarding.is_some() {
-        updates.push("is_onboarding = $11");
+    if request.technology_vision.is_some() {
+        set_clauses.push("technology_vision = ?");
     }
-    if request.onboarding_step.is_some() {
-        updates.push("onboarding_step = $12");
+    if request.pain_point_primary.is_some() {
+        set_clauses.push("pain_point_primary = ?");
     }
-    if request.axiology_complete.is_some() {
-        updates.push("axiology_complete = $13");
+    if request.pain_point_secondary.is_some() {
+        set_clauses.push("pain_point_secondary = ?");
     }
-    // Granular onboarding completion
-    if request.onboarding_profile_complete.is_some() {
-        updates.push("onboarding_profile_complete = $14");
-    }
-    if request.onboarding_places_complete.is_some() {
-        updates.push("onboarding_places_complete = $15");
-    }
-    if request.onboarding_tools_complete.is_some() {
-        updates.push("onboarding_tools_complete = $16");
+    if request.excited_features.is_some() {
+        set_clauses.push("excited_features = ?");
     }
 
-    if updates.is_empty() {
+    if set_clauses.is_empty() {
         // No updates requested, just return current profile
         return get_profile(db).await;
     }
 
-    query.push_str(&updates.join(", "));
-    query.push_str(" WHERE id = $17 RETURNING *");
+    // Always update updated_at
+    set_clauses.push("updated_at = datetime('now')");
 
-    // Execute the update with bound parameters
-    let mut query_builder = sqlx::query_as::<_, UserProfile>(&query);
+    let query = format!(
+        "UPDATE data_user_profile SET {} WHERE id = '00000000-0000-0000-0000-000000000001'",
+        set_clauses.join(", ")
+    );
 
-    // Convert f64 to Decimal for database
-    let height_decimal = request.height_cm.map(|v| {
-        Decimal::from_str(&v.to_string())
-            .unwrap_or_else(|_| Decimal::from_str("0").unwrap())
-    });
-    let weight_decimal = request.weight_kg.map(|v| {
-        Decimal::from_str(&v.to_string())
-            .unwrap_or_else(|_| Decimal::from_str("0").unwrap())
-    });
+    // Build the query with bindings
+    let mut query_builder = sqlx::query(&query);
 
-    // Bind all parameters in order ($1 through $17)
-    query_builder = query_builder
-        .bind(&request.full_name)
-        .bind(&request.preferred_name)
-        .bind(&request.birth_date)
-        .bind(&height_decimal)
-        .bind(&weight_decimal)
-        .bind(&request.ethnicity)
-        .bind(&request.occupation)
-        .bind(&request.employer)
-        .bind(&request.theme)
-        .bind(&request.crux)
-        .bind(&request.is_onboarding)
-        .bind(&request.onboarding_step)
-        .bind(&request.axiology_complete)
-        .bind(&request.onboarding_profile_complete)
-        .bind(&request.onboarding_places_complete)
-        .bind(&request.onboarding_tools_complete)
-        .bind(profile_id);
+    // Bind in the same order as set_clauses
+    if let Some(ref v) = request.full_name {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.preferred_name {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.birth_date {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(v) = request.height_cm {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(v) = request.weight_kg {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.ethnicity {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.occupation {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.employer {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.home_place_id {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.onboarding_status {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.theme {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(v) = request.update_check_hour {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.crux {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.technology_vision {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.pain_point_primary {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.pain_point_secondary {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.excited_features {
+        query_builder = query_builder.bind(v);
+    }
 
-    let updated_profile = query_builder
-        .fetch_one(db)
+    query_builder
+        .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to update user profile: {}", e)))?;
 
-    Ok(updated_profile)
+    // Return updated profile
+    get_profile(db).await
 }
 
 /// Helper to get the user's display name for system prompts
 ///
 /// Returns preferred_name if set, otherwise full_name, otherwise "the user"
-pub async fn get_display_name(db: &PgPool) -> Result<String> {
+pub async fn get_display_name(db: &SqlitePool) -> Result<String> {
     let profile = get_profile(db).await?;
 
     Ok(profile

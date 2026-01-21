@@ -160,9 +160,7 @@ pub fn init(config: ObservabilityConfig) -> Result<(), Box<dyn std::error::Error
             .with_interval(std::time::Duration::from_secs(30))
             .build();
 
-        SdkMeterProvider::builder()
-            .with_reader(reader)
-            .build()
+        SdkMeterProvider::builder().with_reader(reader).build()
     } else {
         // No OTLP endpoint - use noop provider (metrics still tracked in-memory)
         tracing::info!("OTEL_EXPORTER_OTLP_ENDPOINT not set, metrics will be logged only");

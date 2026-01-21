@@ -18,7 +18,7 @@ pub use archive_job::{
     create_archive_job, execute_archive_job, fetch_pending_archive_jobs, spawn_archive_job_async,
     ArchiveContext,
 };
-pub use entity_resolution_job::{chain_to_place_resolution, chain_to_people_resolution};
+pub use entity_resolution_job::{chain_to_people_resolution, chain_to_place_resolution};
 pub use executor::JobExecutor;
 pub use models::{CreateJobRequest, Job, JobStatus, JobType, SyncJobMetadata};
 pub use prudent_context_job::PrudentContextJob;
@@ -27,11 +27,11 @@ pub use transform_factory::TransformFactory;
 pub use transform_trigger::create_transform_job_for_stream;
 
 use crate::error::{Error, Result};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 /// Helper function to convert a row to a Job
-fn job_from_row(row: &sqlx::postgres::PgRow) -> Result<Job> {
+fn job_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Job> {
     use sqlx::Row;
 
     Ok(Job {
@@ -63,11 +63,15 @@ fn job_from_row(row: &sqlx::postgres::PgRow) -> Result<Job> {
 }
 
 /// Check if a stream has an active (pending or running) sync job
-pub async fn has_active_sync_job(db: &PgPool, source_id: Uuid, stream_name: &str) -> Result<bool> {
+pub async fn has_active_sync_job(
+    db: &SqlitePool,
+    source_id: Uuid,
+    stream_name: &str,
+) -> Result<bool> {
     let result = sqlx::query_scalar::<_, bool>(
         r#"
         SELECT EXISTS(
-            SELECT 1 FROM data.jobs
+            SELECT 1 FROM data_jobs
             WHERE source_connection_id = $1
               AND stream_name = $2
               AND job_type = 'sync'
@@ -84,10 +88,12 @@ pub async fn has_active_sync_job(db: &PgPool, source_id: Uuid, stream_name: &str
 }
 
 /// Create a new job in the database
-pub async fn create_job(db: &PgPool, request: CreateJobRequest) -> Result<Job> {
+pub async fn create_job(db: &SqlitePool, request: CreateJobRequest) -> Result<Job> {
+    let job_id = Uuid::new_v4();
     let row = sqlx::query(
         r#"
-        INSERT INTO data.jobs (
+        INSERT INTO data_jobs (
+            id,
             job_type,
             status,
             source_connection_id,
@@ -98,10 +104,11 @@ pub async fn create_job(db: &PgPool, request: CreateJobRequest) -> Result<Job> {
             parent_job_id,
             transform_stage,
             metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
         "#,
     )
+    .bind(job_id)
     .bind(&request.job_type.to_string())
     .bind(&request.status.to_string())
     .bind(request.source_connection_id)
@@ -119,10 +126,10 @@ pub async fn create_job(db: &PgPool, request: CreateJobRequest) -> Result<Job> {
 }
 
 /// Get a job by ID
-pub async fn get_job(db: &PgPool, job_id: Uuid) -> Result<Job> {
+pub async fn get_job(db: &SqlitePool, job_id: Uuid) -> Result<Job> {
     let row = sqlx::query(
         r#"
-        SELECT * FROM data.jobs
+        SELECT * FROM data_jobs
         WHERE id = $1
         "#,
     )
@@ -136,7 +143,7 @@ pub async fn get_job(db: &PgPool, job_id: Uuid) -> Result<Job> {
 
 /// Update job status
 pub async fn update_job_status(
-    db: &PgPool,
+    db: &SqlitePool,
     job_id: Uuid,
     status: JobStatus,
     error_message: Option<String>,
@@ -150,17 +157,17 @@ pub async fn update_job_status(
     let query = if is_terminal {
         sqlx::query(
             r#"
-            UPDATE data.jobs
+            UPDATE data_jobs
             SET status = $1,
                 error_message = $2,
-                completed_at = NOW()
+                completed_at = datetime('now')
             WHERE id = $3
             "#,
         )
     } else {
         sqlx::query(
             r#"
-            UPDATE data.jobs
+            UPDATE data_jobs
             SET status = $1,
                 error_message = $2
             WHERE id = $3
@@ -180,15 +187,16 @@ pub async fn update_job_status(
 
 /// Query jobs with filters
 pub async fn query_jobs(
-    db: &PgPool,
+    db: &SqlitePool,
     source_id: Option<Uuid>,
     statuses: Option<Vec<JobStatus>>,
     limit: Option<i64>,
 ) -> Result<Vec<Job>> {
-    let mut query = String::from("SELECT * FROM data.jobs WHERE 1=1");
+    let mut query = String::from("SELECT * FROM data_jobs WHERE 1=1");
     let mut bind_count = 0;
 
-    if source_id.is_some() {
+    let source_id_str = source_id.map(|s| s.to_string());
+    if source_id_str.is_some() {
         bind_count += 1;
         query.push_str(&format!(" AND source_connection_id = ${}", bind_count));
     }
@@ -202,9 +210,13 @@ pub async fn query_jobs(
         }
     });
 
-    if status_strings.is_some() {
-        bind_count += 1;
-        query.push_str(&format!(" AND status = ANY(${})", bind_count));
+    // SQLite doesn't support ANY(), use IN clause with individual placeholders
+    if let Some(ref status_strs) = status_strings {
+        let placeholders: Vec<String> = (0..status_strs.len())
+            .map(|i| format!("${}", bind_count + 1 + i))
+            .collect();
+        bind_count += status_strs.len();
+        query.push_str(&format!(" AND status IN ({})", placeholders.join(", ")));
     }
 
     query.push_str(" ORDER BY created_at DESC");
@@ -216,12 +228,15 @@ pub async fn query_jobs(
 
     let mut q = sqlx::query(&query);
 
-    if let Some(sid) = source_id {
+    if let Some(ref sid) = source_id_str {
         q = q.bind(sid);
     }
 
+    // Bind each status individually
     if let Some(ref status_strs) = status_strings {
-        q = q.bind(status_strs.as_slice());
+        for status in status_strs {
+            q = q.bind(status);
+        }
     }
 
     if let Some(lim) = limit {
@@ -239,12 +254,12 @@ pub async fn query_jobs(
 }
 
 /// Cancel a running job
-pub async fn cancel_job(db: &PgPool, job_id: Uuid) -> Result<()> {
+pub async fn cancel_job(db: &SqlitePool, job_id: Uuid) -> Result<()> {
     let rows_affected = sqlx::query(
         r#"
-        UPDATE data.jobs
+        UPDATE data_jobs
         SET status = 'cancelled',
-            completed_at = NOW()
+            completed_at = datetime('now')
         WHERE id = $1
           AND status IN ('pending', 'running')
         "#,
@@ -282,7 +297,7 @@ pub async fn cancel_job(db: &PgPool, job_id: Uuid) -> Result<()> {
 ///
 /// The created job
 pub async fn create_chained_transform_job(
-    db: &PgPool,
+    db: &SqlitePool,
     parent_job_id: Uuid,
     source_table: &str,
     target_tables: Vec<&str>,
@@ -316,10 +331,10 @@ pub async fn create_chained_transform_job(
 /// Get all child jobs for a parent job
 ///
 /// Useful for tracking multi-stage transform pipelines.
-pub async fn get_child_jobs(db: &PgPool, parent_job_id: Uuid) -> Result<Vec<Job>> {
+pub async fn get_child_jobs(db: &SqlitePool, parent_job_id: Uuid) -> Result<Vec<Job>> {
     let rows = sqlx::query(
         r#"
-        SELECT * FROM data.jobs
+        SELECT * FROM data_jobs
         WHERE parent_job_id = $1
         ORDER BY created_at ASC
         "#,
@@ -353,7 +368,7 @@ pub async fn get_child_jobs(db: &PgPool, parent_job_id: Uuid) -> Result<Vec<Job>
 ///
 /// The completed job, or an error if timeout is reached or job fails
 pub async fn wait_for_job_completion(
-    db: &PgPool,
+    db: &SqlitePool,
     job_id: Uuid,
     timeout_seconds: u64,
     poll_interval_ms: u64,

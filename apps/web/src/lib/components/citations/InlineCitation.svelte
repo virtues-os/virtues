@@ -92,7 +92,7 @@
 		padding: 0;
 		margin: 0 1px;
 		font-size: 0.65rem;
-		font-weight: 500;
+		font-weight: 400;
 		color: var(--color-foreground-subtle);
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);

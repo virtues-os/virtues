@@ -8,11 +8,39 @@
 		<string>com.virtues.ios.processing</string>
 		<string>com.virtues.ios.sync</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>localhost</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>NSContactsUsageDescription</key>
+	<string>Virtues uses your contacts to identify people mentioned in your conversations and provide personalized insights.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Virtues reads your health data (heart rate, steps, sleep, activity) to provide daily wellness insights. Your data is stored securely and never shared without consent.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Virtues connects to your local Virtues server for data sync.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Virtues continuously tracks your location to enable background data collection and provide context for your day.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Virtues tracks your location continuously to keep background recording and data collection running.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Virtues tracks your location to provide context for your day and enable background data collection.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Virtues records ambient audio passively for long periods in the background to capture your daily environment. You can disable recording at any time.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
 		<string>fetch</string>
 		<string>processing</string>
+		<string>audio</string>
 	</array>
 	<key>NSMotionUsageDescription</key>
 	<string>Virtues uses motion sensors to track barometric pressure and altitude changes for activity context.</string>

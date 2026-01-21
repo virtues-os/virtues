@@ -304,7 +304,7 @@ async fn execute_chat_conversation_batch_insert(
     ];
 
     let query_str = Database::build_batch_insert_query(
-        "data.knowledge_ai_conversation",
+        "data_knowledge_ai_conversation",
         &columns,
         "source_stream_id",
         records.len(),

@@ -492,3 +492,286 @@ export async function getStorageObjectContent(objectId: string): Promise<ObjectC
 	}
 	return res.json();
 }
+
+// =============================================================================
+// Drive - Personal File Storage
+// =============================================================================
+
+export interface DriveFile {
+	id: string;
+	path: string;
+	filename: string;
+	mime_type: string | null;
+	size_bytes: number;
+	is_folder: boolean;
+	parent_id: string | null;
+	sha256_hash: string | null;
+	deleted_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface DriveUsage {
+	total_bytes: number;
+	quota_bytes: number;
+	file_count: number;
+	folder_count: number;
+	usage_percent: number;
+	tier: string;
+}
+
+export interface QuotaWarnings {
+	warnings: string[];
+	usage_percent: number;
+}
+
+/**
+ * Get drive storage usage and quota information
+ */
+export async function getDriveUsage(): Promise<DriveUsage> {
+	const res = await fetch(`${API_BASE}/drive/usage`);
+	if (!res.ok) throw new Error(`Failed to get drive usage: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Get quota warning messages (80%, 90%, 100%)
+ */
+export async function getDriveWarnings(): Promise<QuotaWarnings> {
+	const res = await fetch(`${API_BASE}/drive/warnings`);
+	if (!res.ok) throw new Error(`Failed to get drive warnings: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * List files in a directory
+ * @param path - Directory path (empty string for root)
+ */
+export async function listDriveFiles(path: string = ''): Promise<DriveFile[]> {
+	const params = new URLSearchParams();
+	if (path) params.set('path', path);
+
+	const res = await fetch(`${API_BASE}/drive/files?${params}`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to list files: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/**
+ * Get file metadata by ID
+ */
+export async function getDriveFile(fileId: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to get file: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/**
+ * Upload a file to drive
+ * @param path - Target folder path
+ * @param file - File to upload
+ * @param onProgress - Optional progress callback (0-100)
+ */
+export async function uploadDriveFile(
+	path: string,
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<DriveFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('path', path);
+	formData.append('filename', file.name);
+
+	// Use XMLHttpRequest for progress tracking
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', `${API_BASE}/drive/upload`);
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && onProgress) {
+				onProgress(Math.round((e.loaded / e.total) * 100));
+			}
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve(JSON.parse(xhr.responseText));
+			} else {
+				try {
+					const error = JSON.parse(xhr.responseText);
+					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
+				} catch {
+					reject(new Error(`Upload failed: ${xhr.statusText}`));
+				}
+			}
+		};
+
+		xhr.onerror = () => reject(new Error('Upload failed: network error'));
+		xhr.send(formData);
+	});
+}
+
+/**
+ * Download a file from drive
+ */
+export async function downloadDriveFile(fileId: string): Promise<{ file: DriveFile; blob: Blob }> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/download`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to download file: ${res.statusText}`);
+	}
+
+	// Get filename from Content-Disposition header
+	const contentDisposition = res.headers.get('Content-Disposition');
+	let filename = 'download';
+	if (contentDisposition) {
+		const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
+		if (match) filename = match[1];
+	}
+
+	const blob = await res.blob();
+	return {
+		file: { filename } as DriveFile,
+		blob
+	};
+}
+
+/**
+ * Delete a file or folder
+ */
+export async function deleteDriveFile(fileId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}`, { method: 'DELETE' });
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to delete file: ${res.statusText}`);
+	}
+}
+
+/**
+ * Create a folder
+ */
+export async function createDriveFolder(path: string, name: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/folders`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ path, name })
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to create folder: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/**
+ * Move or rename a file/folder
+ */
+export async function moveDriveFile(fileId: string, newPath: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/move`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ new_path: newPath })
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to move file: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/**
+ * List files in trash
+ */
+export async function listDriveTrash(): Promise<DriveFile[]> {
+	const res = await fetch(`${API_BASE}/drive/trash`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to list trash: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/**
+ * Restore a file from trash
+ */
+export async function restoreDriveFile(fileId: string): Promise<DriveFile> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/restore`, {
+		method: 'POST'
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to restore file: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/**
+ * Permanently delete a file (skip trash)
+ */
+export async function purgeDriveFile(fileId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/purge`, {
+		method: 'DELETE'
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to permanently delete file: ${res.statusText}`);
+	}
+}
+
+/**
+ * Empty entire trash (permanently delete all trashed files)
+ */
+export async function emptyDriveTrash(): Promise<{ deleted_count: number }> {
+	const res = await fetch(`${API_BASE}/drive/trash/empty`, {
+		method: 'POST'
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to empty trash: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+// =============================================================================
+// Sessions - Chat Session Management
+// =============================================================================
+
+export interface ChatMessage {
+	role: 'user' | 'assistant' | 'system';
+	content: string;
+	timestamp: string;
+}
+
+export interface CreateSessionResponse {
+	id: string;
+	title: string;
+	message_count: number;
+	created_at: string;
+}
+
+/**
+ * Create a new chat session with initial messages
+ * Used for intro sessions and pre-populated conversations
+ */
+export async function createSession(
+	title: string,
+	messages: ChatMessage[]
+): Promise<CreateSessionResponse> {
+	const res = await fetch(`${API_BASE}/sessions`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title, messages })
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to create session: ${res.statusText}`);
+	}
+
+	return res.json();
+}

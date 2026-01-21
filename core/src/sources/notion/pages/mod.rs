@@ -5,7 +5,7 @@ pub mod transform;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -36,7 +36,7 @@ impl NotionPagesStream {
     /// Create a new Notion pages stream with SourceAuth and StreamWriter
     pub fn new(
         source_id: Uuid,
-        _db: PgPool,
+        _db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
         auth: SourceAuth,
     ) -> Self {
@@ -427,7 +427,7 @@ impl PullStream for NotionPagesStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, _db: &PgPool, _source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, _db: &SqlitePool, _source_id: Uuid) -> Result<()> {
         // Notion doesn't have stream-specific config yet
         Ok(())
     }

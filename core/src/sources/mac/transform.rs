@@ -1,7 +1,6 @@
 ///! macOS stream transformations to ontology tables
 ///!
 ///! Transforms raw macOS device data (apps, browser, iMessage) into normalized ontology tables.
-
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -144,11 +143,11 @@ impl OntologyTransform for MacAppsTransform {
 
         // Batch insert sessions
         let mut pending_records: Vec<(
-            String,           // app_name
-            Option<String>,   // app_bundle_id
-            DateTime<Utc>,    // start_time
-            DateTime<Utc>,    // end_time
-            Uuid,             // source_stream_id
+            String,         // app_name
+            Option<String>, // app_bundle_id
+            DateTime<Utc>,  // start_time
+            DateTime<Utc>,  // end_time
+            Uuid,           // source_stream_id
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
         let mut batch_insert_count = 0;
@@ -358,7 +357,7 @@ async fn execute_app_usage_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.activity_app_usage",
+        "data_activity_app_usage",
         &[
             "app_name",
             "app_bundle_id",
@@ -450,12 +449,12 @@ impl OntologyTransform for MacBrowserTransform {
 
         // Batch insert configuration
         let mut pending_records: Vec<(
-            String,           // url
-            String,           // domain
-            Option<String>,   // page_title
-            Option<i32>,      // visit_duration_seconds
-            DateTime<Utc>,    // timestamp
-            Uuid,             // source_stream_id
+            String,            // url
+            String,            // domain
+            Option<String>,    // page_title
+            Option<i32>,       // visit_duration_seconds
+            DateTime<Utc>,     // timestamp
+            Uuid,              // source_stream_id
             serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
@@ -634,14 +633,22 @@ fn extract_domain_from_url(url: &str) -> Option<String> {
 /// Execute batch insert for browser history records
 async fn execute_browser_batch_insert(
     db: &Database,
-    records: &[(String, String, Option<String>, Option<i32>, DateTime<Utc>, Uuid, serde_json::Value)],
+    records: &[(
+        String,
+        String,
+        Option<String>,
+        Option<i32>,
+        DateTime<Utc>,
+        Uuid,
+        serde_json::Value,
+    )],
 ) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.activity_web_browsing",
+        "data_activity_web_browsing",
         &[
             "url",
             "domain",
@@ -737,21 +744,21 @@ impl OntologyTransform for MacIMessageTransform {
 
         // Batch insert configuration
         let mut pending_records: Vec<(
-            String,                // message_id
-            Option<String>,        // thread_id
-            String,                // channel
-            Option<String>,        // body
-            DateTime<Utc>,         // timestamp
-            Option<String>,        // from_identifier
-            Vec<String>,           // to_identifiers
-            String,                // direction
-            bool,                  // is_read
-            bool,                  // is_group_message
-            Option<String>,        // group_name
-            bool,                  // has_attachments
-            i32,                   // attachment_count
-            Uuid,                  // source_stream_id
-            serde_json::Value,     // metadata
+            String,            // message_id
+            Option<String>,    // thread_id
+            String,            // channel
+            Option<String>,    // body
+            DateTime<Utc>,     // timestamp
+            Option<String>,    // from_identifier
+            Vec<String>,       // to_identifiers
+            String,            // direction
+            bool,              // is_read
+            bool,              // is_group_message
+            Option<String>,    // group_name
+            bool,              // has_attachments
+            i32,               // attachment_count
+            Uuid,              // source_stream_id
+            serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
         let mut batch_insert_count = 0;
@@ -764,7 +771,11 @@ impl OntologyTransform for MacIMessageTransform {
                 records_read += 1;
 
                 // Extract required fields
-                let Some(message_id) = record.get("message_id").and_then(|v| v.as_str()).map(String::from) else {
+                let Some(message_id) = record
+                    .get("message_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                else {
                     continue;
                 };
 
@@ -841,8 +852,12 @@ impl OntologyTransform for MacIMessageTransform {
                 let date_delivered = record.get("date_delivered").and_then(|v| v.as_str());
                 let is_delivered = record.get("is_delivered").and_then(|v| v.as_bool());
                 let is_sent = record.get("is_sent").and_then(|v| v.as_bool());
-                let associated_message_guid = record.get("associated_message_guid").and_then(|v| v.as_str());
-                let expressive_send_style_id = record.get("expressive_send_style_id").and_then(|v| v.as_str());
+                let associated_message_guid = record
+                    .get("associated_message_guid")
+                    .and_then(|v| v.as_str());
+                let expressive_send_style_id = record
+                    .get("expressive_send_style_id")
+                    .and_then(|v| v.as_str());
 
                 let metadata = serde_json::json!({
                     "service": service,
@@ -996,7 +1011,7 @@ async fn execute_imessage_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.social_message",
+        "data_social_message",
         &[
             "message_id",
             "thread_id",
@@ -1041,6 +1056,10 @@ async fn execute_imessage_batch_insert(
         metadata,
     ) in records
     {
+        // SQLite doesn't support array types, convert to JSON string
+        let to_identifiers_json =
+            serde_json::to_string(&to_identifiers).unwrap_or_else(|_| "[]".to_string());
+
         query = query
             .bind(message_id)
             .bind(thread_id)
@@ -1048,7 +1067,7 @@ async fn execute_imessage_batch_insert(
             .bind(body)
             .bind(timestamp)
             .bind(from_identifier)
-            .bind(to_identifiers)
+            .bind(to_identifiers_json)
             .bind(direction)
             .bind(is_read)
             .bind(is_group_message)
@@ -1069,8 +1088,12 @@ async fn execute_imessage_batch_insert(
 
 struct MacAppsTransformRegistration;
 impl TransformRegistration for MacAppsTransformRegistration {
-    fn source_table(&self) -> &'static str { "stream_mac_apps" }
-    fn target_table(&self) -> &'static str { "activity_app_usage" }
+    fn source_table(&self) -> &'static str {
+        "stream_mac_apps"
+    }
+    fn target_table(&self) -> &'static str {
+        "activity_app_usage"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(MacAppsTransform))
     }
@@ -1079,8 +1102,12 @@ inventory::submit! { &MacAppsTransformRegistration as &dyn TransformRegistration
 
 struct MacBrowserTransformRegistration;
 impl TransformRegistration for MacBrowserTransformRegistration {
-    fn source_table(&self) -> &'static str { "stream_mac_browser" }
-    fn target_table(&self) -> &'static str { "activity_web_browsing" }
+    fn source_table(&self) -> &'static str {
+        "stream_mac_browser"
+    }
+    fn target_table(&self) -> &'static str {
+        "activity_web_browsing"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(MacBrowserTransform))
     }
@@ -1089,8 +1116,12 @@ inventory::submit! { &MacBrowserTransformRegistration as &dyn TransformRegistrat
 
 struct MacIMessageTransformRegistration;
 impl TransformRegistration for MacIMessageTransformRegistration {
-    fn source_table(&self) -> &'static str { "stream_mac_imessage" }
-    fn target_table(&self) -> &'static str { "social_message" }
+    fn source_table(&self) -> &'static str {
+        "stream_mac_imessage"
+    }
+    fn target_table(&self) -> &'static str {
+        "social_message"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(MacIMessageTransform))
     }
@@ -1161,7 +1192,10 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].app_name, "VSCode");
         assert_eq!(
-            sessions[0].end_time.signed_duration_since(sessions[0].start_time).num_minutes(),
+            sessions[0]
+                .end_time
+                .signed_duration_since(sessions[0].start_time)
+                .num_minutes(),
             5
         );
     }

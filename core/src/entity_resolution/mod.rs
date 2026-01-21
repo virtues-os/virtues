@@ -20,12 +20,12 @@
 //! let stats = entity_resolution::resolve_entities(db, window).await?;
 //! ```
 
-pub mod places;
 pub mod people;
+pub mod places;
 
-use chrono::{DateTime, Utc};
 use crate::database::Database;
 use crate::error::Result;
+use chrono::{DateTime, Utc};
 
 /// Time window for entity resolution
 #[derive(Debug, Clone, Copy)]

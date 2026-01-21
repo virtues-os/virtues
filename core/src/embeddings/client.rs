@@ -144,10 +144,10 @@ impl EmbeddingClient {
     }
 }
 
-/// Format embedding vector for PostgreSQL pgvector insertion
+/// Format embedding vector for database insertion
 ///
 /// Converts Vec<f64> to string like "[0.1, 0.2, 0.3, ...]"
-pub fn format_embedding_for_pg(embedding: &[f64]) -> String {
+pub fn format_embedding(embedding: &[f64]) -> String {
     format!(
         "[{}]",
         embedding
@@ -165,13 +165,14 @@ mod tests {
     #[test]
     fn test_format_embedding() {
         let embedding = vec![0.1, 0.2, 0.3];
-        let formatted = format_embedding_for_pg(&embedding);
+        let formatted = format_embedding(&embedding);
         assert_eq!(formatted, "[0.1,0.2,0.3]");
     }
 
     #[test]
     fn test_client_creation() {
-        let client = EmbeddingClient::new("http://localhost", 11434, "nomic-embed-text".to_string());
+        let client =
+            EmbeddingClient::new("http://localhost", 11434, "nomic-embed-text".to_string());
         assert_eq!(client.model(), "nomic-embed-text");
     }
 }

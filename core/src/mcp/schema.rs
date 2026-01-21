@@ -5,7 +5,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::{Row, SqlitePool};
 
 /// Information about a database column
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -25,7 +25,10 @@ pub struct TableSchema {
 }
 
 /// Get the schema for a specific table in the data schema
-pub async fn get_table_schema(pool: &PgPool, table_name: &str) -> Result<TableSchema, sqlx::Error> {
+pub async fn get_table_schema(
+    pool: &SqlitePool,
+    table_name: &str,
+) -> Result<TableSchema, sqlx::Error> {
     let rows = sqlx::query(
         r#"
         SELECT
@@ -61,7 +64,7 @@ pub async fn get_table_schema(pool: &PgPool, table_name: &str) -> Result<TableSc
 }
 
 /// List all ontology tables in the data schema
-pub async fn list_ontology_tables(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+pub async fn list_ontology_tables(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
     let tables: Vec<(String,)> = sqlx::query_as(
         r#"
         SELECT table_name

@@ -14,6 +14,7 @@ impl OntologyDescriptor for DocumentOntology {
             .domain("knowledge")
             .table_name("knowledge_document")
             .source_streams(vec!["stream_notion_pages"])
+            .timestamp_column("created_time")
             .embedding(
                 "COALESCE(title, '') || '\n\n' || COALESCE(content_summary, LEFT(content, 8000), '')",
                 "document",

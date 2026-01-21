@@ -1,12 +1,16 @@
 <script lang="ts">
-	import { goto } from "$app/navigation";
+	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { windowTabs } from "$lib/stores/windowTabs.svelte";
+	import { bookmarks } from "$lib/stores/bookmarks.svelte";
 	import SidebarHeader from "./SidebarHeader.svelte";
 	import SidebarAccordion from "./SidebarAccordion.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SearchModal from "./SearchModal.svelte";
+	import BookmarksModal from "$lib/components/BookmarksModal.svelte";
+	import { WikiSidebarSection } from "$lib/components/wiki";
 	import type { SidebarSectionData } from "./types";
 
 	const STORAGE_KEY = "virtues-sidebar-collapsed";
@@ -20,6 +24,9 @@
 
 	// Search modal state
 	let isSearchOpen = $state(false);
+
+	// Bookmarks modal state
+	let isBookmarksOpen = $state(false);
 
 	// Load state from localStorage
 	onMount(() => {
@@ -66,10 +73,20 @@
 			e.preventDefault();
 			toggleCollapse();
 		}
-		// Cmd+K or Ctrl+K - Search (placeholder for future)
+		// Cmd+K or Ctrl+K - Search
 		if ((e.metaKey || e.ctrlKey) && e.key === "k") {
 			e.preventDefault();
 			handleSearch();
+		}
+		// Cmd+B or Ctrl+B - Open bookmarks
+		if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+			e.preventDefault();
+			handleOpenBookmarks();
+		}
+		// Cmd+D or Ctrl+D - Bookmark current tab
+		if ((e.metaKey || e.ctrlKey) && e.key === "d") {
+			e.preventDefault();
+			handleBookmarkCurrentTab();
 		}
 	}
 
@@ -81,8 +98,37 @@
 		isSearchOpen = false;
 	}
 
+	function handleOpenBookmarks() {
+		isBookmarksOpen = true;
+	}
+
+	function closeBookmarks() {
+		isBookmarksOpen = false;
+	}
+
+	async function handleBookmarkCurrentTab() {
+		const tab = windowTabs.activeTab;
+		if (!tab) return;
+
+		await bookmarks.toggleRouteBookmark({
+			route: tab.route,
+			tab_type: tab.type,
+			label: tab.label,
+			icon: tab.icon
+		});
+	}
+
 	function handleNewChat() {
-		goto("/");
+		// Find existing new chat tab (no conversationId) or create one
+		const existingNewChat = windowTabs.getAllTabs().find(
+			(t) => t.type === 'chat' && !t.conversationId
+		);
+
+		if (existingNewChat) {
+			windowTabs.setActiveTab(existingNewChat.id);
+		} else {
+			windowTabs.openTabFromRoute('/', { label: 'New Chat', preferEmptyPane: true });
+		}
 	}
 
 	function toggleCollapse() {
@@ -101,7 +147,7 @@
 
 	// Recent chats for display (last 5)
 	const recentChats = $derived(chatSessions.sessions.slice(0, 5));
-	
+
 	// Check if there are more chats beyond what's shown
 	const hasMoreChats = $derived(chatSessions.sessions.length > 5);
 
@@ -116,15 +162,6 @@
 			icon: "ri:brain-line",
 			defaultExpanded: false,
 			items: [
-				// Coming soon - Timeline feature in development
-				// {
-				// 	id: "timeline",
-				// 	type: "link",
-				// 	label: "Timeline",
-				// 	href: "/timeline",
-				// 	icon: "ri:time-line",
-				// 	pagespace: "timeline",
-				// },
 				{
 					id: "sources",
 					type: "link",
@@ -132,14 +169,6 @@
 					href: "/data/sources",
 					icon: "ri:device-line",
 					pagespace: "data/sources",
-				},
-				{
-					id: "entities",
-					type: "link",
-					label: "Entities",
-					href: "/data/entities",
-					icon: "ri:map-pin-user-line",
-					pagespace: "data/entities",
 				},
 				{
 					id: "activity",
@@ -164,6 +193,14 @@
 					href: "/storage",
 					icon: "ri:database-2-line",
 					pagespace: "storage",
+				},
+				{
+					id: "drive",
+					type: "link",
+					label: "Drive",
+					href: "/data/drive",
+					icon: "ri:hard-drive-2-line",
+					pagespace: "data/drive",
 				},
 			],
 		});
@@ -230,18 +267,14 @@
 			"relative h-full overflow-hidden bg-[var(--surface-elevated)]",
 			"transition-[width] ease-[cubic-bezier(0.34,1.56,0.64,1)]",
 			isCollapsed
-				? [
-						"w-8 border-r border-black/5",
-						"duration-400 delay-0",
-						"data-[theme=dark]:border-white/10 data-[theme=night]:border-white/10",
-					].join(" ")
-				: ["w-60", "duration-300 delay-100"].join(" "),
+				? ["w-8", "duration-400 delay-0"].join(" ")
+				: ["w-52", "duration-300 delay-100"].join(" "),
 		].join(" "),
 	);
 
 	const sidebarInnerClass = $derived.by(() =>
 		[
-			"flex h-full min-w-60 w-60 flex-col",
+			"flex h-full min-w-52 w-52 flex-col",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);
@@ -338,6 +371,27 @@
 				{/if}
 			</SidebarAccordion>
 
+			<!-- Wiki section -->
+			<SidebarAccordion
+				title="Wiki"
+				icon="ri:book-2-line"
+				expanded={expandedSections.has("wiki")}
+				collapsed={isCollapsed}
+				onToggle={() => toggleSection("wiki")}
+				animationDelay={(animationIndices.chatStartIndex +
+					recentChats.length +
+					2) *
+					STAGGER_DELAY}
+			>
+				<WikiSidebarSection
+					collapsed={isCollapsed}
+					baseAnimationDelay={(animationIndices.chatStartIndex +
+						recentChats.length +
+						3) *
+						STAGGER_DELAY}
+				/>
+			</SidebarAccordion>
+
 			<!-- Accordion sections (Onboarding, Memory) -->
 			{#each sections as section}
 				<SidebarAccordion
@@ -369,8 +423,32 @@
 		<SidebarFooter
 			collapsed={isCollapsed}
 			animationDelay={animationIndices.footerIndex * STAGGER_DELAY}
+			onOpenBookmarks={handleOpenBookmarks}
 		/>
 	</div>
 </aside>
 
 <SearchModal open={isSearchOpen} onClose={closeSearch} />
+<BookmarksModal open={isBookmarksOpen} onClose={closeBookmarks} />
+
+<style>
+	@reference "../../../app.css";
+
+	/* Premium easing */
+	:root {
+		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	/* Staggered fade-slide animation */
+	@keyframes fadeSlideIn {
+		from {
+			opacity: 0;
+			transform: translateX(-8px);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+</style>

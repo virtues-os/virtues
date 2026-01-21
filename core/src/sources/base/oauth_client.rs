@@ -353,7 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_backoff_calculation() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
         let client = OAuthHttpClient::new(Uuid::new_v4(), token_manager);
 
@@ -368,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_url() {
-        let pool = sqlx::PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
         let client = OAuthHttpClient::new(Uuid::new_v4(), token_manager)
             .with_base_url("https://api.example.com/v1");

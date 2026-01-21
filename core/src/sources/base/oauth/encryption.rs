@@ -25,7 +25,8 @@ impl TokenEncryptor {
     pub fn from_env() -> Result<Self> {
         let key_b64 = std::env::var("VIRTUES_ENCRYPTION_KEY").map_err(|_| {
             Error::Other(
-                "VIRTUES_ENCRYPTION_KEY not set. Generate with: openssl rand -base64 32".to_string(),
+                "VIRTUES_ENCRYPTION_KEY not set. Generate with: openssl rand -base64 32"
+                    .to_string(),
             )
         })?;
 

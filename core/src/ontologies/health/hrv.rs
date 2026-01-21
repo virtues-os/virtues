@@ -14,6 +14,7 @@ impl OntologyDescriptor for HrvOntology {
             .domain("health")
             .table_name("health_hrv")
             .source_streams(vec!["stream_ios_healthkit"])
+            .timestamp_column("timestamp")
             .build()
     }
 }

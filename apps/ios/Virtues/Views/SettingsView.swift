@@ -110,22 +110,24 @@ struct SettingsView: View {
                 Section(header: Text("Permissions")) {
                     PermissionStatusRow(
                         title: "HealthKit",
-                        isGranted: healthKitManager.isAuthorized
+                        status: healthKitManager.isAuthorized ? .granted : .denied
                     )
                     
                     PermissionStatusRow(
                         title: "Location (Always)",
-                        isGranted: locationManager.hasPermission
+                        status: locationManager.hasAlwaysPermission
+                            ? .granted
+                            : (locationManager.hasPermission ? .partial : .denied)
                     )
                     
                     PermissionStatusRow(
                         title: "Microphone",
-                        isGranted: audioManager.hasPermission
+                        status: audioManager.hasPermission ? .granted : .denied
                     )
 
                     PermissionStatusRow(
                         title: "Contacts",
-                        isGranted: contactsManager.isAuthorized
+                        status: contactsManager.isAuthorized ? .granted : .denied
                     )
 
                     Button(action: {
@@ -262,20 +264,59 @@ struct SettingsView: View {
 
 // MARK: - Permission Status Row
 
+enum PermissionDisplayStatus {
+    case granted
+    case partial
+    case denied
+
+    var label: String {
+        switch self {
+        case .granted:
+            return "Granted"
+        case .partial:
+            return "Limited"
+        case .denied:
+            return "Denied"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .granted:
+            return .warmSuccess
+        case .partial:
+            return .warmWarning
+        case .denied:
+            return .warmError
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .granted:
+            return "checkmark.circle.fill"
+        case .partial:
+            return "exclamationmark.circle.fill"
+        case .denied:
+            return "xmark.circle"
+        }
+    }
+}
+
 struct PermissionStatusRow: View {
     let title: String
-    let isGranted: Bool
+    let status: PermissionDisplayStatus
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
             HStack(spacing: 4) {
-                Image(systemName: isGranted ? "checkmark.circle.fill" : "xmark.circle")
-                    .foregroundColor(isGranted ? .warmSuccess : .warmError)
-                Text(isGranted ? "Granted" : "Denied")
+                Image(systemName: status.iconName)
+                    .foregroundColor(status.color)
+                Text(status.label)
                     .font(.caption)
-                    .foregroundColor(isGranted ? .warmSuccess : .warmError)
+                    .foregroundColor(status.color)
             }
         }
     }
@@ -333,7 +374,11 @@ struct StorageDetailsView: View {
                         .font(.caption)
                         .foregroundColor(.warmForegroundMuted)
 
-                    Text("• Storage warnings appear below 100MB")
+                    Text("• Storage warnings appear below 50MB")
+                        .font(.caption)
+                        .foregroundColor(.warmForegroundMuted)
+
+                    Text("• Data collection pauses below 10MB")
                         .font(.caption)
                         .foregroundColor(.warmForegroundMuted)
                 }

@@ -1,7 +1,10 @@
 //! Add command - add new OAuth or device sources
 
 use crate::client::Virtues;
+use crate::DeviceInfo;
+use console::style;
 use std::env;
+use uuid::Uuid;
 
 /// Handle adding a new source (OAuth or device)
 pub async fn handle_add_source(
@@ -70,7 +73,9 @@ pub async fn handle_add_source(
     println!("   ID: {}", response.source.id);
 
     // List available streams
-    let streams = crate::list_source_streams(virtues.database.pool(), response.source.id).await?;
+    let source_id = Uuid::parse_str(&response.source.id)
+        .map_err(|e| format!("Invalid source ID: {}", e))?;
+    let streams = crate::list_source_streams(virtues.database.pool(), source_id).await?;
     if !streams.is_empty() {
         println!("\n📊 Available streams (all disabled by default):");
         for stream in streams {
@@ -138,44 +143,72 @@ fn parse_callback_url(
     })
 }
 
-/// Handle device pairing flow
+/// Handle device pairing flow (Manual Link)
 async fn handle_device_pairing(
     virtues: Virtues,
     device_type: &str,
     name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use crate::cli::display::*;
+    use std::io::{self, Write};
 
-    let server_url = env::var("VIRTUES_SERVER_URL").unwrap_or_else(|_| "localhost:8000".to_string());
+    let server_url =
+        env::var("VIRTUES_SERVER_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
 
-    println!("🔐 Adding {} source...", device_type);
-    println!();
+    println!(
+        "\n📱 Adding {} device manually",
+        style(device_type).cyan().bold()
+    );
+    println!("{}", style("━".repeat(50)).dim());
+    println!("\n1. Open the {} app on your device", device_type);
+    println!(
+        "2. Go to {} and ensure the Server Endpoint is set to:",
+        style("Settings").bold()
+    );
+    println!("   {}", style(&server_url).yellow());
+    println!(
+        "3. Copy the {} from the app settings",
+        style("Device ID").bold()
+    );
 
-    let pairing = crate::initiate_device_pairing(virtues.database.pool(), device_type, name).await?;
+    print!("\n📝 Enter the Device ID here: ");
+    io::stdout().flush()?;
 
-    display_pairing_code(&pairing.code, &server_url, &pairing.expires_at);
+    let mut device_id = String::new();
+    io::stdin().read_line(&mut device_id)?;
+    let device_id = device_id.trim();
 
-    println!("⏳ Waiting for device to connect...");
-    let result = wait_for_pairing(
-        virtues.database.pool(),
-        pairing.source_id,
-        pairing.expires_at,
-    )
-    .await?;
+    if device_id.is_empty() {
+        println!("{}", style("❌ Device ID cannot be empty").red());
+        return Ok(());
+    }
 
-    match result {
-        PairingResult::Success(device_info) => {
-            display_pairing_success(&device_info, pairing.source_id);
+    // Call the manual link endpoint logic directly
+    // Note: We access the internal API function directly here since we are in the core crate
+    match crate::api::link_device_manually(virtues.database.pool(), device_id, name, device_type)
+        .await
+    {
+        Ok(completed) => {
+            let device_info = DeviceInfo {
+                device_id: device_id.to_string(),
+                device_name: name.to_string(),
+                device_model: "Unknown".to_string(),
+                os_version: "Unknown".to_string(),
+                app_version: None,
+            };
 
+            display_pairing_success(&device_info, completed.source_id);
+
+            // Fetch actual stream connections from DB to display correct status/types
             let streams =
-                crate::list_source_streams(virtues.database.pool(), pairing.source_id).await?;
-            display_available_streams(&streams, pairing.source_id);
+                crate::list_source_streams(virtues.database.pool(), completed.source_id).await?;
+            display_available_streams(&streams, completed.source_id);
         }
-        PairingResult::Timeout => {
-            display_pairing_timeout();
-        }
-        PairingResult::Cancelled => {
-            display_pairing_cancelled(&pairing.code);
+        Err(e) => {
+            println!(
+                "\n{}",
+                style(format!("❌ Failed to link device: {}", e)).red()
+            );
         }
     }
 

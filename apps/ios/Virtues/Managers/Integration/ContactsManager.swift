@@ -335,31 +335,60 @@ class ContactsManager: ObservableObject, HealthCheckable {
         }
 
         let deviceId = configProvider.deviceId
-
-        let streamData = ContactsStreamData(
-            deviceId: deviceId,
-            syncTimestamp: Date(),
-            contacts: contacts
-        )
-
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
 
-        guard let data = try? encoder.encode(streamData) else {
-            print("❌ Failed to encode contacts")
-            return false
+        let maxPayloadBytes = 9_000_000  // Keep below SQLite 10MB payload guard
+        let initialBatchSize = 200
+
+        var index = 0
+        var allSuccess = true
+
+        while index < contacts.count {
+            var batchSize = min(initialBatchSize, contacts.count - index)
+            var batch = Array(contacts[index..<(index + batchSize)])
+
+            while true {
+                let streamData = ContactsStreamData(
+                    deviceId: deviceId,
+                    syncTimestamp: Date(),
+                    contacts: batch
+                )
+
+                guard let data = try? encoder.encode(streamData) else {
+                    print("❌ Failed to encode contacts batch")
+                    allSuccess = false
+                    break
+                }
+
+                if data.count > maxPayloadBytes && batch.count > 1 {
+                    // Reduce batch size and try again
+                    batchSize = max(1, batch.count / 2)
+                    batch = Array(contacts[index..<(index + batchSize)])
+                    continue
+                }
+
+                if data.count > maxPayloadBytes && batch.count == 1 {
+                    print("❌ Contact record too large to enqueue (\(data.count) bytes)")
+                    allSuccess = false
+                } else {
+                    let success = storageProvider.enqueue(streamName: "ios_contacts", data: data)
+                    if success {
+                        print("✅ Saved \(batch.count) contacts to SQLite queue (\(data.count) bytes)")
+                        dataUploader.updateUploadStats()
+                    } else {
+                        print("❌ Failed to save contacts batch to SQLite")
+                        allSuccess = false
+                    }
+                }
+
+                break
+            }
+
+            index += batch.count
         }
 
-        let success = storageProvider.enqueue(streamName: "ios_contacts", data: data)
-
-        if success {
-            print("✅ Saved \(contacts.count) contacts to SQLite queue (\(data.count) bytes)")
-            dataUploader.updateUploadStats()
-        } else {
-            print("❌ Failed to save contacts to SQLite")
-        }
-
-        return success
+        return allSuccess
     }
 
     // MARK: - Helpers
@@ -394,7 +423,23 @@ struct ContactEmail: Codable {
 }
 
 struct ContactsStreamData: Codable {
+    let source: String = "ios"
+    let stream: String = "contacts"
     let deviceId: String
-    let syncTimestamp: Date
-    let contacts: [ContactRecord]
+    let records: [ContactRecord]
+    let timestamp: String
+    let checkpoint: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case source, stream
+        case deviceId = "device_id"
+        case records, timestamp, checkpoint
+    }
+
+    init(deviceId: String, syncTimestamp: Date, contacts: [ContactRecord], checkpoint: String? = nil) {
+        self.deviceId = deviceId
+        self.records = contacts
+        self.timestamp = ISO8601DateFormatter().string(from: syncTimestamp)
+        self.checkpoint = checkpoint
+    }
 }

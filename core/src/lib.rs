@@ -9,9 +9,12 @@ pub mod database;
 pub mod embeddings;
 pub mod entity_resolution;
 pub mod error;
+pub mod geo;
+pub mod http_client;
 pub mod jobs;
 pub mod llm;
 pub mod mcp;
+pub mod middleware;
 pub mod observability;
 pub mod ontologies;
 pub mod registry;
@@ -21,8 +24,7 @@ pub mod server;
 pub mod setup;
 pub mod sources;
 pub mod storage;
-pub mod timeline;
-pub mod transcription;
+pub mod tollbooth;
 
 // Re-export main types
 pub use client::{Virtues, VirtuesBuilder};

@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 #[command(version, about = "Virtues personal data platform CLI", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Subcommand)]

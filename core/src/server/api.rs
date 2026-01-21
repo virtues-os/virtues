@@ -585,6 +585,46 @@ pub async fn complete_device_pairing_handler(
     }
 }
 
+/// Request to manually link a device (UUID flow)
+#[derive(Debug, Deserialize)]
+pub struct LinkDeviceRequest {
+    pub device_id: String,
+    pub name: String,
+    pub device_type: String,
+}
+
+/// Link a device manually using its UUID
+pub async fn link_device_manual_handler(
+    State(state): State<AppState>,
+    Json(request): Json<LinkDeviceRequest>,
+) -> Response {
+    match crate::api::link_device_manually(
+        state.db.pool(),
+        &request.device_id,
+        &request.name,
+        &request.device_type,
+    )
+    .await
+    {
+        Ok(completed) => (
+            StatusCode::OK,
+            Json(CompletePairingResponse {
+                source_id: completed.source_id,
+                device_token: completed.device_token,
+                available_streams: completed.available_streams,
+            }),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": e.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
+
 /// Response for pairing status
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
@@ -703,25 +743,21 @@ pub async fn device_health_check_handler(
 
     // Validate the device token
     match crate::api::device_pairing::validate_device_token(state.db.pool(), &token).await {
-        Ok(source_id) => {
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "status": "active",
-                    "source_id": source_id,
-                })),
-            )
-                .into_response()
-        }
-        Err(_) => {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "error": "Invalid or revoked device token"
-                })),
-            )
-                .into_response()
-        }
+        Ok(source_id) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "active",
+                "source_id": source_id,
+            })),
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "Invalid or revoked device token"
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -970,126 +1006,6 @@ pub async fn delete_aspiration_handler(
 }
 
 // =============================================================================
-// Axiology API - Temperaments
-// =============================================================================
-
-pub async fn list_temperaments_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_temperaments(state.db.pool()).await)
-}
-
-pub async fn get_temperament_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    api_response(crate::api::get_temperament(state.db.pool(), id).await)
-}
-
-pub async fn create_temperament_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::create_temperament(state.db.pool(), request).await)
-}
-
-pub async fn update_temperament_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Json(request): Json<crate::api::UpdateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::update_temperament(state.db.pool(), id, request).await)
-}
-
-pub async fn delete_temperament_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    match crate::api::delete_temperament(state.db.pool(), id).await {
-        Ok(_) => success_message("Temperament deleted successfully"),
-        Err(e) => error_response(e),
-    }
-}
-
-// =============================================================================
-// Axiology API - Virtues
-// =============================================================================
-
-pub async fn list_virtues_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_virtues(state.db.pool()).await)
-}
-
-pub async fn get_virtue_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    api_response(crate::api::get_virtue(state.db.pool(), id).await)
-}
-
-pub async fn create_virtue_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::create_virtue(state.db.pool(), request).await)
-}
-
-pub async fn update_virtue_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Json(request): Json<crate::api::UpdateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::update_virtue(state.db.pool(), id, request).await)
-}
-
-pub async fn delete_virtue_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    match crate::api::delete_virtue(state.db.pool(), id).await {
-        Ok(_) => success_message("Virtue deleted successfully"),
-        Err(e) => error_response(e),
-    }
-}
-
-// =============================================================================
-// Axiology API - Vices
-// =============================================================================
-
-pub async fn list_vices_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_vices(state.db.pool()).await)
-}
-
-pub async fn get_vice_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    api_response(crate::api::get_vice(state.db.pool(), id).await)
-}
-
-pub async fn create_vice_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::create_vice(state.db.pool(), request).await)
-}
-
-pub async fn update_vice_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-    Json(request): Json<crate::api::UpdateSimpleRequest>,
-) -> Response {
-    api_response(crate::api::update_vice(state.db.pool(), id, request).await)
-}
-
-pub async fn delete_vice_handler(
-    State(state): State<AppState>,
-    Path(id): Path<Uuid>,
-) -> Response {
-    match crate::api::delete_vice(state.db.pool(), id).await {
-        Ok(_) => success_message("Vice deleted successfully"),
-        Err(e) => error_response(e),
-    }
-}
-
-// =============================================================================
 // Tools API
 // =============================================================================
 
@@ -1102,10 +1018,7 @@ pub async fn list_tools_handler(
 }
 
 /// Get a specific tool by ID
-pub async fn get_tool_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn get_tool_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::get_tool(state.db.pool(), id).await)
 }
 
@@ -1153,85 +1066,24 @@ pub async fn get_agent_handler(
 }
 
 // =============================================================================
-// Timeline API
-// =============================================================================
-
-/// Query parameters for day view
-#[derive(Debug, Deserialize)]
-pub struct DayViewQuery {
-    /// Timezone offset from UTC in hours (e.g., 1 for Rome, -8 for PST)
-    pub tz_offset: Option<i32>,
-}
-
-/// Get day view for a specific date
-///
-/// Query parameters:
-/// - tz_offset: Timezone offset from UTC in hours (default: 0)
-pub async fn get_day_view_handler(
-    State(state): State<AppState>,
-    Path(date_str): Path<String>,
-    Query(params): Query<DayViewQuery>,
-) -> Response {
-    use chrono::NaiveDate;
-
-    let date = match NaiveDate::parse_from_str(&date_str, "%Y-%m-%d") {
-        Ok(d) => d,
-        Err(_) => {
-            return error_response(crate::error::Error::InvalidInput(
-                "Invalid date format. Use YYYY-MM-DD".to_string(),
-            ))
-        }
-    };
-
-    let tz_offset = params.tz_offset.unwrap_or(0);
-    api_response(crate::api::get_day_view(state.db.pool(), date, tz_offset).await)
-}
-
-// =============================================================================
 // Seed Testing API
 // =============================================================================
 
-/// Get pipeline status (archive, transform, clustering, timeline chunks)
+/// Get pipeline status (archive, transform, clustering)
 pub async fn seed_pipeline_status_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::get_pipeline_status(&state.db).await)
 }
 
 #[derive(Debug, serde::Deserialize)]
-pub struct ChunksSummaryQuery {
+pub struct DataQualityQuery {
     pub start: String, // RFC3339 timestamp
     pub end: String,   // RFC3339 timestamp
-}
-
-/// Get timeline chunks summary grouped by type
-pub async fn seed_chunks_summary_handler(
-    State(state): State<AppState>,
-    Query(params): Query<ChunksSummaryQuery>,
-) -> Response {
-    let start = match chrono::DateTime::parse_from_rfc3339(&params.start) {
-        Ok(dt) => dt.with_timezone(&chrono::Utc),
-        Err(_) => {
-            return error_response(crate::error::Error::InvalidInput(
-                "Invalid start timestamp. Use RFC3339 format".to_string(),
-            ))
-        }
-    };
-
-    let end = match chrono::DateTime::parse_from_rfc3339(&params.end) {
-        Ok(dt) => dt.with_timezone(&chrono::Utc),
-        Err(_) => {
-            return error_response(crate::error::Error::InvalidInput(
-                "Invalid end timestamp. Use RFC3339 format".to_string(),
-            ))
-        }
-    };
-
-    api_response(crate::api::get_chunks_summary(&state.db, start, end).await)
 }
 
 /// Get data quality metrics for seed data
 pub async fn seed_data_quality_handler(
     State(state): State<AppState>,
-    Query(params): Query<ChunksSummaryQuery>,
+    Query(params): Query<DataQualityQuery>,
 ) -> Response {
     let start = match chrono::DateTime::parse_from_rfc3339(&params.start) {
         Ok(dt) => dt.with_timezone(&chrono::Utc),
@@ -1432,9 +1284,12 @@ pub async fn places_autocomplete_handler(
         Ok(response) => {
             // Record usage on success - warn but don't fail if recording fails
             // The user already received their response, so this is a billing/tracking issue only
-            if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::GooglePlaces, 1)
-                    .await
+            if let Err(e) = crate::api::record_service_usage(
+                state.db.pool(),
+                crate::api::Service::GooglePlaces,
+                1,
+            )
+            .await
             {
                 tracing::warn!(
                     service = "google_places",
@@ -1475,9 +1330,12 @@ pub async fn places_details_handler(
     match crate::api::get_place_details(request).await {
         Ok(response) => {
             // Record usage on success - warn but don't fail if recording fails
-            if let Err(e) =
-                crate::api::record_service_usage(state.db.pool(), crate::api::Service::GooglePlaces, 1)
-                    .await
+            if let Err(e) = crate::api::record_service_usage(
+                state.db.pool(),
+                crate::api::Service::GooglePlaces,
+                1,
+            )
+            .await
             {
                 tracing::warn!(
                     service = "google_places",
@@ -1519,12 +1377,11 @@ pub async fn usage_check_handler(
 ) -> Response {
     let service = match query.service.as_str() {
         "ai_gateway" => crate::api::Service::AiGateway,
-        "assemblyai" => crate::api::Service::AssemblyAi,
         "google_places" => crate::api::Service::GooglePlaces,
         "exa" => crate::api::Service::Exa,
         _ => {
             return error_response(crate::error::Error::InvalidInput(format!(
-                "Invalid service: {}. Valid services: ai_gateway, assemblyai, google_places, exa",
+                "Invalid service: {}. Valid services: ai_gateway, google_places, exa",
                 query.service
             )))
         }
@@ -1617,9 +1474,7 @@ pub async fn get_storage_object_content_handler(
     State(state): State<AppState>,
     Path(object_id): Path<Uuid>,
 ) -> Response {
-    api_response(
-        crate::api::get_object_content(state.db.pool(), &*state.storage, object_id).await,
-    )
+    api_response(crate::api::get_object_content(state.db.pool(), &*state.storage, object_id).await)
 }
 
 // =============================================================================
@@ -1677,6 +1532,842 @@ pub async fn set_place_as_home_handler(
 ) -> Response {
     match crate::api::set_home_place_entity(state.db.pool(), place_id).await {
         Ok(_) => success_message("Home place updated"),
+        Err(e) => error_response(e),
+    }
+}
+
+// ============================================================================
+// Wiki API Handlers
+// ============================================================================
+
+/// Resolve a slug to its entity type
+pub async fn wiki_resolve_slug_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::resolve_slug(state.db.pool(), &slug).await)
+}
+
+// --- Person ---
+
+/// Get a person by slug
+pub async fn wiki_get_person_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_person_by_slug(state.db.pool(), &slug).await)
+}
+
+/// List all people
+pub async fn wiki_list_people_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_people(state.db.pool()).await)
+}
+
+/// Update a person by ID
+pub async fn wiki_update_person_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdateWikiPersonRequest>,
+) -> Response {
+    api_response(crate::api::update_person(state.db.pool(), id, request).await)
+}
+
+// --- Place ---
+
+/// Get a place by slug
+pub async fn wiki_get_place_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_place_by_slug(state.db.pool(), &slug).await)
+}
+
+/// List all places (wiki view)
+pub async fn wiki_list_places_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_wiki_places(state.db.pool()).await)
+}
+
+/// Update a place by ID (wiki fields)
+pub async fn wiki_update_place_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdateWikiPlaceRequest>,
+) -> Response {
+    api_response(crate::api::update_wiki_place(state.db.pool(), id, request).await)
+}
+
+// --- Organization ---
+
+/// Get an organization by slug
+pub async fn wiki_get_organization_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_organization_by_slug(state.db.pool(), &slug).await)
+}
+
+/// List all organizations
+pub async fn wiki_list_organizations_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_organizations(state.db.pool()).await)
+}
+
+/// Update an organization by ID
+pub async fn wiki_update_organization_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdateWikiOrganizationRequest>,
+) -> Response {
+    api_response(crate::api::update_organization(state.db.pool(), id, request).await)
+}
+
+// --- Thing ---
+
+/// Get a thing by slug
+pub async fn wiki_get_thing_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_thing_by_slug(state.db.pool(), &slug).await)
+}
+
+/// List all things
+pub async fn wiki_list_things_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_things(state.db.pool()).await)
+}
+
+/// Update a thing by ID
+pub async fn wiki_update_thing_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdateWikiThingRequest>,
+) -> Response {
+    api_response(crate::api::update_thing(state.db.pool(), id, request).await)
+}
+
+// --- Telos ---
+
+/// Get active telos
+pub async fn wiki_get_active_telos_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_active_telos(state.db.pool()).await)
+}
+
+/// Get a telos by slug
+pub async fn wiki_get_telos_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_telos_by_slug(state.db.pool(), &slug).await)
+}
+
+// --- Act ---
+
+/// Get an act by slug
+pub async fn wiki_get_act_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_act_by_slug(state.db.pool(), &slug).await)
+}
+
+/// List all acts
+pub async fn wiki_list_acts_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_acts(state.db.pool()).await)
+}
+
+// --- Chapter ---
+
+/// Get a chapter by slug
+pub async fn wiki_get_chapter_handler(
+    State(state): State<AppState>,
+    Path(slug): Path<String>,
+) -> Response {
+    api_response(crate::api::get_chapter_by_slug(state.db.pool(), &slug).await)
+}
+
+/// List chapters for an act
+pub async fn wiki_list_chapters_handler(
+    State(state): State<AppState>,
+    Path(act_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::list_chapters_for_act(state.db.pool(), act_id).await)
+}
+
+// --- Day ---
+
+#[derive(Deserialize)]
+pub struct WikiDayQuery {
+    pub start_date: Option<chrono::NaiveDate>,
+    pub end_date: Option<chrono::NaiveDate>,
+}
+
+/// Get a day by date
+pub async fn wiki_get_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::get_or_create_day(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// Update a day by date
+pub async fn wiki_update_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Json(request): Json<crate::api::UpdateWikiDayRequest>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::update_day(state.db.pool(), parsed_date, request).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// List days in a date range
+pub async fn wiki_list_days_handler(
+    State(state): State<AppState>,
+    Query(query): Query<WikiDayQuery>,
+) -> Response {
+    let today = chrono::Utc::now().date_naive();
+    let start_date = query
+        .start_date
+        .unwrap_or(today - chrono::Duration::days(30));
+    let end_date = query.end_date.unwrap_or(today);
+    api_response(crate::api::list_days(state.db.pool(), start_date, end_date).await)
+}
+
+// =============================================================================
+// Wiki Citations API
+// =============================================================================
+
+/// Get citations for a wiki page
+pub async fn wiki_get_citations_handler(
+    State(state): State<AppState>,
+    Path((source_type, source_id)): Path<(String, Uuid)>,
+) -> Response {
+    api_response(crate::api::get_citations(state.db.pool(), &source_type, source_id).await)
+}
+
+/// Create a citation for a wiki page
+pub async fn wiki_create_citation_handler(
+    State(state): State<AppState>,
+    Path((source_type, source_id)): Path<(String, Uuid)>,
+    Json(mut request): Json<crate::api::CreateCitationRequest>,
+) -> Response {
+    // Set source type/id from path
+    request.source_type = source_type;
+    request.source_id = source_id;
+    match crate::api::create_citation(state.db.pool(), request).await {
+        Ok(citation) => (StatusCode::CREATED, Json(citation)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Update a citation
+pub async fn wiki_update_citation_handler(
+    State(state): State<AppState>,
+    Path(citation_id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdateCitationRequest>,
+) -> Response {
+    api_response(crate::api::update_citation(state.db.pool(), citation_id, request).await)
+}
+
+/// Delete a citation
+pub async fn wiki_delete_citation_handler(
+    State(state): State<AppState>,
+    Path(citation_id): Path<Uuid>,
+) -> Response {
+    match crate::api::delete_citation(state.db.pool(), citation_id).await {
+        Ok(_) => success_message("Citation deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+// =============================================================================
+// Wiki Temporal Events API
+// =============================================================================
+
+/// Get events for a day by date
+pub async fn wiki_get_day_events_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::get_events_by_date(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// Create a temporal event
+pub async fn wiki_create_event_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreateTemporalEventRequest>,
+) -> Response {
+    match crate::api::create_temporal_event(state.db.pool(), request).await {
+        Ok(event) => (StatusCode::CREATED, Json(event)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Update a temporal event
+pub async fn wiki_update_event_handler(
+    State(state): State<AppState>,
+    Path(event_id): Path<Uuid>,
+    Json(request): Json<crate::api::UpdateTemporalEventRequest>,
+) -> Response {
+    api_response(crate::api::update_temporal_event(state.db.pool(), event_id, request).await)
+}
+
+/// Delete a temporal event
+pub async fn wiki_delete_event_handler(
+    State(state): State<AppState>,
+    Path(event_id): Path<Uuid>,
+) -> Response {
+    match crate::api::delete_temporal_event(state.db.pool(), event_id).await {
+        Ok(_) => success_message("Event deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete all auto-generated events for a day (regeneration support)
+pub async fn wiki_delete_auto_events_handler(
+    State(state): State<AppState>,
+    Path(day_id): Path<Uuid>,
+) -> Response {
+    match crate::api::delete_auto_events_for_day(state.db.pool(), day_id).await {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "deleted": count })),
+        )
+            .into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Get data sources (ontology records) for a day
+pub async fn wiki_get_day_sources_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::get_day_sources(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// Get all ontology data streams for a day (dynamic query across all ontologies)
+pub async fn wiki_get_day_streams_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::get_day_streams(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+// =============================================================================
+// Code Execution API (AI Sandbox)
+// =============================================================================
+
+/// Execute Python code in a sandboxed environment
+///
+/// Used by the AI agent's code_interpreter tool.
+/// On Linux, uses nsjail for process isolation.
+/// On dev machines (macOS/Windows), runs Python directly.
+pub async fn execute_code_handler(Json(request): Json<crate::api::ExecuteCodeRequest>) -> Response {
+    let response = crate::api::execute_code(request).await;
+    (StatusCode::OK, Json(response)).into_response()
+}
+
+// =============================================================================
+// Bookmarks API Handlers
+// =============================================================================
+
+/// List all bookmarks
+pub async fn list_bookmarks_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_bookmarks(state.db.pool()).await)
+}
+
+/// Create a tab bookmark
+pub async fn create_tab_bookmark_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreateTabBookmarkRequest>,
+) -> Response {
+    match crate::api::create_tab_bookmark(state.db.pool(), request).await {
+        Ok(bookmark) => (StatusCode::CREATED, Json(bookmark)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Create an entity bookmark
+pub async fn create_entity_bookmark_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreateEntityBookmarkRequest>,
+) -> Response {
+    match crate::api::create_entity_bookmark(state.db.pool(), request).await {
+        Ok(bookmark) => (StatusCode::CREATED, Json(bookmark)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete a bookmark by ID
+pub async fn delete_bookmark_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Response {
+    match crate::api::delete_bookmark(state.db.pool(), id).await {
+        Ok(_) => success_message("Bookmark deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Toggle bookmark for a route (create or delete)
+pub async fn toggle_route_bookmark_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreateTabBookmarkRequest>,
+) -> Response {
+    api_response(crate::api::toggle_route_bookmark(state.db.pool(), request).await)
+}
+
+/// Toggle bookmark for an entity (create or delete)
+pub async fn toggle_entity_bookmark_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreateEntityBookmarkRequest>,
+) -> Response {
+    api_response(crate::api::toggle_entity_bookmark(state.db.pool(), request).await)
+}
+
+/// Query params for checking route bookmark status
+#[derive(Debug, Deserialize)]
+pub struct RouteBookmarkQuery {
+    pub route: String,
+}
+
+/// Check if a route is bookmarked
+pub async fn check_route_bookmark_handler(
+    State(state): State<AppState>,
+    Query(params): Query<RouteBookmarkQuery>,
+) -> Response {
+    api_response(crate::api::is_route_bookmarked(state.db.pool(), &params.route).await)
+}
+
+/// Check if an entity is bookmarked
+pub async fn check_entity_bookmark_handler(
+    State(state): State<AppState>,
+    Path(entity_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::is_entity_bookmarked(state.db.pool(), entity_id).await)
+}
+
+// =============================================================================
+// Session Usage & Compaction API Handlers
+// =============================================================================
+
+/// Get token usage for a session
+pub async fn get_session_usage_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::get_session_usage(state.db.pool(), session_id).await)
+}
+
+/// Compact a session (summarize older messages)
+pub async fn compact_session_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+    Json(request): Json<Option<CompactSessionRequest>>,
+) -> Response {
+    let options = request.unwrap_or_default().into();
+    api_response(crate::api::compaction::compact_session(state.db.pool(), session_id, options).await)
+}
+
+/// Request body for compaction
+#[derive(Debug, Deserialize, Default)]
+pub struct CompactSessionRequest {
+    /// Number of recent exchanges to keep verbatim (default: 8)
+    pub keep_recent_exchanges: Option<usize>,
+    /// Force compaction even if under threshold
+    #[serde(default)]
+    pub force: bool,
+}
+
+impl From<CompactSessionRequest> for crate::api::compaction::CompactionOptions {
+    fn from(req: CompactSessionRequest) -> Self {
+        Self {
+            keep_recent_exchanges: req.keep_recent_exchanges.unwrap_or(8),
+            force: req.force,
+        }
+    }
+}
+
+// =============================================================================
+// Sessions API Handlers
+// =============================================================================
+
+/// List chat sessions
+pub async fn list_sessions_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::sessions::list_sessions(state.db.pool(), 25).await)
+}
+
+/// Create a new chat session with initial messages
+pub async fn create_session_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::sessions::CreateSessionRequest>,
+) -> Response {
+    api_response(crate::api::sessions::create_session_from_request(state.db.pool(), request).await)
+}
+
+/// Get a chat session by ID
+pub async fn get_session_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::sessions::get_session(state.db.pool(), session_id).await)
+}
+
+/// Update a chat session title
+pub async fn update_session_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+    Json(request): Json<crate::api::sessions::UpdateTitleRequest>,
+) -> Response {
+    api_response(
+        crate::api::sessions::update_session_title(state.db.pool(), session_id, &request.title)
+            .await,
+    )
+}
+
+/// Delete a chat session
+pub async fn delete_session_handler(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+) -> Response {
+    api_response(crate::api::sessions::delete_session(state.db.pool(), session_id).await)
+}
+
+/// Generate a title for a chat session
+pub async fn generate_session_title_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::sessions::GenerateTitleRequest>,
+) -> Response {
+    api_response(
+        crate::api::sessions::generate_title(
+            state.db.pool(),
+            request.session_id,
+            &request.messages,
+        )
+        .await,
+    )
+}
+
+// =============================================================================
+// Chat API Handler
+// =============================================================================
+
+/// POST /api/chat - Stream chat completion (requires authentication)
+pub async fn chat_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    Json(request): Json<crate::api::chat::ChatRequest>,
+) -> Response {
+    crate::api::chat::chat_handler(
+        axum::extract::State(state.db.pool().clone()),
+        user,
+        Json(request),
+    )
+    .await
+}
+
+// =============================================================================
+// Auth API Handlers
+// =============================================================================
+
+/// POST /auth/signin - Send magic link email
+pub async fn auth_signin_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(request): Json<crate::api::auth::SignInRequest>,
+) -> Response {
+    crate::api::auth::signin_handler(
+        axum::extract::State(state.db.pool().clone()),
+        headers,
+        Json(request),
+    )
+    .await
+    .into_response()
+}
+
+/// GET /auth/callback - Verify magic link token
+pub async fn auth_callback_handler(
+    State(state): State<AppState>,
+    Query(params): Query<crate::api::auth::CallbackParams>,
+    jar: axum_extra::extract::cookie::CookieJar,
+) -> Response {
+    crate::api::auth::callback_handler(
+        axum::extract::State(state.db.pool().clone()),
+        Query(params),
+        jar,
+    )
+    .await
+    .into_response()
+}
+
+/// POST /auth/signout - Sign out and clear session
+pub async fn auth_signout_handler(
+    State(state): State<AppState>,
+    jar: axum_extra::extract::cookie::CookieJar,
+) -> Response {
+    crate::api::auth::signout_handler(axum::extract::State(state.db.pool().clone()), jar)
+        .await
+        .into_response()
+}
+
+/// GET /auth/session - Get current session
+pub async fn auth_session_handler(
+    State(state): State<AppState>,
+    jar: axum_extra::extract::cookie::CookieJar,
+) -> Response {
+    crate::api::auth::session_handler(axum::extract::State(state.db.pool().clone()), jar)
+        .await
+        .into_response()
+}
+
+/// POST /api/profile/owner-email - Atlas webhook to update owner email
+pub async fn auth_owner_email_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::auth::UpdateOwnerEmailRequest>,
+) -> Response {
+    crate::api::auth::update_owner_email_handler(
+        axum::extract::State(state.db.pool().clone()),
+        Json(request),
+    )
+    .await
+    .into_response()
+}
+
+// =============================================================================
+// Drive API Handlers (User File Storage)
+// =============================================================================
+
+/// GET /api/drive/usage - Get drive usage statistics
+pub async fn get_drive_usage_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_drive_usage(state.db.pool()).await)
+}
+
+/// GET /api/drive/warnings - Get quota warnings
+pub async fn get_drive_warnings_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::check_drive_warnings(state.db.pool()).await)
+}
+
+/// Query params for listing drive files
+#[derive(Debug, Deserialize)]
+pub struct ListDriveFilesQuery {
+    #[serde(default = "default_drive_path")]
+    pub path: String,
+}
+
+fn default_drive_path() -> String {
+    String::new() // Empty string = root directory
+}
+
+/// GET /api/drive/files - List files in a directory
+pub async fn list_drive_files_handler(
+    State(state): State<AppState>,
+    Query(params): Query<ListDriveFilesQuery>,
+) -> Response {
+    api_response(crate::api::list_drive_files(state.db.pool(), &params.path).await)
+}
+
+/// GET /api/drive/files/:id - Get file metadata
+pub async fn get_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_drive_file(state.db.pool(), &file_id).await)
+}
+
+/// GET /api/drive/files/:id/download - Download file content
+pub async fn download_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    match crate::api::download_drive_file(state.db.pool(), &config, &file_id).await {
+        Ok((file, content)) => {
+            let content_type = file
+                .mime_type
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, content_type),
+                    (
+                        axum::http::header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"{}\"", file.filename),
+                    ),
+                ],
+                content,
+            )
+                .into_response()
+        }
+        Err(e) => error_response(e),
+    }
+}
+
+/// DELETE /api/drive/files/:id - Delete a file or folder
+pub async fn delete_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    match crate::api::delete_drive_file(state.db.pool(), &config, &file_id).await {
+        Ok(_) => success_message("File deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// PUT /api/drive/files/:id/move - Move or rename a file
+pub async fn move_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+    Json(request): Json<crate::api::DriveMoveFileRequest>,
+) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    api_response(
+        crate::api::move_drive_file(state.db.pool(), &config, &file_id, &request.new_path).await,
+    )
+}
+
+/// POST /api/drive/upload - Upload a file (multipart form)
+pub async fn upload_drive_file_handler(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+
+    // Parse multipart form
+    let mut path: Option<String> = None;
+    let mut filename: Option<String> = None;
+    let mut mime_type: Option<String> = None;
+    let mut data: Option<axum::body::Bytes> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "path" => {
+                if let Ok(text) = field.text().await {
+                    path = Some(text);
+                }
+            }
+            "file" => {
+                filename = field.file_name().map(|s| s.to_string());
+                mime_type = field.content_type().map(|s| s.to_string());
+                if let Ok(bytes) = field.bytes().await {
+                    data = Some(bytes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let request = crate::api::DriveUploadRequest {
+        path: path.unwrap_or_else(|| "uploads".to_string()),
+        filename: filename.unwrap_or_else(|| "unnamed".to_string()),
+        mime_type,
+    };
+
+    match data {
+        Some(bytes) => {
+            match crate::api::upload_drive_file(state.db.pool(), &config, request, bytes).await {
+                Ok(file) => (StatusCode::CREATED, Json(file)).into_response(),
+                Err(e) => error_response(e),
+            }
+        }
+        None => error_response(crate::error::Error::InvalidInput(
+            "No file data provided".into(),
+        )),
+    }
+}
+
+/// POST /api/drive/folders - Create a folder
+pub async fn create_drive_folder_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::DriveCreateFolderRequest>,
+) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    match crate::api::create_drive_folder(state.db.pool(), &config, request).await {
+        Ok(folder) => (StatusCode::CREATED, Json(folder)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/drive/reconcile - Reconcile usage with filesystem (admin)
+pub async fn reconcile_drive_usage_handler(State(state): State<AppState>) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    api_response(crate::api::reconcile_drive_usage(state.db.pool(), &config).await)
+}
+
+// =============================================================================
+// Drive Trash Handlers
+// =============================================================================
+
+/// GET /api/drive/trash - List files in trash
+pub async fn list_drive_trash_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_drive_trash(state.db.pool()).await)
+}
+
+/// POST /api/drive/files/:id/restore - Restore a file from trash
+pub async fn restore_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    api_response(crate::api::restore_drive_file(state.db.pool(), &file_id).await)
+}
+
+/// DELETE /api/drive/files/:id/purge - Permanently delete a file (skip trash)
+pub async fn purge_drive_file_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    match crate::api::purge_drive_file(state.db.pool(), &config, &file_id).await {
+        Ok(_) => success_message("File permanently deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// POST /api/drive/trash/empty - Empty all files from trash
+pub async fn empty_drive_trash_handler(State(state): State<AppState>) -> Response {
+    let config = crate::api::DriveConfig::from_env();
+    match crate::api::empty_drive_trash(state.db.pool(), &config).await {
+        Ok(count) => {
+            (StatusCode::OK, Json(serde_json::json!({ "deleted_count": count }))).into_response()
+        }
         Err(e) => error_response(e),
     }
 }

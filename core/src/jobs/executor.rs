@@ -6,14 +6,14 @@ use crate::jobs::sync_job::execute_sync_job;
 use crate::jobs::transform_context::TransformContext;
 use crate::jobs::transform_job::execute_transform_job;
 use crate::observability::JobTimer;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// Job executor that spawns background tasks for async job execution
 #[derive(Clone)]
 pub struct JobExecutor {
-    db: PgPool,
+    db: SqlitePool,
     context: Arc<TransformContext>,
 }
 
@@ -23,7 +23,7 @@ impl JobExecutor {
     /// # Arguments
     /// * `db` - Database connection pool
     /// * `context` - Transform context with storage and API keys
-    pub fn new(db: PgPool, context: TransformContext) -> Self {
+    pub fn new(db: SqlitePool, context: TransformContext) -> Self {
         Self {
             db,
             context: Arc::new(context),
@@ -50,7 +50,7 @@ impl JobExecutor {
     }
 
     /// Internal method to run a job
-    async fn run_job(db: &PgPool, context: &Arc<TransformContext>, job_id: Uuid) -> Result<()> {
+    async fn run_job(db: &SqlitePool, context: &Arc<TransformContext>, job_id: Uuid) -> Result<()> {
         // Fetch the job
         let job = super::get_job(db, job_id).await?;
 

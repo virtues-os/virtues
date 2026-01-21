@@ -4,8 +4,9 @@
 //! into normalized ontology tables.
 
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::error::Result;
 use crate::jobs::models::Job;
@@ -23,7 +24,7 @@ use crate::jobs::transform_factory::TransformFactory;
 /// * `job` - The job to execute
 #[tracing::instrument(skip(db, context, job), fields(job_id = %job.id, job_type = "transform"))]
 pub async fn execute_transform_job(
-    db: &PgPool,
+    db: &SqlitePool,
     context: &Arc<TransformContext>,
     job: &Job,
 ) -> Result<()> {
@@ -44,9 +45,15 @@ pub async fn execute_transform_job(
             crate::Error::InvalidInput("Transform job missing target_table in metadata".into())
         })?;
 
-    let source_id = job
+    let source_id_str = job
         .source_connection_id
+        .as_ref()
         .ok_or_else(|| crate::Error::InvalidInput("Transform job missing source_id".into()))?;
+    let source_id = Uuid::parse_str(source_id_str)
+        .map_err(|e| crate::Error::InvalidInput(format!("Invalid source_id: {}", e)))?;
+
+    let job_id = Uuid::parse_str(&job.id)
+        .map_err(|e| crate::Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
 
     tracing::info!(
         source_table,
@@ -80,9 +87,9 @@ pub async fn execute_transform_job(
             // Update job with success
             sqlx::query(
                 r#"
-                UPDATE data.jobs
+                UPDATE data_jobs
                 SET status = 'succeeded',
-                    completed_at = NOW(),
+                    completed_at = datetime('now'),
                     records_processed = $1,
                     metadata = $2
                 WHERE id = $3
@@ -90,7 +97,7 @@ pub async fn execute_transform_job(
             )
             .bind(transform_result.records_written as i64)
             .bind(metadata)
-            .bind(job.id)
+            .bind(&job.id)
             .execute(db)
             .await?;
 
@@ -109,7 +116,7 @@ pub async fn execute_transform_job(
             for chained in &transform_result.chained_transforms {
                 let chained_job = crate::jobs::create_chained_transform_job(
                     db,
-                    job.id,
+                    job_id,
                     &chained.source_table,
                     chained.target_tables.iter().map(|s| s.as_str()).collect(),
                     &chained.domain,
@@ -152,9 +159,9 @@ pub async fn execute_transform_job(
             // Update job with failure
             sqlx::query(
                 r#"
-                UPDATE data.jobs
+                UPDATE data_jobs
                 SET status = 'failed',
-                    completed_at = NOW(),
+                    completed_at = datetime('now'),
                     error_message = $1,
                     metadata = $2
                 WHERE id = $3
@@ -162,7 +169,7 @@ pub async fn execute_transform_job(
             )
             .bind(e.to_string())
             .bind(metadata)
-            .bind(job.id)
+            .bind(&job.id)
             .execute(db)
             .await?;
 

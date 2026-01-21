@@ -1,17 +1,15 @@
 //! Embedding batch job
 //!
+//! NOTE: Vector embeddings are currently disabled for SQLite migration.
+//! This module will be re-enabled when sqlite-vec is integrated.
+//!
 //! Processes unembedded records from ontology tables in batches.
 //! Uses the ontology registry to dynamically discover searchable tables.
 
-use super::client::{format_embedding_for_pg, EmbeddingClient};
+use super::client::EmbeddingClient;
 use crate::error::Result;
-use crate::ontologies::descriptor::EmbeddingConfig;
 use crate::ontologies::registry::ontology_registry;
-use sqlx::{PgPool, Row};
-use uuid::Uuid;
-
-/// Batch size for processing embeddings
-const BATCH_SIZE: i64 = 50;
+use sqlx::SqlitePool;
 
 /// Result of an embedding job execution
 #[derive(Debug, Clone, serde::Serialize)]
@@ -23,135 +21,59 @@ pub struct EmbeddingJobResult {
 }
 
 /// Embedding job for batch processing ontology tables
+///
+/// NOTE: Vector embeddings are currently disabled for SQLite migration.
+/// All methods return stub/empty results until sqlite-vec is integrated.
 pub struct EmbeddingJob {
-    pool: PgPool,
+    pool: SqlitePool,
+    #[allow(dead_code)]
     client: EmbeddingClient,
 }
 
 impl EmbeddingJob {
     /// Create a new embedding job
-    pub fn new(pool: PgPool, client: EmbeddingClient) -> Self {
+    pub fn new(pool: SqlitePool, client: EmbeddingClient) -> Self {
         Self { pool, client }
     }
 
     /// Create embedding job from environment configuration
-    pub fn from_env(pool: PgPool) -> Result<Self> {
+    pub fn from_env(pool: SqlitePool) -> Result<Self> {
         let client = EmbeddingClient::from_env()?;
         Ok(Self::new(pool, client))
     }
 
     /// Create embedding job with custom configuration
-    pub fn with_config(pool: PgPool, endpoint: &str, model: &str) -> Result<Self> {
+    pub fn with_config(pool: SqlitePool, endpoint: &str, model: &str) -> Result<Self> {
         let client = EmbeddingClient::with_config(endpoint, model)?;
         Ok(Self::new(pool, client))
     }
 
     /// Process all searchable ontology tables (discovered from registry)
+    ///
+    /// NOTE: Currently disabled - returns empty results.
+    /// Vector embeddings will be re-enabled when sqlite-vec is integrated.
     pub async fn process_all(&self) -> Result<Vec<EmbeddingJobResult>> {
-        let mut results = Vec::new();
+        tracing::info!("Embedding job skipped: vector search disabled for SQLite migration");
 
-        for ontology in ontology_registry().list_searchable() {
-            if let Some(emb) = &ontology.embedding {
-                let result = self.process_table(ontology.table_name, emb).await?;
-                results.push(result);
-            }
-        }
+        // Return stub results for each searchable table
+        let results = ontology_registry()
+            .list_searchable()
+            .iter()
+            .filter(|o| o.embedding.is_some())
+            .map(|o| EmbeddingJobResult {
+                table: o.table_name.to_string(),
+                records_processed: 0,
+                records_failed: 0,
+                duration_ms: 0,
+            })
+            .collect();
 
         Ok(results)
     }
 
-    /// Process a single ontology table using its embedding configuration
-    async fn process_table(
-        &self,
-        table_name: &str,
-        config: &EmbeddingConfig,
-    ) -> Result<EmbeddingJobResult> {
-        let start = std::time::Instant::now();
-        let mut processed = 0;
-        let mut failed = 0;
-
-        // Build the SELECT query dynamically from EmbeddingConfig
-        let select_query = format!(
-            r#"
-            SELECT id, ({}) as embed_text
-            FROM data.{}
-            WHERE embedding IS NULL
-            ORDER BY {} DESC NULLS LAST
-            LIMIT $1
-            "#,
-            config.embed_text_sql, table_name, config.timestamp_sql
-        );
-
-        // Build the UPDATE query
-        let update_query = format!(
-            r#"
-            UPDATE data.{}
-            SET embedding = $1::vector, embedded_at = NOW()
-            WHERE id = $2
-            "#,
-            table_name
-        );
-
-        loop {
-            let records = sqlx::query(&select_query)
-                .bind(BATCH_SIZE)
-                .fetch_all(&self.pool)
-                .await?;
-
-            if records.is_empty() {
-                break;
-            }
-
-            for record in records {
-                let id: Uuid = record.get("id");
-                let text: Option<String> = record.get("embed_text");
-                let text = text.unwrap_or_default();
-
-                // Skip if empty
-                if text.trim().is_empty() {
-                    continue;
-                }
-
-                match self.client.embed(&text).await {
-                    Ok(embedding) => {
-                        let embedding_str = format_embedding_for_pg(&embedding);
-
-                        if let Err(e) = sqlx::query(&update_query)
-                            .bind(&embedding_str)
-                            .bind(id)
-                            .execute(&self.pool)
-                            .await
-                        {
-                            tracing::error!(
-                                "Failed to store {} embedding for {}: {}",
-                                table_name,
-                                id,
-                                e
-                            );
-                            failed += 1;
-                        } else {
-                            processed += 1;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to embed {} record {}: {}", table_name, id, e);
-                        failed += 1;
-                    }
-                }
-            }
-
-            tracing::info!("Processed {} {} records so far", processed, table_name);
-        }
-
-        Ok(EmbeddingJobResult {
-            table: table_name.to_string(),
-            records_processed: processed,
-            records_failed: failed,
-            duration_ms: start.elapsed().as_millis() as u64,
-        })
-    }
-
     /// Get embedding statistics for all searchable tables (discovered from registry)
+    ///
+    /// NOTE: Returns stub stats showing all records as pending since embeddings are disabled.
     pub async fn get_stats(&self) -> Result<EmbeddingStats> {
         let mut tables = Vec::new();
 
@@ -164,23 +86,20 @@ impl EmbeddingJob {
     }
 
     async fn get_table_stats(&self, table: &str) -> Result<TableEmbeddingStats> {
-        let row = sqlx::query_as::<_, (i64, i64)>(&format!(
-            r#"
-            SELECT
-                COUNT(*) as total,
-                COUNT(embedding) as embedded
-            FROM data.{}
-            "#,
-            table
-        ))
-        .fetch_one(&self.pool)
-        .await?;
+        // Just count total records - embeddings are disabled
+        let row =
+            sqlx::query_as::<_, (i64,)>(&format!("SELECT COUNT(*) as total FROM data_{}", table))
+                .fetch_one(&self.pool)
+                .await?;
+
+        let total = row.0 as usize;
 
         Ok(TableEmbeddingStats {
             table: table.to_string(),
-            total: row.0 as usize,
-            embedded: row.1 as usize,
-            pending: (row.0 - row.1) as usize,
+            total,
+            embedded: 0, // No embeddings in SQLite yet
+            skipped: 0,
+            pending: total, // All records are pending
         })
     }
 }
@@ -197,6 +116,10 @@ pub struct EmbeddingStats {
 pub struct TableEmbeddingStats {
     pub table: String,
     pub total: usize,
+    /// Records with embeddings
     pub embedded: usize,
+    /// Records skipped (empty content, marked as processed)
+    pub skipped: usize,
+    /// Records not yet processed
     pub pending: usize,
 }

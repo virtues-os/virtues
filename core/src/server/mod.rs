@@ -31,6 +31,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to initialize usage limits: {}", e);
     }
 
+    // Initialize drive quota from TIER env var
+    if let Err(e) = crate::api::init_drive_quota(client.database.pool()).await {
+        tracing::warn!("Failed to initialize drive quota: {}", e);
+    }
+
+    // Seed owner email from OWNER_EMAIL env var (Seed and Drift pattern)
+    if let Err(e) = crate::api::seed_owner_email(client.database.pool()).await {
+        tracing::warn!("Failed to seed owner email: {}", e);
+    }
+
     // Initialize StreamWriter (simple in-memory buffer)
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
@@ -50,6 +60,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                     // Schedule embedding job (every 30 minutes)
                     if let Err(e) = sched.schedule_embedding_job().await {
                         tracing::warn!("Failed to schedule embedding job: {}", e);
+                    }
+
+                    // Schedule drive trash purge job (daily at 3am)
+                    if let Err(e) = sched.schedule_drive_trash_purge_job().await {
+                        tracing::warn!("Failed to schedule drive trash purge job: {}", e);
                     }
 
                     // Keep scheduler alive - it will be dropped when the server shuts down
@@ -75,6 +90,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let app = Router::new()
         // Health check
         .route("/health", get(health))
+        // App server info (for device pairing)
+        .route("/api/app/server-info", get(server_info))
+        // Timeline alias (redirects to wiki/day)
+        .route("/api/timeline/day/:date", get(api::wiki_get_day_handler))
         // Data ingestion
         .route("/ingest", post(ingest::ingest))
         // OAuth flow
@@ -98,6 +117,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/devices/pairing/complete",
             post(api::complete_device_pairing_handler),
+        )
+        .route(
+            "/api/devices/pairing/link",
+            post(api::link_device_manual_handler),
         )
         .route(
             "/api/devices/pairing/:source_id",
@@ -173,11 +196,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/profile", get(api::get_profile_handler))
         .route("/api/profile", put(api::update_profile_handler))
         // Entities API - Places
-        .route("/api/entities/places", get(api::list_places_handler).post(api::create_place_handler))
-        .route("/api/entities/places/:id", get(api::get_place_handler).put(api::update_place_handler).delete(api::delete_place_handler))
-        .route("/api/entities/places/:id/set-home", post(api::set_place_as_home_handler))
+        .route(
+            "/api/entities/places",
+            get(api::list_places_handler).post(api::create_place_handler),
+        )
+        .route(
+            "/api/entities/places/:id",
+            get(api::get_place_handler)
+                .put(api::update_place_handler)
+                .delete(api::delete_place_handler),
+        )
+        .route(
+            "/api/entities/places/:id/set-home",
+            post(api::set_place_as_home_handler),
+        )
         // Places API (Google Places proxy)
-        .route("/api/places/autocomplete", get(api::places_autocomplete_handler))
+        .route(
+            "/api/places/autocomplete",
+            get(api::places_autocomplete_handler),
+        )
         .route("/api/places/details", get(api::places_details_handler))
         // Assistant Profile API
         .route(
@@ -205,68 +242,312 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/actions/tasks/:id", put(api::update_task_handler))
         .route("/api/actions/tasks/:id", delete(api::delete_task_handler))
         // Actions API - Initiatives
-        .route("/api/actions/initiatives", get(api::list_initiatives_handler))
-        .route("/api/actions/initiatives", post(api::create_initiative_handler))
-        .route("/api/actions/initiatives/:id", get(api::get_initiative_handler))
-        .route("/api/actions/initiatives/:id", put(api::update_initiative_handler))
-        .route("/api/actions/initiatives/:id", delete(api::delete_initiative_handler))
+        .route(
+            "/api/actions/initiatives",
+            get(api::list_initiatives_handler),
+        )
+        .route(
+            "/api/actions/initiatives",
+            post(api::create_initiative_handler),
+        )
+        .route(
+            "/api/actions/initiatives/:id",
+            get(api::get_initiative_handler),
+        )
+        .route(
+            "/api/actions/initiatives/:id",
+            put(api::update_initiative_handler),
+        )
+        .route(
+            "/api/actions/initiatives/:id",
+            delete(api::delete_initiative_handler),
+        )
         // Actions API - Aspirations
-        .route("/api/actions/aspirations", get(api::list_aspirations_handler))
-        .route("/api/actions/aspirations", post(api::create_aspiration_handler))
-        .route("/api/actions/aspirations/:id", get(api::get_aspiration_handler))
-        .route("/api/actions/aspirations/:id", put(api::update_aspiration_handler))
-        .route("/api/actions/aspirations/:id", delete(api::delete_aspiration_handler))
+        .route(
+            "/api/actions/aspirations",
+            get(api::list_aspirations_handler),
+        )
+        .route(
+            "/api/actions/aspirations",
+            post(api::create_aspiration_handler),
+        )
+        .route(
+            "/api/actions/aspirations/:id",
+            get(api::get_aspiration_handler),
+        )
+        .route(
+            "/api/actions/aspirations/:id",
+            put(api::update_aspiration_handler),
+        )
+        .route(
+            "/api/actions/aspirations/:id",
+            delete(api::delete_aspiration_handler),
+        )
         // Actions API - Tags
         .route("/api/actions/tags", get(api::list_tags_handler))
-        // Axiology API - Temperaments
-        .route("/api/axiology/temperaments", get(api::list_temperaments_handler))
-        .route("/api/axiology/temperaments", post(api::create_temperament_handler))
-        .route("/api/axiology/temperaments/:id", get(api::get_temperament_handler))
-        .route("/api/axiology/temperaments/:id", put(api::update_temperament_handler))
-        .route("/api/axiology/temperaments/:id", delete(api::delete_temperament_handler))
-        // Axiology API - Virtues
-        .route("/api/axiology/virtues", get(api::list_virtues_handler))
-        .route("/api/axiology/virtues", post(api::create_virtue_handler))
-        .route("/api/axiology/virtues/:id", get(api::get_virtue_handler))
-        .route("/api/axiology/virtues/:id", put(api::update_virtue_handler))
-        .route("/api/axiology/virtues/:id", delete(api::delete_virtue_handler))
-        // Axiology API - Vices
-        .route("/api/axiology/vices", get(api::list_vices_handler))
-        .route("/api/axiology/vices", post(api::create_vice_handler))
-        .route("/api/axiology/vices/:id", get(api::get_vice_handler))
-        .route("/api/axiology/vices/:id", put(api::update_vice_handler))
-        .route("/api/axiology/vices/:id", delete(api::delete_vice_handler))
-        // Timeline API
-        .route("/api/timeline/day/:date", get(api::get_day_view_handler))
         // Seed Testing API
-        .route("/api/seed/pipeline-status", get(api::seed_pipeline_status_handler))
-        .route("/api/seed/chunks-summary", get(api::seed_chunks_summary_handler))
-        .route("/api/seed/data-quality", get(api::seed_data_quality_handler))
+        .route(
+            "/api/seed/pipeline-status",
+            get(api::seed_pipeline_status_handler),
+        )
+        .route(
+            "/api/seed/data-quality",
+            get(api::seed_data_quality_handler),
+        )
         // Embedding API
-        .route("/api/embeddings/stats", get(api::get_embedding_stats_handler))
-        .route("/api/embeddings/trigger", post(api::trigger_embedding_handler))
+        .route(
+            "/api/embeddings/stats",
+            get(api::get_embedding_stats_handler),
+        )
+        .route(
+            "/api/embeddings/trigger",
+            post(api::trigger_embedding_handler),
+        )
         // Metrics API
-        .route("/api/metrics/activity", get(api::get_activity_metrics_handler))
+        .route(
+            "/api/metrics/activity",
+            get(api::get_activity_metrics_handler),
+        )
         // Plaid Link API (different from standard OAuth)
-        .route("/api/plaid/link-token", post(api::create_plaid_link_token_handler))
-        .route("/api/plaid/exchange-token", post(api::exchange_plaid_token_handler))
-        .route("/api/plaid/:source_id/accounts", get(api::get_plaid_accounts_handler))
-        .route("/api/plaid/:source_id", delete(api::remove_plaid_item_handler))
+        .route(
+            "/api/plaid/link-token",
+            post(api::create_plaid_link_token_handler),
+        )
+        .route(
+            "/api/plaid/exchange-token",
+            post(api::exchange_plaid_token_handler),
+        )
+        .route(
+            "/api/plaid/:source_id/accounts",
+            get(api::get_plaid_accounts_handler),
+        )
+        .route(
+            "/api/plaid/:source_id",
+            delete(api::remove_plaid_item_handler),
+        )
         // Onboarding API
-        .route("/api/onboarding/status", get(api::get_onboarding_status_handler))
-        .route("/api/onboarding/steps/:step/complete", post(api::complete_onboarding_step_handler))
-        .route("/api/onboarding/steps/:step/skip", post(api::skip_onboarding_step_handler))
-        .route("/api/onboarding/axiology", post(api::save_onboarding_axiology_handler))
-        .route("/api/onboarding/aspirations", post(api::save_onboarding_aspirations_handler))
-        .route("/api/onboarding/complete", post(api::complete_onboarding_handler))
+        .route(
+            "/api/onboarding/status",
+            get(api::get_onboarding_status_handler),
+        )
+        .route(
+            "/api/onboarding/steps/:step/complete",
+            post(api::complete_onboarding_step_handler),
+        )
+        .route(
+            "/api/onboarding/steps/:step/skip",
+            post(api::skip_onboarding_step_handler),
+        )
+        .route(
+            "/api/onboarding/axiology",
+            post(api::save_onboarding_axiology_handler),
+        )
+        .route(
+            "/api/onboarding/aspirations",
+            post(api::save_onboarding_aspirations_handler),
+        )
+        .route(
+            "/api/onboarding/complete",
+            post(api::complete_onboarding_handler),
+        )
         // Usage API
         .route("/api/usage", get(api::usage_handler))
         .route("/api/usage/check", get(api::usage_check_handler))
         // Search API (Exa)
         .route("/api/search/web", post(api::exa_search_handler))
         // Storage API
-        .route("/api/storage/objects", get(api::list_storage_objects_handler))
-        .route("/api/storage/objects/:id/content", get(api::get_storage_object_content_handler))
+        .route(
+            "/api/storage/objects",
+            get(api::list_storage_objects_handler),
+        )
+        .route(
+            "/api/storage/objects/:id/content",
+            get(api::get_storage_object_content_handler),
+        )
+        // Drive API (user file storage)
+        .route("/api/drive/usage", get(api::get_drive_usage_handler))
+        .route("/api/drive/warnings", get(api::get_drive_warnings_handler))
+        .route("/api/drive/files", get(api::list_drive_files_handler))
+        .route(
+            "/api/drive/files/:id",
+            get(api::get_drive_file_handler).delete(api::delete_drive_file_handler),
+        )
+        .route(
+            "/api/drive/files/:id/download",
+            get(api::download_drive_file_handler),
+        )
+        .route(
+            "/api/drive/files/:id/move",
+            put(api::move_drive_file_handler),
+        )
+        .route("/api/drive/upload", post(api::upload_drive_file_handler))
+        .route("/api/drive/folders", post(api::create_drive_folder_handler))
+        .route(
+            "/api/drive/reconcile",
+            post(api::reconcile_drive_usage_handler),
+        )
+        // Drive trash endpoints
+        .route("/api/drive/trash", get(api::list_drive_trash_handler))
+        .route(
+            "/api/drive/trash/empty",
+            post(api::empty_drive_trash_handler),
+        )
+        .route(
+            "/api/drive/files/:id/restore",
+            post(api::restore_drive_file_handler),
+        )
+        .route(
+            "/api/drive/files/:id/purge",
+            delete(api::purge_drive_file_handler),
+        )
+        // Wiki API
+        .route(
+            "/api/wiki/resolve/:slug",
+            get(api::wiki_resolve_slug_handler),
+        )
+        // Wiki - Person
+        .route("/api/wiki/people", get(api::wiki_list_people_handler))
+        .route(
+            "/api/wiki/person/:slug",
+            get(api::wiki_get_person_handler).put(api::wiki_update_person_handler),
+        )
+        // Wiki - Place
+        .route("/api/wiki/places", get(api::wiki_list_places_handler))
+        .route(
+            "/api/wiki/place/:slug",
+            get(api::wiki_get_place_handler).put(api::wiki_update_place_handler),
+        )
+        // Wiki - Organization
+        .route(
+            "/api/wiki/organizations",
+            get(api::wiki_list_organizations_handler),
+        )
+        .route(
+            "/api/wiki/organization/:slug",
+            get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
+        )
+        // Wiki - Thing
+        .route("/api/wiki/things", get(api::wiki_list_things_handler))
+        .route(
+            "/api/wiki/thing/:slug",
+            get(api::wiki_get_thing_handler).put(api::wiki_update_thing_handler),
+        )
+        // Wiki - Telos
+        .route(
+            "/api/wiki/telos/active",
+            get(api::wiki_get_active_telos_handler),
+        )
+        .route("/api/wiki/telos/:slug", get(api::wiki_get_telos_handler))
+        // Wiki - Act
+        .route("/api/wiki/acts", get(api::wiki_list_acts_handler))
+        .route("/api/wiki/act/:slug", get(api::wiki_get_act_handler))
+        // Wiki - Chapter
+        .route(
+            "/api/wiki/chapter/:slug",
+            get(api::wiki_get_chapter_handler),
+        )
+        .route(
+            "/api/wiki/act/:act_id/chapters",
+            get(api::wiki_list_chapters_handler),
+        )
+        // Wiki - Day
+        .route("/api/wiki/days", get(api::wiki_list_days_handler))
+        .route(
+            "/api/wiki/day/:date",
+            get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
+        )
+        // Wiki - Citations
+        .route(
+            "/api/wiki/:source_type/:source_id/citations",
+            get(api::wiki_get_citations_handler).post(api::wiki_create_citation_handler),
+        )
+        .route(
+            "/api/wiki/citations/:id",
+            put(api::wiki_update_citation_handler).delete(api::wiki_delete_citation_handler),
+        )
+        // Wiki - Temporal Events
+        .route(
+            "/api/wiki/day/:date/events",
+            get(api::wiki_get_day_events_handler),
+        )
+        .route("/api/wiki/events", post(api::wiki_create_event_handler))
+        .route(
+            "/api/wiki/events/:id",
+            put(api::wiki_update_event_handler).delete(api::wiki_delete_event_handler),
+        )
+        .route(
+            "/api/wiki/day/:day_id/auto-events",
+            delete(api::wiki_delete_auto_events_handler),
+        )
+        // Wiki - Day Sources (ontology data)
+        .route(
+            "/api/wiki/day/:date/sources",
+            get(api::wiki_get_day_sources_handler),
+        )
+        // Wiki - Day Streams (dynamic ontology queries)
+        .route(
+            "/api/wiki/day/:date/streams",
+            get(api::wiki_get_day_streams_handler),
+        )
+        // Code Execution API (AI Sandbox)
+        .route("/api/code/execute", post(api::execute_code_handler))
+        // Bookmarks API
+        .route("/api/bookmarks", get(api::list_bookmarks_handler))
+        .route("/api/bookmarks/tab", post(api::create_tab_bookmark_handler))
+        .route(
+            "/api/bookmarks/entity",
+            post(api::create_entity_bookmark_handler),
+        )
+        .route("/api/bookmarks/:id", delete(api::delete_bookmark_handler))
+        .route(
+            "/api/bookmarks/toggle/tab",
+            post(api::toggle_route_bookmark_handler),
+        )
+        .route(
+            "/api/bookmarks/toggle/entity",
+            post(api::toggle_entity_bookmark_handler),
+        )
+        .route(
+            "/api/bookmarks/check/route",
+            get(api::check_route_bookmark_handler),
+        )
+        .route(
+            "/api/bookmarks/check/entity/:entity_id",
+            get(api::check_entity_bookmark_handler),
+        )
+        // Sessions API (chat sessions)
+        .route("/api/sessions", get(api::list_sessions_handler).post(api::create_session_handler))
+        .route(
+            "/api/sessions/:id",
+            get(api::get_session_handler)
+                .patch(api::update_session_handler)
+                .delete(api::delete_session_handler),
+        )
+        .route(
+            "/api/sessions/title",
+            post(api::generate_session_title_handler),
+        )
+        // Session Usage & Compaction API
+        .route(
+            "/api/sessions/:id/usage",
+            get(api::get_session_usage_handler),
+        )
+        .route(
+            "/api/sessions/:id/compact",
+            post(api::compact_session_handler),
+        )
+        // Chat API (streaming)
+        .route("/api/chat", post(api::chat_handler))
+        // Auth API
+        .route("/auth/signin", post(api::auth_signin_handler))
+        .route("/auth/callback", get(api::auth_callback_handler))
+        .route("/auth/signout", post(api::auth_signout_handler))
+        .route("/auth/session", get(api::auth_session_handler))
+        // Atlas webhook for owner email updates (Seed and Drift pattern)
+        .route(
+            "/api/profile/owner-email",
+            post(api::auth_owner_email_handler),
+        )
         .with_state(state.clone())
         .layer(DefaultBodyLimit::disable()) // Disable default 2MB limit
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)); // Set 20MB limit for audio files
@@ -276,6 +557,33 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let app = add_mcp_routes(app, mcp_server);
 
     tracing::info!("MCP endpoint enabled at /mcp");
+
+    // Add static file serving for SPA frontend
+    // This serves the SvelteKit static build and falls back to 200.html for SPA routing
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
+    let static_path = std::path::Path::new(&static_dir);
+
+    let app = if static_path.exists() && static_path.is_dir() {
+        use tower_http::services::{ServeDir, ServeFile};
+
+        let fallback_file = static_path.join("200.html");
+        let serve_dir = if fallback_file.exists() {
+            ServeDir::new(&static_dir).fallback(ServeFile::new(fallback_file))
+        } else {
+            // Try index.html as fallback if 200.html doesn't exist
+            let index_file = static_path.join("index.html");
+            ServeDir::new(&static_dir).fallback(ServeFile::new(index_file))
+        };
+
+        tracing::info!("Static file serving enabled from: {}", static_dir);
+        app.fallback_service(serve_dir)
+    } else {
+        tracing::info!(
+            "No static directory found at: {} - static serving disabled",
+            static_dir
+        );
+        app
+    };
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -306,7 +614,9 @@ fn validate_environment() -> Result<()> {
                     master_key.len()
                 );
             } else if encryption::parse_master_key_hex(&master_key).is_err() {
-                tracing::warn!("STREAM_ENCRYPTION_MASTER_KEY is not valid hex. Archive jobs will fail.");
+                tracing::warn!(
+                    "STREAM_ENCRYPTION_MASTER_KEY is not valid hex. Archive jobs will fail."
+                );
             }
         }
         Err(_) => {
@@ -342,14 +652,9 @@ fn validate_environment() -> Result<()> {
     Ok(())
 }
 
-async fn health(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> impl IntoResponse {
+async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> impl IntoResponse {
     // Check database connectivity with a simple query
-    let db_status = match sqlx::query("SELECT 1")
-        .execute(state.db.pool())
-        .await
-    {
+    let db_status = match sqlx::query("SELECT 1").execute(state.db.pool()).await {
         Ok(_) => "connected",
         Err(_) => "disconnected",
     };
@@ -369,6 +674,23 @@ async fn health(
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
             "database": db_status,
+            "pool": {
+                "size": state.db.pool().size(),
+                "idle": state.db.pool().num_idle(),
+            }
         })),
     )
+}
+
+/// Server info endpoint for device pairing
+/// Returns the API endpoint URL for iOS device configuration
+async fn server_info() -> impl IntoResponse {
+    // Get the API URL from environment or construct from host
+    let api_endpoint = std::env::var("PUBLIC_API_URL")
+        .or_else(|_| std::env::var("ELT_API_URL"))
+        .unwrap_or_else(|_| "http://localhost:8000/api".to_string());
+
+    Json(serde_json::json!({
+        "apiEndpoint": api_endpoint
+    }))
 }

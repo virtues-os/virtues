@@ -4,14 +4,14 @@
 //! For HTTP transport, use the main Virtues server (`cargo run serve`) which includes MCP at /mcp endpoint.
 
 use anyhow::Result;
-use virtues::mcp::VirtuesMcpServer;
 use clap::Parser;
 use dotenv::dotenv;
 use rmcp::{transport::stdio, ServiceExt};
-use sqlx::postgres::PgPoolOptions;
+use sqlx::sqlite::SqlitePoolOptions;
 use std::env;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use virtues::mcp::VirtuesMcpServer;
 
 #[derive(Parser, Debug)]
 #[command(name = "virtues-mcp-server")]
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         env::var("DATABASE_URL").expect("DATABASE_URL must be set in environment or .env file");
 
     // Create database connection pool
-    let pool = PgPoolOptions::new()
+    let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await?;

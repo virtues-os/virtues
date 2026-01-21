@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -20,14 +20,17 @@ use crate::{
 ///
 /// Receives app usage data pushed from macOS devices via /ingest endpoint.
 pub struct MacAppsStream {
-    _db: PgPool,
+    _db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl MacAppsStream {
     /// Create a new MacAppsStream
-    pub fn new(db: PgPool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
-        Self { _db: db, stream_writer }
+    pub fn new(db: SqlitePool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+        Self {
+            _db: db,
+            stream_writer,
+        }
     }
 }
 

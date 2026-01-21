@@ -91,7 +91,7 @@
 			await fetch("/api/profile", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ is_onboarding: false }),
+				body: JSON.stringify({ onboarding_status: "complete" }),
 			});
 			goto("/");
 		}

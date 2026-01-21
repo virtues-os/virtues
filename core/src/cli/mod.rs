@@ -16,7 +16,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
 
-    match cli.command {
+    // Command should always be Some at this point (main.rs handles None case)
+    let command = cli.command.expect("Command should be set by main.rs");
+
+    match command {
         Commands::Init => {
             // This command is handled in main.rs before the Virtues client is created
             unreachable!("Init command should be handled in main.rs");

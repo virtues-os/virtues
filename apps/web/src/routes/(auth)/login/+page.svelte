@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { signIn } from "@auth/sveltekit/client";
 	import { page } from "$app/stores";
 	import { Button } from "$lib";
 
@@ -8,7 +7,7 @@
 	let emailSent = $state(false);
 	let error = $state<string | null>(null);
 
-	// Check for error from Auth.js callback
+	// Check for error from auth callback
 	const authError = $derived($page.url.searchParams.get("error"));
 
 	async function handleSubmit(e: SubmitEvent) {
@@ -17,13 +16,19 @@
 		isLoading = true;
 
 		try {
-			const result = await signIn("resend", {
-				email,
-				redirect: false,
-				callbackUrl: "/",
+			// Call Rust auth API
+			const response = await fetch("/auth/signin", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({ email }),
 			});
 
-			if (result?.error) {
+			if (response.status === 429) {
+				const data = await response.json();
+				error = data.error || "Too many attempts. Please try again later.";
+			} else if (!response.ok) {
 				error = "Unable to send magic link. Please try again.";
 			} else {
 				emailSent = true;
@@ -41,11 +46,11 @@
 		<!-- Success state -->
 		<div class="text-center">
 			<div
-				class="w-16 h-16 mx-auto mb-6 rounded-full bg-green-500/10 flex items-center justify-center"
+				class="w-16 h-16 mx-auto mb-6 rounded-full bg-success-subtle flex items-center justify-center"
 			>
 				<iconify-icon
 					icon="lucide:mail-check"
-					class="text-green-500 text-3xl"
+					class="text-success text-3xl"
 				></iconify-icon>
 			</div>
 			<h1 class="font-serif text-3xl font-normal text-foreground mb-3">
@@ -77,13 +82,13 @@
 
 		{#if authError === "AccessDenied"}
 			<div
-				class="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+				class="mb-6 p-4 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
 			>
 				Access denied. This email is not authorized to sign in.
 			</div>
 		{:else if authError}
 			<div
-				class="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+				class="mb-6 p-4 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
 			>
 				{authError === "Verification"
 					? "The magic link has expired. Please request a new one."
@@ -93,7 +98,7 @@
 
 		{#if error}
 			<div
-				class="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm"
+				class="mb-6 p-4 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
 			>
 				{error}
 			</div>

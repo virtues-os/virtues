@@ -26,7 +26,7 @@ use crate::storage::stream_writer::StreamWriter;
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{json, Value as JsonValue};
-use sqlx::{PgPool, Row};
+use sqlx::{Row, SqlitePool};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -35,13 +35,13 @@ use uuid::Uuid;
 const EPOCH: i64 = 0; // Unix epoch (1970-01-01 00:00:00 UTC)
 
 pub struct AppChatExportStream {
-    db: PgPool,
+    db: SqlitePool,
     source_id: Uuid,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl AppChatExportStream {
-    pub fn new(db: PgPool, source_id: Uuid, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+    pub fn new(db: SqlitePool, source_id: Uuid, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
         Self {
             db,
             source_id,
@@ -85,7 +85,7 @@ impl PullStream for AppChatExportStream {
         let sessions = sqlx::query(
             r#"
             SELECT id, messages, updated_at
-            FROM app.chat_sessions
+            FROM app_chat_sessions
             WHERE updated_at > $1
             ORDER BY updated_at ASC
             "#,
@@ -240,7 +240,7 @@ impl PullStream for AppChatExportStream {
         "virtues"
     }
 
-    async fn load_config(&mut self, _db: &PgPool, _source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, _db: &SqlitePool, _source_id: Uuid) -> Result<()> {
         // No external config needed for internal export
         Ok(())
     }

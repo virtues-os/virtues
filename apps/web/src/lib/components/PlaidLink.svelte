@@ -147,8 +147,8 @@
 
 <div class="space-y-6">
 	{#if error}
-		<div class="p-4 border border-red-300 bg-red-50">
-			<p class="text-sm font-serif text-red-900">{error}</p>
+		<div class="p-4 border border-error bg-error-subtle">
+			<p class="text-sm font-serif text-error">{error}</p>
 			<Button
 				variant="ghost"
 				size="sm"
@@ -166,17 +166,17 @@
 	{#if isOAuthRedirect && isLoading}
 		<div class="text-center py-8">
 			<div
-				class="animate-spin h-8 w-8 border-2 border-neutral-400 border-t-transparent rounded-full mx-auto mb-4"
+				class="animate-spin h-8 w-8 border-2 border-border-strong border-t-transparent rounded-full mx-auto mb-4"
 			></div>
-			<p class="text-neutral-600">Completing bank connection...</p>
+			<p class="text-foreground-muted">Completing bank connection...</p>
 		</div>
 	{:else}
 		<div class="space-y-6">
 			<div class="text-center">
-				<p class="text-neutral-900 font-serif text-lg mb-2">
+				<p class="text-foreground font-serif text-lg mb-2">
 					Connect Your Bank Account
 				</p>
-				<p class="text-neutral-600 text-sm">
+				<p class="text-foreground-muted text-sm">
 					Securely connect your bank account using Plaid. Your
 					credentials are never shared with us.
 				</p>
@@ -204,10 +204,10 @@
 			</div>
 
 			<!-- Security note -->
-			<div class="border-t border-neutral-200 pt-6">
-				<div class="flex items-start gap-3 text-sm text-neutral-600">
+			<div class="border-t border-border pt-6">
+				<div class="flex items-start gap-3 text-sm text-foreground-muted">
 					<svg
-						class="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5"
+						class="w-5 h-5 text-success flex-shrink-0 mt-0.5"
 						fill="none"
 						stroke="currentColor"
 						viewBox="0 0 24 24"
@@ -220,7 +220,7 @@
 						/>
 					</svg>
 					<div>
-						<p class="font-medium text-neutral-900">
+						<p class="font-medium text-foreground">
 							Secure Connection
 						</p>
 						<p>

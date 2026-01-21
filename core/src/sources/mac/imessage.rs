@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -20,14 +20,17 @@ use crate::{
 ///
 /// Receives iMessage/SMS data pushed from macOS devices via /ingest endpoint.
 pub struct MacIMessageStream {
-    _db: PgPool,
+    _db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl MacIMessageStream {
     /// Create a new MacIMessageStream
-    pub fn new(db: PgPool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
-        Self { _db: db, stream_writer }
+    pub fn new(db: SqlitePool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+        Self {
+            _db: db,
+            stream_writer,
+        }
     }
 }
 
