@@ -33,6 +33,10 @@ class HealthKitManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: hasRequestedAuthKey) }
     }
 
+    var hasRequestedHealthKitAuthorization: Bool {
+        hasRequestedAuthorization
+    }
+
     // Anchors for incremental sync
     var anchors: [String: HKQueryAnchor] = [:]
     private let anchorKeyPrefix = "com.virtues.healthkit.anchor."

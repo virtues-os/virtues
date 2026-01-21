@@ -3,7 +3,7 @@
 //! This module provides a unified way to instantiate any stream based on
 //! source type and stream name, handling authentication and configuration loading.
 
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -36,14 +36,18 @@ use super::{auth::SourceAuth, stream_type::StreamType};
 /// }
 /// ```
 pub struct StreamFactory {
-    db: PgPool,
+    db: SqlitePool,
     storage: Arc<Storage>,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl StreamFactory {
     /// Create a new stream factory
-    pub fn new(db: PgPool, storage: Arc<Storage>, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+    pub fn new(
+        db: SqlitePool,
+        storage: Arc<Storage>,
+        stream_writer: Arc<Mutex<StreamWriter>>,
+    ) -> Self {
         Self {
             db,
             storage,
@@ -87,7 +91,7 @@ impl StreamFactory {
     /// Load source information from the database
     async fn load_source(&self, source_id: Uuid) -> Result<SourceInfo> {
         let result = sqlx::query_as::<_, (String, String)>(
-            "SELECT source, name FROM source_connections WHERE id = $1 AND is_active = true",
+            "SELECT source, name FROM data_source_connections WHERE id = $1 AND is_active = true",
         )
         .bind(source_id)
         .fetch_optional(&self.db)
@@ -218,28 +222,49 @@ impl StreamFactory {
             //         self.stream_writer.clone(),
             //     ))))
             // }
-            // ("ios", "location") => {
-            //     use crate::sources::ios::IosLocationStream;
-            //     Ok(StreamType::Push(Box::new(IosLocationStream::new(
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     ))))
-            // }
-            // ("ios", "healthkit") => {
-            //     use crate::sources::ios::IosHealthKitStream;
-            //     Ok(StreamType::Push(Box::new(IosHealthKitStream::new(
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     ))))
-            // }
-            // ("ios", "microphone") => {
-            //     use crate::sources::ios::IosMicrophoneStream;
-            //     Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
-            //         self.db.clone(),
-            //         self.storage.clone(),
-            //         self.stream_writer.clone(),
-            //     ))))
-            // }
+            ("ios", "location") => {
+                use crate::sources::ios::IosLocationStream;
+                Ok(StreamType::Push(Box::new(IosLocationStream::new(
+                    self.db.clone(),
+                    self.stream_writer.clone(),
+                ))))
+            }
+            ("ios", "healthkit") => {
+                use crate::sources::ios::IosHealthKitStream;
+                Ok(StreamType::Push(Box::new(IosHealthKitStream::new(
+                    self.db.clone(),
+                    self.stream_writer.clone(),
+                ))))
+            }
+            ("ios", "microphone") => {
+                use crate::sources::ios::IosMicrophoneStream;
+                Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
+                    self.db.clone(),
+                    self.storage.clone(),
+                    self.stream_writer.clone(),
+                ))))
+            }
+            ("ios", "contacts") => {
+                use crate::sources::ios::IosContactsStream;
+                Ok(StreamType::Push(Box::new(IosContactsStream::new(
+                    self.db.clone(),
+                    self.stream_writer.clone(),
+                ))))
+            }
+            ("ios", "battery") => {
+                use crate::sources::ios::IosBatteryStream;
+                Ok(StreamType::Push(Box::new(IosBatteryStream::new(
+                    self.db.clone(),
+                    self.stream_writer.clone(),
+                ))))
+            }
+            ("ios", "barometer") => {
+                use crate::sources::ios::IosBarometerStream;
+                Ok(StreamType::Push(Box::new(IosBarometerStream::new(
+                    self.db.clone(),
+                    self.stream_writer.clone(),
+                ))))
+            }
 
             _ => Err(Error::Other(format!(
                 "Unknown stream: {}/{}",
@@ -272,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_factory_creation() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let _factory = StreamFactory::new(pool, storage, stream_writer);
@@ -280,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_factory_clone() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool, storage, stream_writer);
@@ -289,7 +314,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_auth_device() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool, storage, stream_writer);
@@ -304,7 +329,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_auth_unknown_source() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool, storage, stream_writer);
@@ -320,7 +345,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_stream_typed_impl_google_calendar() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool.clone(), storage, stream_writer.clone());
@@ -343,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_stream_typed_impl_unknown_stream() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Arc::new(Storage::local("./test_data".to_string()).unwrap());
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool.clone(), storage, stream_writer.clone());

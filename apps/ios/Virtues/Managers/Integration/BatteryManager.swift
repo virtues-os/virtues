@@ -142,30 +142,64 @@ class BatteryManager: ObservableObject {
 
     private func saveMetricToQueue(_ metric: BatteryMetric) async -> Bool {
         let deviceId = configProvider.deviceId
+        let result = await saveWithRetry(metric: metric, deviceId: deviceId, maxAttempts: 3)
 
-        let streamData = BatteryStreamData(
-            deviceId: deviceId,
-            metrics: [metric]
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-
-        guard let data = try? encoder.encode(streamData) else {
-            print("❌ Failed to encode battery metric")
-            return false
-        }
-
-        let success = storageProvider.enqueue(streamName: "ios_battery", data: data)
-
-        if success {
+        switch result {
+        case .success:
             print("✅ Saved battery metric to SQLite queue")
             dataUploader.updateUploadStats()
-        } else {
-            print("❌ Failed to save battery metric to SQLite")
+            return true
+        case .failure(let error):
+            ErrorLogger.shared.log(error, deviceId: deviceId)
+            return false
+        }
+    }
+
+    /// Attempts to save battery metric with exponential backoff retry
+    private func saveWithRetry(metric: BatteryMetric, deviceId: String, maxAttempts: Int) async -> Result<Void, AnyDataCollectionError> {
+        let streamData = BatteryStreamData(deviceId: deviceId, metrics: [metric])
+
+        for attempt in 1...maxAttempts {
+            // Encode the data
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+
+            let data: Data
+            do {
+                data = try encoder.encode(streamData)
+            } catch {
+                let encodingError = DataEncodingError(
+                    streamType: .battery,
+                    underlyingError: error,
+                    dataSize: nil
+                )
+                return .failure(AnyDataCollectionError(encodingError))
+            }
+
+            // Attempt to save to SQLite
+            let success = storageProvider.enqueue(streamName: "ios_battery", data: data)
+
+            if success {
+                if attempt > 1 {
+                    ErrorLogger.shared.logSuccessfulRetry(streamType: .battery, attemptNumber: attempt)
+                }
+                return .success(())
+            }
+
+            // If not last attempt, wait before retrying using async sleep (non-blocking)
+            if attempt < maxAttempts {
+                let delayNanoseconds = UInt64(Double(attempt) * 0.5 * 1_000_000_000)  // 0.5s, 1.0s backoff
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+            }
         }
 
-        return success
+        // All attempts failed
+        let storageError = StorageError(
+            streamType: .battery,
+            reason: "Failed to enqueue to SQLite after \(maxAttempts) attempts",
+            attemptNumber: maxAttempts
+        )
+        return .failure(AnyDataCollectionError(storageError))
     }
 }
 
@@ -179,6 +213,23 @@ struct BatteryMetric: Codable {
 }
 
 struct BatteryStreamData: Codable {
+    let source: String = "ios"
+    let stream: String = "battery"
     let deviceId: String
-    let metrics: [BatteryMetric]
+    let records: [BatteryMetric]
+    let timestamp: String
+    let checkpoint: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case source, stream
+        case deviceId = "device_id"
+        case records, timestamp, checkpoint
+    }
+
+    init(deviceId: String, metrics: [BatteryMetric], checkpoint: String? = nil) {
+        self.deviceId = deviceId
+        self.records = metrics
+        self.timestamp = ISO8601DateFormatter().string(from: Date())
+        self.checkpoint = checkpoint
+    }
 }

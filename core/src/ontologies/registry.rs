@@ -10,13 +10,13 @@ use super::descriptor::Ontology;
 
 // Import domain registrations
 use super::activity::registry::register_activity_ontologies;
+use super::financial::registry::register_financial_ontologies;
 use super::health::registry::register_health_ontologies;
 use super::knowledge::registry::register_knowledge_ontologies;
 use super::location::registry::register_location_ontologies;
 use super::praxis::registry::register_praxis_ontologies;
 use super::social::registry::register_social_ontologies;
 use super::speech::registry::register_speech_ontologies;
-use super::financial::registry::register_financial_ontologies;
 
 /// Global ontology registry
 pub struct OntologyRegistry {
@@ -52,10 +52,7 @@ impl OntologyRegistry {
         }
 
         // Group by domain
-        self.by_domain
-            .entry(domain)
-            .or_default()
-            .push(name.clone());
+        self.by_domain.entry(domain).or_default().push(name.clone());
 
         // Store ontology
         self.ontologies.insert(name, ontology);

@@ -1,6 +1,6 @@
 //! Source management API - CRUD operations for data sources
 
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use super::types::{SourceConnection, SourceConnectionStatus};
@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 /// List all configured sources
 ///
 /// Returns all sources in the database with stream counts and last sync time.
-pub async fn list_sources(db: &PgPool) -> Result<Vec<SourceConnection>> {
+pub async fn list_sources(db: &SqlitePool) -> Result<Vec<SourceConnection>> {
     let sources = sqlx::query_as::<_, SourceConnection>(
         r#"
         SELECT
@@ -25,8 +25,8 @@ pub async fn list_sources(db: &PgPool) -> Result<Vec<SourceConnection>> {
             MAX(st.last_sync_at) as last_sync_at,
             COALESCE(COUNT(DISTINCT CASE WHEN st.is_enabled THEN st.stream_name END), 0) as enabled_streams_count,
             COALESCE(COUNT(DISTINCT st.stream_name), 0) as total_streams_count
-        FROM source_connections s
-        LEFT JOIN stream_connections st ON s.id = st.source_connection_id
+        FROM data_source_connections s
+        LEFT JOIN data_stream_connections st ON s.id = st.source_connection_id
         WHERE NOT (s.auth_type = 'device' AND s.pairing_status IS NULL)
         GROUP BY s.id, s.source, s.name, s.auth_type, s.is_active, s.is_internal, s.error_message, s.created_at, s.updated_at
         ORDER BY s.created_at DESC
@@ -40,7 +40,8 @@ pub async fn list_sources(db: &PgPool) -> Result<Vec<SourceConnection>> {
 }
 
 /// Get a specific source by ID
-pub async fn get_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnection> {
+pub async fn get_source(db: &SqlitePool, source_id: Uuid) -> Result<SourceConnection> {
+    let source_id_str = source_id.to_string();
     let source = sqlx::query_as::<_, SourceConnection>(
         r#"
         SELECT
@@ -56,13 +57,13 @@ pub async fn get_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnection
             MAX(st.last_sync_at) as last_sync_at,
             COALESCE(COUNT(DISTINCT CASE WHEN st.is_enabled THEN st.stream_name END), 0) as enabled_streams_count,
             COALESCE(COUNT(DISTINCT st.stream_name), 0) as total_streams_count
-        FROM source_connections s
-        LEFT JOIN stream_connections st ON s.id = st.source_connection_id
+        FROM data_source_connections s
+        LEFT JOIN data_stream_connections st ON s.id = st.source_connection_id
         WHERE s.id = $1
         GROUP BY s.id, s.source, s.name, s.auth_type, s.is_active, s.is_internal, s.error_message, s.created_at, s.updated_at
         "#,
     )
-    .bind(source_id)
+    .bind(&source_id_str)
     .fetch_one(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to get source: {e}")))?;
@@ -73,9 +74,10 @@ pub async fn get_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnection
 /// Pause a source by setting is_active to false
 ///
 /// This prevents scheduled syncs from running but keeps the source configured.
-pub async fn pause_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnection> {
-    sqlx::query("UPDATE source_connections SET is_active = false, updated_at = NOW() WHERE id = $1")
-        .bind(source_id)
+pub async fn pause_source(db: &SqlitePool, source_id: Uuid) -> Result<SourceConnection> {
+    let source_id_str = source_id.to_string();
+    sqlx::query("UPDATE data_source_connections SET is_active = false, updated_at = datetime('now') WHERE id = $1")
+        .bind(&source_id_str)
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to pause source: {e}")))?;
@@ -86,9 +88,10 @@ pub async fn pause_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnecti
 /// Resume a source by setting is_active to true
 ///
 /// This re-enables scheduled syncs for the source.
-pub async fn resume_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnection> {
-    sqlx::query("UPDATE source_connections SET is_active = true, updated_at = NOW() WHERE id = $1")
-        .bind(source_id)
+pub async fn resume_source(db: &SqlitePool, source_id: Uuid) -> Result<SourceConnection> {
+    let source_id_str = source_id.to_string();
+    sqlx::query("UPDATE data_source_connections SET is_active = true, updated_at = datetime('now') WHERE id = $1")
+        .bind(&source_id_str)
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to resume source: {e}")))?;
@@ -99,9 +102,10 @@ pub async fn resume_source(db: &PgPool, source_id: Uuid) -> Result<SourceConnect
 /// Delete a source by ID
 ///
 /// This will cascade delete all associated data in stream tables.
-pub async fn delete_source(db: &PgPool, source_id: Uuid) -> Result<()> {
-    sqlx::query("DELETE FROM source_connections WHERE id = $1")
-        .bind(source_id)
+pub async fn delete_source(db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    let source_id_str = source_id.to_string();
+    sqlx::query("DELETE FROM data_source_connections WHERE id = $1")
+        .bind(&source_id_str)
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to delete source: {e}")))?;
@@ -112,7 +116,8 @@ pub async fn delete_source(db: &PgPool, source_id: Uuid) -> Result<()> {
 /// Get source status with sync statistics
 ///
 /// Returns detailed status including sync history and success rates.
-pub async fn get_source_status(db: &PgPool, source_id: Uuid) -> Result<SourceConnectionStatus> {
+pub async fn get_source_status(db: &SqlitePool, source_id: Uuid) -> Result<SourceConnectionStatus> {
+    let source_id_str = source_id.to_string();
     let status = sqlx::query_as::<_, SourceConnectionStatus>(
         r#"
         SELECT
@@ -121,20 +126,20 @@ pub async fn get_source_status(db: &PgPool, source_id: Uuid) -> Result<SourceCon
             s.source,
             s.is_active,
             s.is_internal,
-            s.last_sync_at,
+            (SELECT MAX(completed_at) FROM data_jobs WHERE source_connection_id = s.id AND status = 'succeeded') as last_sync_at,
             s.error_message,
-            COUNT(sl.id) as total_syncs,
-            COALESCE(SUM(CASE WHEN sl.status = 'success' THEN 1 ELSE 0 END), 0) as successful_syncs,
-            COALESCE(SUM(CASE WHEN sl.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_syncs,
-            (SELECT status FROM sync_logs WHERE source_connection_id = s.id ORDER BY started_at DESC LIMIT 1) as last_sync_status,
-            (SELECT duration_ms FROM sync_logs WHERE source_connection_id = s.id ORDER BY started_at DESC LIMIT 1) as last_sync_duration_ms
-        FROM source_connections s
-        LEFT JOIN sync_logs sl ON s.id = sl.source_connection_id
+            COUNT(j.id) as total_syncs,
+            COALESCE(SUM(CASE WHEN j.status = 'succeeded' THEN 1 ELSE 0 END), 0) as successful_syncs,
+            COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_syncs,
+            (SELECT status FROM data_jobs WHERE source_connection_id = s.id ORDER BY started_at DESC LIMIT 1) as last_sync_status,
+            (SELECT CAST((julianday(completed_at) - julianday(started_at)) * 86400000 AS INTEGER) FROM data_jobs WHERE source_connection_id = s.id AND completed_at IS NOT NULL ORDER BY started_at DESC LIMIT 1) as last_sync_duration_ms
+        FROM data_source_connections s
+        LEFT JOIN data_jobs j ON s.id = j.source_connection_id AND j.job_type = 'sync'
         WHERE s.id = $1
-        GROUP BY s.id, s.name, s.source, s.is_active, s.is_internal, s.last_sync_at, s.error_message
+        GROUP BY s.id, s.name, s.source, s.is_active, s.is_internal, s.error_message
         "#
     )
-    .bind(source_id)
+    .bind(&source_id_str)
     .fetch_one(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to get source status: {e}")))?;

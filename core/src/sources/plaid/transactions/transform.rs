@@ -96,10 +96,7 @@ impl OntologyTransform for PlaidTransactionTransform {
                     .unwrap_or_else(Uuid::new_v4);
 
                 // Extract required fields
-                let amount = record
-                    .get("amount")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
+                let amount = record.get("amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
                 let transaction_date = record
                     .get("date")
@@ -199,8 +196,7 @@ impl OntologyTransform for PlaidTransactionTransform {
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
                     let insert_start = std::time::Instant::now();
-                    let batch_result =
-                        execute_transaction_batch_insert(db, &pending_records).await;
+                    let batch_result = execute_transaction_batch_insert(db, &pending_records).await;
                     let insert_duration = insert_start.elapsed();
                     batch_insert_total_ms += insert_duration.as_millis();
                     batch_insert_count += 1;
@@ -313,7 +309,7 @@ async fn execute_transaction_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.financial_transaction",
+        "data_financial_transaction",
         &[
             "transaction_id_external",
             "account_id_external",

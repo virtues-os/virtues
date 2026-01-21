@@ -54,24 +54,28 @@ const RECORDING_TIMEZONE: &str = "Europe/Rome";
 /// Get or create the test source for Monday in Rome dataset
 async fn get_or_create_test_source(db: &Database) -> Result<Uuid> {
     // Check if test source already exists
-    let existing = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM data.source_connections WHERE name = 'monday-in-rome' LIMIT 1",
+    let existing = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM data_source_connections WHERE name = 'monday-in-rome' LIMIT 1",
     )
     .fetch_optional(db.pool())
     .await?;
 
-    if let Some(id) = existing {
+    if let Some(id_str) = existing {
+        let id = Uuid::parse_str(&id_str)
+            .map_err(|e| crate::error::Error::Database(format!("Invalid source ID: {e}")))?;
         info!("Using existing monday-in-rome source: {}", id);
         return Ok(id);
     }
 
     // Create test source
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO data.source_connections (name, source, auth_type, is_active)
-         VALUES ('monday-in-rome', 'ios', 'device', true)
-         RETURNING id",
+    let id = Uuid::new_v4();
+    let id_str = id.to_string();
+    sqlx::query(
+        "INSERT INTO data_source_connections (id, name, source, auth_type, is_active)
+         VALUES ($1, 'monday-in-rome', 'ios', 'device', true)",
     )
-    .fetch_one(db.pool())
+    .bind(&id_str)
+    .execute(db.pool())
     .await?;
 
     info!("Created monday-in-rome source: {}", id);
@@ -252,7 +256,7 @@ async fn seed_stream_pipeline(
 /// Seed microphone transcriptions directly to speech_transcription table
 ///
 /// Loads microphone.csv and directly inserts into speech_transcription ontology table,
-/// bypassing the transform layer to avoid calling AssemblyAI API during seeding.
+/// bypassing the transform layer to avoid calling external APIs during seeding.
 ///
 /// Groups utterances into conversation sessions based on VAD segment gaps (>2 min silence).
 async fn seed_microphone_transcriptions(
@@ -268,14 +272,17 @@ async fn seed_microphone_transcriptions(
     let mut rdr = csv::Reader::from_reader(file_content.as_bytes());
 
     // Create a seed stream connection for microphone (similar to other streams)
-    let _seed_stream_id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO data.stream_connections (source_connection_id, stream_name, table_name, created_at, updated_at)
-         VALUES ($1, 'microphone', 'stream_ios_microphone', NOW(), NOW())
-         ON CONFLICT (source_connection_id, stream_name) DO UPDATE SET updated_at = NOW()
-         RETURNING id",
+    let stream_id = Uuid::new_v4();
+    let stream_id_str = stream_id.to_string();
+    let source_id_str = source_id.to_string();
+    sqlx::query(
+        "INSERT INTO data_stream_connections (id, source_connection_id, stream_name, table_name, created_at, updated_at)
+         VALUES ($1, $2, 'microphone', 'stream_ios_microphone', datetime('now'), datetime('now'))
+         ON CONFLICT (source_connection_id, stream_name) DO UPDATE SET updated_at = datetime('now')",
     )
-    .bind(source_id)
-    .fetch_one(db.pool())
+    .bind(&stream_id_str)
+    .bind(&source_id_str)
+    .execute(db.pool())
     .await?;
 
     // Base timestamp: Nov 10, 2025 06:30:00 UTC (recording started when user woke up)
@@ -344,8 +351,14 @@ async fn seed_microphone_transcriptions(
         // Calculate actual speech duration from metadata (concatenated_end - concatenated_start)
         // This excludes silence and represents only the speech portion
         let actual_speech_duration = {
-            let concat_start = metadata.get("concatenated_start").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let concat_end = metadata.get("concatenated_end").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let concat_start = metadata
+                .get("concatenated_start")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let concat_end = metadata
+                .get("concatenated_end")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             concat_end - concat_start
         };
 
@@ -403,10 +416,11 @@ async fn seed_microphone_transcriptions(
                     // Accumulate actual speech duration
                     conv.total_speech_duration += utterance.actual_speech_duration;
                     conv.transcripts.push(utterance.transcript_text.clone());
-                    conv.avg_confidence =
-                        (conv.avg_confidence * conv.utterance_count as f64 + utterance.confidence_score)
-                            / (conv.utterance_count + 1) as f64;
-                    conv.max_speaker_count = match (conv.max_speaker_count, utterance.speaker_count) {
+                    conv.avg_confidence = (conv.avg_confidence * conv.utterance_count as f64
+                        + utterance.confidence_score)
+                        / (conv.utterance_count + 1) as f64;
+                    conv.max_speaker_count = match (conv.max_speaker_count, utterance.speaker_count)
+                    {
                         (Some(a), Some(b)) => Some(a.max(b)),
                         (Some(a), None) => Some(a),
                         (None, Some(b)) => Some(b),
@@ -443,7 +457,8 @@ async fn seed_microphone_transcriptions(
     // Insert conversations into speech_transcription
     let mut count = 0;
     for conv in &conversations {
-        let timestamp = base_timestamp + Duration::milliseconds((conv.start_seconds * 1000.0) as i64);
+        let timestamp =
+            base_timestamp + Duration::milliseconds((conv.start_seconds * 1000.0) as i64);
         // Use actual speech duration (from concatenated times), not the span in original recording
         let duration_seconds = conv.total_speech_duration.ceil() as i32;
         let combined_transcript = conv.transcripts.join(" ");
@@ -453,7 +468,7 @@ async fn seed_microphone_transcriptions(
 
         sqlx::query(
             r#"
-            INSERT INTO data.speech_transcription (
+            INSERT INTO data_speech_transcription (
                 audio_file_path,
                 audio_duration_seconds,
                 transcript_text,
@@ -552,17 +567,21 @@ async fn seed_calendar_events(db: &Database, csv_path: &PathBuf) -> Result<usize
             .and_then(|v| v.as_str())
             .unwrap_or("{}");
 
-        let attendee_identifiers: Vec<String> = serde_json::from_str(attendee_identifiers_str)
-            .unwrap_or_default();
+        let attendee_identifiers: Vec<String> =
+            serde_json::from_str(attendee_identifiers_str).unwrap_or_default();
 
         // Generate required fields for seeding
         let source_stream_id = Uuid::new_v4();
         let source_table = "stream_seed_calendar";
         let source_provider = "seed";
 
+        // SQLite doesn't support array types, convert back to JSON string
+        let attendee_identifiers_json =
+            serde_json::to_string(&attendee_identifiers).unwrap_or_else(|_| "[]".to_string());
+
         // Insert into praxis_calendar table (using original Nov 10 timestamps)
         sqlx::query(
-            "INSERT INTO data.praxis_calendar
+            "INSERT INTO data_praxis_calendar
              (title, description, calendar_name, location_name, start_time, end_time, is_all_day, attendee_identifiers, source_stream_id, source_table, source_provider)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (source_stream_id) DO NOTHING"
@@ -574,7 +593,7 @@ async fn seed_calendar_events(db: &Database, csv_path: &PathBuf) -> Result<usize
         .bind(start_time)
         .bind(end_time)
         .bind(is_all_day)
-        .bind(&attendee_identifiers)
+        .bind(&attendee_identifiers_json)
         .bind(source_stream_id)
         .bind(source_table)
         .bind(source_provider)
@@ -654,7 +673,7 @@ async fn seed_sleep_data(db: &Database, csv_path: &PathBuf) -> Result<usize> {
         // Insert into health_sleep table (using original Nov 9-10 timestamps)
         sqlx::query(
             r#"
-            INSERT INTO data.health_sleep (
+            INSERT INTO data_health_sleep (
                 start_time,
                 end_time,
                 total_duration_minutes,
@@ -790,7 +809,7 @@ async fn seed_imessage_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf)
         // Required fields: message_id, channel, timestamp, direction
         sqlx::query(
             r#"
-            INSERT INTO data.social_message (
+            INSERT INTO data_social_message (
                 message_id,
                 thread_id,
                 channel,
@@ -840,25 +859,28 @@ async fn seed_imessage_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf)
 /// Helper function to get or create a person entity by name
 async fn get_or_create_person(db: &Database, name: &str) -> Result<Uuid> {
     // Check if person already exists
-    let existing = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM data.entities_person WHERE canonical_name = $1 LIMIT 1",
+    let existing = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM data_entities_person WHERE canonical_name = $1 LIMIT 1",
     )
     .bind(name)
     .fetch_optional(db.pool())
     .await?;
 
-    if let Some(id) = existing {
-        return Ok(id);
+    if let Some(id_str) = existing {
+        return Uuid::parse_str(&id_str)
+            .map_err(|e| crate::error::Error::Database(format!("Invalid person ID: {e}")));
     }
 
     // Create new person
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO data.entities_person (canonical_name, metadata)
-         VALUES ($1, '{}')
-         RETURNING id",
+    let id = Uuid::new_v4();
+    let id_str = id.to_string();
+    sqlx::query(
+        "INSERT INTO data_entities_person (id, canonical_name, metadata)
+         VALUES ($1, $2, '{}')",
     )
+    .bind(&id_str)
     .bind(name)
-    .fetch_one(db.pool())
+    .execute(db.pool())
     .await?;
 
     Ok(id)
@@ -907,8 +929,8 @@ async fn seed_email_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf) ->
         let from_address = record.get("from_address").and_then(|v| v.as_str());
         let from_name = record.get("from_name").and_then(|v| v.as_str());
 
-        // Parse array fields (PostgreSQL array format: {value1,value2})
-        let parse_pg_array = |field_name: &str| -> Vec<String> {
+        // Parse array fields (brace-delimited format: {value1,value2})
+        let parse_array = |field_name: &str| -> Vec<String> {
             record
                 .get(field_name)
                 .and_then(|v| v.as_str())
@@ -923,12 +945,12 @@ async fn seed_email_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf) ->
                 .unwrap_or_default()
         };
 
-        let to_addresses = parse_pg_array("to_addresses");
-        let to_names = parse_pg_array("to_names");
-        let cc_addresses = parse_pg_array("cc_addresses");
-        let cc_names = parse_pg_array("cc_names");
-        let bcc_addresses = parse_pg_array("bcc_addresses");
-        let labels = parse_pg_array("labels");
+        let to_addresses = parse_array("to_addresses");
+        let to_names = parse_array("to_names");
+        let cc_addresses = parse_array("cc_addresses");
+        let cc_names = parse_array("cc_names");
+        let bcc_addresses = parse_array("bcc_addresses");
+        let labels = parse_array("labels");
 
         // Parse boolean fields
         let parse_bool = |field_name: &str| -> bool {
@@ -1006,10 +1028,25 @@ async fn seed_email_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf) ->
             }
         }
 
+        // SQLite doesn't support array types, convert to JSON strings
+        let to_addresses_json =
+            serde_json::to_string(&to_addresses).unwrap_or_else(|_| "[]".to_string());
+        let to_names_json = serde_json::to_string(&to_names).unwrap_or_else(|_| "[]".to_string());
+        let cc_addresses_json =
+            serde_json::to_string(&cc_addresses).unwrap_or_else(|_| "[]".to_string());
+        let cc_names_json = serde_json::to_string(&cc_names).unwrap_or_else(|_| "[]".to_string());
+        let bcc_addresses_json =
+            serde_json::to_string(&bcc_addresses).unwrap_or_else(|_| "[]".to_string());
+        let to_person_ids_json =
+            serde_json::to_string(&to_person_ids).unwrap_or_else(|_| "[]".to_string());
+        let cc_person_ids_json =
+            serde_json::to_string(&cc_person_ids).unwrap_or_else(|_| "[]".to_string());
+        let labels_json = serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string());
+
         // Insert into social_email table (using original Nov 10 timestamps)
         sqlx::query(
             r#"
-            INSERT INTO data.social_email (
+            INSERT INTO data_social_email (
                 message_id,
                 thread_id,
                 subject,
@@ -1052,16 +1089,16 @@ async fn seed_email_data(db: &Database, _source_id: Uuid, csv_path: &PathBuf) ->
         .bind(timestamp)
         .bind(from_address)
         .bind(from_name)
-        .bind(&to_addresses)
-        .bind(&to_names)
-        .bind(&cc_addresses)
-        .bind(&cc_names)
-        .bind(&bcc_addresses)
+        .bind(&to_addresses_json)
+        .bind(&to_names_json)
+        .bind(&cc_addresses_json)
+        .bind(&cc_names_json)
+        .bind(&bcc_addresses_json)
         .bind(from_person_id)
-        .bind(&to_person_ids)
-        .bind(&cc_person_ids)
+        .bind(&to_person_ids_json)
+        .bind(&cc_person_ids_json)
         .bind(direction)
-        .bind(&labels)
+        .bind(&labels_json)
         .bind(is_read)
         .bind(is_starred)
         .bind(has_attachments)
@@ -1107,7 +1144,7 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
             let description = record.get("description").and_then(|v| v.as_str());
 
             sqlx::query(
-                "INSERT INTO data.axiology_telos (title, description, is_active)
+                "INSERT INTO data_axiology_telos (title, description, is_active)
                  VALUES ($1, $2, true)
                  ON CONFLICT DO NOTHING",
             )
@@ -1144,6 +1181,8 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
             } else {
                 vec![]
             };
+            // Serialize tags as JSON for SQLite
+            let tags_json = serde_json::to_string(&tags).unwrap_or_else(|_| "[]".to_string());
 
             let status = record
                 .get("status")
@@ -1158,22 +1197,22 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
                 .get("start_date")
                 .and_then(|v| v.as_str())
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc));
+                .map(|dt| dt.with_timezone(&Utc).to_rfc3339());
 
             let target_date = record
                 .get("target_date")
                 .and_then(|v| v.as_str())
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc));
+                .map(|dt| dt.with_timezone(&Utc).to_rfc3339());
 
             sqlx::query(
-                "INSERT INTO data.praxis_task (title, description, tags, status, progress_percent, start_date, target_date, is_active)
+                "INSERT INTO data_praxis_task (title, description, tags, status, progress_percent, start_date, target_date, is_active)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, true)
                  ON CONFLICT DO NOTHING"
             )
             .bind(title)
             .bind(description)
-            .bind(&tags)
+            .bind(&tags_json)
             .bind(status)
             .bind(progress_percent)
             .bind(start_date)
@@ -1203,7 +1242,7 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
             let description = record.get("description").and_then(|v| v.as_str());
 
             sqlx::query(
-                "INSERT INTO data.axiology_virtue (title, description, is_active)
+                "INSERT INTO data_axiology_virtue (title, description, is_active)
                  VALUES ($1, $2, true)
                  ON CONFLICT DO NOTHING",
             )
@@ -1234,7 +1273,7 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
             let description = record.get("description").and_then(|v| v.as_str());
 
             sqlx::query(
-                "INSERT INTO data.axiology_vice (title, description, is_active)
+                "INSERT INTO data_axiology_vice (title, description, is_active)
                  VALUES ($1, $2, true)
                  ON CONFLICT DO NOTHING",
             )
@@ -1273,7 +1312,7 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
             let temperament_type = record.get("temperament_type").and_then(|v| v.as_str());
 
             sqlx::query(
-                "INSERT INTO data.axiology_temperament (title, description, temperament_type, is_active)
+                "INSERT INTO data_axiology_temperament (title, description, temperament_type, is_active)
                  VALUES ($1, $2, $3, true)
                  ON CONFLICT DO NOTHING"
             )
@@ -1306,7 +1345,7 @@ async fn seed_axiology_data(db: &Database, base_path: &PathBuf) -> Result<usize>
             let preference_domain = record.get("preference_domain").and_then(|v| v.as_str());
 
             sqlx::query(
-                "INSERT INTO data.axiology_preference (title, description, preference_domain, is_active)
+                "INSERT INTO data_axiology_preference (title, description, preference_domain, is_active)
                  VALUES ($1, $2, $3, true)
                  ON CONFLICT DO NOTHING"
             )
@@ -1401,7 +1440,7 @@ pub async fn seed_monday_in_rome(
     }
 
     // Special handling for microphone transcriptions: seed directly to speech_transcription table
-    // (bypasses transform since we don't want to call AssemblyAI API during seeding)
+    // (bypasses transform since we don't want to call external APIs during seeding)
     let microphone_csv_path = base_path.join("microphone.csv");
     if microphone_csv_path.exists() {
         info!("📝 Seeding microphone transcriptions directly to speech_transcription table...");
@@ -1534,12 +1573,16 @@ pub async fn seed_monday_in_rome(
         .with_timezone(&Utc);
 
     // Run entity resolution (place clustering) for the seed data time range
-    match crate::entity_resolution::resolve_entities(db, crate::entity_resolution::TimeWindow { start, end }).await {
+    match crate::entity_resolution::resolve_entities(
+        db,
+        crate::entity_resolution::TimeWindow { start, end },
+    )
+    .await
+    {
         Ok(stats) => {
             info!(
                 "✅ Entity resolution completed: {} places resolved, {} people resolved",
-                stats.places_resolved,
-                stats.people_resolved
+                stats.places_resolved, stats.people_resolved
             );
         }
         Err(e) => {

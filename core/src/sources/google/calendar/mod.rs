@@ -4,7 +4,7 @@ pub mod transform;
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -30,7 +30,7 @@ use crate::{
 pub struct GoogleCalendarStream {
     source_id: Uuid,
     client: GoogleClient,
-    db: PgPool,
+    db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
     config: GoogleCalendarConfig,
 }
@@ -39,7 +39,7 @@ impl GoogleCalendarStream {
     /// Create a new calendar stream with SourceAuth and StreamWriter
     pub fn new(
         source_id: Uuid,
-        db: PgPool,
+        db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
         auth: SourceAuth,
     ) -> Self {
@@ -61,10 +61,10 @@ impl GoogleCalendarStream {
     }
 
     /// Load configuration from database (called by PullStream trait)
-    async fn load_config_internal(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
+    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
         // Load from stream_connections table only
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM stream_connections WHERE source_connection_id = $1 AND stream_name = 'calendar'",
+            "SELECT config FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'calendar'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -297,7 +297,7 @@ impl GoogleCalendarStream {
         &self,
         calendar_id: &str,
         event: &Event,
-        _tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        _tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> Result<bool> {
         // Extract key fields - handle both datetime and date formats
         let start_time = if let Some(start) = event.start.as_ref() {
@@ -428,7 +428,7 @@ impl GoogleCalendarStream {
     /// Get the last sync token from the database (stream_connections table only)
     async fn get_last_sync_token(&self) -> Result<Option<String>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT last_sync_token FROM stream_connections WHERE source_connection_id = $1 AND stream_name = 'calendar'",
+            "SELECT last_sync_token FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'calendar'",
         )
         .bind(self.source_id)
         .fetch_optional(&self.db)
@@ -441,10 +441,10 @@ impl GoogleCalendarStream {
     async fn save_sync_token_with_tx(
         &self,
         token: &str,
-        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE data.stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'calendar'"
+            "UPDATE data_stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'calendar'"
         )
         .bind(token)
         .bind(Utc::now())
@@ -458,7 +458,7 @@ impl GoogleCalendarStream {
     /// Clear the sync token (used when token is invalid)
     async fn clear_sync_token(&self) -> Result<()> {
         sqlx::query(
-            "UPDATE data.stream_connections SET last_sync_token = NULL WHERE source_connection_id = $1 AND stream_name = 'calendar'"
+            "UPDATE data_stream_connections SET last_sync_token = NULL WHERE source_connection_id = $1 AND stream_name = 'calendar'"
         )
         .bind(self.source_id)
         .execute(&self.db)
@@ -475,7 +475,7 @@ impl PullStream for GoogleCalendarStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
         self.load_config_internal(db, source_id).await
     }
 

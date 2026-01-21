@@ -14,6 +14,8 @@ impl OntologyDescriptor for CalendarOntology {
             .domain("praxis")
             .table_name("praxis_calendar")
             .source_streams(vec!["stream_google_calendar"])
+            .timestamp_column("start_time")
+            .end_timestamp_column("end_time")
             .embedding(
                 "COALESCE(title, '') || '\n\n' || COALESCE(description, '')",
                 "calendar",

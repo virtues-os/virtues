@@ -65,10 +65,10 @@
 					style="color: {agent.color}"
 					width="14"
 				></iconify-icon>
-				<span class="text-neutral-700">{agent.name}</span>
+				<span class="text-foreground-muted">{agent.name}</span>
 				<iconify-icon
 					icon="ri:arrow-down-s-line"
-					class="text-neutral-400 transition-transform duration-200"
+					class="text-foreground-subtle transition-transform duration-200"
 					class:rotate-180={open}
 					width="16"
 				></iconify-icon>
@@ -89,14 +89,14 @@
 					</div>
 					<div class="flex-1 min-w-0">
 						<div class="flex items-center gap-2">
-							<span class="text-sm font-medium text-neutral-900">
+							<span class="text-sm font-medium text-foreground">
 								{agent.name}
 							</span>
 							{#if agent.id === 'auto'}
-								<span class="text-xs text-neutral-500">(recommended)</span>
+								<span class="text-xs text-foreground-subtle">(recommended)</span>
 							{/if}
 						</div>
-						<p class="text-xs text-neutral-600 mt-0.5 line-clamp-2">
+						<p class="text-xs text-foreground-muted mt-0.5 line-clamp-2">
 							{agent.description}
 						</p>
 					</div>
@@ -104,7 +104,7 @@
 				{#if isSelected}
 					<iconify-icon
 						icon="ri:check-line"
-						class="text-blue-600 flex-shrink-0 mt-0.5"
+						class="text-primary flex-shrink-0 mt-0.5"
 						width="16"
 					></iconify-icon>
 				{/if}

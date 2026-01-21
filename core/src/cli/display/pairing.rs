@@ -54,7 +54,7 @@ pub fn display_pairing_code(code: &str, server_url: &str, expires_at: &DateTime<
 
 /// Wait for device to complete pairing with visual feedback
 pub async fn wait_for_pairing(
-    db: &sqlx::PgPool,
+    db: &sqlx::SqlitePool,
     source_id: Uuid,
     expires_at: DateTime<Utc>,
 ) -> Result<PairingResult, Box<dyn std::error::Error>> {

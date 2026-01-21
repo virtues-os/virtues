@@ -13,9 +13,7 @@ fn main() {
         .output();
 
     let commit = match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).trim().to_string()
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => std::env::var("GIT_COMMIT").unwrap_or_else(|_| "unknown".to_string()),
     };
 

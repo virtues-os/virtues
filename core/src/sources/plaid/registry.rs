@@ -11,7 +11,8 @@ impl SourceRegistry for PlaidSource {
         RegisteredSource {
             name: "plaid",
             display_name: "Plaid",
-            description: "Connect your bank accounts and credit cards to sync transactions and balances",
+            description:
+                "Connect your bank accounts and credit cards to sync transactions and balances",
             // Plaid uses a custom Link flow rather than standard OAuth2
             // but we model it similarly for the UI
             auth_type: AuthType::OAuth2,
@@ -25,9 +26,7 @@ impl SourceRegistry for PlaidSource {
                 // Transactions stream
                 RegisteredStream::new("transactions")
                     .display_name("Transactions")
-                    .description(
-                        "Sync bank transactions with merchant and category info",
-                    )
+                    .description("Sync bank transactions with merchant and category info")
                     .table_name("stream_plaid_transactions")
                     .target_ontologies(vec!["financial_transaction"])
                     .config_schema(transactions_config_schema())
@@ -39,9 +38,7 @@ impl SourceRegistry for PlaidSource {
                 // Accounts stream
                 RegisteredStream::new("accounts")
                     .display_name("Accounts")
-                    .description(
-                        "Sync bank accounts, credit cards, and account balances",
-                    )
+                    .description("Sync bank accounts, credit cards, and account balances")
                     .table_name("stream_plaid_accounts")
                     .target_ontologies(vec!["financial_account"])
                     .config_schema(accounts_config_schema())

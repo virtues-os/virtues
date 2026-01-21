@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::Result;
@@ -44,7 +44,7 @@ pub trait PullStream: Send + Sync {
     /// Load OAuth tokens, API keys, or other config from database
     ///
     /// Called before sync_pull() to ensure stream has necessary credentials
-    async fn load_config(&mut self, db: &PgPool, source_id: Uuid) -> Result<()>;
+    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()>;
 
     /// Table name in data schema (e.g., "stream_google_calendar")
     fn table_name(&self) -> &str;

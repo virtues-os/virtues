@@ -112,20 +112,18 @@ impl StreamType {
 impl std::fmt::Debug for StreamType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            StreamType::Pull(stream) => {
-                f.debug_struct("StreamType::Pull")
-                    .field("source", &stream.source_name())
-                    .field("stream", &stream.stream_name())
-                    .field("table", &stream.table_name())
-                    .finish()
-            }
-            StreamType::Push(stream) => {
-                f.debug_struct("StreamType::Push")
-                    .field("source", &stream.source_name())
-                    .field("stream", &stream.stream_name())
-                    .field("table", &stream.table_name())
-                    .finish()
-            }
+            StreamType::Pull(stream) => f
+                .debug_struct("StreamType::Pull")
+                .field("source", &stream.source_name())
+                .field("stream", &stream.stream_name())
+                .field("table", &stream.table_name())
+                .finish(),
+            StreamType::Push(stream) => f
+                .debug_struct("StreamType::Push")
+                .field("source", &stream.source_name())
+                .field("stream", &stream.stream_name())
+                .field("table", &stream.table_name())
+                .finish(),
         }
     }
 }

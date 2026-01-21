@@ -14,6 +14,7 @@ impl OntologyDescriptor for HeartRateOntology {
             .domain("health")
             .table_name("health_heart_rate")
             .source_streams(vec!["stream_ios_healthkit"])
+            .timestamp_column("timestamp")
             .build()
     }
 }

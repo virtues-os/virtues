@@ -34,8 +34,8 @@ pub async fn get_or_create_device_source(
     use sqlx;
 
     // Try to get existing source connection by device_id
-    let existing: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM source_connections WHERE source = $1 AND device_id = $2 AND auth_type = 'device'"
+    let existing: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM data_source_connections WHERE source = $1 AND device_id = $2 AND auth_type = 'device'"
     )
     .bind(source_name)
     .bind(device_id)
@@ -43,22 +43,24 @@ pub async fn get_or_create_device_source(
     .await
     .map_err(|e| Error::Database(format!("Failed to query source connection: {e}")))?;
 
-    if let Some((id,)) = existing {
-        return Ok(id);
+    if let Some((id_str,)) = existing {
+        return Uuid::parse_str(&id_str)
+            .map_err(|e| Error::Database(format!("Invalid source ID: {e}")));
     }
 
     // Create new device source connection with a unique name
     let new_id = Uuid::new_v4();
+    let new_id_str = new_id.to_string();
     let name = format!("{}-{}", source_name, device_id);
 
-    let (id,): (Uuid,) = sqlx::query_as(
-        "INSERT INTO source_connections (id, source, name, device_id, auth_type, is_active, is_internal)
+    let (id_str,): (String,) = sqlx::query_as(
+        "INSERT INTO data_source_connections (id, source, name, device_id, auth_type, is_active, is_internal)
          VALUES ($1, $2, $3, $4, 'device', true, false)
          ON CONFLICT (source, device_id) WHERE device_id IS NOT NULL
-         DO UPDATE SET updated_at = NOW()
+         DO UPDATE SET updated_at = datetime('now')
          RETURNING id",
     )
-    .bind(new_id)
+    .bind(&new_id_str)
     .bind(source_name)
     .bind(&name)
     .bind(device_id)
@@ -66,5 +68,6 @@ pub async fn get_or_create_device_source(
     .await
     .map_err(|e| Error::Database(format!("Failed to create source connection: {e}")))?;
 
-    Ok(id)
+    Uuid::parse_str(&id_str)
+        .map_err(|e| Error::Database(format!("Invalid source ID returned: {e}")))
 }

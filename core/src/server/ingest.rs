@@ -69,6 +69,13 @@ pub struct AppState {
     pub stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
+/// Enable extracting SqlitePool from AppState for auth middleware
+impl axum::extract::FromRef<AppState> for sqlx::SqlitePool {
+    fn from_ref(state: &AppState) -> Self {
+        state.db.pool().clone()
+    }
+}
+
 /// Main ingestion handler
 pub async fn ingest(
     State(state): State<AppState>,
@@ -245,11 +252,12 @@ async fn process_batch(
     // Return (accepted, rejected) counts
     // Note: PushResult only tracks received/written, so we calculate rejected as difference
     let accepted = result.records_written;
-    let rejected = result.records_received.saturating_sub(result.records_written);
+    let rejected = result
+        .records_received
+        .saturating_sub(result.records_written);
 
     Ok((accepted, rejected))
 }
-
 
 /// Trigger transforms for device batch (hot path - unified with cloud syncs)
 ///

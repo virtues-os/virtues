@@ -2,10 +2,25 @@
 //!
 //! This module provides server-side proxy to Google Places API,
 //! avoiding client-side JavaScript origin restrictions.
+//!
+//! Requests are proxied through Tollbooth for budget enforcement.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::tollbooth;
+
+/// Get Tollbooth URL from environment (defaults to localhost:9002 for development)
+fn get_tollbooth_url() -> String {
+    std::env::var("TOLLBOOTH_URL").unwrap_or_else(|_| "http://localhost:9002".to_string())
+}
+
+/// Get Tollbooth internal secret from environment
+fn get_tollbooth_secret() -> Result<String> {
+    std::env::var("TOLLBOOTH_INTERNAL_SECRET").map_err(|_| {
+        Error::Configuration("TOLLBOOTH_INTERNAL_SECRET environment variable not set".into())
+    })
+}
 
 /// Request for place autocomplete
 #[derive(Debug, Deserialize)]
@@ -41,6 +56,7 @@ pub struct PlaceDetailsRequest {
     /// The place ID from autocomplete
     pub place_id: String,
     /// Optional session token (should match autocomplete session)
+    #[allow(dead_code)]
     pub session_token: Option<String>,
 }
 
@@ -53,57 +69,58 @@ pub struct PlaceDetailsResponse {
     pub longitude: f64,
 }
 
-// Google Places API response types (internal)
+// Tollbooth response types for Google Places (New API format)
 #[derive(Debug, Deserialize)]
-struct GoogleAutocompleteResponse {
-    predictions: Vec<GooglePrediction>,
-    status: String,
-    error_message: Option<String>,
+struct TollboothAutocompleteResponse {
+    suggestions: Option<Vec<TollboothSuggestion>>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GooglePrediction {
+#[serde(rename_all = "camelCase")]
+struct TollboothSuggestion {
+    place_prediction: Option<TollboothPlacePrediction>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TollboothPlacePrediction {
     place_id: String,
-    description: String,
-    structured_formatting: GoogleStructuredFormatting,
+    text: TollboothText,
+    structured_format: Option<TollboothStructuredFormat>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GoogleStructuredFormatting {
-    main_text: String,
-    secondary_text: Option<String>,
+struct TollboothText {
+    text: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct GooglePlaceDetailsResponse {
-    result: Option<GooglePlaceResult>,
-    status: String,
-    error_message: Option<String>,
+#[serde(rename_all = "camelCase")]
+struct TollboothStructuredFormat {
+    main_text: TollboothText,
+    secondary_text: Option<TollboothText>,
+}
+
+// Tollbooth response types for place details (New API format)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TollboothPlaceDetailsResponse {
+    id: String,
+    #[allow(dead_code)]
+    display_name: Option<TollboothText>,
+    formatted_address: Option<String>,
+    location: Option<TollboothLocation>,
 }
 
 #[derive(Debug, Deserialize)]
-struct GooglePlaceResult {
-    place_id: String,
-    formatted_address: String,
-    geometry: GoogleGeometry,
+struct TollboothLocation {
+    latitude: f64,
+    longitude: f64,
 }
 
-#[derive(Debug, Deserialize)]
-struct GoogleGeometry {
-    location: GoogleLatLng,
-}
-
-#[derive(Debug, Deserialize)]
-struct GoogleLatLng {
-    lat: f64,
-    lng: f64,
-}
-
-/// Get autocomplete predictions for a query
+/// Get autocomplete predictions for a query (proxied through Tollbooth)
 pub async fn autocomplete(request: AutocompleteRequest) -> Result<AutocompleteResponse> {
-    let api_key = std::env::var("GOOGLE_API_KEY").map_err(|_| {
-        Error::Configuration("GOOGLE_API_KEY environment variable not set".into())
-    })?;
+    let secret = get_tollbooth_secret()?;
 
     if request.query.trim().is_empty() {
         return Ok(AutocompleteResponse {
@@ -111,94 +128,117 @@ pub async fn autocomplete(request: AutocompleteRequest) -> Result<AutocompleteRe
         });
     }
 
-    let client = reqwest::Client::new();
-    let mut url = format!(
-        "https://maps.googleapis.com/maps/api/place/autocomplete/json?input={}&types=address&key={}",
-        urlencoding::encode(&request.query),
-        api_key
-    );
+    let tollbooth_url = get_tollbooth_url();
+
+    // Build request body for Tollbooth (which forwards to Google Places New API)
+    let mut body = serde_json::json!({
+        "input": request.query
+    });
 
     if let Some(token) = &request.session_token {
-        url.push_str(&format!("&sessiontoken={}", urlencoding::encode(token)));
+        body["sessionToken"] = serde_json::json!(token);
     }
 
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| Error::ExternalApi(format!("Google Places API request failed: {}", e)))?;
+    let client = reqwest::Client::new();
+    let response = tollbooth::with_system_auth(
+        client.post(format!(
+            "{}/v1/services/google/places/autocomplete",
+            tollbooth_url
+        )),
+        &secret,
+    )
+    .header("Content-Type", "application/json")
+    .json(&body)
+    .send()
+    .await
+    .map_err(|e| {
+        Error::ExternalApi(format!("Tollbooth/Google Places API request failed: {}", e))
+    })?;
 
-    let google_response: GoogleAutocompleteResponse = response
-        .json()
-        .await
-        .map_err(|e| Error::ExternalApi(format!("Failed to parse Google Places response: {}", e)))?;
-
-    if google_response.status != "OK" && google_response.status != "ZERO_RESULTS" {
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         return Err(Error::ExternalApi(format!(
-            "Google Places API error: {} - {}",
-            google_response.status,
-            google_response.error_message.unwrap_or_default()
+            "Tollbooth/Google Places API error ({}): {}",
+            status, error_text
         )));
     }
 
-    let predictions = google_response
-        .predictions
+    let tollbooth_response: TollboothAutocompleteResponse = response.json().await.map_err(|e| {
+        Error::ExternalApi(format!("Failed to parse Google Places response: {}", e))
+    })?;
+
+    let predictions = tollbooth_response
+        .suggestions
+        .unwrap_or_default()
         .into_iter()
+        .filter_map(|s| s.place_prediction)
         .map(|p| AutocompletePrediction {
             place_id: p.place_id,
-            description: p.description,
-            main_text: p.structured_formatting.main_text,
-            secondary_text: p.structured_formatting.secondary_text.unwrap_or_default(),
+            description: p.text.text.clone(),
+            main_text: p
+                .structured_format
+                .as_ref()
+                .map(|sf| sf.main_text.text.clone())
+                .unwrap_or_else(|| p.text.text.clone()),
+            secondary_text: p
+                .structured_format
+                .as_ref()
+                .and_then(|sf| sf.secondary_text.as_ref())
+                .map(|t| t.text.clone())
+                .unwrap_or_default(),
         })
         .collect();
 
     Ok(AutocompleteResponse { predictions })
 }
 
-/// Get details for a specific place
+/// Get details for a specific place (proxied through Tollbooth)
 pub async fn get_place_details(request: PlaceDetailsRequest) -> Result<PlaceDetailsResponse> {
-    let api_key = std::env::var("GOOGLE_API_KEY").map_err(|_| {
-        Error::Configuration("GOOGLE_API_KEY environment variable not set".into())
-    })?;
+    let secret = get_tollbooth_secret()?;
+    let tollbooth_url = get_tollbooth_url();
 
     let client = reqwest::Client::new();
-    let mut url = format!(
-        "https://maps.googleapis.com/maps/api/place/details/json?place_id={}&fields=place_id,formatted_address,geometry&key={}",
-        urlencoding::encode(&request.place_id),
-        api_key
-    );
+    let response = tollbooth::with_system_auth(
+        client.get(format!(
+            "{}/v1/services/google/places/{}",
+            tollbooth_url, request.place_id
+        )),
+        &secret,
+    )
+    .send()
+    .await
+    .map_err(|e| {
+        Error::ExternalApi(format!("Tollbooth/Google Places API request failed: {}", e))
+    })?;
 
-    if let Some(token) = &request.session_token {
-        url.push_str(&format!("&sessiontoken={}", urlencoding::encode(token)));
-    }
-
-    let response = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| Error::ExternalApi(format!("Google Places API request failed: {}", e)))?;
-
-    let google_response: GooglePlaceDetailsResponse = response
-        .json()
-        .await
-        .map_err(|e| Error::ExternalApi(format!("Failed to parse Google Places response: {}", e)))?;
-
-    if google_response.status != "OK" {
+    if !response.status().is_success() {
+        let status = response.status();
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Unknown error".to_string());
         return Err(Error::ExternalApi(format!(
-            "Google Places API error: {} - {}",
-            google_response.status,
-            google_response.error_message.unwrap_or_default()
+            "Tollbooth/Google Places API error ({}): {}",
+            status, error_text
         )));
     }
 
-    let result = google_response
-        .result
-        .ok_or_else(|| Error::ExternalApi("No place result returned".into()))?;
+    let tollbooth_response: TollboothPlaceDetailsResponse = response.json().await.map_err(|e| {
+        Error::ExternalApi(format!("Failed to parse Google Places response: {}", e))
+    })?;
+
+    let location = tollbooth_response
+        .location
+        .ok_or_else(|| Error::ExternalApi("No location in place details".into()))?;
 
     Ok(PlaceDetailsResponse {
-        place_id: result.place_id,
-        formatted_address: result.formatted_address,
-        latitude: result.geometry.location.lat,
-        longitude: result.geometry.location.lng,
+        place_id: tollbooth_response.id,
+        formatted_address: tollbooth_response.formatted_address.unwrap_or_default(),
+        latitude: location.latitude,
+        longitude: location.longitude,
     })
 }

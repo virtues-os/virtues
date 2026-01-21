@@ -14,6 +14,7 @@ impl OntologyDescriptor for AiConversationOntology {
             .domain("knowledge")
             .table_name("knowledge_ai_conversation")
             .source_streams(vec!["stream_virtues_ai_chat"])
+            .timestamp_column("timestamp")
             .embedding(
                 "content",
                 "ai_conversation",

@@ -27,9 +27,9 @@
 
 <div class="w-full max-w-sm text-center">
 	<div
-		class="w-16 h-16 mx-auto mb-6 rounded-full bg-red-500/10 flex items-center justify-center"
+		class="w-16 h-16 mx-auto mb-6 rounded-full bg-error-subtle flex items-center justify-center"
 	>
-		<iconify-icon icon="lucide:alert-circle" class="text-red-500 text-3xl"></iconify-icon>
+		<iconify-icon icon="lucide:alert-circle" class="text-error text-3xl"></iconify-icon>
 	</div>
 
 	<h1 class="font-serif text-3xl font-normal text-foreground mb-3">

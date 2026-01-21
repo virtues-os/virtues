@@ -17,7 +17,7 @@
 //! - `0 0 0 * * *` - Daily at midnight
 //! - `0 0 9 * * 1` - Every Monday at 9:00 AM
 
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
@@ -32,7 +32,7 @@ use crate::{
 
 /// Simplified scheduler using StreamFactory
 pub struct Scheduler {
-    db: PgPool,
+    db: SqlitePool,
     storage: Storage,
     stream_writer: Arc<Mutex<StreamWriter>>,
     scheduler: JobScheduler,
@@ -41,7 +41,7 @@ pub struct Scheduler {
 impl Scheduler {
     /// Create a new scheduler
     pub async fn new(
-        db: PgPool,
+        db: SqlitePool,
         storage: Storage,
         stream_writer: Arc<Mutex<StreamWriter>>,
     ) -> Result<Self> {
@@ -66,15 +66,16 @@ impl Scheduler {
     /// (Mac, iOS) are not scheduled since they're initiated by client devices.
     pub async fn start(&self) -> Result<()> {
         // First, check for enabled streams WITHOUT cron schedules and log warnings
-        let streams_without_schedule = sqlx::query_as::<_, (Uuid, String, String, String)>(
+        // Note: UUIDs stored as TEXT in SQLite
+        let streams_without_schedule = sqlx::query_as::<_, (String, String, String, String)>(
             r#"
             SELECT
                 st.id as stream_connection_id,
                 s.source,
                 s.name as source_name,
                 st.stream_name
-            FROM stream_connections st
-            JOIN source_connections s ON st.source_connection_id = s.id
+            FROM data_stream_connections st
+            JOIN data_source_connections s ON st.source_connection_id = s.id
             WHERE st.is_enabled = true
               AND st.cron_schedule IS NULL
               AND s.is_active = true
@@ -92,19 +93,24 @@ impl Scheduler {
                     tracing::warn!(
                         "Stream {}/{} ({}) is enabled but has no cron_schedule. \
                         Registry default is '{}'. Consider updating the database or seed config.",
-                        source, stream_name, source_name, default_cron
+                        source,
+                        stream_name,
+                        source_name,
+                        default_cron
                     );
 
                     // Apply the default schedule to the database
                     tracing::info!(
                         "Applying registry default cron schedule '{}' to {}/{}",
-                        default_cron, source, stream_name
+                        default_cron,
+                        source,
+                        stream_name
                     );
 
                     sqlx::query!(
                         r#"
-                        UPDATE data.stream_connections
-                        SET cron_schedule = $1, updated_at = NOW()
+                        UPDATE data_stream_connections
+                        SET cron_schedule = $1, updated_at = datetime('now')
                         WHERE id = $2
                         "#,
                         default_cron,
@@ -122,14 +128,16 @@ impl Scheduler {
             } else {
                 tracing::warn!(
                     "Stream {}/{} ({}) not found in registry. Cannot apply default schedule.",
-                    source, stream_name, source_name
+                    source,
+                    stream_name,
+                    source_name
                 );
             }
         }
 
         // Load enabled streams from database
         // Filter to only pull streams (not 'mac' or 'ios' which are push-only)
-        let streams = sqlx::query_as::<_, (Uuid, String, String, String, Option<String>)>(
+        let streams = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
             r#"
             SELECT
                 s.id as source_id,
@@ -137,8 +145,8 @@ impl Scheduler {
                 s.source,
                 st.stream_name,
                 st.cron_schedule
-            FROM stream_connections st
-            JOIN source_connections s ON st.source_connection_id = s.id
+            FROM data_stream_connections st
+            JOIN data_source_connections s ON st.source_connection_id = s.id
             WHERE st.is_enabled = true
               AND st.cron_schedule IS NOT NULL
               AND s.is_active = true
@@ -175,7 +183,7 @@ impl Scheduler {
                 let db = db.clone();
                 let storage = storage.clone();
                 let stream_writer = stream_writer.clone();
-                let source_id = source_id;
+                let source_id_str = source_id.clone();
                 let stream_name = stream_name.clone();
                 let source_name = source_name.clone();
                 let stream_name_str = stream_name.clone();
@@ -187,12 +195,25 @@ impl Scheduler {
                         source_name
                     );
 
+                    // Parse source_id from String to Uuid
+                    let source_uuid = match Uuid::parse_str(&source_id_str) {
+                        Ok(uuid) => uuid,
+                        Err(e) => {
+                            tracing::error!(
+                                "Invalid source_id UUID '{}': {}",
+                                source_id_str,
+                                e
+                            );
+                            return;
+                        }
+                    };
+
                     // Use the job-based API
                     match crate::api::jobs::trigger_stream_sync(
                         &db,
                         &storage,
                         stream_writer,
-                        source_id,
+                        source_uuid,
                         &stream_name,
                         None,
                     )
@@ -351,6 +372,52 @@ impl Scheduler {
         Ok(())
     }
 
+    /// Schedule the drive trash purge job (daily at 3am)
+    ///
+    /// Permanently deletes files that have been in trash for more than 30 days.
+    pub async fn schedule_drive_trash_purge_job(&self) -> Result<()> {
+        let db = self.db.clone();
+
+        // Daily at 3am
+        let cron_expr = "0 0 3 * * *";
+
+        tracing::info!("Scheduling DriveTrashPurgeJob daily at 3am");
+
+        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
+            let db = db.clone();
+
+            Box::pin(async move {
+                tracing::info!("Running DriveTrashPurgeJob");
+
+                let config = crate::api::DriveConfig::from_env();
+                match crate::api::purge_old_drive_trash(&db, &config).await {
+                    Ok(count) => {
+                        if count > 0 {
+                            tracing::info!(
+                                "DriveTrashPurgeJob completed: {} files permanently deleted",
+                                count
+                            );
+                        } else {
+                            tracing::debug!("DriveTrashPurgeJob: no files to purge");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("DriveTrashPurgeJob failed: {}", e);
+                    }
+                }
+            })
+        })
+        .map_err(|e| Error::Other(format!("Failed to create DriveTrashPurgeJob: {}", e)))?;
+
+        self.scheduler
+            .add(job)
+            .await
+            .map_err(|e| Error::Other(format!("Failed to add DriveTrashPurgeJob: {}", e)))?;
+
+        tracing::info!("DriveTrashPurgeJob scheduled daily at 3am");
+        Ok(())
+    }
+
     /// Stop the scheduler
     pub async fn stop(&mut self) -> Result<()> {
         self.scheduler
@@ -367,11 +434,11 @@ impl Scheduler {
         let rows = sqlx::query_as::<
             _,
             (
-                Uuid,
                 String,
                 String,
                 String,
-                Option<chrono::DateTime<chrono::Utc>>,
+                String,
+                Option<String>,
             ),
         >(
             r#"
@@ -381,8 +448,8 @@ impl Scheduler {
                 st.stream_name,
                 st.cron_schedule,
                 st.last_sync_at
-            FROM stream_connections st
-            JOIN source_connections s ON st.source_connection_id = s.id
+            FROM data_stream_connections st
+            JOIN data_source_connections s ON st.source_connection_id = s.id
             WHERE st.is_enabled = true
               AND st.cron_schedule IS NOT NULL
               AND s.source NOT IN ('mac', 'ios')  -- Exclude push-only sources
@@ -414,11 +481,11 @@ impl Scheduler {
 /// Information about a scheduled stream
 #[derive(Debug)]
 pub struct ScheduledStream {
-    pub source_id: Uuid,
+    pub source_id: String,
     pub source_name: String,
     pub stream_name: String,
     pub cron_schedule: String,
-    pub last_sync_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_sync_at: Option<String>,
 }
 
 #[cfg(test)]
@@ -427,7 +494,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scheduler_creation() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Storage::local("./test_data".to_string()).unwrap();
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let result = Scheduler::new(pool, storage, stream_writer).await;

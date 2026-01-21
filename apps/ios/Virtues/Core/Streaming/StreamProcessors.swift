@@ -21,6 +21,15 @@ enum StreamProcessorFactory {
         case "ios_mic":
             return AudioStreamProcessor()
 
+        case "ios_battery":
+            return BatteryStreamProcessor()
+
+        case "ios_barometer":
+            return BarometerStreamProcessor()
+
+        case "ios_contacts":
+            return ContactsStreamProcessor()
+
         default:
             return nil
         }
@@ -84,5 +93,65 @@ struct AudioStreamProcessor: StreamDataProcessor {
 
     func combine(_ items: [AudioChunk], deviceId: String) -> AudioStreamData {
         return AudioStreamData(deviceId: deviceId, chunks: items)
+    }
+}
+
+// MARK: - Battery Stream Processor
+
+struct BatteryStreamProcessor: StreamDataProcessor {
+    typealias DataType = BatteryMetric
+    typealias StreamDataType = BatteryStreamData
+
+    let streamName = "ios_battery"
+
+    func decode(_ data: Data) throws -> [BatteryMetric] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let streamData = try decoder.decode(BatteryStreamData.self, from: data)
+        return streamData.records
+    }
+
+    func combine(_ items: [BatteryMetric], deviceId: String) -> BatteryStreamData {
+        return BatteryStreamData(deviceId: deviceId, metrics: items)
+    }
+}
+
+// MARK: - Barometer Stream Processor
+
+struct BarometerStreamProcessor: StreamDataProcessor {
+    typealias DataType = BarometerMetric
+    typealias StreamDataType = BarometerStreamData
+
+    let streamName = "ios_barometer"
+
+    func decode(_ data: Data) throws -> [BarometerMetric] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let streamData = try decoder.decode(BarometerStreamData.self, from: data)
+        return streamData.records
+    }
+
+    func combine(_ items: [BarometerMetric], deviceId: String) -> BarometerStreamData {
+        return BarometerStreamData(deviceId: deviceId, metrics: items)
+    }
+}
+
+// MARK: - Contacts Stream Processor
+
+struct ContactsStreamProcessor: StreamDataProcessor {
+    typealias DataType = ContactRecord
+    typealias StreamDataType = ContactsStreamData
+
+    let streamName = "ios_contacts"
+
+    func decode(_ data: Data) throws -> [ContactRecord] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let streamData = try decoder.decode(ContactsStreamData.self, from: data)
+        return streamData.records
+    }
+
+    func combine(_ items: [ContactRecord], deviceId: String) -> ContactsStreamData {
+        return ContactsStreamData(deviceId: deviceId, syncTimestamp: Date(), contacts: items)
     }
 }

@@ -3,13 +3,25 @@
 //! Provides web search capabilities using Exa AI's search API.
 //! Exa specializes in AI-optimized web search with neural and keyword search.
 //!
+//! Requests are proxied through Tollbooth for budget enforcement.
 //! @see https://docs.exa.ai for API documentation
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::tollbooth;
 
-const EXA_API_BASE: &str = "https://api.exa.ai";
+/// Get Tollbooth URL from environment (defaults to localhost:9002 for development)
+fn get_tollbooth_url() -> String {
+    std::env::var("TOLLBOOTH_URL").unwrap_or_else(|_| "http://localhost:9002".to_string())
+}
+
+/// Get Tollbooth internal secret from environment
+fn get_tollbooth_secret() -> Result<String> {
+    std::env::var("TOLLBOOTH_INTERNAL_SECRET").map_err(|_| {
+        Error::Configuration("TOLLBOOTH_INTERNAL_SECRET environment variable not set".into())
+    })
+}
 
 /// Search type for Exa queries
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -170,26 +182,9 @@ struct ExaResult {
     score: Option<f64>,
 }
 
-/// Perform a web search using Exa AI
+/// Perform a web search using Exa AI (proxied through Tollbooth)
 pub async fn search(request: SearchRequest) -> Result<SearchResponse> {
-    let api_key = std::env::var("EXA_API_KEY").map_err(|_| {
-        Error::Configuration("EXA_API_KEY environment variable not set".into())
-    })?;
-
-    // Validate API key is not empty or whitespace
-    if api_key.trim().is_empty() {
-        return Err(Error::Configuration(
-            "EXA_API_KEY is set but empty or contains only whitespace".into(),
-        ));
-    }
-
-    // Basic format validation - Exa API keys are typically 32+ chars
-    if api_key.len() < 20 {
-        tracing::warn!(
-            "EXA_API_KEY appears unusually short ({} chars) - may be invalid",
-            api_key.len()
-        );
-    }
+    let secret = get_tollbooth_secret()?;
 
     if request.query.trim().is_empty() {
         return Err(Error::InvalidInput("Search query cannot be empty".into()));
@@ -233,15 +228,18 @@ pub async fn search(request: SearchRequest) -> Result<SearchResponse> {
         },
     };
 
+    let tollbooth_url = get_tollbooth_url();
+
     let client = reqwest::Client::new();
-    let response = client
-        .post(format!("{}/search", EXA_API_BASE))
-        .header("Content-Type", "application/json")
-        .header("x-api-key", &api_key)
-        .json(&exa_request)
-        .send()
-        .await
-        .map_err(|e| Error::ExternalApi(format!("Exa API request failed: {}", e)))?;
+    let response = tollbooth::with_system_auth(
+        client.post(format!("{}/v1/services/exa/search", tollbooth_url)),
+        &secret,
+    )
+    .header("Content-Type", "application/json")
+    .json(&exa_request)
+    .send()
+    .await
+    .map_err(|e| Error::ExternalApi(format!("Tollbooth/Exa API request failed: {}", e)))?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -250,7 +248,7 @@ pub async fn search(request: SearchRequest) -> Result<SearchResponse> {
             .await
             .unwrap_or_else(|_| "Unknown error".to_string());
         return Err(Error::ExternalApi(format!(
-            "Exa API error ({}): {}",
+            "Tollbooth/Exa API error ({}): {}",
             status, error_text
         )));
     }

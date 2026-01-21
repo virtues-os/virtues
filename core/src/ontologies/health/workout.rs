@@ -14,6 +14,8 @@ impl OntologyDescriptor for WorkoutOntology {
             .domain("health")
             .table_name("health_workout")
             .source_streams(vec!["stream_ios_healthkit"])
+            .timestamp_column("start_time")
+            .end_timestamp_column("end_time")
             .build()
     }
 }

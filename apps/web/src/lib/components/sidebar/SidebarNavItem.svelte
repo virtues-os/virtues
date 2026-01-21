@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from "$app/state";
+	import { windowTabs } from "$lib/stores/windowTabs.svelte";
 	import "iconify-icon";
 	import type { SidebarNavItemData } from "./types";
 
@@ -14,15 +15,20 @@
 	function isActive(href?: string, pagespace?: string): boolean {
 		if (!href) return false;
 
-		// For chat routes with conversationId query param
-		if (pagespace) {
-			const currentConversationId =
-				page.url.searchParams.get("conversationId");
-			if (currentConversationId === pagespace) {
+		// Check if the active tab matches this nav item
+		const activeTab = windowTabs.activeTab;
+		if (activeTab) {
+			// For chat routes with conversationId
+			if (pagespace && activeTab.conversationId === pagespace) {
+				return true;
+			}
+			// For exact route match
+			if (activeTab.route === href) {
 				return true;
 			}
 		}
 
+		// Fallback to URL-based checking
 		if (page.url.pathname === href) {
 			return true;
 		}
@@ -38,7 +44,30 @@
 		return false;
 	}
 
-	const active = $derived(isActive(item.href, item.pagespace));
+	function handleClick(e: MouseEvent) {
+		if (!item.href) return;
+
+		e.preventDefault();
+
+		console.log('[SidebarNavItem] Clicked:', item.href);
+
+		// Cmd/Ctrl+click forces a new tab
+		const forceNew = e.metaKey || e.ctrlKey;
+		// Pass the item label so chat tabs show proper titles like "Google Antigravity..."
+		// preferEmptyPane: true so sidebar clicks can open in empty panes in split view
+		windowTabs.openTabFromRoute(item.href, { forceNew, label: item.label, preferEmptyPane: true });
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			if (item.href) {
+				windowTabs.openTabFromRoute(item.href, { label: item.label, preferEmptyPane: true });
+			}
+		}
+	}
+
+	const active = $derived(item.forceActive ?? isActive(item.href, item.pagespace));
 </script>
 
 {#if item.type === "action"}
@@ -59,8 +88,11 @@
 		{/if}
 	</button>
 {:else}
-	<a
-		href={item.href}
+	<div
+		role="link"
+		tabindex="0"
+		onclick={handleClick}
+		onkeydown={handleKeydown}
 		class="nav-item"
 		class:active
 		class:collapsed
@@ -81,7 +113,7 @@
 		{#if !collapsed}
 			<span class="nav-label">{item.label}</span>
 		{/if}
-	</a>
+	</div>
 {/if}
 
 <style>

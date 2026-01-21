@@ -1,14 +1,14 @@
 //! Validation utilities for setup configuration
 
 use console::style;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::sqlite::SqlitePoolOptions;
 
 use crate::error::{Error, Result};
 use crate::storage::Storage;
 
-/// Test PostgreSQL connection
+/// Test SQLite database connection
 pub async fn test_database_connection(database_url: &str) -> Result<()> {
-    let pool = PgPoolOptions::new()
+    let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect(database_url)
         .await

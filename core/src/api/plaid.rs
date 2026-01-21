@@ -13,7 +13,7 @@
 //! 6. Backend exchanges public_token for access_token and stores it (encrypted)
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -92,7 +92,7 @@ pub struct ConnectedAccountSummary {
 ///
 /// This is called by the frontend before showing the Plaid Link UI.
 pub async fn create_link_token(
-    _db: &PgPool,
+    _db: &SqlitePool,
     _request: CreateLinkTokenRequest,
 ) -> Result<CreateLinkTokenResponse> {
     let client = PlaidClient::from_env()?;
@@ -132,7 +132,7 @@ pub async fn create_link_token(
 /// Creates a new source connection with the access token (encrypted).
 /// Also fetches connected accounts to determine which streams are relevant.
 pub async fn exchange_public_token(
-    db: &PgPool,
+    db: &SqlitePool,
     request: ExchangeTokenRequest,
 ) -> Result<ExchangeTokenResponse> {
     let client = PlaidClient::from_env()?;
@@ -201,8 +201,8 @@ pub async fn exchange_public_token(
     // Insert source connection with encrypted access token
     sqlx::query(
         r#"
-        INSERT INTO data.source_connections (id, source, name, auth_type, access_token, is_active, is_internal, metadata, created_at, updated_at)
-        VALUES ($1, 'plaid', $2, 'plaid', $3, true, false, $4, NOW(), NOW())
+        INSERT INTO data_source_connections (id, source, name, auth_type, access_token, is_active, is_internal, metadata, created_at, updated_at)
+        VALUES ($1, 'plaid', $2, 'plaid', $3, true, false, $4, datetime('now'), datetime('now'))
         "#,
     )
     .bind(source_id)
@@ -234,19 +234,19 @@ pub async fn exchange_public_token(
 /// Get accounts for an existing Plaid connection
 ///
 /// Useful for showing the user which accounts are connected.
-pub async fn get_plaid_accounts(db: &PgPool, source_id: Uuid) -> Result<Vec<PlaidAccount>> {
+pub async fn get_plaid_accounts(db: &SqlitePool, source_id: Uuid) -> Result<Vec<PlaidAccount>> {
     // Load encrypted access token from source_connections
     let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT access_token FROM data.source_connections WHERE id = $1 AND source = 'plaid'",
+        "SELECT access_token FROM data_source_connections WHERE id = $1 AND source = 'plaid'",
     )
     .bind(source_id)
     .fetch_optional(db)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {source_id}")))?;
 
-    let encrypted_token = row.0.ok_or_else(|| {
-        Error::Configuration("Plaid source has no access token".to_string())
-    })?;
+    let encrypted_token = row
+        .0
+        .ok_or_else(|| Error::Configuration("Plaid source has no access token".to_string()))?;
 
     // Decrypt the access token
     let encryptor = TokenEncryptor::from_env()?;
@@ -289,19 +289,19 @@ pub struct PlaidAccount {
 }
 
 /// Remove a Plaid Item (disconnect bank account)
-pub async fn remove_plaid_item(db: &PgPool, source_id: Uuid) -> Result<()> {
+pub async fn remove_plaid_item(db: &SqlitePool, source_id: Uuid) -> Result<()> {
     // Load encrypted access token
     let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT access_token FROM data.source_connections WHERE id = $1 AND source = 'plaid'",
+        "SELECT access_token FROM data_source_connections WHERE id = $1 AND source = 'plaid'",
     )
     .bind(source_id)
     .fetch_optional(db)
     .await?
     .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {source_id}")))?;
 
-    let encrypted_token = row.0.ok_or_else(|| {
-        Error::Configuration("Plaid source has no access token".to_string())
-    })?;
+    let encrypted_token = row
+        .0
+        .ok_or_else(|| Error::Configuration("Plaid source has no access token".to_string()))?;
 
     // Decrypt the access token
     let encryptor = TokenEncryptor::from_env()?;

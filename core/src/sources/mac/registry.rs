@@ -1,6 +1,6 @@
 //! macOS source registration for the catalog
 
-use crate::registry::{AuthType, RegisteredSource, SourceRegistry, RegisteredStream};
+use crate::registry::{AuthType, RegisteredSource, RegisteredStream, SourceRegistry};
 use serde_json::json;
 
 /// macOS source registration

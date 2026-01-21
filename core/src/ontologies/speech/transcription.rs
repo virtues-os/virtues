@@ -14,6 +14,8 @@ impl OntologyDescriptor for TranscriptionOntology {
             .domain("speech")
             .table_name("speech_transcription")
             .source_streams(vec!["stream_ios_microphone"])
+            .timestamp_column("start_time")
+            .end_timestamp_column("end_time")
             .build()
     }
 }

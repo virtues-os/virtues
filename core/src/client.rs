@@ -34,12 +34,12 @@ impl Virtues {
         let storage_status = self.storage.health_check().await?;
 
         // Count active sources
-        let active_sources =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM data.source_connections WHERE is_active = true")
-                .fetch_one(self.database.pool())
-                .await
-                .unwrap_or(Some(0))
-                .unwrap_or(0) as usize;
+        let active_sources = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM data_source_connections WHERE is_active = true"
+        )
+        .fetch_one(self.database.pool())
+        .await
+        .unwrap_or(0) as usize;
 
         Ok(Status {
             is_healthy: db_status.is_healthy && storage_status.is_healthy,
@@ -89,7 +89,7 @@ impl Clone for Virtues {
 /// Builder for creating Virtues clients
 #[derive(Default)]
 pub struct VirtuesBuilder {
-    postgres_url: Option<String>,
+    database_url: Option<String>,
     s3_bucket: Option<String>,
     s3_endpoint: Option<String>,
     s3_access_key: Option<String>,
@@ -103,9 +103,9 @@ impl VirtuesBuilder {
         Self::default()
     }
 
-    /// Set PostgreSQL connection string
-    pub fn postgres(mut self, url: &str) -> Self {
-        self.postgres_url = Some(url.to_string());
+    /// Set database connection string
+    pub fn database(mut self, url: &str) -> Self {
+        self.database_url = Some(url.to_string());
         self
     }
 
@@ -148,12 +148,12 @@ impl VirtuesBuilder {
 
     /// Build the Virtues client
     pub async fn build(self) -> Result<Virtues> {
-        let postgres_url = self
-            .postgres_url
+        let database_url = self
+            .database_url
             .or_else(|| std::env::var("DATABASE_URL").ok())
-            .ok_or_else(|| Error::Configuration("PostgreSQL URL required".to_string()))?;
+            .ok_or_else(|| Error::Configuration("Database URL required".to_string()))?;
 
-        let database = Database::new(&postgres_url)?;
+        let database = Database::new(&database_url)?;
 
         let storage = if let Some(bucket) = self.s3_bucket {
             Storage::s3(
@@ -201,11 +201,11 @@ mod tests {
     #[test]
     fn test_builder() {
         let builder = VirtuesBuilder::new()
-            .postgres("postgresql://localhost/test")
+            .database("sqlite:./data/test.db")
             .s3_bucket("test-bucket")
             .s3_endpoint("localhost:9000");
 
-        assert!(builder.postgres_url.is_some());
+        assert!(builder.database_url.is_some());
         assert!(builder.s3_bucket.is_some());
         assert!(builder.s3_endpoint.is_some());
     }

@@ -1,7 +1,7 @@
 //! API functions for agent management
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 
 use crate::error::Result;
 
@@ -18,7 +18,8 @@ pub struct AgentInfo {
 }
 
 /// List all system default agents (user_id IS NULL)
-pub async fn list_agents(db: &PgPool) -> Result<Vec<AgentInfo>> {
+pub async fn list_agents(db: &SqlitePool) -> Result<Vec<AgentInfo>> {
+    // SQLite returns INTEGER as i64, need explicit type casts
     let agents = sqlx::query_as!(
         AgentInfo,
         r#"
@@ -28,9 +29,9 @@ pub async fn list_agents(db: &PgPool) -> Result<Vec<AgentInfo>> {
             description,
             color,
             icon,
-            enabled,
-            sort_order
-        FROM app.agents
+            enabled as "enabled: bool",
+            sort_order as "sort_order: i32"
+        FROM app_agents
         WHERE user_id IS NULL AND enabled = true
         ORDER BY sort_order ASC
         "#
@@ -42,7 +43,8 @@ pub async fn list_agents(db: &PgPool) -> Result<Vec<AgentInfo>> {
 }
 
 /// Get a specific agent by ID
-pub async fn get_agent(db: &PgPool, agent_id: &str) -> Result<AgentInfo> {
+pub async fn get_agent(db: &SqlitePool, agent_id: &str) -> Result<AgentInfo> {
+    // SQLite returns INTEGER as i64, need explicit type casts
     let agent = sqlx::query_as!(
         AgentInfo,
         r#"
@@ -52,9 +54,9 @@ pub async fn get_agent(db: &PgPool, agent_id: &str) -> Result<AgentInfo> {
             description,
             color,
             icon,
-            enabled,
-            sort_order
-        FROM app.agents
+            enabled as "enabled: bool",
+            sort_order as "sort_order: i32"
+        FROM app_agents
         WHERE user_id IS NULL AND agent_id = $1
         "#,
         agent_id

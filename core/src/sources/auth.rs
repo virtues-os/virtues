@@ -142,11 +142,11 @@ impl std::fmt::Debug for SourceAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::PgPool;
+    use sqlx::SqlitePool;
 
     #[tokio::test]
     async fn test_auth_type_checks() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let tm = Arc::new(TokenManager::new_insecure(pool));
         let auth = SourceAuth::oauth2(Uuid::new_v4(), tm);
         assert!(auth.is_oauth());
@@ -163,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_source_id_extraction() {
-        let pool = PgPool::connect_lazy("postgres://test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let tm = Arc::new(TokenManager::new_insecure(pool));
         let source_id = Uuid::new_v4();
         let auth = SourceAuth::oauth2(source_id, tm);

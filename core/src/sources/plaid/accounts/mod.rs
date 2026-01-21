@@ -6,7 +6,7 @@ pub mod transform;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -30,7 +30,7 @@ use crate::{
 pub struct PlaidAccountsStream {
     source_id: Uuid,
     client: PlaidClient,
-    db: PgPool,
+    db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
     config: PlaidAccountsConfig,
     /// Access token for this Item (loaded from database)
@@ -41,7 +41,7 @@ impl PlaidAccountsStream {
     /// Create a new accounts stream
     pub fn new(
         source_id: Uuid,
-        db: PgPool,
+        db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
     ) -> Result<Self> {
         let client = PlaidClient::from_env()?;
@@ -60,7 +60,7 @@ impl PlaidAccountsStream {
     pub fn with_client(
         source_id: Uuid,
         client: PlaidClient,
-        db: PgPool,
+        db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
     ) -> Self {
         Self {
@@ -74,10 +74,10 @@ impl PlaidAccountsStream {
     }
 
     /// Load configuration from database
-    async fn load_config_internal(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
+    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
         // Load stream config
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM data.stream_connections WHERE source_connection_id = $1 AND stream_name = 'accounts'",
+            "SELECT config FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'accounts'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -91,7 +91,7 @@ impl PlaidAccountsStream {
 
         // Load access token from source_connections (encrypted)
         let token_result = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT access_token FROM data.source_connections WHERE id = $1",
+            "SELECT access_token FROM data_source_connections WHERE id = $1",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -110,9 +110,10 @@ impl PlaidAccountsStream {
     pub async fn sync_with_mode(&self, sync_mode: &SyncMode) -> Result<SyncResult> {
         tracing::info!("Starting Plaid accounts sync");
 
-        let access_token = self.access_token.as_ref().ok_or_else(|| {
-            Error::Configuration("Plaid access token not loaded".to_string())
-        })?;
+        let access_token = self
+            .access_token
+            .as_ref()
+            .ok_or_else(|| Error::Configuration("Plaid access token not loaded".to_string()))?;
 
         self.sync_internal(access_token, sync_mode).await
     }
@@ -136,7 +137,10 @@ impl PlaidAccountsStream {
         for account in &response.accounts {
             records_fetched += 1;
 
-            match self.write_account(account, &institution_id, &institution_name).await {
+            match self
+                .write_account(account, &institution_id, &institution_name)
+                .await
+            {
                 Ok(true) => records_written += 1,
                 Ok(false) => records_failed += 1,
                 Err(e) => {
@@ -194,7 +198,7 @@ impl PlaidAccountsStream {
         // In the future, could call Plaid's /institutions/get_by_id
         if institution_id.is_some() {
             let row = sqlx::query_as::<_, (serde_json::Value,)>(
-                "SELECT metadata FROM data.source_connections WHERE id = $1",
+                "SELECT metadata FROM data_source_connections WHERE id = $1",
             )
             .bind(self.source_id)
             .fetch_optional(&self.db)
@@ -262,7 +266,7 @@ impl PullStream for PlaidAccountsStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
         self.load_config_internal(db, source_id).await
     }
 

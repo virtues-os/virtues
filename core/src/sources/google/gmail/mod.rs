@@ -5,7 +5,7 @@ pub mod transform;
 use async_trait::async_trait;
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -34,7 +34,7 @@ use crate::{
 pub struct GoogleGmailStream {
     source_id: Uuid,
     client: GoogleClient,
-    db: PgPool,
+    db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
     config: GoogleGmailConfig,
 }
@@ -43,7 +43,7 @@ impl GoogleGmailStream {
     /// Create a new Gmail stream with SourceAuth and StreamWriter
     pub fn new(
         source_id: Uuid,
-        db: PgPool,
+        db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
         auth: SourceAuth,
     ) -> Self {
@@ -65,10 +65,10 @@ impl GoogleGmailStream {
     }
 
     /// Load configuration from database (called by PullStream trait)
-    async fn load_config_internal(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
+    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
         // Try loading from stream_connections table first (new pattern)
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
+            "SELECT config FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -698,7 +698,7 @@ impl GoogleGmailStream {
     /// Get the last sync token (history ID) from the database
     async fn get_last_sync_token(&self) -> Result<Option<String>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT last_sync_token FROM stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
+            "SELECT last_sync_token FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
         )
         .bind(self.source_id)
         .fetch_optional(&self.db)
@@ -710,7 +710,7 @@ impl GoogleGmailStream {
     /// Save the history ID to the database
     async fn save_history_id(&self, history_id: &str) -> Result<()> {
         sqlx::query(
-            "UPDATE data.stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'gmail'",
+            "UPDATE data_stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'gmail'",
         )
         .bind(history_id)
         .bind(Utc::now())
@@ -729,7 +729,7 @@ impl PullStream for GoogleGmailStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, db: &PgPool, source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
         self.load_config_internal(db, source_id).await
     }
 

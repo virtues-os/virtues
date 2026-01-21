@@ -5,11 +5,11 @@
 //! - System default agents (assistant configurations)
 //! - Sample axiology tags (common task categories)
 
-use virtues::database::Database;
-use virtues::seeding::prod_seed::seed_production_data;
 use std::env;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use virtues::database::Database;
+use virtues::seeding::prod_seed::seed_production_data;
 
 #[tokio::main]
 async fn main() {

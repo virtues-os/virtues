@@ -2,7 +2,6 @@
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
-use sqlx::types::Decimal;
 use uuid::Uuid;
 
 /// Metadata for a stream data object stored in S3/MinIO
@@ -35,79 +34,55 @@ pub struct StreamTransformCheckpoint {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-mod decimal_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use sqlx::types::Decimal;
-    use std::str::FromStr;
-
-    pub fn serialize<S>(value: &Option<Decimal>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match value {
-            Some(d) => {
-                let float: f64 = d.to_string().parse().unwrap_or(0.0);
-                serializer.serialize_some(&float)
-            }
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Decimal>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let opt: Option<f64> = Option::deserialize(deserializer)?;
-        Ok(opt.map(|f| Decimal::from_str(&f.to_string()).unwrap_or_else(|_| Decimal::from_str("0").unwrap())))
-    }
-}
-
 /// User profile - biographical metadata (singleton table)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct UserProfile {
-    pub id: Uuid,
+    pub id: String,
     // Identity
     pub full_name: Option<String>,
     pub preferred_name: Option<String>,
-    pub birth_date: Option<NaiveDate>,
-    // Physical/Biometric
-    #[serde(with = "decimal_serde")]
-    pub height_cm: Option<Decimal>,
-    #[serde(with = "decimal_serde")]
-    pub weight_kg: Option<Decimal>,
+    pub birth_date: Option<String>,
+    // Physical/Biometric (f64 for SQLite REAL)
+    pub height_cm: Option<f64>,
+    pub weight_kg: Option<f64>,
     pub ethnicity: Option<String>,
-    // Home place (FK to entities_place)
-    pub home_place_id: Option<Uuid>,
     // Work/Occupation
     pub occupation: Option<String>,
     pub employer: Option<String>,
+    // Home place (FK to entities_place)
+    pub home_place_id: Option<String>,
+    // Onboarding - single status field
+    pub onboarding_status: String,
     // Preferences
     pub theme: Option<String>,
-    // Crux - shared ethos statement from onboarding
+    pub update_check_hour: Option<i32>,
+    // Discovery context
     pub crux: Option<String>,
-    // Onboarding
-    pub is_onboarding: bool,
-    pub onboarding_step: Option<i32>,
-    pub axiology_complete: bool,
-    pub onboarding_profile_complete: bool,
-    pub onboarding_places_complete: bool,
-    pub onboarding_tools_complete: bool,
+    pub technology_vision: Option<String>,
+    pub pain_point_primary: Option<String>,
+    pub pain_point_secondary: Option<String>,
+    pub excited_features: Option<String>,
+    // Owner (Seed and Drift pattern)
+    pub owner_email: Option<String>,
     // Audit
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// Assistant profile - AI assistant preferences (singleton table)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AssistantProfile {
-    pub id: Uuid,
+    pub id: String,
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
     pub default_model_id: Option<String>,
+    pub background_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub embedding_model_id: Option<String>,
+    pub ollama_endpoint: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// Validate subdomain format for security
@@ -284,7 +259,8 @@ impl StreamKeyParser {
     /// Returns 2 for `tenants/{subdomain}/streams/...` format, 0 for `streams/...` format
     fn base_offset(&self) -> usize {
         let parts: Vec<&str> = self.key.split('/').collect();
-        if parts.first() == Some(&"tenants") && parts.len() > 2 && parts.get(2) == Some(&"streams") {
+        if parts.first() == Some(&"tenants") && parts.len() > 2 && parts.get(2) == Some(&"streams")
+        {
             2 // Skip "tenants/{subdomain}"
         } else {
             0
@@ -479,13 +455,15 @@ mod tests {
             StreamKeyBuilder::new(Some("../../../etc"), "ios", source_id, "healthkit", date)
                 .is_err()
         );
-        assert!(
-            StreamKeyBuilder::new(Some("tenant/../other"), "ios", source_id, "healthkit", date)
-                .is_err()
-        );
-        assert!(
-            StreamKeyBuilder::new(Some(".."), "ios", source_id, "healthkit", date).is_err()
-        );
+        assert!(StreamKeyBuilder::new(
+            Some("tenant/../other"),
+            "ios",
+            source_id,
+            "healthkit",
+            date
+        )
+        .is_err());
+        assert!(StreamKeyBuilder::new(Some(".."), "ios", source_id, "healthkit", date).is_err());
         assert!(
             StreamKeyBuilder::new(Some("foo/bar"), "ios", source_id, "healthkit", date).is_err()
         );

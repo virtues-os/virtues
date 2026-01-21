@@ -241,7 +241,7 @@
 								: 'border-border'}"
 					>
 						{#if isPrimary}
-							<span class="text-[9px] text-white font-bold"
+							<span class="text-[9px] text-surface font-bold"
 								>1</span
 							>
 						{:else if isSecondary}
@@ -287,7 +287,7 @@
 					>
 						{#if isSelected}
 							<svg
-								class="w-2.5 h-2.5 text-white"
+								class="w-2.5 h-2.5 text-surface"
 								fill="none"
 								stroke="currentColor"
 								viewBox="0 0 24 24"

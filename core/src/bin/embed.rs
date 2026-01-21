@@ -2,22 +2,20 @@
 //!
 //! Run embeddings manually: cargo run --bin embed
 
+use sqlx::sqlite::SqlitePoolOptions;
 use virtues::embeddings::EmbeddingJob;
-use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     // Connect to database
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/virtues".to_string());
+    let database_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./data/virtues.db".to_string());
 
     tracing::info!("Connecting to database...");
-    let pool = PgPoolOptions::new()
+    let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
         .await?;

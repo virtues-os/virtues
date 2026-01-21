@@ -1,6 +1,6 @@
 //! iOS source registration for the catalog
 
-use crate::registry::{AuthType, RegisteredSource, SourceRegistry, RegisteredStream};
+use crate::registry::{AuthType, RegisteredSource, RegisteredStream, SourceRegistry};
 use serde_json::json;
 
 /// iOS source registration
@@ -58,8 +58,17 @@ impl SourceRegistry for IosSource {
                     .config_example(microphone_config_example())
                     .supports_incremental(false)
                     .supports_full_refresh(false)  // Push-based
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes (6-field: sec min hour day month dow)
+                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes
                     .build(),
+
+                // Contacts stream
+                super::IosContactsStream::descriptor(),
+
+                // Battery stream
+                super::IosBatteryStream::descriptor(),
+
+                // Barometer stream
+                super::IosBarometerStream::descriptor(),
             ],
         }
     }
@@ -169,7 +178,7 @@ mod tests {
         let desc = IosSource::descriptor();
         assert_eq!(desc.name, "ios");
         assert_eq!(desc.auth_type, AuthType::Device);
-        assert_eq!(desc.streams.len(), 3);
+        assert_eq!(desc.streams.len(), 6);
     }
 
     #[test]

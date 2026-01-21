@@ -48,6 +48,15 @@ pub struct Ontology {
     /// Source streams that feed into this ontology
     pub source_streams: Vec<&'static str>,
 
+    /// Primary timestamp column for querying "when did this occur/start"
+    /// e.g., "timestamp", "start_time", "arrival_time"
+    pub timestamp_column: &'static str,
+
+    /// Optional end timestamp column for span/duration events
+    /// e.g., "end_time", "departure_time"
+    /// None for point-in-time events like heart rate readings
+    pub end_timestamp_column: Option<&'static str>,
+
     /// Embedding configuration for semantic search (None if not searchable)
     pub embedding: Option<EmbeddingConfig>,
 }
@@ -60,6 +69,8 @@ pub struct OntologyBuilder {
     domain: &'static str,
     table_name: &'static str,
     source_streams: Vec<&'static str>,
+    timestamp_column: &'static str,
+    end_timestamp_column: Option<&'static str>,
     embedding: Option<EmbeddingConfig>,
 }
 
@@ -72,6 +83,8 @@ impl OntologyBuilder {
             domain: "",
             table_name: name,
             source_streams: vec![],
+            timestamp_column: "timestamp", // sensible default
+            end_timestamp_column: None,
             embedding: None,
         }
     }
@@ -98,6 +111,20 @@ impl OntologyBuilder {
 
     pub fn source_streams(mut self, streams: Vec<&'static str>) -> Self {
         self.source_streams = streams;
+        self
+    }
+
+    /// Set the primary timestamp column (when event occurred/started)
+    /// Defaults to "timestamp" if not specified
+    pub fn timestamp_column(mut self, column: &'static str) -> Self {
+        self.timestamp_column = column;
+        self
+    }
+
+    /// Set the end timestamp column for span/duration events
+    /// Leave unset for point-in-time events
+    pub fn end_timestamp_column(mut self, column: &'static str) -> Self {
+        self.end_timestamp_column = Some(column);
         self
     }
 
@@ -130,6 +157,8 @@ impl OntologyBuilder {
             domain: self.domain,
             table_name: self.table_name,
             source_streams: self.source_streams,
+            timestamp_column: self.timestamp_column,
+            end_timestamp_column: self.end_timestamp_column,
             embedding: self.embedding,
         }
     }
@@ -153,11 +182,27 @@ mod tests {
             .domain("health")
             .table_name("health_sleep")
             .source_streams(vec!["stream_ios_healthkit"])
+            .timestamp_column("start_time")
+            .end_timestamp_column("end_time")
             .build();
 
         assert_eq!(ontology.name, "health_sleep");
         assert_eq!(ontology.domain, "health");
+        assert_eq!(ontology.timestamp_column, "start_time");
+        assert_eq!(ontology.end_timestamp_column, Some("end_time"));
         assert!(ontology.embedding.is_none());
+    }
+
+    #[test]
+    fn test_ontology_builder_point_event() {
+        let ontology = OntologyBuilder::new("health_heart_rate")
+            .domain("health")
+            .timestamp_column("timestamp")
+            // No end_timestamp_column - point event
+            .build();
+
+        assert_eq!(ontology.timestamp_column, "timestamp");
+        assert_eq!(ontology.end_timestamp_column, None);
     }
 
     #[test]
@@ -165,6 +210,7 @@ mod tests {
         let ontology = OntologyBuilder::new("social_email")
             .display_name("Emails")
             .domain("social")
+            .timestamp_column("timestamp")
             .embedding(
                 "COALESCE(subject, '') || '\n\n' || COALESCE(body_plain, '')",
                 "email",
@@ -176,6 +222,7 @@ mod tests {
             .build();
 
         assert!(ontology.embedding.is_some());
+        assert_eq!(ontology.timestamp_column, "timestamp");
         let emb = ontology.embedding.unwrap();
         assert_eq!(emb.content_type, "email");
         assert_eq!(emb.title_sql, Some("subject"));

@@ -20,7 +20,9 @@ use crate::database::Database;
 use crate::entity_resolution::{self, TimeWindow};
 use crate::error::Result;
 use crate::jobs::TransformContext;
-use crate::sources::base::{ChainedTransform, OntologyTransform, TransformRegistration, TransformResult};
+use crate::sources::base::{
+    ChainedTransform, OntologyTransform, TransformRegistration, TransformResult,
+};
 
 /// Default lookback window for entity resolution (24 hours)
 const DEFAULT_LOOKBACK_HOURS: i64 = 24;
@@ -63,10 +65,7 @@ impl OntologyTransform for PlaceResolutionTransform {
 
         let visits_created = entity_resolution::places::resolve_places(db, window).await?;
 
-        tracing::info!(
-            visits_created,
-            "Place resolution transform completed"
-        );
+        tracing::info!(visits_created, "Place resolution transform completed");
 
         Ok(TransformResult {
             records_read: visits_created, // Approximation - actual points read is internal
@@ -138,10 +137,7 @@ impl OntologyTransform for PeopleResolutionTransform {
 
         let people_resolved = entity_resolution::people::resolve_people(db, window).await?;
 
-        tracing::info!(
-            people_resolved,
-            "People resolution transform completed"
-        );
+        tracing::info!(people_resolved, "People resolution transform completed");
 
         Ok(TransformResult {
             records_read: people_resolved, // Approximation - actual events read is internal

@@ -2,21 +2,20 @@
 //!
 //! Tracks monthly usage against configurable limits for:
 //! - AI Gateway (tokens)
-//! - AssemblyAI (requests)
 //! - Google Places (requests)
 //! - Exa Search (requests)
 
 use chrono::{Datelike, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Services that are tracked for usage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Service {
     AiGateway,
-    AssemblyAi,
     GooglePlaces,
     Exa,
 }
@@ -25,19 +24,13 @@ impl Service {
     pub fn as_str(&self) -> &'static str {
         match self {
             Service::AiGateway => "ai_gateway",
-            Service::AssemblyAi => "assemblyai",
             Service::GooglePlaces => "google_places",
             Service::Exa => "exa",
         }
     }
 
     pub fn all() -> &'static [Service] {
-        &[
-            Service::AiGateway,
-            Service::AssemblyAi,
-            Service::GooglePlaces,
-            Service::Exa,
-        ]
+        &[Service::AiGateway, Service::GooglePlaces, Service::Exa]
     }
 }
 
@@ -132,23 +125,20 @@ impl Tier {
         match (self, service) {
             // Starter tier
             (Tier::Starter, Service::AiGateway) => 1_000_000,
-            (Tier::Starter, Service::AssemblyAi) => 9_000,  // 150 hours in minutes
             (Tier::Starter, Service::GooglePlaces) => 1_000,
             (Tier::Starter, Service::Exa) => 1_000,
             // Pro tier
             (Tier::Pro, Service::AiGateway) => 5_000_000,
-            (Tier::Pro, Service::AssemblyAi) => 27_000,  // 450 hours in minutes
             (Tier::Pro, Service::GooglePlaces) => 5_000,
             (Tier::Pro, Service::Exa) => 5_000,
         }
     }
 
     /// Get the limit type for a service
-    /// AI Gateway and AssemblyAI are hard-limited (expensive), others are soft-limited
+    /// AI Gateway is hard-limited (expensive), others are soft-limited
     pub fn limit_type_for(&self, service: Service) -> LimitType {
         match service {
             Service::AiGateway => LimitType::Hard,
-            Service::AssemblyAi => LimitType::Hard,
             _ => LimitType::Soft,
         }
     }
@@ -181,7 +171,7 @@ fn first_of_next_month() -> String {
 /// Initialize usage limits from TIER environment variable
 ///
 /// Updates the limits table with tier-appropriate values
-pub async fn init_limits_from_tier(pool: &PgPool) -> Result<(), sqlx::Error> {
+pub async fn init_limits_from_tier(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let tier = Tier::from_env();
     tracing::info!("Initializing usage limits for tier: {}", tier.as_str());
 
@@ -190,19 +180,18 @@ pub async fn init_limits_from_tier(pool: &PgPool) -> Result<(), sqlx::Error> {
         let limit_type = tier.limit_type_for(*service);
         let unit = match service {
             Service::AiGateway => "tokens",
-            Service::AssemblyAi => "minutes",
             _ => "requests",
         };
 
         sqlx::query(
             r#"
-            INSERT INTO app.usage_limits (service, monthly_limit, unit, limit_type, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            INSERT INTO app_usage_limits (service, monthly_limit, unit, limit_type, updated_at)
+            VALUES ($1, $2, $3, $4, datetime('now'))
             ON CONFLICT (service) DO UPDATE SET
                 monthly_limit = $2,
                 unit = $3,
                 limit_type = $4,
-                updated_at = NOW()
+                updated_at = datetime('now')
             "#,
         )
         .bind(service.as_str())
@@ -217,7 +206,7 @@ pub async fn init_limits_from_tier(pool: &PgPool) -> Result<(), sqlx::Error> {
 }
 
 /// Get current monthly usage for a service
-pub async fn get_monthly_usage(pool: &PgPool, service: Service) -> Result<i64, sqlx::Error> {
+pub async fn get_monthly_usage(pool: &SqlitePool, service: Service) -> Result<i64, sqlx::Error> {
     let first_day = first_of_month();
 
     let result = sqlx::query_scalar::<_, Option<i64>>(
@@ -228,7 +217,7 @@ pub async fn get_monthly_usage(pool: &PgPool, service: Service) -> Result<i64, s
                 ELSE request_count
             END
         ), 0)
-        FROM app.api_usage
+        FROM app_api_usage
         WHERE endpoint = $1
           AND day_bucket >= $2
         "#,
@@ -242,11 +231,14 @@ pub async fn get_monthly_usage(pool: &PgPool, service: Service) -> Result<i64, s
 }
 
 /// Get the configured limit for a service (limit, unit, limit_type)
-async fn get_limit(pool: &PgPool, service: Service) -> Result<(i64, String, LimitType), sqlx::Error> {
+async fn get_limit(
+    pool: &SqlitePool,
+    service: Service,
+) -> Result<(i64, String, LimitType), sqlx::Error> {
     let result = sqlx::query_as::<_, (i64, String, String)>(
         r#"
         SELECT monthly_limit, unit, limit_type
-        FROM app.usage_limits
+        FROM app_usage_limits
         WHERE service = $1 AND enabled = TRUE
         "#,
     )
@@ -267,7 +259,6 @@ async fn get_limit(pool: &PgPool, service: Service) -> Result<(i64, String, Limi
             let tier = Tier::from_env();
             let unit = match service {
                 Service::AiGateway => "tokens".to_string(),
-                Service::AssemblyAi => "minutes".to_string(),
                 _ => "requests".to_string(),
             };
             Ok((tier.limit_for(service), unit, tier.limit_type_for(service)))
@@ -281,7 +272,7 @@ async fn get_limit(pool: &PgPool, service: Service) -> Result<(i64, String, Limi
 /// For soft limits, returns success with `over_limit: true` when exceeded.
 /// NOTE: This is a read-only check. For atomic check-and-increment, use `check_and_record_usage`.
 pub async fn check_limit(
-    pool: &PgPool,
+    pool: &SqlitePool,
     service: Service,
 ) -> Result<RemainingUsage, UsageLimitError> {
     let used = get_monthly_usage(pool, service).await.map_err(|e| {
@@ -349,7 +340,7 @@ pub async fn check_limit(
 /// or an error if a hard limit would be exceeded.
 /// For soft limits, always records usage and returns success with `over_limit: true`.
 pub async fn check_and_record_usage(
-    pool: &PgPool,
+    pool: &SqlitePool,
     service: Service,
     units: i64,
 ) -> Result<RemainingUsage, UsageLimitError> {
@@ -391,7 +382,7 @@ pub async fn check_and_record_usage(
                     ELSE request_count
                 END
             ), 0) as total
-            FROM app.api_usage
+            FROM app_api_usage
             WHERE endpoint = $1
               AND day_bucket >= $6
         ),
@@ -402,14 +393,14 @@ pub async fn check_and_record_usage(
             FROM current_usage
         ),
         upsert AS (
-            INSERT INTO app.api_usage (endpoint, day_bucket, request_count, token_count)
-            SELECT $1, $2, $3, $4
+            INSERT INTO app_api_usage (id, endpoint, day_bucket, request_count, token_count)
+            SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))), $1, $2, $3, $4
             FROM new_usage
             WHERE within_limit = true OR $8 = false
             ON CONFLICT (endpoint, day_bucket) DO UPDATE SET
-                request_count = app.api_usage.request_count + $3,
-                token_count = app.api_usage.token_count + $4,
-                updated_at = NOW()
+                request_count = app_api_usage.request_count + $3,
+                token_count = app_api_usage.token_count + $4,
+                updated_at = datetime('now')
             RETURNING 1
         )
         SELECT
@@ -418,14 +409,18 @@ pub async fn check_and_record_usage(
         FROM new_usage
         "#,
     )
-    .bind(service.as_str())          // $1: endpoint
-    .bind(today)                      // $2: day_bucket
-    .bind(request_delta)              // $3: request_count delta
-    .bind(token_delta)                // $4: token_count delta
-    .bind(if service == Service::AiGateway { units } else { units }) // $5: units to check
-    .bind(first_day)                  // $6: first day of month
-    .bind(limit)                      // $7: limit
-    .bind(should_enforce)             // $8: whether to enforce limit
+    .bind(service.as_str()) // $1: endpoint
+    .bind(today) // $2: day_bucket
+    .bind(request_delta) // $3: request_count delta
+    .bind(token_delta) // $4: token_count delta
+    .bind(if service == Service::AiGateway {
+        units
+    } else {
+        units
+    }) // $5: units to check
+    .bind(first_day) // $6: first day of month
+    .bind(limit) // $7: limit
+    .bind(should_enforce) // $8: whether to enforce limit
     .fetch_one(pool)
     .await
     .map_err(|e| {
@@ -482,7 +477,7 @@ pub async fn check_and_record_usage(
 /// This function is useful when you want to record usage after an operation
 /// completes successfully, without pre-checking limits.
 pub async fn record_usage(
-    pool: &PgPool,
+    pool: &SqlitePool,
     service: Service,
     units: i64,
 ) -> Result<(), sqlx::Error> {
@@ -494,16 +489,18 @@ pub async fn record_usage(
         _ => (units, 0),                  // N requests, 0 tokens
     };
 
+    let usage_id = Uuid::new_v4().to_string();
     sqlx::query(
         r#"
-        INSERT INTO app.api_usage (endpoint, day_bucket, request_count, token_count)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO app_api_usage (id, endpoint, day_bucket, request_count, token_count)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (endpoint, day_bucket) DO UPDATE SET
-            request_count = app.api_usage.request_count + $3,
-            token_count = app.api_usage.token_count + $4,
-            updated_at = NOW()
+            request_count = app_api_usage.request_count + $4,
+            token_count = app_api_usage.token_count + $5,
+            updated_at = datetime('now')
         "#,
     )
+    .bind(&usage_id)
     .bind(service.as_str())
     .bind(today)
     .bind(request_delta)
@@ -515,7 +512,7 @@ pub async fn record_usage(
 }
 
 /// Get usage summary for all services
-pub async fn get_all_usage(pool: &PgPool) -> Result<UsageSummary, sqlx::Error> {
+pub async fn get_all_usage(pool: &SqlitePool) -> Result<UsageSummary, sqlx::Error> {
     let tier = Tier::from_env();
     let mut services = std::collections::HashMap::new();
 
@@ -570,7 +567,6 @@ mod tests {
     #[test]
     fn test_service_as_str() {
         assert_eq!(Service::AiGateway.as_str(), "ai_gateway");
-        assert_eq!(Service::AssemblyAi.as_str(), "assemblyai");
         assert_eq!(Service::GooglePlaces.as_str(), "google_places");
         assert_eq!(Service::Exa.as_str(), "exa");
     }

@@ -1,8 +1,7 @@
 //! Storage API - List and view stored stream objects
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -11,25 +10,26 @@ use crate::storage::models::StreamKeyParser;
 use crate::storage::{EncryptionKey, Storage};
 
 /// Summary of a stream object for listing
+/// Note: UUIDs are stored as TEXT in SQLite
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StreamObjectSummary {
-    pub id: Uuid,
-    pub source_connection_id: Uuid,
+    pub id: String,
+    pub source_connection_id: String,
     pub source_name: String,
     pub source_type: String,
     pub stream_name: String,
     pub s3_key: String,
     pub record_count: i32,
     pub size_bytes: i64,
-    pub min_timestamp: Option<DateTime<Utc>>,
-    pub max_timestamp: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    pub min_timestamp: Option<String>,
+    pub max_timestamp: Option<String>,
+    pub created_at: String,
 }
 
 /// Content of a stream object after decryption
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectContent {
-    pub id: Uuid,
+    pub id: String,
     pub s3_key: String,
     pub records: Vec<serde_json::Value>,
     pub record_count: usize,
@@ -39,7 +39,10 @@ pub struct ObjectContent {
 ///
 /// Returns the most recently created stream objects, joining with source_connections
 /// to get human-readable source names.
-pub async fn list_recent_objects(pool: &PgPool, limit: i64) -> Result<Vec<StreamObjectSummary>> {
+pub async fn list_recent_objects(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<StreamObjectSummary>> {
     let objects = sqlx::query_as::<_, StreamObjectSummary>(
         r#"
         SELECT
@@ -54,8 +57,8 @@ pub async fn list_recent_objects(pool: &PgPool, limit: i64) -> Result<Vec<Stream
             so.min_timestamp,
             so.max_timestamp,
             so.created_at
-        FROM data.stream_objects so
-        JOIN data.source_connections sc ON so.source_connection_id = sc.id
+        FROM data_stream_objects so
+        JOIN data_source_connections sc ON so.source_connection_id = sc.id
         ORDER BY so.created_at DESC
         LIMIT $1
         "#,
@@ -71,8 +74,8 @@ pub async fn list_recent_objects(pool: &PgPool, limit: i64) -> Result<Vec<Stream
 /// Internal struct for querying stream object metadata
 #[derive(Debug, sqlx::FromRow)]
 struct StreamObjectMetadata {
-    id: Uuid,
-    source_connection_id: Uuid,
+    id: String,
+    source_connection_id: String,
     stream_name: String,
     s3_key: String,
 }
@@ -82,19 +85,21 @@ struct StreamObjectMetadata {
 /// Fetches the object from S3, decrypts it using the derived key,
 /// and parses the JSONL content into a vector of JSON values.
 pub async fn get_object_content(
-    pool: &PgPool,
+    pool: &SqlitePool,
     storage: &Storage,
     object_id: Uuid,
 ) -> Result<ObjectContent> {
+    let object_id_str = object_id.to_string();
+
     // 1. Get object metadata from database
     let metadata = sqlx::query_as::<_, StreamObjectMetadata>(
         r#"
         SELECT id, source_connection_id, stream_name, s3_key
-        FROM data.stream_objects
+        FROM data_stream_objects
         WHERE id = $1
         "#,
     )
-    .bind(object_id)
+    .bind(&object_id_str)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to query stream object: {e}")))?
@@ -110,9 +115,12 @@ pub async fn get_object_content(
     let master_key = parse_master_key_hex(&master_key_hex)?;
 
     // 4. Derive encryption key for this specific object
+    // Parse source_connection_id back to Uuid for key derivation
+    let source_conn_uuid = Uuid::parse_str(&metadata.source_connection_id)
+        .map_err(|e| Error::Database(format!("Invalid source_connection_id UUID: {e}")))?;
     let derived_key = derive_stream_key(
         &master_key,
-        metadata.source_connection_id,
+        source_conn_uuid,
         &metadata.stream_name,
         date,
     )?;

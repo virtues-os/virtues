@@ -8,7 +8,7 @@
 export type Theme = 'light' | 'warm' | 'dark' | 'night' | 'ember' | 'contrast' | 'monokai' | 'atom';
 
 const THEME_STORAGE_KEY = 'virtues-theme';
-const DEFAULT_THEME: Theme = 'light';
+const DEFAULT_THEME: Theme = 'warm';
 
 /**
  * Get the current theme from localStorage or system preference
@@ -127,16 +127,16 @@ export const themePreviewColors: Record<
 		surfaceElevated: '#F5F5F5',
 		foreground: '#171717',
 		foregroundMuted: '#525252',
-		primary: '#2563EB',
+		primary: '#2883DE',
 		syntax: ['#6366F1', '#7C3AED', '#EC4899', '#EF4444', '#F59E0B', '#10B981']
 	},
 	warm: {
-		background: '#FAF9F5',
+		background: '#F7F7F4',
 		surface: '#FFFFFF',
-		surfaceElevated: '#F3F2E9',
-		foreground: '#14283D',
-		foregroundMuted: '#1a3550',
-		primary: '#2883DE',
+		surfaceElevated: '#F0EFE9',
+		foreground: '#26251E',
+		foregroundMuted: '#3D3B33',
+		primary: '#EB5601',
 		syntax: ['#7C3AED', '#DC2626', '#059669', '#D97706', '#2563EB', '#DB2777']
 	},
 	dark: {

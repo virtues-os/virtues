@@ -1,11 +1,13 @@
 //! LLM Client Implementation
 //!
-//! Provides HTTP client for Vercel AI Gateway (OpenAI-compatible API)
-//! Supports multiple providers including Anthropic, OpenAI, etc.
+//! Provides HTTP client for Tollbooth API proxy (OpenAI-compatible API)
+//! Tollbooth handles routing to providers via litellm-rs with budget enforcement.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::env;
+
+use crate::tollbooth;
 
 /// LLM request structure
 #[derive(Debug, Clone, Serialize)]
@@ -38,43 +40,54 @@ pub trait LLMClient: Send + Sync {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse, String>;
 }
 
-/// Vercel AI Gateway client (OpenAI-compatible API)
-/// Supports routing to multiple providers: Anthropic, OpenAI, etc.
+/// Tollbooth client (OpenAI-compatible API with budget enforcement)
+/// Routes to providers via litellm-rs: Anthropic, OpenAI, Google, etc.
 #[derive(Clone)]
-pub struct AIGatewayClient {
-    api_key: String,
+pub struct TollboothClient {
+    secret: String,
+    user_id: String,
     client: reqwest::Client,
     base_url: String,
 }
 
-impl AIGatewayClient {
-    /// Create a new AI Gateway client from environment
-    /// Expects AI_GATEWAY_API_KEY environment variable
+impl TollboothClient {
+    /// Create a new Tollbooth client from environment
+    /// Uses system user ID for background operations (no specific user context)
     pub fn from_env() -> Result<Self, String> {
-        let api_key = env::var("AI_GATEWAY_API_KEY")
-            .map_err(|_| "AI_GATEWAY_API_KEY not set in environment".to_string())?;
+        let secret = env::var("TOLLBOOTH_INTERNAL_SECRET")
+            .map_err(|_| "TOLLBOOTH_INTERNAL_SECRET not set in environment".to_string())?;
+        let base_url = env::var("TOLLBOOTH_URL").unwrap_or_else(|_| {
+            tracing::warn!("TOLLBOOTH_URL not set, using default localhost:9002");
+            "http://localhost:9002".to_string()
+        });
+
+        // Validate secret length
+        tollbooth::validate_secret(&secret).map_err(|e| e.to_string())?;
 
         Ok(Self {
-            api_key,
-            client: reqwest::Client::new(),
-            base_url: "https://ai-gateway.vercel.sh/v1".to_string(),
+            secret,
+            user_id: tollbooth::SYSTEM_USER_ID.to_string(),
+            client: crate::http_client::tollbooth_client(),
+            base_url,
         })
     }
 
-    /// Create a new AI Gateway client with explicit API key
-    pub fn new(api_key: String) -> Self {
+    /// Create a new Tollbooth client with explicit secret and user ID
+    pub fn new(secret: String, user_id: String) -> Self {
         Self {
-            api_key,
-            client: reqwest::Client::new(),
-            base_url: "https://ai-gateway.vercel.sh/v1".to_string(),
+            secret,
+            user_id,
+            client: crate::http_client::tollbooth_client(),
+            base_url: "http://localhost:9002".to_string(),
         }
     }
 
-    /// Create with custom base URL (for testing or self-hosted)
-    pub fn with_base_url(api_key: String, base_url: String) -> Self {
+    /// Create with custom base URL (for testing or different deployment)
+    pub fn with_base_url(secret: String, user_id: String, base_url: String) -> Self {
         Self {
-            api_key,
-            client: reqwest::Client::new(),
+            secret,
+            user_id,
+            client: crate::http_client::tollbooth_client(),
             base_url,
         }
     }
@@ -127,7 +140,7 @@ struct OpenAIUsage {
 }
 
 #[async_trait]
-impl LLMClient for AIGatewayClient {
+impl LLMClient for TollboothClient {
     async fn generate(&self, request: LLMRequest) -> Result<LLMResponse, String> {
         // Build messages array
         let mut messages = Vec::new();
@@ -154,15 +167,17 @@ impl LLMClient for AIGatewayClient {
             stream: false,
         };
 
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&chat_request)
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {}", e))?;
+        let response = tollbooth::with_tollbooth_auth(
+            self.client
+                .post(format!("{}/v1/chat/completions", self.base_url)),
+            &self.user_id,
+            &self.secret,
+        )
+        .header("Content-Type", "application/json")
+        .json(&chat_request)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -170,7 +185,7 @@ impl LLMClient for AIGatewayClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unable to read error response".to_string());
-            return Err(format!("AI Gateway API error ({}): {}", status, error_text));
+            return Err(format!("Tollbooth API error ({}): {}", status, error_text));
         }
 
         let chat_response: ChatCompletionResponse = response
@@ -198,30 +213,38 @@ impl LLMClient for AIGatewayClient {
     }
 }
 
+/// Alias for backwards compatibility
+pub type AIGatewayClient = TollboothClient;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // Test secret that meets minimum length requirement (32 chars)
+    const TEST_SECRET: &str = "this-is-a-test-secret-32-chars!";
+
     #[test]
-    fn test_ai_gateway_client_creation() {
-        env::set_var("AI_GATEWAY_API_KEY", "test-key");
-        let client = AIGatewayClient::from_env();
+    fn test_tollbooth_client_creation() {
+        env::set_var("TOLLBOOTH_INTERNAL_SECRET", TEST_SECRET);
+        env::set_var("TOLLBOOTH_URL", "http://localhost:9002");
+        let client = TollboothClient::from_env();
         assert!(client.is_ok());
     }
 
     #[test]
-    fn test_missing_api_key() {
-        env::remove_var("AI_GATEWAY_API_KEY");
-        let client = AIGatewayClient::from_env();
+    fn test_missing_secret() {
+        env::remove_var("TOLLBOOTH_INTERNAL_SECRET");
+        let client = TollboothClient::from_env();
         assert!(client.is_err());
     }
 
     #[test]
     fn test_custom_base_url() {
-        let client = AIGatewayClient::with_base_url(
-            "test-key".to_string(),
-            "https://custom-gateway.example.com/v1".to_string(),
+        let client = TollboothClient::with_base_url(
+            TEST_SECRET.to_string(),
+            "test-user".to_string(),
+            "https://tollbooth.example.com".to_string(),
         );
-        assert_eq!(client.base_url, "https://custom-gateway.example.com/v1");
+        assert_eq!(client.base_url, "https://tollbooth.example.com");
     }
 }

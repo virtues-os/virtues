@@ -4,7 +4,7 @@ pub mod transform;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -12,10 +12,7 @@ use uuid::Uuid;
 use crate::{
     error::{Error, Result},
     sources::{
-        base::{
-            validate_latitude, validate_longitude,
-            validate_timestamp_reasonable,
-        },
+        base::{validate_latitude, validate_longitude, validate_timestamp_reasonable},
         push_stream::{IngestPayload, PushResult, PushStream},
     },
     storage::stream_writer::StreamWriter,
@@ -27,14 +24,17 @@ pub use transform::IosLocationTransform;
 ///
 /// Receives location data pushed from iOS devices via /ingest endpoint.
 pub struct IosLocationStream {
-    _db: PgPool,
+    _db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl IosLocationStream {
     /// Create a new IosLocationStream
-    pub fn new(db: PgPool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
-        Self { _db: db, stream_writer }
+    pub fn new(db: SqlitePool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+        Self {
+            _db: db,
+            stream_writer,
+        }
     }
 }
 

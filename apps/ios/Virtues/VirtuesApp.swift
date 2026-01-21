@@ -32,6 +32,7 @@ struct VirtuesApp: App {
         _ = ContactsManager.shared
         _ = PermissionMonitor.shared
         _ = LowPowerModeMonitor.shared
+        HealthCheckCoordinator.shared.startMonitoring()
     }
 
     private func configureNavigationBarAppearance() {
@@ -200,6 +201,11 @@ struct VirtuesApp: App {
         // Start battery monitoring if enabled (no permission required)
         if config.isStreamEnabled("battery") {
             batteryManager.startMonitoring()
+        }
+
+        // Start barometer monitoring if enabled and available (no permission required)
+        if config.isStreamEnabled("barometer") && BarometerManager.isAvailable {
+            BarometerManager.shared.startMonitoring()
         }
 
         // Sync contacts if authorized AND enabled

@@ -396,7 +396,7 @@ async fn execute_email_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.social_email",
+        "data_social_email",
         &[
             "message_id",
             "thread_id",
@@ -455,6 +455,15 @@ async fn execute_email_batch_insert(
         stream_id,
     ) in records
     {
+        // SQLite doesn't support array types, convert to JSON strings
+        let to_addresses_json =
+            serde_json::to_string(&to_addresses).unwrap_or_else(|_| "[]".to_string());
+        let to_names_json = serde_json::to_string(&to_names).unwrap_or_else(|_| "[]".to_string());
+        let cc_addresses_json =
+            serde_json::to_string(&cc_addresses).unwrap_or_else(|_| "[]".to_string());
+        let cc_names_json = serde_json::to_string(&cc_names).unwrap_or_else(|_| "[]".to_string());
+        let labels_json = serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string());
+
         query = query
             .bind(message_id)
             .bind(thread_id)
@@ -465,12 +474,12 @@ async fn execute_email_batch_insert(
             .bind(timestamp)
             .bind(from_address)
             .bind(from_name)
-            .bind(to_addresses)
-            .bind(to_names)
-            .bind(cc_addresses)
-            .bind(cc_names)
+            .bind(to_addresses_json)
+            .bind(to_names_json)
+            .bind(cc_addresses_json)
+            .bind(cc_names_json)
             .bind(direction)
-            .bind(labels)
+            .bind(labels_json)
             .bind(is_read)
             .bind(is_starred)
             .bind(has_attachments)

@@ -2,7 +2,7 @@
 //!
 //! Defines the source descriptor for the internal Virtues web application source.
 
-use crate::registry::{AuthType, RegisteredSource, SourceRegistry, RegisteredStream};
+use crate::registry::{AuthType, RegisteredSource, RegisteredStream, SourceRegistry};
 use serde_json::json;
 
 /// Virtues source registration
