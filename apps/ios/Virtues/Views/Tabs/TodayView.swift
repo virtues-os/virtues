@@ -963,11 +963,13 @@ struct TodayView: View {
     }
 
     private func loadLocationTrack() {
-        locationDataPoints = SQLiteManager.shared.getTodaysLocationTrack()
+        let points = SQLiteManager.shared.getTodaysLocationTrack()
+        locationDataPoints = downsamplePreservingEndpoints(points, maxCount: 1000)
     }
 
     private func loadSpeechBlocks() {
-        speechBlocks = SQLiteManager.shared.getTodaysSpeechBlocks()
+        let blocks = SQLiteManager.shared.getTodaysSpeechBlocks()
+        speechBlocks = downsamplePreservingEndpoints(blocks, maxCount: 500)
     }
 
     private func loadBatteryHistory() {
@@ -980,6 +982,32 @@ struct TodayView: View {
 
     private func loadTodaysContacts() {
         todaysContacts = SQLiteManager.shared.getTodaysNewContacts()
+    }
+
+    private func downsamplePreservingEndpoints<T>(_ items: [T], maxCount: Int) -> [T] {
+        guard items.count > maxCount, maxCount > 0 else {
+            return items
+        }
+
+        guard maxCount > 2 else {
+            return [items.first, items.last].compactMap { $0 }
+        }
+
+        guard let first = items.first, let last = items.last, items.count > 2 else {
+            return items
+        }
+
+        let middleItems = Array(items[1..<(items.count - 1)])
+        let targetMiddleCount = maxCount - 2
+        let stride = Int(ceil(Double(middleItems.count) / Double(targetMiddleCount)))
+
+        var sampled: [T] = [first]
+        for (index, item) in middleItems.enumerated() where index % stride == 0 {
+            sampled.append(item)
+        }
+        sampled.append(last)
+
+        return sampled
     }
 
     // MARK: - Time Range

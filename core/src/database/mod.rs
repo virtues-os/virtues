@@ -1,50 +1,64 @@
-//! Database module for PostgreSQL operations
+//! Database module for SQLite operations
 
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use std::time::Duration;
+
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 use crate::error::{Error, Result};
 
 /// Database connection and operations
 #[derive(Clone)]
 pub struct Database {
-    pool: PgPool,
+    pool: SqlitePool,
 }
 
 impl Database {
     /// Create a new database connection
-    pub fn new(postgres_url: &str) -> Result<Self> {
-        // Get max connections from environment (default: 10)
+    pub fn new(database_url: &str) -> Result<Self> {
+        // Get max connections from environment (default: 5 for SQLite)
         let max_connections = std::env::var("DATABASE_MAX_CONNECTIONS")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(10);
+            .unwrap_or(5);
 
         tracing::info!("Database pool max connections: {}", max_connections);
 
         // Pool will be created on first use
-        let pool = PgPoolOptions::new()
+        let pool = SqlitePoolOptions::new()
             .max_connections(max_connections)
+            .acquire_timeout(Duration::from_secs(10))
+            .idle_timeout(Duration::from_secs(600))
+            .max_lifetime(Duration::from_secs(1800))
             .after_connect(|conn, _meta| {
                 Box::pin(async move {
-                    // Set search_path to match migration schema configuration
-                    sqlx::query("SET search_path TO data, app, public")
+                    // Enable SQLite-specific settings for better performance and safety
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA journal_mode = WAL")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA busy_timeout = 5000")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA synchronous = NORMAL")
                         .execute(&mut *conn)
                         .await?;
                     Ok(())
                 })
             })
-            .connect_lazy(postgres_url)?;
+            .connect_lazy(database_url)?;
 
         Ok(Self { pool })
     }
 
     /// Create from an existing pool
-    pub fn from_pool(pool: PgPool) -> Self {
+    pub fn from_pool(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     /// Get the underlying connection pool
-    pub fn pool(&self) -> &PgPool {
+    pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
@@ -92,23 +106,23 @@ impl Database {
     /// Individual transforms should use this to build their batch insert queries.
     ///
     /// # Arguments
-    /// * `table` - Table name (e.g., "data.location_point")
+    /// * `table` - Table name (e.g., "data_location_point")
     /// * `columns` - Column names in order
     /// * `conflict_column` - Column for ON CONFLICT DO NOTHING (e.g., "source_stream_id")
     /// * `num_rows` - Number of rows to insert in this batch
     ///
     /// # Returns
-    /// SQL query string with placeholders ($1, $2, $3, ...)
+    /// SQL query string with placeholders ($1, $2, $3, ...) - works with SQLite via sqlx
     ///
     /// # Example
     /// ```ignore
     /// let query_str = db.build_batch_insert_query(
-    ///     "data.location_point",
+    ///     "data_location_point",
     ///     &["coordinates", "latitude", "longitude"],
     ///     "source_stream_id",
     ///     100, // 100 rows
     /// );
-    /// // Returns: INSERT INTO data.location_point (coordinates, latitude, longitude)
+    /// // Returns: INSERT INTO data_location_point (coordinates, latitude, longitude)
     /// //          VALUES ($1, $2, $3), ($4, $5, $6), ...
     /// //          ON CONFLICT (source_stream_id) DO NOTHING
     /// ```
@@ -125,6 +139,7 @@ impl Database {
         query.push_str(") VALUES ");
 
         // Build VALUES clauses: ($1, $2, $3), ($4, $5, $6), ...
+        // Note: SQLite via sqlx supports $N style parameters
         let mut value_clauses = Vec::with_capacity(num_rows);
         for row_idx in 0..num_rows {
             let mut placeholders = Vec::with_capacity(num_cols);
@@ -136,6 +151,7 @@ impl Database {
         }
 
         query.push_str(&value_clauses.join(", "));
+        // SQLite uses same ON CONFLICT syntax as PostgreSQL
         query.push_str(&format!(" ON CONFLICT ({}) DO NOTHING", conflict_column));
 
         query
@@ -169,7 +185,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_database_creation() {
-        let result = Database::new("postgresql://localhost/test");
+        // Use in-memory SQLite for testing
+        let result = Database::new("sqlite::memory:");
         assert!(result.is_ok());
     }
 }

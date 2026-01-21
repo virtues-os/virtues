@@ -1,10 +1,11 @@
 //! iOS Microphone data processor
-
-pub mod transform;
+//!
+//! Receives audio data from iOS devices. Transcription transforms are disabled
+//! since AssemblyAI integration has been removed.
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -18,20 +19,22 @@ use crate::{
     storage::{stream_writer::StreamWriter, Storage},
 };
 
-pub use transform::MicrophoneTranscriptionTransform;
-
 /// iOS Microphone stream implementing PushStream trait
 ///
 /// Receives microphone/audio data pushed from iOS devices via /ingest endpoint.
 pub struct IosMicrophoneStream {
-    _db: PgPool,
+    _db: SqlitePool,
     storage: Arc<Storage>,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl IosMicrophoneStream {
     /// Create a new IosMicrophoneStream
-    pub fn new(db: PgPool, storage: Arc<Storage>, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+    pub fn new(
+        db: SqlitePool,
+        storage: Arc<Storage>,
+        stream_writer: Arc<Mutex<StreamWriter>>,
+    ) -> Self {
         Self {
             _db: db,
             storage,

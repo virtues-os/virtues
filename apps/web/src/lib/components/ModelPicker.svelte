@@ -27,15 +27,8 @@
 
 	// Sync local value with prop value
 	$effect(() => {
-		if (value && value !== localValue) {
+		if (value && value.id !== localValue?.id) {
 			localValue = value;
-		}
-	});
-
-	// Notify parent when local value changes
-	$effect(() => {
-		if (localValue && localValue !== value && onSelect) {
-			onSelect(localValue);
 		}
 	});
 
@@ -45,6 +38,12 @@
 			localValue = DEFAULT_MODEL;
 		}
 	});
+
+	// Handle selection from UniversalSelect
+	function handleSelect(model: ModelOption) {
+		localValue = model;
+		onSelect?.(model);
+	}
 
 	// Helper function to get icon for provider
 	function getProviderIcon(provider: string): string {
@@ -74,11 +73,11 @@
 			case 'google':
 				return 'text-blue-600';
 			case 'xai':
-				return 'text-neutral-900';
+				return 'text-foreground';
 			case 'moonshot ai':
 				return 'text-purple-600';
 			default:
-				return 'text-neutral-600';
+				return 'text-foreground-muted';
 		}
 	}
 
@@ -89,13 +88,13 @@
 
 {#if loading}
 	<!-- Loading state -->
-	<div class="flex items-center gap-2 px-3 py-1.5 text-neutral-500">
+	<div class="flex items-center gap-2 px-3 py-1.5 text-foreground-subtle">
 		<iconify-icon icon="ri:loader-4-line" class="animate-spin" width="16"></iconify-icon>
 		<span class="text-sm">Loading models...</span>
 	</div>
 {:else if error}
 	<!-- Error state -->
-	<div class="flex items-center gap-2 px-3 py-1.5 text-red-600">
+	<div class="flex items-center gap-2 px-3 py-1.5 text-error">
 		<iconify-icon icon="ri:error-warning-line" width="16"></iconify-icon>
 		<span class="text-sm">Error loading models</span>
 	</div>
@@ -107,6 +106,7 @@
 		disabled={disabled || loading}
 		width="w-64"
 		getKey={getModelKey}
+		onSelect={handleSelect}
 	>
 		{#snippet trigger(model: ModelOption, isDisabled: boolean, open: boolean)}
 			<div
@@ -121,15 +121,15 @@
 				{#if isDisabled}
 					<iconify-icon
 						icon={getProviderIcon(model.provider)}
-						class="text-neutral-600"
+						class="text-foreground-muted"
 						width="16"
 						in:fade={{ duration: 200 }}
 					></iconify-icon>
 				{:else}
-					<span class="text-neutral-700">{model.displayName}</span>
+					<span class="text-foreground-muted">{model.displayName}</span>
 					<iconify-icon
 						icon="ri:arrow-down-s-line"
-						class="text-neutral-400 transition-transform duration-200"
+						class="text-foreground-subtle transition-transform duration-200"
 						class:rotate-180={open}
 						width="16"
 					></iconify-icon>
@@ -146,17 +146,17 @@
 						class={getProviderIconColor(model.provider)}
 						width="16"
 					></iconify-icon>
-					<span class="text-sm text-neutral-900">
+					<span class="text-sm text-foreground">
 						{model.displayName}
 						{#if DEFAULT_MODEL && model.id === DEFAULT_MODEL.id}
-							<span class="text-xs text-neutral-500 ml-1">(recommended)</span>
+							<span class="text-xs text-foreground-subtle ml-1">(recommended)</span>
 						{/if}
 					</span>
 				</div>
 				{#if isSelected}
 					<iconify-icon
 						icon="ri:check-line"
-						class="text-blue-600 flex-shrink-0"
+						class="text-primary flex-shrink-0"
 						width="16"
 					></iconify-icon>
 				{/if}

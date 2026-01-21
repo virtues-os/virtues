@@ -1,7 +1,7 @@
 //! Stream management and configuration API
 
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use ts_rs::TS;
@@ -25,7 +25,7 @@ pub struct StreamConnection {
     pub cron_schedule: Option<String>,
     #[ts(type = "any")]
     pub config: serde_json::Value,
-    pub last_sync_at: Option<DateTime<Utc>>,
+    pub last_sync_at: Option<String>,
     pub supports_incremental: bool,
     pub supports_full_refresh: bool,
     #[ts(type = "any")]
@@ -67,7 +67,10 @@ pub struct UpdateStreamScheduleRequest {
 ///     );
 /// }
 /// ```
-pub async fn list_source_streams(db: &PgPool, source_id: Uuid) -> Result<Vec<StreamConnection>> {
+pub async fn list_source_streams(
+    db: &SqlitePool,
+    source_id: Uuid,
+) -> Result<Vec<StreamConnection>> {
     // Get source to determine type
     let source = get_source(db, source_id).await?;
     let provider = &source.source;
@@ -76,21 +79,22 @@ pub async fn list_source_streams(db: &PgPool, source_id: Uuid) -> Result<Vec<Str
     let descriptor = crate::registry::get_source(provider)
         .ok_or_else(|| Error::Other(format!("Unknown provider: {provider}")))?;
 
-    // Get enabled streams from database
+    // Get enabled streams from database (bind as string for TEXT column)
+    let source_id_str = source_id.to_string();
     let enabled_streams: Vec<(
         String,
         bool,
         Option<String>,
         serde_json::Value,
-        Option<DateTime<Utc>>,
+        Option<String>,
     )> = sqlx::query_as(
         r#"
             SELECT stream_name, is_enabled, cron_schedule, config, last_sync_at
-            FROM stream_connections
+            FROM data_stream_connections
             WHERE source_connection_id = $1
             "#,
     )
-    .bind(source_id)
+    .bind(&source_id_str)
     .fetch_all(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to query streams: {e}")))?;
@@ -104,7 +108,7 @@ pub async fn list_source_streams(db: &PgPool, source_id: Uuid) -> Result<Vec<Str
             .find(|(name, _, _, _, _)| name == stream_desc.name);
 
         let (is_enabled, cron_schedule, config, last_sync_at) = if let Some(record) = db_record {
-            (record.1, record.2.clone(), record.3.clone(), record.4)
+            (record.1, record.2.clone(), record.3.clone(), record.4.clone())
         } else {
             (false, None, serde_json::json!({}), None)
         };
@@ -129,14 +133,13 @@ pub async fn list_source_streams(db: &PgPool, source_id: Uuid) -> Result<Vec<Str
     // For Plaid sources, filter streams based on connected account types
     if provider == "plaid" {
         // Fetch metadata separately since SourceConnection doesn't include it
-        let metadata_row: Option<(Option<serde_json::Value>,)> = sqlx::query_as(
-            "SELECT metadata FROM source_connections WHERE id = $1",
-        )
-        .bind(source_id)
-        .fetch_optional(db)
-        .await
-        .ok()
-        .flatten();
+        let metadata_row: Option<(Option<serde_json::Value>,)> =
+            sqlx::query_as("SELECT metadata FROM data_source_connections WHERE id = $1")
+                .bind(&source_id_str)
+                .fetch_optional(db)
+                .await
+                .ok()
+                .flatten();
 
         if let Some((Some(metadata),)) = metadata_row {
             if let Ok(plaid_meta) = serde_json::from_value::<PlaidSourceMetadata>(metadata) {
@@ -178,7 +181,7 @@ pub async fn list_source_streams(db: &PgPool, source_id: Uuid) -> Result<Vec<Str
 /// # Returns
 /// StreamConnection with current configuration
 pub async fn get_stream_info(
-    db: &PgPool,
+    db: &SqlitePool,
     source_id: Uuid,
     stream_name: &str,
 ) -> Result<StreamConnection> {
@@ -203,7 +206,7 @@ pub async fn get_stream_info(
 /// # Returns
 /// Updated StreamConnection
 pub async fn enable_stream(
-    db: &PgPool,
+    db: &SqlitePool,
     storage: &crate::storage::Storage,
     stream_writer: Arc<Mutex<StreamWriter>>,
     source_id: Uuid,
@@ -226,14 +229,14 @@ pub async fn enable_stream(
     // Insert or update streams table
     sqlx::query(
         r#"
-        INSERT INTO stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, true, $5, $6, NOW(), NOW())
+        INSERT INTO data_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, true, $5, $6, datetime('now'), datetime('now'))
         ON CONFLICT (source_connection_id, stream_name)
         DO UPDATE SET
             is_enabled = true,
             config = EXCLUDED.config,
-            cron_schedule = COALESCE(stream_connections.cron_schedule, EXCLUDED.cron_schedule),
-            updated_at = NOW()
+            cron_schedule = COALESCE(data_stream_connections.cron_schedule, EXCLUDED.cron_schedule),
+            updated_at = datetime('now')
         "#
     )
     .bind(Uuid::new_v4())
@@ -299,11 +302,11 @@ pub async fn enable_stream(
 /// * `db` - Database connection pool
 /// * `source_id` - UUID of the source
 /// * `stream_name` - Name of the stream to disable
-pub async fn disable_stream(db: &PgPool, source_id: Uuid, stream_name: &str) -> Result<()> {
+pub async fn disable_stream(db: &SqlitePool, source_id: Uuid, stream_name: &str) -> Result<()> {
     sqlx::query(
         r#"
-        UPDATE stream_connections
-        SET is_enabled = false, updated_at = NOW()
+        UPDATE data_stream_connections
+        SET is_enabled = false, updated_at = datetime('now')
         WHERE source_connection_id = $1 AND stream_name = $2
         "#,
     )
@@ -327,7 +330,7 @@ pub async fn disable_stream(db: &PgPool, source_id: Uuid, stream_name: &str) -> 
 /// # Returns
 /// Updated StreamConnection
 pub async fn update_stream_config(
-    db: &PgPool,
+    db: &SqlitePool,
     source_id: Uuid,
     stream_name: &str,
     config: serde_json::Value,
@@ -338,8 +341,8 @@ pub async fn update_stream_config(
     // Update config
     sqlx::query(
         r#"
-        UPDATE stream_connections
-        SET config = $1, updated_at = NOW()
+        UPDATE data_stream_connections
+        SET config = $1, updated_at = datetime('now')
         WHERE source_connection_id = $2 AND stream_name = $3
         "#,
     )
@@ -365,7 +368,7 @@ pub async fn update_stream_config(
 /// # Returns
 /// Updated StreamConnection
 pub async fn update_stream_schedule(
-    db: &PgPool,
+    db: &SqlitePool,
     source_id: Uuid,
     stream_name: &str,
     cron_schedule: Option<String>,
@@ -376,8 +379,8 @@ pub async fn update_stream_schedule(
     // Update schedule
     sqlx::query(
         r#"
-        UPDATE stream_connections
-        SET cron_schedule = $1, updated_at = NOW()
+        UPDATE data_stream_connections
+        SET cron_schedule = $1, updated_at = datetime('now')
         WHERE source_connection_id = $2 AND stream_name = $3
         "#,
     )
@@ -393,16 +396,21 @@ pub async fn update_stream_schedule(
 }
 
 /// Enable default streams for a newly created source (internal helper)
-pub async fn enable_default_streams(db: &PgPool, source_id: Uuid, provider: &str) -> Result<()> {
+pub async fn enable_default_streams(
+    db: &SqlitePool,
+    source_id: Uuid,
+    provider: &str,
+) -> Result<()> {
     let descriptor = crate::registry::get_source(provider)
         .ok_or_else(|| Error::Other(format!("Unknown provider: {provider}")))?;
 
     // Insert streams table entries for all available streams (disabled by default)
+    // Insert streams table entries for all available streams (enabled by default)
     for stream in &descriptor.streams {
         sqlx::query(
             r#"
-            INSERT INTO stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, false, '{}', NOW(), NOW())
+            INSERT INTO data_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, true, '{}', $5, datetime('now'), datetime('now'))
             ON CONFLICT (source_connection_id, stream_name) DO NOTHING
             "#
         )
@@ -410,6 +418,7 @@ pub async fn enable_default_streams(db: &PgPool, source_id: Uuid, provider: &str
         .bind(source_id)
         .bind(stream.name)
         .bind(stream.table_name)
+        .bind(stream.default_cron_schedule)
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to enable stream {}: {e}", stream.name)))?;

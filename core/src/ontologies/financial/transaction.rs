@@ -15,6 +15,7 @@ impl OntologyDescriptor for FinancialTransactionOntology {
             .domain("financial")
             .table_name("financial_transaction")
             .source_streams(vec!["stream_plaid_transactions"])
+            .timestamp_column("timestamp")
             // Enable semantic search on transactions
             .embedding(
                 // Text to embed: merchant name + transaction name + category

@@ -15,6 +15,8 @@ impl OntologyDescriptor for LocationVisitOntology {
             .domain("location")
             .table_name("location_visit")
             // No source_streams - derived from location_point via clustering job
+            .timestamp_column("arrival_time")
+            .end_timestamp_column("departure_time")
             .build()
     }
 }

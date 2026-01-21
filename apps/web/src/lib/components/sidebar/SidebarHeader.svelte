@@ -34,17 +34,15 @@
 </script>
 
 <div class="header-container" class:collapsed>
-	<!-- Row 1: Logo (clickable to toggle sidebar) -->
+	<!-- Row 1: Logo + Collapse -->
 	<div
 		class="workspace-row animate-row"
 		style="animation-delay: {logoAnimationDelay}ms; --stagger-delay: {logoAnimationDelay}ms"
 	>
 		<button
 			class="logo-area"
-			onclick={onToggleCollapse}
-			title={collapsed
-				? "Expand sidebar (Cmd+[)"
-				: "Collapse sidebar (Cmd+[)"}
+			onclick={onNewChat}
+			title="New Chat (Cmd+N)"
 		>
 			<!-- Static Triangle Logo -->
 			<div class="logo">
@@ -62,29 +60,32 @@
 				<span class="app-name">Virtues</span>
 			{/if}
 		</button>
+
+		{#if !collapsed}
+			<button
+				class="collapse-btn"
+				onclick={onToggleCollapse}
+				title="Collapse sidebar (Cmd+[)"
+			>
+				<iconify-icon icon="ri:arrow-left-s-line" width="18"></iconify-icon>
+			</button>
+		{/if}
 	</div>
 
-	<!-- Row 2: Action Layer (Search + New) -->
+	<!-- Row 2: Search -->
 	{#if !collapsed}
 		<div
 			class="action-layer animate-row"
 			style="animation-delay: {actionsAnimationDelay}ms; --stagger-delay: {actionsAnimationDelay}ms"
 		>
 			<button
-				class="action-btn search-btn"
+				class="search-btn"
 				onclick={handleSearch}
 				title="Search (Cmd+K)"
 			>
 				<iconify-icon icon="ri:search-line" width="14"></iconify-icon>
-				<span class="action-label">Search</span>
-			</button>
-			<button
-				class="action-btn new-btn"
-				onclick={onNewChat}
-				title="New Chat (Cmd+N)"
-			>
-				<iconify-icon icon="ri:add-line" width="14"></iconify-icon>
-				<span class="action-label">New</span>
+				<span class="search-label">Search...</span>
+				<kbd class="search-kbd">⌘K</kbd>
 			</button>
 		</div>
 	{/if}
@@ -192,41 +193,61 @@
 		transition: color 200ms var(--ease-premium);
 	}
 
-	/* Row 2: Action Layer */
-	.action-layer {
-		@apply flex gap-1;
-	}
-
-	.action-btn {
-		@apply flex items-center cursor-pointer;
-		border-radius: 8px;
-		gap: 6px;
-		padding: 6px 10px;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
+	.collapse-btn {
+		@apply flex items-center justify-center cursor-pointer;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
 		background: transparent;
+		color: var(--color-foreground-muted);
 		transition: all 200ms var(--ease-premium);
 	}
 
-	.action-btn:hover {
+	.collapse-btn:hover {
 		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 		color: var(--color-foreground);
 	}
 
-	.action-btn iconify-icon {
-		color: currentColor;
+	.collapse-btn:active {
+		transform: scale(0.95);
 	}
 
-	.action-btn:active {
-		transform: scale(0.98);
-	}
-
-	.action-label {
-		font-weight: 400;
-		color: inherit;
+	/* Row 2: Action Layer */
+	.action-layer {
+		@apply flex;
 	}
 
 	.search-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		flex: 1;
+		padding: 0.5rem 0.75rem;
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		border-radius: 0.5rem;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.search-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground-muted);
+	}
+
+	.search-label {
+		flex: 1;
+		text-align: left;
+	}
+
+	.search-kbd {
+		font-family: inherit;
+		font-size: 0.6875rem;
+		padding: 0.125rem 0.375rem;
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 0.25rem;
+		color: var(--color-foreground-subtle);
 	}
 </style>

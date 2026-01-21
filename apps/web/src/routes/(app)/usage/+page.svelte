@@ -32,7 +32,6 @@
 
 	const serviceNames: Record<string, string> = {
 		ai_gateway: "AI Gateway",
-		assemblyai: "Speech Transcription",
 		google_places: "Google Places",
 		exa: "Web Search",
 	};

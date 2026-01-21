@@ -287,8 +287,7 @@ fn init_registry() -> Registry {
     // registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
 
     // Register device sources
-    // TODO: Re-enable incrementally as we publish
-    // registry.register(crate::sources::ios::registry::IosSource::descriptor());
+    registry.register(crate::sources::ios::registry::IosSource::descriptor());
     // registry.register(crate::sources::mac::registry::MacSource::descriptor());
 
     registry
@@ -322,7 +321,9 @@ pub fn list_all_streams() -> Vec<(&'static str, &'static RegisteredStream)> {
 /// Get a stream by its table name (e.g., "stream_google_calendar")
 ///
 /// Returns the source name and stream reference if found.
-pub fn get_stream_by_table_name(table_name: &str) -> Option<(&'static str, &'static RegisteredStream)> {
+pub fn get_stream_by_table_name(
+    table_name: &str,
+) -> Option<(&'static str, &'static RegisteredStream)> {
     registry()
         .list_all_streams()
         .into_iter()
@@ -357,7 +358,10 @@ pub fn normalize_stream_name(name: &str) -> String {
     }
 
     // Return as-is if not found (caller may have passed a full table name)
-    tracing::debug!("Stream name '{}' not found in registry, returning as-is", name);
+    tracing::debug!(
+        "Stream name '{}' not found in registry, returning as-is",
+        name
+    );
     name.to_string()
 }
 

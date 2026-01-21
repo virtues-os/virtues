@@ -16,7 +16,9 @@ export interface DeviceInfo {
 // Response when initiating device pairing
 export interface PairingInitResponse {
 	source_id: string;
-	code: string; // 6-char alphanumeric code
+	/** @deprecated Legacy pairing flow only */
+	code: string; // 6-char alphanumeric code (empty string in manual flow)
+	/** @deprecated Legacy pairing flow only */
 	expires_at: string; // ISO 8601 timestamp
 }
 
@@ -60,7 +62,9 @@ export interface PendingPairing {
 	source_id: string;
 	name: string;
 	device_type: string;
+	/** @deprecated Legacy pairing flow only */
 	code: string;
+	/** @deprecated Legacy pairing flow only */
 	expires_at: string; // ISO 8601 timestamp
 	created_at: string; // ISO 8601 timestamp
 }

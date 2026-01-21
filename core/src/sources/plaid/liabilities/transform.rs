@@ -95,9 +95,7 @@ impl OntologyTransform for PlaidLiabilityTransform {
                     .unwrap_or_else(|| "other".to_string());
 
                 // Extract APR/interest rate
-                let apr_percentage = record
-                    .get("apr_percentage")
-                    .and_then(|v| v.as_f64());
+                let apr_percentage = record.get("apr_percentage").and_then(|v| v.as_f64());
 
                 let apr_type = record
                     .get("apr_type")
@@ -109,13 +107,10 @@ impl OntologyTransform for PlaidLiabilityTransform {
                     .and_then(|v| v.as_f64());
 
                 // Extract payment info
-                let minimum_payment = record
-                    .get("minimum_payment")
-                    .and_then(|v| v.as_f64());
+                let minimum_payment = record.get("minimum_payment").and_then(|v| v.as_f64());
 
-                let last_payment_amount = record
-                    .get("last_payment_amount")
-                    .and_then(|v| v.as_f64());
+                let last_payment_amount =
+                    record.get("last_payment_amount").and_then(|v| v.as_f64());
 
                 let last_payment_date = record
                     .get("last_payment_date")
@@ -127,14 +122,12 @@ impl OntologyTransform for PlaidLiabilityTransform {
                     .and_then(|v| v.as_str())
                     .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
 
-                let next_payment_amount = record
-                    .get("next_payment_amount")
-                    .and_then(|v| v.as_f64());
+                let next_payment_amount =
+                    record.get("next_payment_amount").and_then(|v| v.as_f64());
 
                 // Extract loan specifics
-                let original_loan_amount = record
-                    .get("original_loan_amount")
-                    .and_then(|v| v.as_f64());
+                let original_loan_amount =
+                    record.get("original_loan_amount").and_then(|v| v.as_f64());
 
                 let outstanding_balance = record
                     .get("last_statement_balance")
@@ -183,9 +176,7 @@ impl OntologyTransform for PlaidLiabilityTransform {
                     .and_then(|v| v.as_str())
                     .map(String::from);
 
-                let escrow_balance = record
-                    .get("escrow_balance")
-                    .and_then(|v| v.as_f64());
+                let escrow_balance = record.get("escrow_balance").and_then(|v| v.as_f64());
 
                 // Build metadata with all extra fields
                 let metadata = serde_json::json!({
@@ -302,18 +293,10 @@ fn parse_loan_term_months(term: &str) -> Option<i32> {
     let term_lower = term.to_lowercase();
     if term_lower.contains("year") {
         // Extract number before "year"
-        let years: i32 = term_lower
-            .split_whitespace()
-            .next()?
-            .parse()
-            .ok()?;
+        let years: i32 = term_lower.split_whitespace().next()?.parse().ok()?;
         Some(years * 12)
     } else if term_lower.contains("month") {
-        term_lower
-            .split_whitespace()
-            .next()?
-            .parse()
-            .ok()
+        term_lower.split_whitespace().next()?.parse().ok()
     } else {
         None
     }
@@ -357,7 +340,7 @@ async fn execute_liability_batch_insert(
 
     // Build batch insert with ON CONFLICT for upsert behavior
     let query_str = Database::build_batch_insert_query(
-        "data.financial_liability",
+        "data_financial_liability",
         &[
             "account_id_external",
             "liability_type",

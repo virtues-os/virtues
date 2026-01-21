@@ -1,6 +1,6 @@
 //! Google source registration for the catalog
 
-use crate::registry::{AuthType, OAuthConfig, RegisteredSource, SourceRegistry, RegisteredStream};
+use crate::registry::{AuthType, OAuthConfig, RegisteredSource, RegisteredStream, SourceRegistry};
 use crate::sources::base::SyncStrategy;
 use serde_json::json;
 

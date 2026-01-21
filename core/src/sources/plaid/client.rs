@@ -678,12 +678,17 @@ impl PlaidErrorCategory {
             "ITEM_LOGIN_REQUIRED" | "ACCESS_NOT_GRANTED" | "USER_SETUP_REQUIRED" => {
                 Self::UserActionRequired
             }
-            "PRODUCT_NOT_READY" | "INSTITUTION_DOWN" | "INSTITUTION_NO_LONGER_SUPPORTED"
-            | "RATE_LIMIT_EXCEEDED" | "INTERNAL_SERVER_ERROR" | "PLANNED_MAINTENANCE" => {
-                Self::Retryable
-            }
-            "PRODUCT_NOT_SUPPORTED" | "NO_ACCOUNTS" | "INVALID_ACCESS_TOKEN"
-            | "INVALID_PUBLIC_TOKEN" | "INVALID_PRODUCT" => Self::Terminal,
+            "PRODUCT_NOT_READY"
+            | "INSTITUTION_DOWN"
+            | "INSTITUTION_NO_LONGER_SUPPORTED"
+            | "RATE_LIMIT_EXCEEDED"
+            | "INTERNAL_SERVER_ERROR"
+            | "PLANNED_MAINTENANCE" => Self::Retryable,
+            "PRODUCT_NOT_SUPPORTED"
+            | "NO_ACCOUNTS"
+            | "INVALID_ACCESS_TOKEN"
+            | "INVALID_PUBLIC_TOKEN"
+            | "INVALID_PRODUCT" => Self::Terminal,
             _ => Self::Unknown,
         }
     }

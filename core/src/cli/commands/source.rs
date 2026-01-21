@@ -194,13 +194,19 @@ pub async fn handle_source_command(
 
             for job in jobs {
                 let records = job.records_processed;
-                let duration =
-                    if let (Some(completed), started) = (job.completed_at, job.started_at) {
-                        let duration_ms = (completed - started).num_milliseconds();
+                let duration = if let Some(completed_str) = &job.completed_at {
+                    // Parse both timestamps and calculate duration
+                    let completed = chrono::DateTime::parse_from_rfc3339(completed_str).ok();
+                    let started = chrono::DateTime::parse_from_rfc3339(&job.started_at).ok();
+                    if let (Some(c), Some(s)) = (completed, started) {
+                        let duration_ms = (c - s).num_milliseconds();
                         format!("{}ms", duration_ms)
                     } else {
                         "-".to_string()
-                    };
+                    }
+                } else {
+                    "-".to_string()
+                };
                 let error = job
                     .error_message
                     .map(|e| {
@@ -212,9 +218,14 @@ pub async fn handle_source_command(
                     })
                     .unwrap_or_else(|| "-".to_string());
 
+                // Format the started_at timestamp for display
+                let started_display = chrono::DateTime::parse_from_rfc3339(&job.started_at)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|_| job.started_at.clone());
+
                 println!(
                     "{} {:<10} {:<10} {:<10} {}",
-                    job.started_at.format("%Y-%m-%d %H:%M:%S"),
+                    started_display,
                     job.status,
                     records,
                     duration,

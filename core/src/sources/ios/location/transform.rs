@@ -70,17 +70,19 @@ impl OntologyTransform for IosLocationTransform {
         );
 
         // Batch insert configuration
+        // Tuple: (id, point_wkt, latitude, longitude, altitude, accuracy, speed, course, timestamp, stream_id, metadata)
         let mut pending_records: Vec<(
-            String,
-            f64,
-            f64,
-            Option<f64>,
-            Option<f64>,
-            Option<f64>,
-            Option<f64>,
-            DateTime<Utc>,
-            Uuid,
-            serde_json::Value,
+            String,  // id (UUID)
+            String,  // point_wkt
+            f64,     // latitude
+            f64,     // longitude
+            Option<f64>, // altitude
+            Option<f64>, // accuracy
+            Option<f64>, // speed
+            Option<f64>, // course
+            DateTime<Utc>, // timestamp
+            Uuid,    // stream_id
+            serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
         let mut batch_insert_count = 0;
@@ -148,8 +150,12 @@ impl OntologyTransform for IosLocationTransform {
                 // Format: POINT(longitude latitude)
                 let point_wkt = format!("POINT({} {})", longitude, latitude);
 
+                // Generate UUID for this record
+                let record_id = Uuid::new_v4().to_string();
+
                 // Add to pending batch
                 pending_records.push((
+                    record_id,
                     point_wkt,
                     latitude,
                     longitude,
@@ -266,16 +272,17 @@ impl OntologyTransform for IosLocationTransform {
 async fn execute_location_batch_insert(
     db: &Database,
     records: &[(
-        String,
-        f64,
-        f64,
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-        Option<f64>,
-        DateTime<Utc>,
-        Uuid,
-        serde_json::Value,
+        String,      // id (UUID)
+        String,      // point_wkt
+        f64,         // latitude
+        f64,         // longitude
+        Option<f64>, // altitude
+        Option<f64>, // accuracy
+        Option<f64>, // speed
+        Option<f64>, // course
+        DateTime<Utc>, // timestamp
+        Uuid,        // stream_id
+        serde_json::Value, // metadata
     )],
 ) -> Result<usize> {
     if records.is_empty() {
@@ -284,9 +291,9 @@ async fn execute_location_batch_insert(
 
     // Build custom batch insert query with PostGIS function
     // We can't use the generic builder because coordinates needs ST_GeogFromText()
-    let num_cols = 12;
-    let mut query_str = String::from("INSERT INTO data.location_point (");
-    query_str.push_str("coordinates, latitude, longitude, altitude_meters, ");
+    let num_cols = 13; // Added id column
+    let mut query_str = String::from("INSERT INTO data_location_point (");
+    query_str.push_str("id, coordinates, latitude, longitude, altitude_meters, ");
     query_str.push_str("accuracy_meters, speed_meters_per_second, course_degrees, ");
     query_str.push_str("timestamp, source_stream_id, source_table, source_provider, metadata");
     query_str.push_str(") VALUES ");
@@ -295,19 +302,21 @@ async fn execute_location_batch_insert(
     let mut value_clauses = Vec::with_capacity(records.len());
     for row_idx in 0..records.len() {
         let base_param = row_idx * num_cols + 1;
+        // Parameters: id, ST_GeogFromText(wkt), lat, lon, alt, acc, speed, course, ts, stream_id, src_table, src_provider, metadata
         let clause = format!(
-            "(ST_GeogFromText(${base_param}), ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
-            base_param + 1,
-            base_param + 2,
-            base_param + 3,
-            base_param + 4,
-            base_param + 5,
-            base_param + 6,
-            base_param + 7,
-            base_param + 8,
-            base_param + 9,
-            base_param + 10,
-            base_param + 11,
+            "(${base_param}, ST_GeogFromText(${}), ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
+            base_param + 1,  // point_wkt for ST_GeogFromText
+            base_param + 2,  // latitude
+            base_param + 3,  // longitude
+            base_param + 4,  // altitude
+            base_param + 5,  // accuracy
+            base_param + 6,  // speed
+            base_param + 7,  // course
+            base_param + 8,  // timestamp
+            base_param + 9,  // stream_id
+            base_param + 10, // source_table
+            base_param + 11, // source_provider
+            base_param + 12, // metadata
         );
         value_clauses.push(clause);
     }
@@ -320,6 +329,7 @@ async fn execute_location_batch_insert(
 
     // Bind all parameters row by row
     for (
+        id,
         point_wkt,
         latitude,
         longitude,
@@ -333,6 +343,7 @@ async fn execute_location_batch_insert(
     ) in records
     {
         query = query
+            .bind(id)
             .bind(format!("SRID=4326;{}", point_wkt))
             .bind(latitude)
             .bind(longitude)

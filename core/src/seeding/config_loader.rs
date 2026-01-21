@@ -113,8 +113,8 @@ pub fn load_models() -> Result<Vec<ModelConfig>> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/seeds/models.json");
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read models.json from {}", path))?;
-    let config: ModelsJson = serde_json::from_str(&content)
-        .context("Failed to parse models.json")?;
+    let config: ModelsJson =
+        serde_json::from_str(&content).context("Failed to parse models.json")?;
     Ok(config.models)
 }
 
@@ -123,8 +123,8 @@ pub fn load_agents() -> Result<Vec<AgentConfig>> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/seeds/agents.json");
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read agents.json from {}", path))?;
-    let config: AgentsJson = serde_json::from_str(&content)
-        .context("Failed to parse agents.json")?;
+    let config: AgentsJson =
+        serde_json::from_str(&content).context("Failed to parse agents.json")?;
     Ok(config.agents)
 }
 
@@ -133,8 +133,7 @@ pub fn load_tools() -> Result<(Vec<ToolConfig>, serde_json::Value)> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/seeds/tools.json");
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read tools.json from {}", path))?;
-    let config: ToolsJson = serde_json::from_str(&content)
-        .context("Failed to parse tools.json")?;
+    let config: ToolsJson = serde_json::from_str(&content).context("Failed to parse tools.json")?;
     Ok((config.tools, config.default_enabled_tools))
 }
 
@@ -158,19 +157,29 @@ struct AssistantProfileJson {
 
 /// Load assistant profile defaults from JSON
 pub fn load_assistant_profile_defaults() -> Result<AssistantProfileDefaults> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/seeds/assistant_profile.json");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../config/seeds/assistant_profile.json"
+    );
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read assistant_profile.json from {}", path))?;
-    let config: AssistantProfileJson = serde_json::from_str(&content)
-        .context("Failed to parse assistant_profile.json")?;
+    let config: AssistantProfileJson =
+        serde_json::from_str(&content).context("Failed to parse assistant_profile.json")?;
     Ok(config.defaults)
 }
 
 /// Load source connection configurations from JSON
 pub fn load_source_connections() -> Result<Vec<SourceConnectionSeed>> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/seeds/_generated_source_connections.json");
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read _generated_source_connections.json from {}", path))?;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../config/seeds/_generated_source_connections.json"
+    );
+    let content = fs::read_to_string(path).with_context(|| {
+        format!(
+            "Failed to read _generated_source_connections.json from {}",
+            path
+        )
+    })?;
     let config: SourceConnectionsJson = serde_json::from_str(&content)
         .context("Failed to parse _generated_source_connections.json")?;
     Ok(config.connections)
@@ -178,9 +187,16 @@ pub fn load_source_connections() -> Result<Vec<SourceConnectionSeed>> {
 
 /// Load stream connection configurations from JSON
 pub fn load_stream_connections() -> Result<Vec<StreamConnectionSeed>> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../config/seeds/_generated_stream_connections.json");
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read _generated_stream_connections.json from {}", path))?;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../config/seeds/_generated_stream_connections.json"
+    );
+    let content = fs::read_to_string(path).with_context(|| {
+        format!(
+            "Failed to read _generated_stream_connections.json from {}",
+            path
+        )
+    })?;
     let config: StreamConnectionsJson = serde_json::from_str(&content)
         .context("Failed to parse _generated_stream_connections.json")?;
     Ok(config.connections)
@@ -197,8 +213,16 @@ mod tests {
 
         // Verify all models have context windows
         for model in &models {
-            assert!(model.context_window > 0, "Model {} should have context_window", model.model_id);
-            assert!(model.max_output_tokens > 0, "Model {} should have max_output_tokens", model.model_id);
+            assert!(
+                model.context_window > 0,
+                "Model {} should have context_window",
+                model.model_id
+            );
+            assert!(
+                model.max_output_tokens > 0,
+                "Model {} should have max_output_tokens",
+                model.model_id
+            );
         }
     }
 
@@ -219,22 +243,41 @@ mod tests {
     fn test_load_tools() {
         let (tools, defaults) = load_tools().expect("Failed to load tools");
         assert!(!tools.is_empty(), "Tools should not be empty");
-        assert!(defaults.is_object(), "Default enabled tools should be an object");
+        assert!(
+            defaults.is_object(),
+            "Default enabled tools should be an object"
+        );
     }
 
     #[test]
     fn test_load_assistant_profile_defaults() {
-        let defaults = load_assistant_profile_defaults().expect("Failed to load assistant profile defaults");
+        let defaults =
+            load_assistant_profile_defaults().expect("Failed to load assistant profile defaults");
 
         // Verify required fields
-        assert!(!defaults.default_agent_id.is_empty(), "Default agent ID should not be empty");
-        assert!(!defaults.default_model_id.is_empty(), "Default model ID should not be empty");
-        assert!(defaults.enabled_tools.is_object(), "Enabled tools should be an object");
-        assert!(defaults.ui_preferences.is_object(), "UI preferences should be an object");
+        assert!(
+            !defaults.default_agent_id.is_empty(),
+            "Default agent ID should not be empty"
+        );
+        assert!(
+            !defaults.default_model_id.is_empty(),
+            "Default model ID should not be empty"
+        );
+        assert!(
+            defaults.enabled_tools.is_object(),
+            "Enabled tools should be an object"
+        );
+        assert!(
+            defaults.ui_preferences.is_object(),
+            "UI preferences should be an object"
+        );
 
         // Verify UI preferences structure
         let ui_prefs = &defaults.ui_preferences;
-        assert!(ui_prefs.get("contextIndicator").is_some(), "Should have contextIndicator preferences");
+        assert!(
+            ui_prefs.get("contextIndicator").is_some(),
+            "Should have contextIndicator preferences"
+        );
     }
 
     /// CRITICAL VALIDATION: Verify seed configs match registry
@@ -245,12 +288,14 @@ mod tests {
 
         for conn in &connections {
             // Verify source exists in registry
-            let registered_source = crate::registry::get_source(&conn.source)
-                .unwrap_or_else(|| panic!(
-                    "Source '{}' in _generated_source_connections.json not found in registry. \
+            let registered_source =
+                crate::registry::get_source(&conn.source).unwrap_or_else(|| {
+                    panic!(
+                        "Source '{}' in _generated_source_connections.json not found in registry. \
                      Did you forget to register it in core/src/registry/mod.rs?",
-                    conn.source
-                ));
+                        conn.source
+                    )
+                });
 
             // Verify auth_type matches
             let registry_auth_type = match registered_source.auth_type {
@@ -272,39 +317,50 @@ mod tests {
     /// CRITICAL VALIDATION: Verify stream configs match registry
     #[test]
     fn test_stream_connections_match_registry() {
-        let source_connections = load_source_connections().expect("Failed to load source connections");
-        let stream_connections = load_stream_connections().expect("Failed to load stream connections");
+        let source_connections =
+            load_source_connections().expect("Failed to load source connections");
+        let stream_connections =
+            load_stream_connections().expect("Failed to load stream connections");
 
         for stream_conn in &stream_connections {
             // Find the parent source connection
-            let source_conn = source_connections.iter()
+            let source_conn = source_connections
+                .iter()
                 .find(|s| s.id == stream_conn.source_connection_id)
-                .unwrap_or_else(|| panic!(
-                    "Stream '{}' references unknown source_connection_id {}. \
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Stream '{}' references unknown source_connection_id {}. \
                      Check _generated_stream_connections.json.",
-                    stream_conn.stream_name, stream_conn.source_connection_id
-                ));
+                        stream_conn.stream_name, stream_conn.source_connection_id
+                    )
+                });
 
             // Verify stream exists in registry
-            let registered_stream = crate::registry::get_stream(&source_conn.source, &stream_conn.stream_name)
-                .unwrap_or_else(|| panic!(
-                    "Stream '{}' for source '{}' not found in registry. \
+            let registered_stream =
+                crate::registry::get_stream(&source_conn.source, &stream_conn.stream_name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "Stream '{}' for source '{}' not found in registry. \
                      Available streams: {:?}. \
                      Run 'make generate-seeds' to regenerate config from registry.",
-                    stream_conn.stream_name,
-                    source_conn.source,
-                    crate::registry::get_source(&source_conn.source)
-                        .map(|s| s.streams.iter().map(|st| st.name).collect::<Vec<_>>())
-                        .unwrap_or_default()
-                ));
+                            stream_conn.stream_name,
+                            source_conn.source,
+                            crate::registry::get_source(&source_conn.source)
+                                .map(|s| s.streams.iter().map(|st| st.name).collect::<Vec<_>>())
+                                .unwrap_or_default()
+                        )
+                    });
 
             // Verify table_name matches
             assert_eq!(
-                stream_conn.table_name, registered_stream.table_name,
+                stream_conn.table_name,
+                registered_stream.table_name,
                 "Table name mismatch for {}/{}: config says '{}', registry says '{}'. \
                  Run 'make generate-seeds' to regenerate config from registry.",
-                source_conn.source, stream_conn.stream_name,
-                stream_conn.table_name, registered_stream.table_name
+                source_conn.source,
+                stream_conn.stream_name,
+                stream_conn.table_name,
+                registered_stream.table_name
             );
         }
     }
@@ -316,8 +372,7 @@ mod tests {
         let connections = load_source_connections().expect("Failed to load source connections");
 
         for conn in &connections {
-            let registry_source = crate::registry::get_source(&conn.source)
-                .unwrap();
+            let registry_source = crate::registry::get_source(&conn.source).unwrap();
 
             if registry_source.auth_type != crate::registry::AuthType::None {
                 panic!(
@@ -325,8 +380,7 @@ mod tests {
                      Only internal sources (auth_type=None) should be seeded. \
                      OAuth/Device sources are created via auth flows. \
                      Run 'make generate-seeds' to regenerate config from registry.",
-                    conn.source,
-                    conn.auth_type
+                    conn.source, conn.auth_type
                 );
             }
 

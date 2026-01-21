@@ -1,10 +1,5 @@
-import adapterAuto from '@sveltejs/adapter-auto';
-import adapterNode from '@sveltejs/adapter-node';
+import adapterStatic from '@sveltejs/adapter-static';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
-
-// Use adapter-node for Docker/self-hosted deployments (when ADAPTER=node is set)
-// Otherwise use adapter-auto which auto-detects Vercel, Cloudflare, etc.
-const useNodeAdapter = process.env.ADAPTER === 'node';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -13,14 +8,15 @@ const config = {
 	preprocess: vitePreprocess(),
 
 	kit: {
-		// adapter-auto only supports some environments, see https://svelte.dev/docs/kit/adapter-auto for a list.
-		// For Docker deployments, set ADAPTER=node to use adapter-node
-		adapter: useNodeAdapter ? adapterNode() : adapterAuto(),
-
-		// CSRF protection - enabled by default, explicit configuration for clarity
-		csrf: {
-			checkOrigin: true
-		}
+		// Static SPA build - served by Rust backend
+		adapter: adapterStatic({
+			pages: 'build',
+			assets: 'build',
+			fallback: '200.html', // SPA fallback for client-side routing
+			precompress: false,
+			strict: true
+		})
+		// No CSRF config needed - static SPA has no server-side form handling
 	}
 };
 

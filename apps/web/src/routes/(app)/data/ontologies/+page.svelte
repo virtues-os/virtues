@@ -20,7 +20,7 @@
 		Speech: { icon: "ri:mic-line", color: "text-pink-600" },
 		Introspection: { icon: "ri:lightbulb-line", color: "text-indigo-600" },
 		Entities: { icon: "ri:user-line", color: "text-slate-600" },
-		Unknown: { icon: "ri:database-2-line", color: "text-neutral-600" },
+		Unknown: { icon: "ri:database-2-line", color: "text-foreground-muted" },
 	};
 
 	function getDomainIcon(domain: string): string {
@@ -119,11 +119,11 @@
 							class="text-2xl {getDomainColor(domain)}"
 						></iconify-icon>
 						<h2
-							class="text-xl font-serif font-medium text-neutral-900"
+							class="text-xl font-serif font-medium text-foreground"
 						>
 							{domain}
 							<span
-								class="text-neutral-400 text-sm font-normal ml-2"
+								class="text-foreground-subtle text-sm font-normal ml-2"
 								>({ontologies.length})</span
 							>
 						</h2>

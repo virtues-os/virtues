@@ -28,13 +28,29 @@ RUN cargo build --release
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install runtime dependencies (wget for healthcheck)
-RUN apt-get update && apt-get install -y \
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     libpq5 \
     wget \
+    # Python for code execution (gVisor provides isolation)
+    python3 \
+    python3-pip \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Python packages for code interpreter
+# Note: In gVisor, the container IS the sandbox - no nsjail needed
+RUN pip3 install --no-cache-dir --break-system-packages \
+    numpy \
+    pandas \
+    scipy \
+    matplotlib \
+    requests \
+    httpx \
+    python-dateutil \
+    pytz
 
 WORKDIR /app
 

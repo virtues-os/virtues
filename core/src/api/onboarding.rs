@@ -1,12 +1,11 @@
-//! Onboarding API - Bulk operations for onboarding flow
+//! Onboarding API - Status tracking for onboarding flow
 //!
 //! These endpoints handle the specialized needs of onboarding:
-//! - Onboarding status tracking with granular completion
-//! - Bulk saving of axiology items after user review
+//! - Onboarding status tracking with step-based completion
 //! - Bulk saving of aspirations
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use crate::error::Result;
@@ -18,132 +17,115 @@ use crate::error::Result;
 /// Response for onboarding status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnboardingStatus {
-    /// Whether user is still in onboarding mode
-    pub is_onboarding: bool,
-    /// Profile information complete (name required)
-    pub profile_complete: bool,
-    /// Places added or skipped
-    pub places_complete: bool,
-    /// Tools connected or skipped
-    pub tools_complete: bool,
-    /// Axiology conversation complete
-    pub axiology_complete: bool,
+    /// Current onboarding step
+    pub status: String,
+    /// Whether onboarding is complete
+    pub is_complete: bool,
     /// Overall completion percentage (0-100)
     pub completion_percentage: u8,
-    /// Whether all steps are complete
-    pub all_complete: bool,
 }
 
 /// Available onboarding steps that can be completed
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OnboardingStep {
+    Welcome,
     Profile,
     Places,
     Tools,
-    Axiology,
+    Complete,
 }
 
 impl OnboardingStep {
     pub fn as_str(&self) -> &'static str {
         match self {
+            OnboardingStep::Welcome => "welcome",
             OnboardingStep::Profile => "profile",
             OnboardingStep::Places => "places",
             OnboardingStep::Tools => "tools",
-            OnboardingStep::Axiology => "axiology",
+            OnboardingStep::Complete => "complete",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
+            "welcome" => Some(OnboardingStep::Welcome),
             "profile" => Some(OnboardingStep::Profile),
             "places" => Some(OnboardingStep::Places),
             "tools" => Some(OnboardingStep::Tools),
-            "axiology" => Some(OnboardingStep::Axiology),
+            "complete" => Some(OnboardingStep::Complete),
             _ => None,
+        }
+    }
+
+    /// Get the next step in the onboarding flow
+    pub fn next(&self) -> Option<Self> {
+        match self {
+            OnboardingStep::Welcome => Some(OnboardingStep::Profile),
+            OnboardingStep::Profile => Some(OnboardingStep::Places),
+            OnboardingStep::Places => Some(OnboardingStep::Tools),
+            OnboardingStep::Tools => Some(OnboardingStep::Complete),
+            OnboardingStep::Complete => None,
+        }
+    }
+
+    /// Get completion percentage for this step
+    pub fn completion_percentage(&self) -> u8 {
+        match self {
+            OnboardingStep::Welcome => 0,
+            OnboardingStep::Profile => 25,
+            OnboardingStep::Places => 50,
+            OnboardingStep::Tools => 75,
+            OnboardingStep::Complete => 100,
         }
     }
 }
 
 /// Get current onboarding status
-pub async fn get_onboarding_status(pool: &PgPool) -> Result<OnboardingStatus> {
+pub async fn get_onboarding_status(pool: &SqlitePool) -> Result<OnboardingStatus> {
     let row = sqlx::query!(
         r#"
-        SELECT
-            is_onboarding,
-            onboarding_profile_complete,
-            onboarding_places_complete,
-            onboarding_tools_complete,
-            axiology_complete
-        FROM data.user_profile
+        SELECT onboarding_status
+        FROM data_user_profile
         LIMIT 1
         "#
     )
     .fetch_one(pool)
     .await?;
 
-    let profile_complete = row.onboarding_profile_complete.unwrap_or(false);
-    let places_complete = row.onboarding_places_complete.unwrap_or(false);
-    let tools_complete = row.onboarding_tools_complete.unwrap_or(false);
-    let axiology_complete = row.axiology_complete.unwrap_or(false);
-
-    // Calculate completion percentage (4 steps)
-    let completed_count = [profile_complete, places_complete, tools_complete, axiology_complete]
-        .iter()
-        .filter(|&&x| x)
-        .count();
-    let completion_percentage = ((completed_count * 100) / 4) as u8;
-    let all_complete = completed_count == 4;
+    let status = row.onboarding_status.clone();
+    let step = OnboardingStep::from_str(&status).unwrap_or(OnboardingStep::Welcome);
+    let is_complete = step == OnboardingStep::Complete;
+    let completion_percentage = step.completion_percentage();
 
     Ok(OnboardingStatus {
-        is_onboarding: row.is_onboarding,
-        profile_complete,
-        places_complete,
-        tools_complete,
-        axiology_complete,
+        status,
+        is_complete,
         completion_percentage,
-        all_complete,
     })
 }
 
-/// Mark a specific onboarding step as complete
-pub async fn complete_step(pool: &PgPool, step: OnboardingStep) -> Result<OnboardingStatus> {
-    let column = match step {
-        OnboardingStep::Profile => "onboarding_profile_complete",
-        OnboardingStep::Places => "onboarding_places_complete",
-        OnboardingStep::Tools => "onboarding_tools_complete",
-        OnboardingStep::Axiology => "axiology_complete",
-    };
+/// Mark a specific onboarding step as complete and advance to next step
+pub async fn complete_step(pool: &SqlitePool, step: OnboardingStep) -> Result<OnboardingStatus> {
+    // Get the next step
+    let next_status = step.next().unwrap_or(OnboardingStep::Complete).as_str();
 
-    // Use format! since we can't use bind for column names
-    let query = format!(
-        "UPDATE data.user_profile SET {} = TRUE",
-        column
-    );
-    sqlx::query(&query).execute(pool).await?;
+    sqlx::query!(
+        r#"
+        UPDATE data_user_profile
+        SET onboarding_status = $1
+        "#,
+        next_status
+    )
+    .execute(pool)
+    .await?;
 
-    // Check if all steps complete and auto-finish onboarding
-    let status = get_onboarding_status(pool).await?;
-    if status.all_complete {
-        sqlx::query!(
-            r#"
-            UPDATE data.user_profile
-            SET is_onboarding = FALSE
-            "#
-        )
-        .execute(pool)
-        .await?;
-
-        // Re-fetch status with updated is_onboarding
-        return get_onboarding_status(pool).await;
-    }
-
-    Ok(status)
+    get_onboarding_status(pool).await
 }
 
-/// Skip a specific onboarding step (marks as complete without action)
-pub async fn skip_step(pool: &PgPool, step: OnboardingStep) -> Result<OnboardingStatus> {
-    // Skipping is the same as completing - we just mark it done
+/// Skip a specific onboarding step (advances to next step)
+pub async fn skip_step(pool: &SqlitePool, step: OnboardingStep) -> Result<OnboardingStatus> {
+    // Skipping is the same as completing - we just advance to the next step
     complete_step(pool, step).await
 }
 
@@ -152,6 +134,7 @@ pub async fn skip_step(pool: &PgPool, step: OnboardingStep) -> Result<Onboarding
 // =============================================================================
 
 /// A single extracted axiology item from the discovery conversation
+/// Note: Axiology tables have been removed, but we keep this type for API compatibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractedAxiologyItem {
     pub title: String,
@@ -159,17 +142,22 @@ pub struct ExtractedAxiologyItem {
 }
 
 /// Request to save all axiology items from onboarding review
+/// Note: Axiology tables have been removed. This now only stores telos.
 #[derive(Debug, Deserialize)]
 pub struct SaveAxiologyRequest {
     /// The user's life purpose (exactly one)
     pub telos: Option<ExtractedAxiologyItem>,
-    /// Character strengths to cultivate
+    /// Character strengths to cultivate (no longer stored)
+    #[serde(default)]
     pub virtues: Vec<ExtractedAxiologyItem>,
-    /// Patterns to resist/overcome
+    /// Patterns to resist/overcome (no longer stored)
+    #[serde(default)]
     pub vices: Vec<ExtractedAxiologyItem>,
-    /// Natural dispositions
+    /// Natural dispositions (no longer stored)
+    #[serde(default)]
     pub temperaments: Vec<ExtractedAxiologyItem>,
-    /// External affinities
+    /// External affinities (no longer stored)
+    #[serde(default)]
     pub preferences: Vec<ExtractedAxiologyItem>,
     /// The original reflection text (for reference)
     pub reflection: Option<String>,
@@ -209,20 +197,15 @@ pub struct SaveAspirationsResponse {
 // API Functions
 // =============================================================================
 
-/// Save all axiology items from onboarding in a single transaction
+/// Save telos from onboarding (axiology tables have been removed)
 ///
 /// This creates:
 /// - 0-1 telos (if provided, archives any existing active telos)
-/// - 0+ virtues
-/// - 0+ vices
-/// - 0+ temperaments
-/// - 0+ preferences
+/// - Other axiology items are no longer stored but accepted for API compatibility
 pub async fn save_onboarding_axiology(
-    pool: &PgPool,
+    pool: &SqlitePool,
     request: SaveAxiologyRequest,
 ) -> Result<SaveAxiologyResponse> {
-    let mut tx = pool.begin().await?;
-
     let mut response = SaveAxiologyResponse {
         telos_id: None,
         virtue_ids: Vec::new(),
@@ -233,10 +216,12 @@ pub async fn save_onboarding_axiology(
 
     // Handle telos (only one active at a time)
     if let Some(telos) = request.telos {
+        let mut tx = pool.begin().await?;
+
         // Archive any existing active telos
         sqlx::query!(
             r#"
-            UPDATE data.axiology_telos
+            UPDATE data_telos
             SET is_active = FALSE
             WHERE is_active = TRUE
             "#
@@ -245,97 +230,38 @@ pub async fn save_onboarding_axiology(
         .await?;
 
         // Create new telos
+        let telos_id = Uuid::new_v4().to_string();
         let telos_row = sqlx::query!(
             r#"
-            INSERT INTO data.axiology_telos (title, description, is_active)
-            VALUES ($1, $2, TRUE)
+            INSERT INTO data_telos (id, title, description, is_active)
+            VALUES ($1, $2, $3, TRUE)
             RETURNING id
             "#,
+            telos_id,
             telos.title,
             telos.description
         )
         .fetch_one(&mut *tx)
         .await?;
 
-        response.telos_id = Some(telos_row.id);
+        tx.commit().await?;
+        // SQLite returns id as Option<String>, need to parse to Uuid
+        if let Some(id_str) = telos_row.id.as_ref() {
+            if let Ok(uuid) = Uuid::parse_str(id_str) {
+                response.telos_id = Some(uuid);
+            }
+        }
     }
 
-    // Create virtues
-    for virtue in request.virtues {
-        let row = sqlx::query!(
-            r#"
-            INSERT INTO data.axiology_virtue (title, description, is_active)
-            VALUES ($1, $2, TRUE)
-            RETURNING id
-            "#,
-            virtue.title,
-            virtue.description
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-
-        response.virtue_ids.push(row.id);
-    }
-
-    // Create vices
-    for vice in request.vices {
-        let row = sqlx::query!(
-            r#"
-            INSERT INTO data.axiology_vice (title, description, is_active)
-            VALUES ($1, $2, TRUE)
-            RETURNING id
-            "#,
-            vice.title,
-            vice.description
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-
-        response.vice_ids.push(row.id);
-    }
-
-    // Create temperaments
-    for temperament in request.temperaments {
-        let row = sqlx::query!(
-            r#"
-            INSERT INTO data.axiology_temperament (title, description, is_active)
-            VALUES ($1, $2, TRUE)
-            RETURNING id
-            "#,
-            temperament.title,
-            temperament.description
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-
-        response.temperament_ids.push(row.id);
-    }
-
-    // Create preferences
-    for preference in request.preferences {
-        let row = sqlx::query!(
-            r#"
-            INSERT INTO data.axiology_preference (title, description, preference_domain, is_active)
-            VALUES ($1, $2, 'general', TRUE)
-            RETURNING id
-            "#,
-            preference.title,
-            preference.description
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-
-        response.preference_ids.push(row.id);
-    }
-
-    tx.commit().await?;
+    // Note: virtues, vices, temperaments, preferences are no longer stored
+    // The request fields are accepted for API compatibility but ignored
 
     Ok(response)
 }
 
 /// Save aspirations from onboarding
 pub async fn save_onboarding_aspirations(
-    pool: &PgPool,
+    pool: &SqlitePool,
     request: SaveAspirationsRequest,
 ) -> Result<SaveAspirationsResponse> {
     let mut aspiration_ids = Vec::new();
@@ -345,18 +271,21 @@ pub async fn save_onboarding_aspirations(
             continue;
         }
 
+        let aspiration_id = Uuid::new_v4().to_string();
         let row = sqlx::query!(
             r#"
-            INSERT INTO data.praxis_aspiration (
+            INSERT INTO data_praxis_aspiration (
+                id,
                 title,
                 description,
                 target_timeframe,
                 source_provider,
-                is_active
+                status
             )
-            VALUES ($1, $2, $3, 'onboarding', TRUE)
+            VALUES ($1, $2, $3, $4, 'internal', 'dreaming')
             RETURNING id
             "#,
+            aspiration_id,
             aspiration.title,
             aspiration.description,
             aspiration.target_timeframe
@@ -364,20 +293,23 @@ pub async fn save_onboarding_aspirations(
         .fetch_one(pool)
         .await?;
 
-        aspiration_ids.push(row.id);
+        // SQLite returns id as Option<String>, need to parse to Uuid
+        if let Some(id_str) = row.id.as_ref() {
+            if let Ok(uuid) = Uuid::parse_str(id_str) {
+                aspiration_ids.push(uuid);
+            }
+        }
     }
 
     Ok(SaveAspirationsResponse { aspiration_ids })
 }
 
 /// Mark onboarding as complete
-pub async fn complete_onboarding(pool: &PgPool) -> Result<()> {
-    // Set onboarding_step to NULL to indicate completion
-    // The is_onboarding flag is set separately via the profile update
+pub async fn complete_onboarding(pool: &SqlitePool) -> Result<()> {
     sqlx::query!(
         r#"
-        UPDATE data.user_profile
-        SET onboarding_step = NULL
+        UPDATE data_user_profile
+        SET onboarding_status = 'complete'
         "#
     )
     .execute(pool)

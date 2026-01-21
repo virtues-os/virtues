@@ -255,17 +255,14 @@ struct AccountRecord {
 }
 
 /// Execute batch insert for account records
-async fn execute_account_batch_insert(
-    db: &Database,
-    records: &[AccountRecord],
-) -> Result<usize> {
+async fn execute_account_batch_insert(db: &Database, records: &[AccountRecord]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
 
     // Build batch insert with ON CONFLICT for upsert behavior
     let query_str = Database::build_batch_insert_query(
-        "data.financial_account",
+        "data_financial_account",
         &[
             "account_id_external",
             "account_name",

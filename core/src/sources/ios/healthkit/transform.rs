@@ -1089,7 +1089,7 @@ async fn execute_heart_rate_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.health_heart_rate",
+        "data_health_heart_rate",
         &[
             "bpm",
             "measurement_context",
@@ -1133,7 +1133,7 @@ async fn execute_hrv_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.health_hrv",
+        "data_health_hrv",
         &[
             "hrv_ms",
             "measurement_type",
@@ -1177,7 +1177,7 @@ async fn execute_steps_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.health_steps",
+        "data_health_steps",
         &[
             "step_count",
             "timestamp",
@@ -1227,7 +1227,7 @@ async fn execute_sleep_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.health_sleep",
+        "data_health_sleep",
         &[
             "sleep_stages",
             "total_duration_minutes",
@@ -1296,7 +1296,7 @@ async fn execute_workout_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.health_workout",
+        "data_health_workout",
         &[
             "activity_type",
             "intensity",
@@ -1357,8 +1357,12 @@ async fn execute_workout_batch_insert(
 
 struct HealthKitHeartRateRegistration;
 impl TransformRegistration for HealthKitHeartRateRegistration {
-    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
-    fn target_table(&self) -> &'static str { "health_heart_rate" }
+    fn source_table(&self) -> &'static str {
+        "stream_ios_healthkit"
+    }
+    fn target_table(&self) -> &'static str {
+        "health_heart_rate"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(HealthKitHeartRateTransform))
     }
@@ -1367,8 +1371,12 @@ inventory::submit! { &HealthKitHeartRateRegistration as &dyn TransformRegistrati
 
 struct HealthKitHRVRegistration;
 impl TransformRegistration for HealthKitHRVRegistration {
-    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
-    fn target_table(&self) -> &'static str { "health_hrv" }
+    fn source_table(&self) -> &'static str {
+        "stream_ios_healthkit"
+    }
+    fn target_table(&self) -> &'static str {
+        "health_hrv"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(HealthKitHRVTransform))
     }
@@ -1377,8 +1385,12 @@ inventory::submit! { &HealthKitHRVRegistration as &dyn TransformRegistration }
 
 struct HealthKitStepsRegistration;
 impl TransformRegistration for HealthKitStepsRegistration {
-    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
-    fn target_table(&self) -> &'static str { "health_steps" }
+    fn source_table(&self) -> &'static str {
+        "stream_ios_healthkit"
+    }
+    fn target_table(&self) -> &'static str {
+        "health_steps"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(HealthKitStepsTransform))
     }
@@ -1387,8 +1399,12 @@ inventory::submit! { &HealthKitStepsRegistration as &dyn TransformRegistration }
 
 struct HealthKitSleepRegistration;
 impl TransformRegistration for HealthKitSleepRegistration {
-    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
-    fn target_table(&self) -> &'static str { "health_sleep" }
+    fn source_table(&self) -> &'static str {
+        "stream_ios_healthkit"
+    }
+    fn target_table(&self) -> &'static str {
+        "health_sleep"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(HealthKitSleepTransform))
     }
@@ -1397,8 +1413,12 @@ inventory::submit! { &HealthKitSleepRegistration as &dyn TransformRegistration }
 
 struct HealthKitWorkoutRegistration;
 impl TransformRegistration for HealthKitWorkoutRegistration {
-    fn source_table(&self) -> &'static str { "stream_ios_healthkit" }
-    fn target_table(&self) -> &'static str { "health_workout" }
+    fn source_table(&self) -> &'static str {
+        "stream_ios_healthkit"
+    }
+    fn target_table(&self) -> &'static str {
+        "health_workout"
+    }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(HealthKitWorkoutTransform))
     }

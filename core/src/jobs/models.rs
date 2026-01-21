@@ -1,6 +1,5 @@
 //! Job data models and types
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
@@ -78,28 +77,29 @@ impl std::str::FromStr for JobStatus {
 }
 
 /// Job model
+/// Note: UUIDs and timestamps are stored as TEXT in SQLite
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Job {
-    pub id: Uuid,
+    pub id: String,
     pub job_type: JobType,
     pub status: JobStatus,
 
     // Sync job fields
-    pub source_connection_id: Option<Uuid>,
+    pub source_connection_id: Option<String>,
     pub stream_name: Option<String>,
     pub sync_mode: Option<String>, // 'full_refresh' or 'incremental'
 
     // Transform job fields
-    pub transform_id: Option<Uuid>,
+    pub transform_id: Option<String>,
     pub transform_strategy: Option<String>,
 
     // Job chaining
-    pub parent_job_id: Option<Uuid>,
+    pub parent_job_id: Option<String>,
     pub transform_stage: Option<String>,
 
     // Tracking
-    pub started_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
     pub records_processed: i64,
     pub error_message: Option<String>,
     pub error_class: Option<String>,
@@ -108,8 +108,8 @@ pub struct Job {
     pub metadata: serde_json::Value,
 
     // Timestamps
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 // Custom TryFrom implementations for sqlx type conversion

@@ -359,7 +359,7 @@ async fn execute_calendar_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.praxis_calendar",
+        "data_praxis_calendar",
         &[
             "title",
             "description",
@@ -406,13 +406,17 @@ async fn execute_calendar_batch_insert(
         metadata,
     ) in records
     {
+        // SQLite doesn't support array types, convert to JSON string
+        let attendee_identifiers_json =
+            serde_json::to_string(&attendee_identifiers).unwrap_or_else(|_| "[]".to_string());
+
         query = query
             .bind(title)
             .bind(description)
             .bind(calendar_name)
             .bind(event_type)
             .bind(organizer_identifier)
-            .bind(attendee_identifiers)
+            .bind(attendee_identifiers_json)
             .bind(location_name)
             .bind(conference_url)
             .bind(conference_platform)

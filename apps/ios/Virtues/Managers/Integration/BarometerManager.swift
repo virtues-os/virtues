@@ -139,30 +139,64 @@ class BarometerManager: ObservableObject {
 
     private func saveMetricsToQueue(_ metrics: [BarometerMetric]) async -> Bool {
         let deviceId = configProvider.deviceId
+        let result = await saveWithRetry(metrics: metrics, deviceId: deviceId, maxAttempts: 3)
 
-        let streamData = BarometerStreamData(
-            deviceId: deviceId,
-            metrics: metrics
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-
-        guard let data = try? encoder.encode(streamData) else {
-            print("   Failed to encode barometer metrics")
+        switch result {
+        case .success:
+            print("✅ Saved barometer metrics to SQLite queue")
+            dataUploader.updateUploadStats()
+            return true
+        case .failure(let error):
+            ErrorLogger.shared.log(error, deviceId: deviceId)
             return false
         }
+    }
 
-        let success = storageProvider.enqueue(streamName: "ios_barometer", data: data)
+    /// Attempts to save barometer metrics with exponential backoff retry
+    private func saveWithRetry(metrics: [BarometerMetric], deviceId: String, maxAttempts: Int) async -> Result<Void, AnyDataCollectionError> {
+        let streamData = BarometerStreamData(deviceId: deviceId, metrics: metrics)
 
-        if success {
-            print("   Saved barometer metrics to SQLite queue")
-            dataUploader.updateUploadStats()
-        } else {
-            print("   Failed to save barometer metrics to SQLite")
+        for attempt in 1...maxAttempts {
+            // Encode the data
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+
+            let data: Data
+            do {
+                data = try encoder.encode(streamData)
+            } catch {
+                let encodingError = DataEncodingError(
+                    streamType: .barometer,
+                    underlyingError: error,
+                    dataSize: metrics.count
+                )
+                return .failure(AnyDataCollectionError(encodingError))
+            }
+
+            // Attempt to save to SQLite
+            let success = storageProvider.enqueue(streamName: "ios_barometer", data: data)
+
+            if success {
+                if attempt > 1 {
+                    ErrorLogger.shared.logSuccessfulRetry(streamType: .barometer, attemptNumber: attempt)
+                }
+                return .success(())
+            }
+
+            // If not last attempt, wait before retrying using async sleep (non-blocking)
+            if attempt < maxAttempts {
+                let delayNanoseconds = UInt64(Double(attempt) * 0.5 * 1_000_000_000)  // 0.5s, 1.0s backoff
+                try? await Task.sleep(nanoseconds: delayNanoseconds)
+            }
         }
 
-        return success
+        // All attempts failed
+        let storageError = StorageError(
+            streamType: .barometer,
+            reason: "Failed to enqueue to SQLite after \(maxAttempts) attempts",
+            attemptNumber: maxAttempts
+        )
+        return .failure(AnyDataCollectionError(storageError))
     }
 }
 
@@ -175,6 +209,23 @@ struct BarometerMetric: Codable {
 }
 
 struct BarometerStreamData: Codable {
+    let source: String = "ios"
+    let stream: String = "barometer"
     let deviceId: String
-    let metrics: [BarometerMetric]
+    let records: [BarometerMetric]
+    let timestamp: String
+    let checkpoint: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case source, stream
+        case deviceId = "device_id"
+        case records, timestamp, checkpoint
+    }
+
+    init(deviceId: String, metrics: [BarometerMetric], checkpoint: String? = nil) {
+        self.deviceId = deviceId
+        self.records = metrics
+        self.timestamp = ISO8601DateFormatter().string(from: Date())
+        self.checkpoint = checkpoint
+    }
 }

@@ -9,7 +9,7 @@ use crate::jobs::{JobExecutor, TransformContext};
 use crate::registry;
 use crate::sources::base::MemoryDataSource;
 use serde_json::json;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ use uuid::Uuid;
 /// Returns Ok(()) even if no transform is configured (just logs a debug message).
 /// Returns Err only on database or execution errors.
 pub async fn create_transform_job_for_stream(
-    db: &PgPool,
+    db: &SqlitePool,
     executor: &JobExecutor,
     context: &Arc<TransformContext>,
     source_id: Uuid,
@@ -46,20 +46,21 @@ pub async fn create_transform_job_for_stream(
     let table_name = registry::normalize_stream_name(stream_name);
 
     // Use source registry as single source of truth for stream → ontology mapping
-    let (source_name, stream) = registry::get_stream_by_table_name(&table_name).ok_or_else(|| {
-        let err = Error::InvalidInput(format!(
-            "Unknown stream for transform: '{}'. Check registry for valid streams.",
-            table_name
-        ));
-        tracing::error!(
-            error = %err,
-            stream_name = %stream_name,
-            normalized_table_name = %table_name,
-            source_id = %source_id,
-            "Transform route not found - stream→ontology mapping failed"
-        );
-        err
-    })?;
+    let (source_name, stream) =
+        registry::get_stream_by_table_name(&table_name).ok_or_else(|| {
+            let err = Error::InvalidInput(format!(
+                "Unknown stream for transform: '{}'. Check registry for valid streams.",
+                table_name
+            ));
+            tracing::error!(
+                error = %err,
+                stream_name = %stream_name,
+                normalized_table_name = %table_name,
+                source_id = %source_id,
+                "Transform route not found - stream→ontology mapping failed"
+            );
+            err
+        })?;
 
     // Extract domain from first target ontology table name (e.g., "health_heart_rate" -> "health")
     let domain = stream
@@ -127,8 +128,12 @@ pub async fn create_transform_job_for_stream(
         let memory_executor =
             JobExecutor::new(db.clone(), (*transform_context_with_memory).clone());
 
+        // Parse job.id to Uuid for executor
+        let job_uuid = Uuid::parse_str(&job.id)
+            .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
+
         // Execute with memory data source
-        memory_executor.execute_async(job.id);
+        memory_executor.execute_async(job_uuid);
     } else {
         tracing::info!(
             job_id = %job.id,
@@ -140,9 +145,16 @@ pub async fn create_transform_job_for_stream(
             "Created transform job with S3 data source (COLD PATH - traditional S3 read)"
         );
 
+        // Parse job.id to Uuid for executor
+        let job_uuid = Uuid::parse_str(&job.id)
+            .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
+
         // Execute with standard S3 reader (cold path)
-        executor.execute_async(job.id);
+        executor.execute_async(job_uuid);
     }
 
-    Ok(job.id)
+    // Parse job.id to Uuid for return value
+    let job_uuid = Uuid::parse_str(&job.id)
+        .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
+    Ok(job_uuid)
 }

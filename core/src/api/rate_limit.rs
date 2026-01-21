@@ -5,10 +5,9 @@
 //! so these limits apply to each user's instance independently.
 
 use chrono::{DateTime, NaiveDate, Utc};
-use sqlx::types::Decimal;
-use sqlx::PgPool;
-use std::str::FromStr;
+use sqlx::SqlitePool;
 use thiserror::Error;
+use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum RateLimitError {
@@ -46,9 +45,9 @@ pub struct RateLimits {
 impl Default for RateLimits {
     fn default() -> Self {
         Self {
-            chat_requests_per_day: 1000,       // 1000 chat requests/day
-            chat_tokens_per_day: 500_000,      // 500K tokens/day (~$1.50/day worst case)
-            background_jobs_per_day: 100,      // 100 background LLM jobs/day
+            chat_requests_per_day: 1000,  // 1000 chat requests/day
+            chat_tokens_per_day: 500_000, // 500K tokens/day (~$1.50/day worst case)
+            background_jobs_per_day: 100, // 100 background LLM jobs/day
         }
     }
 }
@@ -77,11 +76,7 @@ impl RateLimits {
     }
 
     /// Create custom rate limits (useful for testing or custom tiers)
-    pub fn custom(
-        chat_per_day: i32,
-        tokens_per_day: i32,
-        jobs_per_day: i32,
-    ) -> Self {
+    pub fn custom(chat_per_day: i32, tokens_per_day: i32, jobs_per_day: i32) -> Self {
         Self {
             chat_requests_per_day: chat_per_day,
             chat_tokens_per_day: tokens_per_day,
@@ -130,7 +125,7 @@ impl TokenUsage {
 /// * `Ok(())` if within limits
 /// * `Err(RateLimitError)` if limits would be exceeded
 pub async fn check_rate_limit(
-    pool: &PgPool,
+    pool: &SqlitePool,
     endpoint: &str,
     limits: &RateLimits,
 ) -> Result<(), RateLimitError> {
@@ -146,17 +141,20 @@ pub async fn check_rate_limit(
 
     // Atomically increment request count and get new total
     // This prevents race conditions by using database-level atomicity
+    // SQLite uses 'excluded' for conflict values, and we need to reference the table directly
+    let usage_id = Uuid::new_v4().to_string();
     let new_count = sqlx::query!(
         r#"
-        INSERT INTO app.api_usage
-            (endpoint, day_bucket, request_count)
-        VALUES ($1, $2, 1)
+        INSERT INTO app_api_usage
+            (id, endpoint, day_bucket, request_count)
+        VALUES ($1, $2, $3, 1)
         ON CONFLICT (endpoint, day_bucket)
         DO UPDATE SET
-            request_count = api_usage.request_count + 1,
-            updated_at = NOW()
-        RETURNING request_count as "count!"
+            request_count = request_count + 1,
+            updated_at = datetime('now')
+        RETURNING request_count as "count!: i32"
         "#,
+        usage_id,
         endpoint,
         day_bucket
     )
@@ -223,7 +221,7 @@ pub async fn check_rate_limit(
 /// * `Err(sqlx::Error::Protocol)` if token counts exceed i32::MAX
 /// * `Err(sqlx::Error)` on other database errors
 pub async fn record_usage(
-    pool: &PgPool,
+    pool: &SqlitePool,
     endpoint: &str,
     tokens: TokenUsage,
 ) -> Result<(), sqlx::Error> {
@@ -243,13 +241,13 @@ pub async fn record_usage(
     // Update token usage (request count already incremented by check_rate_limit)
     let result = sqlx::query!(
         r#"
-        UPDATE app.api_usage
+        UPDATE app_api_usage
         SET
             token_count = token_count + $3,
             input_tokens = input_tokens + $4,
             output_tokens = output_tokens + $5,
             estimated_cost_usd = estimated_cost_usd + $6,
-            updated_at = NOW()
+            updated_at = datetime('now')
         WHERE endpoint = $1 AND day_bucket = $2
         "#,
         endpoint,
@@ -276,11 +274,11 @@ pub async fn record_usage(
 pub struct UsageStats {
     pub daily_requests: i32,
     pub daily_tokens: i32,
-    pub daily_cost: Decimal,
+    pub daily_cost: f64,
     pub limits: RateLimits,
 }
 
-pub async fn get_usage_stats(pool: &PgPool, endpoint: &str) -> Result<UsageStats, sqlx::Error> {
+pub async fn get_usage_stats(pool: &SqlitePool, endpoint: &str) -> Result<UsageStats, sqlx::Error> {
     let now = Utc::now();
     let day_bucket = get_day_bucket(now);
     let limits = RateLimits::default();
@@ -313,16 +311,17 @@ struct DailyUsage {
 }
 
 async fn get_daily_usage(
-    pool: &PgPool,
+    pool: &SqlitePool,
     endpoint: &str,
     day_bucket: NaiveDate,
 ) -> Result<DailyUsage, sqlx::Error> {
+    // SQLite needs explicit type annotations for COALESCE results
     let result = sqlx::query!(
         r#"
         SELECT
-            COALESCE(request_count, 0) as "request_count!",
-            COALESCE(token_count, 0) as "token_count!"
-        FROM app.api_usage
+            COALESCE(request_count, 0) as "request_count!: i32",
+            COALESCE(token_count, 0) as "token_count!: i32"
+        FROM app_api_usage
         WHERE endpoint = $1 AND day_bucket = $2
         "#,
         endpoint,
@@ -331,20 +330,25 @@ async fn get_daily_usage(
     .fetch_optional(pool)
     .await?;
 
-    Ok(result.map(|r| DailyUsage {
-        request_count: r.request_count,
-        token_count: r.token_count,
-    }).unwrap_or(DailyUsage {
-        request_count: 0,
-        token_count: 0,
-    }))
+    Ok(result
+        .map(|r| DailyUsage {
+            request_count: r.request_count,
+            token_count: r.token_count,
+        })
+        .unwrap_or(DailyUsage {
+            request_count: 0,
+            token_count: 0,
+        }))
 }
 
-async fn get_total_daily_tokens(pool: &PgPool, day_bucket: NaiveDate) -> Result<i32, sqlx::Error> {
+async fn get_total_daily_tokens(
+    pool: &SqlitePool,
+    day_bucket: NaiveDate,
+) -> Result<i32, sqlx::Error> {
     let result = sqlx::query!(
         r#"
-        SELECT COALESCE(SUM(token_count), 0)::int as "total_tokens!"
-        FROM app.api_usage
+        SELECT COALESCE(SUM(token_count), 0) as "total_tokens!: i64"
+        FROM app_api_usage
         WHERE day_bucket = $1
         "#,
         day_bucket
@@ -352,14 +356,14 @@ async fn get_total_daily_tokens(pool: &PgPool, day_bucket: NaiveDate) -> Result<
     .fetch_one(pool)
     .await?;
 
-    Ok(result.total_tokens)
+    Ok(result.total_tokens as i32)
 }
 
-async fn get_daily_cost(pool: &PgPool, day_bucket: NaiveDate) -> Result<Decimal, sqlx::Error> {
+async fn get_daily_cost(pool: &SqlitePool, day_bucket: NaiveDate) -> Result<f64, sqlx::Error> {
     let result = sqlx::query!(
         r#"
-        SELECT COALESCE(SUM(estimated_cost_usd), 0) as "total_cost!"
-        FROM app.api_usage
+        SELECT COALESCE(SUM(estimated_cost_usd), 0.0) as "total_cost!: f64"
+        FROM app_api_usage
         WHERE day_bucket = $1
         "#,
         day_bucket
@@ -372,27 +376,27 @@ async fn get_daily_cost(pool: &PgPool, day_bucket: NaiveDate) -> Result<Decimal,
 
 /// Calculate estimated cost based on token usage and model
 /// Pricing as of November 2024 (subject to change)
-fn calculate_cost(tokens: &TokenUsage) -> Decimal {
+fn calculate_cost(tokens: &TokenUsage) -> f64 {
     let model_lower = tokens.model.to_lowercase();
 
     // Anthropic Claude pricing (per million tokens)
-    let (input_price, output_price) = if model_lower.contains("sonnet") {
+    let (input_price, output_price): (f64, f64) = if model_lower.contains("sonnet") {
         if model_lower.contains("4") {
-            (Decimal::from_str("3.00").unwrap(), Decimal::from_str("15.00").unwrap()) // Claude Sonnet 4
+            (3.00, 15.00) // Claude Sonnet 4
         } else {
-            (Decimal::from_str("3.00").unwrap(), Decimal::from_str("15.00").unwrap()) // Claude 3.5 Sonnet
+            (3.00, 15.00) // Claude 3.5 Sonnet
         }
     } else if model_lower.contains("haiku") {
-        (Decimal::from_str("0.80").unwrap(), Decimal::from_str("4.00").unwrap()) // Claude 3.5 Haiku
+        (0.80, 4.00) // Claude 3.5 Haiku
     } else if model_lower.contains("opus") {
-        (Decimal::from_str("15.00").unwrap(), Decimal::from_str("75.00").unwrap()) // Claude 3 Opus
+        (15.00, 75.00) // Claude 3 Opus
     } else {
         // Default to Sonnet pricing if unknown
-        (Decimal::from_str("3.00").unwrap(), Decimal::from_str("15.00").unwrap())
+        (3.00, 15.00)
     };
 
-    let input_cost = Decimal::from(tokens.input) * input_price / Decimal::from(1_000_000);
-    let output_cost = Decimal::from(tokens.output) * output_price / Decimal::from(1_000_000);
+    let input_cost = (tokens.input as f64) * input_price / 1_000_000.0;
+    let output_cost = (tokens.output as f64) * output_price / 1_000_000.0;
 
     input_cost + output_cost
 }
@@ -407,8 +411,8 @@ mod tests {
         let cost = calculate_cost(&tokens);
 
         // 1000 * 0.003 / 1000 + 500 * 0.015 / 1000 = 0.003 + 0.0075 = 0.0105
-        assert!(cost > Decimal::from_str("0.01").unwrap());
-        assert!(cost < Decimal::from_str("0.02").unwrap());
+        assert!(cost > 0.01);
+        assert!(cost < 0.02);
     }
 
     #[test]
@@ -417,7 +421,7 @@ mod tests {
         let cost = calculate_cost(&tokens);
 
         // Should be much cheaper than Sonnet
-        assert!(cost < Decimal::from_str("0.05").unwrap());
+        assert!(cost < 0.05);
     }
 
     #[test]

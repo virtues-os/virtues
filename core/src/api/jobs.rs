@@ -6,7 +6,7 @@ use crate::jobs::{
 };
 use crate::storage::{stream_writer::StreamWriter, Storage};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -14,16 +14,16 @@ use uuid::Uuid;
 /// Response when a job is created
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJobResponse {
-    pub job_id: Uuid,
+    pub job_id: String,
     pub status: String,
-    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub started_at: String,
 }
 
 /// Trigger a sync for a specific stream (async version)
 ///
 /// This creates a job and starts it in the background, returning immediately.
 pub async fn trigger_stream_sync(
-    db: &PgPool,
+    db: &SqlitePool,
     storage: &Storage,
     stream_writer: Arc<Mutex<StreamWriter>>,
     source_id: Uuid,
@@ -48,7 +48,7 @@ pub async fn trigger_stream_sync(
     // Load cursor from database for incremental syncs
     let cursor_before = if sync_mode_str == "incremental" {
         sqlx::query_scalar::<_, Option<String>>(
-            "SELECT last_sync_token FROM data.stream_connections WHERE source_connection_id = $1 AND stream_name = $2",
+            "SELECT last_sync_token FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = $2",
         )
         .bind(source_id)
         .bind(stream_name)
@@ -80,7 +80,9 @@ pub async fn trigger_stream_sync(
 
     // Start job execution in background
     let executor = JobExecutor::new(db.clone(), context);
-    executor.execute_async(job.id);
+    let job_uuid = Uuid::parse_str(&job.id)
+        .map_err(|e| Error::Database(format!("Invalid job ID: {}", e)))?;
+    executor.execute_async(job_uuid);
 
     Ok(CreateJobResponse {
         job_id: job.id,
@@ -90,7 +92,7 @@ pub async fn trigger_stream_sync(
 }
 
 /// Get job status by ID
-pub async fn get_job_status(db: &PgPool, job_id: Uuid) -> Result<Job> {
+pub async fn get_job_status(db: &SqlitePool, job_id: Uuid) -> Result<Job> {
     jobs::get_job(db, job_id).await
 }
 
@@ -102,7 +104,7 @@ pub struct QueryJobsRequest {
     pub limit: Option<i64>,
 }
 
-pub async fn query_jobs(db: &PgPool, request: QueryJobsRequest) -> Result<Vec<Job>> {
+pub async fn query_jobs(db: &SqlitePool, request: QueryJobsRequest) -> Result<Vec<Job>> {
     // Parse status strings to JobStatus enums
     let statuses = if let Some(status_strs) = request.status {
         let parsed: Result<Vec<JobStatus>> = status_strs
@@ -121,7 +123,7 @@ pub async fn query_jobs(db: &PgPool, request: QueryJobsRequest) -> Result<Vec<Jo
 }
 
 /// Cancel a running job
-pub async fn cancel_job(db: &PgPool, job_id: Uuid) -> Result<()> {
+pub async fn cancel_job(db: &SqlitePool, job_id: Uuid) -> Result<()> {
     jobs::cancel_job(db, job_id).await
 }
 
@@ -129,21 +131,22 @@ pub async fn cancel_job(db: &PgPool, job_id: Uuid) -> Result<()> {
 ///
 /// Returns jobs for a specific source and stream, ordered by most recent first.
 pub async fn get_job_history(
-    db: &PgPool,
+    db: &SqlitePool,
     source_id: Uuid,
     stream_name: &str,
     limit: i64,
 ) -> Result<Vec<Job>> {
+    let source_id_str = source_id.to_string();
     let jobs = sqlx::query_as::<_, Job>(
         r#"
         SELECT *
-        FROM data.jobs
+        FROM data_jobs
         WHERE source_connection_id = $1 AND stream_name = $2 AND job_type = 'sync'
         ORDER BY created_at DESC
         LIMIT $3
         "#,
     )
-    .bind(source_id)
+    .bind(&source_id_str)
     .bind(stream_name)
     .bind(limit)
     .fetch_all(db)

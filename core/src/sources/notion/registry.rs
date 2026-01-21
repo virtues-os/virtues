@@ -1,6 +1,6 @@
 //! Notion source registration for the catalog
 
-use crate::registry::{AuthType, OAuthConfig, RegisteredSource, SourceRegistry, RegisteredStream};
+use crate::registry::{AuthType, OAuthConfig, RegisteredSource, RegisteredStream, SourceRegistry};
 use serde_json::json;
 
 /// Notion source registration

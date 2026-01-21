@@ -113,7 +113,7 @@ pub struct MemoryDataSource {
     /// Maximum timestamp in records
     max_timestamp: Option<DateTime<Utc>>,
     /// Database connection for checkpoint updates
-    db: sqlx::PgPool,
+    db: sqlx::SqlitePool,
 }
 
 impl MemoryDataSource {
@@ -124,7 +124,7 @@ impl MemoryDataSource {
         stream_name: String,
         min_timestamp: Option<DateTime<Utc>>,
         max_timestamp: Option<DateTime<Utc>>,
-        db: sqlx::PgPool,
+        db: sqlx::SqlitePool,
     ) -> Self {
         Self {
             records,
@@ -210,13 +210,15 @@ impl TransformDataSource for MemoryDataSource {
         timestamp: DateTime<Utc>,
     ) -> Result<()> {
         // Update checkpoint in database
+        let id = Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO data.stream_checkpoints (source_id, stream_name, checkpoint_key, last_processed_at)
-             VALUES ($1, $2, $3, $4)
+            "INSERT INTO data_stream_checkpoints (id, source_id, stream_name, checkpoint_key, last_processed_at)
+             VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (source_id, stream_name, checkpoint_key)
              DO UPDATE SET last_processed_at = EXCLUDED.last_processed_at,
-                           updated_at = NOW()",
+                           updated_at = datetime('now')",
         )
+        .bind(&id)
         .bind(source_id)
         .bind(stream_name)
         .bind(checkpoint_key)

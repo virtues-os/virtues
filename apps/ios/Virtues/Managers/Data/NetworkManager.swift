@@ -197,28 +197,27 @@ class NetworkManager: ObservableObject {
 // MARK: - Request/Response Models
 
 struct UploadResponse: Codable {
-    let success: Bool
-    let taskId: String?  // Optional since Celery processing may be disabled
-    let pipelineActivityId: String
-    let dataSizeBytes: Int
-    let dataSize: String
-    let source: String
-    let message: String
-    let streamKey: String
+    let accepted: Int
+    let rejected: Int
+    let nextCheckpoint: String?
+    let activityId: String
+    
+    // Optional legacy fields to prevent decoding errors if server sends them
+    let success: Bool?
+    let message: String?
     
     private enum CodingKeys: String, CodingKey {
+        case accepted
+        case rejected
+        case nextCheckpoint = "next_checkpoint"
+        case activityId = "activity_id"
         case success
-        case taskId = "task_id"
-        case pipelineActivityId = "pipeline_activity_id"
-        case dataSizeBytes = "data_size_bytes"
-        case dataSize = "data_size"
-        case source
         case message
-        case streamKey = "stream_key"
     }
 }
 
 struct ErrorResponse: Codable {
     let error: String
     let details: String?
+    let message: String? // Added to match backend
 }

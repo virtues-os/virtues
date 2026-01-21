@@ -276,7 +276,10 @@ struct DataView: View {
     // MARK: - Permission States
 
     private var healthKitPermissionState: PermissionState {
-        healthKitManager.isAuthorized ? .granted : .undetermined
+        if healthKitManager.isAuthorized {
+            return .granted
+        }
+        return healthKitManager.hasRequestedHealthKitAuthorization ? .denied : .undetermined
     }
 
     private var locationPermissionState: PermissionState {

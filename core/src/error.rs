@@ -125,9 +125,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///
 /// ```rust
 /// use virtues::{db_query, error::Result};
-/// use sqlx::PgPool;
+/// use sqlx::SqlitePool;
 ///
-/// async fn get_user(db: &PgPool, id: i32) -> Result<User> {
+/// async fn get_user(db: &SqlitePool, id: i32) -> Result<User> {
 ///     db_query!(
 ///         sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
 ///             .bind(id)
@@ -153,9 +153,9 @@ macro_rules! db_query {
 ///
 /// ```rust
 /// use virtues::{db_execute, error::Result};
-/// use sqlx::PgPool;
+/// use sqlx::SqlitePool;
 ///
-/// async fn delete_user(db: &PgPool, id: i32) -> Result<()> {
+/// async fn delete_user(db: &SqlitePool, id: i32) -> Result<()> {
 ///     db_execute!(
 ///         sqlx::query("DELETE FROM users WHERE id = $1")
 ///             .bind(id)

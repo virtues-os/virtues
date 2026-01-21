@@ -11,7 +11,7 @@
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -133,12 +133,12 @@ struct RawContextData {
 }
 
 pub struct PrudentContextJob {
-    pool: Arc<PgPool>,
+    pool: Arc<SqlitePool>,
     llm_client: Arc<dyn LLMClient>,
 }
 
 impl PrudentContextJob {
-    pub fn new(pool: Arc<PgPool>, llm_client: Arc<dyn LLMClient>) -> Self {
+    pub fn new(pool: Arc<SqlitePool>, llm_client: Arc<dyn LLMClient>) -> Self {
         Self { pool, llm_client }
     }
 
@@ -168,7 +168,7 @@ impl PrudentContextJob {
 
         // Get active telos (should be singular)
         let telos_row = sqlx::query(
-            "SELECT id, title, description FROM data.axiology_telos WHERE is_active = true LIMIT 1",
+            "SELECT id, title, description FROM data_axiology_telos WHERE is_active = true LIMIT 1",
         )
         .fetch_optional(self.pool.as_ref())
         .await
@@ -185,7 +185,7 @@ impl PrudentContextJob {
 
         // Get active tasks (short-term goals)
         let task_rows = sqlx::query(
-            "SELECT id, title, tags, description, status, progress_percent FROM data.praxis_task WHERE is_active = true ORDER BY created_at DESC"
+            "SELECT id, title, tags, description, status, progress_percent FROM data_praxis_task WHERE is_active = true ORDER BY created_at DESC"
         )
         .fetch_all(self.pool.as_ref())
         .await
@@ -195,12 +195,17 @@ impl PrudentContextJob {
             .into_iter()
             .map(|row| {
                 use sqlx::Row;
+                let id_str: Option<String> = row.get("id");
+                let id = id_str.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
+                let tags_str: Option<String> = row.get("tags");
+                let tags: Option<Vec<String>> =
+                    tags_str.as_ref().and_then(|s| serde_json::from_str(s).ok());
                 serde_json::json!({
-                    "id": row.get::<uuid::Uuid, _>("id"),
-                    "title": row.get::<String, _>("title"),
-                    "tags": row.get::<Option<Vec<String>>, _>("tags"),
+                    "id": id,
+                    "title": row.get::<Option<String>, _>("title"),
+                    "tags": tags,
                     "status": row.get::<Option<String>, _>("status"),
-                    "progress_percent": row.get::<Option<i32>, _>("progress_percent"),
+                    "progress_percent": row.get::<Option<i64>, _>("progress_percent"),
                     "description": row.get::<Option<String>, _>("description")
                 })
             })
@@ -208,7 +213,7 @@ impl PrudentContextJob {
 
         // Get habits (now stored as tasks with is_habit = true)
         let habit_rows = sqlx::query(
-            "SELECT id, title, description, recurrence_rule, current_streak, best_streak FROM data.praxis_task WHERE is_habit = true AND is_active = true",
+            "SELECT id, title, description, recurrence_rule, current_streak, best_streak FROM data_praxis_task WHERE is_habit = true AND is_active = true",
         )
         .fetch_all(self.pool.as_ref())
         .await
@@ -218,20 +223,22 @@ impl PrudentContextJob {
             .into_iter()
             .map(|row| {
                 use sqlx::Row;
+                let id_str: Option<String> = row.get("id");
+                let id = id_str.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
                 serde_json::json!({
-                    "id": row.get::<uuid::Uuid, _>("id"),
-                    "title": row.get::<String, _>("title"),
+                    "id": id,
+                    "title": row.get::<Option<String>, _>("title"),
                     "description": row.get::<Option<String>, _>("description"),
                     "frequency": row.get::<Option<String>, _>("recurrence_rule"),
-                    "current_streak": row.get::<Option<i32>, _>("current_streak"),
-                    "best_streak": row.get::<Option<i32>, _>("best_streak")
+                    "current_streak": row.get::<Option<i64>, _>("current_streak"),
+                    "best_streak": row.get::<Option<i64>, _>("best_streak")
                 })
             })
             .collect();
 
         // Get virtues
         let virtue_rows = sqlx::query(
-            "SELECT id, title, description FROM data.axiology_virtue WHERE is_active = true",
+            "SELECT id, title, description FROM data_axiology_virtue WHERE is_active = true",
         )
         .fetch_all(self.pool.as_ref())
         .await
@@ -241,28 +248,33 @@ impl PrudentContextJob {
             .into_iter()
             .map(|row| {
                 use sqlx::Row;
+                let id_str: Option<String> = row.get("id");
+                let id = id_str.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
                 serde_json::json!({
-                    "id": row.get::<uuid::Uuid, _>("id"),
-                    "title": row.get::<String, _>("title"),
+                    "id": id,
+                    "title": row.get::<Option<String>, _>("title"),
                     "description": row.get::<Option<String>, _>("description")
                 })
             })
             .collect();
 
         // Get vices to watch for
-        let vice_rows =
-            sqlx::query("SELECT id, title, description FROM data.axiology_vice WHERE is_active = true")
-                .fetch_all(self.pool.as_ref())
-                .await
-                .map_err(|e| format!("Failed to fetch vices: {}", e))?;
+        let vice_rows = sqlx::query(
+            "SELECT id, title, description FROM data_axiology_vice WHERE is_active = true",
+        )
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| format!("Failed to fetch vices: {}", e))?;
 
         let vices: Vec<serde_json::Value> = vice_rows
             .into_iter()
             .map(|row| {
                 use sqlx::Row;
+                let id_str: Option<String> = row.get("id");
+                let id = id_str.as_ref().and_then(|s| uuid::Uuid::parse_str(s).ok());
                 serde_json::json!({
-                    "id": row.get::<uuid::Uuid, _>("id"),
-                    "title": row.get::<String, _>("title"),
+                    "id": id,
+                    "title": row.get::<Option<String>, _>("title"),
                     "description": row.get::<Option<String>, _>("description")
                 })
             })
@@ -273,7 +285,7 @@ impl PrudentContextJob {
         let todays_events_rows = sqlx::query(
             r#"
             SELECT title, description, start_time, end_time
-            FROM data.praxis_calendar
+            FROM data_praxis_calendar
             WHERE DATE(start_time) = CURRENT_DATE
             ORDER BY start_time
             LIMIT 20
@@ -304,8 +316,8 @@ impl PrudentContextJob {
         let upcoming_events_rows = sqlx::query(
             r#"
             SELECT title, description, start_time
-            FROM data.praxis_calendar
-            WHERE start_time > NOW() AND start_time < NOW() + INTERVAL '7 days'
+            FROM data_praxis_calendar
+            WHERE start_time > datetime('now') AND start_time < datetime('now', '+7 days')
             ORDER BY start_time
             LIMIT 10
             "#,
@@ -462,7 +474,7 @@ Return ONLY the JSON, no other text."#,
         let response = self
             .llm_client
             .generate(LLMRequest {
-                model: "anthropic/claude-sonnet-4".to_string(), // AI Gateway model format
+                model: "claude-sonnet-4-20250514".to_string(), // AI Gateway model format
                 prompt,
                 max_tokens: 4096,
                 temperature: 0.3,
@@ -485,7 +497,7 @@ Return ONLY the JSON, no other text."#,
             TokenUsage {
                 input: response.usage.input_tokens as u32,
                 output: response.usage.output_tokens as u32,
-                model: "anthropic/claude-sonnet-4".to_string(),
+                model: "claude-sonnet-4-20250514".to_string(),
             },
         )
         .await
@@ -513,11 +525,11 @@ Return ONLY the JSON, no other text."#,
 
         let token_count = context_json.to_string().len() as i32; // Rough estimate
         let id = Uuid::new_v4();
-        let model = "anthropic/claude-sonnet-4";
+        let model = "claude-sonnet-4-20250514";
 
         sqlx::query(
             r#"
-            INSERT INTO data.prudent_context_snapshot
+            INSERT INTO data_prudent_context_snapshot
             (id, computed_at, expires_at, context_data, llm_model, token_count)
             VALUES ($1, $2, $3, $4, $5, $6)
             "#,

@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Tool {
@@ -14,9 +14,9 @@ pub struct Tool {
     pub default_params: Option<JsonValue>,
     pub display_order: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,8 +36,8 @@ pub struct UpdateToolRequest {
 }
 
 /// List all tools with optional filtering
-pub async fn list_tools(db: &PgPool, params: ListToolsQuery) -> Result<Vec<Tool>> {
-    let mut query = "SELECT * FROM app.tools WHERE 1=1".to_string();
+pub async fn list_tools(db: &SqlitePool, params: ListToolsQuery) -> Result<Vec<Tool>> {
+    let mut query = "SELECT * FROM app_tools WHERE 1=1".to_string();
 
     if let Some(category) = params.category {
         query.push_str(&format!(" AND category = '{}'", category));
@@ -54,8 +54,8 @@ pub async fn list_tools(db: &PgPool, params: ListToolsQuery) -> Result<Vec<Tool>
 }
 
 /// Get a single tool by ID
-pub async fn get_tool(db: &PgPool, id: String) -> Result<Tool> {
-    let tool = sqlx::query_as::<_, Tool>("SELECT * FROM app.tools WHERE id = $1")
+pub async fn get_tool(db: &SqlitePool, id: String) -> Result<Tool> {
+    let tool = sqlx::query_as::<_, Tool>("SELECT * FROM app_tools WHERE id = $1")
         .bind(&id)
         .fetch_optional(db)
         .await
@@ -66,7 +66,7 @@ pub async fn get_tool(db: &PgPool, id: String) -> Result<Tool> {
 }
 
 /// Update a tool's metadata
-pub async fn update_tool(db: &PgPool, id: String, payload: UpdateToolRequest) -> Result<Tool> {
+pub async fn update_tool(db: &SqlitePool, id: String, payload: UpdateToolRequest) -> Result<Tool> {
     let mut updates = Vec::new();
     let mut param_count = 1;
 
@@ -109,11 +109,11 @@ pub async fn update_tool(db: &PgPool, id: String, payload: UpdateToolRequest) ->
         return Err(Error::InvalidInput("No fields to update".to_string()));
     }
 
-    updates.push("updated_at = NOW()".to_string());
+    updates.push("updated_at = datetime('now')".to_string());
 
     // Build the query
     let query = format!(
-        "UPDATE app.tools SET {} WHERE id = ${} RETURNING *",
+        "UPDATE app_tools SET {} WHERE id = ${} RETURNING *",
         updates.join(", "),
         param_count
     );

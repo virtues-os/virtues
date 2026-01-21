@@ -14,6 +14,7 @@ impl OntologyDescriptor for EmailOntology {
             .domain("social")
             .table_name("social_email")
             .source_streams(vec!["stream_google_gmail"])
+            .timestamp_column("timestamp")
             .embedding(
                 "COALESCE(subject, '') || '\n\n' || COALESCE(body_plain, '')",
                 "email",

@@ -14,6 +14,7 @@ impl OntologyDescriptor for MessageOntology {
             .domain("social")
             .table_name("social_message")
             .source_streams(vec!["stream_mac_imessage"])
+            .timestamp_column("timestamp")
             .embedding(
                 "'From ' || COALESCE(from_name, 'Unknown') || ': ' || COALESCE(body, '')",
                 "message",

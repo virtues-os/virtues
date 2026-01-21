@@ -8,11 +8,10 @@ config({ path: resolve(__dirname, '../../.env') });
 // Schema migrations are managed by SQLx in core/migrations/
 export default defineConfig({
 	schema: './src/lib/server/schema.ts',
-	dialect: 'postgresql',
+	dialect: 'sqlite',
 	dbCredentials: {
-		url: process.env.DATABASE_URL || ''
-	},
-	schemaFilter: ['app']
+		url: process.env.DATABASE_URL || 'sqlite:./data/virtues.db'
+	}
 	// Note: No 'out' field - we don't generate migrations here
 	// All migrations are in core/migrations/ (SQLx)
 });

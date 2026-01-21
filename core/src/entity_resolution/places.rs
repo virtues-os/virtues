@@ -16,16 +16,15 @@ use geo::HaversineDistance;
 use geo::Point as GeoPoint;
 use uuid::Uuid;
 
-use crate::database::Database;
-use crate::error::Result;
 use super::TimeWindow;
+use crate::database::Database;
+use crate::error::{Error, Result};
 
 /// Spatial clustering parameters
-const SPATIAL_EPSILON_METERS: f64 = 75.0;  // Max distance within a cluster (better GPS drift tolerance)
+const SPATIAL_EPSILON_METERS: f64 = 75.0; // Max distance within a cluster (better GPS drift tolerance)
 const MIN_VISIT_DURATION_MINUTES: i64 = 5; // Minimum visit duration
-const TEMPORAL_GAP_MINUTES: i64 = 5;        // Max time gap within visit (robust for iOS backgrounding)
+const TEMPORAL_GAP_MINUTES: i64 = 5; // Max time gap within visit (robust for iOS backgrounding)
 const MAX_HORIZONTAL_ACCURACY: f64 = 100.0; // Filter low-quality points
-const MAX_SPEED_MPS: f64 = 50.0;             // Filter high-speed transit
 
 /// Location point for clustering
 #[derive(Debug, Clone)]
@@ -66,25 +65,16 @@ pub async fn resolve_places(db: &Database, window: TimeWindow) -> Result<usize> 
         return Ok(0);
     }
 
-    tracing::debug!(
-        point_count = points.len(),
-        "Fetched location points"
-    );
+    tracing::debug!(point_count = points.len(), "Fetched location points");
 
     // 2. Auto-detect sampling rate
     let sampling_rate = detect_sampling_rate(&points);
-    tracing::debug!(
-        points_per_minute = sampling_rate,
-        "Detected sampling rate"
-    );
+    tracing::debug!(points_per_minute = sampling_rate, "Detected sampling rate");
 
     // 3. Run density-adaptive clustering
     let visits = cluster_location_points(&points, sampling_rate)?;
 
-    tracing::debug!(
-        visit_count = visits.len(),
-        "Completed clustering"
-    );
+    tracing::debug!(visit_count = visits.len(), "Completed clustering");
 
     // 4. Write visits idempotently and link to place entities
     let mut records_written = 0;
@@ -117,34 +107,35 @@ async fn fetch_location_points(db: &Database, window: TimeWindow) -> Result<Vec<
             latitude,
             longitude,
             timestamp,
-            accuracy_meters as horizontal_accuracy,
-            speed_meters_per_second as speed
-        FROM data.location_point
+            horizontal_accuracy
+        FROM data_location_point
         WHERE timestamp >= $1
           AND timestamp < $2
-          AND (accuracy_meters IS NULL OR accuracy_meters < $3)
-          AND (speed_meters_per_second IS NULL
-               OR speed_meters_per_second < 0
-               OR speed_meters_per_second < $4)
+          AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)
         ORDER BY timestamp ASC
         "#,
         window.start,
         window.end,
-        MAX_HORIZONTAL_ACCURACY,
-        MAX_SPEED_MPS
+        MAX_HORIZONTAL_ACCURACY
     )
     .fetch_all(db.pool())
     .await?;
 
     let points = rows
         .into_iter()
-        .map(|row| LocationPoint {
-            id: row.id,
-            latitude: row.latitude,
-            longitude: row.longitude,
-            timestamp: row.timestamp,
-            horizontal_accuracy: row.horizontal_accuracy,
-            _speed: row.speed,
+        .filter_map(|row| {
+            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let timestamp = DateTime::parse_from_rfc3339(&row.timestamp)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))?;
+            Some(LocationPoint {
+                id,
+                latitude: row.latitude,
+                longitude: row.longitude,
+                timestamp,
+                horizontal_accuracy: row.horizontal_accuracy,
+                _speed: None,
+            })
         })
         .collect();
 
@@ -185,10 +176,7 @@ fn cluster_location_points(points: &[LocationPoint], points_per_minute: f64) -> 
     let min_cluster_size = (MIN_VISIT_DURATION_MINUTES as f64 * points_per_minute).round() as usize;
     let min_cluster_size = min_cluster_size.max(3); // At least 3 points
 
-    tracing::debug!(
-        min_cluster_size,
-        "Calculated adaptive parameters"
-    );
+    tracing::debug!(min_cluster_size, "Calculated adaptive parameters");
 
     // Simple density-based clustering (DBSCAN-like)
     let mut visits = Vec::new();
@@ -299,8 +287,7 @@ fn generate_visit_id(centroid_lat: f64, centroid_lon: f64, start_time: DateTime<
     // Round start time to nearest minute
     let timestamp_secs = start_time.timestamp();
     let rounded_secs = (timestamp_secs / 60) * 60;
-    let start_rounded = DateTime::from_timestamp(rounded_secs, 0)
-        .unwrap_or(start_time);
+    let start_rounded = DateTime::from_timestamp(rounded_secs, 0).unwrap_or(start_time);
 
     // Create deterministic UUID v5
     let hash_input = format!(
@@ -320,7 +307,7 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
     // Find or create place entity for this location
     let place_id = resolve_or_create_place(db, visit.centroid_lat, visit.centroid_lon).await?;
 
-    let point_wkt = format!("POINT({} {})", visit.centroid_lon, visit.centroid_lat);
+    let duration_minutes = (visit.end_time - visit.start_time).num_minutes() as i32;
 
     let metadata = serde_json::json!({
         "point_count": visit.points.len(),
@@ -329,39 +316,39 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
 
     sqlx::query!(
         r#"
-        INSERT INTO data.location_visit (
+        INSERT INTO data_location_visit (
             id,
             place_id,
-            centroid_coordinates,
             latitude,
             longitude,
-            start_time,
-            end_time,
+            arrival_time,
+            departure_time,
+            duration_minutes,
             source_stream_id,
             source_table,
             source_provider,
             metadata
         ) VALUES (
-            $1, $2, ST_GeogFromText($3), $4, $5, $6, $7, $8, $9, $10, $11
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
         )
         ON CONFLICT (id) DO UPDATE SET
             place_id = EXCLUDED.place_id,
-            end_time = EXCLUDED.end_time,
-            centroid_coordinates = EXCLUDED.centroid_coordinates,
+            departure_time = EXCLUDED.departure_time,
+            duration_minutes = EXCLUDED.duration_minutes,
             latitude = EXCLUDED.latitude,
             longitude = EXCLUDED.longitude,
             metadata = EXCLUDED.metadata,
-            updated_at = NOW()
-        WHERE data.location_visit.end_time < EXCLUDED.end_time
-           OR data.location_visit.place_id IS NULL
+            updated_at = datetime('now')
+        WHERE data_location_visit.departure_time < EXCLUDED.departure_time
+           OR data_location_visit.place_id IS NULL
         "#,
         visit_id,
         place_id,
-        format!("SRID=4326;{}", point_wkt),
         visit.centroid_lat,
         visit.centroid_lon,
         visit.start_time,
         visit.end_time,
+        duration_minutes,
         visit.points.first().unwrap().id, // Use first point ID as source
         "location_point",
         "ios",
@@ -379,65 +366,84 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
 /// If found, returns its ID. If not, creates a new place entity with reverse geocoded name.
 async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uuid> {
     // Check for existing place within 75 meters (match SPATIAL_EPSILON_METERS)
-    let existing = sqlx::query!(
+    // Use bounding box for efficient SQL filtering, then Haversine for precise distance
+    let search_radius = 75.0;
+    let (min_lat, max_lat, min_lon, max_lon) = crate::geo::bounding_box(lat, lon, search_radius);
+
+    let candidates = sqlx::query!(
         r#"
-        SELECT id, canonical_name
-        FROM data.entities_place
-        WHERE ST_DWithin(
-            geo_center::geography,
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-            75.0
-        )
-        ORDER BY ST_Distance(
-            geo_center::geography,
-            ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
-        )
-        LIMIT 1
+        SELECT id, name, latitude, longitude
+        FROM data_entities_place
+        WHERE latitude IS NOT NULL
+          AND longitude IS NOT NULL
+          AND latitude BETWEEN $1 AND $2
+          AND longitude BETWEEN $3 AND $4
         "#,
-        lon,
-        lat
+        min_lat,
+        max_lat,
+        min_lon,
+        max_lon
     )
-    .fetch_optional(db.pool())
+    .fetch_all(db.pool())
     .await?;
 
-    if let Some(place) = existing {
-        tracing::debug!(
-            place_id = %place.id,
-            place_name = %place.canonical_name,
-            "Found existing place entity"
-        );
-        return Ok(place.id);
+    // Find nearest place using Haversine distance
+    let nearest = crate::geo::find_nearest(
+        lat,
+        lon,
+        candidates.iter().filter_map(|p| {
+            // Only include places with valid IDs
+            let id = p.id.as_ref()?;
+            Some((id.clone(), p.latitude?, p.longitude?))
+        }),
+        search_radius,
+    );
+
+    if let Some((place_id, _distance)) = nearest {
+        let place = candidates
+            .iter()
+            .find(|p| p.id.as_deref() == Some(&place_id));
+        if let Some(p) = place {
+            let id_str = p.id.as_ref().unwrap();
+            tracing::debug!(
+                place_id = %id_str,
+                place_name = %p.name,
+                "Found existing place entity"
+            );
+            return Uuid::parse_str(id_str)
+                .map_err(|e| Error::Database(format!("Invalid UUID: {}", e)));
+        }
     }
 
     // Create new place entity with reverse geocoded name
-    let canonical_name = reverse_geocode_stub(lat, lon);
+    let place_name = reverse_geocode_stub(lat, lon);
+    let place_id = Uuid::new_v4();
+    let place_id_str = place_id.to_string();
 
-    let place_id = sqlx::query!(
+    sqlx::query!(
         r#"
-        INSERT INTO data.entities_place (
-            canonical_name,
-            geo_center,
-            cluster_radius_meters,
+        INSERT INTO data_entities_place (
+            id,
+            name,
+            latitude,
+            longitude,
+            radius_m,
             metadata
         ) VALUES (
-            $1,
-            ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
-            75.0,
-            '{}'::jsonb
+            $1, $2, $3, $4, 75.0, '{}'
         )
-        RETURNING id
         "#,
-        canonical_name,
-        lon,
-        lat
+        place_id_str,
+        place_name,
+        lat,
+        lon
     )
-    .fetch_one(db.pool())
-    .await?
-    .id;
+    .execute(db.pool())
+    .await?;
 
     tracing::info!(
         place_id = %place_id,
-        place_name = %canonical_name,
+        place_name = %place_name,
         lat = %lat,
         lon = %lon,
         "Created new place entity"

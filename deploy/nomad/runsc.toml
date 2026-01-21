@@ -1,0 +1,37 @@
+# gVisor (runsc) configuration for Virtues
+# Optimized for SQLite WAL mode and multi-tenant isolation
+
+[runsc]
+  # Platform selection
+  # - systrap: Most compatible, works everywhere
+  # - kvm: Faster, requires /dev/kvm access (nested virt or bare metal)
+  platform = "systrap"
+
+  # Network mode
+  # - sandbox: Use network namespace from containerd (CNI bridge)
+  # - host: Share host network (NOT recommended for multi-tenant)
+  network = "sandbox"
+
+  # File access mode
+  # - shared: Required for SQLite WAL mode (mmap shared memory)
+  # - exclusive: Better isolation but breaks WAL
+  file-access = "shared"
+
+  # Enable gofer host UDS for shared memory
+  # Required for SQLite WAL concurrent access
+  fsgofer-host-uds = true
+
+  # Direct filesystem access for better performance
+  directfs = true
+
+  # Disable overlay filesystem
+  # We use direct bind mounts for ZFS quota enforcement
+  overlay2 = "none"
+
+  # Debug settings (disable in production)
+  debug = false
+  # debug-log = "/var/log/runsc/"
+
+  # Strace for debugging syscall issues (disable in production)
+  # strace = true
+  # strace-syscalls = "open,openat,read,write,mmap"

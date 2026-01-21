@@ -4,34 +4,18 @@ version: '3.8'
 # Managed by cloud-init setup.sh during provisioning
 
 services:
-  postgres:
-    image: ghcr.io/virtues-os/virtues-postgres:latest
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: virtues
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   core:
     image: ghcr.io/yourorg/virtues-core:${TAG:-latest}
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/virtues
+      DATABASE_URL: sqlite:/data/virtues.db
       VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
       STREAM_ENCRYPTION_MASTER_KEY: ${STREAM_ENCRYPTION_MASTER_KEY}
       RUST_LOG: ${RUST_LOG:-warn}
     ports:
       - "8000:8000"
+    volumes:
+      - sqlite_data:/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -45,7 +29,6 @@ services:
       - core
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/virtues
       RUST_API_URL: http://core:8000
       AUTH_SECRET: ${AUTH_SECRET}
       OWNER_EMAIL: ${OWNER_EMAIL}
@@ -59,4 +42,4 @@ services:
       - "3000:3000"
 
 volumes:
-  postgres_data:
+  sqlite_data:

@@ -903,7 +903,7 @@ class SQLiteManager {
 
                     // Decode BatteryStreamData
                     if let streamData = try? decoder.decode(BatteryStreamData.self, from: dataBlob) {
-                        for metric in streamData.metrics {
+                        for metric in streamData.records {
                             dataPoints.append(BatteryDataPoint(
                                 date: metric.timestamp,
                                 level: metric.level,
@@ -1000,7 +1000,7 @@ class SQLiteManager {
 
                     // Decode BarometerStreamData
                     if let streamData = try? decoder.decode(BarometerStreamData.self, from: dataBlob) {
-                        for metric in streamData.metrics {
+                        for metric in streamData.records {
                             dataPoints.append(BarometerDataPoint(
                                 date: metric.timestamp,
                                 pressureKPa: metric.pressureKPa,
@@ -1053,7 +1053,7 @@ class SQLiteManager {
 
                     // Decode ContactsStreamData
                     if let streamData = try? decoder.decode(ContactsStreamData.self, from: dataBlob) {
-                        for contact in streamData.contacts {
+                        for contact in streamData.records {
                             let name = [contact.givenName, contact.familyName]
                                 .filter { !$0.isEmpty }
                                 .joined(separator: " ")

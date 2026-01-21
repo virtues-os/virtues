@@ -3,7 +3,7 @@
 //! Endpoints for querying available ontology tables based on enabled streams.
 
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::collections::HashSet;
 
 use crate::error::Result;
@@ -14,16 +14,17 @@ use crate::registry;
 /// This queries the database for enabled streams and maps them to ontology tables
 /// using the source registry as the single source of truth.
 /// Only returns tables that both (1) have enabled streams AND (2) actually exist in the database schema.
-pub async fn list_available_ontologies(db: &PgPool) -> Result<Vec<String>> {
-    // First, get all tables that actually exist in the data schema
+pub async fn list_available_ontologies(db: &SqlitePool) -> Result<Vec<String>> {
+    // First, get all tables that actually exist in the database
+    // SQLite uses sqlite_master instead of information_schema
     let existing_tables = sqlx::query!(
         r#"
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'data'
-          AND table_name NOT LIKE 'stream_%'
-          AND table_name NOT IN ('sources', 'streams', 'sync_logs')
-          AND table_type = 'BASE TABLE'
+        SELECT name as table_name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name LIKE 'data_%'
+          AND name NOT LIKE 'data_stream_%'
+          AND name NOT IN ('data_sources', 'data_streams', 'data_sync_logs')
         "#
     )
     .fetch_all(db)
@@ -44,8 +45,8 @@ pub async fn list_available_ontologies(db: &PgPool) -> Result<Vec<String>> {
     let rows = sqlx::query!(
         r#"
         SELECT DISTINCT s.table_name
-        FROM data.stream_connections s
-        JOIN data.source_connections src ON s.source_connection_id = src.id
+        FROM data_stream_connections s
+        JOIN data_source_connections src ON s.source_connection_id = src.id
         WHERE s.is_enabled = true
           AND src.is_active = true
         "#
@@ -102,7 +103,7 @@ pub struct OntologyOverview {
 }
 
 /// Get overview of all available ontologies with counts and sample records
-pub async fn get_ontologies_overview(db: &PgPool) -> Result<Vec<OntologyOverview>> {
+pub async fn get_ontologies_overview(db: &SqlitePool) -> Result<Vec<OntologyOverview>> {
     let available_tables = list_available_ontologies(db).await?;
     let mut overviews = Vec::new();
 
@@ -111,7 +112,7 @@ pub async fn get_ontologies_overview(db: &PgPool) -> Result<Vec<OntologyOverview
         let domain = extract_domain(&table_name);
 
         // Get record count
-        let count_query = format!("SELECT COUNT(*) as count FROM data.{}", table_name);
+        let count_query = format!("SELECT COUNT(*) as count FROM data_{}", table_name);
         let count_result = sqlx::query_scalar::<_, i64>(&count_query)
             .fetch_one(db)
             .await;
@@ -131,7 +132,7 @@ pub async fn get_ontologies_overview(db: &PgPool) -> Result<Vec<OntologyOverview
         // Get one random sample record if records exist
         let sample_record = if record_count > 0 {
             let sample_query = format!(
-                "SELECT row_to_json(t) as record FROM (SELECT * FROM data.{} ORDER BY RANDOM() LIMIT 1) t",
+                "SELECT row_to_json(t) as record FROM (SELECT * FROM data_{} ORDER BY RANDOM() LIMIT 1) t",
                 table_name
             );
 

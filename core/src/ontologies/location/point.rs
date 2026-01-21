@@ -15,6 +15,7 @@ impl OntologyDescriptor for LocationPointOntology {
             .domain("location")
             .table_name("location_point")
             .source_streams(vec!["stream_ios_location"])
+            .timestamp_column("timestamp")
             .build()
     }
 }

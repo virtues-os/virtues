@@ -146,14 +146,14 @@
 </script>
 
 <div class="space-y-2">
-	<span class="block text-sm text-neutral-700">
+	<span class="block text-sm text-foreground-muted">
 		{label}
 	</span>
 	<div class="relative">
 		<input
 			bind:this={inputElement}
 			type="text"
-			class="w-full px-4 py-2 pr-10 rounded border border-neutral-300 bg-white text-neutral-900 focus:outline-none focus:border-neutral-900 disabled:opacity-50 disabled:cursor-not-allowed"
+			class="w-full px-4 py-2 pr-10 rounded border border-border bg-surface text-foreground focus:outline-none focus:border-border-strong disabled:opacity-50 disabled:cursor-not-allowed"
 			{placeholder}
 			{disabled}
 			bind:value={inputValue}
@@ -166,7 +166,7 @@
 		/>
 		<div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
 			<svg
-				class="w-4 h-4 text-neutral-400"
+				class="w-4 h-4 text-foreground-subtle"
 				fill="none"
 				stroke="currentColor"
 				viewBox="0 0 24 24"
@@ -183,14 +183,14 @@
 		{#if open && filteredItems.length > 0}
 			<div
 				bind:this={dropdownElement}
-				class="absolute z-50 w-full bg-white border border-neutral-300 shadow-lg rounded max-h-80 overflow-y-auto mt-2"
+				class="absolute z-50 w-full bg-surface border border-border shadow-lg rounded max-h-80 overflow-y-auto mt-2"
 				transition:fly={{ y: -8, duration: 200, easing: cubicOut }}
 			>
 				{#each filteredItems as item, i}
 					<button
 						type="button"
-						class="w-full px-4 py-3 text-left cursor-pointer hover:bg-neutral-50 transition-colors border-b border-neutral-100 last:border-b-0"
-						class:bg-neutral-50={i === highlightedIndex}
+						class="w-full px-4 py-3 text-left cursor-pointer hover:bg-surface-elevated transition-colors border-b border-border-subtle last:border-b-0"
+						class:bg-surface-elevated={i === highlightedIndex}
 						onmousedown={(e) => {
 							e.preventDefault();
 							selectItem(item);
@@ -202,7 +202,7 @@
 						{#if itemSnippet}
 							{@render itemSnippet(item)}
 						{:else}
-							<span class="text-neutral-900">
+							<span class="text-foreground">
 								{item[displayKey]}
 							</span>
 						{/if}
@@ -212,10 +212,10 @@
 		{:else if open && filteredItems.length === 0}
 			<div
 				bind:this={dropdownElement}
-				class="absolute z-50 w-full bg-white border border-neutral-300 shadow-lg rounded mt-2"
+				class="absolute z-50 w-full bg-surface border border-border shadow-lg rounded mt-2"
 				transition:fly={{ y: -8, duration: 200, easing: cubicOut }}
 			>
-				<div class="p-4 text-sm text-neutral-500 text-center">
+				<div class="p-4 text-sm text-foreground-subtle text-center">
 					No results found
 				</div>
 			</div>

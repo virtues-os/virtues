@@ -1,26 +1,4 @@
 services:
-  # PostgreSQL with PostGIS and pgvector extensions
-  postgres:
-    image: joshuasundance/postgis_pgvector
-    container_name: virtues-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-      POSTGRES_DB: ${DB_NAME:-virtues}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-schemas.sh:/docker-entrypoint-initdb.d/01-init-schemas.sh
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - virtues-network
-
   # MinIO object storage
   minio:
     image: minio/minio:latest
@@ -51,7 +29,7 @@ services:
     container_name: virtues-core
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-virtues}
+      DATABASE_URL: sqlite:/data/virtues.db
       VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
       RUST_LOG: info,virtues=debug
       # OAuth endpoints
@@ -60,7 +38,6 @@ services:
       NOTION_CLIENT_ID: ${NOTION_CLIENT_ID}
       NOTION_CLIENT_SECRET: ${NOTION_CLIENT_SECRET}
       # API Keys
-      ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
       EXA_API_KEY: ${EXA_API_KEY}
       # Usage limits
@@ -73,13 +50,13 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
       minio:
         condition: service_healthy
     networks:
       - virtues-network
     volumes:
+      # SQLite database storage
+      - sqlite_data:/data
       # Mount for hot reload during development (optional)
       - ./core:/app
       - cargo_cache:/usr/local/cargo/registry
@@ -94,14 +71,11 @@ services:
     container_name: virtues-web
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-virtues}
       ELT_API_URL: http://core:8000
       PUBLIC_ELT_API_URL: http://localhost:8000
     ports:
       - "5173:5173"
     depends_on:
-      postgres:
-        condition: service_healthy
       core:
         condition: service_started
     networks:
@@ -114,7 +88,7 @@ services:
     command: pnpm dev --host 0.0.0.0
 
 volumes:
-  postgres_data:
+  sqlite_data:
   minio_data:
   cargo_cache:
   target_cache:

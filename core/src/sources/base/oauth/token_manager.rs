@@ -6,7 +6,7 @@
 use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
 use serde::Deserialize;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use uuid::Uuid;
 
 use super::encryption::TokenEncryptor;
@@ -48,7 +48,7 @@ impl Default for OAuthProxyConfig {
 
 /// Centralized token manager for all OAuth sources
 pub struct TokenManager {
-    db: PgPool,
+    db: SqlitePool,
     client: Client,
     proxy_config: OAuthProxyConfig,
     encryptor: TokenEncryptor,
@@ -62,7 +62,7 @@ impl TokenManager {
     ///
     /// # Errors
     /// Returns error if encryption key is not set or invalid
-    pub fn new(db: PgPool) -> Result<Self> {
+    pub fn new(db: SqlitePool) -> Result<Self> {
         Self::with_config(db, OAuthProxyConfig::default())
     }
 
@@ -73,7 +73,7 @@ impl TokenManager {
     ///
     /// # Errors
     /// Returns error if encryption key is not set or invalid
-    pub fn with_config(db: PgPool, proxy_config: OAuthProxyConfig) -> Result<Self> {
+    pub fn with_config(db: SqlitePool, proxy_config: OAuthProxyConfig) -> Result<Self> {
         // Always require encryption - no insecure mode
         let encryptor = TokenEncryptor::from_env().map_err(|_| {
             Error::Configuration(
@@ -98,7 +98,7 @@ impl TokenManager {
     /// # Warning
     /// This stores tokens in plaintext (base64 encoded). NEVER use in production!
     #[cfg(test)]
-    pub fn new_insecure(db: PgPool) -> Self {
+    pub fn new_insecure(db: SqlitePool) -> Self {
         tracing::warn!("Creating TokenManager in INSECURE mode for tests - tokens in plaintext");
 
         Self {
@@ -140,7 +140,7 @@ impl TokenManager {
                 access_token,
                 refresh_token,
                 token_expires_at
-            FROM source_connections
+            FROM data_source_connections
             WHERE id = $1 AND is_active = true
             "#,
         )
@@ -248,12 +248,12 @@ impl TokenManager {
         // Update tokens in database
         sqlx::query(
             r#"
-            UPDATE source_connections
+            UPDATE data_source_connections
             SET
                 access_token = $1,
                 refresh_token = COALESCE($2, refresh_token),
                 token_expires_at = $3,
-                updated_at = NOW()
+                updated_at = datetime('now')
             WHERE id = $4
             "#,
         )
@@ -292,25 +292,27 @@ impl TokenManager {
             None
         };
 
-        let source_id: Uuid = sqlx::query_scalar(
+        let new_id = Uuid::new_v4().to_string();
+        let source_id_str: String = sqlx::query_scalar(
             r#"
-            INSERT INTO source_connections (
-                source, name, access_token, refresh_token, token_expires_at, is_active, is_internal
+            INSERT INTO data_source_connections (
+                id, source, name, access_token, refresh_token, token_expires_at, is_active, is_internal
             ) VALUES (
-                $1, $2, $3, $4, $5, true, false
+                $1, $2, $3, $4, $5, $6, true, false
             )
             ON CONFLICT (name)
             DO UPDATE SET
                 access_token = EXCLUDED.access_token,
-                refresh_token = COALESCE(EXCLUDED.refresh_token, source_connections.refresh_token),
+                refresh_token = COALESCE(EXCLUDED.refresh_token, data_source_connections.refresh_token),
                 token_expires_at = EXCLUDED.token_expires_at,
                 is_active = true,
                 error_message = NULL,
                 error_at = NULL,
-                updated_at = NOW()
+                updated_at = datetime('now')
             RETURNING id
             "#,
         )
+        .bind(&new_id)
         .bind(source)
         .bind(source_name)
         .bind(access_token_to_store)
@@ -319,6 +321,9 @@ impl TokenManager {
         .fetch_one(&self.db)
         .await?;
 
+        let source_id = Uuid::parse_str(&source_id_str)
+            .map_err(|e| crate::error::Error::Database(format!("Invalid source ID: {e}")))?;
+
         Ok(source_id)
     }
 
@@ -326,11 +331,11 @@ impl TokenManager {
     pub async fn mark_auth_error(&self, source_id: Uuid, error_message: &str) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE source_connections
+            UPDATE data_source_connections
             SET
                 error_message = $1,
-                error_at = NOW(),
-                updated_at = NOW()
+                error_at = datetime('now'),
+                updated_at = datetime('now')
             WHERE id = $2
             "#,
         )
@@ -346,11 +351,11 @@ impl TokenManager {
     pub async fn clear_auth_error(&self, source_id: Uuid) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE source_connections
+            UPDATE data_source_connections
             SET
                 error_message = NULL,
                 error_at = NULL,
-                updated_at = NOW()
+                updated_at = datetime('now')
             WHERE id = $1
             "#,
         )
@@ -368,7 +373,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_needs_refresh() {
-        let pool = PgPool::connect_lazy("postgres://test:test@localhost/test").unwrap();
+        let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let manager = TokenManager::new_insecure(pool);
 
         // Token expiring in 1 minute - should refresh

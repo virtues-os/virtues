@@ -159,7 +159,8 @@ pub trait TransformRegistration: Send + Sync {
 inventory::collect!(&'static dyn TransformRegistration);
 
 /// Get all registered transforms
-pub fn registered_transforms() -> impl Iterator<Item = &'static &'static dyn TransformRegistration> {
+pub fn registered_transforms() -> impl Iterator<Item = &'static &'static dyn TransformRegistration>
+{
     inventory::iter::<&'static dyn TransformRegistration>()
 }
 
@@ -170,7 +171,8 @@ pub fn find_transform(
     context: &TransformContext,
 ) -> Result<Box<dyn OntologyTransform>> {
     for registration in registered_transforms() {
-        if registration.source_table() == source_table && registration.target_table() == target_table
+        if registration.source_table() == source_table
+            && registration.target_table() == target_table
         {
             return registration.create(context);
         }

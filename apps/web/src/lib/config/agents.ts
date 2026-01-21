@@ -8,9 +8,8 @@
 
 /**
  * UI-safe agent metadata
- * 2-agent system:
+ * Single agent system:
  * - agent: Has all tools, handles queries requiring data/actions (general assistant)
- * Note: onboarding agent is not shown in UI - it's automatically selected based on axiology_complete flag
  */
 export const AGENT_UI_METADATA = [
 	{

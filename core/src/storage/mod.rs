@@ -119,7 +119,7 @@ impl Storage {
 
     /// Generate a presigned URL for temporary public access to an object
     ///
-    /// This is useful for allowing external services (like AssemblyAI) to access
+    /// This is useful for allowing external services to access
     /// files stored in S3/MinIO without giving them permanent credentials.
     ///
     /// # Arguments

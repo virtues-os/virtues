@@ -250,6 +250,18 @@ class BatchUploadCoordinator: ObservableObject {
             let audioProcessor = processor as! AudioStreamProcessor
             return await uploadWithProcessor(processor: audioProcessor, events: events, to: url)
 
+        case "ios_battery":
+            let batteryProcessor = processor as! BatteryStreamProcessor
+            return await uploadWithProcessor(processor: batteryProcessor, events: events, to: url)
+
+        case "ios_barometer":
+            let barometerProcessor = processor as! BarometerStreamProcessor
+            return await uploadWithProcessor(processor: barometerProcessor, events: events, to: url)
+
+        case "ios_contacts":
+            let contactsProcessor = processor as! ContactsStreamProcessor
+            return await uploadWithProcessor(processor: contactsProcessor, events: events, to: url)
+
         default:
             for event in events {
                 storageProvider.incrementRetry(id: event.id)
@@ -262,12 +274,14 @@ class BatchUploadCoordinator: ObservableObject {
     private func uploadWithProcessor<P: StreamDataProcessor>(processor: P, events: [UploadEvent], to url: URL) async -> Bool {
         do {
             var allItems: [P.DataType] = []
+            var decodedEvents: [UploadEvent] = []
 
             // Decode each event and collect all items
             for event in events {
                 do {
                     let items = try processor.decode(event.dataBlob)
                     allItems.append(contentsOf: items)
+                    decodedEvents.append(event)
                 } catch {
                     print("⚠️ Failed to decode event \(event.id): \(error)")
                     storageProvider.incrementRetry(id: event.id)
@@ -289,7 +303,7 @@ class BatchUploadCoordinator: ObservableObject {
             )
 
             // Mark all events as complete
-            for event in events {
+            for event in decodedEvents {
                 handleSuccessfulUpload(event: event, response: response)
             }
 

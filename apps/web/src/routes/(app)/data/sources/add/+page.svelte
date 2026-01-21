@@ -6,6 +6,7 @@
 	import { Button, Page, Badge, Input } from "$lib";
 	import TypedSelect from "$lib/components/TypedSelect.svelte";
 	import DevicePairing from "$lib/components/DevicePairing.svelte";
+	import ManualDeviceLink from "$lib/components/ManualDeviceLink.svelte";
 	import PlaidLink from "$lib/components/PlaidLink.svelte";
 	import { goto } from "$app/navigation";
 	import { onMount } from "svelte";
@@ -160,6 +161,12 @@
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to load streams";
 		}
+	}
+
+	// Handle completed manual pairing (skip stream selection)
+	async function handleDevicePairingComplete() {
+		toast.success("Device linked successfully! Default streams enabled.");
+		await goto("/data/sources");
 	}
 
 	// Handle device pairing cancel
@@ -421,12 +428,22 @@
 
 								{#if !devicePairingInfo && sourceName.trim()}
 									<div class="pt-6 border-t border-border">
-										<DevicePairing
-											deviceType={selectedSource.name}
-											deviceName={sourceName}
-											onSuccess={handleDevicePairingSuccess}
-											onCancel={handleDevicePairingCancel}
-										/>
+										{#if selectedSource.name === "ios"}
+											<ManualDeviceLink
+												deviceType={selectedSource.name}
+												deviceName={sourceName}
+												onSuccess={() => {}}
+												onComplete={handleDevicePairingComplete}
+												onCancel={handleDevicePairingCancel}
+											/>
+										{:else}
+											<DevicePairing
+												deviceType={selectedSource.name}
+												deviceName={sourceName}
+												onSuccess={handleDevicePairingSuccess}
+												onCancel={handleDevicePairingCancel}
+											/>
+										{/if}
 									</div>
 								{:else if devicePairingInfo}
 									<div class="pt-6 border-t border-border">

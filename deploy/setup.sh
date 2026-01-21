@@ -6,7 +6,6 @@
 # - SUBDOMAIN (required)
 # - TIER (required: 'starter' or 'pro')
 # - OWNER_EMAIL (required)
-# - DB_PASSWORD (required)
 # - VIRTUES_ENCRYPTION_KEY (required)
 # - AUTH_SECRET (optional, generated if not provided)
 # - RESEND_API_KEY (required)
@@ -76,7 +75,7 @@ if ! [[ "${OWNER_EMAIL:-}" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]
 fi
 
 # Validate required secrets exist (don't log their values)
-required_vars=("DB_PASSWORD" "VIRTUES_ENCRYPTION_KEY" "RESEND_API_KEY" "GHCR_REPO" "S3_ENDPOINT" "S3_BUCKET" "S3_ACCESS_KEY" "S3_SECRET_KEY")
+required_vars=("VIRTUES_ENCRYPTION_KEY" "RESEND_API_KEY" "GHCR_REPO" "S3_ENDPOINT" "S3_BUCKET" "S3_ACCESS_KEY" "S3_SECRET_KEY")
 for var in "${required_vars[@]}"; do
     if [ -z "${!var:-}" ]; then
         error_exit "Required environment variable $var is not set"
@@ -120,15 +119,155 @@ apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 apt-get update -qq
-apt-get install -y -qq caddy awscli
+apt-get install -y -qq caddy awscli dnsutils sqlite3
 
 # ============================================================================
 # Directory Setup
 # ============================================================================
 
 mkdir -p /opt/virtues
+mkdir -p /opt/virtues/data
 mkdir -p /opt/backups
 chmod 700 /opt/virtues  # Restrict access to .env
+
+# ============================================================================
+# Code Interpreter Sandbox Setup (nsjail + Python)
+# ============================================================================
+
+log "Setting up code interpreter sandbox..."
+
+# Install nsjail
+apt-get install -y -qq nsjail
+
+# Create sandbox directories
+mkdir -p /opt/sandbox/{python,workspaces}
+
+# Install Python 3.12 if not present
+if ! command -v python3.12 &> /dev/null; then
+    log "Installing Python 3.12..."
+    apt-get install -y -qq python3.12 python3.12-venv python3.12-dev
+fi
+
+# Create Python virtual environment with pre-installed packages
+log "Creating Python sandbox environment..."
+python3.12 -m venv /opt/sandbox/python
+/opt/sandbox/python/bin/pip install --upgrade pip --quiet
+
+log "Installing Python packages for code interpreter..."
+/opt/sandbox/python/bin/pip install --quiet \
+    numpy pandas scipy scikit-learn statsmodels \
+    matplotlib seaborn plotly \
+    yfinance pandas-ta fredapi alpha-vantage bt empyrical pyfolio-reloaded \
+    requests httpx beautifulsoup4 \
+    sympy \
+    pillow openpyxl xlsxwriter \
+    python-dateutil pytz tqdm
+
+# Make Python env read-only for security
+chmod -R 555 /opt/sandbox/python
+
+# Workspaces dir for temporary code execution
+chown -R root:root /opt/sandbox/workspaces
+chmod 755 /opt/sandbox/workspaces
+
+# Copy nsjail configuration
+cat > /opt/sandbox/nsjail.cfg << 'NSJAIL'
+name: "python-sandbox"
+description: "Sandbox for AI code execution"
+
+mode: ONCE
+time_limit: 60
+max_cpus: 1
+
+rlimit_as_type: HARD
+rlimit_as: 512
+rlimit_cpu_type: HARD
+rlimit_cpu: 60
+rlimit_fsize_type: HARD
+rlimit_fsize: 10
+rlimit_nofile_type: HARD
+rlimit_nofile: 64
+
+clone_newnet: false
+clone_newuser: true
+clone_newns: true
+clone_newpid: true
+clone_newipc: true
+clone_newuts: true
+clone_newcgroup: true
+
+uidmap {
+    inside_id: "1000"
+    outside_id: "1000"
+    count: 1
+}
+
+gidmap {
+    inside_id: "1000"
+    outside_id: "1000"
+    count: 1
+}
+
+mount {
+    src: "/opt/sandbox/python"
+    dst: "/python"
+    is_bind: true
+    rw: false
+}
+
+mount {
+    dst: "/tmp"
+    fstype: "tmpfs"
+    options: "size=50M,mode=1777"
+}
+
+mount {
+    src: "/dev/null"
+    dst: "/dev/null"
+    is_bind: true
+    rw: true
+}
+
+mount {
+    src: "/dev/urandom"
+    dst: "/dev/urandom"
+    is_bind: true
+    rw: false
+}
+
+mount {
+    dst: "/proc"
+    fstype: "proc"
+    rw: false
+}
+
+mount {
+    src: "/etc/resolv.conf"
+    dst: "/etc/resolv.conf"
+    is_bind: true
+    rw: false
+}
+
+mount {
+    src: "/etc/ssl/certs"
+    dst: "/etc/ssl/certs"
+    is_bind: true
+    rw: false
+}
+
+mount {
+    src: "/usr/share/ca-certificates"
+    dst: "/usr/share/ca-certificates"
+    is_bind: true
+    rw: false
+}
+
+keep_caps: false
+disable_no_new_privs: false
+log_level: WARNING
+NSJAIL
+
+log "Code interpreter sandbox setup complete"
 
 # ============================================================================
 # Generate Secrets (if not provided)
@@ -162,29 +301,11 @@ chmod 600 /opt/virtues/.env
 log "Creating docker-compose.yml..."
 cat > /opt/virtues/docker-compose.yml << 'COMPOSE'
 services:
-  postgres:
-    image: ghcr.io/virtues-os/virtues-postgres:latest
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: virtues
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   core:
     image: ${GHCR_REPO}/virtues-core:${TAG:-latest}
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/virtues
+      DATABASE_URL: sqlite:/data/virtues.db
       VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
       STREAM_ENCRYPTION_MASTER_KEY: ${STREAM_ENCRYPTION_MASTER_KEY}
       SUBDOMAIN: ${SUBDOMAIN}
@@ -196,6 +317,8 @@ services:
       GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      - sqlite_data:/data
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
       interval: 30s
@@ -209,7 +332,6 @@ services:
       - core
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@postgres:5432/virtues
       RUST_API_URL: http://core:8000
       ELT_API_URL: http://core:8000
       AUTH_SECRET: ${AUTH_SECRET}
@@ -225,7 +347,7 @@ services:
       - "127.0.0.1:3000:3000"
 
 volumes:
-  postgres_data:
+  sqlite_data:
 COMPOSE
 
 # ============================================================================
@@ -342,13 +464,28 @@ if ! docker compose exec -T core virtues migrate; then
 fi
 log "Migrations completed successfully"
 
-# Verify migrations
+# Verify migrations by checking if database file exists and has tables
 log "Verifying migrations..."
-TABLES=$(docker compose exec -T postgres psql -U postgres -d virtues -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'app'")
-if [ "$TABLES" -lt 5 ]; then
-    error_exit "Migration verification failed: expected at least 5 tables in app schema, found $TABLES"
+if docker compose exec -T core test -f /data/virtues.db; then
+    log "Database file exists"
+else
+    error_exit "Migration verification failed: database file not found"
 fi
-log "Migration verification passed ($TABLES tables in app schema)"
+log "Migration verification passed"
+
+# ============================================================================
+# Validate DNS
+# ============================================================================
+
+log "Validating DNS for ${SUBDOMAIN}.virtues.com..."
+EXPECTED_IP=$(curl -sf https://api.ipify.org || curl -sf https://ifconfig.me)
+RESOLVED_IP=$(dig +short "${SUBDOMAIN}.virtues.com" @8.8.8.8 | head -1)
+
+if [ -n "$EXPECTED_IP" ] && [ "$RESOLVED_IP" != "$EXPECTED_IP" ]; then
+    log "WARNING: DNS not ready (expected $EXPECTED_IP, got '$RESOLVED_IP')"
+    log "Waiting 30s for DNS propagation..."
+    sleep 30
+fi
 
 # ============================================================================
 # Start Caddy
@@ -377,19 +514,21 @@ source /opt/virtues/.env
 set +a
 
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-LOCAL_FILE="/opt/backups/virtues-${TIMESTAMP}.sql.gz"
-S3_KEY="tenants/${SUBDOMAIN}/backups/virtues-${TIMESTAMP}.sql.gz"
+LOCAL_FILE="/opt/backups/virtues-${TIMESTAMP}.db"
+S3_KEY="tenants/${SUBDOMAIN}/backups/virtues-${TIMESTAMP}.db.gz"
 LOG="/var/log/virtues-backup.log"
 
 log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 
-# Create local backup
+# Create local backup using SQLite backup command
 log "Creating backup..."
-docker compose exec -T postgres pg_dump -U postgres virtues | gzip > "$LOCAL_FILE"
+docker compose exec -T core sqlite3 /data/virtues.db ".backup /tmp/backup.db"
+docker compose cp core:/tmp/backup.db "$LOCAL_FILE"
+gzip "$LOCAL_FILE"
 
 # Upload to S3
 log "Uploading to S3: ${S3_KEY}"
-if aws s3 cp "$LOCAL_FILE" "s3://${S3_BUCKET}/${S3_KEY}" \
+if aws s3 cp "${LOCAL_FILE}.gz" "s3://${S3_BUCKET}/${S3_KEY}" \
     --endpoint-url "${S3_ENDPOINT}" 2>&1 >> "$LOG"; then
     log "S3 upload successful"
 else
@@ -397,7 +536,7 @@ else
 fi
 
 # Keep only 1 day locally (S3 has 7 days for disaster recovery)
-find /opt/backups -name "virtues-*.sql.gz" -mtime +1 -delete
+find /opt/backups -name "virtues-*.db.gz" -mtime +1 -delete
 
 # Keep only 7 days in S3
 log "Cleaning up old S3 backups..."
@@ -406,7 +545,7 @@ aws s3 ls "s3://${S3_BUCKET}/tenants/${SUBDOMAIN}/backups/" \
     --endpoint-url "${S3_ENDPOINT}" 2>/dev/null | \
     while read -r line; do
         FILE=$(echo "$line" | awk '{print $4}')
-        # Extract date from filename: virtues-YYYYMMDD-HHMMSS.sql.gz
+        # Extract date from filename: virtues-YYYYMMDD-HHMMSS.db.gz
         FILE_DATE=$(echo "$FILE" | sed -n 's/virtues-\([0-9]\{8\}\).*/\1/p')
         if [[ -n "$FILE_DATE" && "$FILE_DATE" < "$CUTOFF_DATE" ]]; then
             log "Deleting old backup: $FILE"
@@ -415,118 +554,21 @@ aws s3 ls "s3://${S3_BUCKET}/tenants/${SUBDOMAIN}/backups/" \
         fi
     done
 
-log "Backup completed: $LOCAL_FILE"
+log "Backup completed: ${LOCAL_FILE}.gz"
 BACKUP
 chmod +x /etc/cron.daily/virtues-backup
 
-# Hourly session cleanup (runs via web container)
+# Hourly session cleanup (runs via core container with SQLite)
 cat > /etc/cron.hourly/virtues-cleanup << 'CLEANUP'
 #!/bin/bash
 cd /opt/virtues
-# Cleanup expired sessions and tokens directly in postgres
-docker compose exec -T postgres psql -U postgres -d virtues -c "
-    DELETE FROM app.auth_session WHERE expires < NOW();
-    DELETE FROM app.auth_verification_token WHERE expires < NOW();
+# Cleanup expired sessions and tokens directly in SQLite
+docker compose exec -T core sqlite3 /data/virtues.db "
+    DELETE FROM app_auth_session WHERE expires < datetime('now');
+    DELETE FROM app_auth_verification_token WHERE expires < datetime('now');
 " >> /var/log/virtues-cleanup.log 2>&1
 CLEANUP
 chmod +x /etc/cron.hourly/virtues-cleanup
-
-# ============================================================================
-# Setup Automatic Updates (systemd timer)
-# ============================================================================
-
-log "Setting up automatic update checker..."
-
-# Create the update check script
-cat > /opt/virtues/update-check.sh << 'UPDATECHECK'
-#!/bin/bash
-set -euo pipefail
-LOG="/var/log/virtues-update.log"
-
-log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
-
-cd /opt/virtues
-
-# Load environment
-set -a
-source /opt/virtues/.env
-set +a
-
-log "Checking for updates..."
-
-# Pull images quietly first to check if there are updates
-OLD_CORE=$(docker compose images core --quiet 2>/dev/null || echo "")
-OLD_WEB=$(docker compose images web --quiet 2>/dev/null || echo "")
-
-docker compose pull --quiet 2>/dev/null || true
-
-NEW_CORE=$(docker compose images core --quiet 2>/dev/null || echo "")
-NEW_WEB=$(docker compose images web --quiet 2>/dev/null || echo "")
-
-# Check if any images changed
-if [ "$OLD_CORE" != "$NEW_CORE" ] || [ "$OLD_WEB" != "$NEW_WEB" ]; then
-    log "New images found, updating..."
-
-    # Stop services gracefully
-    docker compose stop web core
-
-    # Start with new images
-    docker compose up -d
-
-    # Wait for core to be healthy
-    sleep 15
-
-    # Run migrations
-    if docker compose exec -T core virtues migrate 2>&1 >> "$LOG"; then
-        log "Update completed successfully"
-    else
-        log "ERROR: Migration failed, but services are running"
-    fi
-
-    # Cleanup old images
-    docker image prune -f >> "$LOG" 2>&1 || true
-else
-    log "No updates available"
-fi
-UPDATECHECK
-chmod +x /opt/virtues/update-check.sh
-
-# Create systemd service for updates
-cat > /etc/systemd/system/virtues-update.service << 'UPDATESERVICE'
-[Unit]
-Description=Virtues Update Check
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/opt/virtues/update-check.sh
-WorkingDirectory=/opt/virtues
-StandardOutput=append:/var/log/virtues-update.log
-StandardError=append:/var/log/virtues-update.log
-UPDATESERVICE
-
-# Create systemd timer (default 8:00 UTC = 3 AM Central)
-# The hour is configurable via user settings and updated by the web app
-cat > /etc/systemd/system/virtues-update.timer << 'UPDATETIMER'
-[Unit]
-Description=Daily Virtues Update Check
-
-[Timer]
-OnCalendar=*-*-* 08:00:00
-Persistent=true
-RandomizedDelaySec=300
-
-[Install]
-WantedBy=timers.target
-UPDATETIMER
-
-# Enable and start the timer
-systemctl daemon-reload
-systemctl enable virtues-update.timer
-systemctl start virtues-update.timer
-
-log "Automatic updates configured (daily at 08:00 UTC)"
 
 # ============================================================================
 # Setup Log Rotation

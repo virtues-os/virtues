@@ -4,7 +4,7 @@ pub mod transform;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -13,8 +13,8 @@ use crate::{
     error::{Error, Result},
     sources::{
         base::{
-            validate_heart_rate, validate_percentage,
-            validate_positive, validate_timestamp_reasonable,
+            validate_heart_rate, validate_percentage, validate_positive,
+            validate_timestamp_reasonable,
         },
         push_stream::{IngestPayload, PushResult, PushStream},
     },
@@ -30,14 +30,17 @@ pub use transform::{
 ///
 /// Receives health data pushed from iOS devices via /ingest endpoint.
 pub struct IosHealthKitStream {
-    _db: PgPool,
+    _db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
 
 impl IosHealthKitStream {
     /// Create a new IosHealthKitStream
-    pub fn new(db: PgPool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
-        Self { _db: db, stream_writer }
+    pub fn new(db: SqlitePool, stream_writer: Arc<Mutex<StreamWriter>>) -> Self {
+        Self {
+            _db: db,
+            stream_writer,
+        }
     }
 }
 
@@ -74,7 +77,11 @@ impl PushStream for IosHealthKitStream {
             if let Some(hrv_val) = record.get("hrv").and_then(|v| v.as_f64()) {
                 validate_positive("HRV", hrv_val)?;
             }
-            if let Some(s) = record.get("steps").and_then(|v| v.as_i64()).map(|v| v as i32) {
+            if let Some(s) = record
+                .get("steps")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as i32)
+            {
                 if s < 0 {
                     return Err(Error::InvalidInput("Steps cannot be negative".into()));
                 }

@@ -304,7 +304,7 @@ async fn execute_notion_page_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data.knowledge_document",
+        "data_knowledge_document",
         &[
             "title",
             "content",

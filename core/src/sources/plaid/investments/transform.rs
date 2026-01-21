@@ -126,17 +126,11 @@ impl OntologyTransform for PlaidInvestmentTransform {
                     .and_then(|v| v.as_str())
                     .map(String::from);
 
-                let cost_basis = record
-                    .get("cost_basis")
-                    .and_then(|v| v.as_f64());
+                let cost_basis = record.get("cost_basis").and_then(|v| v.as_f64());
 
-                let institution_value = record
-                    .get("institution_value")
-                    .and_then(|v| v.as_f64());
+                let institution_value = record.get("institution_value").and_then(|v| v.as_f64());
 
-                let close_price = record
-                    .get("close_price")
-                    .and_then(|v| v.as_f64());
+                let close_price = record.get("close_price").and_then(|v| v.as_f64());
 
                 let currency_code = record
                     .get("iso_currency_code")
@@ -271,17 +265,14 @@ struct AssetRecord {
 }
 
 /// Execute batch insert for asset records
-async fn execute_asset_batch_insert(
-    db: &Database,
-    records: &[AssetRecord],
-) -> Result<usize> {
+async fn execute_asset_batch_insert(db: &Database, records: &[AssetRecord]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
     }
 
     // Build batch insert with ON CONFLICT for upsert behavior
     let query_str = Database::build_batch_insert_query(
-        "data.financial_asset",
+        "data_financial_asset",
         &[
             "account_id_external",
             "security_id_external",

@@ -11,6 +11,7 @@ export interface SidebarNavItemData {
 	pagespace?: string; // For route matching
 	onclick?: () => void;
 	statusIcon?: string; // Completion checkmark for onboarding
+	forceActive?: boolean; // Override active state
 }
 
 export interface SidebarSectionData {
