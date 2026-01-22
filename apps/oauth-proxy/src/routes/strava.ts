@@ -1,6 +1,7 @@
 import express, { Router, Request, Response } from 'express';
 import { oauthConfigs } from '../config/oauth-apps';
 import { createError } from '../middleware/error-handler';
+import { isValidReturnUrl } from '../utils/url-validator';
 
 const router: Router = express.Router();
 
@@ -227,28 +228,5 @@ router.post('/refresh', async (req: Request, res: Response) => {
     }
   }
 });
-
-// Validate return URL to prevent open redirect attacks
-function isValidReturnUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    
-    // Allow localhost for development
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-      return true;
-    }
-    
-    // Allow specific domains (add your domain patterns here)
-    const allowedPatterns = [
-      /^.*\.virtues\.com$/,
-      /^.*\.local$/,
-      /^.*\.localhost$/
-    ];
-    
-    return allowedPatterns.some(pattern => pattern.test(parsed.hostname));
-  } catch {
-    return false;
-  }
-}
 
 export { router as stravaRouter };
