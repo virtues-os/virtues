@@ -1,6 +1,7 @@
 import express, { Router, Request, Response } from 'express';
 import { oauthConfigs } from '../config/oauth-apps';
 import { createError } from '../middleware/error-handler';
+import { isValidReturnUrl } from '../utils/url-validator';
 
 // Type for Notion OAuth token response
 interface NotionTokenResponse {
@@ -207,43 +208,6 @@ router.post('/token', async (req: Request, res: Response) => {
     console.error('Error exchanging code for token:', error);
     res.status(500).json({ error: 'Failed to exchange code for token' });
   }
-});
-
-// Helper function to validate return URLs
-function isValidReturnUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    
-    // Allow localhost for development
-    if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-      return true;
-    }
-    
-    // Allow specific domains
-    const allowedPatterns = [
-      /^.*\.virtues\.com$/,
-      /^.*\.local$/,
-      /^.*\.localhost$/
-    ];
-    
-    return allowedPatterns.some(pattern => pattern.test(parsed.hostname));
-  } catch {
-    return false;
-  }
-}
-
-// Temporary debug endpoint - REMOVE IN PRODUCTION
-router.get('/debug-config', (req: Request, res: Response) => {
-  const config = oauthConfigs.notion;
-  res.json({
-    tokenUrl: config.tokenUrl,
-    redirectUri: config.redirectUri,
-    clientIdSet: !!config.clientId,
-    clientSecretSet: !!config.clientSecret,
-    clientIdLength: config.clientId?.length || 0,
-    clientIdPrefix: config.clientId?.substring(0, 8) + '...',
-    clientSecretLength: config.clientSecret?.length || 0
-  });
 });
 
 export default router;
