@@ -1,33 +1,37 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
-	import Page from '$lib/components/Page.svelte';
-	import ChatInput from '$lib/components/ChatInput.svelte';
-	import ContextWarningToast from '$lib/components/ContextWarningToast.svelte';
-	import GettingStarted from '$lib/components/GettingStarted.svelte';
+	import type { Tab } from "$lib/tabs/types";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import Page from "$lib/components/Page.svelte";
+	import ChatInput from "$lib/components/ChatInput.svelte";
+	import ContextWarningToast from "$lib/components/ContextWarningToast.svelte";
+	import GettingStarted from "$lib/components/GettingStarted.svelte";
 	import {
 		getSelectedModel,
 		getDefaultModel,
 		initializeSelectedModel,
-		getInitializationPromise
-	} from '$lib/stores/models.svelte';
-	import CitedMarkdown from '$lib/components/CitedMarkdown.svelte';
-	import { CitationPanel } from '$lib/components/citations';
-	import { buildCitationContextFromParts } from '$lib/citations';
-	import type { Citation } from '$lib/types/Citation';
-	import UserMessage from '$lib/components/UserMessage.svelte';
-	import ThinkingBlock from '$lib/components/ThinkingBlock.svelte';
-	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
-	import { chatSessions } from '$lib/stores/chatSessions.svelte';
-	import { Chat } from '@ai-sdk/svelte';
-	import { DefaultChatTransport } from 'ai';
+		getInitializationPromise,
+	} from "$lib/stores/models.svelte";
+	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import { CitationPanel } from "$lib/components/citations";
+	import { buildCitationContextFromParts } from "$lib/citations";
+	import type { Citation } from "$lib/types/Citation";
+	import UserMessage from "$lib/components/UserMessage.svelte";
+	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import { onMount, onDestroy } from "svelte";
+	import { goto } from "$app/navigation";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import type { Chat } from "@ai-sdk/svelte";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
+	// Capture initial conversationId from tab prop (intentionally captures initial value only)
+	// svelte-ignore state_referenced_locally
+	const initialConversationId = tab.conversationId;
+	
 	// UI state
-	let conversationId = $state(tab.conversationId || crypto.randomUUID());
+	let conversationId = $state(initialConversationId || crypto.randomUUID());
 	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
@@ -35,7 +39,10 @@
 	let loadedMessages = $state<any[]>([]);
 
 	// Track tab.conversationId to reset state when switching conversations
-	let previousTabConversationId = $state<string | undefined>(tab.conversationId);
+	// svelte-ignore state_referenced_locally
+	let previousTabConversationId = $state<string | undefined>(
+		initialConversationId,
+	);
 	let preferredName = $state<string | undefined>(undefined);
 
 	// AbortController for cancelling in-flight requests on tab switch
@@ -54,7 +61,9 @@
 	}>({});
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
-	let messageMetadata = $state<Map<string, { agentId?: string; provider?: string }>>(new Map());
+	let messageMetadata = $state<
+		Map<string, { agentId?: string; provider?: string }>
+	>(new Map());
 
 	// Citation panel state
 	let citationPanelOpen = $state(false);
@@ -77,7 +86,7 @@
 		percentage: number;
 		tokens: number;
 		window: number;
-		status: 'healthy' | 'warning' | 'critical';
+		status: "healthy" | "warning" | "critical";
 	}
 	let contextUsage = $state<ContextUsageState | undefined>(undefined);
 	let showContextWarning = $state(false);
@@ -92,19 +101,22 @@
 			if (!res.ok) return;
 
 			const data = await res.json();
-			const status: 'healthy' | 'warning' | 'critical' =
-				data.usage_percentage >= 85 ? 'critical' :
-				data.usage_percentage >= 70 ? 'warning' : 'healthy';
+			const status: "healthy" | "warning" | "critical" =
+				data.usage_percentage >= 85
+					? "critical"
+					: data.usage_percentage >= 70
+						? "warning"
+						: "healthy";
 
 			contextUsage = {
 				percentage: data.usage_percentage,
 				tokens: data.total_tokens,
 				window: data.context_window,
-				status
+				status,
 			};
 
 			// Show warning toast once when crossing 70%
-			if (status === 'warning' && !hasShownWarning) {
+			if (status === "warning" && !hasShownWarning) {
 				showContextWarning = true;
 				hasShownWarning = true;
 			}
@@ -115,8 +127,8 @@
 
 	// Handle context indicator click - open context tab in split view
 	function handleContextClick() {
-		const currentPane = windowTabs.findTabPane(tab.id);
-		windowTabs.openSessionContext(conversationId, currentPane);
+		const currentPane = workspaceStore.findTabPane(tab.id);
+		workspaceStore.openSessionContext(conversationId, currentPane);
 	}
 
 	// Handle compact from warning toast
@@ -125,9 +137,9 @@
 
 		try {
 			await fetch(`/api/sessions/${conversationId}/compact`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ force: true })
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ force: true }),
 			});
 			await refreshContextUsage();
 			showContextWarning = false;
@@ -141,7 +153,7 @@
 		if (msg.agentId || msg.provider) {
 			messageMetadata.set(msg.id, {
 				agentId: msg.agentId,
-				provider: msg.provider
+				provider: msg.provider,
 			});
 		}
 
@@ -149,16 +161,16 @@
 
 		if (msg.reasoning) {
 			parts.push({
-				type: 'reasoning' as const,
+				type: "reasoning" as const,
 				text: msg.reasoning,
-				state: 'done' as const
+				state: "done" as const,
 			});
 		}
 
 		if (msg.content) {
 			parts.push({
-				type: 'text' as const,
-				text: msg.content
+				type: "text" as const,
+				text: msg.content,
 			});
 		}
 
@@ -166,11 +178,13 @@
 			for (const toolCall of msg.tool_calls) {
 				parts.push({
 					type: `tool-${toolCall.tool_name}` as const,
-					toolCallId: toolCall.tool_call_id || `${msg.id}_${toolCall.tool_name}_${Date.now()}`,
+					toolCallId:
+						toolCall.tool_call_id ||
+						`${msg.id}_${toolCall.tool_name}_${Date.now()}`,
 					toolName: toolCall.tool_name,
 					input: toolCall.arguments,
-					state: 'output-available' as const,
-					output: toolCall.result
+					state: "output-available" as const,
+					output: toolCall.result,
 				});
 			}
 		}
@@ -191,36 +205,34 @@
 		});
 	}
 
-	// Getter functions to ensure Chat transport always uses current values
-	// (closures capture initial values, so we need indirection)
-	function getCurrentModel() {
-		// Use selected model, or fall back to database default from store
-		return selectedModelValue?.id || getDefaultModel()?.id || '';
-	}
-	function getCurrentConversationId() {
-		return conversationId;
+	// Chat instance - fetched from shared store to survive remounts
+	let chat = $state<Chat>(null!);
+	let currentChatConversationId = $state<string | null>(null);
+
+	// Getter for current model - used by Chat transport
+	function getCurrentModel(): string {
+		return selectedModelValue?.id || getDefaultModel()?.id || "";
 	}
 
-	// Initialize Chat instance
-	const chat = new Chat({
-		id: conversationId,
-		transport: new DefaultChatTransport({
-			api: '/api/chat',
-			prepareSendMessagesRequest: ({ id, messages }) => {
-				return {
-					body: {
-						sessionId: getCurrentConversationId(),
-						model: getCurrentModel(),
-						agentId: 'auto',
-						messages
-					}
-				};
+	// Get or create chat instance for the current conversationId
+	function ensureChatInstance() {
+		if (currentChatConversationId !== conversationId) {
+			// Release old instance if we had one
+			if (currentChatConversationId) {
+				chatInstances.release(currentChatConversationId);
 			}
-		}),
-		messages: [],
-		onError: (error) => {
-			console.error('[Chat] Error occurred:', error);
+			// Get or create new instance with model getter
+			chat = chatInstances.getOrCreate({
+				conversationId,
+				getModel: getCurrentModel,
+			});
+			currentChatConversationId = conversationId;
 		}
+	}
+
+	// Initialize chat on first render
+	$effect(() => {
+		ensureChatInstance();
 	});
 
 	// Watch for tab.conversationId changes to reset state when switching conversations
@@ -237,7 +249,8 @@
 			previousTabConversationId = currentTabConversationId;
 
 			// Generate new conversationId for new chats, or use the tab's conversationId
-			const newConversationId = currentTabConversationId || crypto.randomUUID();
+			const newConversationId =
+				currentTabConversationId || crypto.randomUUID();
 			conversationId = newConversationId;
 
 			// Reset chat state
@@ -255,29 +268,45 @@
 				isLoading = true;
 				(async () => {
 					try {
-						const response = await fetch(`/api/sessions/${currentTabConversationId}`, { signal });
+						const response = await fetch(
+							`/api/sessions/${currentTabConversationId}`,
+							{ signal },
+						);
 						if (signal.aborted) return; // Check if we were aborted
 						if (response.ok) {
 							const data = await response.json();
 							if (signal.aborted) return; // Check again after parsing
 							loadedMessages = data.messages || [];
-							chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
+							chat.messages = deduplicateMessages(
+								loadedMessages,
+							).map((msg: any) => ({
 								id: msg.id,
-								role: msg.role as 'user' | 'assistant',
-								parts: convertMessageToParts(msg)
+								role: msg.role as "user" | "assistant",
+								parts: convertMessageToParts(msg),
 							}));
 							if (data.conversation?.model) {
-								initializeSelectedModel(data.conversation.model);
+								initializeSelectedModel(
+									data.conversation.model,
+								);
 							}
 							await refreshContextUsage();
 						}
 					} catch (error) {
 						// Ignore abort errors - they're expected when switching tabs
-						if (error instanceof Error && error.name === 'AbortError') return;
-						console.error('[ChatView] Error loading conversation on tab change:', error);
+						if (
+							error instanceof Error &&
+							error.name === "AbortError"
+						)
+							return;
+						console.error(
+							"[ChatView] Error loading conversation on tab change:",
+							error,
+						);
 					} finally {
 						if (!signal.aborted) {
 							isLoading = false;
+							// Scroll to bottom after loading existing chat
+							setTimeout(() => scrollToBottom("instant"), 10);
 						}
 					}
 				})();
@@ -294,62 +323,71 @@
 			// Wait for models to load
 			await getInitializationPromise();
 
-		// Load assistant profile
-		try {
-			const profileResponse = await fetch('/api/assistant-profile');
-			if (profileResponse.ok) {
-				const profile = await profileResponse.json();
-				if (profile.ui_preferences) {
-					uiPreferences = profile.ui_preferences;
-				}
-			}
-		} catch (error) {
-			console.error('Failed to load assistant profile:', error);
-		}
-
-		// Load preferred name from profile
-		try {
-			const response = await fetch('/api/profile');
-			if (response.ok) {
-				const profile = await response.json();
-				preferredName = profile.preferred_name;
-			}
-		} catch (error) {
-			// Non-critical, continue without preferred name
-		}
-
-		// Load conversation if it exists
-		if (tab.conversationId) {
+			// Load assistant profile
 			try {
-				const response = await fetch(`/api/sessions/${tab.conversationId}`);
-				if (response.ok) {
-					const data = await response.json();
-					loadedMessages = data.messages || [];
-
-					// Update chat messages
-					chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
-						id: msg.id,
-						role: msg.role as 'user' | 'assistant',
-						parts: convertMessageToParts(msg)
-					}));
-
-					// Initialize model from conversation
-					if (data.conversation?.model) {
-						initializeSelectedModel(data.conversation.model);
+				const profileResponse = await fetch("/api/assistant-profile");
+				if (profileResponse.ok) {
+					const profile = await profileResponse.json();
+					if (profile.ui_preferences) {
+						uiPreferences = profile.ui_preferences;
 					}
-
-					// Load initial context usage
-					await refreshContextUsage();
 				}
 			} catch (error) {
-				console.error('[ChatView] Error loading conversation:', error);
+				console.error("Failed to load assistant profile:", error);
 			}
-		}
 
-		isLoading = false;
-		setTimeout(() => {
-			enableTransitions = true;
-		}, 50);
+			// Load preferred name from profile
+			try {
+				const response = await fetch("/api/profile");
+				if (response.ok) {
+					const profile = await response.json();
+					preferredName = profile.preferred_name;
+				}
+			} catch (error) {
+				// Non-critical, continue without preferred name
+			}
+
+			// Load conversation if it exists
+			if (tab.conversationId) {
+				try {
+					const response = await fetch(
+						`/api/sessions/${tab.conversationId}`,
+					);
+					if (response.ok) {
+						const data = await response.json();
+						loadedMessages = data.messages || [];
+
+						// Update chat messages
+						chat.messages = deduplicateMessages(loadedMessages).map(
+							(msg: any) => ({
+								id: msg.id,
+								role: msg.role as "user" | "assistant",
+								parts: convertMessageToParts(msg),
+							}),
+						);
+
+						// Initialize model from conversation
+						if (data.conversation?.model) {
+							initializeSelectedModel(data.conversation.model);
+						}
+
+						// Load initial context usage
+						await refreshContextUsage();
+					}
+				} catch (error) {
+					console.error(
+						"[ChatView] Error loading conversation:",
+						error,
+					);
+				}
+			}
+
+			isLoading = false;
+			setTimeout(() => {
+				// Scroll to bottom after initial load
+				scrollToBottom("instant");
+				enableTransitions = true;
+			}, 50);
 		})();
 
 		return () => {
@@ -359,10 +397,17 @@
 		};
 	});
 
+	// Release chat instance on destroy
+	onDestroy(() => {
+		if (currentChatConversationId) {
+			chatInstances.release(currentChatConversationId);
+		}
+	});
+
 	// Derive thinking state from chat status
 	const isThinking = $derived.by(() => {
 		const status = chat.status;
-		return status === 'submitted' || status === 'streaming';
+		return status === "submitted" || status === "streaming";
 	});
 
 	// Deduplicated messages for rendering
@@ -380,7 +425,7 @@
 	// Get the last assistant message
 	const lastAssistantMessage = $derived.by(() => {
 		for (let i = uniqueMessages.length - 1; i >= 0; i--) {
-			if (uniqueMessages[i].role === 'assistant') {
+			if (uniqueMessages[i].role === "assistant") {
 				return uniqueMessages[i];
 			}
 		}
@@ -398,9 +443,12 @@
 	const hasSubstantialTextContent = $derived.by(() => {
 		if (!lastAssistantMessage) return false;
 		const textParts = lastAssistantMessage.parts.filter(
-			(p: any) => p.type === 'text' && p.text
+			(p: any) => p.type === "text" && p.text,
 		);
-		const totalText = textParts.map((p: any) => p.text).join('').trim();
+		const totalText = textParts
+			.map((p: any) => p.text)
+			.join("")
+			.trim();
 		return totalText.length > 20;
 	});
 
@@ -409,7 +457,9 @@
 		if (isThinking && !thinkingIndicatorVisible) {
 			thinkingIndicatorVisible = true;
 			minTimeElapsed = false;
-			const timer = setTimeout(() => { minTimeElapsed = true; }, 500);
+			const timer = setTimeout(() => {
+				minTimeElapsed = true;
+			}, 500);
 			return () => clearTimeout(timer);
 		}
 	});
@@ -437,7 +487,7 @@
 	});
 
 	// Local input state
-	let input = $state('');
+	let input = $state("");
 	let inputFocused = $state(false);
 
 	// Title generation state
@@ -446,7 +496,9 @@
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// Model selection state - use bindable for ChatInput toolbar
-	let selectedModelValue = $state<import('$lib/config/models').ModelOption | undefined>(undefined);
+	let selectedModelValue = $state<
+		import("$lib/config/models").ModelOption | undefined
+	>(undefined);
 
 	// Sync selected model with store (only on initial load)
 	$effect(() => {
@@ -467,9 +519,12 @@
 	$effect(() => {
 		if (isThinking) {
 			thinkingTimeout = setTimeout(() => {
-				if (chat.status === 'error') {
+				if (chat.status === "error") {
 					chat.clearError();
-				} else if (chat.status === 'streaming' || chat.status === 'submitted') {
+				} else if (
+					chat.status === "streaming" ||
+					chat.status === "submitted"
+				) {
 					if (chat.clearError) {
 						chat.clearError();
 					}
@@ -495,11 +550,11 @@
 	function getTimeBasedGreeting(): string {
 		const hour = new Date().getHours();
 		if (hour >= 3 && hour < 12) {
-			return 'Good Morning';
+			return "Good Morning";
 		} else if (hour >= 12 && hour < 17) {
-			return 'Good Afternoon';
+			return "Good Afternoon";
 		} else {
-			return 'Good Evening';
+			return "Good Evening";
 		}
 	}
 
@@ -510,16 +565,17 @@
 		if (titleGenerated || chat.messages.length < 2) return;
 
 		try {
-			const response = await fetch('/api/sessions/title', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
+			const response = await fetch("/api/sessions/title", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					sessionId: conversationId,
 					messages: chat.messages.map((m) => ({
 						role: m.role,
-						content: m.parts.find((p) => p.type === 'text')?.text || ''
-					}))
-				})
+						content:
+							m.parts.find((p) => p.type === "text")?.text || "",
+					})),
+				}),
 			});
 
 			if (response.ok) {
@@ -527,7 +583,7 @@
 				titleGenerated = true;
 				// Update tab label with the new title
 				if (data.title) {
-					windowTabs.updateTab(tab.id, { label: data.title });
+					workspaceStore.updateTab(tab.id, { label: data.title });
 				}
 			}
 		} catch (error) {
@@ -538,11 +594,20 @@
 	// Getting Started handlers
 	function handleGettingStartedCreateSession(sessionId: string) {
 		// Open the new session in a tab and navigate to it
-		windowTabs.openTabFromRoute(`/?conversationId=${sessionId}`, {
+		workspaceStore.openTabFromRoute(`/?conversationId=${sessionId}`, {
 			forceNew: true,
-			label: 'Welcome to Virtues'
+			label: "Welcome to Virtues",
 		});
 		chatSessions.refresh();
+	}
+
+	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
+		if (scrollContainer) {
+			scrollContainer.scrollTo({
+				top: scrollContainer.scrollHeight,
+				behavior,
+			});
+		}
 	}
 
 	function handleGettingStartedFocusInput(placeholder?: string) {
@@ -556,11 +621,13 @@
 		const messageToSend = value.trim();
 		if (!messageToSend) return;
 
-		if (chat.status !== 'ready') {
+		if (chat.status !== "ready") {
 			return;
 		}
+		input = "";
 
-		input = '';
+		// Auto-scroll to bottom on submit
+		scrollToBottom("smooth");
 
 		try {
 			await chat.sendMessage({ text: messageToSend });
@@ -572,21 +639,24 @@
 					// Update previousTabConversationId first to prevent the tab-switch effect
 					// from treating this as a tab change and resetting state
 					previousTabConversationId = conversationId;
-					console.log('[ChatView] Updating tab with conversationId:', {
-						tabId: tab.id,
+					console.log(
+						"[ChatView] Updating tab with conversationId:",
+						{
+							tabId: tab.id,
+							conversationId,
+							newRoute: `/?conversationId=${conversationId}`,
+						},
+					);
+					workspaceStore.updateTab(tab.id, {
 						conversationId,
-						newRoute: `/?conversationId=${conversationId}`
-					});
-					windowTabs.updateTab(tab.id, {
-						conversationId,
-						route: `/?conversationId=${conversationId}`
+						route: `/?conversationId=${conversationId}`,
 					});
 				}
 				await chatSessions.refresh();
 			}
 
 			if (refreshDataTimeout) {
-				clearTimeout(refreshDataTimeout);
+				clearTimeout(refreshDataTimeout as any);
 			}
 			refreshDataTimeout = setTimeout(() => {
 				refreshSessionData();
@@ -595,8 +665,8 @@
 				refreshDataTimeout = null;
 			}, 2000);
 		} catch (error) {
-			console.error('[handleChatSubmit] Error:', error);
-			input = '';
+			console.error("[handleChatSubmit] Error:", error);
+			input = "";
 		}
 	}
 </script>
@@ -607,7 +677,6 @@
 	</div>
 {:else}
 	<Page scrollable={false} className="h-full p-0!">
-
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area">
@@ -620,52 +689,86 @@
 					>
 						<div class="messages-container">
 							{#each uniqueMessages as message, messageIndex (message.id)}
-								{@const isUserMessage = message.role === 'user'}
+								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage
-									? uniqueMessages.slice(0, messageIndex).filter((m) => m.role === 'user').length
+									? uniqueMessages
+											.slice(0, messageIndex)
+											.filter((m) => m.role === "user")
+											.length
 									: -1}
 								<div
 									class="flex justify-start"
-									id={isUserMessage ? `exchange-${exchangeIndex}` : undefined}
+									id={isUserMessage
+										? `exchange-${exchangeIndex}`
+										: undefined}
 								>
 									<div
 										class="message-wrapper"
 										data-role={message.role}
-										data-agent-id={messageMetadata.get(message.id)?.agentId || 'general'}
-										data-loading={message.role === 'assistant' &&
-											!message.parts.some((p) => p.type === 'text' && p.text)}
+										data-agent-id={messageMetadata.get(
+											message.id,
+										)?.agentId || "general"}
+										data-loading={message.role ===
+											"assistant" &&
+											!message.parts.some(
+												(p) =>
+													p.type === "text" && p.text,
+											)}
 									>
-										{#if message.role === 'assistant'}
-											{@const citationContext = buildCitationContextFromParts(message.parts)}
+										{#if message.role === "assistant"}
+											{@const citationContext =
+												buildCitationContextFromParts(
+													message.parts,
+												)}
 											{@const isLastMessage =
-												message.id === uniqueMessages[uniqueMessages.length - 1]?.id}
-											{@const isStreaming = chat.status === 'streaming' && isLastMessage}
-											{@const messageReasoningParts = message.parts.filter(
-												(p: any) => p.type === 'reasoning'
-											)}
-											{@const messageToolParts = message.parts.filter((p: any) =>
-												p.type.startsWith('tool-')
-											)}
-											{@const messageReasoning = messageReasoningParts
-												.map((p: any) => p.text || '')
-												.filter(Boolean)
-												.join('\n')}
+												message.id ===
+												uniqueMessages[
+													uniqueMessages.length - 1
+												]?.id}
+											{@const isStreaming =
+												chat.status === "streaming" &&
+												isLastMessage}
+											{@const messageReasoningParts =
+												message.parts.filter(
+													(p: any) =>
+														p.type === "reasoning",
+												)}
+											{@const messageToolParts =
+												message.parts.filter((p: any) =>
+													p.type.startsWith("tool-"),
+												)}
+											{@const messageReasoning =
+												messageReasoningParts
+													.map(
+														(p: any) =>
+															p.text || "",
+													)
+													.filter(Boolean)
+													.join("\n")}
 											{@const hasThinkingContent =
-												messageReasoning || messageToolParts.length > 0}
+												messageReasoning ||
+												messageToolParts.length > 0}
 
 											{#if hasThinkingContent}
 												<ThinkingBlock
-													isThinking={isStreaming && isLastMessage && chat.status === 'streaming'}
+													isThinking={isStreaming &&
+														isLastMessage &&
+														chat.status ===
+															"streaming"}
 													toolCalls={messageToolParts}
 													reasoningContent={messageReasoning}
 													{isStreaming}
-													duration={isLastMessage ? thinkingDuration : 0}
+													duration={isLastMessage
+														? thinkingDuration
+														: 0}
 												/>
 											{/if}
 
-											{#each message.parts as part, partIndex (part.type === 'text' ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
-												{#if part.type === 'text'}
-													<div class="text-base text-foreground assistant-response">
+											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
+												{#if part.type === "text"}
+													<div
+														class="text-base text-foreground assistant-response"
+													>
 														<CitedMarkdown
 															content={part.text}
 															{isStreaming}
@@ -673,12 +776,19 @@
 															onCitationClick={openCitationPanel}
 														/>
 													</div>
-												{:else if part.type.startsWith('tool-') && (part as any).state === 'output-error'}
-													<div class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg">
-														<span class="font-medium">Error:</span>
-														{(part as any).toolName} failed
+												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
+													<div
+														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
+													>
+														<span
+															class="font-medium"
+															>Error:</span
+														>
+														{(part as any).toolName}
+														failed
 														{#if (part as any).errorText}
-															- {(part as any).errorText}
+															- {(part as any)
+																.errorText}
 														{/if}
 													</div>
 												{/if}
@@ -686,9 +796,12 @@
 										{:else}
 											<UserMessage
 												text={message.parts
-													.filter((p) => p.type === 'text')
+													.filter(
+														(p) =>
+															p.type === "text",
+													)
 													.map((p) => p.text)
-													.join('')}
+													.join("")}
 											/>
 										{/if}
 									</div>
@@ -711,33 +824,54 @@
 
 							{#if chat.error}
 								{@const isRateLimitError =
-									chat.error.message?.includes('Rate limit exceeded') ||
-									chat.error.message?.includes('rate limit') ||
-									chat.error.message?.includes('429')}
+									chat.error.message?.includes(
+										"Rate limit exceeded",
+									) ||
+									chat.error.message?.includes(
+										"rate limit",
+									) ||
+									chat.error.message?.includes("429")}
 								<div class="flex justify-start">
-									<div class="error-container" class:rate-limit-error={isRateLimitError}>
+									<div
+										class="error-container"
+										class:rate-limit-error={isRateLimitError}
+									>
 										<div class="error-icon">
 											<iconify-icon
-												icon={isRateLimitError ? 'ri:time-line' : 'ri:error-warning-line'}
+												icon={isRateLimitError
+													? "ri:time-line"
+													: "ri:error-warning-line"}
 												width="20"
 											></iconify-icon>
 										</div>
 										<div class="error-content">
 											<div class="error-title">
-												{isRateLimitError ? 'Rate Limit Reached' : 'An error occurred'}
+												{isRateLimitError
+													? "Rate Limit Reached"
+													: "An error occurred"}
 											</div>
 											<div class="error-message">
 												{#if isRateLimitError}
-													You've reached your API usage limit. Please wait for the limit to reset
-													or check your usage dashboard for details.
+													You've reached your API
+													usage limit. Please wait for
+													the limit to reset or check
+													your usage dashboard for
+													details.
 												{:else}
-													{chat.error.message || 'Something went wrong. Please try again.'}
+													{chat.error.message ||
+														"Something went wrong. Please try again."}
 												{/if}
 											</div>
 											<div class="error-actions">
 												{#if isRateLimitError}
-													<a href="/usage" class="usage-link">
-														<iconify-icon icon="ri:bar-chart-line" width="16"></iconify-icon>
+													<a
+														href="/usage"
+														class="usage-link"
+													>
+														<iconify-icon
+															icon="ri:bar-chart-line"
+															width="16"
+														></iconify-icon>
 														View Usage Dashboard
 													</a>
 												{:else}
@@ -748,7 +882,10 @@
 															chat.regenerate();
 														}}
 													>
-														<iconify-icon icon="ri:refresh-line" width="16"></iconify-icon>
+														<iconify-icon
+															icon="ri:refresh-line"
+															width="16"
+														></iconify-icon>
 														Retry
 													</button>
 												{/if}
@@ -768,9 +905,17 @@
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
 					>
-						<div class="hero-section" class:visible={isEmpty} class:transitions-enabled={enableTransitions}>
-							<h1 class="hero-title shiny-title font-serif text-4xl text-navy mb-6">
-								{greeting}{preferredName ? `, ${preferredName}` : ''}
+						<div
+							class="hero-section"
+							class:visible={isEmpty}
+							class:transitions-enabled={enableTransitions}
+						>
+							<h1
+								class="hero-title shiny-title font-serif text-4xl text-navy mb-6"
+							>
+								{greeting}{preferredName
+									? `, ${preferredName}`
+									: ""}
 							</h1>
 						</div>
 
@@ -779,14 +924,14 @@
 							bind:focused={inputFocused}
 							bind:selectedModel={selectedModelValue}
 							disabled={false}
-							sendDisabled={chat.status !== 'ready'}
+							sendDisabled={chat.status !== "ready"}
 							maxWidth="max-w-3xl"
 							showToolbar={true}
 							conversationId={tab.conversationId}
 							{contextUsage}
 							onContextClick={handleContextClick}
 							on:submit={(e) => {
-								if (chat.status === 'ready') {
+								if (chat.status === "ready") {
 									handleChatSubmit(e.detail);
 								}
 							}}
@@ -804,7 +949,11 @@
 		</div>
 	</Page>
 
-	<CitationPanel citation={selectedCitation} open={citationPanelOpen} onClose={closeCitationPanel} />
+	<CitationPanel
+		citation={selectedCitation}
+		open={citationPanelOpen}
+		onClose={closeCitationPanel}
+	/>
 
 	<!-- Context Warning Toast -->
 	{#if showContextWarning && contextUsage}
@@ -812,7 +961,7 @@
 			<ContextWarningToast
 				usagePercentage={contextUsage.percentage}
 				oncompact={handleCompactNow}
-				ondismiss={() => showContextWarning = false}
+				ondismiss={() => (showContextWarning = false)}
 			/>
 		</div>
 	{/if}
@@ -867,6 +1016,8 @@
 		transition: opacity 0.2s ease-in-out;
 		position: relative;
 		z-index: 1;
+		/* Add padding to keep scrollbar away from resize handle */
+		padding-right: 8px;
 	}
 
 	.chat-layout.visible {
@@ -973,7 +1124,7 @@
 	}
 
 	/* User message card styling */
-	.message-wrapper[data-role='user'] {
+	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
 		border-radius: 8px;
 		padding: 10px 16px;

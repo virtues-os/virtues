@@ -10,6 +10,17 @@
 //! - **RegisteredStream**: A stream type that a source offers (e.g., "Calendar", "Gmail")
 //! - **StreamConnection**: A user's enabled stream with configuration (stored in `stream_connections` table)
 //!
+//! **Unified Registry:**
+//! This registry is the single source of truth for:
+//! - UI metadata (names, descriptions, icons, config schemas)
+//! - Transform logic (how stream data maps to ontology tables)
+//! - Stream creation logic (how to instantiate stream implementations)
+//!
+//! By unifying metadata and logic in one place, we eliminate:
+//! - Large match statements in StreamFactory
+//! - Parallel registries that can drift out of sync
+//! - Manual consistency maintenance
+//!
 //! Frontends and CLIs query this registry (via the catalog API) to discover:
 //! - What sources are available (Google, Notion, iOS, Mac, Virtues)
 //! - What streams each source provides (Calendar, Gmail, Pages, HealthKit, etc.)
@@ -18,154 +29,214 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use ts_rs::TS;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
-/// Authentication type required for a source
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
-#[ts(export, export_to = "../../apps/web/src/lib/types/")]
-#[serde(rename_all = "lowercase")]
-pub enum AuthType {
-    /// OAuth 2.0 authentication
-    OAuth2,
-    /// API key authentication
-    ApiKey,
-    /// Device-based (no external auth needed)
-    Device,
-    /// No authentication required
-    None,
+use crate::error::Result;
+use crate::jobs::TransformContext;
+use crate::sources::auth::SourceAuth;
+use crate::sources::base::OntologyTransform;
+use crate::sources::stream_type::StreamType;
+use crate::storage::{stream_writer::StreamWriter, Storage};
+
+use virtues_registry::sources::SourceDescriptor;
+use virtues_registry::streams::StreamDescriptor;
+
+// Re-export types from shared registry
+pub use virtues_registry::sources::{AuthType, OAuthConfig};
+
+/// Type alias for transform creator functions
+///
+/// A transform creator is a function that takes a TransformContext and returns
+/// a boxed OntologyTransform. This allows transforms to be created lazily with
+/// the necessary context (API keys, storage, etc.).
+pub type TransformCreator = fn(&TransformContext) -> Result<Box<dyn OntologyTransform>>;
+
+/// Type alias for stream creator functions
+///
+/// A stream creator is a function that takes a StreamFactoryContext and returns
+/// a StreamType (either Pull or Push). This allows streams to be created with
+/// all necessary dependencies.
+pub type StreamCreator = fn(&StreamFactoryContext) -> Result<StreamType>;
+
+/// Context passed to stream creator functions
+///
+/// This provides all the dependencies needed to create any type of stream.
+pub struct StreamFactoryContext {
+    /// Source ID (e.g., "source_google-calendar")
+    pub source_id: String,
+    /// Database connection pool
+    pub db: sqlx::SqlitePool,
+    /// Storage backend (S3, local, etc.)
+    pub storage: Arc<Storage>,
+    /// Stream writer for buffering data
+    pub stream_writer: Arc<Mutex<StreamWriter>>,
+    /// Authentication for this source
+    pub auth: SourceAuth,
+}
+
+/// A transform mapping from this stream to an ontology table
+#[derive(Clone)]
+pub struct StreamTransform {
+    /// Target ontology table (e.g., "calendar", "social_email")
+    pub target_table: &'static str,
+    
+    /// Function to create the transform instance
+    pub creator: TransformCreator,
 }
 
 /// A registered source type (e.g., "Google", "Notion")
 /// This defines what sources CAN be connected.
 /// For actual user connections, see api::SourceConnection.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/lib/types/")]
+#[derive(Debug, Clone, Serialize)]
 pub struct RegisteredSource {
-    /// Unique identifier (e.g., "google", "notion", "ios")
-    pub name: &'static str,
+    /// Metadata from shared registry
+    #[serde(flatten)]
+    pub descriptor: SourceDescriptor,
 
-    /// Human-readable display name
-    pub display_name: &'static str,
-
-    /// Description of what this source provides
-    pub description: &'static str,
-
-    /// Authentication type required
-    pub auth_type: AuthType,
-
-    /// Available streams for this source
+    /// Available streams for this source (with implementation)
     pub streams: Vec<RegisteredStream>,
-
-    /// OAuth-specific configuration (if applicable)
-    pub oauth_config: Option<OAuthConfig>,
-
-    /// Iconify icon name for UI display (e.g., "ri:google-fill")
-    pub icon: Option<&'static str>,
 }
 
-/// OAuth configuration details for a source
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/lib/types/")]
-pub struct OAuthConfig {
-    /// OAuth scopes required
-    pub scopes: Vec<&'static str>,
-
-    /// Authorization URL pattern
-    pub auth_url: &'static str,
-
-    /// Token URL pattern
-    pub token_url: &'static str,
+// Custom Deserialize implementation for RegisteredSource
+impl<'de> Deserialize<'de> for RegisteredSource {
+    fn deserialize<D>(_deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom("RegisteredSource cannot be deserialized - it must be constructed at compile time"))
+    }
 }
 
 /// A registered stream type (e.g., "Calendar", "Gmail")
 /// This defines what streams a source offers.
 /// For user stream state, see api::StreamConnection.
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/lib/types/")]
+///
+/// This struct unifies the shared metadata with core-specific implementation logic.
+#[derive(Clone)]
 pub struct RegisteredStream {
-    /// Stream identifier (e.g., "calendar", "gmail")
-    pub name: &'static str,
-
-    /// Human-readable display name
-    pub display_name: &'static str,
-
-    /// Description of what this stream provides
-    pub description: &'static str,
-
-    /// Database table name (e.g., "stream_google_calendar")
-    pub table_name: &'static str,
-
-    /// Target ontology tables this stream feeds into
-    /// e.g., ["praxis_calendar"] for Google Calendar
-    /// e.g., ["health_heart_rate", "health_sleep", "health_workout"] for HealthKit
-    pub target_ontologies: Vec<&'static str>,
+    /// Metadata from shared registry
+    pub descriptor: StreamDescriptor,
 
     /// JSON schema for configuration (serialized as JSON)
-    #[ts(type = "any")]
     pub config_schema: serde_json::Value,
 
     /// Example configuration
-    #[ts(type = "any")]
     pub config_example: serde_json::Value,
 
-    /// Whether this stream supports incremental sync
-    pub supports_incremental: bool,
+    /// Transforms that map this stream's data to ontology tables
+    /// 
+    /// This unifies the catalog metadata with transform logic - the stream
+    /// definition now includes how its data should be transformed.
+    /// Note: This field is skipped during serialization (handled by custom Serialize impl)
+    pub transforms: Vec<StreamTransform>,
 
-    /// Whether this stream supports full refresh
-    pub supports_full_refresh: bool,
+    /// Optional factory function to create the stream implementation
+    ///
+    /// This unifies the stream factory logic with the catalog - no more match
+    /// statements in StreamFactory. If None, the stream cannot be instantiated
+    /// dynamically (e.g., disabled or not yet implemented).
+    pub stream_creator: Option<StreamCreator>,
+}
 
-    /// Default cron schedule for this stream in 6-field format: sec min hour day month dow (e.g., "0 0 \*/6 * * *")
-    pub default_cron_schedule: Option<&'static str>,
+// Custom Debug implementation to skip function pointer fields
+impl std::fmt::Debug for RegisteredStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegisteredStream")
+            .field("descriptor", &self.descriptor)
+            .field("transforms_count", &self.transforms.len())
+            .field("has_stream_creator", &self.stream_creator.is_some())
+            .finish()
+    }
+}
+
+// Custom Serialize implementation that skips transforms
+impl Serialize for RegisteredStream {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("RegisteredStream", 3)?;
+        state.serialize_field("descriptor", &self.descriptor)?;
+        state.serialize_field("config_schema", &self.config_schema)?;
+        state.serialize_field("config_example", &self.config_example)?;
+        state.end()
+    }
+}
+
+// Custom Deserialize implementation that sets transforms to empty
+impl<'de> Deserialize<'de> for RegisteredStream {
+    fn deserialize<D>(_deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom("RegisteredStream cannot be deserialized - it must be constructed at compile time"))
+    }
 }
 
 impl RegisteredStream {
     /// Create a new stream descriptor builder
     pub fn new(name: &'static str) -> StreamBuilder {
+        // Find metadata in shared registry
+        let descriptor = virtues_registry::streams::registered_streams()
+            .into_iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("Stream '{}' not found in virtues-registry", name));
+
         StreamBuilder {
-            name,
-            display_name: name,
-            description: "",
-            table_name: "",
-            target_ontologies: vec![],
+            descriptor,
             config_schema: serde_json::json!({}),
             config_example: serde_json::json!({}),
-            supports_incremental: true,
-            supports_full_refresh: true,
-            default_cron_schedule: None,
+            transforms: vec![],
+            stream_creator: None,
         }
+    }
+
+    /// Find a transform for a specific target ontology table
+    pub fn get_transform(&self, target_table: &str) -> Option<&StreamTransform> {
+        self.transforms.iter().find(|t| t.target_table == target_table)
+    }
+
+    /// Create a transform instance for a specific target ontology table
+    pub fn create_transform(
+        &self,
+        target_table: &str,
+        context: &TransformContext,
+    ) -> Result<Box<dyn OntologyTransform>> {
+        let transform = self.get_transform(target_table).ok_or_else(|| {
+            crate::error::Error::InvalidInput(format!(
+                "No transform registered for {} -> {}",
+                self.descriptor.table_name, target_table
+            ))
+        })?;
+        (transform.creator)(context)
+    }
+
+    /// Create a stream instance using the registered creator
+    ///
+    /// Returns Error if no stream creator is registered.
+    pub fn create_stream(&self, context: &StreamFactoryContext) -> Result<StreamType> {
+        let creator = self.stream_creator.ok_or_else(|| {
+            crate::error::Error::InvalidInput(format!(
+                "No stream creator registered for {}",
+                self.descriptor.table_name
+            ))
+        })?;
+        creator(context)
     }
 }
 
 /// Builder for RegisteredStream
 pub struct StreamBuilder {
-    name: &'static str,
-    display_name: &'static str,
-    description: &'static str,
-    table_name: &'static str,
-    target_ontologies: Vec<&'static str>,
+    descriptor: StreamDescriptor,
     config_schema: serde_json::Value,
     config_example: serde_json::Value,
-    supports_incremental: bool,
-    supports_full_refresh: bool,
-    default_cron_schedule: Option<&'static str>,
+    transforms: Vec<StreamTransform>,
+    stream_creator: Option<StreamCreator>,
 }
 
 impl StreamBuilder {
-    pub fn display_name(mut self, name: &'static str) -> Self {
-        self.display_name = name;
-        self
-    }
-
-    pub fn description(mut self, desc: &'static str) -> Self {
-        self.description = desc;
-        self
-    }
-
-    pub fn table_name(mut self, name: &'static str) -> Self {
-        self.table_name = name;
-        self
-    }
-
     pub fn config_schema(mut self, schema: serde_json::Value) -> Self {
         self.config_schema = schema;
         self
@@ -176,39 +247,28 @@ impl StreamBuilder {
         self
     }
 
-    pub fn supports_incremental(mut self, supports: bool) -> Self {
-        self.supports_incremental = supports;
+    /// Add a transform that maps this stream to an ontology table
+    pub fn transform(mut self, target_table: &'static str, creator: TransformCreator) -> Self {
+        self.transforms.push(StreamTransform {
+            target_table,
+            creator,
+        });
         self
     }
 
-    pub fn supports_full_refresh(mut self, supports: bool) -> Self {
-        self.supports_full_refresh = supports;
-        self
-    }
-
-    pub fn default_cron_schedule(mut self, schedule: &'static str) -> Self {
-        self.default_cron_schedule = Some(schedule);
-        self
-    }
-
-    /// Set target ontology tables this stream feeds into
-    pub fn target_ontologies(mut self, ontologies: Vec<&'static str>) -> Self {
-        self.target_ontologies = ontologies;
+    /// Set the stream creator function for instantiating this stream
+    pub fn stream_creator(mut self, creator: StreamCreator) -> Self {
+        self.stream_creator = Some(creator);
         self
     }
 
     pub fn build(self) -> RegisteredStream {
         RegisteredStream {
-            name: self.name,
-            display_name: self.display_name,
-            description: self.description,
-            table_name: self.table_name,
-            target_ontologies: self.target_ontologies,
+            descriptor: self.descriptor,
             config_schema: self.config_schema,
             config_example: self.config_example,
-            supports_incremental: self.supports_incremental,
-            supports_full_refresh: self.supports_full_refresh,
-            default_cron_schedule: self.default_cron_schedule,
+            transforms: self.transforms,
+            stream_creator: self.stream_creator,
         }
     }
 }
@@ -221,7 +281,8 @@ pub trait SourceRegistry {
 
 /// Global registry of all sources
 pub struct Registry {
-    sources: HashMap<String, RegisteredSource>,
+    /// Internal storage for registered sources (public for internal use)
+    pub sources: HashMap<String, RegisteredSource>,
 }
 
 impl Registry {
@@ -234,35 +295,59 @@ impl Registry {
 
     /// Register a source
     fn register(&mut self, descriptor: RegisteredSource) {
-        self.sources.insert(descriptor.name.to_string(), descriptor);
+        self.sources.insert(descriptor.descriptor.name.to_string(), descriptor);
     }
 
     /// Get all registered sources
     pub fn list_sources(&self) -> Vec<&RegisteredSource> {
-        self.sources.values().collect()
+        self.sources
+            .values()
+            .filter(|s| s.descriptor.enabled)
+            .collect()
     }
 
     /// Get a specific source by name
     pub fn get_source(&self, name: &str) -> Option<&RegisteredSource> {
-        self.sources.get(name)
+        self.sources.get(name).filter(|s| s.descriptor.enabled)
     }
 
     /// Get a specific stream from a source
     pub fn get_stream(&self, source_name: &str, stream_name: &str) -> Option<&RegisteredStream> {
         self.sources
             .get(source_name)
-            .and_then(|source| source.streams.iter().find(|s| s.name == stream_name))
+            .filter(|source| source.descriptor.enabled)
+            .and_then(|source| {
+                source
+                    .streams
+                    .iter()
+                    .find(|s| s.descriptor.name == stream_name && s.descriptor.enabled)
+            })
     }
 
     /// List all streams across all sources
     pub fn list_all_streams(&self) -> Vec<(&str, &RegisteredStream)> {
         self.sources
             .values()
+            .filter(|source| source.descriptor.enabled)
             .flat_map(|source| {
                 source
                     .streams
                     .iter()
-                    .map(move |stream| (source.name, stream))
+                    .filter(|stream| stream.descriptor.enabled)
+                    .map(move |stream| (source.descriptor.name, stream))
+            })
+            .collect()
+    }
+
+    /// List all streams including those that are disabled
+    pub fn list_all_streams_including_disabled(&self) -> Vec<(&str, &RegisteredStream)> {
+        self.sources
+            .values()
+            .flat_map(|source| {
+                source
+                    .streams
+                    .iter()
+                    .map(move |stream| (source.descriptor.name, stream))
             })
             .collect()
     }
@@ -277,18 +362,14 @@ static REGISTRY: OnceLock<Registry> = OnceLock::new();
 fn init_registry() -> Registry {
     let mut registry = Registry::new();
 
-    // Register internal sources
-    registry.register(crate::sources::virtues::registry::VirtuesSource::descriptor());
-
     // Register OAuth sources
     registry.register(crate::sources::google::registry::GoogleSource::descriptor());
-    // TODO: Re-enable incrementally as we publish
-    // registry.register(crate::sources::notion::registry::NotionSource::descriptor());
-    // registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
+    registry.register(crate::sources::notion::registry::NotionSource::descriptor());
+    registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
 
     // Register device sources
     registry.register(crate::sources::ios::registry::IosSource::descriptor());
-    // registry.register(crate::sources::mac::registry::MacSource::descriptor());
+    registry.register(crate::sources::mac::registry::MacSource::descriptor());
 
     registry
 }
@@ -318,6 +399,11 @@ pub fn list_all_streams() -> Vec<(&'static str, &'static RegisteredStream)> {
     registry().list_all_streams()
 }
 
+/// List all streams including those that are disabled
+pub fn list_all_streams_including_disabled() -> Vec<(&'static str, &'static RegisteredStream)> {
+    registry().list_all_streams_including_disabled()
+}
+
 /// Get a stream by its table name (e.g., "stream_google_calendar")
 ///
 /// Returns the source name and stream reference if found.
@@ -327,7 +413,49 @@ pub fn get_stream_by_table_name(
     registry()
         .list_all_streams()
         .into_iter()
-        .find(|(_, stream)| stream.table_name == table_name)
+        .find(|(_, stream)| stream.descriptor.table_name == table_name)
+}
+
+/// Get a stream by its table name, including disabled streams
+///
+/// This is useful for transform lookups where we need to find the transform
+/// even if the stream is disabled.
+pub fn get_stream_by_table_name_including_disabled(
+    table_name: &str,
+) -> Option<(&'static str, &'static RegisteredStream)> {
+    registry()
+        .list_all_streams_including_disabled()
+        .into_iter()
+        .find(|(_, stream)| stream.descriptor.table_name == table_name)
+}
+
+/// Find and create a transform for the given source and target tables
+///
+/// This is the unified transform lookup that uses the registry as the single
+/// source of truth for both metadata and transform logic.
+///
+/// # Arguments
+/// * `source_table` - The stream table name (e.g., "stream_google_calendar")
+/// * `target_table` - The ontology table name (e.g., "calendar")
+/// * `context` - Transform context with dependencies
+///
+/// # Returns
+/// A boxed OntologyTransform ready to execute
+pub fn find_transform(
+    source_table: &str,
+    target_table: &str,
+    context: &TransformContext,
+) -> Result<Box<dyn OntologyTransform>> {
+    // Look up the stream by its table name (including disabled streams for transforms)
+    let (_, stream) = get_stream_by_table_name_including_disabled(source_table).ok_or_else(|| {
+        crate::error::Error::InvalidInput(format!(
+            "No registered stream with table_name '{}'",
+            source_table
+        ))
+    })?;
+
+    // Create the transform using the stream's registered creator
+    stream.create_transform(target_table, context)
 }
 
 /// Normalize stream name from short form to full table name
@@ -352,8 +480,8 @@ pub fn normalize_stream_name(name: &str) -> String {
 
     // Try to find by short name in registry
     for (_source_name, stream) in list_all_streams() {
-        if stream.name == name {
-            return stream.table_name.to_string();
+        if stream.descriptor.name == name {
+            return stream.descriptor.table_name.to_string();
         }
     }
 
@@ -381,18 +509,9 @@ mod tests {
         assert!(google.is_some(), "Should find Google source");
 
         if let Some(g) = google {
-            assert_eq!(g.name, "google");
+            assert_eq!(g.descriptor.name, "google");
             assert!(!g.streams.is_empty(), "Google should have streams");
         }
-    }
-
-    /// Export TypeScript types for frontend use
-    #[test]
-    fn export_typescript_types() {
-        AuthType::export().expect("Failed to export AuthType");
-        RegisteredSource::export().expect("Failed to export RegisteredSource");
-        OAuthConfig::export().expect("Failed to export OAuthConfig");
-        RegisteredStream::export().expect("Failed to export RegisteredStream");
     }
 
     #[test]
@@ -401,8 +520,8 @@ mod tests {
         assert!(calendar.is_some(), "Should find Google Calendar stream");
 
         if let Some(cal) = calendar {
-            assert_eq!(cal.name, "calendar");
-            assert_eq!(cal.table_name, "stream_google_calendar");
+            assert_eq!(cal.descriptor.name, "calendar");
+            assert_eq!(cal.descriptor.table_name, "stream_google_calendar");
         }
     }
 
@@ -413,8 +532,8 @@ mod tests {
 
         // Check that stream names are properly formatted
         for (source, stream) in streams {
-            assert!(stream.table_name.starts_with("stream_"));
-            assert!(stream.table_name.contains(source));
+            assert!(stream.descriptor.table_name.starts_with("stream_"));
+            assert!(stream.descriptor.table_name.contains(source));
         }
     }
 }

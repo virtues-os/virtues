@@ -1,224 +1,44 @@
-// Module-level log to verify file is loaded
-console.log('[WindowTabs] Module loaded');
+/**
+ * WindowTabs Store
+ * 
+ * Manages the tab state for the application. Uses the tabs module for:
+ * - Type definitions (tabs/types.ts)
+ * - Route parsing (tabs/registry.ts)
+ * - URL serialization (tabs/urlSerializer.ts)
+ */
+
+// Import from the tabs module
+import {
+	type Tab,
+	type TabType,
+	type FallbackView,
+	type PaneState,
+	type SplitState,
+	getTabDomain,
+} from '$lib/tabs/types';
+import { parseRoute } from '$lib/tabs/registry';
+import {
+	serializeToUrl as serializeStateToUrl,
+	deserializeFromUrl as deserializeStateFromUrl,
+	hasUrlTabParams,
+} from '$lib/tabs/urlSerializer';
+
+// Re-export types for backwards compatibility
+export type { Tab, TabType, FallbackView, PaneState, SplitState };
+export { parseRoute };
 
 const STORAGE_KEY = 'virtues-window-tabs';
 const STORAGE_VERSION = 2; // Increment to force migration
 
-// All supported tab types mapped to routes
-export { parseRoute };
-
-export type TabType =
-	| 'chat'
-	| 'history'
-	| 'session-context'
-	| 'wiki'
-	| 'wiki-list'
-	| 'data-sources'
-	| 'data-sources-add'
-	| 'data-entities'
-	| 'data-jobs'
-	| 'data-drive'
-	| 'storage'
-	| 'usage'
-	| 'profile';
-
-// Domain groups for hybrid navigation (same domain = navigate in place)
-type TabDomain = 'chat' | 'wiki' | 'data' | 'settings';
-
-function getTabDomain(type: TabType): TabDomain {
-	switch (type) {
-		case 'chat':
-		case 'history':
-		case 'session-context':
-			return 'chat';
-		case 'wiki':
-		case 'wiki-list':
-			return 'wiki';
-		case 'data-sources':
-		case 'data-sources-add':
-		case 'data-entities':
-		case 'data-jobs':
-		case 'data-drive':
-		case 'storage':
-		case 'usage':
-			return 'data';
-		case 'profile':
-			return 'settings';
-		default:
-			return 'chat';
-	}
-}
-
-export interface Tab {
-	id: string;
-	type: TabType;
-	label: string;
-	route: string;
-	icon?: string;
-	pinned?: boolean;
-
-	// Type-specific data
-	conversationId?: string; // For chat tabs
-	linkedConversationId?: string; // For session-context tabs (links to chat)
-	slug?: string; // For wiki entity tabs
-	sourceId?: string; // For data source detail tabs
-	wikiCategory?: string; // For wiki-list tabs (people, places, etc.)
-	profileSection?: string; // For profile tabs (account, assistant)
-
-	scrollPosition?: number;
-	createdAt: number;
-}
-
-// Route parsing result
-interface ParsedRoute {
-	type: TabType;
-	label: string;
-	icon: string;
-	conversationId?: string;
-	linkedConversationId?: string;
-	slug?: string;
-	sourceId?: string;
-	wikiCategory?: string;
-	profileSection?: string;
-}
-
-// Parse a route into tab metadata
-function parseRoute(route: string): ParsedRoute {
-	const url = new URL(route, 'http://localhost');
-	const path = url.pathname;
-	const params = url.searchParams;
-
-	// Chat routes
-	if (path === '/') {
-		const conversationId = params.get('conversationId');
-		return {
-			type: 'chat',
-			label: conversationId ? 'Chat' : 'New Chat',
-			icon: 'ri:chat-1-line',
-			conversationId: conversationId || undefined
-		};
-	}
-
-	// History
-	if (path === '/history') {
-		return { type: 'history', label: 'History', icon: 'ri:history-line' };
-	}
-
-	// Session context (for viewing token usage, messages, etc.)
-	const contextMatch = path.match(/^\/context\/([^/]+)$/);
-	if (contextMatch) {
-		return {
-			type: 'session-context',
-			label: 'Context',
-			icon: 'ri:information-line',
-			linkedConversationId: contextMatch[1]
-		};
-	}
-
-	// Wiki routes
-	if (path.startsWith('/wiki')) {
-		// Wiki category lists
-		if (path === '/wiki/people') {
-			return { type: 'wiki-list', label: 'People', icon: 'ri:user-line', wikiCategory: 'people' };
-		}
-		if (path === '/wiki/places') {
-			return { type: 'wiki-list', label: 'Places', icon: 'ri:map-pin-line', wikiCategory: 'places' };
-		}
-		if (path === '/wiki/orgs') {
-			return { type: 'wiki-list', label: 'Orgs', icon: 'ri:building-line', wikiCategory: 'orgs' };
-		}
-		if (path === '/wiki/things') {
-			return { type: 'wiki-list', label: 'Things', icon: 'ri:box-3-line', wikiCategory: 'things' };
-		}
-
-		// Wiki entity detail (slug)
-		const slugMatch = path.match(/^\/wiki\/([^/]+)$/);
-		if (slugMatch && !['people', 'places', 'orgs', 'things'].includes(slugMatch[1])) {
-			return {
-				type: 'wiki',
-				label: 'Wiki',
-				icon: 'ri:book-2-line',
-				slug: slugMatch[1]
-			};
-		}
-
-		// Wiki index
-		return { type: 'wiki', label: 'Wiki', icon: 'ri:book-2-line' };
-	}
-
-	// Data routes
-	if (path === '/data/sources/add') {
-		return { type: 'data-sources-add', label: 'Add Source', icon: 'ri:add-circle-line' };
-	}
-	if (path.startsWith('/data/sources')) {
-		const sourceMatch = path.match(/^\/data\/sources\/([^/]+)$/);
-		if (sourceMatch) {
-			return {
-				type: 'data-sources',
-				label: 'Source',
-				icon: 'ri:database-2-line',
-				sourceId: sourceMatch[1]
-			};
-		}
-		return { type: 'data-sources', label: 'Sources', icon: 'ri:database-2-line' };
-	}
-	if (path === '/data/entities') {
-		return { type: 'data-entities', label: 'Entities', icon: 'ri:node-tree' };
-	}
-	if (path === '/data/jobs') {
-		return { type: 'data-jobs', label: 'Jobs', icon: 'ri:refresh-line' };
-	}
-
-	// Storage
-	if (path === '/storage') {
-		return { type: 'storage', label: 'Storage', icon: 'ri:hard-drive-2-line' };
-	}
-
-	// Drive
-	if (path === '/data/drive') {
-		return { type: 'data-drive', label: 'Drive', icon: 'ri:folder-line' };
-	}
-
-	// Usage
-	if (path === '/usage') {
-		return { type: 'usage', label: 'Usage', icon: 'ri:bar-chart-line' };
-	}
-
-	// Profile routes
-	if (path.startsWith('/profile')) {
-		if (path === '/profile/account') {
-			return { type: 'profile', label: 'Account', icon: 'ri:user-settings-line', profileSection: 'account' };
-		}
-		if (path === '/profile/assistant') {
-			return { type: 'profile', label: 'Assistant', icon: 'ri:robot-line', profileSection: 'assistant' };
-		}
-		return { type: 'profile', label: 'Profile', icon: 'ri:user-settings-line' };
-	}
-
-	// Fallback
-	return { type: 'chat', label: 'Page', icon: 'ri:file-line' };
-}
-
 type TabInput = Omit<Tab, 'id' | 'createdAt'>;
-
-// Split screen state
-export interface PaneState {
-	id: 'left' | 'right';
-	tabs: Tab[];
-	activeTabId: string | null;
-	width: number; // percentage (e.g., 50)
-}
-
-export interface SplitState {
-	enabled: boolean;
-	panes: [PaneState, PaneState] | null;
-	activePaneId: 'left' | 'right';
-}
 
 class WindowTabsStore {
 	tabs = $state<Tab[]>([]);
 	activeTabId = $state<string | null>(null);
 	private initialized = false;
+
+	// Fallback view preference (what to show when all tabs are closed)
+	fallbackPreference = $state<FallbackView>('empty');
 
 	// Guard to prevent URL sync feedback loop
 	// Set to true when tabs are changed programmatically (e.g., sidebar click)
@@ -237,6 +57,9 @@ class WindowTabsStore {
 		activePaneId: 'left'
 	});
 
+	// Global drag state for tab splitting UI
+	isDragging = $state(false);
+
 	// Check and clear the skip flag (call this in URL sync $effect)
 	shouldSkipUrlSync(): boolean {
 		if (this._skipUrlSync) {
@@ -253,23 +76,12 @@ class WindowTabsStore {
 
 	// Initialize store - safe to call multiple times
 	init(): void {
-		if (this.initialized) {
-			console.log('[WindowTabs] Already initialized');
-			return;
-		}
-		if (typeof window === 'undefined') {
-			console.log('[WindowTabs] Skipping init (SSR)');
-			return;
-		}
+		if (this.initialized) return;
+		if (typeof window === 'undefined') return;
 
-		console.log('[WindowTabs] Initializing...');
 		this.initialized = true;
+		this.loadFallbackPreference();
 		this.restore();
-		console.log('[WindowTabs] Initialized:');
-		console.log('[WindowTabs]   tabs.length:', this.tabs.length);
-		console.log('[WindowTabs]   activeTabId:', this.activeTabId);
-		console.log('[WindowTabs]   split.enabled:', this.split.enabled);
-		console.log('[WindowTabs]   getAllTabs().length:', this.getAllTabs().length);
 	}
 
 	// Get active tab (works in both split and non-split modes)
@@ -282,6 +94,22 @@ class WindowTabsStore {
 			return undefined;
 		}
 		return this.tabs.find((t) => t.id === this.activeTabId);
+	}
+
+	// Get active tabs from ALL visible panes (for sidebar highlighting in split view)
+	getActiveTabsForSidebar(): Tab[] {
+		if (this.split.enabled && this.split.panes) {
+			const activeTabs: Tab[] = [];
+			for (const pane of this.split.panes) {
+				const activeTab = pane.tabs.find((t) => t.id === pane.activeTabId);
+				if (activeTab) {
+					activeTabs.push(activeTab);
+				}
+			}
+			return activeTabs;
+		}
+		const singleActiveTab = this.tabs.find((t) => t.id === this.activeTabId);
+		return singleActiveTab ? [singleActiveTab] : [];
 	}
 
 	// Get all tabs regardless of split mode
@@ -347,10 +175,22 @@ class WindowTabsStore {
 		// If closing the active tab, activate an adjacent one
 		if (this.activeTabId === id) {
 			if (this.tabs.length === 1) {
-				// Last tab - create a new empty one
+				// Last tab - check fallback preference
 				this.tabs = [];
 				this.activeTabId = null;
-				this.openTab({ type: 'chat', label: 'New Chat', route: '/' });
+				
+				const pref = this.fallbackPreference;
+				if (pref === 'chat') {
+					this.openTabFromRoute('/');
+				} else if (pref === 'conway') {
+					this.openTabFromRoute('/life');
+				} else if (pref === 'dog-jump') {
+					this.openTabFromRoute('/jump');
+				} else if (pref === 'wiki-today') {
+					const today = new Date().toISOString().split('T')[0];
+					this.openTabFromRoute(`/wiki/${today}`);
+				}
+				// If 'empty', stay at 0 tabs - SplitContainer shows DiscoveryPage
 				return;
 			} else if (index === this.tabs.length - 1) {
 				// Last in list - activate previous
@@ -522,6 +362,11 @@ class WindowTabsStore {
 
 	// Update a tab's properties (works in both split and non-split modes)
 	updateTab(id: string, updates: Partial<Omit<Tab, 'id' | 'createdAt'>>): void {
+		// If updating the route, set skip flag to prevent URL sync feedback loop
+		if (updates.route) {
+			this._skipUrlSync = true;
+		}
+
 		if (this.split.enabled && this.split.panes) {
 			const paneId = this.findTabPane(id);
 			if (paneId) {
@@ -608,7 +453,7 @@ class WindowTabsStore {
 	}
 
 	// Open a tab from a route string, parsing it to determine type and metadata
-	openTabFromRoute(route: string, options?: { forceNew?: boolean; label?: string; preferEmptyPane?: boolean }): string {
+	openTabFromRoute(route: string, options?: { forceNew?: boolean; label?: string; preferEmptyPane?: boolean; paneId?: 'left' | 'right' }): string {
 		// Set skip flag to prevent URL sync from reverting this change
 		this._skipUrlSync = true;
 
@@ -622,6 +467,9 @@ class WindowTabsStore {
 			if (parsed.type === 'chat' && parsed.conversationId) {
 				// Match chat by conversationId
 				result = this.findTab((t) => t.conversationId === parsed.conversationId);
+			} else if (parsed.type === 'page-detail' && parsed.pageId) {
+				// Match page by pageId
+				result = this.findTab((t) => t.type === 'page-detail' && t.pageId === parsed.pageId);
 			} else if (parsed.type === 'wiki' && parsed.slug) {
 				// Match wiki by slug
 				result = this.findTab((t) => t.type === 'wiki' && t.slug === parsed.slug);
@@ -662,6 +510,7 @@ class WindowTabsStore {
 						route,
 						icon: parsed.icon,
 						conversationId: parsed.conversationId,
+						pageId: parsed.pageId,
 						slug: parsed.slug,
 						sourceId: parsed.sourceId,
 						wikiCategory: parsed.wikiCategory,
@@ -682,6 +531,7 @@ class WindowTabsStore {
 			icon: parsed.icon,
 			conversationId: parsed.conversationId,
 			linkedConversationId: parsed.linkedConversationId,
+			pageId: parsed.pageId,
 			slug: parsed.slug,
 			sourceId: parsed.sourceId,
 			wikiCategory: parsed.wikiCategory,
@@ -689,6 +539,11 @@ class WindowTabsStore {
 		};
 
 		if (this.split.enabled && this.split.panes) {
+			// If explicit paneId is provided, use it
+			if (options?.paneId) {
+				return this.openTabInPane(tabInput, options.paneId);
+			}
+
 			// If preferEmptyPane is true (e.g., from sidebar), prefer opening in empty pane
 			if (options?.preferEmptyPane) {
 				const leftPane = this.split.panes[0];
@@ -732,6 +587,15 @@ class WindowTabsStore {
 	// Get the route of the active tab (for URL syncing)
 	get activeRoute(): string | null {
 		return this.activeTab?.route || null;
+	}
+
+	// Update the active tab's route (used when external navigation like OAuth callbacks occur)
+	updateActiveTabRoute(newRoute: string): void {
+		const activeTab = this.activeTab;
+		if (activeTab) {
+			console.log('[WindowTabs] Updating active tab route:', { from: activeTab.route, to: newRoute });
+			this.updateTab(activeTab.id, { route: newRoute });
+		}
 	}
 
 	// Reorder tabs (for drag and drop)
@@ -837,11 +701,24 @@ class WindowTabsStore {
 			console.warn('[WindowTabs] Failed to restore from localStorage:', e);
 		}
 
-		// Default: create a single new chat tab with clean state
+		// Default: use fallback preference (but default to chat for first-time users)
 		this.tabs = [];
 		this.activeTabId = null;
 		this.split = { enabled: false, panes: null, activePaneId: 'left' };
-		this.openTab({ type: 'chat', label: 'New Chat', route: '/', icon: 'ri:chat-1-line' });
+		
+		// For first-time users, default to chat. Otherwise respect preference.
+		const pref = this.fallbackPreference;
+		if (pref === 'chat' || pref === 'empty') {
+			// First launch or empty preference - open chat as a sensible default
+			this.openTab({ type: 'chat', label: 'New Chat', route: '/', icon: 'ri:chat-1-line' });
+		} else if (pref === 'conway') {
+			this.openTabFromRoute('/life');
+		} else if (pref === 'dog-jump') {
+			this.openTabFromRoute('/jump');
+		} else if (pref === 'wiki-today') {
+			const today = new Date().toISOString().split('T')[0];
+			this.openTabFromRoute(`/wiki/${today}`);
+		}
 	}
 
 	// Clear all tabs and reset (useful for testing/debugging)
@@ -850,7 +727,20 @@ class WindowTabsStore {
 		this.activeTabId = null;
 		this.split = { enabled: false, panes: null, activePaneId: 'left' };
 		localStorage.removeItem(STORAGE_KEY);
-		this.openTab({ type: 'chat', label: 'New Chat', route: '/', icon: 'ri:chat-1-line' });
+		
+		// Respect fallback preference
+		const pref = this.fallbackPreference;
+		if (pref === 'chat') {
+			this.openTab({ type: 'chat', label: 'New Chat', route: '/', icon: 'ri:chat-1-line' });
+		} else if (pref === 'conway') {
+			this.openTabFromRoute('/life');
+		} else if (pref === 'dog-jump') {
+			this.openTabFromRoute('/jump');
+		} else if (pref === 'wiki-today') {
+			const today = new Date().toISOString().split('T')[0];
+			this.openTabFromRoute(`/wiki/${today}`);
+		}
+		// If 'empty', stay at 0 tabs
 	}
 
 	// Close all tabs (used for logout)
@@ -874,6 +764,25 @@ class WindowTabsStore {
 		};
 		console.log('[WindowTabs Debug]', state);
 		return state;
+	}
+
+	// Set the fallback view preference
+	setFallbackPreference(pref: FallbackView): void {
+		this.fallbackPreference = pref;
+		// Persist to localStorage for quick access on next load
+		if (typeof window !== 'undefined') {
+			localStorage.setItem('virtues-fallback-preference', pref);
+		}
+	}
+
+	// Load fallback preference from localStorage
+	loadFallbackPreference(): void {
+		if (typeof window !== 'undefined') {
+			const stored = localStorage.getItem('virtues-fallback-preference');
+			if (stored && ['empty', 'chat', 'conway', 'dog-jump', 'wiki-today'].includes(stored)) {
+				this.fallbackPreference = stored as FallbackView;
+			}
+		}
 	}
 
 	// ============ Split Screen Methods ============
@@ -1165,6 +1074,47 @@ class WindowTabsStore {
 			},
 			targetPaneId
 		);
+	}
+
+	// ============ URL Serialization Methods ============
+	// These delegate to the extracted urlSerializer module
+
+	/**
+	 * Serialize the entire tab state to URL query parameters.
+	 * Format: ?tabs=type_id,type_id&active=0&split=true&tabs2=type_id&active2=0
+	 */
+	serializeToUrl(): string {
+		return serializeStateToUrl({
+			tabs: this.tabs,
+			activeTabId: this.activeTabId,
+			split: this.split
+		});
+	}
+
+	/**
+	 * Deserialize URL query parameters to restore tab state.
+	 * Call this on initial page load to restore state from URL.
+	 */
+	deserializeFromUrl(url: string): void {
+		const state = deserializeStateFromUrl(url);
+		if (!state) {
+			return;
+		}
+
+		// Apply the restored state
+		this.tabs = state.tabs;
+		this.activeTabId = state.activeTabId;
+		this.split = state.split;
+
+		this.persist();
+		console.log('[WindowTabs] Restored', this.getAllTabs().length, 'tabs from URL');
+	}
+
+	/**
+	 * Check if the current URL has tab params that should be restored.
+	 */
+	hasUrlTabParams(url: string): boolean {
+		return hasUrlTabParams(url);
 	}
 }
 

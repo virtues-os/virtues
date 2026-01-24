@@ -1,15 +1,17 @@
 <script lang="ts">
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
-	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { bookmarks } from "$lib/stores/bookmarks.svelte";
 
 	interface Props {
-		paneId?: 'left' | 'right'; // When set, renders as a pane tab bar in split mode
+		paneId?: "left" | "right"; // When set, renders as a pane tab bar in split mode
 	}
 
 	let { paneId }: Props = $props();
 
 	// Context menu state
-	let contextMenu = $state<{ x: number; y: number; tabId: string } | null>(null);
+	let contextMenu = $state<{ x: number; y: number; tabId: string } | null>(
+		null,
+	);
 
 	// Drag state for pane-to-pane (only show highlight when dragging from different pane)
 	let dragOverFromOtherPane = $state(false);
@@ -20,56 +22,62 @@
 
 	// Rename state
 	let renamingTabId = $state<string | null>(null);
-	let renameValue = $state('');
+	let renameValue = $state("");
 
 	// Derive tabs and active state based on mode
 	const tabs = $derived(
 		paneId
-			? (paneId === 'left' ? windowTabs.leftPane?.tabs : windowTabs.rightPane?.tabs) || []
-			: windowTabs.tabs
+			? (paneId === "left"
+					? workspaceStore.leftPane?.tabs
+					: workspaceStore.rightPane?.tabs) || []
+			: workspaceStore.tabs,
 	);
 
 	const activeTabId = $derived(
 		paneId
-			? (paneId === 'left' ? windowTabs.leftPane?.activeTabId : windowTabs.rightPane?.activeTabId)
-			: windowTabs.activeTabId
+			? paneId === "left"
+				? workspaceStore.leftPane?.activeTabId
+				: workspaceStore.rightPane?.activeTabId
+			: workspaceStore.activeTabId,
 	);
 
-	const isActivePane = $derived(paneId ? windowTabs.split.activePaneId === paneId : true);
-	const isSplitMode = $derived(windowTabs.split.enabled);
+	const isActivePane = $derived(
+		paneId ? workspaceStore.split.activePaneId === paneId : true,
+	);
+	const isSplitMode = $derived(workspaceStore.split.enabled);
 
 	function handleTabClick(id: string) {
 		if (paneId) {
-			windowTabs.setActiveTabInPane(id, paneId);
+			workspaceStore.setActiveTabInPane(id, paneId);
 		} else {
-			windowTabs.setActiveTab(id);
+			workspaceStore.setActiveTab(id);
 		}
 	}
 
 	function handleTabClose(e: MouseEvent, id: string) {
 		e.stopPropagation();
 		if (paneId) {
-			windowTabs.closeTabInPane(id, paneId);
+			workspaceStore.closeTabInPane(id, paneId);
 		} else {
-			windowTabs.closeTab(id);
+			workspaceStore.closeTab(id);
 		}
 	}
 
 	function handleToggleSplit() {
-		windowTabs.toggleSplit();
+		workspaceStore.toggleSplit();
 	}
 
 	function handleMergePanes() {
-		windowTabs.disableSplit();
+		workspaceStore.disableSplit();
 	}
 
 	function handleMiddleClick(e: MouseEvent, id: string) {
 		if (e.button === 1) {
 			e.preventDefault();
 			if (paneId) {
-				windowTabs.closeTabInPane(id, paneId);
+				workspaceStore.closeTabInPane(id, paneId);
 			} else {
-				windowTabs.closeTab(id);
+				workspaceStore.closeTab(id);
 			}
 		}
 	}
@@ -86,28 +94,28 @@
 	function handleCloseTab() {
 		if (!contextMenu) return;
 		if (paneId) {
-			windowTabs.closeTabInPane(contextMenu.tabId, paneId);
+			workspaceStore.closeTabInPane(contextMenu.tabId, paneId);
 		} else {
-			windowTabs.closeTab(contextMenu.tabId);
+			workspaceStore.closeTab(contextMenu.tabId);
 		}
 		closeContextMenu();
 	}
 
 	function handleCloseOthers() {
 		if (!contextMenu) return;
-		windowTabs.closeOtherTabs(contextMenu.tabId, paneId);
+		workspaceStore.closeOtherTabs(contextMenu.tabId, paneId);
 		closeContextMenu();
 	}
 
 	function handleCloseToRight() {
 		if (!contextMenu) return;
-		windowTabs.closeTabsToRight(contextMenu.tabId, paneId);
+		workspaceStore.closeTabsToRight(contextMenu.tabId, paneId);
 		closeContextMenu();
 	}
 
 	function handleTogglePin() {
 		if (!contextMenu) return;
-		windowTabs.togglePin(contextMenu.tabId);
+		workspaceStore.togglePin(contextMenu.tabId);
 		closeContextMenu();
 	}
 
@@ -145,7 +153,7 @@
 			route: tab.route,
 			tab_type: tab.type,
 			label: tab.label,
-			icon: tab.icon
+			icon: tab.icon,
 		});
 		closeContextMenu();
 	}
@@ -165,21 +173,21 @@
 			return;
 		}
 		const newLabel = renameValue.trim();
-		windowTabs.updateTab(renamingTabId, { label: newLabel });
+		workspaceStore.updateTab(renamingTabId, { label: newLabel });
 		renamingTabId = null;
-		renameValue = '';
+		renameValue = "";
 	}
 
 	function handleRenameCancel() {
 		renamingTabId = null;
-		renameValue = '';
+		renameValue = "";
 	}
 
 	function handleRenameKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') {
+		if (e.key === "Enter") {
 			e.preventDefault();
 			handleRenameSubmit();
-		} else if (e.key === 'Escape') {
+		} else if (e.key === "Escape") {
 			e.preventDefault();
 			handleRenameCancel();
 		}
@@ -196,21 +204,26 @@
 	// Drag and drop handlers
 	function handleDragStart(e: DragEvent, tabId: string) {
 		if (!e.dataTransfer) return;
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', JSON.stringify({ tabId, sourcePane: paneId }));
+		e.dataTransfer.effectAllowed = "move";
+		e.dataTransfer.setData(
+			"text/plain",
+			JSON.stringify({ tabId, sourcePane: paneId }),
+		);
 		draggedTabId = tabId;
+		workspaceStore.isDragging = true;
 	}
 
 	function handleDragEnd() {
 		draggedTabId = null;
 		dropTargetIndex = null;
 		dragOverFromOtherPane = false;
+		workspaceStore.isDragging = false;
 	}
 
 	function handleDragOver(e: DragEvent) {
 		e.preventDefault();
 		if (e.dataTransfer) {
-			e.dataTransfer.dropEffect = 'move';
+			e.dataTransfer.dropEffect = "move";
 		}
 		// Only show pane highlight in split mode when drag might be from another pane
 		// We can't check the source during dragover, so we check if we're in split mode
@@ -230,7 +243,7 @@
 		e.stopPropagation();
 
 		if (!e.dataTransfer) return;
-		e.dataTransfer.dropEffect = 'move';
+		e.dataTransfer.dropEffect = "move";
 
 		// Calculate if we're in the left or right half of the tab
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -251,27 +264,38 @@
 		if (!e.dataTransfer) return;
 
 		try {
-			const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+			const data = JSON.parse(e.dataTransfer.getData("text/plain"));
 			const { tabId, sourcePane } = data;
 
 			// Handle reordering within the same pane
 			if (sourcePane === paneId || (!sourcePane && !paneId)) {
 				if (dropTargetIndex !== null) {
 					const fromIndex = tabs.findIndex((t) => t.id === tabId);
-					if (fromIndex !== -1 && fromIndex !== dropTargetIndex && fromIndex !== dropTargetIndex - 1) {
+					if (
+						fromIndex !== -1 &&
+						fromIndex !== dropTargetIndex &&
+						fromIndex !== dropTargetIndex - 1
+					) {
 						// Adjust target index if we're moving forward
-						const toIndex = dropTargetIndex > fromIndex ? dropTargetIndex - 1 : dropTargetIndex;
+						const toIndex =
+							dropTargetIndex > fromIndex
+								? dropTargetIndex - 1
+								: dropTargetIndex;
 						if (paneId) {
-							windowTabs.reorderTabsInPane(fromIndex, toIndex, paneId);
+							workspaceStore.reorderTabsInPane(
+								fromIndex,
+								toIndex,
+								paneId,
+							);
 						} else {
-							windowTabs.reorderTabs(fromIndex, toIndex);
+							workspaceStore.reorderTabs(fromIndex, toIndex);
 						}
 					}
 				}
 			}
 			// Handle moving to a different pane
 			else if (sourcePane !== paneId && paneId && sourcePane) {
-				windowTabs.moveTabToPane(tabId, paneId);
+				workspaceStore.moveTabToPane(tabId, paneId);
 			}
 		} catch {
 			// Invalid data, ignore
@@ -284,30 +308,30 @@
 	// Get icon for tab type
 	function getDefaultIcon(type: string): string {
 		switch (type) {
-			case 'chat':
-				return 'ri:chat-1-line';
-			case 'history':
-				return 'ri:history-line';
-			case 'wiki':
-				return 'ri:book-2-line';
-			case 'wiki-list':
-				return 'ri:list-check';
-			case 'data-sources':
-				return 'ri:database-2-line';
-			case 'data-sources-add':
-				return 'ri:add-circle-line';
-			case 'data-entities':
-				return 'ri:node-tree';
-			case 'data-jobs':
-				return 'ri:refresh-line';
-			case 'storage':
-				return 'ri:hard-drive-2-line';
-			case 'usage':
-				return 'ri:bar-chart-line';
-			case 'profile':
-				return 'ri:user-settings-line';
+			case "chat":
+				return "ri:chat-1-line";
+			case "history":
+				return "ri:history-line";
+			case "wiki":
+				return "ri:book-2-line";
+			case "wiki-list":
+				return "ri:list-check";
+			case "data-sources":
+				return "ri:database-2-line";
+			case "data-sources-add":
+				return "ri:add-circle-line";
+			case "data-entities":
+				return "ri:node-tree";
+			case "data-jobs":
+				return "ri:refresh-line";
+			case "storage":
+				return "ri:hard-drive-2-line";
+			case "usage":
+				return "ri:bar-chart-line";
+			case "profile":
+				return "ri:user-settings-line";
 			default:
-				return 'ri:file-line';
+				return "ri:file-line";
 		}
 	}
 </script>
@@ -322,86 +346,109 @@
 	ondragover={paneId ? handleDragOver : undefined}
 	ondragleave={paneId ? handleDragLeave : undefined}
 	ondrop={paneId ? handleDrop : undefined}
+	role="toolbar"
+	aria-label="Tab bar"
+	tabindex="0"
 >
 	<!-- Only show nav buttons on left pane or when not in split mode -->
-	{#if !paneId || paneId === 'left'}
+	{#if !paneId || paneId === "left"}
 		<div class="nav-buttons">
 			<button
 				class="nav-button"
-				class:disabled={!windowTabs.canGoBack()}
-				onclick={() => windowTabs.goBack()}
+				class:disabled={!workspaceStore.canGoBack()}
+				onclick={() => workspaceStore.goBack()}
 				aria-label="Go back"
 				title="Go back"
-				disabled={!windowTabs.canGoBack()}
+				disabled={!workspaceStore.canGoBack()}
 			>
-				<iconify-icon icon="ri:arrow-left-s-line" />
+				<iconify-icon icon="ri:arrow-left-s-line"></iconify-icon>
 			</button>
 			<button
 				class="nav-button"
-				class:disabled={!windowTabs.canGoForward()}
-				onclick={() => windowTabs.goForward()}
+				class:disabled={!workspaceStore.canGoForward()}
+				onclick={() => workspaceStore.goForward()}
 				aria-label="Go forward"
 				title="Go forward"
-				disabled={!windowTabs.canGoForward()}
+				disabled={!workspaceStore.canGoForward()}
 			>
-				<iconify-icon icon="ri:arrow-right-s-line" />
+				<iconify-icon icon="ri:arrow-right-s-line"></iconify-icon>
 			</button>
 		</div>
 	{/if}
 
-	<div class="tabs-scroll" ondragover={handleDragOver} ondragleave={handleDragLeave} ondrop={handleDrop}>
+	<div
+		class="tabs-scroll"
+		ondragover={handleDragOver}
+		ondragleave={handleDragLeave}
+		ondrop={handleDrop}
+		role="tablist"
+		tabindex="0"
+	>
 		{#each tabs as tab, index (tab.id)}
-			{@const showDropIndicatorBefore = dropTargetIndex === index && draggedTabId !== tab.id}
-			{@const showDropIndicatorAfter = dropTargetIndex === index + 1 && index === tabs.length - 1 && draggedTabId !== tab.id}
+			{@const showDropIndicatorBefore =
+				dropTargetIndex === index && draggedTabId !== tab.id}
+			{@const showDropIndicatorAfter =
+				dropTargetIndex === index + 1 &&
+				index === tabs.length - 1 &&
+				draggedTabId !== tab.id}
 			{#if showDropIndicatorBefore}
 				<div class="drop-indicator"></div>
 			{/if}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
-				class:active-in-active-pane={tab.id === activeTabId && isActivePane}
+				class:active-in-active-pane={tab.id === activeTabId &&
+					isActivePane}
 				class:dragging={tab.id === draggedTabId}
 				class:pinned={tab.pinned}
 				class:renaming={tab.id === renamingTabId}
-				draggable={tab.id !== renamingTabId ? 'true' : 'false'}
+				draggable={tab.id !== renamingTabId ? "true" : "false"}
 				ondragstart={(e) => handleDragStart(e, tab.id)}
 				ondragend={handleDragEnd}
 				ondragover={(e) => handleTabDragOver(e, index)}
 				ondragleave={handleTabDragLeave}
-				onclick={() => tab.id !== renamingTabId && handleTabClick(tab.id)}
+				onclick={() =>
+					tab.id !== renamingTabId && handleTabClick(tab.id)}
 				ondblclick={(e) => handleDoubleClick(e, tab.id)}
 				onauxclick={(e) => handleMiddleClick(e, tab.id)}
 				oncontextmenu={(e) => handleContextMenu(e, tab.id)}
-				onkeydown={(e) => e.key === 'Enter' && tab.id !== renamingTabId && handleTabClick(tab.id)}
-				title={tab.id === renamingTabId ? '' : tab.label}
+				onkeydown={(e) =>
+					e.key === "Enter" &&
+					tab.id !== renamingTabId &&
+					handleTabClick(tab.id)}
+				title={tab.id === renamingTabId ? "" : tab.label}
 				role="button"
 				tabindex="0"
 			>
-				<iconify-icon icon={tab.icon || getDefaultIcon(tab.type)} class="tab-icon" />
-				{#if !tab.pinned}
-					{#if tab.id === renamingTabId}
-						<input
-							type="text"
-							class="tab-rename-input"
-							bind:value={renameValue}
-							onkeydown={handleRenameKeydown}
-							onblur={handleRenameSubmit}
-							onclick={(e) => e.stopPropagation()}
-							autofocus
-						/>
-					{:else}
-						<span class="tab-label">{tab.label}</span>
-					{/if}
+			<iconify-icon
+				icon={tab.icon || getDefaultIcon(tab.type)}
+				class="tab-icon"
+			></iconify-icon>
+			{#if !tab.pinned}
+				{#if tab.id === renamingTabId}
+					<!-- svelte-ignore a11y_autofocus -->
+					<input
+						type="text"
+						class="tab-rename-input"
+						bind:value={renameValue}
+						onkeydown={handleRenameKeydown}
+						onblur={handleRenameSubmit}
+						onclick={(e) => e.stopPropagation()}
+						autofocus
+					/>
+				{:else}
+					<span class="tab-label">{tab.label}</span>
 				{/if}
-				{#if !tab.pinned && tab.id !== renamingTabId}
-					<button
-						class="tab-close"
-						onclick={(e) => handleTabClose(e, tab.id)}
-						aria-label="Close tab"
-					>
-						<iconify-icon icon="ri:close-line" />
-					</button>
-				{/if}
+			{/if}
+			{#if !tab.pinned && tab.id !== renamingTabId}
+				<button
+					class="tab-close"
+					onclick={(e) => handleTabClose(e, tab.id)}
+					aria-label="Close tab"
+				>
+					<iconify-icon icon="ri:close-line"></iconify-icon>
+				</button>
+			{/if}
 			</div>
 			{#if showDropIndicatorAfter}
 				<div class="drop-indicator"></div>
@@ -416,18 +463,18 @@
 			aria-label="Split view"
 			title="Split view"
 		>
-			<iconify-icon icon="ri:layout-column-line" />
+			<iconify-icon icon="ri:layout-column-line"></iconify-icon>
 		</button>
 	{/if}
 
-	{#if paneId === 'right' && isSplitMode}
+	{#if paneId === "right" && isSplitMode}
 		<button
 			class="merge-toggle"
 			onclick={handleMergePanes}
 			aria-label="Merge panes"
 			title="Merge panes"
 		>
-			<iconify-icon icon="ri:layout-right-line" />
+			<iconify-icon icon="ri:layout-right-line"></iconify-icon>
 		</button>
 	{/if}
 </div>
@@ -439,29 +486,63 @@
 		style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
 		role="menu"
 	>
-		<button class="context-menu-item" onclick={handleTogglePin} role="menuitem">
-			<iconify-icon icon={isContextTabPinned() ? 'ri:unpin-line' : 'ri:pushpin-line'} width="14"></iconify-icon>
-			{isContextTabPinned() ? 'Unpin' : 'Pin'}
+		<button
+			class="context-menu-item"
+			onclick={handleTogglePin}
+			role="menuitem"
+		>
+			<iconify-icon
+				icon={isContextTabPinned()
+					? "ri:unpin-line"
+					: "ri:pushpin-line"}
+				width="14"
+			></iconify-icon>
+			{isContextTabPinned() ? "Unpin" : "Pin"}
 		</button>
-		<button class="context-menu-item" onclick={handleToggleBookmark} role="menuitem">
-			<iconify-icon icon={isContextTabBookmarked() ? 'ri:bookmark-fill' : 'ri:bookmark-line'} width="14"></iconify-icon>
-			{isContextTabBookmarked() ? 'Remove Bookmark' : 'Bookmark'}
+		<button
+			class="context-menu-item"
+			onclick={handleToggleBookmark}
+			role="menuitem"
+		>
+			<iconify-icon
+				icon={isContextTabBookmarked()
+					? "ri:bookmark-fill"
+					: "ri:bookmark-line"}
+				width="14"
+			></iconify-icon>
+			{isContextTabBookmarked() ? "Remove Bookmark" : "Bookmark"}
 		</button>
-		<button class="context-menu-item" onclick={handleStartRename} role="menuitem">
+		<button
+			class="context-menu-item"
+			onclick={handleStartRename}
+			role="menuitem"
+		>
 			<iconify-icon icon="ri:edit-line" width="14"></iconify-icon>
 			Rename
 		</button>
 		<div class="context-menu-divider"></div>
-		<button class="context-menu-item" onclick={handleCloseTab} role="menuitem">
+		<button
+			class="context-menu-item"
+			onclick={handleCloseTab}
+			role="menuitem"
+		>
 			Close
 		</button>
 		{#if tabs.length > 1}
-			<button class="context-menu-item" onclick={handleCloseOthers} role="menuitem">
+			<button
+				class="context-menu-item"
+				onclick={handleCloseOthers}
+				role="menuitem"
+			>
 				Close Others
 			</button>
 		{/if}
 		{#if hasTabsToRight()}
-			<button class="context-menu-item" onclick={handleCloseToRight} role="menuitem">
+			<button
+				class="context-menu-item"
+				onclick={handleCloseToRight}
+				role="menuitem"
+			>
 				Close to the Right
 			</button>
 		{/if}
@@ -477,6 +558,8 @@
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-surface);
 		flex-shrink: 0;
+		position: relative;
+		z-index: 110; /* Above global drag overlays */
 	}
 
 	.nav-buttons {
@@ -685,7 +768,11 @@
 
 	/* Drag over indicator */
 	.tab-bar.drag-over {
-		background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
+		background: color-mix(
+			in srgb,
+			var(--color-primary) 10%,
+			var(--color-surface)
+		);
 	}
 
 	/* Tab being dragged */

@@ -3,7 +3,7 @@
  * Enables NotebookLM/Perplexity-style citations in responses
  */
 
-export type SourceType = 'ontology' | 'axiology' | 'web_search' | 'narratives' | 'location' | 'generic';
+export type SourceType = 'ontology' | 'web_search' | 'narratives' | 'location' | 'generic';
 
 export interface Citation {
 	/** Sequential ID: "1", "2", "3" */

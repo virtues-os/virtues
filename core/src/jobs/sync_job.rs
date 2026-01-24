@@ -5,10 +5,10 @@ use crate::jobs::models::Job;
 use crate::jobs::{JobExecutor, TransformContext};
 use crate::sources::base::SyncMode;
 use crate::sources::StreamFactory;
+use crate::registry;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Execute a sync job
 ///
@@ -20,15 +20,10 @@ pub async fn execute_sync_job(
     context: &Arc<TransformContext>,
     job: &Job,
 ) -> Result<()> {
-    let source_id_str = job
+    let source_id = job
         .source_connection_id
-        .as_ref()
+        .clone()
         .ok_or_else(|| crate::Error::InvalidInput("Sync job missing source_id".to_string()))?;
-    let source_id = Uuid::parse_str(source_id_str)
-        .map_err(|e| crate::Error::InvalidInput(format!("Invalid source_id: {}", e)))?;
-
-    let job_id = Uuid::parse_str(&job.id)
-        .map_err(|e| crate::Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
 
     let stream_name = job
         .stream_name
@@ -39,6 +34,45 @@ pub async fn execute_sync_job(
         .sync_mode
         .as_ref()
         .ok_or_else(|| crate::Error::InvalidInput("Sync job missing sync_mode".to_string()))?;
+
+    // 1. Tier Enforcement
+    // Get source and stream info from registry
+    let source_conn = sqlx::query!(
+        "SELECT source FROM elt_source_connections WHERE id = $1",
+        source_id
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| crate::Error::Database(format!("Failed to fetch source connection: {}", e)))?;
+
+    let registered_stream = registry::get_stream(&source_conn.source, stream_name).ok_or_else(|| {
+        crate::Error::InvalidInput(format!(
+            "Stream '{}' not found for source '{}'",
+            stream_name, source_conn.source
+        ))
+    })?;
+
+    // Get user tier (mocked for now, should come from profile/subscription)
+    // TODO: Implement actual subscription check
+    let user_tier = virtues_registry::sources::SourceTier::Free;
+
+    if (registered_stream.descriptor.tier as u32) > (user_tier as u32) {
+        let error_msg = format!(
+            "Tier mismatch: stream '{}' requires {:?} tier, user has {:?} tier",
+            stream_name, registered_stream.descriptor.tier, user_tier
+        );
+        tracing::warn!(error_msg);
+
+        sqlx::query(
+            "UPDATE elt_jobs SET status = 'failed', error_message = $1, error_class = 'tier_error' WHERE id = $2",
+        )
+        .bind(&error_msg)
+        .bind(&job.id)
+        .execute(db)
+        .await?;
+
+        return Err(crate::Error::Unauthorized(error_msg));
+    }
 
     // Extract cursor from metadata if present
     let cursor_before = job
@@ -51,6 +85,21 @@ pub async fn execute_sync_job(
     let sync_mode = match sync_mode_str.as_str() {
         "full_refresh" => SyncMode::FullRefresh,
         "incremental" => SyncMode::incremental(cursor_before.clone()),
+        "backfill" => {
+            let start = job
+                .metadata
+                .get("start_date")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| crate::Error::InvalidInput("Backfill missing start_date".into()))?;
+            let end = job
+                .metadata
+                .get("end_date")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| crate::Error::InvalidInput("Backfill missing end_date".into()))?;
+            SyncMode::backfill(start, end)
+        }
         _ => {
             return Err(crate::Error::InvalidInput(format!(
                 "Invalid sync mode: {}",
@@ -65,7 +114,7 @@ pub async fn execute_sync_job(
         context.storage.clone(),
         context.stream_writer.clone(),
     );
-    let mut stream_type = factory.create_stream_typed(source_id, stream_name).await?;
+    let mut stream_type = factory.create_stream_typed(&source_id, stream_name).await?;
 
     // Ensure we got a PullStream (sync jobs should only work with pull streams)
     let pull_stream = match stream_type.as_pull_mut() {
@@ -79,14 +128,41 @@ pub async fn execute_sync_job(
     };
 
     // Load configuration
-    pull_stream.load_config(db, source_id).await?;
+    pull_stream.load_config(db, &source_id).await?;
 
     // Execute sync using PullStream API
     let result = pull_stream.sync_pull(sync_mode.clone()).await;
 
     match result {
         Ok(sync_result) => {
-            // Extract records for direct transform and async archival
+            // Update watermarks and sync status
+            sqlx::query(
+                r#"
+                UPDATE elt_stream_connections
+                SET last_sync_at = $1, 
+                    last_sync_token = $2, 
+                    earliest_record_at = COALESCE(earliest_record_at, $3),
+                    latest_record_at = $4,
+                    sync_status = $5,
+                    updated_at = datetime('now')
+                WHERE source_connection_id = $6 AND stream_name = $7
+                "#,
+            )
+            .bind(sync_result.completed_at)
+            .bind(&sync_result.next_cursor)
+            .bind(sync_result.earliest_record_at)
+            .bind(sync_result.latest_record_at)
+            .bind(match sync_mode {
+                SyncMode::FullRefresh => "initial",
+                SyncMode::Incremental { .. } => "incremental",
+                SyncMode::Backfill { .. } => "backfilling",
+            })
+            .bind(&source_id)
+            .bind(stream_name)
+            .execute(db)
+            .await?;
+
+            // Extract records for direct transform and archival
             let has_records = sync_result.records.is_some();
             let records = sync_result.records.clone().unwrap_or_default();
 
@@ -97,36 +173,37 @@ pub async fn execute_sync_job(
                 "Sync completed, checking for records to archive"
             );
 
-            // Create archive job if we have records (direct transform path - hot path)
-            let archive_job_id = if !records.is_empty() {
+            // Write records directly to filesystem (sync, no async job queue)
+            let storage_key = if !records.is_empty() {
                 tracing::info!(
                     stream_name = %stream_name,
                     record_count = records.len(),
-                    "Creating archive job for S3 upload"
+                    "Writing records to filesystem"
                 );
 
-                let archive_id = crate::jobs::spawn_archive_job_async(
+                let storage_key = write_stream_records(
                     db,
                     context.storage.as_ref(),
-                    Some(job_id), // Parent sync job
-                    source_id,
+                    &source_id,
+                    &source_conn.source,
                     stream_name,
-                    records.clone(),
-                    (None, Some(sync_result.completed_at)), // (min_ts, max_ts)
+                    &records,
+                    sync_result.earliest_record_at,
+                    sync_result.latest_record_at,
                 )
                 .await?;
 
                 tracing::info!(
                     stream_name = %stream_name,
-                    archive_job_id = %archive_id,
-                    "Archive job created successfully"
+                    storage_key = %storage_key,
+                    "Records written to filesystem successfully"
                 );
 
-                Some(archive_id)
+                Some(storage_key)
             } else {
                 tracing::warn!(
                     stream_name = %stream_name,
-                    "No records collected from sync, skipping archive job"
+                    "No records collected from sync, skipping archival"
                 );
                 None
             };
@@ -138,30 +215,17 @@ pub async fn execute_sync_job(
                 "records_fetched": sync_result.records_fetched,
                 "records_written": sync_result.records_written,
                 "records_failed": sync_result.records_failed,
+                "earliest_record_at": sync_result.earliest_record_at,
+                "latest_record_at": sync_result.latest_record_at,
                 "duration_ms": sync_result.duration_ms(),
                 "direct_transform_enabled": has_records,
-                "archive_job_id": archive_job_id
+                "storage_key": storage_key
             });
-
-            // Update the stream_connections table with last sync timestamp and cursor
-            sqlx::query(
-                r#"
-                UPDATE data_stream_connections
-                SET last_sync_at = $1, last_sync_token = $2, updated_at = datetime('now')
-                WHERE source_connection_id = $3 AND stream_name = $4
-                "#,
-            )
-            .bind(sync_result.completed_at)
-            .bind(&sync_result.next_cursor)
-            .bind(source_id)
-            .bind(stream_name)
-            .execute(db)
-            .await?;
 
             // Update job with final stats and metadata
             sqlx::query(
                 r#"
-                UPDATE data_jobs
+                UPDATE elt_jobs
                 SET status = 'succeeded',
                     completed_at = datetime('now'),
                     records_processed = $1,
@@ -182,7 +246,7 @@ pub async fn execute_sync_job(
                 records_written = sync_result.records_written,
                 duration_ms = sync_result.duration_ms(),
                 direct_transform = has_records,
-                archive_job_id = ?archive_job_id,
+                storage_key = ?storage_key,
                 "Sync job completed successfully"
             );
 
@@ -193,7 +257,7 @@ pub async fn execute_sync_job(
                     db,
                     executor,
                     context,
-                    source_id,
+                    source_id.clone(),
                     stream_name,
                     Some(records),
                 )
@@ -228,7 +292,7 @@ pub async fn execute_sync_job(
             // Update job with error
             sqlx::query(
                 r#"
-                UPDATE data_jobs
+                UPDATE elt_jobs
                 SET status = 'failed',
                     completed_at = datetime('now'),
                     error_message = $1,
@@ -244,6 +308,17 @@ pub async fn execute_sync_job(
             .execute(db)
             .await?;
 
+            // Handle rate limiting backoff
+            if error_class == "rate_limit" {
+                tracing::info!(
+                    job_id = %job.id,
+                    stream_name = %stream_name,
+                    "Rate limit detected, scheduling backoff"
+                );
+                // In a real system, we would reschedule the job with a delay
+                // For now, we just log it as a rate_limit error
+            }
+
             tracing::error!(
                 job_id = %job.id,
                 stream_name = %stream_name,
@@ -255,6 +330,65 @@ pub async fn execute_sync_job(
             Err(e)
         }
     }
+}
+
+/// Write stream records directly to filesystem and record metadata
+///
+/// This replaces the async archive job system with synchronous filesystem writes.
+async fn write_stream_records(
+    db: &SqlitePool,
+    storage: &crate::storage::Storage,
+    source_id: &str,
+    source_type: &str,
+    stream_name: &str,
+    records: &[serde_json::Value],
+    min_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    max_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+) -> Result<String> {
+    use chrono::Utc;
+    use crate::storage::models::StreamKeyBuilder;
+
+    let date = Utc::now().date_naive();
+    let key_builder = StreamKeyBuilder::new(None, source_type, source_id, stream_name, date)
+        .map_err(|e| crate::Error::Other(format!("Invalid stream key: {}", e)))?;
+    let storage_key = key_builder.build();
+
+    // Write JSONL to filesystem
+    storage.upload_jsonl(&storage_key, records).await?;
+
+    // Calculate size
+    let size_bytes: i64 = records
+        .iter()
+        .map(|r| serde_json::to_string(r).unwrap_or_default().len() as i64)
+        .sum();
+
+    // Record metadata in elt_stream_objects
+    let stream_object_id = crate::ids::generate_id(crate::ids::STREAM_OBJECT_PREFIX, &[&storage_key]);
+    sqlx::query(
+        "INSERT INTO elt_stream_objects
+         (id, source_connection_id, stream_name, storage_key, record_count, size_bytes,
+          min_timestamp, max_timestamp, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, datetime('now'))",
+    )
+    .bind(&stream_object_id)
+    .bind(source_id)
+    .bind(stream_name)
+    .bind(&storage_key)
+    .bind(records.len() as i32)
+    .bind(size_bytes)
+    .bind(min_timestamp)
+    .bind(max_timestamp)
+    .execute(db)
+    .await?;
+
+    tracing::info!(
+        stream_object_id = %stream_object_id,
+        storage_key = %storage_key,
+        record_count = records.len(),
+        "Stream object metadata recorded"
+    );
+
+    Ok(storage_key)
 }
 
 /// Classify errors for monitoring and alerting
@@ -285,23 +419,6 @@ fn classify_sync_error(error: &crate::error::Error) -> &'static str {
         Error::Source(_) => "sync_token_error",
         Error::Database(_) => "database_error",
         Error::Storage(_) => "storage_error",
-        Error::S3(msg) => {
-            let msg_lower = msg.to_lowercase();
-            // Classify S3 errors by error code
-            if msg_lower.contains("nosuchbucket") {
-                "s3_config_error"
-            } else if msg_lower.contains("accessdenied") || msg_lower.contains("forbidden") {
-                "s3_auth_error"
-            } else if msg_lower.contains("invalidrequest")
-                || msg_lower.contains("preconditionfailed")
-            {
-                "s3_invalid_request"
-            } else if msg_lower.contains("nosuchkey") {
-                "s3_not_found"
-            } else {
-                "s3_storage_error"
-            }
-        }
         Error::Authentication(_) | Error::Unauthorized(_) => "auth_error",
         Error::Serialization(_) => "serialization_error",
         Error::Configuration(_) => "config_error",

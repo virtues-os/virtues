@@ -6,12 +6,12 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::api::models::{get_default_model, get_model};
 use crate::api::sessions::ChatMessage;
 use crate::api::token_estimation::{estimate_session_context, ContextStatus};
 use crate::error::Result;
+use crate::types::Timestamp;
 
 // ============================================================================
 // Types
@@ -29,8 +29,8 @@ pub struct SessionUsageRecord {
     pub cache_read_tokens: i64,
     pub cache_write_tokens: i64,
     pub estimated_cost_usd: f64,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// Aggregated usage for a session
@@ -49,8 +49,8 @@ pub struct SessionUsage {
     pub total_cost_usd: f64,
     pub user_message_count: i32,
     pub assistant_message_count: i32,
-    pub first_message_at: Option<String>,
-    pub last_message_at: Option<String>,
+    pub first_message_at: Option<Timestamp>,
+    pub last_message_at: Option<Timestamp>,
     pub compaction_status: CompactionStatus,
     pub context_status: String,
 }
@@ -62,7 +62,7 @@ pub struct CompactionStatus {
     pub messages_summarized: i32,
     pub messages_verbatim: i32,
     pub summary_version: i32,
-    pub last_compacted_at: Option<String>,
+    pub last_compacted_at: Option<Timestamp>,
 }
 
 /// Usage data to record after an LLM response
@@ -133,11 +133,11 @@ pub fn calculate_cost(
 /// This uses upsert to accumulate usage per session-model pair.
 pub async fn record_session_usage(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     model: &str,
     usage: UsageData,
 ) -> Result<()> {
-    let session_id_str = session_id.to_string();
+    let session_id_str = session_id.clone();
     let id = format!("{}_{}", session_id_str, model.replace('/', "_"));
     let now = Utc::now().to_rfc3339();
 
@@ -185,14 +185,14 @@ pub async fn record_session_usage(
 }
 
 /// Get cumulative usage for a session
-pub async fn get_session_usage(pool: &SqlitePool, session_id: Uuid) -> Result<SessionUsage> {
-    let session_id_str = session_id.to_string();
+pub async fn get_session_usage(pool: &SqlitePool, session_id: String) -> Result<SessionUsage> {
+    let session_id_str = session_id.clone();
 
-    // Get session data including messages and summary info
+    // Get session metadata
     let session_row = sqlx::query!(
         r#"
         SELECT
-            id, title, messages, message_count,
+            id, title, message_count,
             conversation_summary, summary_up_to_index, summary_version, last_compacted_at,
             created_at, updated_at
         FROM app_chat_sessions
@@ -206,11 +206,46 @@ pub async fn get_session_usage(pool: &SqlitePool, session_id: Uuid) -> Result<Se
     let session_row =
         session_row.ok_or_else(|| crate::Error::NotFound("Session not found".into()))?;
 
-    // Parse messages
-    let messages: Vec<ChatMessage> = serde_json::from_str(&session_row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", session_id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
+    // Load messages from normalized table
+    let message_rows = sqlx::query!(
+        r#"
+        SELECT
+            id, role, content, created_at as timestamp,
+            model, provider, agent_id, reasoning, tool_calls, intent, subject
+        FROM app_chat_messages
+        WHERE session_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+        session_id_str
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let messages: Vec<ChatMessage> = message_rows
+        .into_iter()
+        .map(|row| {
+            let tool_calls = row.tool_calls
+                .as_ref()
+                .and_then(|tc| serde_json::from_str(tc).ok());
+            let intent = row.intent
+                .as_ref()
+                .and_then(|i| serde_json::from_str(i).ok());
+            
+            ChatMessage {
+                id: row.id,
+                role: row.role,
+                content: row.content,
+                timestamp: row.timestamp,
+                model: row.model,
+                provider: row.provider,
+                agent_id: row.agent_id,
+                reasoning: row.reasoning,
+                tool_calls,
+                intent,
+                subject: row.subject,
+            }
+        })
+        .collect();
 
     // Get aggregated usage from app_session_usage
     let usage_row = sqlx::query!(
@@ -232,17 +267,17 @@ pub async fn get_session_usage(pool: &SqlitePool, session_id: Uuid) -> Result<Se
     .fetch_optional(pool)
     .await?;
 
-    // Get the most recently used model, falling back to database default
+    // Get the most recently used model, falling back to registry default
     let last_model = match messages.iter().rev().find_map(|m| m.model.clone()) {
         Some(model) => model,
-        None => get_default_model(pool)
+        None => get_default_model()
             .await
             .map(|m| m.model_id)
             .unwrap_or_else(|_| "anthropic/claude-sonnet-4-20250514".to_string()),
     };
 
-    // Get model context window
-    let context_window = match get_model(pool, &last_model).await {
+    // Get model context window from registry
+    let context_window = match get_model(&last_model).await {
         Ok(model_info) => model_info.context_window.unwrap_or(1_000_000) as i64,
         Err(_) => 1_000_000, // Default 1M for Gemini
     };
@@ -252,8 +287,8 @@ pub async fn get_session_usage(pool: &SqlitePool, session_id: Uuid) -> Result<Se
     let assistant_message_count = messages.iter().filter(|m| m.role == "assistant").count() as i32;
 
     // Get timestamps
-    let first_message_at = messages.first().map(|m| m.timestamp.clone());
-    let last_message_at = messages.last().map(|m| m.timestamp.clone());
+    let first_message_at = messages.first().and_then(|m| m.timestamp.parse::<Timestamp>().ok());
+    let last_message_at = messages.last().and_then(|m| m.timestamp.parse::<Timestamp>().ok());
 
     // Parse compaction info
     let summary_up_to_index = session_row.summary_up_to_index.unwrap_or(0) as i32;
@@ -319,7 +354,7 @@ pub async fn get_session_usage(pool: &SqlitePool, session_id: Uuid) -> Result<Se
             messages_summarized,
             messages_verbatim,
             summary_version,
-            last_compacted_at: session_row.last_compacted_at,
+            last_compacted_at: session_row.last_compacted_at.and_then(|s| s.parse::<Timestamp>().ok()),
         },
         context_status: context_status.as_str().to_string(),
     })
@@ -328,15 +363,15 @@ pub async fn get_session_usage(pool: &SqlitePool, session_id: Uuid) -> Result<Se
 /// Check if compaction is needed for a session
 pub async fn check_compaction_needed(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     model: &str,
 ) -> Result<ContextStatus> {
-    let session_id_str = session_id.to_string();
+    let session_id_str = session_id.clone();
 
-    // Get session messages and summary
+    // Get session metadata
     let session_row = sqlx::query!(
         r#"
-        SELECT messages, conversation_summary, summary_up_to_index
+        SELECT conversation_summary, summary_up_to_index
         FROM app_chat_sessions
         WHERE id = $1
         "#,
@@ -348,13 +383,49 @@ pub async fn check_compaction_needed(
     let session_row =
         session_row.ok_or_else(|| crate::Error::NotFound("Session not found".into()))?;
 
-    let messages: Vec<ChatMessage> = serde_json::from_str(&session_row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", session_id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
+    // Load messages from normalized table
+    let message_rows = sqlx::query!(
+        r#"
+        SELECT
+            id, role, content, created_at as timestamp,
+            model, provider, agent_id, reasoning, tool_calls, intent, subject
+        FROM app_chat_messages
+        WHERE session_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+        session_id_str
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let messages: Vec<ChatMessage> = message_rows
+        .into_iter()
+        .map(|row| {
+            let tool_calls = row.tool_calls
+                .as_ref()
+                .and_then(|tc| serde_json::from_str(tc).ok());
+            let intent = row.intent
+                .as_ref()
+                .and_then(|i| serde_json::from_str(i).ok());
+            
+            ChatMessage {
+                id: row.id,
+                role: row.role,
+                content: row.content,
+                timestamp: row.timestamp,
+                model: row.model,
+                provider: row.provider,
+                agent_id: row.agent_id,
+                reasoning: row.reasoning,
+                tool_calls,
+                intent,
+                subject: row.subject,
+            }
+        })
+        .collect();
 
-    // Get model context window
-    let context_window = match get_model(pool, model).await {
+    // Get model context window from registry
+    let context_window = match get_model(model).await {
         Ok(model_info) => model_info.context_window.unwrap_or(1_000_000) as i64,
         Err(_) => 1_000_000,
     };

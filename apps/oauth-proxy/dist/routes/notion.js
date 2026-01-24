@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const oauth_apps_1 = require("../config/oauth-apps");
 const error_handler_1 = require("../middleware/error-handler");
+const url_validator_1 = require("../utils/url-validator");
 const router = express_1.default.Router();
 // In-memory store for state parameters (in production, use Redis or similar)
 const stateStore = new Map();
@@ -72,7 +73,7 @@ router.get('/callback', async (req, res) => {
             throw (0, error_handler_1.createError)('State parameter expired', 400);
         }
         // Validate return URL
-        if (!isValidReturnUrl(return_url)) {
+        if (!(0, url_validator_1.isValidReturnUrl)(return_url)) {
             throw (0, error_handler_1.createError)('Invalid return URL', 400);
         }
         const config = oauth_apps_1.oauthConfigs.notion;
@@ -175,39 +176,6 @@ router.post('/token', async (req, res) => {
         console.error('Error exchanging code for token:', error);
         res.status(500).json({ error: 'Failed to exchange code for token' });
     }
-});
-// Helper function to validate return URLs
-function isValidReturnUrl(url) {
-    try {
-        const parsed = new URL(url);
-        // Allow localhost for development
-        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-            return true;
-        }
-        // Allow specific domains
-        const allowedPatterns = [
-            /^.*\.virtues\.com$/,
-            /^.*\.local$/,
-            /^.*\.localhost$/
-        ];
-        return allowedPatterns.some(pattern => pattern.test(parsed.hostname));
-    }
-    catch {
-        return false;
-    }
-}
-// Temporary debug endpoint - REMOVE IN PRODUCTION
-router.get('/debug-config', (req, res) => {
-    const config = oauth_apps_1.oauthConfigs.notion;
-    res.json({
-        tokenUrl: config.tokenUrl,
-        redirectUri: config.redirectUri,
-        clientIdSet: !!config.clientId,
-        clientSecretSet: !!config.clientSecret,
-        clientIdLength: config.clientId?.length || 0,
-        clientIdPrefix: config.clientId?.substring(0, 8) + '...',
-        clientSecretLength: config.clientSecret?.length || 0
-    });
 });
 exports.default = router;
 //# sourceMappingURL=notion.js.map

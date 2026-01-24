@@ -7,11 +7,11 @@
 CREATE TABLE IF NOT EXISTS app_assistant_profile (
     id TEXT PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000001',
     assistant_name TEXT DEFAULT 'Ari',
-    default_agent_id TEXT DEFAULT 'auto',
+    default_agent_id TEXT DEFAULT 'agent',
     default_model_id TEXT DEFAULT 'anthropic/claude-sonnet-4-20250514',
     background_model_id TEXT DEFAULT 'cerebras/llama-3.3-70b',  -- For cheap tasks: titles, summaries
-    enabled_tools TEXT DEFAULT '{"queryLocationMap": true}',  -- JSON
-    ui_preferences TEXT DEFAULT '{}',  -- JSON
+    enabled_tools TEXT DEFAULT '{"web_search": true, "virtues_query_ontology": true, "virtues_semantic_search": true}',  -- JSON
+    ui_preferences TEXT DEFAULT '{"contextIndicator": {"alwaysVisible": false, "showThreshold": 70}}',  -- JSON
     embedding_model_id TEXT DEFAULT 'nomic-embed-text',
     ollama_endpoint TEXT DEFAULT 'http://localhost:11434',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -37,9 +37,9 @@ VALUES ('00000000-0000-0000-0000-000000000001');
 CREATE TABLE IF NOT EXISTS app_chat_sessions (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    messages TEXT NOT NULL DEFAULT '[]',  -- JSON array
     message_count INTEGER NOT NULL DEFAULT 0,
     trace TEXT,  -- JSON
+    workspace_id TEXT,  -- Which workspace this chat belongs to (for view filtering)
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -56,101 +56,45 @@ BEGIN
 END;
 
 --------------------------------------------------------------------------------
--- MODELS
+-- MODELS: REMOVED - Models are now read from virtues-registry crate
+-- See: packages/virtues-registry/src/models.rs
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS app_models (
+--------------------------------------------------------------------------------
+-- AGENTS: REMOVED - Agents are now read from virtues-registry crate
+-- See: packages/virtues-registry/src/agents.rs
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- MCP TOOLS
+-- Only stores MCP tools discovered from connected servers.
+-- Built-in tools (web_search, query_ontology, semantic_search) are in registry.
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS app_mcp_tools (
     id TEXT PRIMARY KEY,
-    user_id TEXT,
-    model_id TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    context_window INTEGER,
-    max_output_tokens INTEGER,
-    supports_tools INTEGER DEFAULT 1,
-    is_default INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_models_user_model
-    ON app_models(user_id, model_id) WHERE user_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_models_system_model
-    ON app_models(model_id) WHERE user_id IS NULL;
-CREATE INDEX IF NOT EXISTS idx_models_enabled
-    ON app_models(id) WHERE enabled = 1;
-
-CREATE TRIGGER IF NOT EXISTS app_models_set_updated_at
-    AFTER UPDATE ON app_models
-    FOR EACH ROW
-    WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE app_models SET updated_at = datetime('now') WHERE id = NEW.id;
-END;
-
---------------------------------------------------------------------------------
--- AGENTS
---------------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS app_agents (
-    id TEXT PRIMARY KEY,
-    user_id TEXT,
-    agent_id TEXT NOT NULL,
-    name TEXT NOT NULL,
+    server_name TEXT NOT NULL,              -- MCP server name (e.g., "my-github-mcp")
+    server_url TEXT NOT NULL,               -- MCP server URL
+    tool_name TEXT NOT NULL,                -- Tool name from MCP server
     description TEXT,
-    color TEXT,
-    icon TEXT,
+    input_schema TEXT,                      -- JSON schema for tool parameters
     enabled INTEGER NOT NULL DEFAULT 1,
-    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(server_name, tool_name)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_user_agent
-    ON app_agents(user_id, agent_id) WHERE user_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_system_agent
-    ON app_agents(agent_id) WHERE user_id IS NULL;
-CREATE INDEX IF NOT EXISTS idx_agents_enabled
-    ON app_agents(id) WHERE enabled = 1;
+CREATE INDEX IF NOT EXISTS idx_mcp_tools_server
+    ON app_mcp_tools(server_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_tools_enabled
+    ON app_mcp_tools(id) WHERE enabled = 1;
 
-CREATE TRIGGER IF NOT EXISTS app_agents_set_updated_at
-    AFTER UPDATE ON app_agents
+CREATE TRIGGER IF NOT EXISTS app_mcp_tools_set_updated_at
+    AFTER UPDATE ON app_mcp_tools
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE app_agents SET updated_at = datetime('now') WHERE id = NEW.id;
-END;
-
---------------------------------------------------------------------------------
--- TOOLS
---------------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS app_tools (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT,
-    tool_type TEXT NOT NULL CHECK (tool_type IN ('mcp', 'virtues')),
-    category TEXT,
-    icon TEXT,
-    default_params TEXT,  -- JSON
-    display_order INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_tools_category
-    ON app_tools(category) WHERE category IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_tools_type
-    ON app_tools(tool_type);
-
-CREATE TRIGGER IF NOT EXISTS app_tools_set_updated_at
-    AFTER UPDATE ON app_tools
-    FOR EACH ROW
-    WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE app_tools SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE app_mcp_tools SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 --------------------------------------------------------------------------------

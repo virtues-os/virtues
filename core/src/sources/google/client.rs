@@ -5,7 +5,6 @@
 
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use super::error_handler::GoogleErrorHandler;
 use crate::{
@@ -23,7 +22,7 @@ pub struct GoogleClient {
 
 impl GoogleClient {
     /// Create a new Google API client
-    pub fn new(source_id: Uuid, token_manager: Arc<TokenManager>) -> Self {
+    pub fn new(source_id: String, token_manager: Arc<TokenManager>) -> Self {
         Self {
             http: OAuthHttpClient::new(source_id, token_manager)
                 .with_base_url("https://www.googleapis.com")
@@ -40,7 +39,7 @@ impl GoogleClient {
     /// // Base URL: https://www.googleapis.com/calendar/v3
     /// ```
     pub fn with_api(
-        source_id: Uuid,
+        source_id: String,
         token_manager: Arc<TokenManager>,
         api: &str,
         version: &str,
@@ -88,14 +87,14 @@ mod tests {
     async fn test_client_creation() {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
-        let _client = GoogleClient::new(Uuid::new_v4(), token_manager);
+        let _client = GoogleClient::new("test-source".to_string(), token_manager);
     }
 
     #[tokio::test]
     async fn test_client_with_api() {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
-        let _client = GoogleClient::with_api(Uuid::new_v4(), token_manager, "calendar", "v3");
+        let _client = GoogleClient::with_api("test-source".to_string(), token_manager, "calendar", "v3");
     }
 
     #[test]

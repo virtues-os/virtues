@@ -4,7 +4,6 @@
 //! different source types: OAuth2, Device, API Key, and unauthenticated sources.
 
 use std::sync::Arc;
-use uuid::Uuid;
 
 use super::base::TokenManager;
 use crate::error::Result;
@@ -20,7 +19,7 @@ use crate::error::Result;
 pub enum SourceAuth {
     /// OAuth 2.0 authentication with automatic token refresh
     OAuth2 {
-        source_id: Uuid,
+        source_id: String,
         token_manager: Arc<TokenManager>,
     },
 
@@ -52,7 +51,7 @@ pub enum Credentials {
 
 impl SourceAuth {
     /// Create OAuth2 authentication
-    pub fn oauth2(source_id: Uuid, token_manager: Arc<TokenManager>) -> Self {
+    pub fn oauth2(source_id: String, token_manager: Arc<TokenManager>) -> Self {
         Self::OAuth2 {
             source_id,
             token_manager,
@@ -86,7 +85,7 @@ impl SourceAuth {
                 source_id,
                 token_manager,
             } => {
-                let token = token_manager.get_valid_token(*source_id).await?;
+                let token = token_manager.get_valid_token(source_id.clone()).await?;
                 Ok(Credentials::BearerToken(token))
             }
             Self::Device { device_id } => Ok(Credentials::DeviceId(device_id.clone())),
@@ -106,9 +105,9 @@ impl SourceAuth {
     }
 
     /// Get the source_id for OAuth2 sources
-    pub fn source_id(&self) -> Option<Uuid> {
+    pub fn source_id(&self) -> Option<&str> {
         match self {
-            Self::OAuth2 { source_id, .. } => Some(*source_id),
+            Self::OAuth2 { source_id, .. } => Some(source_id),
             _ => None,
         }
     }
@@ -148,7 +147,7 @@ mod tests {
     async fn test_auth_type_checks() {
         let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let tm = Arc::new(TokenManager::new_insecure(pool));
-        let auth = SourceAuth::oauth2(Uuid::new_v4(), tm);
+        let auth = SourceAuth::oauth2("test-source".to_string(), tm);
         assert!(auth.is_oauth());
         assert!(!auth.is_device());
 
@@ -165,9 +164,9 @@ mod tests {
     async fn test_source_id_extraction() {
         let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let tm = Arc::new(TokenManager::new_insecure(pool));
-        let source_id = Uuid::new_v4();
-        let auth = SourceAuth::oauth2(source_id, tm);
-        assert_eq!(auth.source_id(), Some(source_id));
+        let source_id = "test-source".to_string();
+        let auth = SourceAuth::oauth2(source_id.clone(), tm);
+        assert_eq!(auth.source_id(), Some(source_id.as_str()));
 
         let auth = SourceAuth::device("test");
         assert_eq!(auth.source_id(), None);

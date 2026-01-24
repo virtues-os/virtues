@@ -14,7 +14,7 @@
 //! - `jobs` - Async job tracking and management
 //! - `registry` - Catalog/registry queries
 //! - `ontologies` - Ontology table queries
-//! - `praxis` - Temporal pursuits management (tasks/initiatives/aspirations)
+
 //! - `rate_limit` - API usage tracking and rate limiting
 //! - `models` - LLM model configurations
 //! - `agents` - AI agent configurations
@@ -32,15 +32,20 @@ pub mod device_pairing;
 pub mod drive;
 pub mod entities;
 pub mod exa;
+pub mod explorer_nodes;
+pub mod internal;
 pub mod jobs;
 pub mod metrics;
+pub mod feedback;
 pub mod models;
 pub mod oauth;
-pub mod onboarding;
+
 pub mod ontologies;
+pub mod pages;
 pub mod places;
 pub mod plaid;
-pub mod praxis;
+pub mod workspaces;
+
 pub mod profile;
 pub mod rate_limit;
 pub mod registry;
@@ -57,6 +62,8 @@ pub mod types;
 pub mod usage;
 pub mod validation;
 pub mod wiki;
+pub mod developer;
+pub mod terminal;
 
 // Re-export commonly used types
 pub use streams::StreamConnection;
@@ -107,11 +114,13 @@ pub use drive::{
     delete_file as delete_drive_file,
     download_file as download_drive_file,
     download_file_stream as download_drive_file_stream,
+    download_lake_object,
     empty_trash as empty_drive_trash,
     get_drive_usage,
     get_file_metadata as get_drive_file,
     // Functions
     init_drive_quota,
+    is_lake_object_id,
     list_files as list_drive_files,
     list_trash as list_drive_trash,
     move_file as move_drive_file,
@@ -140,6 +149,7 @@ pub use entities::{
 pub use exa::{
     search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
+pub use feedback::{submit_feedback, FeedbackRequest};
 pub use jobs::{
     cancel_job, get_job_history, get_job_status, query_jobs, trigger_stream_sync,
     CreateJobResponse, QueryJobsRequest,
@@ -154,11 +164,10 @@ pub use oauth::{
     CreateSourceRequest, OAuthAuthorizeRequest, OAuthAuthorizeResponse, OAuthCallbackParams,
     RegisterDeviceRequest,
 };
-pub use onboarding::{
-    complete_onboarding, complete_step, get_onboarding_status, save_onboarding_aspirations,
-    save_onboarding_axiology, skip_step, ExtractedAxiologyItem, OnboardingAspiration,
-    OnboardingStatus, OnboardingStep, SaveAspirationsRequest, SaveAspirationsResponse,
-    SaveAxiologyRequest, SaveAxiologyResponse,
+
+pub use internal::{
+    get_server_status, hydrate_profile, mark_server_ready, seed_dev_server_status,
+    HydrateRequest, HydrateResponse, ServerStatus,
 };
 pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
@@ -169,13 +178,23 @@ pub use plaid::{
     CreateLinkTokenRequest, CreateLinkTokenResponse, ExchangeTokenRequest, ExchangeTokenResponse,
     PlaidAccount,
 };
-pub use praxis::{
-    create_aspiration, create_initiative, create_task, delete_aspiration, delete_initiative,
-    delete_task, get_aspiration, get_initiative, get_task, list_aspirations, list_initiatives,
-    list_tags, list_tasks, update_aspiration, update_initiative, update_task, Aspiration,
-    CreateAspirationRequest, CreateTaskRequest, Initiative, Task, UpdateAspirationRequest,
-    UpdateTaskRequest,
+pub use pages::{
+    create_page, delete_page, get_page, list_pages, search_entities, update_page,
+    CreatePageRequest, EntitySearchResponse, EntitySearchResult, Page, PageListResponse,
+    PageSummary, UpdatePageRequest,
 };
+pub use workspaces::{
+    create_workspace, delete_workspace, get_workspace, list_workspaces, save_tab_state,
+    update_workspace, CreateWorkspaceRequest, SaveTabStateRequest, UpdateWorkspaceRequest,
+    Workspace, WorkspaceListResponse, WorkspaceSummary,
+};
+pub use explorer_nodes::{
+    create_node, delete_node, get_node, get_workspace_tree, move_nodes, resolve_view,
+    update_node, CreateNodeRequest, ExplorerNode, MoveNodesRequest, ResolveViewRequest,
+    TreeNode, UpdateNodeRequest, ViewConfig, ViewEntity, ViewResolutionResponse,
+    WorkspaceTreeResponse,
+};
+
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
 pub use rate_limit::{
     check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
@@ -192,11 +211,13 @@ pub use sources::{
 };
 pub use storage::{get_object_content, list_recent_objects, ObjectContent, StreamObjectSummary};
 pub use streams::{
-    disable_stream, enable_stream, get_stream_info, list_source_streams, update_stream_config,
-    update_stream_schedule, EnableStreamRequest, UpdateStreamConfigRequest,
+    bulk_update_streams, disable_stream, enable_stream, get_stream_info, list_source_streams,
+    update_stream_config, update_stream_schedule, BulkUpdateStreamsRequest,
+    BulkUpdateStreamsResponse, EnableStreamRequest, StreamUpdate, UpdateStreamConfigRequest,
     UpdateStreamScheduleRequest,
 };
-pub use tools::{get_tool, list_tools, update_tool, ListToolsQuery, Tool, UpdateToolRequest};
+pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
+pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
 pub use session_usage::{
     calculate_cost as calculate_token_cost, check_compaction_needed, get_session_usage,
     record_session_usage, CompactionStatus, SessionUsage, UsageData,

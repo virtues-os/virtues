@@ -21,13 +21,13 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
-use uuid::Uuid;
+
 
 use crate::{
     error::{Error, Result},
-    jobs::PrudentContextJob,
     llm::LLMClient,
     storage::{stream_writer::StreamWriter, Storage},
+    types::Timestamp,
 };
 
 /// Simplified scheduler using StreamFactory
@@ -74,8 +74,8 @@ impl Scheduler {
                 s.source,
                 s.name as source_name,
                 st.stream_name
-            FROM data_stream_connections st
-            JOIN data_source_connections s ON st.source_connection_id = s.id
+            FROM elt_stream_connections st
+            JOIN elt_source_connections s ON st.source_connection_id = s.id
             WHERE st.is_enabled = true
               AND st.cron_schedule IS NULL
               AND s.is_active = true
@@ -89,7 +89,7 @@ impl Scheduler {
         for (stream_id, source, source_name, stream_name) in &streams_without_schedule {
             // Look up registry default
             if let Some(registered_stream) = crate::registry::get_stream(source, stream_name) {
-                if let Some(default_cron) = registered_stream.default_cron_schedule {
+                if let Some(default_cron) = registered_stream.descriptor.default_cron_schedule {
                     tracing::warn!(
                         "Stream {}/{} ({}) is enabled but has no cron_schedule. \
                         Registry default is '{}'. Consider updating the database or seed config.",
@@ -109,7 +109,7 @@ impl Scheduler {
 
                     sqlx::query!(
                         r#"
-                        UPDATE data_stream_connections
+                        UPDATE elt_stream_connections
                         SET cron_schedule = $1, updated_at = datetime('now')
                         WHERE id = $2
                         "#,
@@ -145,8 +145,8 @@ impl Scheduler {
                 s.source,
                 st.stream_name,
                 st.cron_schedule
-            FROM data_stream_connections st
-            JOIN data_source_connections s ON st.source_connection_id = s.id
+            FROM elt_stream_connections st
+            JOIN elt_source_connections s ON st.source_connection_id = s.id
             WHERE st.is_enabled = true
               AND st.cron_schedule IS NOT NULL
               AND s.is_active = true
@@ -195,25 +195,12 @@ impl Scheduler {
                         source_name
                     );
 
-                    // Parse source_id from String to Uuid
-                    let source_uuid = match Uuid::parse_str(&source_id_str) {
-                        Ok(uuid) => uuid,
-                        Err(e) => {
-                            tracing::error!(
-                                "Invalid source_id UUID '{}': {}",
-                                source_id_str,
-                                e
-                            );
-                            return;
-                        }
-                    };
-
-                    // Use the job-based API
+                    // Use the job-based API with String source_id
                     match crate::api::jobs::trigger_stream_sync(
                         &db,
                         &storage,
                         stream_writer,
-                        source_uuid,
+                        source_id_str.clone(),
                         &stream_name,
                         None,
                     )
@@ -262,115 +249,7 @@ impl Scheduler {
         Ok(())
     }
 
-    /// Schedule the prudent context job (4x daily: 6am, 12pm, 6pm, 10pm)
-    pub async fn schedule_prudent_context_job(&self, llm_client: Arc<dyn LLMClient>) -> Result<()> {
-        let schedules = vec![
-            ("0 0 6 * * *", "6am"),
-            ("0 0 12 * * *", "12pm"),
-            ("0 0 18 * * *", "6pm"),
-            ("0 0 22 * * *", "10pm"),
-        ];
 
-        for (cron_expr, label) in schedules {
-            let db = self.db.clone();
-            let llm_client = llm_client.clone();
-
-            tracing::info!("Scheduling PrudentContextJob at {}", label);
-
-            let job = Job::new_async(cron_expr, move |_uuid, _lock| {
-                let db_pool = Arc::new(db.clone());
-                let llm = llm_client.clone();
-
-                Box::pin(async move {
-                    tracing::info!("Running PrudentContextJob");
-                    let job = PrudentContextJob::new(db_pool, llm);
-
-                    match job.execute().await {
-                        Ok(()) => {
-                            tracing::info!("PrudentContextJob completed successfully");
-                        }
-                        Err(e) => {
-                            tracing::error!("PrudentContextJob failed: {}", e);
-                        }
-                    }
-                })
-            })
-            .map_err(|e| {
-                Error::Other(format!(
-                    "Failed to create PrudentContextJob for {}: {}",
-                    label, e
-                ))
-            })?;
-
-            self.scheduler
-                .add(job)
-                .await
-                .map_err(|e| Error::Other(format!("Failed to add PrudentContextJob: {}", e)))?;
-        }
-
-        tracing::info!("PrudentContextJob scheduled for 6am, 12pm, 6pm, and 10pm");
-        Ok(())
-    }
-
-    /// Schedule the embedding job (every 30 minutes)
-    ///
-    /// Processes unembedded records from ontology tables (emails, messages, calendar, AI conversations)
-    /// to generate semantic embeddings using Ollama.
-    pub async fn schedule_embedding_job(&self) -> Result<()> {
-        let db = self.db.clone();
-
-        // Every 30 minutes
-        let cron_expr = "0 */30 * * * *";
-
-        tracing::info!("Scheduling EmbeddingJob every 30 minutes");
-
-        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
-            let db = db.clone();
-
-            Box::pin(async move {
-                tracing::info!("Running EmbeddingJob");
-
-                match crate::embeddings::EmbeddingJob::from_env(db) {
-                    Ok(job) => match job.process_all().await {
-                        Ok(results) => {
-                            let total_processed: usize =
-                                results.iter().map(|r| r.records_processed).sum();
-                            let total_failed: usize =
-                                results.iter().map(|r| r.records_failed).sum();
-
-                            if total_processed > 0 || total_failed > 0 {
-                                tracing::info!(
-                                    "EmbeddingJob completed: {} processed, {} failed",
-                                    total_processed,
-                                    total_failed
-                                );
-                            } else {
-                                tracing::debug!("EmbeddingJob: no records to process");
-                            }
-                        }
-                        Err(e) => {
-                            tracing::error!("EmbeddingJob failed: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        tracing::warn!(
-                            "EmbeddingJob skipped: Ollama not configured or unavailable: {}",
-                            e
-                        );
-                    }
-                }
-            })
-        })
-        .map_err(|e| Error::Other(format!("Failed to create EmbeddingJob: {}", e)))?;
-
-        self.scheduler
-            .add(job)
-            .await
-            .map_err(|e| Error::Other(format!("Failed to add EmbeddingJob: {}", e)))?;
-
-        tracing::info!("EmbeddingJob scheduled every 30 minutes");
-        Ok(())
-    }
 
     /// Schedule the drive trash purge job (daily at 3am)
     ///
@@ -438,7 +317,7 @@ impl Scheduler {
                 String,
                 String,
                 String,
-                Option<String>,
+                Option<Timestamp>,
             ),
         >(
             r#"
@@ -448,8 +327,8 @@ impl Scheduler {
                 st.stream_name,
                 st.cron_schedule,
                 st.last_sync_at
-            FROM data_stream_connections st
-            JOIN data_source_connections s ON st.source_connection_id = s.id
+            FROM elt_stream_connections st
+            JOIN elt_source_connections s ON st.source_connection_id = s.id
             WHERE st.is_enabled = true
               AND st.cron_schedule IS NOT NULL
               AND s.source NOT IN ('mac', 'ios')  -- Exclude push-only sources
@@ -485,7 +364,7 @@ pub struct ScheduledStream {
     pub source_name: String,
     pub stream_name: String,
     pub cron_schedule: String,
-    pub last_sync_at: Option<String>,
+    pub last_sync_at: Option<Timestamp>,
 }
 
 #[cfg(test)]

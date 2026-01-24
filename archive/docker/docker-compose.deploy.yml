@@ -1,0 +1,45 @@
+version: '3.8'
+
+# Production docker-compose for VPS tenant deployment
+# Managed by cloud-init setup.sh during provisioning
+
+services:
+  core:
+    image: ghcr.io/yourorg/virtues-core:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: sqlite:/data/virtues.db
+      VIRTUES_ENCRYPTION_KEY: ${VIRTUES_ENCRYPTION_KEY}
+      STREAM_ENCRYPTION_MASTER_KEY: ${STREAM_ENCRYPTION_MASTER_KEY}
+      RUST_LOG: ${RUST_LOG:-warn}
+    ports:
+      - "8000:8000"
+    volumes:
+      - sqlite_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  web:
+    image: ghcr.io/yourorg/virtues-web:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      - core
+    environment:
+      NODE_ENV: production
+      RUST_API_URL: http://core:8000
+      AUTH_SECRET: ${AUTH_SECRET}
+      OWNER_EMAIL: ${OWNER_EMAIL}
+      TIER: ${TIER:-starter}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      EMAIL_FROM: ${EMAIL_FROM:-Virtues <noreply@virtues.com>}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY}
+      AUTH_URL: ${AUTH_URL}
+    ports:
+      - "3000:3000"
+
+volumes:
+  sqlite_data:

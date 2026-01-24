@@ -3,7 +3,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
+
 
 use crate::{
     error::{Error, Result},
@@ -11,6 +11,8 @@ use crate::{
     sources::push_stream::{IngestPayload, PushResult, PushStream},
     storage::stream_writer::StreamWriter,
 };
+
+pub mod transform;
 
 pub struct IosBarometerStream {
     _db: SqlitePool,
@@ -27,11 +29,6 @@ impl IosBarometerStream {
 
     pub fn descriptor() -> RegisteredStream {
         RegisteredStream::new("barometer")
-            .display_name("Barometer (Pressure)")
-            .description("Logs atmospheric pressure and relative altitude")
-            .table_name("stream_ios_barometer")
-            .supports_incremental(false)
-            .default_cron_schedule("*/5 * * * *") // Every 5 minutes
             .config_schema(serde_json::json!({
                 "type": "object",
                 "properties": {}
@@ -42,7 +39,7 @@ impl IosBarometerStream {
 
 #[async_trait]
 impl PushStream for IosBarometerStream {
-    async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult> {
+    async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
         let mut result = PushResult::new(payload.records.len());
 
         for record in &payload.records {

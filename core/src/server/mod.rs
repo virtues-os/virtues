@@ -1,7 +1,7 @@
 //! HTTP server for data ingestion and API
 
-mod api;
-mod ingest;
+pub mod api;
+pub mod ingest;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -15,9 +15,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use self::ingest::AppState;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
-use crate::storage::encryption;
 use crate::storage::stream_writer::StreamWriter;
 use crate::Virtues;
 
@@ -41,6 +40,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to seed owner email: {}", e);
     }
 
+    // In dev mode, auto-mark server as ready (skips Tollbooth hydration wait)
+    if let Err(e) = crate::api::seed_dev_server_status(client.database.pool()).await {
+        tracing::warn!("Failed to seed dev server status: {}", e);
+    }
+
     // Initialize StreamWriter (simple in-memory buffer)
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
@@ -56,11 +60,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                     tracing::warn!("Failed to start scheduler: {}", e);
                 } else {
                     tracing::info!("Scheduler started successfully");
-
-                    // Schedule embedding job (every 30 minutes)
-                    if let Err(e) = sched.schedule_embedding_job().await {
-                        tracing::warn!("Failed to schedule embedding job: {}", e);
-                    }
 
                     // Schedule drive trash purge job (daily at 3am)
                     if let Err(e) = sched.schedule_drive_trash_purge_job().await {
@@ -80,7 +79,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         }
     });
 
-    // Create app state with database, storage, and stream writer
     let state = AppState {
         db: client.database.clone(),
         storage: client.storage.clone(),
@@ -101,7 +99,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/sources/:provider/authorize",
             post(api::oauth_authorize_handler),
         )
-        .route("/api/sources/callback", get(api::oauth_callback_handler))
+        // OAuth callback from OAuth proxy (returns HTML redirect)
+        .route("/oauth/callback", get(api::oauth_callback_handler))
         // Source management API
         .route("/api/sources", get(api::list_sources_handler))
         .route("/api/sources", post(api::create_source_handler))
@@ -142,6 +141,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Stream management API
         .route("/api/sources/:id/streams", get(api::list_streams_handler))
+        .route(
+            "/api/sources/:id/streams",
+            post(api::bulk_update_streams_handler),
+        )
         .route(
             "/api/sources/:id/streams/:name",
             get(api::get_stream_handler),
@@ -228,63 +231,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Tools API
         .route("/api/tools", get(api::list_tools_handler))
         .route("/api/tools/:id", get(api::get_tool_handler))
-        .route("/api/tools/:id", put(api::update_tool_handler))
+        // Note: Built-in tools cannot be updated (read-only from registry)
+        // MCP tools management endpoints to be added separately
         // Models API
         .route("/api/models", get(api::list_models_handler))
         .route("/api/models/:id", get(api::get_model_handler))
         // Agents API
         .route("/api/agents", get(api::list_agents_handler))
         .route("/api/agents/:id", get(api::get_agent_handler))
-        // Actions API - Tasks
-        .route("/api/actions/tasks", get(api::list_tasks_handler))
-        .route("/api/actions/tasks", post(api::create_task_handler))
-        .route("/api/actions/tasks/:id", get(api::get_task_handler))
-        .route("/api/actions/tasks/:id", put(api::update_task_handler))
-        .route("/api/actions/tasks/:id", delete(api::delete_task_handler))
-        // Actions API - Initiatives
-        .route(
-            "/api/actions/initiatives",
-            get(api::list_initiatives_handler),
-        )
-        .route(
-            "/api/actions/initiatives",
-            post(api::create_initiative_handler),
-        )
-        .route(
-            "/api/actions/initiatives/:id",
-            get(api::get_initiative_handler),
-        )
-        .route(
-            "/api/actions/initiatives/:id",
-            put(api::update_initiative_handler),
-        )
-        .route(
-            "/api/actions/initiatives/:id",
-            delete(api::delete_initiative_handler),
-        )
-        // Actions API - Aspirations
-        .route(
-            "/api/actions/aspirations",
-            get(api::list_aspirations_handler),
-        )
-        .route(
-            "/api/actions/aspirations",
-            post(api::create_aspiration_handler),
-        )
-        .route(
-            "/api/actions/aspirations/:id",
-            get(api::get_aspiration_handler),
-        )
-        .route(
-            "/api/actions/aspirations/:id",
-            put(api::update_aspiration_handler),
-        )
-        .route(
-            "/api/actions/aspirations/:id",
-            delete(api::delete_aspiration_handler),
-        )
-        // Actions API - Tags
-        .route("/api/actions/tags", get(api::list_tags_handler))
+
+
+
+
         // Seed Testing API
         .route(
             "/api/seed/pipeline-status",
@@ -325,31 +283,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/plaid/:source_id",
             delete(api::remove_plaid_item_handler),
         )
-        // Onboarding API
-        .route(
-            "/api/onboarding/status",
-            get(api::get_onboarding_status_handler),
-        )
-        .route(
-            "/api/onboarding/steps/:step/complete",
-            post(api::complete_onboarding_step_handler),
-        )
-        .route(
-            "/api/onboarding/steps/:step/skip",
-            post(api::skip_onboarding_step_handler),
-        )
-        .route(
-            "/api/onboarding/axiology",
-            post(api::save_onboarding_axiology_handler),
-        )
-        .route(
-            "/api/onboarding/aspirations",
-            post(api::save_onboarding_aspirations_handler),
-        )
-        .route(
-            "/api/onboarding/complete",
-            post(api::complete_onboarding_handler),
-        )
+
         // Usage API
         .route("/api/usage", get(api::usage_handler))
         .route("/api/usage/check", get(api::usage_check_handler))
@@ -491,6 +425,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Code Execution API (AI Sandbox)
         .route("/api/code/execute", post(api::execute_code_handler))
+        // Developer API
+        .route("/api/developer/sql", post(api::execute_sql_handler))
+        .route("/api/developer/tables", get(api::list_tables_handler))
         // Bookmarks API
         .route("/api/bookmarks", get(api::list_bookmarks_handler))
         .route("/api/bookmarks/tab", post(api::create_tab_bookmark_handler))
@@ -515,6 +452,38 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/bookmarks/check/entity/:entity_id",
             get(api::check_entity_bookmark_handler),
         )
+        // Pages API
+        .route("/api/pages", get(api::list_pages_handler).post(api::create_page_handler))
+        .route(
+            "/api/pages/search/entities",
+            get(api::search_entities_handler),
+        )
+        .route(
+            "/api/pages/:id",
+            get(api::get_page_handler)
+                .put(api::update_page_handler)
+                .delete(api::delete_page_handler),
+        )
+        // Workspaces API
+        .route("/api/workspaces", get(api::list_workspaces_handler).post(api::create_workspace_handler))
+        .route(
+            "/api/workspaces/:id",
+            get(api::get_workspace_handler)
+                .put(api::update_workspace_handler)
+                .delete(api::delete_workspace_handler),
+        )
+        .route("/api/workspaces/:id/tree", get(api::get_workspace_tree_handler))
+        .route("/api/workspaces/:id/tabs", put(api::save_workspace_tabs_handler))
+        // Explorer Nodes API
+        .route("/api/explorer-nodes", post(api::create_explorer_node_handler))
+        .route(
+            "/api/explorer-nodes/:id",
+            put(api::update_explorer_node_handler)
+                .delete(api::delete_explorer_node_handler),
+        )
+        .route("/api/explorer-nodes/move", post(api::move_explorer_nodes_handler))
+        // View Resolution API
+        .route("/api/views/resolve", post(api::resolve_view_handler))
         // Sessions API (chat sessions)
         .route("/api/sessions", get(api::list_sessions_handler).post(api::create_session_handler))
         .route(
@@ -548,6 +517,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/profile/owner-email",
             post(api::auth_owner_email_handler),
         )
+        // Internal API (Tollbooth integration)
+        .route("/internal/hydrate", post(api::hydrate_profile_handler))
+        .route("/internal/server-status", get(api::get_server_status_handler))
+        .route("/internal/mark-ready", post(api::mark_server_ready_handler))
+        // Feedback API
+        .route("/api/feedback", post(crate::api::feedback::submit_feedback))
+        // Terminal API (WebSocket)
+        .route("/ws/terminal", get(crate::api::terminal::terminal_ws_handler))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::disable()) // Disable default 2MB limit
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)); // Set 20MB limit for audio files
@@ -560,7 +537,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Add static file serving for SPA frontend
     // This serves the SvelteKit static build and falls back to 200.html for SPA routing
-    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".to_string());
+    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string());
     let static_path = std::path::Path::new(&static_dir);
 
     let app = if static_path.exists() && static_path.is_dir() {
@@ -594,7 +571,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     axum::serve(listener, app).await?;
 
     // Note: No flush needed on shutdown - StreamWriter is in-memory only now.
-    // Archive jobs handle S3 uploads asynchronously.
+    // Records are written directly to filesystem during sync/ingest.
     tracing::info!("Server shutting down gracefully");
 
     // Note: scheduler runs in background and will stop when the process exits
@@ -605,48 +582,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
 /// Validate required environment variables at startup
 fn validate_environment() -> Result<()> {
-    // Check encryption key (optional - only needed for archive jobs)
-    match env::var("STREAM_ENCRYPTION_MASTER_KEY") {
-        Ok(master_key) => {
-            if master_key.len() != 64 {
-                tracing::warn!(
-                    "STREAM_ENCRYPTION_MASTER_KEY should be 64 hex characters, got {}. Archive jobs will fail.",
-                    master_key.len()
-                );
-            } else if encryption::parse_master_key_hex(&master_key).is_err() {
-                tracing::warn!(
-                    "STREAM_ENCRYPTION_MASTER_KEY is not valid hex. Archive jobs will fail."
-                );
-            }
-        }
-        Err(_) => {
-            tracing::warn!(
-                "STREAM_ENCRYPTION_MASTER_KEY not set. Archive jobs disabled. Generate with: openssl rand -hex 32"
-            );
-        }
-    }
-
-    // Check S3 config if S3_BUCKET is set
-    if let Ok(bucket) = env::var("S3_BUCKET") {
-        if bucket.is_empty() {
-            return Err(Error::Configuration("S3_BUCKET is set but empty".into()));
-        }
-
-        // Require credentials when using S3
-        if env::var("S3_ACCESS_KEY").is_err() {
-            return Err(Error::Configuration(
-                "S3_ACCESS_KEY is required when S3_BUCKET is set".into(),
-            ));
-        }
-
-        if env::var("S3_SECRET_KEY").is_err() {
-            return Err(Error::Configuration(
-                "S3_SECRET_KEY is required when S3_BUCKET is set".into(),
-            ));
-        }
-
-        tracing::debug!("S3 configuration validated for bucket: {}", bucket);
-    }
+    // Log storage path being used
+    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./core/data/lake".to_string());
+    tracing::info!("Using storage path: {}", storage_path);
 
     tracing::debug!("Environment validation passed");
     Ok(())

@@ -116,7 +116,7 @@ pub async fn ingest(
     };
 
     // Update last_seen timestamp
-    if let Err(e) = crate::api::update_last_seen(state.db.pool(), source_id).await {
+    if let Err(e) = crate::api::update_last_seen(state.db.pool(), &source_id).await {
         tracing::warn!("Failed to update last_seen: {}", e);
     }
 
@@ -134,7 +134,7 @@ pub async fn ingest(
     // Process records using PushStream trait
     let (accepted, rejected) = match process_batch(
         &state,
-        source_id,
+        &source_id,
         &payload.source,
         &payload.stream,
         &payload.records,
@@ -152,7 +152,7 @@ pub async fn ingest(
 
     // Trigger transforms if records were successfully processed (hot path like cloud syncs)
     if accepted > 0 {
-        if let Err(e) = trigger_transforms_for_batch(&state, source_id, &payload.stream).await {
+        if let Err(e) = trigger_transforms_for_batch(&state, &source_id, &payload.stream).await {
             tracing::error!(
                 error = %e,
                 error_debug = ?e,
@@ -207,7 +207,7 @@ async fn validate_source_stream(_db: &Database, _source: &str, _stream: &str) ->
 /// Process batch of records using PushStream trait
 async fn process_batch(
     state: &AppState,
-    source_id: uuid::Uuid,
+    source_id: &str,
     source: &str,
     stream: &str,
     records: &[Value],
@@ -262,12 +262,11 @@ async fn process_batch(
 /// Trigger transforms for device batch (hot path - unified with cloud syncs)
 ///
 /// After device records are processed and buffered in StreamWriter,
-/// this function collects them and triggers transform jobs directly,
-/// just like cloud syncs do. Also creates async archive job for S3 backup.
+/// this function collects them, writes to filesystem, and triggers transform jobs.
 /// This fully unifies the push (device) and pull (cloud) data pipelines.
 async fn trigger_transforms_for_batch(
     state: &AppState,
-    source_id: uuid::Uuid,
+    source_id: &str,
     stream_name: &str,
 ) -> Result<()> {
     // Collect buffered records from StreamWriter
@@ -294,28 +293,28 @@ async fn trigger_transforms_for_batch(
         }
     };
 
-    // Create archive job for async S3 archival (hot path - same as cloud syncs)
-    let _archive_job_id = if !records.is_empty() {
-        match crate::jobs::spawn_archive_job_async(
+    // Write records directly to filesystem
+    let _storage_key = if !records.is_empty() {
+        match write_stream_records(
             state.db.pool(),
             state.storage.as_ref(),
-            None, // No parent job for device ingests
             source_id,
             stream_name,
-            records.clone(),
-            (min_timestamp, max_timestamp),
+            &records,
+            min_timestamp,
+            max_timestamp,
         )
         .await
         {
-            Ok(archive_id) => {
+            Ok(key) => {
                 tracing::info!(
-                    archive_job_id = %archive_id,
+                    storage_key = %key,
                     source_id = %source_id,
                     stream_name = %stream_name,
                     record_count = records.len(),
-                    "Archive job spawned successfully - S3 archival in progress"
+                    "Records written to filesystem successfully"
                 );
-                Some(archive_id)
+                Some(key)
             }
             Err(e) => {
                 tracing::error!(
@@ -324,7 +323,7 @@ async fn trigger_transforms_for_batch(
                     source_id = %source_id,
                     stream_name = %stream_name,
                     record_count = records.len(),
-                    "Failed to spawn archive job - S3 archival will NOT happen!"
+                    "Failed to write records to filesystem!"
                 );
                 return Err(e);
             }
@@ -351,13 +350,75 @@ async fn trigger_transforms_for_batch(
         state.db.pool(),
         &executor,
         &context,
-        source_id,
+        source_id.to_string(),
         stream_name,
         Some(records), // Pass collected records for direct transform
     )
     .await?;
 
     Ok(())
+}
+
+/// Write stream records directly to filesystem and record metadata
+async fn write_stream_records(
+    db: &sqlx::SqlitePool,
+    storage: &Storage,
+    source_id: &str,
+    stream_name: &str,
+    records: &[Value],
+    min_timestamp: Option<DateTime<Utc>>,
+    max_timestamp: Option<DateTime<Utc>>,
+) -> Result<String> {
+    use crate::storage::models::StreamKeyBuilder;
+
+    // Get source type from source connection
+    let source_type: String =
+        sqlx::query_scalar("SELECT source FROM elt_source_connections WHERE id = $1")
+            .bind(source_id)
+            .fetch_one(db)
+            .await?;
+
+    let date = Utc::now().date_naive();
+    let key_builder = StreamKeyBuilder::new(None, &source_type, source_id, stream_name, date)
+        .map_err(|e| Error::Other(format!("Invalid stream key: {}", e)))?;
+    let storage_key = key_builder.build();
+
+    // Write JSONL to filesystem
+    storage.upload_jsonl(&storage_key, records).await?;
+
+    // Calculate size
+    let size_bytes: i64 = records
+        .iter()
+        .map(|r| serde_json::to_string(r).unwrap_or_default().len() as i64)
+        .sum();
+
+    // Record metadata in elt_stream_objects
+    let stream_object_id = crate::ids::generate_id(crate::ids::STREAM_OBJECT_PREFIX, &[&storage_key]);
+    sqlx::query(
+        "INSERT INTO elt_stream_objects
+         (id, source_connection_id, stream_name, storage_key, record_count, size_bytes,
+          min_timestamp, max_timestamp, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, datetime('now'))",
+    )
+    .bind(&stream_object_id)
+    .bind(source_id)
+    .bind(stream_name)
+    .bind(&storage_key)
+    .bind(records.len() as i32)
+    .bind(size_bytes)
+    .bind(min_timestamp)
+    .bind(max_timestamp)
+    .execute(db)
+    .await?;
+
+    tracing::info!(
+        stream_object_id = %stream_object_id,
+        storage_key = %storage_key,
+        record_count = records.len(),
+        "Stream object metadata recorded"
+    );
+
+    Ok(storage_key)
 }
 
 #[cfg(test)]

@@ -10,7 +10,6 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use super::client::PlaidClient;
 use super::config::PlaidTransactionsConfig;
@@ -28,7 +27,7 @@ use crate::{
 /// Syncs transactions from Plaid to object storage via StreamWriter.
 /// Uses cursor-based sync for efficient incremental updates.
 pub struct PlaidTransactionsStream {
-    source_id: Uuid,
+    source_id: String,
     client: PlaidClient,
     db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
@@ -40,7 +39,7 @@ pub struct PlaidTransactionsStream {
 impl PlaidTransactionsStream {
     /// Create a new transactions stream
     pub fn new(
-        source_id: Uuid,
+        source_id: String,
         db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
     ) -> Result<Self> {
@@ -58,7 +57,7 @@ impl PlaidTransactionsStream {
 
     /// Create with explicit client (for testing)
     pub fn with_client(
-        source_id: Uuid,
+        source_id: String,
         client: PlaidClient,
         db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
@@ -74,10 +73,10 @@ impl PlaidTransactionsStream {
     }
 
     /// Load configuration from database
-    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: &str) -> Result<()> {
         // Load stream config
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
+            "SELECT config FROM elt_stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -91,7 +90,7 @@ impl PlaidTransactionsStream {
 
         // Load encrypted access token from source_connections
         let token_result = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT access_token FROM data_source_connections WHERE id = $1",
+            "SELECT access_token FROM elt_source_connections WHERE id = $1",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -125,6 +124,7 @@ impl PlaidTransactionsStream {
         let mut records_fetched = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
+        #[allow(unused_assignments)]
         let mut next_cursor = None;
 
         // Start database transaction
@@ -135,6 +135,11 @@ impl PlaidTransactionsStream {
             SyncMode::FullRefresh => {
                 // Full refresh: start from empty cursor to get all history
                 tracing::info!("Full refresh requested, starting from empty cursor");
+                None
+            }
+            SyncMode::Backfill { .. } => {
+                // Backfill: also start from empty cursor but transform will filter by date
+                tracing::info!("Backfill requested, starting from empty cursor");
                 None
             }
             SyncMode::Incremental { .. } => {
@@ -194,11 +199,20 @@ impl PlaidTransactionsStream {
                 }
             }
 
-            // Mark removed transactions (soft delete or actual delete)
+            // Mark removed transactions as deleted in both stream and ontology tables
             for removed in &response.removed {
-                tracing::debug!(transaction_id = %removed.transaction_id, "Transaction removed");
-                // For now, we just log removed transactions
-                // The transform will handle reconciliation
+                tracing::info!(transaction_id = %removed.transaction_id, "Transaction removed by Plaid");
+                
+                // Soft-delete in ontology table (data_financial_transaction)
+                // Use the same deterministic ID generation as the transform
+                let ontology_id = crate::ids::generate_id(crate::ids::MONEY_TRANSACTION_PREFIX, &[&self.source_id, &removed.transaction_id]);
+                sqlx::query(
+                    "UPDATE data_financial_transaction SET deleted_at_source = datetime('now'), updated_at = datetime('now') WHERE id = $1"
+                )
+                .bind(&ontology_id)
+                .execute(&mut *tx)
+                .await
+                .ok(); // Ignore errors if record doesn't exist
             }
 
             // Check if there's more data
@@ -233,7 +247,7 @@ impl PlaidTransactionsStream {
         let records = {
             let mut writer = self.stream_writer.lock().await;
             let collected = writer
-                .collect_records(self.source_id, "transactions")
+                .collect_records(&self.source_id, "transactions")
                 .map(|(records, _, _)| records);
 
             if let Some(ref recs) = collected {
@@ -251,6 +265,8 @@ impl PlaidTransactionsStream {
             records_written,
             records_failed,
             next_cursor,
+            earliest_record_at: None,
+            latest_record_at: None,
             started_at,
             completed_at,
             records,
@@ -304,7 +320,7 @@ impl PlaidTransactionsStream {
         // Write to StreamWriter
         {
             let mut writer = self.stream_writer.lock().await;
-            writer.write_record(self.source_id, "transactions", record, Some(timestamp))?;
+            writer.write_record(&self.source_id, "transactions", record, Some(timestamp))?;
         }
 
         tracing::trace!(
@@ -319,9 +335,9 @@ impl PlaidTransactionsStream {
     /// Get the last sync cursor from database
     async fn get_last_cursor(&self) -> Result<Option<String>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT last_sync_token FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
+            "SELECT last_sync_token FROM elt_stream_connections WHERE source_connection_id = $1 AND stream_name = 'transactions'",
         )
-        .bind(self.source_id)
+        .bind(&self.source_id)
         .fetch_optional(&self.db)
         .await?;
 
@@ -335,11 +351,11 @@ impl PlaidTransactionsStream {
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE data_stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'transactions'"
+            "UPDATE elt_stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'transactions'"
         )
         .bind(cursor)
         .bind(Utc::now())
-        .bind(self.source_id)
+        .bind(&self.source_id)
         .execute(&mut **tx)
         .await?;
 
@@ -353,7 +369,7 @@ impl PullStream for PlaidTransactionsStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, db: &SqlitePool, source_id: &str) -> Result<()> {
         self.load_config_internal(db, source_id).await
     }
 

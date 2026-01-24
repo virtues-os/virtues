@@ -2,12 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::storage::encryption::{derive_stream_key, encode_key_base64, parse_master_key_hex};
-use crate::storage::models::StreamKeyParser;
-use crate::storage::{EncryptionKey, Storage};
+use crate::storage::Storage;
+use crate::types::Timestamp;
 
 /// Summary of a stream object for listing
 /// Note: UUIDs are stored as TEXT in SQLite
@@ -18,19 +16,19 @@ pub struct StreamObjectSummary {
     pub source_name: String,
     pub source_type: String,
     pub stream_name: String,
-    pub s3_key: String,
+    pub storage_key: String,
     pub record_count: i32,
     pub size_bytes: i64,
-    pub min_timestamp: Option<String>,
-    pub max_timestamp: Option<String>,
-    pub created_at: String,
+    pub min_timestamp: Option<Timestamp>,
+    pub max_timestamp: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
-/// Content of a stream object after decryption
+/// Content of a stream object
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectContent {
     pub id: String,
-    pub s3_key: String,
+    pub storage_key: String,
     pub records: Vec<serde_json::Value>,
     pub record_count: usize,
 }
@@ -51,14 +49,14 @@ pub async fn list_recent_objects(
             sc.name as source_name,
             sc.source as source_type,
             so.stream_name,
-            so.s3_key,
+            so.storage_key,
             so.record_count,
             so.size_bytes,
             so.min_timestamp,
             so.max_timestamp,
             so.created_at
-        FROM data_stream_objects so
-        JOIN data_source_connections sc ON so.source_connection_id = sc.id
+        FROM elt_stream_objects so
+        JOIN elt_source_connections sc ON so.source_connection_id = sc.id
         ORDER BY so.created_at DESC
         LIMIT $1
         "#,
@@ -75,27 +73,24 @@ pub async fn list_recent_objects(
 #[derive(Debug, sqlx::FromRow)]
 struct StreamObjectMetadata {
     id: String,
-    source_connection_id: String,
-    stream_name: String,
-    s3_key: String,
+    storage_key: String,
 }
 
-/// Get decrypted content of a stream object
+/// Get content of a stream object
 ///
-/// Fetches the object from S3, decrypts it using the derived key,
-/// and parses the JSONL content into a vector of JSON values.
+/// Fetches the object from storage and parses the JSONL content into a vector of JSON values.
 pub async fn get_object_content(
     pool: &SqlitePool,
     storage: &Storage,
-    object_id: Uuid,
+    object_id: String,
 ) -> Result<ObjectContent> {
-    let object_id_str = object_id.to_string();
+    let object_id_str = object_id;
 
     // 1. Get object metadata from database
     let metadata = sqlx::query_as::<_, StreamObjectMetadata>(
         r#"
-        SELECT id, source_connection_id, stream_name, s3_key
-        FROM data_stream_objects
+        SELECT id, storage_key
+        FROM elt_stream_objects
         WHERE id = $1
         "#,
     )
@@ -103,38 +98,15 @@ pub async fn get_object_content(
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to query stream object: {e}")))?
-    .ok_or_else(|| Error::NotFound(format!("Stream object not found: {object_id}")))?;
+    .ok_or_else(|| Error::NotFound(format!("Stream object not found: {object_id_str}")))?;
 
-    // 2. Parse date from S3 key for encryption key derivation
-    let date = StreamKeyParser::parse_date_from_key(&metadata.s3_key)?;
-
-    // 3. Get master encryption key from environment
-    let master_key_hex = std::env::var("STREAM_ENCRYPTION_MASTER_KEY").map_err(|_| {
-        Error::Other("Encryption not configured: STREAM_ENCRYPTION_MASTER_KEY not set".to_string())
-    })?;
-    let master_key = parse_master_key_hex(&master_key_hex)?;
-
-    // 4. Derive encryption key for this specific object
-    // Parse source_connection_id back to Uuid for key derivation
-    let source_conn_uuid = Uuid::parse_str(&metadata.source_connection_id)
-        .map_err(|e| Error::Database(format!("Invalid source_connection_id UUID: {e}")))?;
-    let derived_key = derive_stream_key(
-        &master_key,
-        source_conn_uuid,
-        &metadata.stream_name,
-        date,
-    )?;
-    let encryption_key = EncryptionKey {
-        key_base64: encode_key_base64(&derived_key),
-    };
-
-    // 5. Download and decrypt from S3
+    // 2. Download from storage
     let data = storage
-        .download_encrypted(&metadata.s3_key, &encryption_key)
+        .download(&metadata.storage_key)
         .await
-        .map_err(|e| Error::Other(format!("Failed to download object from S3: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to download object from storage: {e}")))?;
 
-    // 6. Parse JSONL content (newline-delimited JSON)
+    // 3. Parse JSONL content (newline-delimited JSON)
     let content = String::from_utf8(data)
         .map_err(|e| Error::Other(format!("Invalid UTF-8 in object content: {e}")))?;
 
@@ -153,7 +125,7 @@ pub async fn get_object_content(
 
     Ok(ObjectContent {
         id: metadata.id,
-        s3_key: metadata.s3_key,
+        storage_key: metadata.storage_key,
         record_count: records.len(),
         records,
     })

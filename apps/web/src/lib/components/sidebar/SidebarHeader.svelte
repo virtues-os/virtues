@@ -4,6 +4,7 @@
 	interface Props {
 		collapsed?: boolean;
 		onNewChat: () => void;
+		onGoHome: () => void;
 		onToggleCollapse: () => void;
 		onSearch?: () => void;
 		logoAnimationDelay?: number;
@@ -13,6 +14,7 @@
 	let {
 		collapsed = false,
 		onNewChat,
+		onGoHome,
 		onToggleCollapse,
 		onSearch,
 		logoAnimationDelay = 0,
@@ -39,11 +41,7 @@
 		class="workspace-row animate-row"
 		style="animation-delay: {logoAnimationDelay}ms; --stagger-delay: {logoAnimationDelay}ms"
 	>
-		<button
-			class="logo-area"
-			onclick={onNewChat}
-			title="New Chat (Cmd+N)"
-		>
+		<button class="logo-area" onclick={onGoHome} title="Home">
 			<!-- Static Triangle Logo -->
 			<div class="logo">
 				<div class="logo-dots">
@@ -67,25 +65,33 @@
 				onclick={onToggleCollapse}
 				title="Collapse sidebar (Cmd+[)"
 			>
-				<iconify-icon icon="ri:arrow-left-s-line" width="18"></iconify-icon>
+				<iconify-icon icon="ri:arrow-left-s-line" width="18"
+				></iconify-icon>
 			</button>
 		{/if}
 	</div>
 
-	<!-- Row 2: Search -->
+	<!-- Row 2: Command + New Chat -->
 	{#if !collapsed}
 		<div
 			class="action-layer animate-row"
 			style="animation-delay: {actionsAnimationDelay}ms; --stagger-delay: {actionsAnimationDelay}ms"
 		>
 			<button
-				class="search-btn"
+				class="action-btn"
 				onclick={handleSearch}
-				title="Search (Cmd+K)"
+				title="Command (Cmd+K)"
 			>
-				<iconify-icon icon="ri:search-line" width="14"></iconify-icon>
-				<span class="search-label">Search...</span>
-				<kbd class="search-kbd">⌘K</kbd>
+				<span class="action-label">Command</span>
+				<kbd class="action-kbd">⌘K</kbd>
+			</button>
+			<button
+				class="action-btn"
+				onclick={onNewChat}
+				title="New Chat (Cmd+N)"
+			>
+				<span class="action-label">New Chat</span>
+				<kbd class="action-kbd">⌘N</kbd>
 			</button>
 		</div>
 	{/if}
@@ -215,39 +221,39 @@
 	/* Row 2: Action Layer */
 	.action-layer {
 		@apply flex;
+		gap: 6px;
 	}
 
-	.search-btn {
+	.action-btn {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		justify-content: space-between;
+		gap: 4px;
 		flex: 1;
-		padding: 0.5rem 0.75rem;
+		padding: 6px 8px;
 		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		border-radius: 0.5rem;
-		font-size: 0.8125rem;
+		border-radius: 6px;
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
 		transition: all 0.15s ease;
 	}
 
-	.search-btn:hover {
+	.action-btn:hover {
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}
 
-	.search-label {
-		flex: 1;
-		text-align: left;
+	.action-label {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
-	.search-kbd {
+	.action-kbd {
 		font-family: inherit;
-		font-size: 0.6875rem;
-		padding: 0.125rem 0.375rem;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: 0.25rem;
+		font-size: 10px;
 		color: var(--color-foreground-subtle);
+		opacity: 0.7;
 	}
 </style>

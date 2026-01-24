@@ -5,7 +5,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
+
 
 use crate::{
     error::{Error, Result},
@@ -36,7 +36,7 @@ impl MacIMessageStream {
 
 #[async_trait]
 impl PushStream for MacIMessageStream {
-    async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult> {
+    async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
         // Validate payload
         self.validate_payload(&payload)?;
 

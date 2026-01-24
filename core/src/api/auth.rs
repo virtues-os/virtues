@@ -153,7 +153,7 @@ fn check_rate_limit(ip: &str) -> Result<(), (StatusCode, Json<AuthErrorResponse>
 pub async fn seed_owner_email(pool: &SqlitePool) -> crate::Result<()> {
     // Check if owner_email is already set in DB
     let existing: Option<String> = sqlx::query_scalar(
-        "SELECT owner_email FROM data_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
+        "SELECT owner_email FROM app_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
     )
     .fetch_optional(pool)
     .await?
@@ -169,7 +169,7 @@ pub async fn seed_owner_email(pool: &SqlitePool) -> crate::Result<()> {
         let email = owner_email.trim().to_lowercase();
         if !email.is_empty() && is_valid_email(&email) {
             sqlx::query(
-                "UPDATE data_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
+                "UPDATE app_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
             )
             .bind(&email)
             .execute(pool)
@@ -192,7 +192,7 @@ async fn get_owner_email(pool: &SqlitePool) -> Option<String> {
     // The singleton row always exists, so we can use fetch_one
     // owner_email column may be NULL, so we get Option<String>
     sqlx::query_scalar::<_, Option<String>>(
-        "SELECT owner_email FROM data_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
+        "SELECT owner_email FROM app_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
     )
     .fetch_one(pool)
     .await
@@ -203,7 +203,7 @@ async fn get_owner_email(pool: &SqlitePool) -> Option<String> {
 /// Set owner email in database (used by webhook and first-login flow)
 async fn set_owner_email(pool: &SqlitePool, email: &str) -> crate::Result<()> {
     sqlx::query(
-        "UPDATE data_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
+        "UPDATE app_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
     )
     .bind(email)
     .execute(pool)
@@ -590,7 +590,7 @@ async fn get_or_create_user(pool: &SqlitePool, email: &str) -> crate::Result<Aut
         .await?;
 
         return Ok(AuthUser {
-            id: user_id,
+            id: user_id.to_string(),
             email: user.email,
             email_verified: Some(Utc::now()),
         });
@@ -612,7 +612,7 @@ async fn get_or_create_user(pool: &SqlitePool, email: &str) -> crate::Result<Aut
     .await?;
 
     Ok(AuthUser {
-        id: user_id,
+        id: user_id_str,
         email: email.to_string(),
         email_verified: Some(Utc::now()),
     })

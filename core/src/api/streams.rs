@@ -1,21 +1,20 @@
 //! Stream management and configuration API
+//!
+//! Merges shared metadata from virtues-registry with user-specific state from SQLite.
 
-use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use ts_rs::TS;
-use uuid::Uuid;
 
 use super::plaid::PlaidSourceMetadata;
 use super::sources::get_source;
 use crate::error::{Error, Result};
 use crate::storage::stream_writer::StreamWriter;
+use crate::types::Timestamp;
 
 /// A user's stream connection
 /// Merges RegisteredStream (from registry) with user state (from DB).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, TS)]
-#[ts(export, export_to = "../../apps/web/src/lib/types/")]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamConnection {
     pub stream_name: String,
     pub display_name: String,
@@ -23,14 +22,11 @@ pub struct StreamConnection {
     pub table_name: String,
     pub is_enabled: bool,
     pub cron_schedule: Option<String>,
-    #[ts(type = "any")]
     pub config: serde_json::Value,
-    pub last_sync_at: Option<String>,
+    pub last_sync_at: Option<Timestamp>,
     pub supports_incremental: bool,
     pub supports_full_refresh: bool,
-    #[ts(type = "any")]
     pub config_schema: serde_json::Value,
-    #[ts(type = "any")]
     pub config_example: serde_json::Value,
     pub default_cron_schedule: Option<String>,
 }
@@ -53,44 +49,31 @@ pub struct UpdateStreamScheduleRequest {
     pub cron_schedule: Option<String>,
 }
 
-/// # Returns
-/// List of StreamConnection with enablement status and configuration
-///
-/// # Example
-/// ```rust
-/// let streams = virtues::list_source_streams(&db, source_id).await?;
-/// for stream in streams {
-///     println!("{}: {} (enabled: {})",
-///         stream.stream_name,
-///         stream.display_name,
-///         stream.is_enabled
-///     );
-/// }
-/// ```
+/// List all streams for a source with their connection status
 pub async fn list_source_streams(
     db: &SqlitePool,
-    source_id: Uuid,
+    source_id: String,
 ) -> Result<Vec<StreamConnection>> {
     // Get source to determine type
-    let source = get_source(db, source_id).await?;
+    let source = get_source(db, source_id.clone()).await?;
     let provider = &source.source;
-
+ 
     // Get source descriptor from registry
-    let descriptor = crate::registry::get_source(provider)
+    let source_reg = crate::registry::get_source(provider)
         .ok_or_else(|| Error::Other(format!("Unknown provider: {provider}")))?;
-
-    // Get enabled streams from database (bind as string for TEXT column)
-    let source_id_str = source_id.to_string();
+ 
+    // Get enabled streams from database
+    let source_id_str = &source_id;
     let enabled_streams: Vec<(
         String,
         bool,
         Option<String>,
         serde_json::Value,
-        Option<String>,
+        Option<Timestamp>,
     )> = sqlx::query_as(
         r#"
             SELECT stream_name, is_enabled, cron_schedule, config, last_sync_at
-            FROM data_stream_connections
+            FROM elt_stream_connections
             WHERE source_connection_id = $1
             "#,
     )
@@ -101,7 +84,14 @@ pub async fn list_source_streams(
 
     // Build response by combining registry metadata with database state
     let mut result = Vec::new();
-    for stream_desc in &descriptor.streams {
+    for stream_reg in &source_reg.streams {
+        let stream_desc = &stream_reg.descriptor;
+
+        // Skip disabled streams in the system
+        if !stream_desc.enabled {
+            continue;
+        }
+
         // Find matching database record
         let db_record = enabled_streams
             .iter()
@@ -124,17 +114,16 @@ pub async fn list_source_streams(
             last_sync_at,
             supports_incremental: stream_desc.supports_incremental,
             supports_full_refresh: stream_desc.supports_full_refresh,
-            config_schema: stream_desc.config_schema.clone(),
-            config_example: stream_desc.config_example.clone(),
+            config_schema: stream_reg.config_schema.clone(),
+            config_example: stream_reg.config_example.clone(),
             default_cron_schedule: stream_desc.default_cron_schedule.map(|s| s.to_string()),
         });
     }
 
     // For Plaid sources, filter streams based on connected account types
     if provider == "plaid" {
-        // Fetch metadata separately since SourceConnection doesn't include it
         let metadata_row: Option<(Option<serde_json::Value>,)> =
-            sqlx::query_as("SELECT metadata FROM data_source_connections WHERE id = $1")
+            sqlx::query_as("SELECT metadata FROM elt_source_connections WHERE id = $1")
                 .bind(&source_id_str)
                 .fetch_optional(db)
                 .await
@@ -145,21 +134,16 @@ pub async fn list_source_streams(
             if let Ok(plaid_meta) = serde_json::from_value::<PlaidSourceMetadata>(metadata) {
                 let account_types = &plaid_meta.connected_account_types;
 
-                // Only filter if we have account type info (backward compat for existing connections)
                 if !account_types.is_empty() {
                     result.retain(|stream| {
                         match stream.stream_name.as_str() {
-                            // Transactions and accounts are always available
                             "transactions" | "accounts" => true,
-                            // Investments require investment or brokerage accounts
                             "investments" => account_types
                                 .iter()
                                 .any(|t| t == "investment" || t == "brokerage"),
-                            // Liabilities require credit or loan accounts
                             "liabilities" => {
                                 account_types.iter().any(|t| t == "credit" || t == "loan")
                             }
-                            // Unknown streams pass through
                             _ => true,
                         }
                     });
@@ -172,17 +156,9 @@ pub async fn list_source_streams(
 }
 
 /// Get details for a specific stream
-///
-/// # Arguments
-/// * `db` - Database connection pool
-/// * `source_id` - UUID of the source
-/// * `stream_name` - Name of the stream
-///
-/// # Returns
-/// StreamConnection with current configuration
 pub async fn get_stream_info(
     db: &SqlitePool,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
 ) -> Result<StreamConnection> {
     let streams = list_source_streams(db, source_id).await?;
@@ -193,34 +169,23 @@ pub async fn get_stream_info(
 }
 
 /// Enable a stream for a source
-///
-/// Creates an entry in the streams table with the provided or default configuration.
-///
-/// # Arguments
-/// * `db` - Database connection pool
-/// * `storage` - Storage backend for job execution
-/// * `source_id` - UUID of the source
-/// * `stream_name` - Name of the stream to enable
-/// * `config` - Optional configuration (uses defaults if not provided)
-///
-/// # Returns
-/// Updated StreamConnection
 pub async fn enable_stream(
     db: &SqlitePool,
     storage: &crate::storage::Storage,
     stream_writer: Arc<Mutex<StreamWriter>>,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     config: Option<serde_json::Value>,
 ) -> Result<StreamConnection> {
     // Get source to determine type
-    let source = get_source(db, source_id).await?;
+    let source = get_source(db, source_id.clone()).await?;
 
     // Validate stream exists in registry
-    let stream_desc = crate::registry::get_stream(&source.source, stream_name)
+    let stream_reg = crate::registry::get_stream(&source.source, stream_name)
         .ok_or_else(|| Error::Other(format!("Stream not found: {stream_name}")))?;
+    let stream_desc = &stream_reg.descriptor;
 
-    // Use provided config or empty object (stream will load defaults)
+    // Use provided config or empty object
     let config = config.unwrap_or_else(|| serde_json::json!({}));
 
     // Get default cron schedule from registry
@@ -229,18 +194,18 @@ pub async fn enable_stream(
     // Insert or update streams table
     sqlx::query(
         r#"
-        INSERT INTO data_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
+        INSERT INTO elt_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
         VALUES ($1, $2, $3, $4, true, $5, $6, datetime('now'), datetime('now'))
         ON CONFLICT (source_connection_id, stream_name)
         DO UPDATE SET
             is_enabled = true,
             config = EXCLUDED.config,
-            cron_schedule = COALESCE(data_stream_connections.cron_schedule, EXCLUDED.cron_schedule),
+            cron_schedule = COALESCE(elt_stream_connections.cron_schedule, EXCLUDED.cron_schedule),
             updated_at = datetime('now')
         "#
     )
-    .bind(Uuid::new_v4())
-    .bind(source_id)
+    .bind(crate::ids::generate_id(crate::ids::STREAM_PREFIX, &[&source_id, stream_name]))
+    .bind(&source_id)
     .bind(stream_name)
     .bind(stream_desc.table_name)
     .bind(&config)
@@ -248,20 +213,20 @@ pub async fn enable_stream(
     .execute(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to enable stream: {e}")))?;
-
-    // Only trigger initial sync for pull-based sources (they pull data from external APIs)
-    // Device sources (iOS, Mac) push data themselves via ingest endpoint
+ 
+    // Trigger initial sync for pull-based sources
     if source.auth_type == "oauth2" || source.auth_type == "plaid" {
         let db_clone = db.clone();
         let storage_clone = storage.clone();
         let stream_writer_clone = stream_writer.clone();
         let stream_name_clone = stream_name.to_string();
+        let source_id_clone = source_id.clone();
         tokio::spawn(async move {
             match crate::api::jobs::trigger_stream_sync(
                 &db_clone,
                 &storage_clone,
                 stream_writer_clone,
-                source_id,
+                source_id_clone,
                 &stream_name_clone,
                 None,
             )
@@ -284,12 +249,6 @@ pub async fn enable_stream(
                 }
             }
         });
-    } else {
-        tracing::info!(
-            "Skipping initial sync for device source (auth_type={}): stream={}",
-            source.auth_type,
-            stream_name
-        );
     }
 
     // Return updated stream info
@@ -297,20 +256,15 @@ pub async fn enable_stream(
 }
 
 /// Disable a stream for a source
-///
-/// # Arguments
-/// * `db` - Database connection pool
-/// * `source_id` - UUID of the source
-/// * `stream_name` - Name of the stream to disable
-pub async fn disable_stream(db: &SqlitePool, source_id: Uuid, stream_name: &str) -> Result<()> {
+pub async fn disable_stream(db: &SqlitePool, source_id: String, stream_name: &str) -> Result<()> {
     sqlx::query(
         r#"
-        UPDATE data_stream_connections
+        UPDATE elt_stream_connections
         SET is_enabled = false, updated_at = datetime('now')
         WHERE source_connection_id = $1 AND stream_name = $2
         "#,
     )
-    .bind(source_id)
+    .bind(&source_id)
     .bind(stream_name)
     .execute(db)
     .await
@@ -320,77 +274,59 @@ pub async fn disable_stream(db: &SqlitePool, source_id: Uuid, stream_name: &str)
 }
 
 /// Update stream configuration
-///
-/// # Arguments
-/// * `db` - Database connection pool
-/// * `source_id` - UUID of the source
-/// * `stream_name` - Name of the stream
-/// * `config` - New configuration (JSONB)
-///
-/// # Returns
-/// Updated StreamConnection
 pub async fn update_stream_config(
     db: &SqlitePool,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     config: serde_json::Value,
 ) -> Result<StreamConnection> {
     // Validate stream exists
-    get_stream_info(db, source_id, stream_name).await?;
+    get_stream_info(db, source_id.clone(), stream_name).await?;
 
     // Update config
     sqlx::query(
         r#"
-        UPDATE data_stream_connections
+        UPDATE elt_stream_connections
         SET config = $1, updated_at = datetime('now')
         WHERE source_connection_id = $2 AND stream_name = $3
         "#,
     )
     .bind(&config)
-    .bind(source_id)
+    .bind(&source_id)
     .bind(stream_name)
     .execute(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to update stream config: {e}")))?;
-
+ 
     // Return updated stream info
     get_stream_info(db, source_id, stream_name).await
 }
 
 /// Update stream cron schedule
-///
-/// # Arguments
-/// * `db` - Database connection pool
-/// * `source_id` - UUID of the source
-/// * `stream_name` - Name of the stream
-/// * `cron_schedule` - Cron expression in 6-field format (e.g., "0 0 */6 * * *" for every 6 hours) or None to disable scheduling
-///
-/// # Returns
-/// Updated StreamConnection
 pub async fn update_stream_schedule(
     db: &SqlitePool,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     cron_schedule: Option<String>,
 ) -> Result<StreamConnection> {
     // Validate stream exists
-    get_stream_info(db, source_id, stream_name).await?;
-
+    get_stream_info(db, source_id.clone(), stream_name).await?;
+ 
     // Update schedule
     sqlx::query(
         r#"
-        UPDATE data_stream_connections
+        UPDATE elt_stream_connections
         SET cron_schedule = $1, updated_at = datetime('now')
         WHERE source_connection_id = $2 AND stream_name = $3
         "#,
     )
     .bind(&cron_schedule)
-    .bind(source_id)
+    .bind(&source_id)
     .bind(stream_name)
     .execute(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to update stream schedule: {e}")))?;
-
+ 
     // Return updated stream info
     get_stream_info(db, source_id, stream_name).await
 }
@@ -398,42 +334,163 @@ pub async fn update_stream_schedule(
 /// Enable default streams for a newly created source (internal helper)
 pub async fn enable_default_streams(
     db: &SqlitePool,
-    source_id: Uuid,
+    source_id: String,
     provider: &str,
 ) -> Result<()> {
-    let descriptor = crate::registry::get_source(provider)
+    let source_reg = crate::registry::get_source(provider)
         .ok_or_else(|| Error::Other(format!("Unknown provider: {provider}")))?;
+ 
+    for stream_reg in &source_reg.streams {
+        let stream_desc = &stream_reg.descriptor;
+        if !stream_desc.enabled {
+            continue;
+        }
 
-    // Insert streams table entries for all available streams (disabled by default)
-    // Insert streams table entries for all available streams (enabled by default)
-    for stream in &descriptor.streams {
         sqlx::query(
             r#"
-            INSERT INTO data_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
+            INSERT INTO elt_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
             VALUES ($1, $2, $3, $4, true, '{}', $5, datetime('now'), datetime('now'))
             ON CONFLICT (source_connection_id, stream_name) DO NOTHING
             "#
         )
-        .bind(Uuid::new_v4())
-        .bind(source_id)
-        .bind(stream.name)
-        .bind(stream.table_name)
-        .bind(stream.default_cron_schedule)
+        .bind(crate::ids::generate_id(crate::ids::STREAM_PREFIX, &[&source_id, stream_desc.name]))
+        .bind(&source_id)
+        .bind(stream_desc.name)
+        .bind(stream_desc.table_name)
+        .bind(stream_desc.default_cron_schedule)
         .execute(db)
         .await
-        .map_err(|e| Error::Database(format!("Failed to enable stream {}: {e}", stream.name)))?;
+        .map_err(|e| Error::Database(format!("Failed to enable stream {}: {e}", stream_desc.name)))?;
     }
 
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Request for bulk updating multiple streams at once
+#[derive(Debug, serde::Deserialize)]
+pub struct BulkUpdateStreamsRequest {
+    pub streams: Vec<StreamUpdate>,
+}
 
-    /// Export TypeScript types for frontend use
-    #[test]
-    fn export_typescript_types() {
-        StreamConnection::export().expect("Failed to export StreamConnection");
+/// Update for a single stream in a bulk operation
+#[derive(Debug, serde::Deserialize)]
+pub struct StreamUpdate {
+    pub stream_name: String,
+    pub is_enabled: bool,
+    pub config: Option<serde_json::Value>,
+}
+
+/// Response for bulk stream update
+#[derive(Debug, serde::Serialize)]
+pub struct BulkUpdateStreamsResponse {
+    pub updated_count: usize,
+    pub streams: Vec<StreamConnection>,
+}
+
+/// Bulk update multiple streams for a source
+pub async fn bulk_update_streams(
+    db: &SqlitePool,
+    storage: &crate::storage::Storage,
+    stream_writer: Arc<Mutex<StreamWriter>>,
+    source_id: String,
+    updates: Vec<StreamUpdate>,
+) -> Result<BulkUpdateStreamsResponse> {
+    let source = get_source(db, source_id.clone()).await?;
+    let provider = &source.source;
+
+    let source_reg = crate::registry::get_source(provider)
+        .ok_or_else(|| Error::Other(format!("Unknown provider: {provider}")))?;
+
+    let mut updated_count = 0;
+
+    for update in &updates {
+        let stream_reg = source_reg
+            .streams
+            .iter()
+            .find(|s| s.descriptor.name == update.stream_name && s.descriptor.enabled)
+            .ok_or_else(|| {
+                Error::Other(format!(
+                    "Stream not found or disabled: {}",
+                    update.stream_name
+                ))
+            })?;
+        let stream_desc = &stream_reg.descriptor;
+
+        let config = update.config.clone().unwrap_or_else(|| serde_json::json!({}));
+
+        if update.is_enabled {
+            sqlx::query(
+                r#"
+                INSERT INTO elt_stream_connections (id, source_connection_id, stream_name, table_name, is_enabled, config, cron_schedule, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, true, $5, $6, datetime('now'), datetime('now'))
+                ON CONFLICT (source_connection_id, stream_name)
+                DO UPDATE SET
+                    is_enabled = true,
+                    config = EXCLUDED.config,
+                    cron_schedule = COALESCE(elt_stream_connections.cron_schedule, EXCLUDED.cron_schedule),
+                    updated_at = datetime('now')
+                "#,
+            )
+            .bind(crate::ids::generate_id(
+                crate::ids::STREAM_PREFIX,
+                &[&source_id, &update.stream_name],
+            ))
+            .bind(&source_id)
+            .bind(&update.stream_name)
+            .bind(stream_desc.table_name)
+            .bind(&config)
+            .bind(stream_desc.default_cron_schedule)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to enable stream: {e}")))?;
+
+            if source.auth_type == "oauth2" || source.auth_type == "plaid" {
+                let db_clone = db.clone();
+                let storage_clone = storage.clone();
+                let stream_writer_clone = stream_writer.clone();
+                let stream_name_clone = update.stream_name.clone();
+                let source_id_clone = source_id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = crate::api::jobs::trigger_stream_sync(
+                        &db_clone,
+                        &storage_clone,
+                        stream_writer_clone,
+                        source_id_clone,
+                        &stream_name_clone,
+                        None,
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            "Failed to create initial sync job for {}: {}",
+                            stream_name_clone,
+                            e
+                        );
+                    }
+                });
+            }
+        } else {
+            sqlx::query(
+                r#"
+                UPDATE elt_stream_connections
+                SET is_enabled = false, updated_at = datetime('now')
+                WHERE source_connection_id = $1 AND stream_name = $2
+                "#,
+            )
+            .bind(&source_id)
+            .bind(&update.stream_name)
+            .execute(db)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to disable stream: {e}")))?;
+        }
+
+        updated_count += 1;
     }
+
+    let streams = list_source_streams(db, source_id).await?;
+
+    Ok(BulkUpdateStreamsResponse {
+        updated_count,
+        streams,
+    })
 }

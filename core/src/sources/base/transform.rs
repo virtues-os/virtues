@@ -16,7 +16,6 @@
 //! ```
 
 use async_trait::async_trait;
-use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
@@ -35,7 +34,7 @@ pub struct TransformResult {
     pub records_failed: usize,
 
     /// ID of last successfully processed source record (for cursor-based iteration)
-    pub last_processed_id: Option<Uuid>,
+    pub last_processed_id: Option<String>,
 
     /// Follow-up transform configurations for chained transforms
     /// Each tuple is: (source_table, target_tables, domain, source_record_id, transform_stage)
@@ -48,7 +47,7 @@ pub struct ChainedTransform {
     pub source_table: String,
     pub target_tables: Vec<String>,
     pub domain: String,
-    pub source_record_id: Uuid,
+    pub source_record_id: String,
     pub transform_stage: String,
 }
 
@@ -107,7 +106,7 @@ pub trait OntologyTransform: Send + Sync {
     ///
     /// * `db` - Database connection
     /// * `context` - Transform context with StreamReader and other dependencies
-    /// * `source_id` - UUID of the source (for filtering stream data)
+    /// * `source_id` - ID of the source (for filtering stream data)
     ///
     /// # Returns
     ///
@@ -116,7 +115,7 @@ pub trait OntologyTransform: Send + Sync {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult>;
 }
 
@@ -165,11 +164,22 @@ pub fn registered_transforms() -> impl Iterator<Item = &'static &'static dyn Tra
 }
 
 /// Find a registered transform by source and target tables
+///
+/// This function first checks the unified registry (which contains both
+/// stream metadata and transform logic in one place). If not found there,
+/// it falls back to the legacy inventory-based registration for backward
+/// compatibility.
 pub fn find_transform(
     source_table: &str,
     target_table: &str,
     context: &TransformContext,
 ) -> Result<Box<dyn OntologyTransform>> {
+    // Primary: Try the unified registry first
+    if let Ok(transform) = crate::registry::find_transform(source_table, target_table, context) {
+        return Ok(transform);
+    }
+
+    // Fallback: Check inventory-based registration for backward compatibility
     for registration in registered_transforms() {
         if registration.source_table() == source_table
             && registration.target_table() == target_table

@@ -37,12 +37,12 @@ impl OntologyTransform for HealthKitHeartRateTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -58,7 +58,7 @@ impl OntologyTransform for HealthKitHeartRateTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "healthkit", checkpoint_key)
+            .read_with_checkpoint(&source_id, "healthkit", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -126,7 +126,7 @@ impl OntologyTransform for HealthKitHeartRateTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -162,7 +162,7 @@ impl OntologyTransform for HealthKitHeartRateTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "healthkit", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "healthkit", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -245,12 +245,12 @@ impl OntologyTransform for HealthKitHRVTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -266,7 +266,7 @@ impl OntologyTransform for HealthKitHRVTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "healthkit", checkpoint_key)
+            .read_with_checkpoint(&source_id, "healthkit", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -328,7 +328,7 @@ impl OntologyTransform for HealthKitHRVTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -364,7 +364,7 @@ impl OntologyTransform for HealthKitHRVTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "healthkit", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "healthkit", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -447,12 +447,12 @@ impl OntologyTransform for HealthKitStepsTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -468,7 +468,7 @@ impl OntologyTransform for HealthKitStepsTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "healthkit", checkpoint_key)
+            .read_with_checkpoint(&source_id, "healthkit", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -516,7 +516,7 @@ impl OntologyTransform for HealthKitStepsTransform {
                 // Add to pending batch
                 pending_records.push((steps as i32, timestamp, stream_id, metadata));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -552,7 +552,7 @@ impl OntologyTransform for HealthKitStepsTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "healthkit", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "healthkit", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -635,12 +635,12 @@ impl OntologyTransform for HealthKitSleepTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -656,7 +656,7 @@ impl OntologyTransform for HealthKitSleepTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "healthkit", checkpoint_key)
+            .read_with_checkpoint(&source_id, "healthkit", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -743,7 +743,7 @@ impl OntologyTransform for HealthKitSleepTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -779,7 +779,7 @@ impl OntologyTransform for HealthKitSleepTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "healthkit", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "healthkit", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -862,12 +862,12 @@ impl OntologyTransform for HealthKitWorkoutTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -883,7 +883,7 @@ impl OntologyTransform for HealthKitWorkoutTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "healthkit", checkpoint_key)
+            .read_with_checkpoint(&source_id, "healthkit", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -980,7 +980,7 @@ impl OntologyTransform for HealthKitWorkoutTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -1016,7 +1016,7 @@ impl OntologyTransform for HealthKitWorkoutTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "healthkit", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "healthkit", checkpoint_key, max_ts)
                     .await?;
             }
         }

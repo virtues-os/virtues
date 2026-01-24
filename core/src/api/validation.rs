@@ -1,7 +1,6 @@
 //! Input validation for API parameters
 
 use crate::error::{Error, Result};
-use uuid::Uuid;
 
 /// Validate provider name exists in registry
 pub fn validate_provider_name(provider: &str) -> Result<()> {
@@ -50,12 +49,6 @@ pub fn validate_redirect_uri(uri: &str, allowed_hosts: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Validate UUID string
-pub fn validate_uuid(id: &str) -> Result<Uuid> {
-    id.parse::<Uuid>()
-        .map_err(|e| Error::InvalidInput(format!("Invalid UUID: {e}")))
-}
-
 /// Validate source/stream name (alphanumeric + underscore/dash)
 pub fn validate_name(name: &str, field: &str) -> Result<()> {
     if name.is_empty() {
@@ -101,12 +94,6 @@ mod tests {
         assert!(validate_redirect_uri("http://localhost:3000/callback", allowed).is_ok());
         assert!(validate_redirect_uri("http://evil.com/callback", allowed).is_err());
         assert!(validate_redirect_uri("not-a-url", allowed).is_err());
-    }
-
-    #[test]
-    fn test_validate_uuid() {
-        assert!(validate_uuid("550e8400-e29b-41d4-a716-446655440000").is_ok());
-        assert!(validate_uuid("invalid").is_err());
     }
 
     #[test]

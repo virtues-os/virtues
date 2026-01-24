@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::time::Duration;
 use tokio::time::timeout;
-use uuid::Uuid;
 
 use crate::api::sessions::ChatMessage;
 use crate::api::token_estimation::{estimate_session_context, ContextStatus};
@@ -163,16 +162,16 @@ async fn generate_summary(
 /// 4. Updates the session with the new summary and metadata
 pub async fn compact_session(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     options: CompactionOptions,
 ) -> Result<CompactionResult> {
-    let session_id_str = session_id.to_string();
+    let session_id_str = session_id.clone();
 
-    // Load session data
+    // Load session metadata
     let session_row = sqlx::query!(
         r#"
         SELECT
-            messages, message_count,
+            message_count,
             conversation_summary, summary_up_to_index, summary_version
         FROM app_chat_sessions
         WHERE id = $1
@@ -185,10 +184,47 @@ pub async fn compact_session(
     let session_row =
         session_row.ok_or_else(|| crate::Error::NotFound("Session not found".into()))?;
 
-    let messages: Vec<ChatMessage> = serde_json::from_str(&session_row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", session_id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
+    // Load messages from normalized table
+    let message_rows = sqlx::query!(
+        r#"
+        SELECT
+            id, role, content, created_at as timestamp,
+            model, provider, agent_id, reasoning, tool_calls, intent, subject
+        FROM app_chat_messages
+        WHERE session_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+        session_id_str
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let messages: Vec<ChatMessage> = message_rows
+        .into_iter()
+        .map(|row| {
+            let tool_calls = row.tool_calls
+                .as_ref()
+                .and_then(|tc| serde_json::from_str(tc).ok());
+            let intent = row.intent
+                .as_ref()
+                .and_then(|i| serde_json::from_str(i).ok());
+            
+            ChatMessage {
+                id: row.id,
+                role: row.role,
+                content: row.content,
+                timestamp: row.timestamp,
+                model: row.model,
+                provider: row.provider,
+                agent_id: row.agent_id,
+                reasoning: row.reasoning,
+                tool_calls,
+                intent,
+                subject: row.subject,
+            }
+        })
+        .collect();
+    
     let message_count = messages.len();
 
     // Calculate how many messages to keep verbatim
@@ -344,14 +380,15 @@ pub fn build_context_for_llm(
 /// Check if a session needs compaction based on context usage
 pub async fn needs_compaction(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     context_window: i64,
 ) -> Result<ContextStatus> {
-    let session_id_str = session_id.to_string();
+    let session_id_str = session_id.clone();
 
+    // Load session metadata
     let session_row = sqlx::query!(
         r#"
-        SELECT messages, conversation_summary, summary_up_to_index
+        SELECT conversation_summary, summary_up_to_index
         FROM app_chat_sessions
         WHERE id = $1
         "#,
@@ -363,10 +400,46 @@ pub async fn needs_compaction(
     let session_row =
         session_row.ok_or_else(|| crate::Error::NotFound("Session not found".into()))?;
 
-    let messages: Vec<ChatMessage> = serde_json::from_str(&session_row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", session_id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
+    // Load messages from normalized table
+    let message_rows = sqlx::query!(
+        r#"
+        SELECT
+            id, role, content, created_at as timestamp,
+            model, provider, agent_id, reasoning, tool_calls, intent, subject
+        FROM app_chat_messages
+        WHERE session_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+        session_id_str
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let messages: Vec<ChatMessage> = message_rows
+        .into_iter()
+        .map(|row| {
+            let tool_calls = row.tool_calls
+                .as_ref()
+                .and_then(|tc| serde_json::from_str(tc).ok());
+            let intent = row.intent
+                .as_ref()
+                .and_then(|i| serde_json::from_str(i).ok());
+            
+            ChatMessage {
+                id: row.id,
+                role: row.role,
+                content: row.content,
+                timestamp: row.timestamp,
+                model: row.model,
+                provider: row.provider,
+                agent_id: row.agent_id,
+                reasoning: row.reasoning,
+                tool_calls,
+                intent,
+                subject: row.subject,
+            }
+        })
+        .collect();
 
     // Get verbatim messages (after summary)
     let summary_up_to_index = session_row.summary_up_to_index.unwrap_or(0) as usize;
@@ -395,6 +468,7 @@ mod tests {
     fn test_build_context_without_summary() {
         let messages = vec![
             ChatMessage {
+                id: None,
                 role: "user".to_string(),
                 content: "Hello".to_string(),
                 timestamp: "2024-01-01T00:00:00Z".to_string(),
@@ -407,6 +481,7 @@ mod tests {
                 subject: None,
             },
             ChatMessage {
+                id: None,
                 role: "assistant".to_string(),
                 content: "Hi there!".to_string(),
                 timestamp: "2024-01-01T00:00:01Z".to_string(),
@@ -432,6 +507,7 @@ mod tests {
     fn test_build_context_with_summary() {
         let messages = vec![
             ChatMessage {
+                id: None,
                 role: "user".to_string(),
                 content: "Old message".to_string(),
                 timestamp: "2024-01-01T00:00:00Z".to_string(),
@@ -444,6 +520,7 @@ mod tests {
                 subject: None,
             },
             ChatMessage {
+                id: None,
                 role: "assistant".to_string(),
                 content: "Old response".to_string(),
                 timestamp: "2024-01-01T00:00:01Z".to_string(),
@@ -456,6 +533,7 @@ mod tests {
                 subject: None,
             },
             ChatMessage {
+                id: None,
                 role: "user".to_string(),
                 content: "Recent message".to_string(),
                 timestamp: "2024-01-01T00:00:02Z".to_string(),

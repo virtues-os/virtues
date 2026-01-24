@@ -37,8 +37,7 @@
 		switch (type) {
 			case "ontology":
 				return "Personal Data";
-			case "axiology":
-				return "Values";
+
 			case "web_search":
 				return "Web";
 			case "narratives":

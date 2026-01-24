@@ -11,6 +11,7 @@ pub mod entity_resolution;
 pub mod error;
 pub mod geo;
 pub mod http_client;
+pub mod ids;
 pub mod jobs;
 pub mod llm;
 pub mod mcp;
@@ -25,10 +26,12 @@ pub mod setup;
 pub mod sources;
 pub mod storage;
 pub mod tollbooth;
+pub mod types;
 
 // Re-export main types
 pub use client::{Virtues, VirtuesBuilder};
 pub use error::{Error, Result};
+pub use types::Timestamp;
 
 // Re-export OAuth types
 pub use sources::base::TokenManager;

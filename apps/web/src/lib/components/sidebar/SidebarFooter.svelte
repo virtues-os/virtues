@@ -2,45 +2,66 @@
 	import "iconify-icon";
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
-	import { windowTabs } from "$lib/stores/windowTabs.svelte";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import SidebarTooltip from "./SidebarTooltip.svelte";
+	import WorkspaceSwitcher from "./WorkspaceSwitcher.svelte";
 
 	interface Props {
 		collapsed?: boolean;
 		animationDelay?: number;
-		onOpenBookmarks?: () => void;
 	}
 
-	let { collapsed = false, animationDelay = 0, onOpenBookmarks }: Props = $props();
+	let {
+		collapsed = false,
+		animationDelay = 0,
+	}: Props = $props();
+
+	// Profile folder expansion state
+	let isProfileExpanded = $state(false);
 
 	// Check if settings is the active route
 	const isSettingsActive = $derived(
 		page.url.pathname.startsWith("/profile") ||
-		windowTabs.activeTab?.type === 'profile'
+			workspaceStore.activeTab?.type === "profile",
 	);
+
+	function toggleProfile() {
+		isProfileExpanded = !isProfileExpanded;
+	}
 
 	function handleSettingsClick(e: MouseEvent) {
 		e.preventDefault();
-		windowTabs.openTabFromRoute('/profile/account', { label: 'Settings', preferEmptyPane: true });
+		workspaceStore.openTabFromRoute("/profile/account", {
+			label: "Settings",
+			preferEmptyPane: true,
+		});
+	}
+
+	function handleFeedbackClick(e: MouseEvent) {
+		e.preventDefault();
+		workspaceStore.openTabFromRoute("/feedback", {
+			label: "Feedback",
+			preferEmptyPane: true,
+		});
 	}
 
 	async function handleLogout() {
 		try {
-			const response = await fetch('/auth/signout', { method: 'POST' });
+			const response = await fetch("/auth/signout", { method: "POST" });
 			if (response.ok) {
 				// Clear any client-side state
-				windowTabs.closeAllTabs();
+				workspaceStore.closeAllTabs();
 				// Redirect to login
-				await goto('/login');
+				await goto("/login");
 			} else {
-				console.error('[Logout] Failed to sign out:', response.status);
+				console.error("[Logout] Failed to sign out:", response.status);
 				// Even if signout fails, redirect to login to clear session
-				await goto('/login');
+				await goto("/login");
 			}
 		} catch (error) {
-			console.error('[Logout] Error:', error);
+			console.error("[Logout] Error:", error);
 			// On network error, still redirect to login
-			await goto('/login');
+			await goto("/login");
 		}
 	}
 </script>
@@ -51,63 +72,78 @@
 	style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
 >
 	{#if collapsed}
-		<!-- Collapsed: just show icons -->
-		<SidebarTooltip content="Bookmarks (Cmd+B)">
+		<!-- Collapsed: just show profile icon -->
+		<SidebarTooltip content="Profile">
 			<button
-				onclick={onOpenBookmarks}
-				class="footer-icon-btn"
-				aria-label="Bookmarks"
-				title="Bookmarks (Cmd+B)"
-			>
-				<iconify-icon icon="ri:bookmark-line" width="18"></iconify-icon>
-			</button>
-		</SidebarTooltip>
-		<SidebarTooltip content="Settings">
-			<button
-				onclick={handleSettingsClick}
+				onclick={toggleProfile}
 				class="footer-icon-btn"
 				class:active={isSettingsActive}
-				aria-label="Settings"
-				title="Settings"
+				aria-label="Profile"
+				title="Profile"
 			>
-				<iconify-icon icon="ri:settings-4-line" width="18"></iconify-icon>
-			</button>
-		</SidebarTooltip>
-		<SidebarTooltip content="Sign Out">
-			<button
-				onclick={handleLogout}
-				class="footer-icon-btn logout-btn"
-				aria-label="Sign Out"
-				title="Sign Out"
-			>
-				<iconify-icon icon="ri:logout-box-r-line" width="18"></iconify-icon>
+				<iconify-icon icon="ri:user-3-line" width="18"></iconify-icon>
 			</button>
 		</SidebarTooltip>
 	{:else}
-		<!-- Expanded: show bookmarks and settings links -->
+		<!-- Profile folder header -->
 		<button
-			onclick={onOpenBookmarks}
-			class="user-card"
-		>
-			<iconify-icon icon="ri:bookmark-line" width="16" class="nav-icon"></iconify-icon>
-			<span class="nav-label">Bookmarks</span>
-			<kbd class="shortcut-hint">&#8984;B</kbd>
-		</button>
-		<button
-			onclick={handleSettingsClick}
-			class="user-card"
+			onclick={toggleProfile}
+			class="profile-header"
+			class:expanded={isProfileExpanded}
 			class:active={isSettingsActive}
 		>
-			<iconify-icon icon="ri:settings-4-line" width="16" class="nav-icon"></iconify-icon>
-			<span class="nav-label">Settings</span>
+			<iconify-icon icon="ri:user-3-line" width="16" class="nav-icon"></iconify-icon>
+			<span class="nav-label">Profile</span>
+			<svg
+				class="chevron"
+				class:expanded={isProfileExpanded}
+				width="10"
+				height="10"
+				viewBox="0 0 12 12"
+				fill="none"
+			>
+				<path
+					d="M4.5 3L7.5 6L4.5 9"
+					stroke="currentColor"
+					stroke-width="1.5"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				/>
+			</svg>
 		</button>
-		<button
-			onclick={handleLogout}
-			class="user-card logout-btn"
-		>
-			<iconify-icon icon="ri:logout-box-r-line" width="16" class="nav-icon"></iconify-icon>
-			<span class="nav-label">Sign Out</span>
-		</button>
+
+		<!-- Profile children (expandable) -->
+		<div class="profile-children" class:expanded={isProfileExpanded}>
+			<div class="children-inner">
+				<button
+					onclick={handleSettingsClick}
+					class="user-card"
+					class:active={isSettingsActive}
+				>
+					<iconify-icon icon="ri:settings-4-line" width="16" class="nav-icon"></iconify-icon>
+					<span class="nav-label">Settings</span>
+				</button>
+
+				<button
+					onclick={handleFeedbackClick}
+					class="user-card"
+					class:active={page.url.pathname.startsWith("/feedback")}
+				>
+					<iconify-icon icon="ri:feedback-line" width="16" class="nav-icon"></iconify-icon>
+					<span class="nav-label">Feedback</span>
+				</button>
+
+				<button onclick={handleLogout} class="user-card logout-btn">
+					<iconify-icon icon="ri:logout-box-r-line" width="16" class="nav-icon"></iconify-icon>
+					<span class="nav-label">Sign Out</span>
+				</button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Workspace Switcher (always at bottom, not part of profile) -->
+	{#if !collapsed}
+		<WorkspaceSwitcher />
 	{/if}
 </div>
 
@@ -153,6 +189,68 @@
 		transition:
 			opacity 150ms var(--ease-premium),
 			transform 150ms var(--ease-premium);
+	}
+
+	/* Profile folder header */
+	.profile-header {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 6px 10px;
+		border-radius: 8px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font-size: 13px;
+		border: none;
+		cursor: pointer;
+		width: 100%;
+		text-align: left;
+		transition:
+			background-color 200ms var(--ease-premium),
+			color 200ms var(--ease-premium);
+	}
+
+	.profile-header:hover {
+		background: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.profile-header.active {
+		color: var(--color-foreground);
+	}
+
+	.profile-header .chevron {
+		margin-left: auto;
+		color: var(--color-foreground-subtle);
+		opacity: 0.5;
+		transition: transform 150ms var(--ease-premium), opacity 150ms var(--ease-premium);
+	}
+
+	.profile-header:hover .chevron {
+		opacity: 1;
+	}
+
+	.profile-header .chevron.expanded {
+		transform: rotate(90deg);
+		opacity: 0.8;
+	}
+
+	/* Profile children expansion */
+	.profile-children {
+		display: grid;
+		grid-template-rows: 0fr;
+		transition: grid-template-rows 200ms var(--ease-premium);
+		overflow: hidden;
+	}
+
+	.profile-children.expanded {
+		grid-template-rows: 1fr;
+	}
+
+	.profile-children .children-inner {
+		min-height: 0;
+		overflow: hidden;
+		padding-left: 12px;
 	}
 
 	/* User card - matches nav-item pill style exactly */
@@ -206,7 +304,8 @@
 		transition: color 200ms var(--ease-premium);
 	}
 
-	.user-card:hover .nav-icon {
+	.user-card:hover .nav-icon,
+	.profile-header:hover .nav-icon {
 		color: var(--color-foreground);
 	}
 
@@ -247,14 +346,4 @@
 		color: var(--color-foreground);
 	}
 
-	/* Keyboard shortcut hint */
-	.shortcut-hint {
-		margin-left: auto;
-		font-family: var(--font-mono, ui-monospace, monospace);
-		font-size: 10px;
-		padding: 2px 5px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		border-radius: 4px;
-		color: var(--color-foreground-subtle);
-	}
 </style>
