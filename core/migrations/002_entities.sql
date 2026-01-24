@@ -1,10 +1,10 @@
--- Entities: Person, Place, Organization, Thing, Edges (SQLite)
+-- Wiki: People, Places, Organizations, Things, Connections (SQLite)
 
 --------------------------------------------------------------------------------
--- PERSON
+-- WIKI: PEOPLE
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS data_entities_person (
+CREATE TABLE IF NOT EXISTS wiki_people (
     id TEXT PRIMARY KEY,
     canonical_name TEXT NOT NULL,
     emails TEXT DEFAULT '[]',  -- JSON array
@@ -31,24 +31,24 @@ CREATE TABLE IF NOT EXISTS data_entities_person (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_entities_person_name
-    ON data_entities_person(canonical_name);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_person_slug
-    ON data_entities_person(slug) WHERE slug IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wiki_people_name
+    ON wiki_people(canonical_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_people_slug
+    ON wiki_people(slug) WHERE slug IS NOT NULL;
 
-CREATE TRIGGER IF NOT EXISTS data_entities_person_set_updated_at
-    AFTER UPDATE ON data_entities_person
+CREATE TRIGGER IF NOT EXISTS wiki_people_set_updated_at
+    AFTER UPDATE ON wiki_people
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE data_entities_person SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE wiki_people SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 --------------------------------------------------------------------------------
--- PLACE
+-- WIKI: PLACES
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS data_entities_place (
+CREATE TABLE IF NOT EXISTS wiki_places (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     category TEXT,
@@ -71,30 +71,30 @@ CREATE TABLE IF NOT EXISTS data_entities_place (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_entities_place_name
-    ON data_entities_place(name);
-CREATE INDEX IF NOT EXISTS idx_entities_place_location
-    ON data_entities_place(latitude, longitude);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_place_slug
-    ON data_entities_place(slug) WHERE slug IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wiki_places_name
+    ON wiki_places(name);
+CREATE INDEX IF NOT EXISTS idx_wiki_places_location
+    ON wiki_places(latitude, longitude);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_places_slug
+    ON wiki_places(slug) WHERE slug IS NOT NULL;
 
-CREATE TRIGGER IF NOT EXISTS data_entities_place_set_updated_at
-    AFTER UPDATE ON data_entities_place
+CREATE TRIGGER IF NOT EXISTS wiki_places_set_updated_at
+    AFTER UPDATE ON wiki_places
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE data_entities_place SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE wiki_places SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 --------------------------------------------------------------------------------
--- ORGANIZATION
+-- WIKI: ORGS
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS data_entities_organization (
+CREATE TABLE IF NOT EXISTS wiki_orgs (
     id TEXT PRIMARY KEY,
     canonical_name TEXT NOT NULL,
     organization_type TEXT,
-    primary_place_id TEXT REFERENCES data_entities_place(id),
+    primary_place_id TEXT REFERENCES wiki_places(id),
     relationship_type TEXT,
     role_title TEXT,
     start_date TEXT,
@@ -111,26 +111,26 @@ CREATE TABLE IF NOT EXISTS data_entities_organization (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_entities_organization_name
-    ON data_entities_organization(canonical_name);
-CREATE INDEX IF NOT EXISTS idx_entities_organization_type
-    ON data_entities_organization(organization_type) WHERE organization_type IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_organization_slug
-    ON data_entities_organization(slug) WHERE slug IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wiki_orgs_name
+    ON wiki_orgs(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_wiki_orgs_type
+    ON wiki_orgs(organization_type) WHERE organization_type IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_orgs_slug
+    ON wiki_orgs(slug) WHERE slug IS NOT NULL;
 
-CREATE TRIGGER IF NOT EXISTS data_entities_organization_set_updated_at
-    AFTER UPDATE ON data_entities_organization
+CREATE TRIGGER IF NOT EXISTS wiki_orgs_set_updated_at
+    AFTER UPDATE ON wiki_orgs
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE data_entities_organization SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE wiki_orgs SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 --------------------------------------------------------------------------------
--- THING
+-- WIKI: THINGS
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS data_entities_thing (
+CREATE TABLE IF NOT EXISTS wiki_things (
     id TEXT PRIMARY KEY,
     canonical_name TEXT NOT NULL,
     thing_type TEXT,
@@ -147,26 +147,26 @@ CREATE TABLE IF NOT EXISTS data_entities_thing (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_entities_thing_name
-    ON data_entities_thing(canonical_name);
-CREATE INDEX IF NOT EXISTS idx_entities_thing_type
-    ON data_entities_thing(thing_type) WHERE thing_type IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_thing_slug
-    ON data_entities_thing(slug) WHERE slug IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wiki_things_name
+    ON wiki_things(canonical_name);
+CREATE INDEX IF NOT EXISTS idx_wiki_things_type
+    ON wiki_things(thing_type) WHERE thing_type IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_things_slug
+    ON wiki_things(slug) WHERE slug IS NOT NULL;
 
-CREATE TRIGGER IF NOT EXISTS data_entities_thing_set_updated_at
-    AFTER UPDATE ON data_entities_thing
+CREATE TRIGGER IF NOT EXISTS wiki_things_set_updated_at
+    AFTER UPDATE ON wiki_things
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE data_entities_thing SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE wiki_things SET updated_at = datetime('now') WHERE id = NEW.id;
 END;
 
 --------------------------------------------------------------------------------
--- ENTITY EDGES
+-- WIKI: CONNECTIONS (edges between wiki entries)
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS data_entities_edges (
+CREATE TABLE IF NOT EXISTS wiki_connections (
     id TEXT PRIMARY KEY,
     source_type TEXT NOT NULL CHECK (source_type IN ('person', 'place', 'organization', 'thing')),
     source_id TEXT NOT NULL,
@@ -183,17 +183,17 @@ CREATE TABLE IF NOT EXISTS data_entities_edges (
     UNIQUE(source_type, source_id, target_type, target_id, relationship)
 );
 
-CREATE INDEX IF NOT EXISTS idx_entity_edges_source
-    ON data_entities_edges(source_type, source_id);
-CREATE INDEX IF NOT EXISTS idx_entity_edges_target
-    ON data_entities_edges(target_type, target_id);
-CREATE INDEX IF NOT EXISTS idx_entity_edges_relationship
-    ON data_entities_edges(relationship);
+CREATE INDEX IF NOT EXISTS idx_wiki_connections_source
+    ON wiki_connections(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_wiki_connections_target
+    ON wiki_connections(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_wiki_connections_relationship
+    ON wiki_connections(relationship);
 
-CREATE TRIGGER IF NOT EXISTS data_entities_edges_set_updated_at
-    AFTER UPDATE ON data_entities_edges
+CREATE TRIGGER IF NOT EXISTS wiki_connections_set_updated_at
+    AFTER UPDATE ON wiki_connections
     FOR EACH ROW
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
-    UPDATE data_entities_edges SET updated_at = datetime('now') WHERE id = NEW.id;
+    UPDATE wiki_connections SET updated_at = datetime('now') WHERE id = NEW.id;
 END;

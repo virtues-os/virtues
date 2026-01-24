@@ -1,22 +1,43 @@
 //! Chat Sessions API
 //!
-//! CRUD operations for chat sessions stored in app.chat_sessions.
-//! Sessions contain conversation history with messages stored as JSONB.
+//! CRUD operations for chat sessions stored in app_chat_sessions.
+//! Messages are stored in a normalized app_chat_messages table for
+//! performance, proper indexing, and race-condition-free appends.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::error::Result;
+use crate::types::Timestamp;
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Get the next sequence number for a session
+async fn get_next_sequence_num(pool: &SqlitePool, session_id: &str) -> Result<i32> {
+    let row = sqlx::query_scalar!(
+        r#"SELECT COALESCE(MAX(sequence_num), 0) as "seq!: i64" FROM app_chat_messages WHERE session_id = $1"#,
+        session_id
+    )
+    .fetch_one(pool)
+    .await?;
+    
+    Ok((row as i32) + 1)
+}
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/// Chat message structure stored in JSONB array
+/// Chat message structure stored in app_chat_messages table
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
+    /// Unique message ID (stable, persisted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
     pub role: String, // "user" | "assistant" | "system"
     pub content: String,
     pub timestamp: String, // ISO 8601 timestamp
@@ -85,7 +106,7 @@ pub struct TimeRange {
 /// Chat session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatSession {
-    pub id: Uuid,
+    pub id: String,
     pub title: String,
     pub messages: Vec<ChatMessage>,
     pub message_count: i32,
@@ -96,11 +117,11 @@ pub struct ChatSession {
 /// Session list item (without messages for list queries)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionListItem {
-    pub conversation_id: Uuid,
+    pub conversation_id: String,
     pub title: String,
     pub message_count: i32,
-    pub first_message_at: String,
-    pub last_updated: String,
+    pub first_message_at: Timestamp,
+    pub last_updated: Timestamp,
 }
 
 /// Response for session list
@@ -119,10 +140,10 @@ pub struct SessionDetailResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ConversationMeta {
-    pub conversation_id: Uuid,
+    pub conversation_id: String,
     pub title: String,
-    pub first_message_at: String,
-    pub last_message_at: String,
+    pub first_message_at: Timestamp,
+    pub last_message_at: Timestamp,
     pub message_count: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -162,32 +183,32 @@ pub struct CreateSessionRequest {
 /// Response after creating a session
 #[derive(Debug, Serialize)]
 pub struct CreateSessionResponse {
-    pub id: Uuid,
+    pub id: String,
     pub title: String,
     pub message_count: i32,
-    pub created_at: String,
+    pub created_at: Timestamp,
 }
 
 /// Response after updating session
 #[derive(Debug, Serialize)]
 pub struct UpdateSessionResponse {
-    pub conversation_id: Uuid,
+    pub conversation_id: String,
     pub title: String,
-    pub updated_at: String,
+    pub updated_at: Timestamp,
 }
 
 /// Response after deleting session
 #[derive(Debug, Serialize)]
 pub struct DeleteSessionResponse {
     pub success: bool,
-    pub conversation_id: Uuid,
+    pub conversation_id: String,
 }
 
 /// Request to generate title
 #[derive(Debug, Deserialize)]
 pub struct GenerateTitleRequest {
     #[serde(rename = "sessionId")]
-    pub session_id: Uuid,
+    pub session_id: String,
     pub messages: Vec<TitleMessage>,
 }
 
@@ -200,7 +221,7 @@ pub struct TitleMessage {
 /// Response after generating title
 #[derive(Debug, Serialize)]
 pub struct GenerateTitleResponse {
-    pub session_id: Uuid,
+    pub session_id: String,
     pub title: String,
 }
 
@@ -230,13 +251,15 @@ pub async fn list_sessions(pool: &SqlitePool, limit: i64) -> Result<SessionListR
     let conversations = rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
+            let first_message_at = row.created_at.parse::<Timestamp>().ok()?;
+            let last_updated = row.updated_at.parse::<Timestamp>().ok()?;
             Some(SessionListItem {
                 conversation_id: id,
                 title: row.title.clone(),
                 message_count: row.message_count as i32,
-                first_message_at: row.created_at.clone(),
-                last_updated: row.updated_at.clone(),
+                first_message_at,
+                last_updated,
             })
         })
         .collect();
@@ -248,14 +271,15 @@ pub async fn list_sessions(pool: &SqlitePool, limit: i64) -> Result<SessionListR
 }
 
 /// Get a single session with all messages
-pub async fn get_session(pool: &SqlitePool, session_id: Uuid) -> Result<SessionDetailResponse> {
-    let session_id_str = session_id.to_string();
+pub async fn get_session(pool: &SqlitePool, session_id: String) -> Result<SessionDetailResponse> {
+    let session_id_str = session_id.clone();
+    
+    // Get session metadata
     let row = sqlx::query!(
         r#"
         SELECT
             id,
             title,
-            messages,
             message_count,
             created_at,
             updated_at
@@ -272,45 +296,72 @@ pub async fn get_session(pool: &SqlitePool, session_id: Uuid) -> Result<SessionD
     // Parse ID
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
+        .clone()
         .ok_or_else(|| crate::Error::Database("Invalid session ID".into()))?;
-    let id_str = id.to_string();
 
-    // Parse messages from JSON string
-    let messages: Vec<ChatMessage> = serde_json::from_str(&row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
+    // Query messages from normalized table
+    let message_rows = sqlx::query!(
+        r#"
+        SELECT
+            id,
+            role,
+            content,
+            model,
+            provider,
+            agent_id,
+            reasoning,
+            tool_calls,
+            intent,
+            subject,
+            created_at
+        FROM app_chat_messages
+        WHERE session_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+        session_id_str
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Convert to response format
+    let messages_response: Vec<MessageResponse> = message_rows
+        .into_iter()
+        .map(|msg| {
+            // Parse tool_calls from JSON if present
+            let tool_calls: Option<Vec<ToolCall>> = msg.tool_calls
+                .as_ref()
+                .and_then(|tc| serde_json::from_str(tc).ok());
+            
+            MessageResponse {
+                id: msg.id.unwrap_or_else(|| format!("{}_unknown", session_id)),
+                role: msg.role,
+                content: msg.content,
+                timestamp: msg.created_at,
+                model: msg.model,
+                tool_calls,
+                reasoning: msg.reasoning,
+                subject: msg.subject,
+            }
+        })
+        .collect();
 
     // Get last message for model/provider info
-    let last_message = messages.last();
+    let last_message = messages_response.last();
+
+    let first_message_at = row.created_at.parse::<Timestamp>()
+        .map_err(|_| crate::Error::Database("Invalid created_at timestamp".into()))?;
+    let last_message_at = row.updated_at.parse::<Timestamp>()
+        .map_err(|_| crate::Error::Database("Invalid updated_at timestamp".into()))?;
 
     let conversation = ConversationMeta {
         conversation_id: id,
         title: row.title.clone(),
-        first_message_at: row.created_at.clone(),
-        last_message_at: row.updated_at.clone(),
+        first_message_at,
+        last_message_at,
         message_count: row.message_count as i32,
         model: last_message.and_then(|m| m.model.clone()),
-        provider: last_message.and_then(|m| m.provider.clone()),
+        provider: None, // Provider not stored in MessageResponse
     };
-
-    // Format messages for response
-    let messages_response: Vec<MessageResponse> = messages
-        .iter()
-        .enumerate()
-        .map(|(idx, msg)| MessageResponse {
-            id: format!("{}_{}", id_str, idx),
-            role: msg.role.clone(),
-            content: msg.content.clone(),
-            timestamp: msg.timestamp.clone(),
-            model: msg.model.clone(),
-            tool_calls: msg.tool_calls.clone(),
-            reasoning: msg.reasoning.clone(),
-            subject: msg.subject.clone(),
-        })
-        .collect();
 
     Ok(SessionDetailResponse {
         conversation,
@@ -324,37 +375,76 @@ pub async fn create_session(
     title: &str,
     messages: Vec<ChatMessage>,
 ) -> Result<ChatSession> {
-    // Serialize messages to JSON string for SQLite
-    let id = Uuid::new_v4().to_string();
-    let messages_json = serde_json::to_string(&messages)?;
+    let timestamp = Utc::now().to_rfc3339();
+    let id = crate::ids::generate_id(crate::ids::SESSION_PREFIX, &[title, &timestamp]);
     let message_count = messages.len() as i32;
 
+    // Create session record (no JSON blob for messages anymore!)
     let row = sqlx::query!(
         r#"
-        INSERT INTO app_chat_sessions (id, title, messages, message_count)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, title, messages, message_count, created_at, updated_at
+        INSERT INTO app_chat_sessions (id, title, message_count)
+        VALUES ($1, $2, $3)
+        RETURNING id, title, message_count, created_at, updated_at
         "#,
         id,
         title,
-        messages_json,
         message_count
     )
     .fetch_one(pool)
     .await?;
 
     // Parse ID
-    let id = row
+    let session_id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
+        .clone()
         .ok_or_else(|| crate::Error::Database("Invalid session ID".into()))?;
 
-    // Parse messages from JSON string
-    let messages: Vec<ChatMessage> = serde_json::from_str(&row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
+    // Insert messages into normalized table
+    let mut inserted_messages = Vec::new();
+    for (idx, mut msg) in messages.into_iter().enumerate() {
+        let msg_id = msg.id.clone().unwrap_or_else(|| {
+            crate::ids::generate_id(crate::ids::MESSAGE_PREFIX, &[&session_id, &uuid::Uuid::new_v4().to_string()])
+        });
+        msg.id = Some(msg_id.clone());
+        
+        let tool_calls_json = msg.tool_calls
+            .as_ref()
+            .map(|tc| serde_json::to_string(tc))
+            .transpose()?;
+        let intent_json = msg.intent
+            .as_ref()
+            .map(|i| serde_json::to_string(i))
+            .transpose()?;
+        
+        let sequence_num = (idx + 1) as i32;
+        
+        sqlx::query!(
+            r#"
+            INSERT INTO app_chat_messages (
+                id, session_id, role, content, model, provider, agent_id,
+                reasoning, tool_calls, intent, subject, sequence_num, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "#,
+            msg_id,
+            session_id,
+            msg.role,
+            msg.content,
+            msg.model,
+            msg.provider,
+            msg.agent_id,
+            msg.reasoning,
+            tool_calls_json,
+            intent_json,
+            msg.subject,
+            sequence_num,
+            msg.timestamp
+        )
+        .execute(pool)
+        .await?;
+        
+        inserted_messages.push(msg);
+    }
 
     // Parse timestamps
     let created_at = chrono::DateTime::parse_from_rfc3339(&row.created_at)
@@ -365,9 +455,9 @@ pub async fn create_session(
         .unwrap_or_else(|_| Utc::now());
 
     Ok(ChatSession {
-        id,
+        id: session_id,
         title: row.title.clone(),
-        messages,
+        messages: inserted_messages,
         message_count: row.message_count as i32,
         created_at,
         updated_at,
@@ -385,17 +475,17 @@ pub async fn create_session_from_request(
         id: session.id,
         title: session.title,
         message_count: session.message_count,
-        created_at: session.created_at.to_rfc3339(),
+        created_at: Timestamp::from(session.created_at),
     })
 }
 
 /// Update session title
 pub async fn update_session_title(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     title: &str,
 ) -> Result<UpdateSessionResponse> {
-    let session_id_str = session_id.to_string();
+    let session_id_str = session_id;
     let row = sqlx::query!(
         r#"
         UPDATE app_chat_sessions
@@ -414,100 +504,174 @@ pub async fn update_session_title(
     // Parse ID
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
+        .clone()
         .ok_or_else(|| crate::Error::Database("Invalid session ID".into()))?;
+
+    let updated_at = row.updated_at.parse::<Timestamp>()
+        .map_err(|_| crate::Error::Database("Invalid updated_at timestamp".into()))?;
 
     Ok(UpdateSessionResponse {
         conversation_id: id,
         title: row.title.clone(),
-        updated_at: row.updated_at.clone(),
+        updated_at,
     })
 }
 
-/// Append a message to a session
+/// Append a message to a session (atomic INSERT - no race conditions!)
+///
+/// Returns the generated message ID for the newly inserted message.
 pub async fn append_message(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     message: ChatMessage,
-) -> Result<()> {
-    let session_id_str = session_id.to_string();
-
-    // SQLite doesn't support JSONB concatenation like PostgreSQL
-    // We need to read the existing messages, append, and write back
-    let row = sqlx::query!(
-        "SELECT messages FROM app_chat_sessions WHERE id = $1",
-        session_id_str
-    )
-    .fetch_optional(pool)
-    .await?;
-
-    let row = row.ok_or_else(|| crate::Error::NotFound("Session not found".into()))?;
-
-    // Parse existing messages and append new one
-    let mut messages: Vec<ChatMessage> = serde_json::from_str(&row.messages).map_err(|e| {
-        tracing::error!("Corrupted messages JSON in session {}: {}", session_id, e);
-        crate::Error::Database(format!("Corrupted message data: {}", e))
-    })?;
-    messages.push(message);
-    let messages_json = serde_json::to_string(&messages)?;
-    let message_count = messages.len() as i32;
-
-    sqlx::query!(
+) -> Result<String> {
+    let session_id_str = session_id.clone();
+    
+    // Generate stable message ID
+    let msg_id = message.id.clone().unwrap_or_else(|| {
+        crate::ids::generate_id(crate::ids::MESSAGE_PREFIX, &[&session_id_str, &uuid::Uuid::new_v4().to_string()])
+    });
+    
+    // Get next sequence number atomically
+    let sequence_num = get_next_sequence_num(pool, &session_id_str).await?;
+    
+    // Serialize tool_calls and intent to JSON if present
+    let tool_calls_json = message.tool_calls
+        .as_ref()
+        .map(|tc| serde_json::to_string(tc))
+        .transpose()?;
+    let intent_json = message.intent
+        .as_ref()
+        .map(|i| serde_json::to_string(i))
+        .transpose()?;
+    
+    // Insert into normalized table (atomic, idempotent with INSERT OR IGNORE)
+    // If a message with this ID already exists, silently ignore the duplicate
+    let result = sqlx::query(
         r#"
-        UPDATE app_chat_sessions
-        SET
-            messages = $1,
-            message_count = $2,
-            updated_at = datetime('now')
-        WHERE id = $3
+        INSERT OR IGNORE INTO app_chat_messages (
+            id, session_id, role, content, model, provider, agent_id,
+            reasoning, tool_calls, intent, subject, sequence_num, created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#,
-        messages_json,
-        message_count,
-        session_id_str
     )
+    .bind(&msg_id)
+    .bind(&session_id_str)
+    .bind(&message.role)
+    .bind(&message.content)
+    .bind(&message.model)
+    .bind(&message.provider)
+    .bind(&message.agent_id)
+    .bind(&message.reasoning)
+    .bind(&tool_calls_json)
+    .bind(&intent_json)
+    .bind(&message.subject)
+    .bind(sequence_num)
+    .bind(&message.timestamp)
     .execute(pool)
     .await?;
-
-    Ok(())
+    
+    // Only update session metadata if we actually inserted a new row
+    if result.rows_affected() > 0 {
+        // Update session metadata (message count and updated_at)
+        sqlx::query!(
+            r#"
+            UPDATE app_chat_sessions
+            SET message_count = message_count + 1, updated_at = datetime('now')
+            WHERE id = $1
+            "#,
+            session_id_str
+        )
+        .execute(pool)
+        .await?;
+    }
+    
+    Ok(msg_id)
 }
 
 /// Update messages in a session (replace all messages)
+///
+/// Deletes all existing messages and re-inserts the new set.
+/// Used for editing messages or regenerating responses.
 pub async fn update_messages(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     messages: Vec<ChatMessage>,
 ) -> Result<()> {
-    let session_id_str = session_id.to_string();
-    let messages_json = serde_json::to_string(&messages)?;
+    let session_id_str = session_id.clone();
     let message_count = messages.len() as i32;
-
-    let result = sqlx::query!(
+    
+    // Delete all existing messages for this session
+    sqlx::query!(
+        "DELETE FROM app_chat_messages WHERE session_id = $1",
+        session_id_str
+    )
+    .execute(pool)
+    .await?;
+    
+    // Re-insert all messages with new sequence numbers
+    for (idx, msg) in messages.into_iter().enumerate() {
+        let msg_id = msg.id.clone().unwrap_or_else(|| {
+            crate::ids::generate_id(crate::ids::MESSAGE_PREFIX, &[&session_id_str, &uuid::Uuid::new_v4().to_string()])
+        });
+        
+        let tool_calls_json = msg.tool_calls
+            .as_ref()
+            .map(|tc| serde_json::to_string(tc))
+            .transpose()?;
+        let intent_json = msg.intent
+            .as_ref()
+            .map(|i| serde_json::to_string(i))
+            .transpose()?;
+        
+        let sequence_num = (idx + 1) as i32;
+        
+        sqlx::query!(
+            r#"
+            INSERT INTO app_chat_messages (
+                id, session_id, role, content, model, provider, agent_id,
+                reasoning, tool_calls, intent, subject, sequence_num, created_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            "#,
+            msg_id,
+            session_id_str,
+            msg.role,
+            msg.content,
+            msg.model,
+            msg.provider,
+            msg.agent_id,
+            msg.reasoning,
+            tool_calls_json,
+            intent_json,
+            msg.subject,
+            sequence_num,
+            msg.timestamp
+        )
+        .execute(pool)
+        .await?;
+    }
+    
+    // Update session metadata
+    sqlx::query!(
         r#"
         UPDATE app_chat_sessions
-        SET
-            messages = $1,
-            message_count = $2,
-            updated_at = datetime('now')
-        WHERE id = $3
+        SET message_count = $1, updated_at = datetime('now')
+        WHERE id = $2
         "#,
-        messages_json,
         message_count,
         session_id_str
     )
     .execute(pool)
     .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(crate::Error::NotFound("Session not found".into()));
-    }
 
     Ok(())
 }
 
 /// Delete a chat session
-pub async fn delete_session(pool: &SqlitePool, session_id: Uuid) -> Result<DeleteSessionResponse> {
-    let session_id_str = session_id.to_string();
+pub async fn delete_session(pool: &SqlitePool, session_id: String) -> Result<DeleteSessionResponse> {
+    let session_id_str = session_id;
     let result = sqlx::query!(
         r#"
         DELETE FROM app_chat_sessions
@@ -524,8 +688,7 @@ pub async fn delete_session(pool: &SqlitePool, session_id: Uuid) -> Result<Delet
     // Parse ID
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
+        .clone()
         .ok_or_else(|| crate::Error::Database("Invalid session ID".into()))?;
 
     Ok(DeleteSessionResponse {
@@ -539,7 +702,7 @@ pub async fn delete_session(pool: &SqlitePool, session_id: Uuid) -> Result<Delet
 /// Uses Tollbooth with system user (no specific user context for background operations)
 pub async fn generate_title(
     pool: &SqlitePool,
-    session_id: Uuid,
+    session_id: String,
     messages: &[TitleMessage],
 ) -> Result<GenerateTitleResponse> {
     // Get background model from assistant profile
@@ -636,6 +799,7 @@ mod tests {
     #[test]
     fn test_chat_message_serialization() {
         let message = ChatMessage {
+            id: None,
             role: "user".to_string(),
             content: "Hello".to_string(),
             timestamp: "2024-01-01T00:00:00Z".to_string(),

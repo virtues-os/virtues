@@ -434,4 +434,6 @@ pub fn router() -> Router<Arc<AppState>> {
             "/services/google/places/:place_id",
             axum::routing::get(google_places_details),
         )
+        // Feedback
+        .route("/services/feedback", post(crate::routes::feedback::handle_feedback))
 }

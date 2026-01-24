@@ -8,7 +8,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
+
 
 use crate::{
     error::Result,
@@ -27,7 +27,7 @@ use super::{
 
 /// Notion pages stream
 pub struct NotionPagesStream {
-    source_id: Uuid,
+        source_id: String,
     client: NotionApiClient,
     stream_writer: Arc<Mutex<StreamWriter>>,
 }
@@ -35,7 +35,7 @@ pub struct NotionPagesStream {
 impl NotionPagesStream {
     /// Create a new Notion pages stream with SourceAuth and StreamWriter
     pub fn new(
-        source_id: Uuid,
+    source_id: String,
         _db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
         auth: SourceAuth,
@@ -46,7 +46,7 @@ impl NotionPagesStream {
             .expect("NotionPagesStream requires OAuth2 auth")
             .clone();
 
-        let client = NotionApiClient::new(source_id, token_manager);
+        let client = NotionApiClient::new(source_id.clone(), token_manager);
 
         Self {
             source_id,
@@ -68,6 +68,12 @@ impl NotionPagesStream {
                 SyncMode::FullRefresh
             }
             SyncMode::FullRefresh => SyncMode::FullRefresh,
+            SyncMode::Backfill { .. } => {
+                tracing::warn!(
+                    "Notion pages stream does not support backfill. Using full refresh instead."
+                );
+                SyncMode::FullRefresh
+            }
         };
 
         let started_at = Utc::now();
@@ -113,8 +119,8 @@ impl NotionPagesStream {
         // Collect records from StreamWriter for archive and transform pipeline
         let records = {
             let mut writer = self.stream_writer.lock().await;
-            let collected = writer
-                .collect_records(self.source_id, "pages")
+            let collected =             writer
+                .collect_records(&self.source_id, "pages")
                 .map(|(records, _, _)| records);
 
             if let Some(ref recs) = collected {
@@ -134,6 +140,8 @@ impl NotionPagesStream {
             records_written,
             records_failed: 0,
             next_cursor: None,
+            earliest_record_at: None,
+            latest_record_at: None,
             started_at,
             completed_at,
             records, // Return collected records for archive/transform
@@ -412,7 +420,7 @@ impl NotionPagesStream {
         // Write to S3/object storage via StreamWriter
         {
             let mut writer = self.stream_writer.lock().await;
-            writer.write_record(self.source_id, "pages", record, Some(page.last_edited_time))?;
+            writer.write_record(&self.source_id, "pages", record, Some(page.last_edited_time))?;
         }
 
         tracing::debug!(page_id = %page.id, "Wrote Notion page to object storage");
@@ -427,7 +435,7 @@ impl PullStream for NotionPagesStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, _db: &SqlitePool, _source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, _db: &SqlitePool, _source_id: &str) -> Result<()> {
         // Notion doesn't have stream-specific config yet
         Ok(())
     }

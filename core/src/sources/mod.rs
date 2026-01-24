@@ -11,7 +11,6 @@ pub mod plaid;
 pub mod pull_stream;
 pub mod push_stream;
 pub mod stream_type;
-pub mod virtues;
 
 // Re-export commonly used types
 pub use auth::SourceAuth;

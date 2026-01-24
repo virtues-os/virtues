@@ -1,26 +1,20 @@
 <script lang="ts">
-	import { page } from "$app/state";
 	import { onMount } from "svelte";
-	import { chatSessions } from "$lib/stores/chatSessions.svelte";
-	import { windowTabs } from "$lib/stores/windowTabs.svelte";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import { bookmarks } from "$lib/stores/bookmarks.svelte";
-	import SidebarHeader from "./SidebarHeader.svelte";
-	import SidebarAccordion from "./SidebarAccordion.svelte";
-	import SidebarNavItem from "./SidebarNavItem.svelte";
+	import WorkspaceHeader from "./WorkspaceHeader.svelte";
+	import ExplorerNode from "./ExplorerNode.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SearchModal from "./SearchModal.svelte";
 	import BookmarksModal from "$lib/components/BookmarksModal.svelte";
-	import { WikiSidebarSection } from "$lib/components/wiki";
-	import type { SidebarSectionData } from "./types";
+	import emblaCarouselSvelte from "embla-carousel-svelte";
+	import type { EmblaCarouselType } from "embla-carousel";
+	import WheelGesturesPlugin from "embla-carousel-wheel-gestures";
 
 	const STORAGE_KEY = "virtues-sidebar-collapsed";
-	const EXPANDED_SECTIONS_KEY = "virtues-sidebar-expanded";
 
 	// Collapsed state (icon-only mode)
 	let isCollapsed = $state(false);
-
-	// Expanded sections state
-	let expandedSections = $state<Set<string>>(new Set(["history"]));
 
 	// Search modal state
 	let isSearchOpen = $state(false);
@@ -28,21 +22,131 @@
 	// Bookmarks modal state
 	let isBookmarksOpen = $state(false);
 
-	// Load state from localStorage
+	// New workspace modal state
+	let showNewWorkspaceModal = $state(false);
+	let newWorkspaceName = $state("");
+
+	// Track if store is ready
+	let storeReady = $state(false);
+
+	// Embla carousel API
+	let emblaApi: EmblaCarouselType | undefined;
+
+	// Scroll progress for title animation (-1 to 1 relative to current snap)
+	let scrollProgress = $state(0);
+
+	// Embla options
+	const emblaOptions = {
+		loop: false,
+		dragFree: false,
+		containScroll: 'keepSnaps' as const, // No rubberband past edges
+		skipSnaps: false,
+		duration: 12,
+		watchDrag: true,
+	};
+
+	// Workspace info type for header transitions
+	type WorkspaceInfo = {
+		name: string;
+		icon: string | null;
+		accentColor: string | null;
+		isSystem: boolean;
+	};
+
+	// Get workspace info by index
+	function getWorkspaceInfo(index: number): WorkspaceInfo | null {
+		const ws = workspaceStore.workspaces[index];
+		if (!ws) return null;
+		return {
+			name: ws.is_system ? "Virtues" : ws.name,
+			icon: ws.icon || null,
+			accentColor: ws.accent_color || null,
+			isSystem: ws.is_system,
+		};
+	}
+
+	// Current transition workspaces [prev, current, next]
+	const transitionWorkspaces = $derived.by((): [WorkspaceInfo | null, WorkspaceInfo, WorkspaceInfo | null] => {
+		const currentIndex = workspaceStore.workspaces.findIndex(
+			(w) => w.id === workspaceStore.activeWorkspaceId
+		);
+		return [
+			getWorkspaceInfo(currentIndex - 1),
+			getWorkspaceInfo(currentIndex) || { name: "Workspace", icon: null, accentColor: null, isSystem: false },
+			getWorkspaceInfo(currentIndex + 1),
+		];
+	});
+
+	// Handle Embla init
+	function onEmblaInit(event: CustomEvent<EmblaCarouselType>) {
+		emblaApi = event.detail;
+		
+		// Scroll to active workspace on init
+		const index = workspaceStore.workspaces.findIndex(
+			(w) => w.id === workspaceStore.activeWorkspaceId
+		);
+		if (index > 0) {
+			emblaApi.scrollTo(index, true); // true = instant, no animation
+		}
+
+		// Listen for scroll to update title progress
+		emblaApi.on('scroll', () => {
+			if (!emblaApi) return;
+			const progress = emblaApi.scrollProgress();
+			const snapCount = workspaceStore.workspaces.length;
+			const currentSnap = emblaApi.selectedScrollSnap();
+			
+			// Calculate progress relative to current snap (-1 to 1)
+			// progress is 0-1 across all slides
+			const progressPerSlide = 1 / (snapCount - 1 || 1);
+			const currentSnapProgress = currentSnap * progressPerSlide;
+			const relativeProgress = (progress - currentSnapProgress) / progressPerSlide;
+			
+			// Clamp to -1 to 1
+			scrollProgress = Math.max(-1, Math.min(1, relativeProgress));
+		});
+
+		// Listen for slide changes
+		emblaApi.on('select', () => {
+			if (!emblaApi) return;
+			const selectedIndex = emblaApi.selectedScrollSnap();
+			const workspace = workspaceStore.workspaces[selectedIndex];
+			if (workspace && workspace.id !== workspaceStore.activeWorkspaceId) {
+				workspaceStore.activeWorkspaceId = workspace.id;
+			}
+		});
+
+		// Reset progress when settle
+		emblaApi.on('settle', () => {
+			scrollProgress = 0;
+		});
+	}
+
+	// Navigate to workspace (for chevron clicks)
+	export function scrollToWorkspace(workspaceId: string) {
+		if (!emblaApi) return;
+		const index = workspaceStore.workspaces.findIndex((w) => w.id === workspaceId);
+		if (index >= 0) {
+			emblaApi.scrollTo(index);
+		}
+	}
+
+	// Load state from localStorage and initialize
 	onMount(() => {
 		const storedCollapsed = localStorage.getItem(STORAGE_KEY);
 		if (storedCollapsed !== null) {
 			isCollapsed = storedCollapsed === "true";
 		}
 
-		const storedExpanded = localStorage.getItem(EXPANDED_SECTIONS_KEY);
-		if (storedExpanded) {
-			try {
-				expandedSections = new Set(JSON.parse(storedExpanded));
-			} catch {
-				// Use defaults
-			}
-		}
+		// Initialize workspace store
+		workspaceStore.init()
+			.then(() => {
+				storeReady = true;
+			})
+			.catch((err) => {
+				console.error("[UnifiedSidebar] Failed to initialize workspace store:", err);
+				storeReady = true;
+			});
 
 		// Keyboard shortcuts
 		window.addEventListener("keydown", handleKeydown);
@@ -54,12 +158,16 @@
 		localStorage.setItem(STORAGE_KEY, String(isCollapsed));
 	});
 
-	// Persist expanded sections
+	// Sync Embla with workspace changes from external sources (chevron clicks in WorkspaceSwitcher)
 	$effect(() => {
-		localStorage.setItem(
-			EXPANDED_SECTIONS_KEY,
-			JSON.stringify([...expandedSections]),
+		if (!emblaApi || !storeReady) return;
+		const targetIndex = workspaceStore.workspaces.findIndex(
+			(w) => w.id === workspaceStore.activeWorkspaceId
 		);
+		const currentIndex = emblaApi.selectedScrollSnap();
+		if (targetIndex >= 0 && targetIndex !== currentIndex) {
+			emblaApi.scrollTo(targetIndex);
+		}
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -107,27 +215,55 @@
 	}
 
 	async function handleBookmarkCurrentTab() {
-		const tab = windowTabs.activeTab;
+		const tab = workspaceStore.activeTab;
 		if (!tab) return;
 
 		await bookmarks.toggleRouteBookmark({
 			route: tab.route,
 			tab_type: tab.type,
 			label: tab.label,
-			icon: tab.icon
+			icon: tab.icon,
 		});
 	}
 
 	function handleNewChat() {
 		// Find existing new chat tab (no conversationId) or create one
-		const existingNewChat = windowTabs.getAllTabs().find(
-			(t) => t.type === 'chat' && !t.conversationId
-		);
+		const existingNewChat = workspaceStore
+			.getAllTabs()
+			.find((t) => t.type === "chat" && !t.conversationId);
 
 		if (existingNewChat) {
-			windowTabs.setActiveTab(existingNewChat.id);
+			workspaceStore.setActiveTab(existingNewChat.id);
 		} else {
-			windowTabs.openTabFromRoute('/', { label: 'New Chat', preferEmptyPane: true });
+			workspaceStore.openTabFromRoute("/", {
+				label: "New Chat",
+				preferEmptyPane: true,
+			});
+		}
+	}
+
+	function handleGoHome() {
+		// Navigate based on user's fallback preference
+		const pref = workspaceStore.fallbackPreference;
+		switch (pref) {
+			case "chat":
+				handleNewChat();
+				break;
+			case "conway":
+				workspaceStore.openTabFromRoute("/life", { preferEmptyPane: true });
+				break;
+			case "dog-jump":
+				workspaceStore.openTabFromRoute("/jump", { preferEmptyPane: true });
+				break;
+			case "wiki-today": {
+				const today = new Date().toISOString().split("T")[0];
+				workspaceStore.openTabFromRoute(`/wiki/${today}`, { preferEmptyPane: true });
+				break;
+			}
+			case "empty":
+			default:
+				handleNewChat();
+				break;
 		}
 	}
 
@@ -135,131 +271,20 @@
 		isCollapsed = !isCollapsed;
 	}
 
-	function toggleSection(sectionId: string) {
-		const newSet = new Set(expandedSections);
-		if (newSet.has(sectionId)) {
-			newSet.delete(sectionId);
-		} else {
-			newSet.add(sectionId);
-		}
-		expandedSections = newSet;
+	function handleCreateWorkspace() {
+		showNewWorkspaceModal = true;
+		newWorkspaceName = "";
 	}
 
-	// Recent chats for display (last 5)
-	const recentChats = $derived(chatSessions.sessions.slice(0, 5));
+	async function createWorkspace() {
+		if (!newWorkspaceName.trim()) return;
+		await workspaceStore.createWorkspace(newWorkspaceName.trim());
+		showNewWorkspaceModal = false;
+		newWorkspaceName = "";
+	}
 
-	// Check if there are more chats beyond what's shown
-	const hasMoreChats = $derived(chatSessions.sessions.length > 5);
-
-	// Build accordion sections (Memory only - onboarding is handled separately)
-	const sections = $derived.by(() => {
-		const result: SidebarSectionData[] = [];
-
-		// Memory section (merged Data + Views)
-		result.push({
-			id: "memory",
-			title: "Data",
-			icon: "ri:brain-line",
-			defaultExpanded: false,
-			items: [
-				{
-					id: "sources",
-					type: "link",
-					label: "Sources",
-					href: "/data/sources",
-					icon: "ri:device-line",
-					pagespace: "data/sources",
-				},
-				{
-					id: "activity",
-					type: "link",
-					label: "Activity",
-					href: "/data/jobs",
-					icon: "ri:history-line",
-					pagespace: "data/jobs",
-				},
-				{
-					id: "usage",
-					type: "link",
-					label: "Usage",
-					href: "/usage",
-					icon: "ri:dashboard-2-line",
-					pagespace: "usage",
-				},
-				{
-					id: "storage",
-					type: "link",
-					label: "Object Storage",
-					href: "/storage",
-					icon: "ri:database-2-line",
-					pagespace: "storage",
-				},
-				{
-					id: "drive",
-					type: "link",
-					label: "Drive",
-					href: "/data/drive",
-					icon: "ri:hard-drive-2-line",
-					pagespace: "data/drive",
-				},
-			],
-		});
-
-		return result;
-	});
-
-	// Stagger delay per item (ms)
+	// Stagger delay per item
 	const STAGGER_DELAY = 30;
-
-	// Compute global animation indices for all sidebar items (top to bottom)
-	// Order: logo, actions, chats header, chat items, section headers, section items, footer
-	const animationIndices = $derived.by(() => {
-		let globalIndex = 0;
-
-		// Header elements
-		const logoIndex = globalIndex++;
-		const actionsIndex = globalIndex++;
-
-		// Chats accordion header
-		const historyLabelIndex = globalIndex++;
-
-		// Then each chat item
-		const chatStartIndex = globalIndex;
-		globalIndex += recentChats.length;
-
-		// Compute starting index for each section (header + items)
-		const sectionHeaderIndices: Map<string, number> = new Map();
-		const sectionItemStartIndices: Map<string, number> = new Map();
-		for (const section of sections) {
-			// Section header gets an index
-			sectionHeaderIndices.set(section.id, globalIndex++);
-			// Then items start after header
-			sectionItemStartIndices.set(section.id, globalIndex);
-			globalIndex += section.items.length;
-		}
-
-		// Footer comes last
-		const footerIndex = globalIndex++;
-
-		return {
-			logoIndex,
-			actionsIndex,
-			historyLabelIndex,
-			chatStartIndex,
-			sectionHeaderIndices,
-			sectionItemStartIndices,
-			footerIndex,
-		};
-	});
-
-	// Initialize expanded state from section defaults
-	$effect(() => {
-		for (const section of sections) {
-			if (section.defaultExpanded && !expandedSections.has(section.id)) {
-				expandedSections = new Set([...expandedSections, section.id]);
-			}
-		}
-	});
 
 	// Tailwind utility class strings
 	const sidebarClass = $derived.by(() =>
@@ -276,13 +301,6 @@
 		[
 			"flex h-full min-w-52 w-52 flex-col",
 			isCollapsed ? "pointer-events-none" : "",
-		].join(" "),
-	);
-
-	const sectionsClass = $derived.by(() =>
-		[
-			"flex-1 overflow-y-auto overflow-x-hidden px-2 py-3",
-			isCollapsed ? "flex flex-col items-center" : "",
 		].join(" "),
 	);
 </script>
@@ -310,120 +328,68 @@
 	{/if}
 
 	<div class={sidebarInnerClass}>
-		<SidebarHeader
+		<WorkspaceHeader
 			collapsed={isCollapsed}
 			onNewChat={handleNewChat}
+			onGoHome={handleGoHome}
 			onToggleCollapse={toggleCollapse}
 			onSearch={handleSearch}
-			logoAnimationDelay={animationIndices.logoIndex * STAGGER_DELAY}
-			actionsAnimationDelay={animationIndices.actionsIndex *
-				STAGGER_DELAY}
+			logoAnimationDelay={0}
+			actionsAnimationDelay={STAGGER_DELAY}
+			{scrollProgress}
+			{transitionWorkspaces}
 		/>
 
-		<nav class={sectionsClass}>
-			<!-- Chats accordion -->
-			<SidebarAccordion
-				title="Chats"
-				icon="ri:chat-1-line"
-				expanded={expandedSections.has("history")}
-				collapsed={isCollapsed}
-				onToggle={() => toggleSection("history")}
-				animationDelay={animationIndices.historyLabelIndex *
-					STAGGER_DELAY}
-			>
-				{#if recentChats.length === 0}
-					<div class="px-3 py-2 text-xs text-foreground-muted">
-						No chat history
-					</div>
-				{:else}
-					{#each recentChats as session, i}
-						<SidebarNavItem
-							item={{
-								id: session.conversation_id,
-								type: "link",
-								label: session.title || "Untitled",
-								href: `/?conversationId=${session.conversation_id}`,
-								icon: "ri:chat-1-line",
-								pagespace: session.conversation_id,
-							}}
-							collapsed={isCollapsed}
-							animationDelay={(animationIndices.chatStartIndex +
-								i) *
-								STAGGER_DELAY}
-						/>
-					{/each}
-					{#if hasMoreChats}
-						<SidebarNavItem
-							item={{
-								id: "history",
-								type: "link",
-								label: "View all",
-								href: "/history",
-								icon: "ri:history-line",
-								pagespace: "history",
-							}}
-							collapsed={isCollapsed}
-							animationDelay={(animationIndices.chatStartIndex +
-								recentChats.length) *
-								STAGGER_DELAY}
-						/>
-					{/if}
-				{/if}
-			</SidebarAccordion>
-
-			<!-- Wiki section -->
-			<SidebarAccordion
-				title="Wiki"
-				icon="ri:book-2-line"
-				expanded={expandedSections.has("wiki")}
-				collapsed={isCollapsed}
-				onToggle={() => toggleSection("wiki")}
-				animationDelay={(animationIndices.chatStartIndex +
-					recentChats.length +
-					2) *
-					STAGGER_DELAY}
-			>
-				<WikiSidebarSection
-					collapsed={isCollapsed}
-					baseAnimationDelay={(animationIndices.chatStartIndex +
-						recentChats.length +
-						3) *
-						STAGGER_DELAY}
-				/>
-			</SidebarAccordion>
-
-			<!-- Accordion sections (Onboarding, Memory) -->
-			{#each sections as section}
-				<SidebarAccordion
-					title={section.title}
-					icon={section.icon}
-					badge={section.badge}
-					expanded={expandedSections.has(section.id)}
-					collapsed={isCollapsed}
-					onToggle={() => toggleSection(section.id)}
-					animationDelay={(animationIndices.sectionHeaderIndices.get(
-						section.id,
-					) ?? 0) * STAGGER_DELAY}
-				>
-					{#each section.items as item, i}
-						<SidebarNavItem
-							{item}
-							collapsed={isCollapsed}
-							animationDelay={((animationIndices.sectionItemStartIndices.get(
-								section.id,
-							) ?? 0) +
-								i) *
-								STAGGER_DELAY}
-						/>
-					{/each}
-				</SidebarAccordion>
-			{/each}
-		</nav>
+		<!-- Embla Carousel for workspace swiping -->
+		<div 
+			class="embla"
+			class:collapsed={isCollapsed}
+			use:emblaCarouselSvelte={{ options: emblaOptions, plugins: [WheelGesturesPlugin({ forceWheelAxis: 'x' })] }}
+			onemblaInit={onEmblaInit}
+		>
+			<div class="embla__container">
+				{#each workspaceStore.workspaces as workspace (workspace.id)}
+					{@const wsTree = workspaceStore.getTreeForWorkspace(workspace.id)}
+					{@const isActive = workspace.id === workspaceStore.activeWorkspaceId}
+					{@const isSystem = workspace.is_system}
+					<nav class="embla__slide" class:collapsed={isCollapsed}>
+						{#if !storeReady}
+							<div class="loading-state">
+								<iconify-icon icon="ri:loader-4-line" width="16" class="spinner"></iconify-icon>
+								<span>Loading...</span>
+							</div>
+						{:else if wsTree.length === 0}
+							<div class="empty-state">
+								{#if isSystem}
+									<p>No items yet</p>
+								{:else}
+									<p>This workspace is empty</p>
+									{#if isActive}
+										<button class="add-btn" onclick={() => workspaceStore.createFolder("New Folder")}>
+											<iconify-icon icon="ri:folder-add-line" width="14"></iconify-icon>
+											New Folder
+										</button>
+									{/if}
+								{/if}
+							</div>
+						{:else}
+							{#each wsTree as node (node.id)}
+								{#if node}
+									<ExplorerNode
+										{node}
+										collapsed={isCollapsed}
+									/>
+								{/if}
+							{/each}
+						{/if}
+					</nav>
+				{/each}
+			</div>
+		</div>
 
 		<SidebarFooter
 			collapsed={isCollapsed}
-			animationDelay={animationIndices.footerIndex * STAGGER_DELAY}
-			onOpenBookmarks={handleOpenBookmarks}
+			animationDelay={10 * STAGGER_DELAY}
 		/>
 	</div>
 </aside>
@@ -431,15 +397,35 @@
 <SearchModal open={isSearchOpen} onClose={closeSearch} />
 <BookmarksModal open={isBookmarksOpen} onClose={closeBookmarks} />
 
+<!-- New Workspace Modal -->
+{#if showNewWorkspaceModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div class="modal-backdrop" role="presentation" onclick={() => (showNewWorkspaceModal = false)}>
+		<div class="modal" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<h3>New Workspace</h3>
+			<input
+				type="text"
+				placeholder="Workspace name"
+				bind:value={newWorkspaceName}
+				onkeydown={(e) => e.key === "Enter" && createWorkspace()}
+			/>
+			<div class="modal-actions">
+				<button class="cancel-btn" onclick={() => (showNewWorkspaceModal = false)}>
+					Cancel
+				</button>
+				<button class="create-btn" onclick={createWorkspace}>Create</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	@reference "../../../app.css";
 
-	/* Premium easing */
 	:root {
 		--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 	}
 
-	/* Staggered fade-slide animation */
 	@keyframes fadeSlideIn {
 		from {
 			opacity: 0;
@@ -451,4 +437,162 @@
 		}
 	}
 
+	@keyframes spin {
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	/* Embla Carousel styles */
+	.embla {
+		flex: 1;
+		overflow: hidden;
+		min-height: 0; /* Allow flex shrinking */
+	}
+
+	.embla.collapsed {
+		pointer-events: none;
+	}
+
+	.embla__container {
+		display: flex;
+		height: 100%;
+		touch-action: pan-y pinch-zoom; /* Allow vertical scroll within slides */
+	}
+
+	.embla__slide {
+		flex: 0 0 100%;
+		min-width: 0;
+		overflow-y: auto;
+		overflow-x: hidden;
+		padding: 12px 8px;
+	}
+
+	.embla__slide.collapsed {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.loading-state {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 12px;
+		color: var(--color-foreground-subtle);
+		font-size: 13px;
+	}
+
+	.spinner {
+		animation: spin 1s linear infinite;
+	}
+
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 12px;
+		padding: 24px 12px;
+		color: var(--color-foreground-subtle);
+		font-size: 13px;
+		text-align: center;
+	}
+
+	.empty-state .add-btn {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		color: var(--color-foreground-muted);
+		font-size: 12px;
+		border: none;
+		cursor: pointer;
+		transition: all 150ms var(--ease-premium);
+	}
+
+	.empty-state .add-btn:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground);
+	}
+
+	/* Modal styles */
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 10000;
+	}
+
+	.modal {
+		background: var(--surface);
+		border-radius: 12px;
+		padding: 20px;
+		min-width: 300px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+	}
+
+	.modal h3 {
+		margin: 0 0 16px 0;
+		font-size: 16px;
+		font-weight: 600;
+		color: var(--foreground);
+	}
+
+	.modal input {
+		width: 100%;
+		padding: 10px 12px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface-elevated);
+		color: var(--foreground);
+		font-size: 14px;
+		margin-bottom: 16px;
+	}
+
+	.modal input:focus {
+		outline: none;
+		border-color: var(--primary);
+	}
+
+	.modal-actions {
+		display: flex;
+		gap: 8px;
+		justify-content: flex-end;
+	}
+
+	.modal-actions button {
+		padding: 8px 16px;
+		border-radius: 6px;
+		font-size: 13px;
+		cursor: pointer;
+		transition: all 150ms ease;
+	}
+
+	.cancel-btn {
+		background: transparent;
+		border: 1px solid var(--border);
+		color: var(--foreground-muted);
+	}
+
+	.cancel-btn:hover {
+		background: var(--surface-elevated);
+	}
+
+	.create-btn {
+		background: var(--primary);
+		border: none;
+		color: white;
+	}
+
+	.create-btn:hover {
+		opacity: 0.9;
+	}
 </style>

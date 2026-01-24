@@ -26,7 +26,6 @@ use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::StreamExt;
-use uuid::Uuid;
 
 use crate::api::compaction::{build_context_for_llm, compact_session, CompactionOptions};
 use crate::api::session_usage::{record_session_usage, UsageData};
@@ -44,11 +43,14 @@ use crate::middleware::auth::AuthUser;
 pub struct ChatRequest {
     pub messages: Vec<UIMessage>,
     #[serde(rename = "sessionId")]
-    pub session_id: Uuid,
+    pub session_id: String,
     /// Model ID is required - frontend must send selected model from picker
     pub model: String,
     #[serde(rename = "agentId", default = "default_agent")]
     pub agent_id: String,
+    /// Optional client-generated message ID for idempotency
+    #[serde(rename = "messageId")]
+    pub message_id: Option<String>,
 }
 
 fn default_agent() -> String {
@@ -118,6 +120,31 @@ pub enum StreamEvent {
     },
     ReasoningEnd {
         id: String,
+    },
+
+    // Tool invocation streaming
+    #[serde(rename = "tool-invocation-start")]
+    ToolInvocationStart {
+        id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+    },
+    #[serde(rename = "tool-invocation-delta")]
+    ToolInvocationDelta {
+        id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        #[serde(rename = "argsDelta")]
+        args_delta: String,
+    },
+    #[serde(rename = "tool-invocation-end")]
+    ToolInvocationEnd {
+        id: String,
+        #[serde(rename = "toolCallId")]
+        tool_call_id: String,
+        result: Option<serde_json::Value>,
     },
 
     // Error handling
@@ -244,11 +271,11 @@ pub async fn chat_handler(
     user: AuthUser,
     Json(request): Json<ChatRequest>,
 ) -> Response {
-    // Validate model against database
-    let valid_models = match crate::api::models::list_models(&pool).await {
+    // Validate model against registry
+    let valid_models = match crate::api::models::list_models().await {
         Ok(models) => models,
         Err(e) => {
-            tracing::error!("Failed to load models from database: {}", e);
+            tracing::error!("Failed to load models from registry: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ChatError {
@@ -280,11 +307,11 @@ pub async fn chat_handler(
         }
     };
 
-    // Generate message ID
-    let msg_id = format!("msg_{}", generate_id());
+    // Use client-provided message ID for idempotency, or generate one
+    let msg_id = request.message_id.clone().unwrap_or_else(|| format!("msg_{}", generate_id()));
 
     // Ensure session exists - use INSERT OR IGNORE to handle race conditions
-    let session_id_str = request.session_id.to_string();
+    let session_id_str = request.session_id.clone();
     let title = request
         .messages
         .iter()
@@ -307,7 +334,7 @@ pub async fn chat_handler(
 
     // Use INSERT OR IGNORE to handle concurrent requests for same session
     if let Err(e) = sqlx::query(
-        "INSERT OR IGNORE INTO app_chat_sessions (id, title, messages, message_count) VALUES ($1, $2, '[]', 0)"
+        "INSERT OR IGNORE INTO app_chat_sessions (id, title, message_count) VALUES ($1, $2, 0)"
     )
     .bind(&session_id_str)
     .bind(&title)
@@ -328,6 +355,7 @@ pub async fn chat_handler(
         });
 
         let user_message = ChatMessage {
+            id: None,
             role: "user".to_string(),
             content: user_content,
             timestamp: Utc::now().to_rfc3339(),
@@ -340,7 +368,7 @@ pub async fn chat_handler(
             subject: None,
         };
 
-        if let Err(e) = append_message(&pool, request.session_id, user_message).await {
+        if let Err(e) = append_message(&pool, request.session_id.clone(), user_message).await {
             tracing::error!("Failed to save user message: {}", e);
         }
     }
@@ -348,7 +376,7 @@ pub async fn chat_handler(
     // Check if compaction is needed before sending to LLM
     let compaction_status = crate::api::session_usage::check_compaction_needed(
         &pool,
-        request.session_id,
+        request.session_id.clone(),
         &request.model,
     )
     .await;
@@ -359,7 +387,7 @@ pub async fn chat_handler(
             session_id = %request.session_id,
             "Context critical, auto-compacting session"
         );
-        if let Err(e) = compact_session(&pool, request.session_id, CompactionOptions::default()).await
+        if let Err(e) = compact_session(&pool, request.session_id.clone(), CompactionOptions::default()).await
         {
             tracing::warn!(
                 session_id = %request.session_id,
@@ -371,7 +399,7 @@ pub async fn chat_handler(
 
     // Load session from DB and build context with compaction summary
     let session_row = match sqlx::query!(
-        r#"SELECT messages, conversation_summary, summary_up_to_index
+        r#"SELECT conversation_summary, summary_up_to_index
            FROM app_chat_sessions WHERE id = $1"#,
         session_id_str
     )
@@ -392,20 +420,58 @@ pub async fn chat_handler(
         }
     };
 
-    let messages: Vec<ChatMessage> = match serde_json::from_str(&session_row.messages) {
-        Ok(msgs) => msgs,
+    // Load messages from normalized table
+    let message_rows = match sqlx::query!(
+        r#"
+        SELECT
+            id, role, content, created_at, model, provider, agent_id,
+            reasoning, tool_calls, intent, subject
+        FROM app_chat_messages
+        WHERE session_id = $1
+        ORDER BY sequence_num ASC
+        "#,
+        session_id_str
+    )
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(rows) => rows,
         Err(e) => {
-            tracing::error!("Corrupted messages JSON in session {}: {}", session_id_str, e);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ChatError {
-                    error: "Corrupted session data".to_string(),
-                    details: Some(format!("Failed to parse messages: {}", e)),
-                }),
-            )
-                .into_response();
+             tracing::error!("Failed to load messages for session {}: {}", session_id_str, e);
+             return (
+                 StatusCode::INTERNAL_SERVER_ERROR,
+                 Json(ChatError {
+                     error: "Failed to load messages".to_string(),
+                     details: Some(e.to_string()),
+                 }),
+             )
+                 .into_response();
         }
     };
+
+    // Convert rows to ChatMessage
+    let messages: Vec<ChatMessage> = message_rows
+        .into_iter()
+        .map(|msg| {
+             // Parse JSON fields
+             let tool_calls = msg.tool_calls.and_then(|t| serde_json::from_str(&t).ok());
+             let intent = msg.intent.and_then(|i| serde_json::from_str(&i).ok());
+
+             ChatMessage {
+                id: msg.id,
+                role: msg.role,
+                content: msg.content,
+                timestamp: msg.created_at,
+                model: msg.model,
+                provider: msg.provider,
+                agent_id: msg.agent_id,
+                reasoning: msg.reasoning,
+                tool_calls,
+                intent,
+                subject: msg.subject,
+            }
+        })
+        .collect();
 
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
@@ -429,34 +495,6 @@ pub async fn chat_handler(
 }
 
 /// Convert UI messages to OpenAI API format
-fn convert_to_api_messages(messages: &[UIMessage]) -> Vec<serde_json::Value> {
-    messages
-        .iter()
-        .filter_map(|msg| {
-            // Get text content
-            let content = msg.content.clone().unwrap_or_else(|| {
-                msg.parts
-                    .iter()
-                    .filter_map(|p| match p {
-                        UIPart::Text { text } => Some(text.clone()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-            });
-
-            if content.is_empty() && msg.role == "system" {
-                return None;
-            }
-
-            Some(serde_json::json!({
-                "role": msg.role,
-                "content": content
-            }))
-        })
-        .collect()
-}
-
 /// Create the SSE stream for chat
 fn create_chat_stream(
     pool: SqlitePool,
@@ -466,7 +504,7 @@ fn create_chat_stream(
     msg_id: String,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
     let model = request.model.clone();
-    let session_id = request.session_id;
+    let session_id = request.session_id.clone();
 
     Box::pin(async_stream::stream! {
         // Build provider options for reasoning if applicable
@@ -523,6 +561,15 @@ fn create_chat_stream(
         let mut full_content = String::new();
         let mut reasoning_content = String::new();
         let mut in_reasoning = false;
+        
+        // Tool call tracking: track active tool calls by index
+        let mut tool_calls_map: std::collections::HashMap<i64, (String, String, String)> = std::collections::HashMap::new(); // index -> (id, name, args)
+        let mut tool_calls_started: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        
+        // Actual token usage from provider (if available)
+        let mut actual_input_tokens: Option<i64> = None;
+        let mut actual_output_tokens: Option<i64> = None;
+        let mut actual_reasoning_tokens: Option<i64> = None;
 
         while let Some(chunk) = bytes_stream.next().await {
             let chunk = match chunk {
@@ -584,7 +631,79 @@ fn create_chat_stream(
                                         yield Ok(SseEvent::default().data(serialize_event(&event)));
                                     }
                                 }
+
+                                // Handle tool call streaming (OpenAI format)
+                                if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                                    for tool_call in tool_calls {
+                                        let idx = tool_call.get("index").and_then(|i| i.as_i64()).unwrap_or(0);
+                                        let tc_id = tool_call.get("id").and_then(|i| i.as_str()).unwrap_or("");
+                                        
+                                        if let Some(function) = tool_call.get("function") {
+                                            let name = function.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                            let args = function.get("arguments").and_then(|a| a.as_str()).unwrap_or("");
+                                            
+                                            // Track or update this tool call
+                                            let entry = tool_calls_map.entry(idx).or_insert_with(|| (tc_id.to_string(), String::new(), String::new()));
+                                            if !tc_id.is_empty() {
+                                                entry.0 = tc_id.to_string();
+                                            }
+                                            if !name.is_empty() {
+                                                entry.1 = name.to_string();
+                                            }
+                                            entry.2.push_str(args);
+                                            
+                                            // Emit start event on first encounter
+                                            if !tc_id.is_empty() && !name.is_empty() && !tool_calls_started.contains(&idx) {
+                                                tool_calls_started.insert(idx);
+                                                let event = StreamEvent::ToolInvocationStart {
+                                                    id: msg_id.clone(),
+                                                    tool_call_id: tc_id.to_string(),
+                                                    tool_name: name.to_string(),
+                                                };
+                                                yield Ok(SseEvent::default().data(serialize_event(&event)));
+                                            }
+                                            
+                                            // Emit delta for arguments
+                                            if !args.is_empty() && tool_calls_started.contains(&idx) {
+                                                let event = StreamEvent::ToolInvocationDelta {
+                                                    id: msg_id.clone(),
+                                                    tool_call_id: entry.0.clone(),
+                                                    args_delta: args.to_string(),
+                                                };
+                                                yield Ok(SseEvent::default().data(serialize_event(&event)));
+                                            }
+                                        }
+                                    }
+                                }
                             }
+                            
+                            // Check for finish_reason to end tool calls
+                            if let Some(finish_reason) = choice.get("finish_reason").and_then(|f| f.as_str()) {
+                                if finish_reason == "tool_calls" || finish_reason == "stop" {
+                                    // End all active tool calls
+                                    for (idx, (tc_id, _name, _args)) in tool_calls_map.iter() {
+                                        if tool_calls_started.contains(idx) {
+                                            let event = StreamEvent::ToolInvocationEnd {
+                                                id: msg_id.clone(),
+                                                tool_call_id: tc_id.clone(),
+                                                result: None, // Server-side tools would populate this
+                                            };
+                                            yield Ok(SseEvent::default().data(serialize_event(&event)));
+                                        }
+                                    }
+                                    tool_calls_started.clear();
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Extract actual token usage from OpenAI format
+                    if let Some(usage) = json.get("usage") {
+                        actual_input_tokens = usage.get("prompt_tokens").and_then(|t| t.as_i64());
+                        actual_output_tokens = usage.get("completion_tokens").and_then(|t| t.as_i64());
+                        // Some providers include reasoning tokens separately
+                        if let Some(completion_details) = usage.get("completion_tokens_details") {
+                            actual_reasoning_tokens = completion_details.get("reasoning_tokens").and_then(|t| t.as_i64());
                         }
                     }
                     // Gemini format: candidates[].content.parts[] with thought: true flag
@@ -630,6 +749,16 @@ fn create_chat_stream(
                                 }
                             }
                         }
+                        
+                        // Extract actual token usage from Gemini format
+                        if let Some(usage) = json.get("usageMetadata") {
+                            actual_input_tokens = usage.get("promptTokenCount").and_then(|t| t.as_i64());
+                            actual_output_tokens = usage.get("candidatesTokenCount").and_then(|t| t.as_i64());
+                            // Gemini may include thoughtsTokenCount for reasoning
+                            if actual_reasoning_tokens.is_none() {
+                                actual_reasoning_tokens = usage.get("thoughtsTokenCount").and_then(|t| t.as_i64());
+                            }
+                        }
                     }
                 }
             }
@@ -652,6 +781,7 @@ fn create_chat_stream(
         if !full_content.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
             let assistant_message = ChatMessage {
+                id: None,
                 role: "assistant".to_string(),
                 content: full_content.clone(),
                 timestamp: Utc::now().to_rfc3339(),
@@ -664,12 +794,11 @@ fn create_chat_stream(
                 subject: None,
             };
 
-            if let Err(e) = append_message(&pool, session_id, assistant_message).await {
+            if let Err(e) = append_message(&pool, session_id.clone(), assistant_message).await {
                 tracing::error!("Failed to save assistant message: {}", e);
             }
 
-            // Record estimated token usage
-            // Estimate input tokens from the request messages
+            // Record token usage - use actual from provider if available, else estimate
             let input_content: String = api_messages.iter()
                 .filter_map(|m| m.get("content").and_then(|c| c.as_str()))
                 .collect::<Vec<_>>()
@@ -682,15 +811,30 @@ fn create_chat_stream(
                 estimate_tokens(&reasoning_content)
             };
 
+            // Prefer actual usage from provider, fall back to estimates
+            let final_input = actual_input_tokens.unwrap_or(estimated_input_tokens as i64);
+            let final_output = actual_output_tokens.unwrap_or(estimated_output_tokens as i64);
+            let final_reasoning = actual_reasoning_tokens.unwrap_or(estimated_reasoning_tokens as i64);
+            
+            let is_actual = actual_input_tokens.is_some() || actual_output_tokens.is_some();
+            tracing::debug!(
+                session_id = %session_id,
+                input_tokens = final_input,
+                output_tokens = final_output,
+                reasoning_tokens = final_reasoning,
+                is_actual = is_actual,
+                "Recording token usage ({})", if is_actual { "actual" } else { "estimated" }
+            );
+
             let usage_data = UsageData {
-                input_tokens: estimated_input_tokens,
-                output_tokens: estimated_output_tokens,
-                reasoning_tokens: estimated_reasoning_tokens,
+                input_tokens: final_input,
+                output_tokens: final_output,
+                reasoning_tokens: final_reasoning,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
             };
 
-            if let Err(e) = record_session_usage(&pool, session_id, &model, usage_data).await {
+            if let Err(e) = record_session_usage(&pool, session_id.clone(), &model, usage_data).await {
                 tracing::warn!(
                     session_id = %session_id,
                     error = %e,

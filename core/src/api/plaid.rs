@@ -14,7 +14,6 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::sources::base::oauth::encryption::TokenEncryptor;
@@ -34,13 +33,27 @@ pub struct PlaidSourceMetadata {
     /// Used to filter which streams are relevant for this connection
     #[serde(default)]
     pub connected_account_types: Vec<String>,
+    /// Snapshot of connected accounts (stored at connection time)
+    /// Used for quick display without needing Plaid API calls
+    #[serde(default)]
+    pub connected_accounts: Vec<PlaidAccountSnapshot>,
+}
+
+/// Lightweight snapshot of a Plaid account stored in metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaidAccountSnapshot {
+    pub account_id: String,
+    pub name: String,
+    pub account_type: String,
+    pub subtype: Option<String>,
+    pub mask: Option<String>,
 }
 
 /// Request to create a Plaid Link token
 #[derive(Debug, Deserialize)]
 pub struct CreateLinkTokenRequest {
     /// Optional: existing source_id if re-linking an existing connection
-    pub source_id: Option<Uuid>,
+    pub source_id: Option<String>,
 }
 
 /// Response containing a Plaid Link token
@@ -66,7 +79,7 @@ pub struct ExchangeTokenRequest {
 #[derive(Debug, Serialize)]
 pub struct ExchangeTokenResponse {
     /// The source connection ID
-    pub source_id: Uuid,
+    pub source_id: String,
     /// Item ID from Plaid
     pub item_id: String,
     /// Institution name if available
@@ -99,7 +112,7 @@ pub async fn create_link_token(
 
     // Use a unique identifier for the user session
     // In a multi-user system, this would be the actual user ID
-    let user_client_id = format!("virtues-user-{}", Uuid::new_v4());
+    let user_client_id = crate::ids::generate_id("plaid-user", &[&uuid::Uuid::new_v4().to_string()]);
 
     // Request financial products (investments/liabilities require additional Plaid approval)
     // Note: We use accounts_get() instead of accounts_balance_get() to avoid $0.10/call balance fees
@@ -137,9 +150,17 @@ pub async fn exchange_public_token(
 ) -> Result<ExchangeTokenResponse> {
     let client = PlaidClient::from_env()?;
 
-    // Exchange public token for access token
+    // Count current Plaid connections for tier-based limit enforcement
+    let current_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM elt_source_connections WHERE source = 'plaid' AND is_active = true",
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count Plaid connections: {e}")))?;
+
+    // Exchange public token for access token (Tollbooth enforces tier limits)
     let exchange_response = client
-        .item_public_token_exchange(&request.public_token)
+        .item_public_token_exchange_with_count(&request.public_token, Some(current_count.0))
         .await?;
 
     let access_token = exchange_response.access_token;
@@ -157,16 +178,28 @@ pub async fn exchange_public_token(
         .into_iter()
         .collect();
 
-    // Build account summaries for frontend display
-    let connected_accounts: Vec<ConnectedAccountSummary> = accounts_response
+    // Build account snapshots for metadata storage (lightweight, stored in DB)
+    let account_snapshots: Vec<PlaidAccountSnapshot> = accounts_response
         .accounts
         .iter()
-        .map(|acc| ConnectedAccountSummary {
+        .map(|acc| PlaidAccountSnapshot {
             account_id: acc.account_id.clone(),
             name: acc.name.clone(),
             account_type: acc.account_type.clone(),
             subtype: acc.subtype.clone(),
             mask: acc.mask.clone(),
+        })
+        .collect();
+
+    // Build account summaries for frontend response
+    let connected_accounts: Vec<ConnectedAccountSummary> = account_snapshots
+        .iter()
+        .map(|snap| ConnectedAccountSummary {
+            account_id: snap.account_id.clone(),
+            name: snap.name.clone(),
+            account_type: snap.account_type.clone(),
+            subtype: snap.subtype.clone(),
+            mask: snap.mask.clone(),
         })
         .collect();
 
@@ -181,18 +214,19 @@ pub async fn exchange_public_token(
     let encrypted_token = encryptor.encrypt(&access_token)?;
 
     // Create source connection
-    let source_id = Uuid::new_v4();
     let source_name = request
         .institution_name
         .clone()
         .unwrap_or_else(|| "Plaid Account".to_string());
+    let source_id = crate::ids::generate_id(crate::ids::SOURCE_PREFIX, &[&source_name, &item_id]);
 
-    // Store metadata with account types for stream filtering
+    // Store metadata with account types and snapshots for quick display
     let metadata = PlaidSourceMetadata {
         item_id: item_id.clone(),
         institution_id: request.institution_id.clone(),
         institution_name: request.institution_name.clone(),
         connected_account_types,
+        connected_accounts: account_snapshots,
     };
 
     let metadata_json = serde_json::to_value(&metadata)
@@ -201,11 +235,11 @@ pub async fn exchange_public_token(
     // Insert source connection with encrypted access token
     sqlx::query(
         r#"
-        INSERT INTO data_source_connections (id, source, name, auth_type, access_token, is_active, is_internal, metadata, created_at, updated_at)
+        INSERT INTO elt_source_connections (id, source, name, auth_type, access_token, is_active, is_internal, metadata, created_at, updated_at)
         VALUES ($1, 'plaid', $2, 'plaid', $3, true, false, $4, datetime('now'), datetime('now'))
         "#,
     )
-    .bind(source_id)
+    .bind(&source_id)
     .bind(&source_name)
     .bind(&encrypted_token)
     .bind(&metadata_json)
@@ -214,7 +248,7 @@ pub async fn exchange_public_token(
     .map_err(|e| Error::Database(format!("Failed to create Plaid source: {e}")))?;
 
     // Enable default streams for Plaid
-    super::streams::enable_default_streams(db, source_id, "plaid").await?;
+    super::streams::enable_default_streams(db, source_id.clone(), "plaid").await?;
 
     tracing::info!(
         source_id = %source_id,
@@ -234,15 +268,15 @@ pub async fn exchange_public_token(
 /// Get accounts for an existing Plaid connection
 ///
 /// Useful for showing the user which accounts are connected.
-pub async fn get_plaid_accounts(db: &SqlitePool, source_id: Uuid) -> Result<Vec<PlaidAccount>> {
+pub async fn get_plaid_accounts(db: &SqlitePool, source_id: String) -> Result<Vec<PlaidAccount>> {
     // Load encrypted access token from source_connections
     let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT access_token FROM data_source_connections WHERE id = $1 AND source = 'plaid'",
+        "SELECT access_token FROM elt_source_connections WHERE id = $1 AND source = 'plaid'",
     )
-    .bind(source_id)
+    .bind(&source_id)
     .fetch_optional(db)
     .await?
-    .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {source_id}")))?;
+    .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {}", source_id)))?;
 
     let encrypted_token = row
         .0
@@ -289,15 +323,15 @@ pub struct PlaidAccount {
 }
 
 /// Remove a Plaid Item (disconnect bank account)
-pub async fn remove_plaid_item(db: &SqlitePool, source_id: Uuid) -> Result<()> {
+pub async fn remove_plaid_item(db: &SqlitePool, source_id: String) -> Result<()> {
     // Load encrypted access token
     let row = sqlx::query_as::<_, (Option<String>,)>(
-        "SELECT access_token FROM data_source_connections WHERE id = $1 AND source = 'plaid'",
+        "SELECT access_token FROM elt_source_connections WHERE id = $1 AND source = 'plaid'",
     )
-    .bind(source_id)
+    .bind(&source_id)
     .fetch_optional(db)
     .await?
-    .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {source_id}")))?;
+    .ok_or_else(|| Error::NotFound(format!("Plaid source not found: {}", source_id)))?;
 
     let encrypted_token = row
         .0
@@ -312,9 +346,10 @@ pub async fn remove_plaid_item(db: &SqlitePool, source_id: Uuid) -> Result<()> {
     client.item_remove(&access_token).await?;
 
     // Delete source connection
+    let source_id_for_log = source_id.clone();
     super::sources::delete_source(db, source_id).await?;
 
-    tracing::info!(source_id = %source_id, "Plaid item removed");
+    tracing::info!(source_id = %source_id_for_log, "Plaid item removed");
 
     Ok(())
 }

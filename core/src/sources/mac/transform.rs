@@ -41,12 +41,12 @@ impl OntologyTransform for MacAppsTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -62,7 +62,7 @@ impl OntologyTransform for MacAppsTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "apps", checkpoint_key)
+            .read_with_checkpoint(&source_id, "apps", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -162,7 +162,7 @@ impl OntologyTransform for MacAppsTransform {
                 session.stream_id,
             ));
 
-            last_processed_id = Some(session.stream_id);
+            last_processed_id = Some(session.stream_id.to_string());
 
             // Execute batch insert when we reach batch size
             if pending_records.len() >= BATCH_SIZE {
@@ -227,7 +227,7 @@ impl OntologyTransform for MacAppsTransform {
         // Update checkpoint after processing all batches
         if let Some(max_ts) = max_batch_timestamp {
             data_source
-                .update_checkpoint(source_id, "apps", checkpoint_key, max_ts)
+                .update_checkpoint(&source_id, "apps", checkpoint_key, max_ts)
                 .await?;
         }
 
@@ -415,12 +415,12 @@ impl OntologyTransform for MacBrowserTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -436,7 +436,7 @@ impl OntologyTransform for MacBrowserTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "browser", checkpoint_key)
+            .read_with_checkpoint(&source_id, "browser", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -528,7 +528,7 @@ impl OntologyTransform for MacBrowserTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -564,7 +564,7 @@ impl OntologyTransform for MacBrowserTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "browser", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "browser", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -710,12 +710,12 @@ impl OntologyTransform for MacIMessageTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -731,7 +731,7 @@ impl OntologyTransform for MacIMessageTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "imessage", checkpoint_key)
+            .read_with_checkpoint(&source_id, "imessage", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -888,7 +888,7 @@ impl OntologyTransform for MacIMessageTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -924,7 +924,7 @@ impl OntologyTransform for MacIMessageTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "messages", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "messages", checkpoint_key, max_ts)
                     .await?;
             }
         }

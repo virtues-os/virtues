@@ -2,6 +2,13 @@
 	import "iconify-icon";
 	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import type { WorkspaceSummary } from "$lib/api/client";
+	import Modal from "$lib/components/Modal.svelte";
+
+	// Modal state
+	let showNewModal = $state(false);
+	let newWorkspaceName = $state("");
+	let isCreating = $state(false);
+	let inputEl: HTMLInputElement | null = $state(null);
 
 	// Track swipe
 	let touchStartX = 0;
@@ -54,6 +61,44 @@
 		const start = Math.max(0, Math.min(currentIndex - 2, total - 5));
 		return workspaceStore.workspaces.slice(start, start + 5);
 	});
+
+	function openNewModal() {
+		newWorkspaceName = "";
+		showNewModal = true;
+	}
+
+	function closeNewModal() {
+		showNewModal = false;
+		newWorkspaceName = "";
+	}
+
+	async function handleCreateWorkspace() {
+		if (!newWorkspaceName.trim() || isCreating) return;
+		
+		isCreating = true;
+		try {
+			await workspaceStore.createWorkspace(newWorkspaceName.trim());
+			closeNewModal();
+		} catch (error) {
+			console.error("Failed to create workspace:", error);
+		} finally {
+			isCreating = false;
+		}
+	}
+
+	function handleInputKeydown(e: KeyboardEvent) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			handleCreateWorkspace();
+		}
+	}
+
+	// Focus input when modal opens
+	$effect(() => {
+		if (showNewModal && inputEl) {
+			inputEl.focus();
+		}
+	});
 </script>
 
 <div
@@ -97,6 +142,14 @@
 				{/if}
 			</button>
 		{/each}
+		<button
+			class="add-dot"
+			onclick={openNewModal}
+			title="New workspace"
+			aria-label="Create new workspace"
+		>
+			<iconify-icon icon="ri:add-line" width="10"></iconify-icon>
+		</button>
 	</div>
 
 	<button
@@ -108,6 +161,37 @@
 		<iconify-icon icon="ri:arrow-right-s-line" width="16"></iconify-icon>
 	</button>
 </div>
+
+<Modal open={showNewModal} onClose={closeNewModal} title="New Workspace" width="sm">
+	{#snippet children()}
+		<div class="form-group">
+			<label class="modal-label" for="workspace-name">Name</label>
+			<input
+				bind:this={inputEl}
+				bind:value={newWorkspaceName}
+				onkeydown={handleInputKeydown}
+				id="workspace-name"
+				type="text"
+				class="modal-input"
+				placeholder="My Workspace"
+				autocomplete="off"
+			/>
+		</div>
+	{/snippet}
+
+	{#snippet footer()}
+		<button class="modal-btn modal-btn-secondary" onclick={closeNewModal}>
+			Cancel
+		</button>
+		<button
+			class="modal-btn modal-btn-primary"
+			onclick={handleCreateWorkspace}
+			disabled={!newWorkspaceName.trim() || isCreating}
+		>
+			{isCreating ? "Creating..." : "Create"}
+		</button>
+	{/snippet}
+</Modal>
 
 <style>
 	@reference "../../../app.css";
@@ -205,5 +289,31 @@
 
 	.dot.system.active .system-dot {
 		border-bottom-color: var(--primary);
+	}
+
+	.add-dot {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		border-radius: 50%;
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		border: none;
+		cursor: pointer;
+		opacity: 0.5;
+		transition: all 150ms var(--ease-premium);
+	}
+
+	.add-dot:hover {
+		opacity: 1;
+		color: var(--primary);
+		transform: scale(1.2);
+	}
+
+	.form-group {
+		display: flex;
+		flex-direction: column;
 	}
 </style>

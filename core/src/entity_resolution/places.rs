@@ -21,10 +21,11 @@ use crate::database::Database;
 use crate::error::{Error, Result};
 
 /// Spatial clustering parameters
-const SPATIAL_EPSILON_METERS: f64 = 75.0; // Max distance within a cluster (better GPS drift tolerance)
-const MIN_VISIT_DURATION_MINUTES: i64 = 5; // Minimum visit duration
+const SPATIAL_EPSILON_METERS: f64 = 100.0; // Max distance within a cluster
+const MIN_VISIT_DURATION_MINUTES: i64 = 10; // Minimum visit duration (filters traffic/parking noise)
 const TEMPORAL_GAP_MINUTES: i64 = 5; // Max time gap within visit (robust for iOS backgrounding)
 const MAX_HORIZONTAL_ACCURACY: f64 = 100.0; // Filter low-quality points
+const DEFAULT_PLACE_RADIUS_METERS: f64 = 100.0; // Default radius for new places
 
 /// Location point for clustering
 #[derive(Debug, Clone)]
@@ -362,18 +363,19 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
 
 /// Find or create a place entity for the given coordinates
 ///
-/// This function checks if a place entity exists within 75 meters of the given coordinates.
-/// If found, returns its ID. If not, creates a new place entity with reverse geocoded name.
+/// This function checks if a place entity exists within its configured radius.
+/// Each place has its own radius_m (defaults to 100m). If found, returns its ID.
+/// If not, creates a new place entity with reverse geocoded name.
 async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uuid> {
-    // Check for existing place within 75 meters (match SPATIAL_EPSILON_METERS)
-    // Use bounding box for efficient SQL filtering, then Haversine for precise distance
-    let search_radius = 75.0;
-    let (min_lat, max_lat, min_lon, max_lon) = crate::geo::bounding_box(lat, lon, search_radius);
+    // Use a generous bounding box to fetch candidates, then filter by each place's radius
+    let max_search_radius = 500.0; // Fetch places within 500m, then check individual radii
+    let (min_lat, max_lat, min_lon, max_lon) =
+        crate::geo::bounding_box(lat, lon, max_search_radius);
 
     let candidates = sqlx::query!(
         r#"
-        SELECT id, name, latitude, longitude
-        FROM data_entities_place
+        SELECT id, name, latitude, longitude, radius_m
+        FROM wiki_places
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
           AND latitude BETWEEN $1 AND $2
@@ -387,32 +389,41 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
     .fetch_all(db.pool())
     .await?;
 
-    // Find nearest place using Haversine distance
-    let nearest = crate::geo::find_nearest(
-        lat,
-        lon,
-        candidates.iter().filter_map(|p| {
-            // Only include places with valid IDs
-            let id = p.id.as_ref()?;
-            Some((id.clone(), p.latitude?, p.longitude?))
-        }),
-        search_radius,
-    );
+    // Find the nearest place where we're within that place's radius
+    let mut best_match: Option<(&str, &str, f64)> = None; // (id, name, distance)
 
-    if let Some((place_id, _distance)) = nearest {
-        let place = candidates
-            .iter()
-            .find(|p| p.id.as_deref() == Some(&place_id));
-        if let Some(p) = place {
-            let id_str = p.id.as_ref().unwrap();
-            tracing::debug!(
-                place_id = %id_str,
-                place_name = %p.name,
-                "Found existing place entity"
-            );
-            return Uuid::parse_str(id_str)
-                .map_err(|e| Error::Database(format!("Invalid UUID: {}", e)));
+    for place in &candidates {
+        let Some(place_id) = place.id.as_ref() else {
+            continue;
+        };
+        let Some(place_lat) = place.latitude else {
+            continue;
+        };
+        let Some(place_lon) = place.longitude else {
+            continue;
+        };
+
+        let distance = haversine_distance(lat, lon, place_lat, place_lon);
+        let place_radius = place.radius_m.unwrap_or(DEFAULT_PLACE_RADIUS_METERS);
+
+        // Check if we're within this place's radius
+        if distance <= place_radius {
+            // Keep the closest match
+            if best_match.is_none() || distance < best_match.unwrap().2 {
+                best_match = Some((place_id, &place.name, distance));
+            }
         }
+    }
+
+    if let Some((place_id, place_name, distance)) = best_match {
+        tracing::debug!(
+            place_id = %place_id,
+            place_name = %place_name,
+            distance_m = %distance,
+            "Found existing place entity"
+        );
+        return Uuid::parse_str(place_id)
+            .map_err(|e| Error::Database(format!("Invalid UUID: {}", e)));
     }
 
     // Create new place entity with reverse geocoded name
@@ -422,7 +433,7 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
 
     sqlx::query!(
         r#"
-        INSERT INTO data_entities_place (
+        INSERT INTO wiki_places (
             id,
             name,
             latitude,
@@ -430,13 +441,14 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
             radius_m,
             metadata
         ) VALUES (
-            $1, $2, $3, $4, 75.0, '{}'
+            $1, $2, $3, $4, $5, '{}'
         )
         "#,
         place_id_str,
         place_name,
         lat,
-        lon
+        lon,
+        DEFAULT_PLACE_RADIUS_METERS
     )
     .execute(db.pool())
     .await?;
@@ -446,6 +458,7 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
         place_name = %place_name,
         lat = %lat,
         lon = %lon,
+        radius_m = %DEFAULT_PLACE_RADIUS_METERS,
         "Created new place entity"
     );
 

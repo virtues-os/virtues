@@ -13,12 +13,11 @@ use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 /// Authenticated user information extracted from session cookie
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
-    pub id: Uuid,
+    pub id: String,
     pub email: String,
     pub email_verified: Option<DateTime<Utc>>,
 }
@@ -27,7 +26,7 @@ pub struct AuthUser {
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub session_token: String,
-    pub user_id: Uuid,
+    pub user_id: String,
     pub expires: DateTime<Utc>,
 }
 
@@ -117,16 +116,15 @@ pub async fn validate_session(pool: &SqlitePool, session_token: &str) -> crate::
 
     match row {
         Some(row) => {
-            // SQLite returns TEXT columns - parse to expected types
-            let id_str = row
+            // SQLite returns TEXT columns
+            let id = row
                 .id
                 .ok_or_else(|| crate::Error::Database("Missing user ID".into()))?;
-            let id = Uuid::parse_str(&id_str)
-                .map_err(|e| crate::Error::Database(format!("Invalid UUID: {}", e)))?;
 
             let email_verified = row
                 .email_verified
-                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .as_deref()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 .map(|dt| dt.with_timezone(&Utc));
 
             Ok(AuthUser {
@@ -144,13 +142,17 @@ pub async fn validate_session(pool: &SqlitePool, session_token: &str) -> crate::
 /// Create a new session for a user
 pub async fn create_session(
     pool: &SqlitePool,
-    user_id: Uuid,
+    user_id: String,
     session_token: &str,
     expires: DateTime<Utc>,
 ) -> crate::Result<()> {
-    // SQLite requires string conversion for UUID and ISO 8601 for datetime
-    let session_id = Uuid::new_v4().to_string();
-    let user_id_str = user_id.to_string();
+    // Generate a session tracking ID (internal, not the token)
+    let timestamp = Utc::now().to_rfc3339();
+    let session_id = crate::ids::generate_id(
+        crate::ids::AUTH_SESSION_PREFIX,
+        &[&user_id, &timestamp],
+    );
+    let user_id_str = user_id;
     let expires_str = expires.to_rfc3339();
 
     sqlx::query!(
@@ -182,7 +184,7 @@ pub async fn delete_session(pool: &SqlitePool, session_token: &str) -> crate::Re
 }
 
 /// Delete all sessions for a user
-pub async fn delete_all_user_sessions(pool: &SqlitePool, user_id: Uuid) -> crate::Result<()> {
+pub async fn delete_all_user_sessions(pool: &SqlitePool, user_id: String) -> crate::Result<()> {
     sqlx::query!("DELETE FROM app_auth_session WHERE user_id = $1", user_id)
         .execute(pool)
         .await?;

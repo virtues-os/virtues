@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::Client;
 use serde::Deserialize;
 use sqlx::SqlitePool;
-use uuid::Uuid;
+
 
 use super::encryption::TokenEncryptor;
 use crate::error::{Error, Result};
@@ -110,9 +110,9 @@ impl TokenManager {
     }
 
     /// Get a valid access token for a source, refreshing if necessary
-    pub async fn get_valid_token(&self, source_id: Uuid) -> Result<String> {
+    pub async fn get_valid_token(&self, source_id: String) -> Result<String> {
         // Load token from database
-        let token = self.load_token(source_id).await?;
+        let token = self.load_token(source_id.clone()).await?;
 
         // Check if token needs refresh
         if self.needs_refresh(&token) {
@@ -124,7 +124,7 @@ impl TokenManager {
     }
 
     /// Load token information from the database
-    pub async fn load_token(&self, source_id: Uuid) -> Result<OAuthToken> {
+    pub async fn load_token(&self, source_id: String) -> Result<OAuthToken> {
         let record = sqlx::query_as::<
             _,
             (
@@ -140,11 +140,11 @@ impl TokenManager {
                 access_token,
                 refresh_token,
                 token_expires_at
-            FROM data_source_connections
+            FROM elt_source_connections
             WHERE id = $1 AND is_active = true
             "#,
         )
-        .bind(source_id)
+        .bind(&source_id)
         .fetch_optional(&self.db)
         .await?
         .ok_or_else(|| Error::Database(format!("Source connection not found: {source_id}")))?;
@@ -181,7 +181,7 @@ impl TokenManager {
 
     /// Refresh an OAuth token through the proxy
     #[tracing::instrument(skip(self, token), fields(source_id = %source_id, source = %token.source))]
-    pub async fn refresh_token(&self, source_id: Uuid, token: &OAuthToken) -> Result<OAuthToken> {
+    pub async fn refresh_token(&self, source_id: String, token: &OAuthToken) -> Result<OAuthToken> {
         let refresh_token = token
             .refresh_token
             .as_ref()
@@ -248,7 +248,7 @@ impl TokenManager {
         // Update tokens in database
         sqlx::query(
             r#"
-            UPDATE data_source_connections
+            UPDATE elt_source_connections
             SET
                 access_token = $1,
                 refresh_token = COALESCE($2, refresh_token),
@@ -260,7 +260,7 @@ impl TokenManager {
         .bind(&access_token_to_store)
         .bind(refresh_token_to_store.as_ref())
         .bind(expires_at)
-        .bind(source_id)
+        .bind(&source_id)
         .execute(&self.db)
         .await?;
 
@@ -280,22 +280,23 @@ impl TokenManager {
         access_token: String,
         refresh_token: Option<String>,
         expires_in: Option<i64>,
-    ) -> Result<Uuid> {
+    ) -> Result<String> {
         let expires_at = expires_in.map(|seconds| Utc::now() + Duration::seconds(seconds));
-
+ 
         // Encrypt tokens before storing
         let access_token_to_store = self.encryptor.encrypt(&access_token)?;
-
+ 
         let refresh_token_to_store = if let Some(ref rt) = refresh_token {
             Some(self.encryptor.encrypt(rt)?)
         } else {
             None
         };
-
-        let new_id = Uuid::new_v4().to_string();
+ 
+        // Generate semantic ID for source
+        let new_id = crate::ids::generate_id(crate::ids::SOURCE_PREFIX, &[source, source_name]);
         let source_id_str: String = sqlx::query_scalar(
             r#"
-            INSERT INTO data_source_connections (
+            INSERT INTO elt_source_connections (
                 id, source, name, access_token, refresh_token, token_expires_at, is_active, is_internal
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, true, false
@@ -303,7 +304,7 @@ impl TokenManager {
             ON CONFLICT (name)
             DO UPDATE SET
                 access_token = EXCLUDED.access_token,
-                refresh_token = COALESCE(EXCLUDED.refresh_token, data_source_connections.refresh_token),
+                refresh_token = COALESCE(EXCLUDED.refresh_token, elt_source_connections.refresh_token),
                 token_expires_at = EXCLUDED.token_expires_at,
                 is_active = true,
                 error_message = NULL,
@@ -321,17 +322,14 @@ impl TokenManager {
         .fetch_one(&self.db)
         .await?;
 
-        let source_id = Uuid::parse_str(&source_id_str)
-            .map_err(|e| crate::error::Error::Database(format!("Invalid source ID: {e}")))?;
-
-        Ok(source_id)
+        Ok(source_id_str)
     }
 
     /// Mark a source as having authentication errors
-    pub async fn mark_auth_error(&self, source_id: Uuid, error_message: &str) -> Result<()> {
+    pub async fn mark_auth_error(&self, source_id: String, error_message: &str) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE data_source_connections
+            UPDATE elt_source_connections
             SET
                 error_message = $1,
                 error_at = datetime('now'),
@@ -340,18 +338,18 @@ impl TokenManager {
             "#,
         )
         .bind(error_message)
-        .bind(source_id)
+        .bind(&source_id)
         .execute(&self.db)
         .await?;
-
+ 
         Ok(())
     }
 
     /// Clear authentication errors for a source
-    pub async fn clear_auth_error(&self, source_id: Uuid) -> Result<()> {
+    pub async fn clear_auth_error(&self, source_id: String) -> Result<()> {
         sqlx::query(
             r#"
-            UPDATE data_source_connections
+            UPDATE elt_source_connections
             SET
                 error_message = NULL,
                 error_at = NULL,
@@ -359,7 +357,7 @@ impl TokenManager {
             WHERE id = $1
             "#,
         )
-        .bind(source_id)
+        .bind(&source_id)
         .execute(&self.db)
         .await?;
 

@@ -190,6 +190,7 @@ mod tests {
         // Create messages that would be 70%+
         let large_content = "x".repeat(2800); // ~700 tokens
         let messages = vec![ChatMessage {
+            id: None,
             role: "user".to_string(),
             content: large_content,
             timestamp: "2024-01-01T00:00:00Z".to_string(),
