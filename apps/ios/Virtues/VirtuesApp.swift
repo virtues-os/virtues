@@ -26,6 +26,7 @@ struct VirtuesApp: App {
         _ = NetworkMonitor.shared  // Initialize network monitoring early
         _ = BatchUploadCoordinator.shared
         _ = HealthKitManager.shared
+        _ = FinanceKitManager.shared
         _ = LocationManager.shared
         _ = AudioManager.shared
         _ = BatteryManager.shared
@@ -164,6 +165,7 @@ struct VirtuesApp: App {
         let locationManager = LocationManager.shared
         let audioManager = AudioManager.shared
         let healthKitManager = HealthKitManager.shared
+        let financeKitManager = FinanceKitManager.shared
         let batteryManager = BatteryManager.shared
         let contactsManager = ContactsManager.shared
 
@@ -196,6 +198,11 @@ struct VirtuesApp: App {
         // Start HealthKit monitoring if authorized AND enabled
         if healthKitManager.isAuthorized && config.isStreamEnabled("healthkit") {
             healthKitManager.startMonitoring()
+        }
+
+        // Start FinanceKit monitoring if authorized AND enabled
+        if financeKitManager.isAuthorized && config.isStreamEnabled("financekit") {
+            financeKitManager.startMonitoring()
         }
 
         // Start battery monitoring if enabled (no permission required)

@@ -23,6 +23,8 @@
 	</dict>
 	<key>NSContactsUsageDescription</key>
 	<string>Virtues uses your contacts to identify people mentioned in your conversations and provide personalized insights.</string>
+	<key>NSFinanceUsageDescription</key>
+	<string>Virtues uses FinanceKit to securely sync your Apple Card and Apple Cash transactions for local analysis.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Virtues reads your health data (heart rate, steps, sleep, activity) to provide daily wellness insights. Your data is stored securely and never shared without consent.</string>
 	<key>NSLocalNetworkUsageDescription</key>

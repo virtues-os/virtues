@@ -85,9 +85,14 @@ pub struct Config {
     /// Google API key (for Places autocomplete)
     pub google_api_key: Option<String>,
 
-    /// Path to models.json config file (optional)
-    /// If set, loads available models from this file instead of hardcoded list
-    pub models_config_path: Option<String>,
+    /// Plaid Client ID
+    pub plaid_client_id: Option<String>,
+
+    /// Plaid Secret
+    pub plaid_secret: Option<String>,
+
+    /// Plaid Environment (sandbox, development, production)
+    pub plaid_env: String,
 }
 
 impl Config {
@@ -144,8 +149,10 @@ impl Config {
             exa_api_key: std::env::var("EXA_API_KEY").ok(),
             google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
 
-            // Models config
-            models_config_path: std::env::var("MODELS_CONFIG_PATH").ok(),
+            // Plaid
+            plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),
+            plaid_secret: std::env::var("PLAID_SECRET").ok(),
+            plaid_env: std::env::var("PLAID_ENV").unwrap_or_else(|_| "sandbox".to_string()),
         })
     }
 
@@ -166,5 +173,10 @@ impl Config {
     /// Check if Atlas integration is configured
     pub fn has_atlas(&self) -> bool {
         self.atlas_url.is_some() && self.atlas_secret.is_some()
+    }
+
+    /// Check if Plaid is configured
+    pub fn has_plaid(&self) -> bool {
+        self.plaid_client_id.is_some() && self.plaid_secret.is_some()
     }
 }

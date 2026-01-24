@@ -16,7 +16,7 @@ pub fn handle_catalog_command(
             println!("{}", "-".repeat(60));
 
             for source in sources {
-                let auth_type = match source.auth_type {
+                let auth_type = match source.descriptor.auth_type {
                     crate::registry::AuthType::OAuth2 => "OAuth2",
                     crate::registry::AuthType::Device => "Device",
                     crate::registry::AuthType::ApiKey => "API Key",
@@ -24,7 +24,7 @@ pub fn handle_catalog_command(
                 };
                 println!(
                     "{:<15} {:<30} {}",
-                    source.name, source.display_name, auth_type
+                    source.descriptor.name, source.descriptor.display_name, auth_type
                 );
             }
 
@@ -36,13 +36,13 @@ pub fn handle_catalog_command(
             let info = crate::get_source_info(&name)
                 .ok_or_else(|| format!("Source '{}' not found", name))?;
 
-            println!("Source: {}", info.display_name);
-            println!("Type: {}", info.name);
-            println!("Description: {}", info.description);
+            println!("Source: {}", info.descriptor.display_name);
+            println!("Type: {}", info.descriptor.name);
+            println!("Description: {}", info.descriptor.description);
             println!();
-            println!("Authentication: {:?}", info.auth_type);
+            println!("Authentication: {:?}", info.descriptor.auth_type);
 
-            if let Some(oauth_config) = &info.oauth_config {
+            if let Some(oauth_config) = &info.descriptor.oauth_config {
                 println!("OAuth Scopes: {}", oauth_config.scopes.join(", "));
             }
 
@@ -53,17 +53,17 @@ pub fn handle_catalog_command(
 
             for stream in &info.streams {
                 let mut modes = Vec::new();
-                if stream.supports_incremental {
+                if stream.descriptor.supports_incremental {
                     modes.push("incremental");
                 }
-                if stream.supports_full_refresh {
+                if stream.descriptor.supports_full_refresh {
                     modes.push("full");
                 }
                 let modes_str = modes.join(", ");
 
                 println!(
                     "{:<20} {:<40} {}",
-                    stream.name, stream.description, modes_str
+                    stream.descriptor.name, stream.descriptor.description, modes_str
                 );
             }
         }
@@ -81,17 +81,17 @@ pub fn handle_catalog_command(
 
             for (source_name, stream) in streams {
                 let mut modes = Vec::new();
-                if stream.supports_incremental {
+                if stream.descriptor.supports_incremental {
                     modes.push("incremental");
                 }
-                if stream.supports_full_refresh {
+                if stream.descriptor.supports_full_refresh {
                     modes.push("full");
                 }
                 let modes_str = modes.join(", ");
 
                 println!(
                     "{:<15} {:<15} {:<45} {}",
-                    source_name, stream.name, stream.description, modes_str
+                    source_name, stream.descriptor.name, stream.descriptor.description, modes_str
                 );
             }
 

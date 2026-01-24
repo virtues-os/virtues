@@ -14,7 +14,7 @@ impl OntologyDescriptor for FinancialTransactionOntology {
             .description("Bank and credit card transactions from Plaid with merchant and category info")
             .domain("financial")
             .table_name("financial_transaction")
-            .source_streams(vec!["stream_plaid_transactions"])
+            .source_streams(vec!["stream_plaid_transactions", "stream_ios_finance"])
             .timestamp_column("timestamp")
             // Enable semantic search on transactions
             .embedding(

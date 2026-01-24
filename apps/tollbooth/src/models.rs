@@ -1,43 +1,49 @@
-//! Model registry loaded from config/seeds/models.json
+//! Model registry - uses shared virtues-registry crate
 //!
-//! Single source of truth for available models across the app.
-//! The JSON config is embedded at compile time to ensure consistency.
+//! Single source of truth for available models across Tollbooth.
+//! Models are loaded from the shared virtues-registry crate.
 
-use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
 use std::sync::OnceLock;
 
-/// Embedded models config from config/seeds/models.json (compile-time)
-const EMBEDDED_MODELS_JSON: &str = include_str!("../../../config/seeds/models.json");
+// Re-export ModelConfig from shared registry
+pub use virtues_registry::models::ModelConfig;
 
 /// Global model registry
 static MODELS: OnceLock<ModelRegistry> = OnceLock::new();
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct ModelsConfig {
-    pub version: String,
-    pub models: Vec<ModelEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
+/// Local model entry with additional Tollbooth-specific fields
+#[derive(Debug, Clone)]
 pub struct ModelEntry {
     pub model_id: String,
     pub display_name: String,
     pub provider: String,
-    pub sort_order: u32,
+    pub sort_order: i32,
     pub enabled: bool,
-    pub context_window: u32,
-    pub max_output_tokens: u32,
+    pub context_window: i32,
+    pub max_output_tokens: i32,
     pub supports_tools: bool,
-    #[serde(default)]
     pub is_default: bool,
-    /// Pricing per 1K input tokens (optional, uses defaults if not set)
-    #[serde(default)]
     pub input_cost_per_1k: Option<f64>,
-    /// Pricing per 1K output tokens (optional, uses defaults if not set)
-    #[serde(default)]
     pub output_cost_per_1k: Option<f64>,
+}
+
+impl From<ModelConfig> for ModelEntry {
+    fn from(config: ModelConfig) -> Self {
+        Self {
+            model_id: config.model_id,
+            display_name: config.display_name,
+            provider: config.provider,
+            sort_order: config.sort_order,
+            enabled: config.enabled,
+            context_window: config.context_window,
+            max_output_tokens: config.max_output_tokens,
+            supports_tools: config.supports_tools,
+            is_default: config.is_default,
+            input_cost_per_1k: config.input_cost_per_1k,
+            output_cost_per_1k: config.output_cost_per_1k,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -47,33 +53,20 @@ pub struct ModelRegistry {
 }
 
 impl ModelRegistry {
-    /// Load models from JSON file (allows runtime override of embedded config)
-    pub fn load_from_file(path: &str) -> anyhow::Result<Self> {
-        let content = fs::read_to_string(path)?;
-        Self::load_from_str(&content)
-    }
+    /// Build registry from shared virtues-registry crate
+    pub fn from_registry() -> Self {
+        let models: Vec<ModelEntry> = virtues_registry::models::default_models()
+            .into_iter()
+            .map(ModelEntry::from)
+            .collect();
 
-    /// Get default registry from embedded JSON (compile-time single source of truth)
-    pub fn default() -> Self {
-        Self::load_from_str(EMBEDDED_MODELS_JSON)
-            .expect("Embedded models.json is invalid - this is a build-time error")
-    }
-
-    /// Load models from a JSON string
-    fn load_from_str(json: &str) -> anyhow::Result<Self> {
-        let config: ModelsConfig = serde_json::from_str(json)?;
-
-        let by_id: HashMap<String, ModelEntry> = config
-            .models
+        let by_id: HashMap<String, ModelEntry> = models
             .iter()
             .cloned()
             .map(|m| (m.model_id.clone(), m))
             .collect();
 
-        Ok(Self {
-            models: config.models,
-            by_id,
-        })
+        Self { models, by_id }
     }
 
     /// Get enabled models filtered by provider availability
@@ -124,19 +117,11 @@ impl ModelRegistry {
 }
 
 /// Initialize the global model registry
-pub fn init(config_path: Option<&str>) -> anyhow::Result<()> {
-    let registry = match config_path {
-        Some(path) => {
-            tracing::info!("Loading models from: {}", path);
-            ModelRegistry::load_from_file(path)?
-        }
-        None => {
-            tracing::info!("Using default model registry");
-            ModelRegistry::default()
-        }
-    };
+pub fn init(_config_path: Option<&str>) -> anyhow::Result<()> {
+    // Config path is now ignored - always use shared registry
+    let registry = ModelRegistry::from_registry();
 
-    tracing::info!("Loaded {} models", registry.models.len());
+    tracing::info!("Loaded {} models from virtues-registry", registry.models.len());
 
     MODELS
         .set(registry)

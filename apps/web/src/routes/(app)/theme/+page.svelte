@@ -19,22 +19,54 @@
 	<!-- Theme Overview -->
 	<div class="mb-8 p-6 bg-surface rounded-lg border border-border">
 		<h2 class="text-xl font-serif text-foreground mb-4">Available Themes</h2>
-		<div class="grid grid-cols-2 gap-4">
+		<div class="grid grid-cols-3 gap-4">
 			<div class="p-4 bg-background rounded border border-border-subtle">
-				<h3 class="font-medium text-foreground mb-1">Light (Default)</h3>
-				<p class="text-sm text-foreground-subtle">Paper background with navy accents</p>
+				<h3 class="font-medium text-foreground mb-1">Ivory Tower</h3>
+				<p class="text-sm text-foreground-subtle">Clean academic white</p>
 			</div>
 			<div class="p-4 bg-background rounded border border-border-subtle">
-				<h3 class="font-medium text-foreground mb-1">Dark</h3>
-				<p class="text-sm text-foreground-subtle">Navy-based dark theme for reduced eye strain</p>
+				<h3 class="font-medium text-foreground mb-1">The Scriptorium</h3>
+				<p class="text-sm text-foreground-subtle">Warm paper, candlelight</p>
 			</div>
 			<div class="p-4 bg-background rounded border border-border-subtle">
-				<h3 class="font-medium text-foreground mb-1">Warm</h3>
-				<p class="text-sm text-foreground-subtle">Sepia-toned with warm browns and amber</p>
+				<h3 class="font-medium text-foreground mb-1">The Forum</h3>
+				<p class="text-sm text-foreground-subtle">Sunny Roman courtyard</p>
 			</div>
 			<div class="p-4 bg-background rounded border border-border-subtle">
-				<h3 class="font-medium text-foreground mb-1">High Contrast</h3>
-				<p class="text-sm text-foreground-subtle">Maximum contrast (WCAG AAA compliant)</p>
+				<h3 class="font-medium text-foreground mb-1">Midnight Oil</h3>
+				<p class="text-sm text-foreground-subtle">Late night studying</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">Narnia Nights</h3>
+				<p class="text-sm text-foreground-subtle">Magical lamppost glow</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">The Dumb Ox</h3>
+				<p class="text-sm text-foreground-subtle">Thomistic warm earth</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">Chiaroscuro</h3>
+				<p class="text-sm text-foreground-subtle">Stark light and shadow</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">The Stoa</h3>
+				<p class="text-sm text-foreground-subtle">Vivid Stoic painted porch</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">The Lyceum</h3>
+				<p class="text-sm text-foreground-subtle">Aristotelian cool blues</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">Tabula Rasa</h3>
+				<p class="text-sm text-foreground-subtle">Blank slate, muted nordic</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">Hemlock</h3>
+				<p class="text-sm text-foreground-subtle">Gothic purple mystery</p>
+			</div>
+			<div class="p-4 bg-background rounded border border-border-subtle">
+				<h3 class="font-medium text-foreground mb-1">The Shire</h3>
+				<p class="text-sm text-foreground-subtle">Cozy hobbit pastels</p>
 			</div>
 		</div>
 	</div>

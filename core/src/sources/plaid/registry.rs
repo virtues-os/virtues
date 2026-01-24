@@ -1,79 +1,67 @@
 //! Plaid source registration for the catalog
+//!
+//! This module provides the unified registration for Plaid sources, including
+//! both UI metadata, transform logic, and stream creation in a single place.
 
-use crate::registry::{AuthType, OAuthConfig, RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::registry::{RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::sources::stream_type::StreamType;
 use serde_json::json;
+
+// Import transforms and stream types for unified registration
+use super::accounts::{transform::PlaidAccountTransform, PlaidAccountsStream};
+use super::transactions::{transform::PlaidTransactionTransform, PlaidTransactionsStream};
+// Note: Investment and Liability transforms exist but their target ontologies don't yet
 
 /// Plaid source registration
 pub struct PlaidSource;
 
 impl SourceRegistry for PlaidSource {
     fn descriptor() -> RegisteredSource {
+        let descriptor = virtues_registry::sources::get_source("plaid")
+            .expect("Plaid source not found in virtues-registry");
+
         RegisteredSource {
-            name: "plaid",
-            display_name: "Plaid",
-            description:
-                "Connect your bank accounts and credit cards to sync transactions and balances",
-            // Plaid uses a custom Link flow rather than standard OAuth2
-            // but we model it similarly for the UI
-            auth_type: AuthType::OAuth2,
-            oauth_config: Some(OAuthConfig {
-                scopes: vec!["transactions", "auth"],
-                auth_url: "https://cdn.plaid.com/link/v2/stable/link.html",
-                token_url: "https://production.plaid.com/link/token/exchange",
-            }),
-            icon: Some("simple-icons:plaid"),
+            descriptor,
             streams: vec![
-                // Transactions stream
+                // Transactions stream with unified transform and stream creator
                 RegisteredStream::new("transactions")
-                    .display_name("Transactions")
-                    .description("Sync bank transactions with merchant and category info")
-                    .table_name("stream_plaid_transactions")
-                    .target_ontologies(vec!["financial_transaction"])
                     .config_schema(transactions_config_schema())
                     .config_example(transactions_config_example())
-                    .supports_incremental(true)
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 */6 * * *") // Every 6 hours
+                    .transform("financial_transaction", |_ctx| Ok(Box::new(PlaidTransactionTransform)))
+                    .stream_creator(|ctx| {
+                        let stream = PlaidTransactionsStream::new(
+                            ctx.source_id.clone(),
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        )?;
+                        Ok(StreamType::Pull(Box::new(stream)))
+                    })
                     .build(),
-                // Accounts stream
+                // Accounts stream with unified transform and stream creator
                 RegisteredStream::new("accounts")
-                    .display_name("Accounts")
-                    .description("Sync bank accounts, credit cards, and account balances")
-                    .table_name("stream_plaid_accounts")
-                    .target_ontologies(vec!["financial_account"])
                     .config_schema(accounts_config_schema())
                     .config_example(accounts_config_example())
-                    .supports_incremental(false) // Accounts always fetched in full
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 0 * * *") // Daily at midnight
+                    .transform("financial_account", |_ctx| Ok(Box::new(PlaidAccountTransform)))
+                    .stream_creator(|ctx| {
+                        let stream = PlaidAccountsStream::new(
+                            ctx.source_id.clone(),
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        )?;
+                        Ok(StreamType::Pull(Box::new(stream)))
+                    })
                     .build(),
                 // Investments stream
+                // Note: target_ontologies empty until financial_asset ontology is created
                 RegisteredStream::new("investments")
-                    .display_name("Investments")
-                    .description(
-                        "Sync investment holdings, securities, and 401k/IRA/brokerage data",
-                    )
-                    .table_name("stream_plaid_investments")
-                    .target_ontologies(vec!["financial_asset"])
                     .config_schema(investments_config_schema())
                     .config_example(investments_config_example())
-                    .supports_incremental(false) // Holdings always fetched in full
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 0 * * *") // Daily at midnight
                     .build(),
                 // Liabilities stream
+                // Note: target_ontologies empty until financial_liability ontology is created
                 RegisteredStream::new("liabilities")
-                    .display_name("Liabilities")
-                    .description(
-                        "Sync credit card APRs, mortgages, student loans, and loan details",
-                    )
-                    .table_name("stream_plaid_liabilities")
-                    .target_ontologies(vec!["financial_liability"])
                     .config_schema(liabilities_config_schema())
                     .config_example(liabilities_config_example())
-                    .supports_incremental(false) // Liabilities always fetched in full
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 0 * * *") // Daily at midnight
                     .build(),
             ],
         }
@@ -219,66 +207,69 @@ fn liabilities_config_example() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::AuthType;
 
     #[test]
     fn test_plaid_descriptor() {
         let desc = PlaidSource::descriptor();
-        assert_eq!(desc.name, "plaid");
-        assert_eq!(desc.auth_type, AuthType::OAuth2);
-        assert!(desc.oauth_config.is_some());
+        assert_eq!(desc.descriptor.name, "plaid");
+        assert_eq!(desc.descriptor.auth_type, AuthType::OAuth2);
+        assert!(desc.descriptor.oauth_config.is_some());
         assert_eq!(desc.streams.len(), 4); // transactions, accounts, investments, liabilities
     }
 
     #[test]
     fn test_transactions_stream() {
         let desc = PlaidSource::descriptor();
-        let transactions = desc.streams.iter().find(|s| s.name == "transactions");
+        let transactions = desc.streams.iter().find(|s| s.descriptor.name == "transactions");
         assert!(transactions.is_some());
 
         let tx = transactions.unwrap();
-        assert_eq!(tx.table_name, "stream_plaid_transactions");
-        assert_eq!(tx.target_ontologies, vec!["financial_transaction"]);
-        assert!(tx.supports_incremental);
-        assert!(tx.supports_full_refresh);
+        assert_eq!(tx.descriptor.table_name, "stream_plaid_transactions");
+        assert_eq!(tx.descriptor.target_ontologies, vec!["financial_transaction"]);
+        assert!(tx.descriptor.supports_incremental);
+        assert!(tx.descriptor.supports_full_refresh);
     }
 
     #[test]
     fn test_accounts_stream() {
         let desc = PlaidSource::descriptor();
-        let accounts = desc.streams.iter().find(|s| s.name == "accounts");
+        let accounts = desc.streams.iter().find(|s| s.descriptor.name == "accounts");
         assert!(accounts.is_some());
 
         let acc = accounts.unwrap();
-        assert_eq!(acc.table_name, "stream_plaid_accounts");
-        assert_eq!(acc.target_ontologies, vec!["financial_account"]);
-        assert!(!acc.supports_incremental);
-        assert!(acc.supports_full_refresh);
+        assert_eq!(acc.descriptor.table_name, "stream_plaid_accounts");
+        assert_eq!(acc.descriptor.target_ontologies, vec!["financial_account"]);
+        assert!(!acc.descriptor.supports_incremental);
+        assert!(acc.descriptor.supports_full_refresh);
     }
 
     #[test]
     fn test_investments_stream() {
         let desc = PlaidSource::descriptor();
-        let investments = desc.streams.iter().find(|s| s.name == "investments");
+        let investments = desc.streams.iter().find(|s| s.descriptor.name == "investments");
         assert!(investments.is_some());
 
         let inv = investments.unwrap();
-        assert_eq!(inv.table_name, "stream_plaid_investments");
-        assert_eq!(inv.target_ontologies, vec!["financial_asset"]);
-        assert!(!inv.supports_incremental);
-        assert!(inv.supports_full_refresh);
+        assert_eq!(inv.descriptor.table_name, "stream_plaid_investments");
+        // target_ontologies empty until financial_asset ontology is created
+        assert!(inv.descriptor.target_ontologies.is_empty());
+        assert!(!inv.descriptor.supports_incremental);
+        assert!(inv.descriptor.supports_full_refresh);
     }
 
     #[test]
     fn test_liabilities_stream() {
         let desc = PlaidSource::descriptor();
-        let liabilities = desc.streams.iter().find(|s| s.name == "liabilities");
+        let liabilities = desc.streams.iter().find(|s| s.descriptor.name == "liabilities");
         assert!(liabilities.is_some());
 
         let liab = liabilities.unwrap();
-        assert_eq!(liab.table_name, "stream_plaid_liabilities");
-        assert_eq!(liab.target_ontologies, vec!["financial_liability"]);
-        assert!(!liab.supports_incremental);
-        assert!(liab.supports_full_refresh);
+        assert_eq!(liab.descriptor.table_name, "stream_plaid_liabilities");
+        // target_ontologies empty until financial_liability ontology is created
+        assert!(liab.descriptor.target_ontologies.is_empty());
+        assert!(!liab.descriptor.supports_incremental);
+        assert!(liab.descriptor.supports_full_refresh);
     }
 
     #[test]

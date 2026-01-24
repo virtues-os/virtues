@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
+	import type { Tab } from '$lib/tabs/types';
+	import { workspaceStore } from '$lib/stores/workspace.svelte';
 	import { ActivityHeatmap } from '$lib/components/wiki';
 	import { onMount } from 'svelte';
 	import 'iconify-icon';
@@ -82,12 +82,12 @@
 
 	// Handle day click from heatmap
 	function handleDayClick(_date: Date, slug: string) {
-		windowTabs.openTabFromRoute(`/wiki/${slug}`);
+		workspaceStore.openTabFromRoute(`/wiki/${slug}`);
 	}
 
 	// Handle navigation
 	function navigateTo(route: string) {
-		windowTabs.openTabFromRoute(route);
+		workspaceStore.openTabFromRoute(route);
 	}
 
 	// Today's formatted date

@@ -110,7 +110,7 @@
 				class="ai-input"
 				placeholder="Ask about this page..."
 			/>
-			<button class="ai-send">
+			<button class="ai-send" aria-label="Send message">
 				<iconify-icon icon="ri:send-plane-line" width="16" height="16"
 				></iconify-icon>
 			</button>

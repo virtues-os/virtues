@@ -1,7 +1,7 @@
 <script lang="ts">
 	import 'iconify-icon';
 	import { bookmarks, type Bookmark } from '$lib/stores/bookmarks.svelte';
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
+	import { workspaceStore } from '$lib/stores/workspace.svelte';
 
 	interface Props {
 		open?: boolean;
@@ -59,9 +59,9 @@
 
 	function navigateToBookmark(bookmark: Bookmark) {
 		if (bookmark.bookmark_type === 'tab' && bookmark.route) {
-			windowTabs.openTabFromRoute(bookmark.route, { label: bookmark.label });
+			workspaceStore.openTabFromRoute(bookmark.route, { label: bookmark.label });
 		} else if (bookmark.bookmark_type === 'entity' && bookmark.entity_slug) {
-			windowTabs.openTabFromRoute(`/wiki/${bookmark.entity_slug}`, { label: bookmark.label });
+			workspaceStore.openTabFromRoute(`/wiki/${bookmark.entity_slug}`, { label: bookmark.label });
 		}
 		onClose();
 	}

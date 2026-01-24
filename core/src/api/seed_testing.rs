@@ -59,7 +59,7 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
             COUNT(*) FILTER (WHERE status = 'completed') as completed,
             COUNT(*) FILTER (WHERE status = 'failed') as failed,
             COALESCE(SUM(records_processed), 0)::bigint as records_archived
-        FROM data_jobs
+        FROM elt_jobs
         WHERE job_type = 'archive'
         "#,
     )
@@ -80,7 +80,7 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
             COUNT(*) as total,
             COUNT(*) FILTER (WHERE status = 'completed') as completed,
             COALESCE(SUM(records_processed), 0)::bigint as records_processed
-        FROM data_jobs
+        FROM elt_jobs
         WHERE job_type = 'transform'
         "#,
     )
@@ -89,7 +89,7 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
 
     // Count unique ontology tables populated (rough estimate from jobs metadata)
     let ontology_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT json_extract(metadata, '$.stream_name')) FROM data_jobs WHERE job_type = 'transform' AND status = 'completed'"
+        "SELECT COUNT(DISTINCT json_extract(metadata, '$.stream_name')) FROM elt_jobs WHERE job_type = 'transform' AND status = 'completed'"
     )
     .fetch_one(db.pool())
     .await

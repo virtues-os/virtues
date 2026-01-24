@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
+	import type { Tab } from '$lib/tabs/types';
 	import { Page, Badge } from '$lib';
 	import 'iconify-icon';
 	import { onMount } from 'svelte';

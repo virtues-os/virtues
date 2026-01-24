@@ -94,7 +94,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             COALESCE(SUM(records_processed), 0)::bigint as total_records,
             AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
                 FILTER (WHERE completed_at IS NOT NULL) as avg_duration
-        FROM data_jobs
+        FROM elt_jobs
         "#,
     )
     .fetch_one(db.pool())
@@ -132,7 +132,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
             AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
                 FILTER (WHERE completed_at IS NOT NULL) as avg_duration,
             COALESCE(SUM(records_processed), 0)::bigint as total_records
-        FROM data_jobs
+        FROM elt_jobs
         GROUP BY job_type
         ORDER BY total DESC
         "#,
@@ -159,7 +159,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     let error_rows = sqlx::query(
         r#"
         SELECT id, job_type, stream_name, error_message, error_class, completed_at
-        FROM data_jobs
+        FROM elt_jobs
         WHERE status = 'failed' AND error_message IS NOT NULL
         ORDER BY completed_at DESC NULLS LAST
         LIMIT 10
@@ -209,7 +209,7 @@ async fn get_period_stats(db: &Database, since: DateTime<Utc>) -> Result<PeriodS
             COUNT(*) FILTER (WHERE status = 'succeeded') as completed,
             COUNT(*) FILTER (WHERE status = 'failed') as failed,
             COALESCE(SUM(records_processed), 0)::bigint as records
-        FROM data_jobs
+        FROM elt_jobs
         WHERE created_at >= $1
         "#,
     )

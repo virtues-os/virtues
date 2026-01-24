@@ -11,12 +11,12 @@
 
 	const customTheme = {
 		code: {
-			container: 'my-4 w-full overflow-hidden rounded-xl border border-border bg-surface-elevated',
-			header: 'flex items-center justify-between bg-surface-elevated px-4 py-2 text-foreground-muted text-xs font-mono',
+			container: 'my-4 w-full overflow-hidden rounded-xl border border-border',
+			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-[var(--code-bg)]',
 			languageLabel: 'text-foreground-muted font-medium',
 			copyButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			copyIcon: 'w-4 h-4',
-			pre: 'overflow-x-auto p-4 text-sm bg-secondary',
+			pre: 'overflow-x-auto p-4 text-sm bg-[var(--code-bg)]',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
 		}
@@ -28,7 +28,7 @@
 		<Streamdown
 			{content}
 			class="streamdown-content"
-			shikiTheme="dark-plus"
+			shikiTheme={'css-variables' as any}
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
 			controls={{ table: false }}

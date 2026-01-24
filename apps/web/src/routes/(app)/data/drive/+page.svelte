@@ -278,6 +278,8 @@
 
 		<!-- Usage Bar -->
 		{#if usage}
+			{@const drivePercent = usage.quota_bytes > 0 ? (usage.drive_bytes / usage.quota_bytes) * 100 : 0}
+			{@const dataLakePercent = usage.quota_bytes > 0 ? (usage.data_lake_bytes / usage.quota_bytes) * 100 : 0}
 			<div class="bg-surface border border-border rounded-lg p-4 mb-6">
 				<div class="flex items-center justify-between mb-2">
 					<span class="text-sm text-foreground-muted">
@@ -287,16 +289,37 @@
 						{usage.tier} tier
 					</span>
 				</div>
-				<div class="h-2 bg-border rounded-full overflow-hidden">
-					<div
-						class="h-full transition-all duration-300 rounded-full"
-						class:bg-emerald-500={usage.usage_percent < 80}
-						class:bg-yellow-500={usage.usage_percent >= 80 && usage.usage_percent < 90}
-						class:bg-red-500={usage.usage_percent >= 90}
-						style="width: {Math.min(usage.usage_percent, 100)}%"
-					></div>
+				<!-- Segmented progress bar -->
+				<div class="h-3 bg-border rounded-full overflow-hidden flex">
+					{#if drivePercent > 0}
+						<div
+							class="h-full bg-blue-500 transition-all duration-300"
+							style="width: {Math.min(drivePercent, 100 - dataLakePercent)}%"
+						></div>
+					{/if}
+					{#if dataLakePercent > 0}
+						<div
+							class="h-full bg-purple-500 transition-all duration-300"
+							style="width: {Math.min(dataLakePercent, 100 - drivePercent)}%"
+						></div>
+					{/if}
 				</div>
-				<div class="flex gap-4 mt-3 text-xs text-foreground-subtle">
+				<!-- Legend -->
+				<div class="flex flex-wrap gap-4 mt-3 text-xs text-foreground-muted">
+					<span class="flex items-center gap-1.5">
+						<span class="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span>
+						Drive ({formatBytes(usage.drive_bytes)})
+					</span>
+					<span class="flex items-center gap-1.5">
+						<span class="w-2.5 h-2.5 bg-purple-500 rounded-sm"></span>
+						Data Lake ({formatBytes(usage.data_lake_bytes)})
+					</span>
+					<span class="flex items-center gap-1.5">
+						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
+						Available ({formatBytes(usage.quota_bytes - usage.total_bytes)})
+					</span>
+				</div>
+				<div class="flex gap-4 mt-2 text-xs text-foreground-subtle">
 					<span>{usage.file_count} files</span>
 					<span>{usage.folder_count} folders</span>
 				</div>

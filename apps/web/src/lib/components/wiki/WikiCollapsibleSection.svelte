@@ -1,15 +1,20 @@
 <script lang="ts">
 	import "iconify-icon";
+	import type { Snippet } from "svelte";
 
 	interface Props {
 		title: string;
 		count?: number;
 		defaultOpen?: boolean;
+		children: Snippet;
 	}
 
-	let { title, count, defaultOpen = true }: Props = $props();
+	let { title, count, defaultOpen = true, children }: Props = $props();
 
-	let isOpen = $state(defaultOpen);
+	// Capture initial value (intentionally captures initial value only)
+	// svelte-ignore state_referenced_locally
+	const initiallyOpen = defaultOpen;
+	let isOpen = $state(initiallyOpen);
 	let contentEl: HTMLDivElement | undefined = $state();
 	let contentHeight = $state(0);
 
@@ -54,7 +59,7 @@
 		style="--content-height: {contentHeight}px"
 	>
 		<div class="pt-2" bind:this={contentEl}>
-			<slot />
+			{@render children()}
 		</div>
 	</div>
 </section>

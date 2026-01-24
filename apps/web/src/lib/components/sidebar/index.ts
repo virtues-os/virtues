@@ -8,5 +8,10 @@ export { default as SidebarTooltip } from './SidebarTooltip.svelte';
 export { default as SidebarPopover } from './SidebarPopover.svelte';
 export { default as SearchModal } from './SearchModal.svelte';
 
+// Workspace components
+export { default as WorkspaceHeader } from './WorkspaceHeader.svelte';
+export { default as WorkspaceSwitcher } from './WorkspaceSwitcher.svelte';
+export { default as ExplorerNode } from './ExplorerNode.svelte';
+
 // Types
 export type { SidebarNavItemData, SidebarSectionData, NavItemType } from './types';

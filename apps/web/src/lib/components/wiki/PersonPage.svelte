@@ -7,7 +7,6 @@
 
 <script lang="ts">
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
-	import WikiEditor from "./WikiEditor.svelte";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import "iconify-icon";
 
@@ -16,12 +15,6 @@
 	}
 
 	let { page }: Props = $props();
-
-	let notesContent = $state(page.content);
-
-	$effect(() => {
-		notesContent = page.content;
-	});
 
 	// Connection tier display
 	const tierLabels: Record<string, string> = {
@@ -48,7 +41,7 @@
 
 ## Notes
 
-${notesContent}
+${page.content || ''}
 `);
 </script>
 
@@ -179,13 +172,11 @@ ${notesContent}
 			<!-- Notes -->
 			<section class="section" id="notes">
 				<h2 class="section-title">Notes</h2>
-				<div class="notes-editor">
-					<WikiEditor
-						bind:content={notesContent}
-						linkedPages={page.linkedPages}
-						placeholder="Add notes about how you met, context, memories..."
-					/>
-				</div>
+				{#if page.content}
+					<div class="notes-content">{page.content}</div>
+				{:else}
+					<p class="empty-placeholder">No notes</p>
+				{/if}
 			</section>
 		</div>
 	</article>
@@ -300,8 +291,11 @@ ${notesContent}
 		margin: 0 0 0.75rem;
 	}
 
-	.notes-editor {
-		min-height: 150px;
+	.notes-content {
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		line-height: 1.6;
+		white-space: pre-wrap;
 	}
 
 	/* Info list (dt/dd) */

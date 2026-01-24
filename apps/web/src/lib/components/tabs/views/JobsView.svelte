@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
+	import type { Tab } from '$lib/tabs/types';
+	import { workspaceStore } from '$lib/stores/workspace.svelte';
 	import { Page, Button, Badge } from '$lib';
 	import type { Job } from '$lib/api/client';
 	import { cancelJob } from '$lib/api/client';
@@ -121,7 +121,7 @@
 	);
 
 	function handleSourceClick(sourceId: string) {
-		windowTabs.openTabFromRoute(`/data/sources/${sourceId}`);
+		workspaceStore.openTabFromRoute(`/data/sources/${sourceId}`);
 	}
 </script>
 

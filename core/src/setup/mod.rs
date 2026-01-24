@@ -3,31 +3,17 @@
 pub mod validation;
 
 use console::style;
-use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password, Select};
+use dialoguer::{theme::ColorfulTheme, Confirm, Input};
 
 use crate::error::Result;
 use validation::{display_error, display_info, display_success};
-
-/// Storage type for configuration
-#[derive(Debug, Clone)]
-pub enum StorageType {
-    Local {
-        path: String,
-    },
-    S3 {
-        endpoint: String,
-        bucket: String,
-        access_key: String,
-        secret_key: String,
-    },
-}
 
 /// Configuration collected from the setup wizard
 #[derive(Debug, Clone)]
 pub struct SetupConfig {
     pub database_url: String,
     pub server_url: String,
-    pub storage: StorageType,
+    pub storage_path: String,
     pub encryption_key: Option<String>,
     pub run_migrations: bool,
 }
@@ -55,12 +41,12 @@ pub async fn run_init() -> Result<SetupConfig> {
     let encryption_key = setup_encryption_key()?;
 
     // Step 5: Storage configuration
-    let storage = setup_storage().await?;
+    let storage_path = setup_storage().await?;
 
     Ok(SetupConfig {
         database_url,
         server_url,
-        storage,
+        storage_path,
         encryption_key,
         run_migrations,
     })
@@ -131,37 +117,17 @@ fn setup_encryption_key() -> Result<Option<String>> {
 }
 
 /// Storage setup step
-async fn setup_storage() -> Result<StorageType> {
+async fn setup_storage() -> Result<String> {
     println!("{}", style("💾 Storage Configuration").bold());
 
-    let options = vec!["Local filesystem", "S3/MinIO"];
-    let selection = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt("Storage type")
-        .items(&options)
-        .default(0)
-        .interact()
-        .map_err(|e| crate::error::Error::Other(format!("Selection error: {}", e)))?;
-
-    let storage = match selection {
-        0 => setup_local_storage().await?,
-        1 => setup_s3_storage().await?,
-        _ => unreachable!(),
-    };
-
-    println!();
-    Ok(storage)
-}
-
-/// Local filesystem storage setup
-async fn setup_local_storage() -> Result<StorageType> {
     let path: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Storage path")
-        .default("./data".to_string())
+        .with_prompt("Storage path for stream archives")
+        .default("./core/data/lake".to_string())
         .interact_text()
         .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
 
     // Test local storage
-    display_info("Testing local storage...");
+    display_info("Testing storage...");
     match validation::test_local_storage(&path).await {
         Ok(_) => {
             display_success(&format!("Using: {}", path));
@@ -172,58 +138,8 @@ async fn setup_local_storage() -> Result<StorageType> {
         }
     }
 
-    Ok(StorageType::Local { path })
-}
-
-/// S3/MinIO storage setup
-async fn setup_s3_storage() -> Result<StorageType> {
-    let endpoint: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("S3 Endpoint (leave empty for AWS S3)")
-        .allow_empty(true)
-        .interact_text()
-        .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
-
-    let bucket: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Bucket name")
-        .interact_text()
-        .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
-
-    let access_key: String = Input::with_theme(&ColorfulTheme::default())
-        .with_prompt("Access Key")
-        .interact_text()
-        .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
-
-    let secret_key: String = Password::with_theme(&ColorfulTheme::default())
-        .with_prompt("Secret Key")
-        .interact()
-        .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
-
-    // Test S3 connection
-    display_info("Testing S3 connection...");
-    let endpoint_opt = if endpoint.is_empty() {
-        None
-    } else {
-        Some(endpoint.clone())
-    };
-
-    match validation::test_s3_connection(endpoint_opt.clone(), &bucket, &access_key, &secret_key)
-        .await
-    {
-        Ok(_) => {
-            display_success("Connected!");
-        }
-        Err(e) => {
-            display_error(&format!("S3 connection failed: {}", e));
-            return Err(e);
-        }
-    }
-
-    Ok(StorageType::S3 {
-        endpoint,
-        bucket,
-        access_key,
-        secret_key,
-    })
+    println!();
+    Ok(path)
 }
 
 /// Generate a random 32-byte encryption key
@@ -277,26 +193,8 @@ pub fn save_config(config: &SetupConfig) -> Result<()> {
     content.push_str(&format!("VIRTUES_SERVER_URL={}\n\n", config.server_url));
 
     // Storage
-    match &config.storage {
-        StorageType::Local { path } => {
-            content.push_str("# Storage (local filesystem)\n");
-            content.push_str(&format!("STORAGE_PATH={}\n\n", path));
-        }
-        StorageType::S3 {
-            endpoint,
-            bucket,
-            access_key,
-            secret_key,
-        } => {
-            content.push_str("# Storage (S3/MinIO)\n");
-            if !endpoint.is_empty() {
-                content.push_str(&format!("S3_ENDPOINT={}\n", endpoint));
-            }
-            content.push_str(&format!("S3_BUCKET={}\n", bucket));
-            content.push_str(&format!("S3_ACCESS_KEY={}\n", access_key));
-            content.push_str(&format!("S3_SECRET_KEY={}\n\n", secret_key));
-        }
-    }
+    content.push_str("# Storage path for stream archives\n");
+    content.push_str(&format!("STORAGE_PATH={}\n\n", config.storage_path));
 
     // Encryption key
     if let Some(key) = &config.encryption_key {

@@ -1,5 +1,4 @@
 export { default as WikiPage } from './WikiPage.svelte';
-export { default as WikiEditor } from './WikiEditor.svelte';
 export { default as WikiCitations } from './WikiCitations.svelte';
 export { default as WikiLinkedPages } from './WikiLinkedPages.svelte';
 export { default as WikiRelatedPages } from './WikiRelatedPages.svelte';

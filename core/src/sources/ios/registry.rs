@@ -1,74 +1,132 @@
 //! iOS source registration for the catalog
+//!
+//! This module provides the unified registration for iOS sources, including
+//! both UI metadata, transform logic, and stream creation in a single place.
 
-use crate::registry::{AuthType, RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::registry::{RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::sources::stream_type::StreamType;
 use serde_json::json;
+
+// Import transforms for unified registration
+use super::healthkit::transform::{
+    HealthKitHeartRateTransform, HealthKitHRVTransform, HealthKitSleepTransform,
+    HealthKitStepsTransform, HealthKitWorkoutTransform,
+};
+use super::financekit::transform::FinanceKitTransactionTransform;
+use super::location::transform::IosLocationTransform;
+use super::battery::transform::IosBatteryTransform;
+use super::barometer::transform::IosBarometerTransform;
+
+// Import stream types for unified registration
+use super::{
+    IosBarometerStream, IosBatteryStream, IosContactsStream, IosFinanceKitStream,
+    IosHealthKitStream, IosLocationStream, IosMicrophoneStream,
+};
 
 /// iOS source registration
 pub struct IosSource;
 
 impl SourceRegistry for IosSource {
     fn descriptor() -> RegisteredSource {
+        let descriptor = virtues_registry::sources::get_source("ios")
+            .expect("iOS source not found in virtues-registry");
+
         RegisteredSource {
-            name: "ios",
-            display_name: "iOS",
-            description: "Personal data from iOS devices (HealthKit, Location, Microphone)",
-            auth_type: AuthType::Device,
-            oauth_config: None,
-            icon: Some("ri:apple-fill"),
+            descriptor,
             streams: vec![
-                // HealthKit stream
+                // HealthKit stream with unified transforms and stream creator
                 RegisteredStream::new("healthkit")
-                    .display_name("HealthKit")
-                    .description("Health and fitness metrics including heart rate, steps, sleep, and workouts")
-                    .table_name("stream_ios_healthkit")
-                    .target_ontologies(vec![
-                        "health_heart_rate",
-                        "health_hrv",
-                        "health_steps",
-                        "health_sleep",
-                        "health_workout",
-                    ])
                     .config_schema(healthkit_config_schema())
                     .config_example(healthkit_config_example())
-                    .supports_incremental(false)
-                    .supports_full_refresh(false)  // Push-based, not pull
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes (6-field: sec min hour day month dow)
+                    .transform("health_heart_rate", |_ctx| Ok(Box::new(HealthKitHeartRateTransform)))
+                    .transform("health_hrv", |_ctx| Ok(Box::new(HealthKitHRVTransform)))
+                    .transform("health_steps", |_ctx| Ok(Box::new(HealthKitStepsTransform)))
+                    .transform("health_sleep", |_ctx| Ok(Box::new(HealthKitSleepTransform)))
+                    .transform("health_workout", |_ctx| Ok(Box::new(HealthKitWorkoutTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosHealthKitStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
                     .build(),
 
-                // Location stream
+                // Location stream with unified transform and stream creator
                 RegisteredStream::new("location")
-                    .display_name("Location")
-                    .description("GPS coordinates, speed, altitude, and activity type")
-                    .table_name("stream_ios_location")
-                    .target_ontologies(vec!["location_point"])
                     .config_schema(location_config_schema())
                     .config_example(location_config_example())
-                    .supports_incremental(false)
-                    .supports_full_refresh(false)  // Push-based
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes (6-field: sec min hour day month dow)
+                    .transform("location_point", |_ctx| Ok(Box::new(IosLocationTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosLocationStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
                     .build(),
 
-                // Microphone stream
+                // Microphone stream with stream creator (no transform yet - transcription handled separately)
                 RegisteredStream::new("microphone")
-                    .display_name("Microphone")
-                    .description("Audio levels, transcriptions, and recordings")
-                    .table_name("stream_ios_microphone")
-                    .target_ontologies(vec!["speech_transcription"])
                     .config_schema(microphone_config_schema())
                     .config_example(microphone_config_example())
-                    .supports_incremental(false)
-                    .supports_full_refresh(false)  // Push-based
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
+                            ctx.db.clone(),
+                            ctx.storage.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
                     .build(),
 
-                // Contacts stream
-                super::IosContactsStream::descriptor(),
+                // Contacts stream with stream creator
+                RegisteredStream::new("contacts")
+                    .config_schema(serde_json::json!({}))
+                    .config_example(serde_json::json!({}))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosContactsStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
+                    .build(),
 
-                // Battery stream
-                super::IosBatteryStream::descriptor(),
+                // Battery stream with stream creator
+                RegisteredStream::new("battery")
+                    .config_schema(serde_json::json!({}))
+                    .config_example(serde_json::json!({}))
+                    .transform("device_battery", |_ctx| Ok(Box::new(IosBatteryTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosBatteryStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
+                    .build(),
 
-                // Barometer stream
-                super::IosBarometerStream::descriptor(),
+                // Barometer stream with stream creator
+                RegisteredStream::new("barometer")
+                    .config_schema(serde_json::json!({}))
+                    .config_example(serde_json::json!({}))
+                    .transform("environment_pressure", |_ctx| Ok(Box::new(IosBarometerTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosBarometerStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
+                    .build(),
+
+                // FinanceKit stream with unified transform and stream creator
+                RegisteredStream::new("financekit")
+                    .config_schema(serde_json::json!({}))
+                    .config_example(serde_json::json!({}))
+                    .transform("financial_transaction", |_ctx| Ok(Box::new(FinanceKitTransactionTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosFinanceKitStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
+                    .build(),
             ],
         }
     }
@@ -172,13 +230,14 @@ fn microphone_config_example() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::AuthType;
 
     #[test]
     fn test_ios_descriptor() {
         let desc = IosSource::descriptor();
-        assert_eq!(desc.name, "ios");
-        assert_eq!(desc.auth_type, AuthType::Device);
-        assert_eq!(desc.streams.len(), 6);
+        assert_eq!(desc.descriptor.name, "ios");
+        assert_eq!(desc.descriptor.auth_type, AuthType::Device);
+        assert_eq!(desc.streams.len(), 7);
     }
 
     #[test]
@@ -187,12 +246,12 @@ mod tests {
         let healthkit = desc
             .streams
             .iter()
-            .find(|s| s.name == "healthkit")
+            .find(|s| s.descriptor.name == "healthkit")
             .expect("HealthKit stream not found");
 
-        assert_eq!(healthkit.display_name, "HealthKit");
-        assert_eq!(healthkit.table_name, "stream_ios_healthkit");
-        assert!(!healthkit.supports_incremental);
+        assert_eq!(healthkit.descriptor.display_name, "HealthKit");
+        assert_eq!(healthkit.descriptor.table_name, "stream_ios_healthkit");
+        assert!(!healthkit.descriptor.supports_incremental);
     }
 
     #[test]
@@ -201,11 +260,11 @@ mod tests {
         let location = desc
             .streams
             .iter()
-            .find(|s| s.name == "location")
+            .find(|s| s.descriptor.name == "location")
             .expect("Location stream not found");
 
-        assert_eq!(location.display_name, "Location");
-        assert_eq!(location.table_name, "stream_ios_location");
+        assert_eq!(location.descriptor.display_name, "Location");
+        assert_eq!(location.descriptor.table_name, "stream_ios_location");
     }
 
     #[test]
@@ -214,10 +273,10 @@ mod tests {
         let mic = desc
             .streams
             .iter()
-            .find(|s| s.name == "microphone")
+            .find(|s| s.descriptor.name == "microphone")
             .expect("Microphone stream not found");
 
-        assert_eq!(mic.display_name, "Microphone");
-        assert_eq!(mic.table_name, "stream_ios_microphone");
+        assert_eq!(mic.descriptor.display_name, "Microphone");
+        assert_eq!(mic.descriptor.table_name, "stream_ios_microphone");
     }
 }

@@ -18,6 +18,7 @@ mod models;
 mod providers;
 mod proxy;
 mod routes;
+mod tier;
 
 use anyhow::Result;
 use axum::{routing::get, Router};
@@ -29,11 +30,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::budget::BudgetManager;
 use crate::config::Config;
+use crate::tier::TierManager;
 
 /// Shared application state
 pub struct AppState {
     pub config: Arc<Config>,
     pub budget: BudgetManager,
+    pub tier: TierManager,
     pub http_client: reqwest::Client,
 }
 
@@ -65,8 +68,8 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = Arc::new(Config::from_env()?);
 
-    // Initialize model registry (from config file or defaults)
-    models::init(config.models_config_path.as_deref())?;
+    // Initialize model registry (from shared virtues-registry)
+    models::init(None)?;
 
     let mode = if config.has_atlas() { "production (Atlas sync)" } else { "standalone" };
     tracing::info!(
@@ -95,9 +98,10 @@ async fn main() -> Result<()> {
 
     // Log external services configuration
     tracing::info!(
-        "External services: Exa={}, GooglePlaces={}",
+        "External services: Exa={}, GooglePlaces={}, Plaid={}",
         config.exa_api_key.is_some(),
-        config.google_api_key.is_some()
+        config.google_api_key.is_some(),
+        config.has_plaid()
     );
 
     // Verify at least one provider is configured
@@ -105,8 +109,12 @@ async fn main() -> Result<()> {
         tracing::warn!("No LLM provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_CLOUD_PROJECT, CEREBRAS_API_KEY, or XAI_API_KEY.");
     }
 
+    // Initialize tier manager
+    let tier = TierManager::new();
+
     // Initialize budget manager (hydrates from Atlas if configured)
-    let budget = BudgetManager::new(&config).await?;
+    // Also populates tier manager with user tiers
+    let budget = BudgetManager::new(&config, &tier).await?;
     let budget_clone = budget.clone();
     let report_interval = config.atlas_report_interval_secs;
 
@@ -124,6 +132,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState {
         config,
         budget,
+        tier,
         http_client,
     });
 
@@ -136,6 +145,10 @@ async fn main() -> Result<()> {
         .nest("/v1", routes::chat::router())
         // External service proxies (Exa, Google Places)
         .nest("/v1", routes::services::router())
+        // Plaid proxy (bank connections)
+        .nest("/v1", routes::plaid::router())
+        // Connection limits (tier-based)
+        .nest("/v1", routes::limits::router())
         // Middleware
         .layer(TraceLayer::new_for_http())
         .layer(

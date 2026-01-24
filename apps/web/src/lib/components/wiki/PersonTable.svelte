@@ -6,7 +6,7 @@
 -->
 
 <script lang="ts">
-	import { goto } from "$app/navigation";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import { getAllPersons, addPerson } from "$lib/wiki";
 	import type { PersonPage, ContactFrequency } from "$lib/wiki/types";
 	import "iconify-icon";
@@ -102,7 +102,7 @@
 
 	// Handle row click - navigate to person page
 	function handleRowClick(person: PersonPage) {
-		goto(`/wiki/${person.slug}`);
+		workspaceStore.openTabFromRoute(`/wiki/${person.slug}`);
 	}
 
 	// Start adding a new row
