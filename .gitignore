@@ -103,6 +103,8 @@ wheels/
 /apps/oauth-proxy/.pnpm-store
 /target/
 data/*
+core/data/
+core/data/*
 
 # Exception: Allow oauth-proxy dist/ for Vercel deployment
 !/apps/oauth-proxy/dist/
@@ -111,3 +113,6 @@ data/*
 /apps/tollbooth/target
 /core/.sqlx
 /apps/tollbooth/target
+/apps/oauth-proxy/dist
+/apps/oauth-proxy/dist
+/apps/oauth-proxy/dist

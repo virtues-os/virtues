@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use console::{style, Term};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::time::Duration;
-use uuid::Uuid;
 
 /// Result of a pairing operation
 pub enum PairingResult {
@@ -55,7 +54,7 @@ pub fn display_pairing_code(code: &str, server_url: &str, expires_at: &DateTime<
 /// Wait for device to complete pairing with visual feedback
 pub async fn wait_for_pairing(
     db: &sqlx::SqlitePool,
-    source_id: Uuid,
+    source_id: String,
     expires_at: DateTime<Utc>,
 ) -> Result<PairingResult, Box<dyn std::error::Error>> {
     let spinner = ProgressBar::new_spinner();
@@ -74,7 +73,7 @@ pub async fn wait_for_pairing(
         loop {
             spinner.tick();
 
-            let status = crate::check_pairing_status(db, source_id).await?;
+            let status = crate::check_pairing_status(db, source_id.clone()).await?;
 
             match status {
                 PairingStatus::Active(device_info) => {
@@ -100,7 +99,7 @@ pub async fn wait_for_pairing(
 }
 
 /// Display successful pairing with device details
-pub fn display_pairing_success(device_info: &DeviceInfo, source_id: Uuid) {
+pub fn display_pairing_success(device_info: &DeviceInfo, source_id: &str) {
     let term = Term::stdout();
 
     let _ = term.write_line(&format!(
@@ -122,7 +121,7 @@ pub fn display_pairing_success(device_info: &DeviceInfo, source_id: Uuid) {
 }
 
 /// Display available streams with helpful commands
-pub fn display_available_streams(streams: &[crate::StreamConnection], source_id: Uuid) {
+pub fn display_available_streams(streams: &[crate::StreamConnection], source_id: &str) {
     let term = Term::stdout();
 
     if streams.is_empty() {
@@ -154,7 +153,7 @@ pub fn display_available_streams(streams: &[crate::StreamConnection], source_id:
     let _ = term.write_line(&format!(
         "   {} stream enable {} <stream_name>",
         style("virtues").cyan(),
-        style(source_id.to_string()).yellow()
+        style(source_id).yellow()
     ));
     let _ = term.write_line("");
 }

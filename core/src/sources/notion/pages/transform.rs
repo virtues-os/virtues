@@ -37,12 +37,12 @@ impl OntologyTransform for NotionPageTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -58,7 +58,7 @@ impl OntologyTransform for NotionPageTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "pages", checkpoint_key)
+            .read_with_checkpoint(&source_id, "pages", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -69,16 +69,18 @@ impl OntologyTransform for NotionPageTransform {
         );
 
         // Batch insert configuration
+        // Tuple: (id, title, content, document_type, external_id, external_url, created_time, last_modified_time, stream_id, metadata)
         let mut pending_records: Vec<(
-            String,
-            Option<String>,
-            String,
-            String,
-            String,
-            DateTime<Utc>,
-            DateTime<Utc>,
-            Uuid,
-            serde_json::Value,
+            String,        // id (deterministic)
+            String,        // title
+            Option<String>, // content
+            String,        // document_type
+            String,        // external_id (page_id)
+            String,        // external_url
+            DateTime<Utc>, // created_time
+            DateTime<Utc>, // last_modified_time
+            Uuid,          // source_stream_id
+            serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
         let mut batch_insert_count = 0;
@@ -172,8 +174,18 @@ impl OntologyTransform for NotionPageTransform {
                     "properties": properties,
                 });
 
+                // Get source_connection_id for deterministic ID generation
+                let source_connection_id = record
+                    .get("source_connection_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+
+                // Generate deterministic ID for idempotency
+                let id = crate::ids::generate_id("document", &[source_connection_id, page_id]);
+
                 // Add to pending batch
                 pending_records.push((
+                    id,
                     title,
                     content_markdown,
                     document_type.to_string(),
@@ -185,7 +197,7 @@ impl OntologyTransform for NotionPageTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -221,7 +233,7 @@ impl OntologyTransform for NotionPageTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "pages", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "pages", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -288,15 +300,16 @@ impl OntologyTransform for NotionPageTransform {
 async fn execute_notion_page_batch_insert(
     db: &Database,
     records: &[(
-        String,
-        Option<String>,
-        String,
-        String,
-        String,
-        DateTime<Utc>,
-        DateTime<Utc>,
-        Uuid,
-        serde_json::Value,
+        String,        // id (deterministic)
+        String,        // title
+        Option<String>, // content
+        String,        // document_type
+        String,        // external_id (page_id)
+        String,        // external_url
+        DateTime<Utc>, // created_time
+        DateTime<Utc>, // last_modified_time
+        Uuid,          // source_stream_id
+        serde_json::Value, // metadata
     )],
 ) -> Result<usize> {
     if records.is_empty() {
@@ -306,6 +319,7 @@ async fn execute_notion_page_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_knowledge_document",
         &[
+            "id",
             "title",
             "content",
             "document_type",
@@ -318,7 +332,7 @@ async fn execute_notion_page_batch_insert(
             "source_table",
             "source_provider",
         ],
-        "source_stream_id",
+        "id",
         records.len(),
     );
 
@@ -326,6 +340,7 @@ async fn execute_notion_page_batch_insert(
 
     // Bind all parameters row by row
     for (
+        id,
         title,
         content,
         document_type,
@@ -338,6 +353,7 @@ async fn execute_notion_page_batch_insert(
     ) in records
     {
         query = query
+            .bind(id)
             .bind(title)
             .bind(content)
             .bind(document_type)

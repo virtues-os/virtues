@@ -6,11 +6,14 @@
 
 CREATE TABLE IF NOT EXISTS data_health_heart_rate (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     bpm INTEGER NOT NULL,
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -33,11 +36,14 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_health_hrv (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     hrv_ms REAL NOT NULL,
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -60,11 +66,14 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_health_steps (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     step_count INTEGER NOT NULL,
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -87,14 +96,17 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_health_sleep (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     sleep_stages TEXT,  -- JSON
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL,
     duration_minutes INTEGER,
     sleep_quality_score REAL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -117,6 +129,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_health_workout (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     workout_type TEXT NOT NULL,
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL,
@@ -125,11 +138,13 @@ CREATE TABLE IF NOT EXISTS data_health_workout (
     distance_km REAL,
     avg_heart_rate INTEGER,
     max_heart_rate INTEGER,
-    place_id TEXT REFERENCES data_entities_place(id),
+    place_id TEXT REFERENCES wiki_places(id),
     route_geometry TEXT,  -- GeoJSON LineString
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -154,15 +169,18 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_location_point (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     latitude REAL NOT NULL,
     longitude REAL NOT NULL,
     altitude REAL,
     horizontal_accuracy REAL,
     vertical_accuracy REAL,
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -187,16 +205,19 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_location_visit (
     id TEXT PRIMARY KEY,
-    place_id TEXT REFERENCES data_entities_place(id),
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
+    place_id TEXT REFERENCES wiki_places(id),
     place_name TEXT,
     latitude REAL NOT NULL,
     longitude REAL NOT NULL,
     arrival_time TEXT NOT NULL,
     departure_time TEXT,
     duration_minutes INTEGER,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -221,6 +242,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_social_email (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     message_id TEXT NOT NULL,
     thread_id TEXT,
     subject TEXT,
@@ -228,7 +250,7 @@ CREATE TABLE IF NOT EXISTS data_social_email (
     body_preview TEXT,
     from_email TEXT NOT NULL,
     from_name TEXT,
-    from_person_id TEXT REFERENCES data_entities_person(id),
+    from_person_id TEXT REFERENCES wiki_people(id),
     to_emails TEXT DEFAULT '[]',  -- JSON array
     to_names TEXT DEFAULT '[]',  -- JSON array
     to_person_ids TEXT DEFAULT '[]',  -- JSON array
@@ -242,9 +264,11 @@ CREATE TABLE IF NOT EXISTS data_social_email (
     has_attachments INTEGER DEFAULT 0,
     labels TEXT DEFAULT '[]',  -- JSON array
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Vector embedding deferred (removed for SQLite migration)
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -272,13 +296,14 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_social_message (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     message_id TEXT NOT NULL,
-    conversation_id TEXT,
-    platform TEXT NOT NULL,
-    content TEXT,
+    thread_id TEXT,
+    channel TEXT NOT NULL,
+    body TEXT,
     from_identifier TEXT NOT NULL,
     from_name TEXT,
-    from_person_id TEXT REFERENCES data_entities_person(id),
+    from_person_id TEXT REFERENCES wiki_people(id),
     to_identifiers TEXT DEFAULT '[]',  -- JSON array
     to_person_ids TEXT DEFAULT '[]',  -- JSON array
     is_read INTEGER DEFAULT 0,
@@ -286,9 +311,11 @@ CREATE TABLE IF NOT EXISTS data_social_message (
     reply_to_message_id TEXT,
     has_attachments INTEGER DEFAULT 0,
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -297,10 +324,10 @@ CREATE TABLE IF NOT EXISTS data_social_message (
 
 CREATE INDEX IF NOT EXISTS idx_social_message_timestamp
     ON data_social_message(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_social_message_conversation
-    ON data_social_message(conversation_id) WHERE conversation_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_social_message_platform
-    ON data_social_message(platform);
+CREATE INDEX IF NOT EXISTS idx_social_message_thread
+    ON data_social_message(thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_social_message_channel
+    ON data_social_message(channel);
 
 CREATE TRIGGER IF NOT EXISTS data_social_message_set_updated_at
     AFTER UPDATE ON data_social_message
@@ -316,6 +343,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_activity_app_usage (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     app_name TEXT NOT NULL,
     app_bundle_id TEXT,
     app_category TEXT,
@@ -324,10 +352,12 @@ CREATE TABLE IF NOT EXISTS data_activity_app_usage (
     window_title TEXT,
     document_path TEXT,
     url TEXT,
-    thing_id TEXT REFERENCES data_entities_thing(id),
-    source_stream_id TEXT NOT NULL UNIQUE,
+    thing_id TEXT REFERENCES wiki_things(id),
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -354,16 +384,19 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_activity_web_browsing (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     url TEXT NOT NULL,
     domain TEXT NOT NULL,
     page_title TEXT,
     visit_duration_seconds INTEGER,
     scroll_depth_percent REAL,
     timestamp TEXT NOT NULL,
-    thing_id TEXT REFERENCES data_entities_thing(id),
-    source_stream_id TEXT NOT NULL UNIQUE,
+    thing_id TEXT REFERENCES wiki_things(id),
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -390,20 +423,23 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_knowledge_document (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     title TEXT,
     content TEXT,
     content_summary TEXT,
     document_type TEXT,
     external_id TEXT,
     external_url TEXT,
-    thing_id TEXT REFERENCES data_entities_thing(id),
+    thing_id TEXT REFERENCES wiki_things(id),
     tags TEXT DEFAULT '[]',  -- JSON array
     is_authored INTEGER DEFAULT 0,
     created_time TEXT,
     last_modified_time TEXT,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -429,18 +465,21 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_knowledge_ai_conversation (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     conversation_id TEXT NOT NULL,
     message_id TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
     content TEXT NOT NULL,
     model TEXT,
     provider TEXT NOT NULL,
-    thing_id TEXT REFERENCES data_entities_thing(id),
+    thing_id TEXT REFERENCES wiki_things(id),
     tags TEXT DEFAULT '[]',  -- JSON array
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL DEFAULT 'stream_virtues_ai_chat',
     source_provider TEXT NOT NULL DEFAULT 'virtues',
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -468,6 +507,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_speech_transcription (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     audio_url TEXT,
     text TEXT NOT NULL,
     language TEXT,
@@ -476,9 +516,11 @@ CREATE TABLE IF NOT EXISTS data_speech_transcription (
     end_time TEXT,
     speaker_count INTEGER,
     speaker_segments TEXT,  -- JSON
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -501,19 +543,22 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_financial_account (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     account_name TEXT NOT NULL,
     account_type TEXT NOT NULL,
     institution_name TEXT,
     institution_id TEXT,
     mask TEXT,
     currency TEXT DEFAULT 'USD',
-    current_balance REAL,
-    available_balance REAL,
-    credit_limit REAL,
+    current_balance INTEGER,  -- Stored in cents
+    available_balance INTEGER, -- Stored in cents
+    credit_limit INTEGER,      -- Stored in cents
     is_active INTEGER DEFAULT 1,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -538,9 +583,10 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_financial_transaction (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     account_id TEXT NOT NULL REFERENCES data_financial_account(id) ON DELETE CASCADE,
     transaction_id TEXT NOT NULL,
-    amount REAL NOT NULL,
+    amount INTEGER NOT NULL, -- Stored in cents
     currency TEXT DEFAULT 'USD',
     merchant_name TEXT,
     merchant_category TEXT,
@@ -549,12 +595,14 @@ CREATE TABLE IF NOT EXISTS data_financial_transaction (
     is_pending INTEGER DEFAULT 0,
     transaction_type TEXT,
     payment_channel TEXT,
-    place_id TEXT REFERENCES data_entities_place(id),
+    place_id TEXT REFERENCES wiki_places(id),
     timestamp TEXT NOT NULL,
     authorized_timestamp TEXT,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -582,18 +630,21 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_financial_asset (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     account_id TEXT NOT NULL REFERENCES data_financial_account(id) ON DELETE CASCADE,
     asset_type TEXT NOT NULL,
     symbol TEXT,
     name TEXT,
     quantity REAL,
-    cost_basis REAL,
-    current_value REAL,
+    cost_basis INTEGER,    -- Stored in cents
+    current_value INTEGER, -- Stored in cents
     currency TEXT DEFAULT 'USD',
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -620,19 +671,22 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_financial_liability (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     account_id TEXT NOT NULL REFERENCES data_financial_account(id) ON DELETE CASCADE,
     liability_type TEXT NOT NULL,
-    principal REAL,
+    principal INTEGER,       -- Stored in cents
     interest_rate REAL,
-    minimum_payment REAL,
+    minimum_payment INTEGER, -- Stored in cents
     next_payment_due_date TEXT,
     origination_date TEXT,
     maturity_date TEXT,
     currency TEXT DEFAULT 'USD',
     timestamp TEXT NOT NULL,
-    source_stream_id TEXT NOT NULL UNIQUE,
+    source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -659,6 +713,7 @@ END;
 
 CREATE TABLE IF NOT EXISTS data_embedding_jobs (
     id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
     target_table TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
     records_processed INTEGER DEFAULT 0,
@@ -666,6 +721,8 @@ CREATE TABLE IF NOT EXISTS data_embedding_jobs (
     error_message TEXT,
     started_at TEXT,
     completed_at TEXT,
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -679,4 +736,135 @@ CREATE TRIGGER IF NOT EXISTS data_embedding_jobs_set_updated_at
     WHEN NEW.updated_at = OLD.updated_at
 BEGIN
     UPDATE data_embedding_jobs SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+--------------------------------------------------------------------------------
+-- CALENDAR
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data_calendar (
+    id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
+    title TEXT NOT NULL,
+    description TEXT,
+    calendar_name TEXT,
+    event_type TEXT,
+    status TEXT,          -- Event status: confirmed, tentative, cancelled
+    response_status TEXT, -- User's RSVP: accepted, declined, tentative, needsAction
+
+    -- People
+    organizer_identifier TEXT, -- organizer_identifier
+    attendee_identifiers TEXT DEFAULT '[]',  -- attendee_identifiers (JSON array)
+    organizer_person_id TEXT REFERENCES wiki_people(id),
+    attendee_person_ids TEXT DEFAULT '[]',  -- JSON array
+
+    -- Context
+    thing_id TEXT REFERENCES wiki_things(id),
+    place_id TEXT REFERENCES wiki_places(id),
+    location_name TEXT,
+
+    -- Conference
+    conference_url TEXT,
+    conference_platform TEXT,
+
+    -- Time
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    is_all_day INTEGER DEFAULT 0,
+    timezone TEXT,
+    recurrence_rule TEXT,
+
+    -- Time blocking
+    block_type TEXT,
+    is_sacred INTEGER DEFAULT 0,
+
+    -- External source
+    source_stream_id TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    source_provider TEXT NOT NULL,
+    external_id TEXT,
+    external_url TEXT,
+
+    deleted_at_source TEXT,
+    is_archived INTEGER DEFAULT 0,
+    metadata TEXT DEFAULT '{}',  -- JSON
+    -- Vector embedding deferred
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_start
+    ON data_calendar(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_calendar_thing
+    ON data_calendar(thing_id) WHERE thing_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_calendar_place
+    ON data_calendar(place_id) WHERE place_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_calendar_block_type
+    ON data_calendar(block_type) WHERE block_type IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS data_calendar_set_updated_at
+    AFTER UPDATE ON data_calendar
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE data_calendar SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+--------------------------------------------------------------------------------
+-- DEVICE: BATTERY
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data_device_battery (
+    id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
+    battery_level REAL NOT NULL,
+    battery_state TEXT NOT NULL,
+    is_low_power_mode INTEGER DEFAULT 0,
+    timestamp TEXT NOT NULL,
+    source_stream_id TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    source_provider TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}',  -- JSON
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_battery_timestamp
+    ON data_device_battery(timestamp DESC);
+
+CREATE TRIGGER IF NOT EXISTS data_device_battery_set_updated_at
+    AFTER UPDATE ON data_device_battery
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE data_device_battery SET updated_at = datetime('now') WHERE id = NEW.id;
+END;
+
+--------------------------------------------------------------------------------
+-- ENVIRONMENT: PRESSURE
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS data_environment_pressure (
+    id TEXT PRIMARY KEY,
+    source_connection_id TEXT REFERENCES elt_source_connections(id),
+    pressure_hpa REAL NOT NULL,
+    relative_altitude_change REAL,
+    timestamp TEXT NOT NULL,
+    source_stream_id TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    source_provider TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}',  -- JSON
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_environment_pressure_timestamp
+    ON data_environment_pressure(timestamp DESC);
+
+CREATE TRIGGER IF NOT EXISTS data_environment_pressure_set_updated_at
+    AFTER UPDATE ON data_environment_pressure
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE data_environment_pressure SET updated_at = datetime('now') WHERE id = NEW.id;
 END;

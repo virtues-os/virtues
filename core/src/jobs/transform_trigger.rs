@@ -11,7 +11,6 @@ use crate::sources::base::MemoryDataSource;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Create and execute a transform job for a stream with in-memory records (hot path)
 ///
@@ -38,10 +37,10 @@ pub async fn create_transform_job_for_stream(
     db: &SqlitePool,
     executor: &JobExecutor,
     context: &Arc<TransformContext>,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     records: Option<Vec<serde_json::Value>>,
-) -> Result<Uuid> {
+) -> Result<String> {
     // Normalize stream name using centralized registry function
     let table_name = registry::normalize_stream_name(stream_name);
 
@@ -64,6 +63,7 @@ pub async fn create_transform_job_for_stream(
 
     // Extract domain from first target ontology table name (e.g., "health_heart_rate" -> "health")
     let domain = stream
+        .descriptor
         .target_ontologies
         .first()
         .map(|ont| ont.split('_').next().unwrap_or("unknown"))
@@ -71,8 +71,8 @@ pub async fn create_transform_job_for_stream(
 
     // Create transform job metadata from registry
     let metadata = json!({
-        "source_table": stream.table_name,
-        "target_table": stream.target_ontologies.first().unwrap_or(&""),
+        "source_table": stream.descriptor.table_name,
+        "target_table": stream.descriptor.target_ontologies.first().unwrap_or(&""),
         "domain": domain,
         "source_provider": source_name,
     });
@@ -81,7 +81,7 @@ pub async fn create_transform_job_for_stream(
     let request = CreateJobRequest {
         job_type: JobType::Transform,
         status: JobStatus::Pending,
-        source_connection_id: Some(source_id),
+        source_connection_id: Some(source_id.clone()),
         stream_name: Some(stream_name.to_string()),
         sync_mode: None,
         transform_id: None,
@@ -100,8 +100,8 @@ pub async fn create_transform_job_for_stream(
             source_id = %source_id,
             stream_name,
             record_count = records.len(),
-            source_table = stream.table_name,
-            target_table = stream.target_ontologies.first().unwrap_or(&""),
+            source_table = stream.descriptor.table_name,
+            target_table = stream.descriptor.target_ontologies.first().unwrap_or(&""),
             domain = domain,
             "Created transform job with memory data source (HOT PATH - direct transform)"
         );
@@ -109,7 +109,7 @@ pub async fn create_transform_job_for_stream(
         // Create MemoryDataSource with records
         let memory_source = MemoryDataSource::new(
             records,
-            source_id,
+            source_id.clone(),
             stream_name.to_string(),
             None, // min_timestamp - could be extracted if needed
             None, // max_timestamp - could be extracted if needed
@@ -128,33 +128,22 @@ pub async fn create_transform_job_for_stream(
         let memory_executor =
             JobExecutor::new(db.clone(), (*transform_context_with_memory).clone());
 
-        // Parse job.id to Uuid for executor
-        let job_uuid = Uuid::parse_str(&job.id)
-            .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
-
         // Execute with memory data source
-        memory_executor.execute_async(job_uuid);
+        memory_executor.execute_async(job.id.clone());
     } else {
         tracing::info!(
             job_id = %job.id,
             source_id = %source_id,
             stream_name,
-            source_table = stream.table_name,
-            target_table = stream.target_ontologies.first().unwrap_or(&""),
+            source_table = stream.descriptor.table_name,
+            target_table = stream.descriptor.target_ontologies.first().unwrap_or(&""),
             domain = domain,
             "Created transform job with S3 data source (COLD PATH - traditional S3 read)"
         );
 
-        // Parse job.id to Uuid for executor
-        let job_uuid = Uuid::parse_str(&job.id)
-            .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
-
         // Execute with standard S3 reader (cold path)
-        executor.execute_async(job_uuid);
+        executor.execute_async(job.id.clone());
     }
 
-    // Parse job.id to Uuid for return value
-    let job_uuid = Uuid::parse_str(&job.id)
-        .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
-    Ok(job_uuid)
+    Ok(job.id)
 }

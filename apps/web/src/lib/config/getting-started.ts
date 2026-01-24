@@ -17,7 +17,9 @@ export interface GettingStartedStep {
 export type StepAction =
 	| { type: 'createSession'; title: string; content: string }
 	| { type: 'navigate'; href: string }
-	| { type: 'focusInput'; placeholder?: string };
+	| { type: 'focusInput'; placeholder?: string }
+	| { type: 'openExternal'; url: string }
+	| { type: 'suggestPrompt' };
 
 export type AutoCompleteCheck =
 	| { type: 'hasSourcesConnected' }
@@ -50,17 +52,32 @@ Virtues operates on the principle of *subsidiarity*—decisions and data should 
 
 Connect your first data source—perhaps your Google account or iPhone—and simply ask me a question. Try something like "What did I do yesterday?" or "Show me my recent emails about the project."
 
-I'm here to help you live your story more purposefully. What would you like to explore first?`;
+I'm here to help you live your life, your story more purposefully. What would you like to explore first?
+
+For a long time, the trade-off has been: "Give us your data, and we'll give you a free service." But that usually means your attention is the product being sold.
+
+Virtues flips that script. I think the most exciting part is the shift from fragmentation to coherence.
+
+Think about it:
+
+Your Health data is in one app.
+Your Work projects are in another.
+Your Personal reflections are in a third.
+Your Finances are in a fourth.
+Usually, you are the only bridge between those worlds, and it's exhausting to keep track of it all. By bringing them together here—privately—we can start to see patterns. We can see how your sleep affects your productivity, or how your spending aligns (or doesn't) with what you say your goals are.
+
+It’s not just about being a "smart assistant"; it’s about being a mirror that helps you see your life more clearly.
+`;
 
 /**
  * Getting Started steps configuration
  */
 export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 	{
-		id: 'learn',
-		title: 'Learn about Virtues',
-		description: 'Discover what your AI assistant can do',
-		icon: 'ri:lightbulb-line',
+		id: 'intro-chat',
+		title: 'Getting started chat',
+		description: 'Open a chat with prepopulated info',
+		icon: 'ri:chat-1-line',
 		action: {
 			type: 'createSession',
 			title: INTRO_SESSION_TITLE,
@@ -68,44 +85,25 @@ export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 		}
 	},
 	{
-		id: 'connect-source',
-		title: 'Connect a data source',
-		description: 'Link Google, Notion, or Plaid',
+		id: 'connections',
+		title: 'Connections',
+		description: 'Add iOS, Gmail, Mac, etc.',
 		icon: 'ri:link',
-		action: { type: 'navigate', href: '/data/sources/add' },
+		action: { type: 'navigate', href: '/data/sources' },
 		autoComplete: { type: 'hasSourcesConnected' }
 	},
 	{
-		id: 'pair-device',
-		title: 'Pair your iPhone',
-		description: 'Sync health, location, and more',
-		icon: 'ri:smartphone-line',
-		action: { type: 'navigate', href: '/pair' },
-		autoComplete: { type: 'hasDevicePaired' }
-	},
-	{
-		id: 'first-question',
-		title: 'Ask your first question',
-		description: 'Try "What did I do yesterday?"',
-		icon: 'ri:question-line',
-		action: {
-			type: 'focusInput',
-			placeholder: 'What did I do yesterday?'
-		},
-		autoComplete: { type: 'hasChatSessions' }
-	},
-	{
-		id: 'explore-data',
-		title: 'Explore your data',
-		description: "See what's connected and synced",
-		icon: 'ri:database-2-line',
-		action: { type: 'navigate', href: '/data/sources' }
-	},
-	{
-		id: 'personalize',
-		title: 'Personalize your assistant',
-		description: 'Set name and preferences',
+		id: 'personalization',
+		title: 'Personalization',
+		description: 'Customize theme and settings',
 		icon: 'ri:user-settings-line',
 		action: { type: 'navigate', href: '/profile/assistant' }
+	},
+	{
+		id: 'user-docs',
+		title: 'User Docs',
+		description: 'View documentation at virtues.com',
+		icon: 'ri:book-open-line',
+		action: { type: 'openExternal', url: 'https://virtues.com' }
 	}
 ];

@@ -235,7 +235,7 @@ ORDER BY DATE(timestamp);
 
 -- Upcoming calendar (titles only, no attendees/content)
 SELECT title, start_time, end_time
-FROM data_praxis_calendar
+FROM data_calendar
 WHERE start_time BETWEEN datetime('now') AND datetime('now', '+7 days')
 ORDER BY start_time;
 ```

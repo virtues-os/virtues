@@ -7,9 +7,10 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::error::{Error, Result};
+use crate::ids;
+
 
 // ============================================================================
 // Wiki Page Types - Entity Views
@@ -18,7 +19,7 @@ use crate::error::{Error, Result};
 /// A person wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPerson {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub canonical_name: String,
     pub content: Option<String>,
@@ -46,7 +47,7 @@ pub struct WikiPerson {
 /// A place wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPlace {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub name: String,
     pub content: Option<String>,
@@ -65,7 +66,7 @@ pub struct WikiPlace {
 /// An organization wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiOrganization {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub canonical_name: String,
     pub content: Option<String>,
@@ -85,7 +86,7 @@ pub struct WikiOrganization {
 /// A thing wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiThing {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub canonical_name: String,
     pub content: Option<String>,
@@ -106,7 +107,7 @@ pub struct WikiThing {
 /// A telos wiki page (life purpose/mission)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiTelos {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub title: String,
     pub description: Option<String>,
@@ -120,7 +121,7 @@ pub struct WikiTelos {
 /// A narrative act wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiAct {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub title: String,
     pub subtitle: Option<String>,
@@ -131,7 +132,7 @@ pub struct WikiAct {
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
     pub sort_order: i32,
-    pub telos_id: Option<Uuid>,
+    pub telos_id: Option<String>,
     pub themes: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -140,7 +141,7 @@ pub struct WikiAct {
 /// A narrative chapter wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiChapter {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub title: String,
     pub subtitle: Option<String>,
@@ -150,7 +151,7 @@ pub struct WikiChapter {
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
     pub sort_order: i32,
-    pub act_id: Option<Uuid>,
+    pub act_id: Option<String>,
     pub themes: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -159,7 +160,7 @@ pub struct WikiChapter {
 /// A day wiki page
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiDay {
-    pub id: Uuid,
+    pub id: String,
     pub date: NaiveDate,
     pub start_timezone: Option<String>,
     pub end_timezone: Option<String>,
@@ -167,8 +168,8 @@ pub struct WikiDay {
     pub autobiography_sections: Option<serde_json::Value>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
-    pub act_id: Option<Uuid>,
-    pub chapter_id: Option<Uuid>,
+    pub act_id: Option<String>,
+    pub chapter_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -180,7 +181,7 @@ pub struct WikiDay {
 /// A person list item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPersonListItem {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub canonical_name: String,
     pub picture: Option<String>,
@@ -191,7 +192,7 @@ pub struct WikiPersonListItem {
 /// A place list item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiPlaceListItem {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub name: String,
     pub category: Option<String>,
@@ -202,7 +203,7 @@ pub struct WikiPlaceListItem {
 /// An organization list item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiOrganizationListItem {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub canonical_name: String,
     pub organization_type: Option<String>,
@@ -212,7 +213,7 @@ pub struct WikiOrganizationListItem {
 /// A thing list item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WikiThingListItem {
-    pub id: Uuid,
+    pub id: String,
     pub slug: Option<String>,
     pub canonical_name: String,
     pub thing_type: Option<String>,
@@ -301,7 +302,7 @@ pub async fn get_person_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiPer
             relationship_category, nickname, notes,
             first_interaction, last_interaction, interaction_count,
             created_at, updated_at
-        FROM data_entities_person
+        FROM wiki_people
         WHERE slug = $1
         "#,
         slug
@@ -311,12 +312,11 @@ pub async fn get_person_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiPer
     .map_err(|e| Error::Database(format!("Failed to get person: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Person not found: {}", slug)))?;
 
-    // Parse ID from Option<String> to Uuid
+    // Get ID as string
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid person ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing person ID".to_string()))?;
 
     Ok(WikiPerson {
         id,
@@ -368,8 +368,7 @@ pub async fn get_person_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiPer
 }
 
 /// Get a person by ID
-pub async fn get_person(pool: &SqlitePool, id: Uuid) -> Result<WikiPerson> {
-    let id_str = id.to_string();
+pub async fn get_person(pool: &SqlitePool, id: String) -> Result<WikiPerson> {
     let row = sqlx::query!(
         r#"
         SELECT
@@ -378,18 +377,24 @@ pub async fn get_person(pool: &SqlitePool, id: Uuid) -> Result<WikiPerson> {
             relationship_category, nickname, notes,
             first_interaction, last_interaction, interaction_count,
             created_at, updated_at
-        FROM data_entities_person
+        FROM wiki_people
         WHERE id = $1
         "#,
-        id_str
+        id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get person: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
 
+    // Get ID as string
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing person ID".to_string()))?;
+
     Ok(WikiPerson {
-        id,
+        id: row_id,
         slug: row.slug.clone(),
         canonical_name: row.canonical_name.clone(),
         content: row.content.clone(),
@@ -442,7 +447,7 @@ pub async fn list_people(pool: &SqlitePool) -> Result<Vec<WikiPersonListItem>> {
         r#"
         SELECT
             id, slug, canonical_name, picture, relationship_category, last_interaction
-        FROM data_entities_person
+        FROM wiki_people
         ORDER BY canonical_name ASC
         "#
     )
@@ -453,7 +458,7 @@ pub async fn list_people(pool: &SqlitePool) -> Result<Vec<WikiPersonListItem>> {
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             Some(WikiPersonListItem {
                 id,
                 slug: row.slug.clone(),
@@ -473,10 +478,9 @@ pub async fn list_people(pool: &SqlitePool) -> Result<Vec<WikiPersonListItem>> {
 /// Update a person
 pub async fn update_person(
     pool: &SqlitePool,
-    id: Uuid,
+    id: String,
     req: UpdateWikiPersonRequest,
 ) -> Result<WikiPerson> {
-    let id_str = id.to_string();
     // Convert Vec<String> arrays to JSON strings for SQLite
     let emails_json = req
         .emails
@@ -489,7 +493,7 @@ pub async fn update_person(
 
     sqlx::query!(
         r#"
-        UPDATE data_entities_person
+        UPDATE wiki_people
         SET
             slug = COALESCE($2, slug),
             canonical_name = COALESCE($3, canonical_name),
@@ -509,7 +513,7 @@ pub async fn update_person(
             updated_at = datetime('now')
         WHERE id = $1
         "#,
-        id_str,
+        id,
         req.slug,
         req.canonical_name,
         req.content,
@@ -546,7 +550,7 @@ pub async fn get_place_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiPlac
             latitude, longitude,
             visit_count, first_visit, last_visit,
             created_at, updated_at
-        FROM data_entities_place
+        FROM wiki_places
         WHERE slug = $1
         "#,
         slug
@@ -558,9 +562,8 @@ pub async fn get_place_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiPlac
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid place ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing place ID".to_string()))?;
 
     Ok(WikiPlace {
         id,
@@ -593,8 +596,7 @@ pub async fn get_place_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiPlac
 }
 
 /// Get a place by ID (wiki view with content fields)
-pub async fn get_wiki_place(pool: &SqlitePool, id: Uuid) -> Result<WikiPlace> {
-    let id_str = id.to_string();
+pub async fn get_wiki_place(pool: &SqlitePool, id: String) -> Result<WikiPlace> {
     let row = sqlx::query!(
         r#"
         SELECT
@@ -602,18 +604,24 @@ pub async fn get_wiki_place(pool: &SqlitePool, id: Uuid) -> Result<WikiPlace> {
             latitude, longitude,
             visit_count, first_visit, last_visit,
             created_at, updated_at
-        FROM data_entities_place
+        FROM wiki_places
         WHERE id = $1
         "#,
-        id_str
+        id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get place: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
 
+    // Get ID as string
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing place ID".to_string()))?;
+
     Ok(WikiPlace {
-        id,
+        id: row_id,
         slug: row.slug.clone(),
         name: row.name.clone(),
         content: row.content.clone(),
@@ -648,7 +656,7 @@ pub async fn list_wiki_places(pool: &SqlitePool) -> Result<Vec<WikiPlaceListItem
         r#"
         SELECT
             id, slug, name, category, address, visit_count
-        FROM data_entities_place
+        FROM wiki_places
         ORDER BY name ASC
         "#
     )
@@ -659,7 +667,7 @@ pub async fn list_wiki_places(pool: &SqlitePool) -> Result<Vec<WikiPlaceListItem
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             Some(WikiPlaceListItem {
                 id,
                 slug: row.slug.clone(),
@@ -675,13 +683,12 @@ pub async fn list_wiki_places(pool: &SqlitePool) -> Result<Vec<WikiPlaceListItem
 /// Update a place wiki content
 pub async fn update_wiki_place(
     pool: &SqlitePool,
-    id: Uuid,
+    id: String,
     req: UpdateWikiPlaceRequest,
 ) -> Result<WikiPlace> {
-    let id_str = id.to_string();
     sqlx::query!(
         r#"
-        UPDATE data_entities_place
+        UPDATE wiki_places
         SET
             slug = COALESCE($2, slug),
             name = COALESCE($3, name),
@@ -692,7 +699,7 @@ pub async fn update_wiki_place(
             updated_at = datetime('now')
         WHERE id = $1
         "#,
-        id_str,
+        id,
         req.slug,
         req.name,
         req.content,
@@ -721,7 +728,7 @@ pub async fn get_organization_by_slug(pool: &SqlitePool, slug: &str) -> Result<W
             start_date, end_date, interaction_count,
             first_interaction, last_interaction,
             created_at, updated_at
-        FROM data_entities_organization
+        FROM wiki_orgs
         WHERE slug = $1
         "#,
         slug
@@ -733,9 +740,8 @@ pub async fn get_organization_by_slug(pool: &SqlitePool, slug: &str) -> Result<W
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid organization ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing organization ID".to_string()))?;
 
     Ok(WikiOrganization {
         id,
@@ -775,8 +781,7 @@ pub async fn get_organization_by_slug(pool: &SqlitePool, slug: &str) -> Result<W
 }
 
 /// Get an organization by ID
-pub async fn get_organization(pool: &SqlitePool, id: Uuid) -> Result<WikiOrganization> {
-    let id_str = id.to_string();
+pub async fn get_organization(pool: &SqlitePool, id: String) -> Result<WikiOrganization> {
     let row = sqlx::query!(
         r#"
         SELECT
@@ -785,18 +790,24 @@ pub async fn get_organization(pool: &SqlitePool, id: Uuid) -> Result<WikiOrganiz
             start_date, end_date, interaction_count,
             first_interaction, last_interaction,
             created_at, updated_at
-        FROM data_entities_organization
+        FROM wiki_orgs
         WHERE id = $1
         "#,
-        id_str
+        id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get organization: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Organization not found: {}", id)))?;
 
+    // Get ID as string
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing organization ID".to_string()))?;
+
     Ok(WikiOrganization {
-        id,
+        id: row_id,
         slug: row.slug.clone(),
         canonical_name: row.canonical_name.clone(),
         content: row.content.clone(),
@@ -838,7 +849,7 @@ pub async fn list_organizations(pool: &SqlitePool) -> Result<Vec<WikiOrganizatio
         r#"
         SELECT
             id, slug, canonical_name, organization_type, relationship_type
-        FROM data_entities_organization
+        FROM wiki_orgs
         ORDER BY canonical_name ASC
         "#
     )
@@ -849,7 +860,7 @@ pub async fn list_organizations(pool: &SqlitePool) -> Result<Vec<WikiOrganizatio
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             Some(WikiOrganizationListItem {
                 id,
                 slug: row.slug.clone(),
@@ -864,13 +875,12 @@ pub async fn list_organizations(pool: &SqlitePool) -> Result<Vec<WikiOrganizatio
 /// Update an organization
 pub async fn update_organization(
     pool: &SqlitePool,
-    id: Uuid,
+    id: String,
     req: UpdateWikiOrganizationRequest,
 ) -> Result<WikiOrganization> {
-    let id_str = id.to_string();
     sqlx::query!(
         r#"
-        UPDATE data_entities_organization
+        UPDATE wiki_orgs
         SET
             slug = COALESCE($2, slug),
             canonical_name = COALESCE($3, canonical_name),
@@ -884,7 +894,7 @@ pub async fn update_organization(
             updated_at = datetime('now')
         WHERE id = $1
         "#,
-        id_str,
+        id,
         req.slug,
         req.canonical_name,
         req.content,
@@ -915,7 +925,7 @@ pub async fn get_thing_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiThin
             thing_type, description,
             first_mentioned, last_mentioned, mention_count,
             created_at, updated_at
-        FROM data_entities_thing
+        FROM wiki_things
         WHERE slug = $1
         "#,
         slug
@@ -927,9 +937,8 @@ pub async fn get_thing_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiThin
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid thing ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing thing ID".to_string()))?;
 
     Ok(WikiThing {
         id,
@@ -960,8 +969,7 @@ pub async fn get_thing_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiThin
 }
 
 /// Get a thing by ID
-pub async fn get_thing(pool: &SqlitePool, id: Uuid) -> Result<WikiThing> {
-    let id_str = id.to_string();
+pub async fn get_thing(pool: &SqlitePool, id: String) -> Result<WikiThing> {
     let row = sqlx::query!(
         r#"
         SELECT
@@ -969,18 +977,24 @@ pub async fn get_thing(pool: &SqlitePool, id: Uuid) -> Result<WikiThing> {
             thing_type, description,
             first_mentioned, last_mentioned, mention_count,
             created_at, updated_at
-        FROM data_entities_thing
+        FROM wiki_things
         WHERE id = $1
         "#,
-        id_str
+        id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", id)))?;
 
+    // Get ID as string
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing thing ID".to_string()))?;
+
     Ok(WikiThing {
-        id,
+        id: row_id,
         slug: row.slug.clone(),
         canonical_name: row.canonical_name.clone(),
         content: row.content.clone(),
@@ -1013,7 +1027,7 @@ pub async fn list_things(pool: &SqlitePool) -> Result<Vec<WikiThingListItem>> {
         r#"
         SELECT
             id, slug, canonical_name, thing_type
-        FROM data_entities_thing
+        FROM wiki_things
         ORDER BY canonical_name ASC
         "#
     )
@@ -1024,7 +1038,7 @@ pub async fn list_things(pool: &SqlitePool) -> Result<Vec<WikiThingListItem>> {
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             Some(WikiThingListItem {
                 id,
                 slug: row.slug.clone(),
@@ -1038,13 +1052,12 @@ pub async fn list_things(pool: &SqlitePool) -> Result<Vec<WikiThingListItem>> {
 /// Update a thing
 pub async fn update_thing(
     pool: &SqlitePool,
-    id: Uuid,
+    id: String,
     req: UpdateWikiThingRequest,
 ) -> Result<WikiThing> {
-    let id_str = id.to_string();
     sqlx::query!(
         r#"
-        UPDATE data_entities_thing
+        UPDATE wiki_things
         SET
             slug = COALESCE($2, slug),
             canonical_name = COALESCE($3, canonical_name),
@@ -1055,7 +1068,7 @@ pub async fn update_thing(
             updated_at = datetime('now')
         WHERE id = $1
         "#,
-        id_str,
+        id,
         req.slug,
         req.canonical_name,
         req.content,
@@ -1081,7 +1094,7 @@ pub async fn get_active_telos(pool: &SqlitePool) -> Result<Option<WikiTelos>> {
         SELECT
             id, slug, title, description, content, cover_image, is_active,
             created_at, updated_at
-        FROM data_telos
+        FROM narrative_telos
         WHERE is_active = true
         "#
     )
@@ -1090,7 +1103,7 @@ pub async fn get_active_telos(pool: &SqlitePool) -> Result<Option<WikiTelos>> {
     .map_err(|e| Error::Database(format!("Failed to get active telos: {}", e)))?;
 
     Ok(row.and_then(|r| {
-        let id = r.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+        let id = r.id.clone()?;
         Some(WikiTelos {
             id,
             slug: r.slug.clone(),
@@ -1116,7 +1129,7 @@ pub async fn get_telos_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiTelo
         SELECT
             id, slug, title, description, content, cover_image, is_active,
             created_at, updated_at
-        FROM data_telos
+        FROM narrative_telos
         WHERE slug = $1
         "#,
         slug
@@ -1128,9 +1141,8 @@ pub async fn get_telos_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiTelo
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid telos ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing telos ID".to_string()))?;
 
     Ok(WikiTelos {
         id,
@@ -1161,7 +1173,7 @@ pub async fn get_act_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiAct> {
             id, slug, title, subtitle, description, content, cover_image, location,
             start_date, end_date, sort_order, telos_id, themes,
             created_at, updated_at
-        FROM data_narrative_act
+        FROM narrative_acts
         WHERE slug = $1
         "#,
         slug
@@ -1173,9 +1185,8 @@ pub async fn get_act_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiAct> {
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid act ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing act ID".to_string()))?;
 
     Ok(WikiAct {
         id,
@@ -1193,7 +1204,7 @@ pub async fn get_act_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiAct> {
             .as_ref()
             .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
         sort_order: row.sort_order as i32,
-        telos_id: row.telos_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+        telos_id: row.telos_id.clone(),
         themes: row
             .themes
             .as_ref()
@@ -1208,26 +1219,31 @@ pub async fn get_act_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiAct> {
 }
 
 /// Get an act by ID
-pub async fn get_act(pool: &SqlitePool, id: Uuid) -> Result<WikiAct> {
-    let id_str = id.to_string();
+pub async fn get_act(pool: &SqlitePool, id: String) -> Result<WikiAct> {
     let row = sqlx::query!(
         r#"
         SELECT
             id, slug, title, subtitle, description, content, cover_image, location,
             start_date, end_date, sort_order, telos_id, themes,
             created_at, updated_at
-        FROM data_narrative_act
+        FROM narrative_acts
         WHERE id = $1
         "#,
-        id_str
+        id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get act: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Act not found: {}", id)))?;
 
+    // Get ID as string
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing act ID".to_string()))?;
+
     Ok(WikiAct {
-        id,
+        id: row_id,
         slug: row.slug.clone(),
         title: row.title.clone(),
         subtitle: row.subtitle.clone(),
@@ -1242,7 +1258,7 @@ pub async fn get_act(pool: &SqlitePool, id: Uuid) -> Result<WikiAct> {
             .as_ref()
             .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
         sort_order: row.sort_order as i32,
-        telos_id: row.telos_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+        telos_id: row.telos_id.clone(),
         themes: row
             .themes
             .as_ref()
@@ -1264,7 +1280,7 @@ pub async fn list_acts(pool: &SqlitePool) -> Result<Vec<WikiAct>> {
             id, slug, title, subtitle, description, content, cover_image, location,
             start_date, end_date, sort_order, telos_id, themes,
             created_at, updated_at
-        FROM data_narrative_act
+        FROM narrative_acts
         ORDER BY sort_order ASC, start_date ASC
         "#
     )
@@ -1275,7 +1291,7 @@ pub async fn list_acts(pool: &SqlitePool) -> Result<Vec<WikiAct>> {
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             Some(WikiAct {
                 id,
                 slug: row.slug.clone(),
@@ -1292,7 +1308,7 @@ pub async fn list_acts(pool: &SqlitePool) -> Result<Vec<WikiAct>> {
                     .as_ref()
                     .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
                 sort_order: row.sort_order as i32,
-                telos_id: row.telos_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+                telos_id: row.telos_id.clone(),
                 themes: row
                     .themes
                     .as_ref()
@@ -1320,7 +1336,7 @@ pub async fn get_chapter_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiCh
             id, slug, title, subtitle, description, content, cover_image,
             start_date, end_date, sort_order, act_id, themes,
             created_at, updated_at
-        FROM data_narrative_chapter
+        FROM narrative_chapters
         WHERE slug = $1
         "#,
         slug
@@ -1332,9 +1348,8 @@ pub async fn get_chapter_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiCh
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid chapter ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing chapter ID".to_string()))?;
 
     Ok(WikiChapter {
         id,
@@ -1351,7 +1366,7 @@ pub async fn get_chapter_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiCh
             .as_ref()
             .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
         sort_order: row.sort_order as i32,
-        act_id: row.act_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+        act_id: row.act_id.clone(),
         themes: row
             .themes
             .as_ref()
@@ -1366,26 +1381,31 @@ pub async fn get_chapter_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiCh
 }
 
 /// Get a chapter by ID
-pub async fn get_chapter(pool: &SqlitePool, id: Uuid) -> Result<WikiChapter> {
-    let id_str = id.to_string();
+pub async fn get_chapter(pool: &SqlitePool, id: String) -> Result<WikiChapter> {
     let row = sqlx::query!(
         r#"
         SELECT
             id, slug, title, subtitle, description, content, cover_image,
             start_date, end_date, sort_order, act_id, themes,
             created_at, updated_at
-        FROM data_narrative_chapter
+        FROM narrative_chapters
         WHERE id = $1
         "#,
-        id_str
+        id
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get chapter: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Chapter not found: {}", id)))?;
 
+    // Get ID as string
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing chapter ID".to_string()))?;
+
     Ok(WikiChapter {
-        id,
+        id: row_id,
         slug: row.slug.clone(),
         title: row.title.clone(),
         subtitle: row.subtitle.clone(),
@@ -1399,7 +1419,7 @@ pub async fn get_chapter(pool: &SqlitePool, id: Uuid) -> Result<WikiChapter> {
             .as_ref()
             .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
         sort_order: row.sort_order as i32,
-        act_id: row.act_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+        act_id: row.act_id.clone(),
         themes: row
             .themes
             .as_ref()
@@ -1414,19 +1434,18 @@ pub async fn get_chapter(pool: &SqlitePool, id: Uuid) -> Result<WikiChapter> {
 }
 
 /// List chapters for an act
-pub async fn list_chapters_for_act(pool: &SqlitePool, act_id: Uuid) -> Result<Vec<WikiChapter>> {
-    let act_id_str = act_id.to_string();
+pub async fn list_chapters_for_act(pool: &SqlitePool, act_id: String) -> Result<Vec<WikiChapter>> {
     let rows = sqlx::query!(
         r#"
         SELECT
             id, slug, title, subtitle, description, content, cover_image,
             start_date, end_date, sort_order, act_id, themes,
             created_at, updated_at
-        FROM data_narrative_chapter
+        FROM narrative_chapters
         WHERE act_id = $1
         ORDER BY sort_order ASC, start_date ASC
         "#,
-        act_id_str
+        act_id
     )
     .fetch_all(pool)
     .await
@@ -1435,7 +1454,7 @@ pub async fn list_chapters_for_act(pool: &SqlitePool, act_id: Uuid) -> Result<Ve
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             Some(WikiChapter {
                 id,
                 slug: row.slug.clone(),
@@ -1451,7 +1470,7 @@ pub async fn list_chapters_for_act(pool: &SqlitePool, act_id: Uuid) -> Result<Ve
                     .as_ref()
                     .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()),
                 sort_order: row.sort_order as i32,
-                act_id: row.act_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
+                act_id: row.act_id.clone(),
                 themes: row
                     .themes
                     .as_ref()
@@ -1482,7 +1501,7 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             last_edited_by, cover_image, act_id, chapter_id,
             created_at, updated_at
-        FROM data_temporal_day
+        FROM wiki_days
         WHERE date = $1
         "#,
         date_str
@@ -1494,9 +1513,8 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
     if let Some(row) = existing {
         let id = row
             .id
-            .as_ref()
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| Error::Database("Invalid day ID".to_string()))?;
+            .clone()
+            .ok_or_else(|| Error::Database("Missing day ID".to_string()))?;
         return Ok(WikiDay {
             id,
             date,
@@ -1509,11 +1527,8 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
                 .and_then(|s| serde_json::from_str(s).ok()),
             last_edited_by: row.last_edited_by.clone(),
             cover_image: row.cover_image.clone(),
-            act_id: row.act_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-            chapter_id: row
-                .chapter_id
-                .as_ref()
-                .and_then(|s| Uuid::parse_str(s).ok()),
+            act_id: row.act_id.clone(),
+            chapter_id: row.chapter_id.clone(),
             created_at: DateTime::parse_from_rfc3339(&row.created_at)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
@@ -1524,10 +1539,10 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
     }
 
     // Create new day
-    let day_id = Uuid::new_v4().to_string();
+    let day_id = ids::generate_id(ids::WIKI_DAY_PREFIX, &[&date_str]);
     let row = sqlx::query!(
         r#"
-        INSERT INTO data_temporal_day (id, date)
+        INSERT INTO wiki_days (id, date)
         VALUES ($1, $2)
         RETURNING
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
@@ -1543,9 +1558,8 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Invalid day ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing day ID".to_string()))?;
 
     Ok(WikiDay {
         id,
@@ -1559,11 +1573,8 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
             .and_then(|s| serde_json::from_str(s).ok()),
         last_edited_by: Some(row.last_edited_by.clone()),
         cover_image: row.cover_image.clone(),
-        act_id: row.act_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-        chapter_id: row
-            .chapter_id
-            .as_ref()
-            .and_then(|s| Uuid::parse_str(s).ok()),
+        act_id: row.act_id.clone(),
+        chapter_id: row.chapter_id.clone(),
         created_at: DateTime::parse_from_rfc3339(&row.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1589,7 +1600,7 @@ pub async fn update_day(
 
     sqlx::query!(
         r#"
-        UPDATE data_temporal_day
+        UPDATE wiki_days
         SET
             autobiography = COALESCE($2, autobiography),
             autobiography_sections = COALESCE($3, autobiography_sections),
@@ -1626,7 +1637,7 @@ pub async fn list_days(
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             last_edited_by, cover_image, act_id, chapter_id,
             created_at, updated_at
-        FROM data_temporal_day
+        FROM wiki_days
         WHERE date >= $1 AND date <= $2
         ORDER BY date DESC
         "#,
@@ -1640,7 +1651,7 @@ pub async fn list_days(
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let id = row.id.clone()?;
             let date = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").ok()?;
             Some(WikiDay {
                 id,
@@ -1654,11 +1665,8 @@ pub async fn list_days(
                     .and_then(|s| serde_json::from_str(s).ok()),
                 last_edited_by: row.last_edited_by.clone(),
                 cover_image: row.cover_image.clone(),
-                act_id: row.act_id.as_ref().and_then(|s| Uuid::parse_str(s).ok()),
-                chapter_id: row
-                    .chapter_id
-                    .as_ref()
-                    .and_then(|s| Uuid::parse_str(s).ok()),
+                act_id: row.act_id.clone(),
+                chapter_id: row.chapter_id.clone(),
                 created_at: DateTime::parse_from_rfc3339(&row.created_at)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
@@ -1678,7 +1686,7 @@ pub async fn list_days(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SlugResolution {
     pub entity_type: String,
-    pub id: Uuid,
+    pub id: String,
 }
 
 /// Resolve a slug to find which entity type it belongs to
@@ -1761,11 +1769,11 @@ pub async fn resolve_slug(pool: &SqlitePool, slug: &str) -> Result<SlugResolutio
 /// A citation linking wiki content to ontology data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Citation {
-    pub id: Uuid,
+    pub id: String,
     pub source_type: String,
-    pub source_id: Uuid,
+    pub source_id: String,
     pub target_table: String,
-    pub target_id: Uuid,
+    pub target_id: String,
     pub citation_index: i32,
     pub label: Option<String>,
     pub preview: Option<String>,
@@ -1779,9 +1787,9 @@ pub struct Citation {
 #[derive(Debug, Deserialize)]
 pub struct CreateCitationRequest {
     pub source_type: String,
-    pub source_id: Uuid,
+    pub source_id: String,
     pub target_table: String,
-    pub target_id: Uuid,
+    pub target_id: String,
     pub citation_index: i32,
     pub label: Option<String>,
     pub preview: Option<String>,
@@ -1805,9 +1813,9 @@ pub struct UpdateCitationRequest {
 pub async fn get_citations(
     pool: &SqlitePool,
     source_type: &str,
-    source_id: Uuid,
+    source_id: String,
 ) -> Result<Vec<Citation>> {
-    let source_id_str = source_id.to_string();
+    let source_id_str = source_id;
 
     let rows = sqlx::query!(
         r#"
@@ -1815,7 +1823,7 @@ pub async fn get_citations(
             id, source_type, source_id, target_table, target_id,
             citation_index, label, preview, is_hidden, added_by,
             created_at, updated_at
-        FROM data_citation
+        FROM wiki_citations
         WHERE source_type = $1 AND source_id = $2
         ORDER BY citation_index ASC
         "#,
@@ -1829,9 +1837,9 @@ pub async fn get_citations(
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
-            let source_id = Uuid::parse_str(&row.source_id).ok()?;
-            let target_id = Uuid::parse_str(&row.target_id).ok()?;
+            let id = row.id.clone()?;
+            let source_id = row.source_id.clone();
+            let target_id = row.target_id.clone();
             Some(Citation {
                 id,
                 source_type: row.source_type.clone(),
@@ -1856,14 +1864,15 @@ pub async fn get_citations(
 
 /// Create a citation
 pub async fn create_citation(pool: &SqlitePool, req: CreateCitationRequest) -> Result<Citation> {
-    let source_id_str = req.source_id.to_string();
-    let target_id_str = req.target_id.to_string();
+    let source_id_str = req.source_id.clone();
+    let target_id_str = req.target_id.clone();
     let added_by = req.added_by.unwrap_or_else(|| "ai".to_string());
 
-    let citation_id = Uuid::new_v4().to_string();
+    let timestamp = Utc::now().to_rfc3339();
+    let citation_id = ids::generate_id(ids::WIKI_CITATION_PREFIX, &[&source_id_str, &target_id_str, &timestamp]);
     let row = sqlx::query!(
         r#"
-        INSERT INTO data_citation (
+        INSERT INTO wiki_citations (
             id, source_type, source_id, target_table, target_id,
             citation_index, label, preview, is_hidden, added_by
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -1889,9 +1898,8 @@ pub async fn create_citation(pool: &SqlitePool, req: CreateCitationRequest) -> R
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Failed to parse citation ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing citation ID".to_string()))?;
 
     Ok(Citation {
         id,
@@ -1916,70 +1924,71 @@ pub async fn create_citation(pool: &SqlitePool, req: CreateCitationRequest) -> R
 /// Update a citation
 pub async fn update_citation(
     pool: &SqlitePool,
-    id: Uuid,
+    id: String,
     req: UpdateCitationRequest,
 ) -> Result<Citation> {
-    let id_str = id.to_string();
-
-    let row = sqlx::query!(
+    sqlx::query(
         r#"
-        UPDATE data_citation
+        UPDATE wiki_citations
         SET
             label = COALESCE($2, label),
             preview = COALESCE($3, preview),
             is_hidden = COALESCE($4, is_hidden),
             updated_at = datetime('now')
         WHERE id = $1
-        RETURNING
+        "#,
+    )
+    .bind(&id)
+    .bind(&req.label)
+    .bind(&req.preview)
+    .bind(&req.is_hidden)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update citation: {}", e)))?;
+
+    // Get updated citation
+    let row = sqlx::query(
+        r#"
+        SELECT
             id, source_type, source_id, target_table, target_id,
             citation_index, label, preview, is_hidden, added_by,
             created_at, updated_at
+        FROM wiki_citations
+        WHERE id = $1
         "#,
-        id_str,
-        req.label,
-        req.preview,
-        req.is_hidden
     )
+    .bind(&id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to update citation: {}", e)))?
+    .map_err(|e| Error::Database(format!("Failed to get updated citation: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Citation not found: {}", id)))?;
 
-    let parsed_id = row
-        .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Failed to parse citation ID".to_string()))?;
-    let source_id = Uuid::parse_str(&row.source_id)
-        .map_err(|_| Error::Database("Failed to parse source ID".to_string()))?;
-    let target_id = Uuid::parse_str(&row.target_id)
-        .map_err(|_| Error::Database("Failed to parse target ID".to_string()))?;
-
+    use sqlx::Row;
     Ok(Citation {
-        id: parsed_id,
-        source_type: row.source_type.clone(),
-        source_id,
-        target_table: row.target_table.clone(),
-        target_id,
-        citation_index: row.citation_index as i32,
-        label: row.label.clone(),
-        preview: row.preview.clone(),
-        is_hidden: row.is_hidden.map(|v| v != 0),
-        added_by: row.added_by.clone(),
-        created_at: DateTime::parse_from_rfc3339(&row.created_at)
+        id: row.try_get("id").map_err(|e| Error::Database(e.to_string()))?,
+        source_type: row.try_get("source_type").map_err(|e| Error::Database(e.to_string()))?,
+        source_id: row.try_get("source_id").map_err(|e| Error::Database(e.to_string()))?,
+        target_table: row.try_get("target_table").map_err(|e| Error::Database(e.to_string()))?,
+        target_id: row.try_get("target_id").map_err(|e| Error::Database(e.to_string()))?,
+        citation_index: row.try_get::<i32, _>("citation_index").map_err(|e| Error::Database(e.to_string()))?,
+        label: row.try_get("label").ok(),
+        preview: row.try_get("preview").ok(),
+        is_hidden: row.try_get::<Option<bool>, _>("is_hidden").ok().flatten(),
+        added_by: row.try_get("added_by").ok(),
+        created_at: DateTime::parse_from_rfc3339(&row.try_get::<String, _>("created_at").map_err(|e| Error::Database(e.to_string()))?)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
+        updated_at: DateTime::parse_from_rfc3339(&row.try_get::<String, _>("updated_at").map_err(|e| Error::Database(e.to_string()))?)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
     })
 }
 
 /// Delete a citation
-pub async fn delete_citation(pool: &SqlitePool, id: Uuid) -> Result<()> {
-    let id_str = id.to_string();
+pub async fn delete_citation(pool: &SqlitePool, id: String) -> Result<()> {
+    let id_str = id.clone();
 
-    let result = sqlx::query!("DELETE FROM data_citation WHERE id = $1", id_str)
+    let result = sqlx::query!("DELETE FROM wiki_citations WHERE id = $1", id_str)
         .execute(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to delete citation: {}", e)))?;
@@ -1998,8 +2007,8 @@ pub async fn delete_citation(pool: &SqlitePool, id: Uuid) -> Result<()> {
 /// A temporal event in a day timeline
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemporalEvent {
-    pub id: Uuid,
-    pub day_id: Uuid,
+    pub id: String,
+    pub day_id: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub auto_label: Option<String>,
@@ -2019,7 +2028,7 @@ pub struct TemporalEvent {
 /// Request to create a temporal event
 #[derive(Debug, Deserialize)]
 pub struct CreateTemporalEventRequest {
-    pub day_id: Uuid,
+    pub day_id: String,
     pub start_time: DateTime<Utc>,
     pub end_time: DateTime<Utc>,
     pub auto_label: Option<String>,
@@ -2046,8 +2055,8 @@ pub struct UpdateTemporalEventRequest {
 // ============================================================================
 
 /// Get events for a day
-pub async fn get_day_events(pool: &SqlitePool, day_id: Uuid) -> Result<Vec<TemporalEvent>> {
-    let day_id_str = day_id.to_string();
+pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<TemporalEvent>> {
+    let day_id_str = day_id;
 
     let rows = sqlx::query!(
         r#"
@@ -2056,7 +2065,7 @@ pub async fn get_day_events(pool: &SqlitePool, day_id: Uuid) -> Result<Vec<Tempo
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
             created_at, updated_at
-        FROM data_temporal_event
+        FROM wiki_events
         WHERE day_id = $1
         ORDER BY start_time ASC
         "#,
@@ -2069,8 +2078,8 @@ pub async fn get_day_events(pool: &SqlitePool, day_id: Uuid) -> Result<Vec<Tempo
     Ok(rows
         .into_iter()
         .filter_map(|row| {
-            let id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
-            let day_id = Uuid::parse_str(&row.day_id).ok()?;
+            let id = row.id.clone()?;
+            let day_id = row.day_id.clone();
             Some(TemporalEvent {
                 id,
                 day_id,
@@ -2123,10 +2132,10 @@ pub async fn create_temporal_event(
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()));
 
-    let event_id = Uuid::new_v4().to_string();
+    let event_id = ids::generate_id(ids::WIKI_EVENT_PREFIX, &[&req.day_id, &start_time_str, &end_time_str]);
     let row = sqlx::query!(
         r#"
-        INSERT INTO data_temporal_event (
+        INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added
@@ -2157,9 +2166,8 @@ pub async fn create_temporal_event(
 
     let id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Failed to parse event ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing event ID".to_string()))?;
 
     Ok(TemporalEvent {
         id,
@@ -2191,14 +2199,14 @@ pub async fn create_temporal_event(
 /// Update a temporal event (user edits)
 pub async fn update_temporal_event(
     pool: &SqlitePool,
-    id: Uuid,
+    id: String,
     req: UpdateTemporalEventRequest,
 ) -> Result<TemporalEvent> {
-    let id_str = id.to_string();
+    let id_str = id.clone();
 
     let row = sqlx::query!(
         r#"
-        UPDATE data_temporal_event
+        UPDATE wiki_events
         SET
             user_label = COALESCE($2, user_label),
             user_location = COALESCE($3, user_location),
@@ -2224,11 +2232,9 @@ pub async fn update_temporal_event(
 
     let parsed_id = row
         .id
-        .as_ref()
-        .and_then(|s| Uuid::parse_str(s).ok())
-        .ok_or_else(|| Error::Database("Failed to parse event ID".to_string()))?;
-    let day_id = Uuid::parse_str(&row.day_id)
-        .map_err(|_| Error::Database("Failed to parse day ID".to_string()))?;
+        .clone()
+        .ok_or_else(|| Error::Database("Missing event ID".to_string()))?;
+    let day_id = row.day_id.clone();
 
     Ok(TemporalEvent {
         id: parsed_id,
@@ -2262,10 +2268,10 @@ pub async fn update_temporal_event(
 }
 
 /// Delete a temporal event
-pub async fn delete_temporal_event(pool: &SqlitePool, id: Uuid) -> Result<()> {
-    let id_str = id.to_string();
+pub async fn delete_temporal_event(pool: &SqlitePool, id: String) -> Result<()> {
+    let id_str = id.clone();
 
-    let result = sqlx::query!("DELETE FROM data_temporal_event WHERE id = $1", id_str)
+    let result = sqlx::query!("DELETE FROM wiki_events WHERE id = $1", id_str)
         .execute(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to delete temporal event: {}", e)))?;
@@ -2278,12 +2284,12 @@ pub async fn delete_temporal_event(pool: &SqlitePool, id: Uuid) -> Result<()> {
 }
 
 /// Delete all auto-generated events for a day (for regeneration)
-pub async fn delete_auto_events_for_day(pool: &SqlitePool, day_id: Uuid) -> Result<u64> {
-    let day_id_str = day_id.to_string();
+pub async fn delete_auto_events_for_day(pool: &SqlitePool, day_id: String) -> Result<u64> {
+    let day_id_str = day_id;
 
     let result = sqlx::query!(
         r#"
-        DELETE FROM data_temporal_event
+        DELETE FROM wiki_events
         WHERE day_id = $1 AND is_user_added = false
         "#,
         day_id_str
@@ -2303,7 +2309,7 @@ pub async fn delete_auto_events_for_day(pool: &SqlitePool, day_id: Uuid) -> Resu
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaySource {
     pub source_type: String,
-    pub id: Uuid,
+    pub id: String,
     pub timestamp: DateTime<Utc>,
     pub label: String,
     pub preview: Option<String>,
@@ -2332,7 +2338,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
     let calendar_rows = sqlx::query!(
         r#"
         SELECT id, start_time, title
-        FROM data_praxis_calendar
+        FROM data_calendar
         WHERE start_time >= $1 AND start_time <= $2
         ORDER BY start_time ASC
         "#,
@@ -2345,13 +2351,10 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
 
     for row in calendar_rows {
         if let Some(id_str) = row.id.as_ref() {
-            if let (Ok(id), Ok(ts)) = (
-                Uuid::parse_str(id_str),
-                DateTime::parse_from_rfc3339(&row.start_time),
-            ) {
+            if let Ok(ts) = DateTime::parse_from_rfc3339(&row.start_time) {
                 sources.push(DaySource {
                     source_type: "calendar".to_string(),
-                    id,
+                    id: id_str.clone(),
                     timestamp: ts.with_timezone(&Utc),
                     label: row.title.clone(),
                     preview: None,
@@ -2377,10 +2380,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
 
     for row in email_rows {
         if let Some(id_str) = row.id.as_ref() {
-            if let (Ok(id), Ok(ts)) = (
-                Uuid::parse_str(id_str),
-                DateTime::parse_from_rfc3339(&row.timestamp),
-            ) {
+            if let Ok(ts) = DateTime::parse_from_rfc3339(&row.timestamp) {
                 let direction_prefix = if row.direction == "sent" {
                     "To"
                 } else {
@@ -2392,7 +2392,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
                     .unwrap_or_else(|| "(no subject)".to_string());
                 sources.push(DaySource {
                     source_type: "email".to_string(),
-                    id,
+                    id: id_str.clone(),
                     timestamp: ts.with_timezone(&Utc),
                     label,
                     preview: Some(format!("{}: {}", direction_prefix, row.from_email)),
@@ -2421,20 +2421,18 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
             row.id.as_ref(),
             DateTime::parse_from_rfc3339(&row.arrival_time),
         ) {
-            if let Ok(id) = Uuid::parse_str(id_str) {
-                let label = row
-                    .place_name
-                    .clone()
-                    .unwrap_or_else(|| "Unknown location".to_string());
-                let preview = row.duration_minutes.map(|d| format!("{} min", d));
-                sources.push(DaySource {
-                    source_type: "location".to_string(),
-                    id,
-                    timestamp: ts.with_timezone(&Utc),
-                    label,
-                    preview,
-                });
-            }
+            let label = row
+                .place_name
+                .clone()
+                .unwrap_or_else(|| "Unknown location".to_string());
+            let preview = row.duration_minutes.map(|d| format!("{} min", d));
+            sources.push(DaySource {
+                source_type: "location".to_string(),
+                id: id_str.clone(),
+                timestamp: ts.with_timezone(&Utc),
+                label,
+                preview,
+            });
         }
     }
 
@@ -2458,16 +2456,14 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
             row.id.as_ref(),
             DateTime::parse_from_rfc3339(&row.start_time),
         ) {
-            if let Ok(id) = Uuid::parse_str(id_str) {
-                let preview = row.duration_minutes.map(|d| format!("{} min", d));
-                sources.push(DaySource {
-                    source_type: "workout".to_string(),
-                    id,
-                    timestamp: ts.with_timezone(&Utc),
-                    label: row.workout_type.clone(),
-                    preview,
-                });
-            }
+            let preview = row.duration_minutes.map(|d| format!("{} min", d));
+            sources.push(DaySource {
+                source_type: "workout".to_string(),
+                id: id_str.clone(),
+                timestamp: ts.with_timezone(&Utc),
+                label: row.workout_type.clone(),
+                preview,
+            });
         }
     }
 
@@ -2490,25 +2486,23 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
         if let (Some(id_str), Ok(ts)) =
             (row.id.as_ref(), DateTime::parse_from_rfc3339(&row.end_time))
         {
-            if let Ok(id) = Uuid::parse_str(id_str) {
-                let duration_str = row.duration_minutes.map(|d| {
-                    let hours = d / 60;
-                    let mins = d % 60;
-                    format!("{}h {}m", hours, mins)
-                });
-                let preview = match (duration_str, row.sleep_quality_score) {
-                    (Some(d), Some(q)) => Some(format!("{}, quality: {:.0}", d, q)),
-                    (Some(d), None) => Some(d),
-                    _ => None,
-                };
-                sources.push(DaySource {
-                    source_type: "sleep".to_string(),
-                    id,
-                    timestamp: ts.with_timezone(&Utc),
-                    label: "Sleep".to_string(),
-                    preview,
-                });
-            }
+            let duration_str = row.duration_minutes.map(|d| {
+                let hours = d / 60;
+                let mins = d % 60;
+                format!("{}h {}m", hours, mins)
+            });
+            let preview = match (duration_str, row.sleep_quality_score) {
+                (Some(d), Some(q)) => Some(format!("{}, quality: {:.0}", d, q)),
+                (Some(d), None) => Some(d),
+                _ => None,
+            };
+            sources.push(DaySource {
+                source_type: "sleep".to_string(),
+                id: id_str.clone(),
+                timestamp: ts.with_timezone(&Utc),
+                label: "Sleep".to_string(),
+                preview,
+            });
         }
     }
 
@@ -2532,28 +2526,26 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
             row.id.as_ref(),
             DateTime::parse_from_rfc3339(&row.timestamp),
         ) {
-            if let Ok(id) = Uuid::parse_str(id_str) {
-                let label = row
-                    .merchant_name
-                    .clone()
-                    .or(row.description.clone())
-                    .unwrap_or_else(|| "Transaction".to_string());
-                let preview = Some(format!("${:.2}", row.amount));
-                sources.push(DaySource {
-                    source_type: "transaction".to_string(),
-                    id,
-                    timestamp: ts.with_timezone(&Utc),
-                    label,
-                    preview,
-                });
-            }
+            let label = row
+                .merchant_name
+                .clone()
+                .or(row.description.clone())
+                .unwrap_or_else(|| "Transaction".to_string());
+            let preview = Some(format!("${:.2}", row.amount));
+            sources.push(DaySource {
+                source_type: "transaction".to_string(),
+                id: id_str.clone(),
+                timestamp: ts.with_timezone(&Utc),
+                label,
+                preview,
+            });
         }
     }
 
     // Messages
     let message_rows = sqlx::query!(
         r#"
-        SELECT id, timestamp, platform, from_name, content
+        SELECT id, timestamp, channel, from_name, body
         FROM data_social_message
         WHERE timestamp >= $1 AND timestamp <= $2
         ORDER BY timestamp ASC
@@ -2571,26 +2563,24 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
             row.id.as_ref(),
             DateTime::parse_from_rfc3339(&row.timestamp),
         ) {
-            if let Ok(id) = Uuid::parse_str(id_str) {
-                let label = row
-                    .from_name
-                    .clone()
-                    .unwrap_or_else(|| "Message".to_string());
-                let preview = row.content.as_ref().map(|c| {
-                    if c.len() > 50 {
-                        format!("{}...", &c[..50])
-                    } else {
-                        c.clone()
-                    }
-                });
-                sources.push(DaySource {
-                    source_type: format!("message:{}", row.platform),
-                    id,
-                    timestamp: ts.with_timezone(&Utc),
-                    label,
-                    preview,
-                });
-            }
+            let label = row
+                .from_name
+                .clone()
+                .unwrap_or_else(|| "Message".to_string());
+            let preview = row.body.as_ref().map(|c| {
+                if c.len() > 50 {
+                    format!("{}...", &c[..50])
+                } else {
+                    c.clone()
+                }
+            });
+            sources.push(DaySource {
+                source_type: format!("message:{}", row.channel),
+                id: id_str.clone(),
+                timestamp: ts.with_timezone(&Utc),
+                label,
+                preview,
+            });
         }
     }
 

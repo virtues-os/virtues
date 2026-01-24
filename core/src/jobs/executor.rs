@@ -8,7 +8,6 @@ use crate::jobs::transform_job::execute_transform_job;
 use crate::observability::JobTimer;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Job executor that spawns background tasks for async job execution
 #[derive(Clone)]
@@ -34,12 +33,12 @@ impl JobExecutor {
     ///
     /// This spawns a Tokio task to run the job and returns immediately.
     /// The job status will be updated in the database as it progresses.
-    pub fn execute_async(&self, job_id: Uuid) {
+    pub fn execute_async(&self, job_id: String) {
         let db = self.db.clone();
         let context = self.context.clone();
 
         tokio::spawn(async move {
-            if let Err(e) = Self::run_job(&db, &context, job_id).await {
+            if let Err(e) = Self::run_job(&db, &context, &job_id).await {
                 tracing::error!(
                     job_id = %job_id,
                     error = %e,
@@ -50,7 +49,7 @@ impl JobExecutor {
     }
 
     /// Internal method to run a job
-    async fn run_job(db: &SqlitePool, context: &Arc<TransformContext>, job_id: Uuid) -> Result<()> {
+    async fn run_job(db: &SqlitePool, context: &Arc<TransformContext>, job_id: &str) -> Result<()> {
         // Fetch the job
         let job = super::get_job(db, job_id).await?;
 
@@ -65,7 +64,7 @@ impl JobExecutor {
         }
 
         // Update job status to running
-        super::update_job_status(db, job_id, JobStatus::Running, None).await?;
+        super::update_job_status(db, &job.id, JobStatus::Running, None).await?;
 
         // Start metrics timer
         let job_type_str = job.job_type.to_string();
@@ -86,7 +85,7 @@ impl JobExecutor {
         // Execute the job based on type
         let result = match job.job_type {
             JobType::Sync => execute_sync_job(db, &executor, context, &job).await,
-            JobType::Transform => execute_transform_job(db, context, &job).await,
+            JobType::Transform => execute_transform_job(db, &executor, context, &job).await,
             JobType::Archive => {
                 // Archive jobs are typically executed directly from sync_job with records
                 // This path is for retries or manual triggers where records are in S3

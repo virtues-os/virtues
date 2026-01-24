@@ -3,7 +3,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
+
 
 use crate::{
     error::{Error, Result},
@@ -11,6 +11,8 @@ use crate::{
     sources::push_stream::{IngestPayload, PushResult, PushStream},
     storage::stream_writer::StreamWriter,
 };
+
+pub mod transform;
 
 pub struct IosBatteryStream {
     _db: SqlitePool,
@@ -27,11 +29,6 @@ impl IosBatteryStream {
 
     pub fn descriptor() -> RegisteredStream {
         RegisteredStream::new("battery")
-            .display_name("Battery Status")
-            .description("Logs battery level, charging state, and power mode")
-            .table_name("stream_ios_battery")
-            .supports_incremental(false)
-            .default_cron_schedule("*/15 * * * *") // Every 15 minutes
             .config_schema(serde_json::json!({
                 "type": "object",
                 "properties": {}
@@ -42,7 +39,7 @@ impl IosBatteryStream {
 
 #[async_trait]
 impl PushStream for IosBatteryStream {
-    async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult> {
+    async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
         let mut result = PushResult::new(payload.records.len());
 
         for record in &payload.records {

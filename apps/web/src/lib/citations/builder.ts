@@ -97,23 +97,7 @@ function buildPreview(toolName: string, output: unknown): string {
 			return 'No narratives found';
 		}
 
-		case 'virtues_query_axiology': {
-			// Try to summarize what was found
-			const keys = Object.keys(result).filter((k) => !['success', 'error'].includes(k));
-			if (keys.length > 0) {
-				const items: string[] = [];
-				for (const key of keys.slice(0, 3)) {
-					const val = result[key];
-					if (Array.isArray(val) && val.length > 0) {
-						items.push(`${val.length} ${key}`);
-					}
-				}
-				if (items.length > 0) {
-					return items.join(', ');
-				}
-			}
-			return 'Values retrieved';
-		}
+
 
 		case 'virtues_semantic_search': {
 			const searchResults = result.results as unknown[] | undefined;

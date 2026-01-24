@@ -5,18 +5,18 @@ use crate::jobs::{
     self, ApiKeys, CreateJobRequest, Job, JobExecutor, JobStatus, SyncJobMetadata, TransformContext,
 };
 use crate::storage::{stream_writer::StreamWriter, Storage};
+use crate::types::Timestamp;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 /// Response when a job is created
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJobResponse {
     pub job_id: String,
     pub status: String,
-    pub started_at: String,
+    pub started_at: Timestamp,
 }
 
 /// Trigger a sync for a specific stream (async version)
@@ -26,12 +26,12 @@ pub async fn trigger_stream_sync(
     db: &SqlitePool,
     storage: &Storage,
     stream_writer: Arc<Mutex<StreamWriter>>,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     sync_mode: Option<crate::sources::base::SyncMode>,
 ) -> Result<CreateJobResponse> {
     // Check if there's already an active sync for this stream
-    if jobs::has_active_sync_job(db, source_id, stream_name).await? {
+    if jobs::has_active_sync_job(db, &source_id, stream_name).await? {
         return Err(Error::InvalidInput(format!(
             "Stream '{}' already has an active sync job",
             stream_name
@@ -41,6 +41,7 @@ pub async fn trigger_stream_sync(
     // Convert sync mode to string for storage
     let sync_mode_str = match sync_mode {
         Some(crate::sources::base::SyncMode::FullRefresh) => "full_refresh",
+        Some(crate::sources::base::SyncMode::Backfill { .. }) => "backfill",
         Some(crate::sources::base::SyncMode::Incremental { .. }) | None => "incremental",
     }
     .to_string();
@@ -48,9 +49,9 @@ pub async fn trigger_stream_sync(
     // Load cursor from database for incremental syncs
     let cursor_before = if sync_mode_str == "incremental" {
         sqlx::query_scalar::<_, Option<String>>(
-            "SELECT last_sync_token FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = $2",
+            "SELECT last_sync_token FROM elt_stream_connections WHERE source_connection_id = $1 AND stream_name = $2",
         )
-        .bind(source_id)
+        .bind(&source_id)
         .bind(stream_name)
         .fetch_optional(db)
         .await?
@@ -61,7 +62,7 @@ pub async fn trigger_stream_sync(
 
     // Create job request
     let request = CreateJobRequest::new_sync_job(
-        source_id,
+        source_id.clone(),
         stream_name.to_string(),
         sync_mode_str.clone(),
         SyncJobMetadata {
@@ -80,9 +81,7 @@ pub async fn trigger_stream_sync(
 
     // Start job execution in background
     let executor = JobExecutor::new(db.clone(), context);
-    let job_uuid = Uuid::parse_str(&job.id)
-        .map_err(|e| Error::Database(format!("Invalid job ID: {}", e)))?;
-    executor.execute_async(job_uuid);
+    executor.execute_async(job.id.clone());
 
     Ok(CreateJobResponse {
         job_id: job.id,
@@ -92,14 +91,14 @@ pub async fn trigger_stream_sync(
 }
 
 /// Get job status by ID
-pub async fn get_job_status(db: &SqlitePool, job_id: Uuid) -> Result<Job> {
+pub async fn get_job_status(db: &SqlitePool, job_id: &str) -> Result<Job> {
     jobs::get_job(db, job_id).await
 }
 
 /// Query jobs with filters
 #[derive(Debug, Clone, Deserialize)]
 pub struct QueryJobsRequest {
-    pub source_id: Option<Uuid>,
+    pub source_id: Option<String>,
     pub status: Option<Vec<String>>,
     pub limit: Option<i64>,
 }
@@ -123,7 +122,7 @@ pub async fn query_jobs(db: &SqlitePool, request: QueryJobsRequest) -> Result<Ve
 }
 
 /// Cancel a running job
-pub async fn cancel_job(db: &SqlitePool, job_id: Uuid) -> Result<()> {
+pub async fn cancel_job(db: &SqlitePool, job_id: &str) -> Result<()> {
     jobs::cancel_job(db, job_id).await
 }
 
@@ -132,21 +131,20 @@ pub async fn cancel_job(db: &SqlitePool, job_id: Uuid) -> Result<()> {
 /// Returns jobs for a specific source and stream, ordered by most recent first.
 pub async fn get_job_history(
     db: &SqlitePool,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     limit: i64,
 ) -> Result<Vec<Job>> {
-    let source_id_str = source_id.to_string();
     let jobs = sqlx::query_as::<_, Job>(
         r#"
         SELECT *
-        FROM data_jobs
+        FROM elt_jobs
         WHERE source_connection_id = $1 AND stream_name = $2 AND job_type = 'sync'
         ORDER BY created_at DESC
         LIMIT $3
         "#,
     )
-    .bind(&source_id_str)
+    .bind(&source_id)
     .bind(stream_name)
     .bind(limit)
     .fetch_all(db)

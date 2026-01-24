@@ -45,12 +45,12 @@ impl OntologyTransform for GmailEmailTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -66,7 +66,7 @@ impl OntologyTransform for GmailEmailTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "gmail", checkpoint_key)
+            .read_with_checkpoint(&source_id, "gmail", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -78,29 +78,28 @@ impl OntologyTransform for GmailEmailTransform {
         );
 
         // Batch insert configuration
+        // Tuple: (id, message_id, thread_id, subject, body_preview, body, timestamp, from_email, from_name,
+        //         to_emails, to_names, cc_emails, cc_names, direction, labels, is_read, is_starred, has_attachments, stream_id)
         let mut pending_records: Vec<(
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            DateTime<Utc>,
-            Option<String>,
-            Option<String>,
-            Vec<String>,
-            Vec<String>,
-            Vec<String>,
-            Vec<String>,
-            &'static str,
-            Vec<String>,
-            bool,
-            bool,
-            bool,
-            i32,
-            Option<i32>,
-            Option<i32>,
-            Uuid,
+            String,        // id (deterministic)
+            String,        // message_id
+            String,        // thread_id
+            Option<String>, // subject
+            Option<String>, // body_preview (snippet)
+            Option<String>, // body
+            DateTime<Utc>, // timestamp
+            Option<String>, // from_email
+            Option<String>, // from_name
+            Vec<String>,   // to_emails
+            Vec<String>,   // to_names
+            Vec<String>,   // cc_emails
+            Vec<String>,   // cc_names
+            &'static str,  // direction
+            Vec<String>,   // labels
+            bool,          // is_read
+            bool,          // is_starred
+            bool,          // has_attachments
+            Uuid,          // source_stream_id
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
         let mut batch_insert_count = 0;
@@ -218,18 +217,6 @@ impl OntologyTransform for GmailEmailTransform {
                     .get("has_attachments")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let attachment_count = record
-                    .get("attachment_count")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0) as i32;
-                let thread_position = record
-                    .get("thread_position")
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
-                let thread_message_count = record
-                    .get("thread_message_count")
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
                 let is_sent = record
                     .get("is_sent")
                     .and_then(|v| v.as_bool())
@@ -238,14 +225,23 @@ impl OntologyTransform for GmailEmailTransform {
                 // Determine direction
                 let direction = if is_sent { "sent" } else { "received" };
 
+                // Get source_connection_id for deterministic ID generation
+                let source_connection_id = record
+                    .get("source_connection_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+
+                // Generate deterministic ID for idempotency
+                let id = crate::ids::generate_id("email", &[source_connection_id, message_id]);
+
                 // Add to pending batch
                 pending_records.push((
+                    id,
                     message_id.to_string(),
                     thread_id.to_string(),
                     subject,
-                    snippet,
-                    body_plain,
-                    body_html,
+                    snippet,      // body_preview
+                    body_plain,   // body
                     timestamp,
                     from_email,
                     from_name,
@@ -258,13 +254,10 @@ impl OntologyTransform for GmailEmailTransform {
                     !is_unread, // is_read = !is_unread
                     is_starred,
                     has_attachments,
-                    attachment_count,
-                    thread_position,
-                    thread_message_count,
                     stream_id,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -300,7 +293,7 @@ impl OntologyTransform for GmailEmailTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "gmail", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "gmail", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -367,28 +360,25 @@ impl OntologyTransform for GmailEmailTransform {
 async fn execute_email_batch_insert(
     db: &Database,
     records: &[(
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        DateTime<Utc>,
-        Option<String>,
-        Option<String>,
-        Vec<String>,
-        Vec<String>,
-        Vec<String>,
-        Vec<String>,
-        &str,
-        Vec<String>,
-        bool,
-        bool,
-        bool,
-        i32,
-        Option<i32>,
-        Option<i32>,
-        Uuid,
+        String,        // id (deterministic)
+        String,        // message_id
+        String,        // thread_id
+        Option<String>, // subject
+        Option<String>, // body_preview (snippet)
+        Option<String>, // body
+        DateTime<Utc>, // timestamp
+        Option<String>, // from_email
+        Option<String>, // from_name
+        Vec<String>,   // to_emails
+        Vec<String>,   // to_names
+        Vec<String>,   // cc_emails
+        Vec<String>,   // cc_names
+        &str,          // direction
+        Vec<String>,   // labels
+        bool,          // is_read
+        bool,          // is_starred
+        bool,          // has_attachments
+        Uuid,          // source_stream_id
     )],
 ) -> Result<usize> {
     if records.is_empty() {
@@ -398,32 +388,29 @@ async fn execute_email_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_social_email",
         &[
+            "id",
             "message_id",
             "thread_id",
             "subject",
-            "snippet",
-            "body_plain",
-            "body_html",
+            "body_preview",
+            "body",
             "timestamp",
-            "from_address",
+            "from_email",
             "from_name",
-            "to_addresses",
+            "to_emails",
             "to_names",
-            "cc_addresses",
+            "cc_emails",
             "cc_names",
             "direction",
             "labels",
             "is_read",
             "is_starred",
             "has_attachments",
-            "attachment_count",
-            "thread_position",
-            "thread_message_count",
             "source_stream_id",
             "source_table",
             "source_provider",
         ],
-        "source_stream_id",
+        "id",
         records.len(),
     );
 
@@ -431,61 +418,55 @@ async fn execute_email_batch_insert(
 
     // Bind all parameters row by row
     for (
+        id,
         message_id,
         thread_id,
         subject,
-        snippet,
-        body_plain,
-        body_html,
+        body_preview,
+        body,
         timestamp,
-        from_address,
+        from_email,
         from_name,
-        to_addresses,
+        to_emails,
         to_names,
-        cc_addresses,
+        cc_emails,
         cc_names,
         direction,
         labels,
         is_read,
         is_starred,
         has_attachments,
-        attachment_count,
-        thread_position,
-        thread_message_count,
         stream_id,
     ) in records
     {
         // SQLite doesn't support array types, convert to JSON strings
-        let to_addresses_json =
-            serde_json::to_string(&to_addresses).unwrap_or_else(|_| "[]".to_string());
+        let to_emails_json =
+            serde_json::to_string(&to_emails).unwrap_or_else(|_| "[]".to_string());
         let to_names_json = serde_json::to_string(&to_names).unwrap_or_else(|_| "[]".to_string());
-        let cc_addresses_json =
-            serde_json::to_string(&cc_addresses).unwrap_or_else(|_| "[]".to_string());
+        let cc_emails_json =
+            serde_json::to_string(&cc_emails).unwrap_or_else(|_| "[]".to_string());
         let cc_names_json = serde_json::to_string(&cc_names).unwrap_or_else(|_| "[]".to_string());
         let labels_json = serde_json::to_string(&labels).unwrap_or_else(|_| "[]".to_string());
 
         query = query
+            .bind(id)
             .bind(message_id)
             .bind(thread_id)
             .bind(subject)
-            .bind(snippet)
-            .bind(body_plain)
-            .bind(body_html)
+            .bind(body_preview)
+            .bind(body)
             .bind(timestamp)
-            .bind(from_address)
+            .bind(from_email)
             .bind(from_name)
-            .bind(to_addresses_json)
+            .bind(to_emails_json)
             .bind(to_names_json)
-            .bind(cc_addresses_json)
+            .bind(cc_emails_json)
             .bind(cc_names_json)
             .bind(direction)
             .bind(labels_json)
             .bind(is_read)
             .bind(is_starred)
             .bind(has_attachments)
-            .bind(attachment_count)
-            .bind(thread_position)
-            .bind(thread_message_count)
             .bind(stream_id)
             .bind("stream_google_gmail")
             .bind("google");

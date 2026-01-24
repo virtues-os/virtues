@@ -77,7 +77,7 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
         SELECT
             id,
             attendee_identifiers
-        FROM data_praxis_calendar
+        FROM data_calendar
         WHERE start_time >= $1
           AND start_time < $2
           AND json_array_length(attendee_identifiers) > 0
@@ -152,7 +152,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
 
     sqlx::query!(
         r#"
-        UPDATE data_praxis_calendar
+        UPDATE data_calendar
         SET attendee_person_ids = $1,
             updated_at = datetime('now')
         WHERE id = $2
@@ -181,7 +181,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
     let existing = sqlx::query!(
         r#"
         SELECT id
-        FROM data_entities_person
+        FROM wiki_people
         WHERE EXISTS (
             SELECT 1 FROM json_each(emails) WHERE value = $1
         )
@@ -215,7 +215,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
     let person_uuid = Uuid::new_v4().to_string();
     let row = sqlx::query!(
         r#"
-        INSERT INTO data_entities_person (
+        INSERT INTO wiki_people (
             id,
             canonical_name,
             emails

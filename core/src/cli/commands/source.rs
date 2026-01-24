@@ -44,17 +44,15 @@ pub async fn handle_source_command(
         }
 
         SourceCommands::Show { id } => {
-            let source_id = id.parse()?;
-
             // Check if this is a pending pairing
             let pairing_status =
-                crate::check_pairing_status(virtues.database.pool(), source_id).await?;
+                crate::check_pairing_status(virtues.database.pool(), id.clone()).await?;
 
             match pairing_status {
                 crate::PairingStatus::Pending => {
                     // Show pairing details
                     let pairings = crate::list_pending_pairings(virtues.database.pool()).await?;
-                    if let Some(pairing) = pairings.iter().find(|p| p.source_id == source_id) {
+                    if let Some(pairing) = pairings.iter().find(|p| p.source_id == id) {
                         let server_url = env::var("VIRTUES_SERVER_URL")
                             .unwrap_or_else(|_| "localhost:8000".to_string());
 
@@ -78,12 +76,12 @@ pub async fn handle_source_command(
                         println!("💡 Enter these details in your device app to complete pairing.");
                         println!();
                         println!("To cancel this pairing:");
-                        println!("   virtues source delete {}", source_id);
+                        println!("   virtues source delete {}", id);
                     }
                 }
                 _ => {
                     // Show regular source details
-                    let source = crate::get_source(virtues.database.pool(), source_id).await?;
+                    let source = crate::get_source(virtues.database.pool(), id.clone()).await?;
 
                     println!("Source Details:");
                     println!("  ID: {}", source.id);
@@ -109,8 +107,7 @@ pub async fn handle_source_command(
         }
 
         SourceCommands::Status { id } => {
-            let source_id = id.parse()?;
-            let status = crate::get_source_status(virtues.database.pool(), source_id).await?;
+            let status = crate::get_source_status(virtues.database.pool(), id).await?;
 
             println!("Source: {} ({})", status.name, status.source);
             println!();
@@ -135,10 +132,8 @@ pub async fn handle_source_command(
         }
 
         SourceCommands::Delete { id, yes } => {
-            let source_id = id.parse()?;
-
             // Get source details first
-            let source = crate::get_source(virtues.database.pool(), source_id).await?;
+            let source = crate::get_source(virtues.database.pool(), id.clone()).await?;
 
             if !yes {
                 println!("Are you sure you want to delete source:");
@@ -162,18 +157,16 @@ pub async fn handle_source_command(
                 }
             }
 
-            crate::delete_source(virtues.database.pool(), source_id).await?;
+            crate::delete_source(virtues.database.pool(), id).await?;
             println!("✅ Source deleted successfully");
         }
 
         SourceCommands::History { id, limit } => {
-            let source_id = id.parse()?;
-
             // Query jobs for this source
             let jobs = crate::api::jobs::query_jobs(
                 virtues.database.pool(),
                 crate::api::jobs::QueryJobsRequest {
-                    source_id: Some(source_id),
+                    source_id: Some(id),
                     status: None,
                     limit: Some(limit),
                 },
@@ -194,16 +187,10 @@ pub async fn handle_source_command(
 
             for job in jobs {
                 let records = job.records_processed;
-                let duration = if let Some(completed_str) = &job.completed_at {
-                    // Parse both timestamps and calculate duration
-                    let completed = chrono::DateTime::parse_from_rfc3339(completed_str).ok();
-                    let started = chrono::DateTime::parse_from_rfc3339(&job.started_at).ok();
-                    if let (Some(c), Some(s)) = (completed, started) {
-                        let duration_ms = (c - s).num_milliseconds();
-                        format!("{}ms", duration_ms)
-                    } else {
-                        "-".to_string()
-                    }
+                let duration = if let Some(completed) = &job.completed_at {
+                    // Calculate duration using Timestamp's Deref to DateTime<Utc>
+                    let duration_ms = (**completed - *job.started_at).num_milliseconds();
+                    format!("{}ms", duration_ms)
                 } else {
                     "-".to_string()
                 };
@@ -219,9 +206,7 @@ pub async fn handle_source_command(
                     .unwrap_or_else(|| "-".to_string());
 
                 // Format the started_at timestamp for display
-                let started_display = chrono::DateTime::parse_from_rfc3339(&job.started_at)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    .unwrap_or_else(|_| job.started_at.clone());
+                let started_display = job.started_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
                 println!(
                     "{} {:<10} {:<10} {:<10} {}",

@@ -37,12 +37,12 @@ impl OntologyTransform for PlaidLiabilityTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -57,7 +57,7 @@ impl OntologyTransform for PlaidLiabilityTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "liabilities", checkpoint_key)
+            .read_with_checkpoint(&source_id, "liabilities", checkpoint_key)
             .await?;
 
         tracing::info!(
@@ -178,9 +178,36 @@ impl OntologyTransform for PlaidLiabilityTransform {
 
                 let escrow_balance = record.get("escrow_balance").and_then(|v| v.as_f64());
 
+                // Get source_connection_id for deterministic ID generation
+                let source_connection_id = record
+                    .get("source_connection_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                // Generate deterministic IDs for idempotency
+                let id = crate::ids::generate_id("liability", &[&source_connection_id, account_id, &liability_type]);
+                // Generate account_id that matches the account transform's ID
+                let internal_account_id = crate::ids::generate_id("account", &[&source_connection_id, account_id]);
+
+                // Use apr_percentage or interest_rate_percentage
+                let interest_rate = apr_percentage.or(interest_rate_percentage);
+                // Use outstanding_balance or original_loan_amount as principal
+                let principal = outstanding_balance.or(original_loan_amount);
+
                 // Build metadata with all extra fields
                 let metadata = serde_json::json!({
                     "plaid_account_id": account_id,
+                    "apr_type": apr_type,
+                    "loan_term_months": loan_term_months,
+                    "last_payment_amount": last_payment_amount,
+                    "last_payment_date": last_payment_date,
+                    "next_payment_amount": next_payment_amount,
+                    "property_address": property_address,
+                    "property_city": property_city,
+                    "property_region": property_region,
+                    "property_postal_code": property_postal_code,
+                    "escrow_balance": escrow_balance,
                     "is_overdue": record.get("is_overdue"),
                     "aprs": record.get("aprs"),
                     "loan_name": record.get("loan_name"),
@@ -200,32 +227,23 @@ impl OntologyTransform for PlaidLiabilityTransform {
                 let timestamp = Utc::now();
 
                 pending_records.push(LiabilityRecord {
-                    account_id_external: format!("plaid:{}", account_id),
+                    id,
+                    account_id: internal_account_id,
                     liability_type,
-                    apr_percentage,
-                    apr_type,
-                    interest_rate_percentage,
+                    principal,
+                    interest_rate,
                     minimum_payment,
-                    last_payment_amount,
-                    last_payment_date,
                     next_payment_due_date,
-                    next_payment_amount,
-                    original_loan_amount,
-                    outstanding_balance,
-                    loan_term_months,
                     origination_date,
                     maturity_date,
-                    property_address,
-                    property_city,
-                    property_region,
-                    property_postal_code,
-                    escrow_balance,
+                    currency_code: "USD".to_string(),
                     timestamp,
                     stream_id,
+                    source_connection_id,
                     metadata,
                 });
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -247,7 +265,7 @@ impl OntologyTransform for PlaidLiabilityTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "liabilities", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "liabilities", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -304,28 +322,19 @@ fn parse_loan_term_months(term: &str) -> Option<i32> {
 
 /// Internal struct to hold liability data for batch insert
 struct LiabilityRecord {
-    account_id_external: String,
+    id: String,                    // deterministic ID
+    account_id: String,            // internal account ID (generated)
     liability_type: String,
-    apr_percentage: Option<f64>,
-    apr_type: Option<String>,
-    interest_rate_percentage: Option<f64>,
+    principal: Option<f64>,        // outstanding_balance/original_loan_amount
+    interest_rate: Option<f64>,    // apr_percentage or interest_rate_percentage
     minimum_payment: Option<f64>,
-    last_payment_amount: Option<f64>,
-    last_payment_date: Option<NaiveDate>,
     next_payment_due_date: Option<NaiveDate>,
-    next_payment_amount: Option<f64>,
-    original_loan_amount: Option<f64>,
-    outstanding_balance: Option<f64>,
-    loan_term_months: Option<i32>,
     origination_date: Option<NaiveDate>,
     maturity_date: Option<NaiveDate>,
-    property_address: Option<String>,
-    property_city: Option<String>,
-    property_region: Option<String>,
-    property_postal_code: Option<String>,
-    escrow_balance: Option<f64>,
+    currency_code: String,
     timestamp: DateTime<Utc>,
     stream_id: Uuid,
+    source_connection_id: String,
     metadata: serde_json::Value,
 }
 
@@ -342,62 +351,48 @@ async fn execute_liability_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_financial_liability",
         &[
-            "account_id_external",
+            "id",
+            "account_id",
             "liability_type",
-            "apr_percentage",
-            "apr_type",
-            "interest_rate_percentage",
+            "principal",
+            "interest_rate",
             "minimum_payment",
-            "last_payment_amount",
-            "last_payment_date",
             "next_payment_due_date",
-            "next_payment_amount",
-            "original_loan_amount",
-            "outstanding_balance",
-            "loan_term_months",
             "origination_date",
             "maturity_date",
-            "property_address",
-            "property_city",
-            "property_region",
-            "property_postal_code",
-            "escrow_balance",
+            "currency",
             "timestamp",
             "source_stream_id",
+            "source_connection_id",
             "metadata",
             "source_table",
             "source_provider",
         ],
-        "account_id_external",
+        "id",
         records.len(),
     );
 
     let mut query = sqlx::query(&query_str);
 
     for record in records {
+        // Convert to cents
+        let principal_cents = record.principal.map(|p| (p * 100.0) as i64);
+        let minimum_payment_cents = record.minimum_payment.map(|m| (m * 100.0) as i64);
+
         query = query
-            .bind(&record.account_id_external)
+            .bind(&record.id)
+            .bind(&record.account_id)
             .bind(&record.liability_type)
-            .bind(record.apr_percentage)
-            .bind(&record.apr_type)
-            .bind(record.interest_rate_percentage)
-            .bind(record.minimum_payment)
-            .bind(record.last_payment_amount)
-            .bind(record.last_payment_date)
+            .bind(principal_cents)
+            .bind(record.interest_rate)
+            .bind(minimum_payment_cents)
             .bind(record.next_payment_due_date)
-            .bind(record.next_payment_amount)
-            .bind(record.original_loan_amount)
-            .bind(record.outstanding_balance)
-            .bind(record.loan_term_months)
             .bind(record.origination_date)
             .bind(record.maturity_date)
-            .bind(&record.property_address)
-            .bind(&record.property_city)
-            .bind(&record.property_region)
-            .bind(&record.property_postal_code)
-            .bind(record.escrow_balance)
+            .bind(&record.currency_code)
             .bind(record.timestamp)
             .bind(record.stream_id)
+            .bind(&record.source_connection_id)
             .bind(&record.metadata)
             .bind("stream_plaid_liabilities")
             .bind("plaid");

@@ -11,7 +11,7 @@
 //! - `health/` - Heart rate, HRV, sleep, steps, workouts
 //! - `location/` - GPS points, clustered visits
 //! - `social/` - Email, messages
-//! - `praxis/` - Calendar events, tasks
+//! - `calendar/` - Calendar events
 //! - `activity/` - App usage, web browsing
 //! - `speech/` - Transcriptions
 //! - `knowledge/` - Documents, AI conversations
@@ -32,9 +32,11 @@ pub mod financial;
 pub mod health;
 pub mod knowledge;
 pub mod location;
-pub mod praxis;
+pub mod calendar;
 pub mod social;
 pub mod speech;
+pub mod device;
+pub mod environment;
 
 // Re-export main types
 pub use descriptor::{EmbeddingConfig, Ontology, OntologyBuilder, OntologyDescriptor};

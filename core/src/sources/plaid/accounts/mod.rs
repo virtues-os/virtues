@@ -9,7 +9,6 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use super::client::PlaidClient;
 use super::config::PlaidAccountsConfig;
@@ -28,7 +27,7 @@ use crate::{
 /// Syncs accounts and balances from Plaid to the financial_account ontology.
 /// Uses full refresh (no incremental sync) since account data is relatively small.
 pub struct PlaidAccountsStream {
-    source_id: Uuid,
+    source_id: String,
     client: PlaidClient,
     db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
@@ -40,7 +39,7 @@ pub struct PlaidAccountsStream {
 impl PlaidAccountsStream {
     /// Create a new accounts stream
     pub fn new(
-        source_id: Uuid,
+        source_id: String,
         db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
     ) -> Result<Self> {
@@ -58,7 +57,7 @@ impl PlaidAccountsStream {
 
     /// Create with explicit client (for testing)
     pub fn with_client(
-        source_id: Uuid,
+        source_id: String,
         client: PlaidClient,
         db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
@@ -74,10 +73,10 @@ impl PlaidAccountsStream {
     }
 
     /// Load configuration from database
-    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: &str) -> Result<()> {
         // Load stream config
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'accounts'",
+            "SELECT config FROM elt_stream_connections WHERE source_connection_id = $1 AND stream_name = 'accounts'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -91,7 +90,7 @@ impl PlaidAccountsStream {
 
         // Load access token from source_connections (encrypted)
         let token_result = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT access_token FROM data_source_connections WHERE id = $1",
+            "SELECT access_token FROM elt_source_connections WHERE id = $1",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -160,7 +159,7 @@ impl PlaidAccountsStream {
         let records = {
             let mut writer = self.stream_writer.lock().await;
             let collected = writer
-                .collect_records(self.source_id, "accounts")
+                .collect_records(&self.source_id, "accounts")
                 .map(|(records, _, _)| records);
 
             if let Some(ref recs) = collected {
@@ -185,6 +184,8 @@ impl PlaidAccountsStream {
             records_written,
             records_failed,
             next_cursor: None, // Accounts don't use cursors
+            earliest_record_at: None,
+            latest_record_at: None,
             started_at,
             completed_at,
             records,
@@ -198,9 +199,9 @@ impl PlaidAccountsStream {
         // In the future, could call Plaid's /institutions/get_by_id
         if institution_id.is_some() {
             let row = sqlx::query_as::<_, (serde_json::Value,)>(
-                "SELECT metadata FROM data_source_connections WHERE id = $1",
+                "SELECT metadata FROM elt_source_connections WHERE id = $1",
             )
-            .bind(self.source_id)
+            .bind(&self.source_id)
             .fetch_optional(&self.db)
             .await
             .ok()
@@ -247,7 +248,7 @@ impl PlaidAccountsStream {
         // Write to StreamWriter
         {
             let mut writer = self.stream_writer.lock().await;
-            writer.write_record(self.source_id, "accounts", record, Some(timestamp))?;
+            writer.write_record(&self.source_id, "accounts", record, Some(timestamp))?;
         }
 
         tracing::trace!(
@@ -266,7 +267,7 @@ impl PullStream for PlaidAccountsStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, db: &SqlitePool, source_id: &str) -> Result<()> {
         self.load_config_internal(db, source_id).await
     }
 

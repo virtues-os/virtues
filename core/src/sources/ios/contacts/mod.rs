@@ -3,7 +3,7 @@ use chrono::Utc;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
+
 
 use crate::{
     error::{Error, Result},
@@ -27,11 +27,6 @@ impl IosContactsStream {
 
     pub fn descriptor() -> RegisteredStream {
         RegisteredStream::new("contacts")
-            .display_name("Contacts")
-            .description("Syncs address book contacts from the device")
-            .table_name("stream_ios_contacts")
-            .supports_incremental(true)
-            .default_cron_schedule("0 0 * * *") // Daily at midnight
             .config_schema(serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -44,7 +39,7 @@ impl IosContactsStream {
 
 #[async_trait]
 impl PushStream for IosContactsStream {
-    async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult> {
+    async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
         let mut result = PushResult::new(payload.records.len());
 
         for record in &payload.records {

@@ -1,8 +1,8 @@
 //! Job data models and types
 
+use crate::types::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use uuid::Uuid;
 
 /// Job type enum
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
@@ -98,8 +98,8 @@ pub struct Job {
     pub transform_stage: Option<String>,
 
     // Tracking
-    pub started_at: String,
-    pub completed_at: Option<String>,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
     pub records_processed: i64,
     pub error_message: Option<String>,
     pub error_class: Option<String>,
@@ -108,8 +108,8 @@ pub struct Job {
     pub metadata: serde_json::Value,
 
     // Timestamps
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 // Custom TryFrom implementations for sqlx type conversion
@@ -136,16 +136,16 @@ pub struct CreateJobRequest {
     pub status: JobStatus,
 
     // Sync job fields
-    pub source_connection_id: Option<Uuid>,
+    pub source_connection_id: Option<String>,
     pub stream_name: Option<String>,
     pub sync_mode: Option<String>, // 'full_refresh' or 'incremental'
 
     // Transform job fields
-    pub transform_id: Option<Uuid>,
+    pub transform_id: Option<String>,
     pub transform_strategy: Option<String>,
 
     // Job chaining
-    pub parent_job_id: Option<Uuid>,
+    pub parent_job_id: Option<String>,
     pub transform_stage: Option<String>,
 
     // Metadata
@@ -162,7 +162,7 @@ pub struct SyncJobMetadata {
 impl CreateJobRequest {
     /// Create a request for a new sync job
     pub fn new_sync_job(
-        source_id: Uuid,
+        source_id: String,
         stream_name: String,
         sync_mode: String, // 'full_refresh' or 'incremental'
         metadata: SyncJobMetadata,
@@ -182,7 +182,7 @@ impl CreateJobRequest {
     }
 
     /// Create a request for a new transform job
-    pub fn new_transform_job(transform_id: Uuid, transform_strategy: String) -> Self {
+    pub fn new_transform_job(transform_id: String, transform_strategy: String) -> Self {
         Self {
             job_type: JobType::Transform,
             status: JobStatus::Pending,

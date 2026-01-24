@@ -12,7 +12,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use uuid::Uuid;
 
 use crate::error::Result;
 
@@ -30,10 +29,10 @@ pub fn get_chunk_size() -> usize {
 /// Batch of records from a stream
 #[derive(Debug, Clone)]
 pub struct StreamBatch {
-    pub source_id: Uuid,
+    pub source_id: String,
     pub stream_name: String,
     pub records: Vec<Value>,
-    pub object_id: Uuid,
+    pub object_id: String,
     pub max_timestamp: Option<DateTime<Utc>>,
 }
 
@@ -47,7 +46,7 @@ pub trait TransformDataSource: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `source_id` - UUID of the data source
+    /// * `source_id` - ID of the data source
     /// * `stream_name` - Name of the stream (e.g., "app_export")
     /// * `checkpoint_key` - Unique key for this transform's checkpoint
     ///
@@ -56,7 +55,7 @@ pub trait TransformDataSource: Send + Sync {
     /// Vector of StreamBatch objects containing records and metadata
     async fn read_with_checkpoint(
         &self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
         checkpoint_key: &str,
     ) -> Result<Vec<StreamBatch>>;
@@ -65,13 +64,13 @@ pub trait TransformDataSource: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `source_id` - UUID of the data source
+    /// * `source_id` - ID of the data source
     /// * `stream_name` - Name of the stream
     /// * `checkpoint_key` - Unique key for this transform's checkpoint
     /// * `timestamp` - Latest timestamp successfully processed
     async fn update_checkpoint(
         &self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
         checkpoint_key: &str,
         timestamp: DateTime<Utc>,
@@ -104,7 +103,7 @@ pub struct MemoryDataSource {
     /// In-memory records from sync job
     records: Vec<Value>,
     /// Source ID for these records
-    source_id: Uuid,
+    source_id: String,
     /// Stream name
     stream_name: String,
     /// Minimum timestamp in records (currently unused, reserved for future use)
@@ -120,7 +119,7 @@ impl MemoryDataSource {
     /// Create a new memory data source
     pub fn new(
         records: Vec<Value>,
-        source_id: Uuid,
+        source_id: String,
         stream_name: String,
         min_timestamp: Option<DateTime<Utc>>,
         max_timestamp: Option<DateTime<Utc>>,
@@ -141,7 +140,7 @@ impl MemoryDataSource {
 impl TransformDataSource for MemoryDataSource {
     async fn read_with_checkpoint(
         &self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
         _checkpoint_key: &str,
     ) -> Result<Vec<StreamBatch>> {
@@ -154,8 +153,8 @@ impl TransformDataSource for MemoryDataSource {
         }
 
         // For memory source, we don't have object_id since data isn't in S3 yet
-        // Use a nil UUID as placeholder
-        let object_id = Uuid::nil();
+        // Use a placeholder
+        let object_id = "memory-data-source".to_string();
 
         // Get chunk size from environment or use default
         let chunk_size = get_chunk_size();
@@ -163,7 +162,7 @@ impl TransformDataSource for MemoryDataSource {
         // If small enough, return as single batch
         if self.records.len() <= chunk_size {
             return Ok(vec![StreamBatch {
-                source_id: self.source_id,
+                source_id: self.source_id.clone(),
                 stream_name: self.stream_name.clone(),
                 records: self.records.clone(),
                 object_id,
@@ -190,10 +189,10 @@ impl TransformDataSource for MemoryDataSource {
                 // Only set max_timestamp on the last chunk
                 let is_last = i == num_chunks - 1;
                 StreamBatch {
-                    source_id: self.source_id,
+                    source_id: self.source_id.clone(),
                     stream_name: self.stream_name.clone(),
                     records: chunk.to_vec(),
-                    object_id,
+                    object_id: object_id.clone(),
                     max_timestamp: if is_last { self.max_timestamp } else { None },
                 }
             })
@@ -204,15 +203,18 @@ impl TransformDataSource for MemoryDataSource {
 
     async fn update_checkpoint(
         &self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
         checkpoint_key: &str,
         timestamp: DateTime<Utc>,
     ) -> Result<()> {
         // Update checkpoint in database
-        let id = Uuid::new_v4().to_string();
+        let id = crate::ids::generate_id(
+            crate::ids::CHECKPOINT_PREFIX,
+            &[source_id, stream_name, checkpoint_key],
+        );
         sqlx::query(
-            "INSERT INTO data_stream_checkpoints (id, source_id, stream_name, checkpoint_key, last_processed_at)
+            "INSERT INTO elt_stream_checkpoints (id, source_id, stream_name, checkpoint_key, last_processed_at)
              VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (source_id, stream_name, checkpoint_key)
              DO UPDATE SET last_processed_at = EXCLUDED.last_processed_at,

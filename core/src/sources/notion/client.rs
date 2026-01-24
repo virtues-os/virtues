@@ -6,7 +6,6 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use super::error_handler::NotionErrorHandler;
 use crate::{
@@ -24,7 +23,7 @@ pub struct NotionApiClient {
 
 impl NotionApiClient {
     /// Create a new Notion API client
-    pub fn new(source_id: Uuid, token_manager: Arc<TokenManager>) -> Self {
+    pub fn new(source_id: String, token_manager: Arc<TokenManager>) -> Self {
         Self {
             http: OAuthHttpClient::new(source_id, token_manager)
                 .with_base_url("https://api.notion.com/v1")
@@ -54,11 +53,12 @@ impl NotionApiClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_client_creation() {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
-        let _client = NotionApiClient::new(Uuid::new_v4(), token_manager);
+        let _client = NotionApiClient::new(Uuid::new_v4().to_string(), token_manager);
     }
 }

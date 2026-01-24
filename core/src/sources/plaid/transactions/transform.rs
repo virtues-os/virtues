@@ -37,12 +37,12 @@ impl OntologyTransform for PlaidTransactionTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -58,7 +58,7 @@ impl OntologyTransform for PlaidTransactionTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "transactions", checkpoint_key)
+            .read_with_checkpoint(&source_id, "transactions", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -116,10 +116,10 @@ impl OntologyTransform for PlaidTransactionTransform {
                     .and_then(|v| v.as_str())
                     .map(String::from);
 
-                let account_id = record
+                let plaid_account_id = record
                     .get("account_id")
                     .and_then(|v| v.as_str())
-                    .map(String::from);
+                    .unwrap_or("unknown");
 
                 let pending = record
                     .get("pending")
@@ -129,7 +129,8 @@ impl OntologyTransform for PlaidTransactionTransform {
                 let iso_currency_code = record
                     .get("iso_currency_code")
                     .and_then(|v| v.as_str())
-                    .map(String::from);
+                    .unwrap_or("USD")
+                    .to_string();
 
                 let payment_channel = record
                     .get("payment_channel")
@@ -154,10 +155,19 @@ impl OntologyTransform for PlaidTransactionTransform {
                 // Extract location if available
                 let location = record.get("location").cloned();
 
+                // Use source_id (passed to transform) as source_connection_id
+                // This is the actual source connection that synced this data
+                let source_connection_id = source_id.clone();
+
+                // Generate deterministic IDs for idempotency
+                let id = crate::ids::generate_id(crate::ids::MONEY_TRANSACTION_PREFIX, &[&source_connection_id, transaction_id]);
+                // Generate account_id that matches the account transform's ID
+                let account_id = crate::ids::generate_id(crate::ids::MONEY_ACCOUNT_PREFIX, &[&source_connection_id, plaid_account_id]);
+
                 // Build metadata with Plaid-specific fields
                 let metadata = serde_json::json!({
                     "plaid_transaction_id": transaction_id,
-                    "plaid_account_id": account_id,
+                    "plaid_account_id": plaid_account_id,
                     "plaid_category": record.get("category"),
                     "plaid_category_id": record.get("category_id"),
                     "personal_finance_category": record.get("personal_finance_category"),
@@ -177,21 +187,22 @@ impl OntologyTransform for PlaidTransactionTransform {
                     .unwrap_or_else(Utc::now);
 
                 pending_records.push(TransactionRecord {
-                    transaction_id: format!("plaid:{}", transaction_id),
+                    id,
                     account_id,
+                    transaction_id: transaction_id.to_string(),
                     amount,
-                    transaction_date,
-                    name,
                     merchant_name,
+                    description: name,
                     category,
                     pending,
                     currency_code: iso_currency_code,
                     timestamp,
                     stream_id,
+                    source_connection_id,
                     metadata,
                 });
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -225,7 +236,7 @@ impl OntologyTransform for PlaidTransactionTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "transactions", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "transactions", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -285,21 +296,22 @@ impl OntologyTransform for PlaidTransactionTransform {
 
 /// Internal struct to hold transaction data for batch insert
 struct TransactionRecord {
-    transaction_id: String,
-    account_id: Option<String>,
+    id: String,                     // deterministic ID
+    account_id: String,             // internal account ID (generated)
+    transaction_id: String,         // external transaction ID
     amount: f64,
-    transaction_date: NaiveDate,
-    name: String,
     merchant_name: Option<String>,
+    description: String,            // from name field
     category: Option<String>,
     pending: bool,
-    currency_code: Option<String>,
+    currency_code: String,
     timestamp: DateTime<Utc>,
     stream_id: Uuid,
+    source_connection_id: String,
     metadata: serde_json::Value,
 }
 
-/// Execute batch insert for transaction records
+/// Execute batch insert for transaction records with fallback to individual inserts
 async fn execute_transaction_batch_insert(
     db: &Database,
     records: &[TransactionRecord],
@@ -311,47 +323,226 @@ async fn execute_transaction_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_financial_transaction",
         &[
-            "transaction_id_external",
-            "account_id_external",
+            "id",
+            "account_id",
+            "transaction_id",
             "amount",
-            "transaction_date",
-            "name",
+            "currency",
             "merchant_name",
+            "description",
             "category",
             "is_pending",
-            "currency_code",
             "timestamp",
             "source_stream_id",
+            "source_connection_id",
             "metadata",
             "source_table",
             "source_provider",
         ],
-        "transaction_id_external",
+        "id",
         records.len(),
     );
 
     let mut query = sqlx::query(&query_str);
 
     for record in records {
+        // Convert amount to cents (INTEGER in schema)
+        let amount_cents = (record.amount * 100.0) as i64;
+
         query = query
-            .bind(&record.transaction_id)
+            .bind(&record.id)
             .bind(&record.account_id)
-            .bind(record.amount)
-            .bind(record.transaction_date)
-            .bind(&record.name)
+            .bind(&record.transaction_id)
+            .bind(amount_cents)
+            .bind(&record.currency_code)
             .bind(&record.merchant_name)
+            .bind(&record.description)
             .bind(&record.category)
             .bind(record.pending)
-            .bind(&record.currency_code)
             .bind(record.timestamp)
             .bind(record.stream_id)
+            .bind(&record.source_connection_id)
             .bind(&record.metadata)
             .bind("stream_plaid_transactions")
             .bind("plaid");
     }
 
-    let result = query.execute(db.pool()).await?;
-    Ok(result.rows_affected() as usize)
+    match query.execute(db.pool()).await {
+        Ok(result) => Ok(result.rows_affected() as usize),
+        Err(batch_err) => {
+            // Batch failed - fall back to individual inserts
+            tracing::warn!(
+                batch_size = records.len(),
+                error = %batch_err,
+                "Batch insert failed, falling back to individual inserts"
+            );
+            execute_transaction_individual_inserts(db, records).await
+        }
+    }
+}
+
+/// Fallback: insert records one by one when batch fails
+/// This allows partial success and identifies problematic records.
+/// Implements "lazy hydration" - if FK constraint fails (missing account),
+/// creates a stub account and retries.
+async fn execute_transaction_individual_inserts(
+    db: &Database,
+    records: &[TransactionRecord],
+) -> Result<usize> {
+    let mut written = 0;
+
+    for record in records {
+        match insert_single_transaction(db, record).await {
+            Ok(_) => written += 1,
+            Err(e) => {
+                // Check if this is a foreign key constraint error (code 787 in SQLite)
+                let error_str = e.to_string();
+                if error_str.contains("FOREIGN KEY constraint failed") || error_str.contains("787") {
+                    // Lazy hydration: create a stub account and retry
+                    tracing::info!(
+                        account_id = %record.account_id,
+                        transaction_id = %record.transaction_id,
+                        "Account not found, creating stub for lazy hydration"
+                    );
+
+                    match create_stub_account(db, record).await {
+                        Ok(_) => {
+                            // Retry the transaction insert
+                            match insert_single_transaction(db, record).await {
+                                Ok(_) => {
+                                    written += 1;
+                                    tracing::debug!(
+                                        transaction_id = %record.transaction_id,
+                                        "Transaction inserted after stub account creation"
+                                    );
+                                }
+                                Err(retry_err) => {
+                                    tracing::warn!(
+                                        transaction_id = %record.transaction_id,
+                                        account_id = %record.account_id,
+                                        error = %retry_err,
+                                        "Failed to insert transaction even after stub account creation"
+                                    );
+                                }
+                            }
+                        }
+                        Err(stub_err) => {
+                            tracing::warn!(
+                                account_id = %record.account_id,
+                                error = %stub_err,
+                                "Failed to create stub account"
+                            );
+                        }
+                    }
+                } else {
+                    // Not an FK error, log and continue
+                    tracing::warn!(
+                        transaction_id = %record.transaction_id,
+                        account_id = %record.account_id,
+                        error = %e,
+                        "Failed to insert individual transaction"
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(written)
+}
+
+/// Insert a single transaction record
+async fn insert_single_transaction(
+    db: &Database,
+    record: &TransactionRecord,
+) -> std::result::Result<(), sqlx::Error> {
+    let amount_cents = (record.amount * 100.0) as i64;
+
+    sqlx::query(
+        r#"
+        INSERT INTO data_financial_transaction (
+            id, account_id, transaction_id, amount, currency, merchant_name,
+            description, category, is_pending, timestamp, source_stream_id,
+            source_connection_id, metadata, source_table, source_provider
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        ON CONFLICT (id) DO UPDATE SET
+            amount = excluded.amount,
+            currency = excluded.currency,
+            merchant_name = excluded.merchant_name,
+            description = excluded.description,
+            category = excluded.category,
+            is_pending = excluded.is_pending,
+            metadata = excluded.metadata,
+            updated_at = datetime('now')
+        "#,
+    )
+    .bind(&record.id)
+    .bind(&record.account_id)
+    .bind(&record.transaction_id)
+    .bind(amount_cents)
+    .bind(&record.currency_code)
+    .bind(&record.merchant_name)
+    .bind(&record.description)
+    .bind(&record.category)
+    .bind(record.pending)
+    .bind(record.timestamp)
+    .bind(record.stream_id)
+    .bind(&record.source_connection_id)
+    .bind(&record.metadata)
+    .bind("stream_plaid_transactions")
+    .bind("plaid")
+    .execute(db.pool())
+    .await?;
+
+    Ok(())
+}
+
+/// Create a stub account for lazy hydration
+/// This creates a minimal account record that will be "hydrated" with full details
+/// when the accounts sync runs.
+async fn create_stub_account(
+    db: &Database,
+    transaction: &TransactionRecord,
+) -> std::result::Result<(), sqlx::Error> {
+    // Extract the Plaid account ID from metadata for the stub name
+    let plaid_account_id = transaction.metadata
+        .get("plaid_account_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    let stub_metadata = serde_json::json!({
+        "is_stub": true,
+        "stub_created_at": chrono::Utc::now().to_rfc3339(),
+        "plaid_account_id": plaid_account_id,
+        "stub_reason": "Created during transaction sync (lazy hydration)"
+    });
+
+    sqlx::query(
+        r#"
+        INSERT INTO data_financial_account (
+            id, account_name, account_type, currency, source_stream_id,
+            source_connection_id, metadata, source_table, source_provider
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (id) DO NOTHING
+        "#,
+    )
+    .bind(&transaction.account_id)
+    .bind(format!("Pending Account ({})", &plaid_account_id[..plaid_account_id.len().min(8)]))
+    .bind("unknown")
+    .bind(&transaction.currency_code)
+    .bind(transaction.stream_id)
+    .bind(&transaction.source_connection_id)
+    .bind(stub_metadata)
+    .bind("stub")
+    .bind("plaid")
+    .execute(db.pool())
+    .await?;
+
+    tracing::info!(
+        account_id = %transaction.account_id,
+        "Created stub account for lazy hydration"
+    );
+
+    Ok(())
 }
 
 // Self-registration

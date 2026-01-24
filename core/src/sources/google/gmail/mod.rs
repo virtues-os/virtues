@@ -9,7 +9,6 @@ use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use super::{
     client::GoogleClient,
@@ -32,7 +31,7 @@ use crate::{
 ///
 /// Syncs email messages from Gmail API to object storage via StreamWriter.
 pub struct GoogleGmailStream {
-    source_id: Uuid,
+    source_id: String,
     client: GoogleClient,
     db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
@@ -42,7 +41,7 @@ pub struct GoogleGmailStream {
 impl GoogleGmailStream {
     /// Create a new Gmail stream with SourceAuth and StreamWriter
     pub fn new(
-        source_id: Uuid,
+        source_id: String,
         db: SqlitePool,
         stream_writer: Arc<Mutex<StreamWriter>>,
         auth: SourceAuth,
@@ -53,7 +52,7 @@ impl GoogleGmailStream {
             .expect("GoogleGmailStream requires OAuth2 auth")
             .clone();
 
-        let client = GoogleClient::with_api(source_id, token_manager, "gmail", "v1");
+        let client = GoogleClient::with_api(source_id.clone(), token_manager, "gmail", "v1");
 
         Self {
             source_id,
@@ -65,10 +64,10 @@ impl GoogleGmailStream {
     }
 
     /// Load configuration from database (called by PullStream trait)
-    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    async fn load_config_internal(&mut self, db: &SqlitePool, source_id: &str) -> Result<()> {
         // Try loading from stream_connections table first (new pattern)
         let result = sqlx::query_as::<_, (serde_json::Value,)>(
-            "SELECT config FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
+            "SELECT config FROM elt_stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
         )
         .bind(source_id)
         .fetch_optional(db)
@@ -108,6 +107,7 @@ impl GoogleGmailStream {
         let effective_cursor = match sync_mode {
             SyncMode::Incremental { cursor } => cursor.clone().or(db_history_id),
             SyncMode::FullRefresh => None,
+            SyncMode::Backfill { .. } => None, // Backfill starts from scratch for the range
         };
 
         match effective_cursor {
@@ -147,7 +147,7 @@ impl GoogleGmailStream {
         let records = {
             let mut writer = self.stream_writer.lock().await;
             let collected = writer
-                .collect_records(self.source_id, "gmail")
+                .collect_records(&self.source_id, "gmail")
                 .map(|(records, _, _)| records);
 
             if let Some(ref recs) = collected {
@@ -167,6 +167,8 @@ impl GoogleGmailStream {
             records_written,
             records_failed,
             next_cursor,
+            earliest_record_at: None,
+            latest_record_at: None,
             started_at,
             completed_at,
             records, // Return collected records for archive/transform
@@ -562,7 +564,7 @@ impl GoogleGmailStream {
         // Write to S3/object storage via StreamWriter
         {
             let mut writer = self.stream_writer.lock().await;
-            writer.write_record(self.source_id, "gmail", record, Some(date))?;
+            writer.write_record(&self.source_id, "gmail", record, Some(date))?;
         }
 
         tracing::trace!(message_id = %message.id, "Wrote Gmail message to object storage");
@@ -698,9 +700,9 @@ impl GoogleGmailStream {
     /// Get the last sync token (history ID) from the database
     async fn get_last_sync_token(&self) -> Result<Option<String>> {
         let row = sqlx::query_as::<_, (Option<String>,)>(
-            "SELECT last_sync_token FROM data_stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
+            "SELECT last_sync_token FROM elt_stream_connections WHERE source_connection_id = $1 AND stream_name = 'gmail'",
         )
-        .bind(self.source_id)
+        .bind(&self.source_id)
         .fetch_optional(&self.db)
         .await?;
 
@@ -710,11 +712,11 @@ impl GoogleGmailStream {
     /// Save the history ID to the database
     async fn save_history_id(&self, history_id: &str) -> Result<()> {
         sqlx::query(
-            "UPDATE data_stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'gmail'",
+            "UPDATE elt_stream_connections SET last_sync_token = $1, last_sync_at = $2 WHERE source_connection_id = $3 AND stream_name = 'gmail'",
         )
         .bind(history_id)
         .bind(Utc::now())
-        .bind(self.source_id)
+        .bind(&self.source_id)
         .execute(&self.db)
         .await?;
 
@@ -729,7 +731,7 @@ impl PullStream for GoogleGmailStream {
         self.sync_with_mode(&mode).await
     }
 
-    async fn load_config(&mut self, db: &SqlitePool, source_id: Uuid) -> Result<()> {
+    async fn load_config(&mut self, db: &SqlitePool, source_id: &str) -> Result<()> {
         self.load_config_internal(db, source_id).await
     }
 

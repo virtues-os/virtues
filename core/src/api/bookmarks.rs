@@ -5,10 +5,9 @@
 //! (Person, Place, Organization, Thing).
 
 use crate::error::{Error, Result};
-use chrono::{DateTime, Utc};
+use crate::types::Timestamp;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 // ============================================================================
 // Types
@@ -27,8 +26,8 @@ pub struct Bookmark {
     pub entity_id: Option<String>,
     pub entity_slug: Option<String>,
     pub sort_order: i32,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// Request to create a tab bookmark
@@ -44,7 +43,7 @@ pub struct CreateTabBookmarkRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateEntityBookmarkRequest {
     pub entity_type: String,
-    pub entity_id: Uuid,
+    pub entity_id: String,
     pub entity_slug: String,
     pub label: String,
     pub icon: Option<String>,
@@ -113,7 +112,7 @@ pub async fn create_tab_bookmark(
             .await
             .map_err(|e| Error::Database(format!("Failed to get sort order: {}", e)))?;
 
-    let id = Uuid::new_v4().to_string();
+    let id = crate::ids::generate_id(crate::ids::BOOKMARK_PREFIX, &[&req.route]);
     let bookmark = sqlx::query_as::<_, Bookmark>(
         r#"
         INSERT INTO app_bookmarks (id, bookmark_type, route, tab_type, label, icon, sort_order)
@@ -150,11 +149,11 @@ pub async fn create_entity_bookmark(
     }
 
     // Check for duplicate entity
-    let entity_id_str = req.entity_id.to_string();
+    let entity_id_str = &req.entity_id;
     let existing = sqlx::query_scalar::<_, String>(
         r#"SELECT id FROM app_bookmarks WHERE bookmark_type = 'entity' AND entity_id = $1"#,
     )
-    .bind(&entity_id_str)
+    .bind(entity_id_str)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to check existing bookmark: {}", e)))?;
@@ -172,7 +171,7 @@ pub async fn create_entity_bookmark(
             .await
             .map_err(|e| Error::Database(format!("Failed to get sort order: {}", e)))?;
 
-    let id = Uuid::new_v4().to_string();
+    let id = crate::ids::generate_id(crate::ids::BOOKMARK_PREFIX, &[entity_id_str]);
     let bookmark = sqlx::query_as::<_, Bookmark>(
         r#"
         INSERT INTO app_bookmarks (id, bookmark_type, entity_type, entity_id, entity_slug, label, icon, sort_order)
@@ -183,7 +182,7 @@ pub async fn create_entity_bookmark(
     )
     .bind(&id)
     .bind(&req.entity_type)
-    .bind(&entity_id_str)
+    .bind(entity_id_str)
     .bind(&req.entity_slug)
     .bind(&req.label)
     .bind(&req.icon)
@@ -196,8 +195,8 @@ pub async fn create_entity_bookmark(
 }
 
 /// Delete a bookmark by ID
-pub async fn delete_bookmark(pool: &SqlitePool, id: Uuid) -> Result<()> {
-    let id_str = id.to_string();
+pub async fn delete_bookmark(pool: &SqlitePool, id: String) -> Result<()> {
+    let id_str = id;
     let result = sqlx::query(r#"DELETE FROM app_bookmarks WHERE id = $1"#)
         .bind(&id_str)
         .execute(pool)
@@ -205,7 +204,7 @@ pub async fn delete_bookmark(pool: &SqlitePool, id: Uuid) -> Result<()> {
         .map_err(|e| Error::Database(format!("Failed to delete bookmark: {}", e)))?;
 
     if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Bookmark not found: {}", id)));
+        return Err(Error::NotFound(format!("Bookmark not found: {}", id_str)));
     }
 
     Ok(())
@@ -231,8 +230,8 @@ pub async fn delete_bookmark_by_route(pool: &SqlitePool, route: &str) -> Result<
 }
 
 /// Delete bookmark by entity ID (for entity bookmarks)
-pub async fn delete_bookmark_by_entity(pool: &SqlitePool, entity_id: Uuid) -> Result<()> {
-    let entity_id_str = entity_id.to_string();
+pub async fn delete_bookmark_by_entity(pool: &SqlitePool, entity_id: String) -> Result<()> {
+    let entity_id_str = entity_id;
     let result = sqlx::query(
         r#"DELETE FROM app_bookmarks WHERE bookmark_type = 'entity' AND entity_id = $1"#,
     )
@@ -244,7 +243,7 @@ pub async fn delete_bookmark_by_entity(pool: &SqlitePool, entity_id: Uuid) -> Re
     if result.rows_affected() == 0 {
         return Err(Error::NotFound(format!(
             "Bookmark not found for entity: {}",
-            entity_id
+            entity_id_str
         )));
     }
 
@@ -268,8 +267,8 @@ pub async fn is_route_bookmarked(pool: &SqlitePool, route: &str) -> Result<Bookm
 }
 
 /// Check if an entity is bookmarked
-pub async fn is_entity_bookmarked(pool: &SqlitePool, entity_id: Uuid) -> Result<BookmarkStatus> {
-    let entity_id_str = entity_id.to_string();
+pub async fn is_entity_bookmarked(pool: &SqlitePool, entity_id: String) -> Result<BookmarkStatus> {
+    let entity_id_str = entity_id;
     let bookmark_id = sqlx::query_scalar::<_, String>(
         r#"SELECT id FROM app_bookmarks WHERE bookmark_type = 'entity' AND entity_id = $1"#,
     )
@@ -315,7 +314,7 @@ pub async fn toggle_entity_bookmark(
     req: CreateEntityBookmarkRequest,
 ) -> Result<ToggleBookmarkResponse> {
     // Check if already bookmarked
-    let status = is_entity_bookmarked(pool, req.entity_id).await?;
+    let status = is_entity_bookmarked(pool, req.entity_id.clone()).await?;
 
     if status.is_bookmarked {
         // Delete existing bookmark

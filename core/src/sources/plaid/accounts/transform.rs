@@ -4,7 +4,6 @@
 //! financial_account ontology table.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::database::Database;
@@ -37,12 +36,12 @@ impl OntologyTransform for PlaidAccountTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -58,7 +57,7 @@ impl OntologyTransform for PlaidAccountTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "accounts", checkpoint_key)
+            .read_with_checkpoint(&source_id, "accounts", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -146,20 +145,25 @@ impl OntologyTransform for PlaidAccountTransform {
                     .and_then(|v| v.as_str())
                     .map(String::from);
 
+                // Use source_id (passed to transform) as source_connection_id
+                // This is the actual source connection that synced this data
+                let source_connection_id = source_id.clone();
+
+                // Generate deterministic ID for idempotency
+                let id = crate::ids::generate_id(crate::ids::MONEY_ACCOUNT_PREFIX, &[&source_connection_id, account_id]);
+
                 // Build metadata
                 let metadata = serde_json::json!({
                     "plaid_account_id": account_id,
+                    "official_name": official_name,
+                    "account_subtype": account_subtype,
                     "synced_at": record.get("synced_at"),
                 });
 
-                let timestamp = Utc::now();
-
                 pending_records.push(AccountRecord {
-                    account_id_external: format!("plaid:{}", account_id),
+                    id,
                     account_name,
-                    official_name,
                     account_type,
-                    account_subtype,
                     mask,
                     current_balance,
                     available_balance,
@@ -167,12 +171,12 @@ impl OntologyTransform for PlaidAccountTransform {
                     currency_code,
                     institution_id,
                     institution_name,
-                    timestamp,
                     stream_id,
+                    source_connection_id,
                     metadata,
                 });
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -194,7 +198,7 @@ impl OntologyTransform for PlaidAccountTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "accounts", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "accounts", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -237,11 +241,9 @@ impl OntologyTransform for PlaidAccountTransform {
 
 /// Internal struct to hold account data for batch insert
 struct AccountRecord {
-    account_id_external: String,
+    id: String,              // deterministic ID
     account_name: String,
-    official_name: Option<String>,
     account_type: String,
-    account_subtype: Option<String>,
     mask: Option<String>,
     current_balance: Option<f64>,
     available_balance: Option<f64>,
@@ -249,12 +251,12 @@ struct AccountRecord {
     currency_code: String,
     institution_id: Option<String>,
     institution_name: Option<String>,
-    timestamp: DateTime<Utc>,
     stream_id: Uuid,
+    source_connection_id: String,
     metadata: serde_json::Value,
 }
 
-/// Execute batch insert for account records
+/// Execute batch insert for account records with fallback to individual inserts
 async fn execute_account_batch_insert(db: &Database, records: &[AccountRecord]) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
@@ -264,53 +266,126 @@ async fn execute_account_batch_insert(db: &Database, records: &[AccountRecord]) 
     let query_str = Database::build_batch_insert_query(
         "data_financial_account",
         &[
-            "account_id_external",
+            "id",
             "account_name",
-            "official_name",
             "account_type",
-            "account_subtype",
             "mask",
+            "currency",
             "current_balance",
             "available_balance",
             "credit_limit",
-            "currency_code",
             "institution_id",
             "institution_name",
-            "timestamp",
             "source_stream_id",
+            "source_connection_id",
             "metadata",
             "source_table",
             "source_provider",
         ],
-        "account_id_external",
+        "id",
         records.len(),
     );
 
     let mut query = sqlx::query(&query_str);
 
     for record in records {
+        // Convert balances to cents (INTEGER in schema)
+        let current_balance_cents = record.current_balance.map(|b| (b * 100.0) as i64);
+        let available_balance_cents = record.available_balance.map(|b| (b * 100.0) as i64);
+        let credit_limit_cents = record.credit_limit.map(|b| (b * 100.0) as i64);
+
         query = query
-            .bind(&record.account_id_external)
+            .bind(&record.id)
             .bind(&record.account_name)
-            .bind(&record.official_name)
             .bind(&record.account_type)
-            .bind(&record.account_subtype)
             .bind(&record.mask)
-            .bind(record.current_balance)
-            .bind(record.available_balance)
-            .bind(record.credit_limit)
             .bind(&record.currency_code)
+            .bind(current_balance_cents)
+            .bind(available_balance_cents)
+            .bind(credit_limit_cents)
             .bind(&record.institution_id)
             .bind(&record.institution_name)
-            .bind(record.timestamp)
             .bind(record.stream_id)
+            .bind(&record.source_connection_id)
             .bind(&record.metadata)
             .bind("stream_plaid_accounts")
             .bind("plaid");
     }
 
-    let result = query.execute(db.pool()).await?;
-    Ok(result.rows_affected() as usize)
+    match query.execute(db.pool()).await {
+        Ok(result) => Ok(result.rows_affected() as usize),
+        Err(batch_err) => {
+            // Batch failed - fall back to individual inserts
+            tracing::warn!(
+                batch_size = records.len(),
+                error = %batch_err,
+                "Account batch insert failed, falling back to individual inserts"
+            );
+            execute_account_individual_inserts(db, records).await
+        }
+    }
+}
+
+/// Fallback: insert account records one by one when batch fails
+async fn execute_account_individual_inserts(
+    db: &Database,
+    records: &[AccountRecord],
+) -> Result<usize> {
+    let mut written = 0;
+
+    for record in records {
+        let current_balance_cents = record.current_balance.map(|b| (b * 100.0) as i64);
+        let available_balance_cents = record.available_balance.map(|b| (b * 100.0) as i64);
+        let credit_limit_cents = record.credit_limit.map(|b| (b * 100.0) as i64);
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO data_financial_account (
+                id, account_name, account_type, mask, currency, current_balance,
+                available_balance, credit_limit, institution_id, institution_name,
+                source_stream_id, source_connection_id, metadata, source_table, source_provider
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            ON CONFLICT (id) DO UPDATE SET
+                account_name = excluded.account_name,
+                current_balance = excluded.current_balance,
+                available_balance = excluded.available_balance,
+                credit_limit = excluded.credit_limit,
+                metadata = excluded.metadata,
+                updated_at = datetime('now')
+            "#,
+        )
+        .bind(&record.id)
+        .bind(&record.account_name)
+        .bind(&record.account_type)
+        .bind(&record.mask)
+        .bind(&record.currency_code)
+        .bind(current_balance_cents)
+        .bind(available_balance_cents)
+        .bind(credit_limit_cents)
+        .bind(&record.institution_id)
+        .bind(&record.institution_name)
+        .bind(record.stream_id)
+        .bind(&record.source_connection_id)
+        .bind(&record.metadata)
+        .bind("stream_plaid_accounts")
+        .bind("plaid")
+        .execute(db.pool())
+        .await;
+
+        match result {
+            Ok(_) => written += 1,
+            Err(e) => {
+                tracing::warn!(
+                    account_id = %record.id,
+                    account_name = %record.account_name,
+                    error = %e,
+                    "Failed to insert individual account"
+                );
+            }
+        }
+    }
+
+    Ok(written)
 }
 
 // Self-registration

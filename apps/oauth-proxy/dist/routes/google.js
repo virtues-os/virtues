@@ -7,6 +7,7 @@ exports.googleRouter = void 0;
 const express_1 = __importDefault(require("express"));
 const oauth_apps_1 = require("../config/oauth-apps");
 const error_handler_1 = require("../middleware/error-handler");
+const url_validator_1 = require("../utils/url-validator");
 const router = express_1.default.Router();
 exports.googleRouter = router;
 // Generate state parameter for CSRF protection
@@ -22,7 +23,7 @@ router.get('/auth', (req, res) => {
             throw (0, error_handler_1.createError)('Missing return_url parameter', 400);
         }
         // Validate return_url to prevent open redirect attacks
-        if (!isValidReturnUrl(return_url)) {
+        if (!(0, url_validator_1.isValidReturnUrl)(return_url)) {
             throw (0, error_handler_1.createError)('Invalid return_url parameter', 400);
         }
         const state = generateState();
@@ -73,7 +74,7 @@ router.get('/callback', async (req, res) => {
             throw (0, error_handler_1.createError)('Invalid state parameter', 400);
         }
         // Validate return_url again
-        if (!isValidReturnUrl(return_url)) {
+        if (!(0, url_validator_1.isValidReturnUrl)(return_url)) {
             throw (0, error_handler_1.createError)('Invalid return_url in state', 400);
         }
         // Exchange code for tokens HERE in the auth-proxy
@@ -136,7 +137,10 @@ async function exchangeCodeForTokens(code) {
     }
     return tokens;
 }
-// Refresh access token using refresh token
+/**
+ * Refresh access token using refresh token
+ * @route POST /google/refresh
+ */
 router.post('/refresh', async (req, res) => {
     try {
         const { refresh_token } = req.body;
@@ -150,14 +154,14 @@ router.post('/refresh', async (req, res) => {
             refresh_token,
             client_id: config.clientId,
             client_secret: config.clientSecret,
-            grant_type: 'refresh_token'
+            grant_type: 'refresh_token',
         });
         const response = await fetch(tokenEndpoint, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
+                'Content-Type': 'application/x-www-form-urlencoded',
             },
-            body: body.toString()
+            body: body.toString(),
         });
         if (!response.ok) {
             const errorData = await response.text();
@@ -177,7 +181,7 @@ router.post('/refresh', async (req, res) => {
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token || refresh_token, // Google may not return a new refresh token
             expires_in: tokens.expires_in || 3600,
-            token_type: tokens.token_type || 'Bearer'
+            token_type: tokens.token_type || 'Bearer',
         });
     }
     catch (error) {
@@ -185,35 +189,15 @@ router.post('/refresh', async (req, res) => {
         if (error.statusCode) {
             res.status(error.statusCode).json({
                 error: error.message,
-                code: error.statusCode === 401 ? 'invalid_refresh_token' : 'refresh_failed'
+                code: error.statusCode === 401 ? 'invalid_refresh_token' : 'refresh_failed',
             });
         }
         else {
             res.status(500).json({
                 error: 'Failed to refresh token',
-                code: 'refresh_failed'
+                code: 'refresh_failed',
             });
         }
     }
 });
-// Validate return URL to prevent open redirect attacks
-function isValidReturnUrl(url) {
-    try {
-        const parsed = new URL(url);
-        // Allow localhost for development
-        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-            return true;
-        }
-        // Allow specific domains (add your domain patterns here)
-        const allowedPatterns = [
-            /^.*\.virtues\.com$/,
-            /^.*\.local$/,
-            /^.*\.localhost$/
-        ];
-        return allowedPatterns.some(pattern => pattern.test(parsed.hostname));
-    }
-    catch {
-        return false;
-    }
-}
 //# sourceMappingURL=google.js.map

@@ -37,12 +37,12 @@ impl OntologyTransform for IosLocationTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -58,7 +58,7 @@ impl OntologyTransform for IosLocationTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "location", checkpoint_key)
+            .read_with_checkpoint(&source_id, "location", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -168,7 +168,7 @@ impl OntologyTransform for IosLocationTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -204,7 +204,7 @@ impl OntologyTransform for IosLocationTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "location", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "location", checkpoint_key, max_ts)
                     .await?;
             }
         }

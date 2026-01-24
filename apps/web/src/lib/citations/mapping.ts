@@ -7,7 +7,7 @@ import type { DisplayInfo } from '$lib/types/Citation';
 
 /**
  * Ontology table name → display info
- * Keys match the table names in data schema (e.g., "health_sleep", "praxis_calendar")
+ * Keys match the table names in data schema (e.g., "health_sleep", "calendar")
  */
 export const ONTOLOGY_DISPLAY: Record<string, DisplayInfo> = {
 	// Health domain
@@ -17,8 +17,8 @@ export const ONTOLOGY_DISPLAY: Record<string, DisplayInfo> = {
 	health_hrv: { icon: 'ri:heart-pulse-line', color: 'text-red-400', label: 'HRV' },
 	health_workout: { icon: 'ri:run-line', color: 'text-orange-500', label: 'Workout' },
 
-	// Praxis domain
-	praxis_calendar: { icon: 'ri:calendar-line', color: 'text-blue-500', label: 'Calendar' },
+	// Calendar domain
+	calendar: { icon: 'ri:calendar-line', color: 'text-blue-500', label: 'Calendar' },
 
 	// Social domain
 	social_email: { icon: 'ri:mail-line', color: 'text-purple-500', label: 'Email' },
@@ -45,7 +45,8 @@ export const ONTOLOGY_DISPLAY: Record<string, DisplayInfo> = {
 		color: 'text-emerald-500',
 		label: 'Transactions'
 	},
-	financial_account: { icon: 'ri:bank-line', color: 'text-emerald-400', label: 'Accounts' }
+	financial_account: { icon: 'ri:bank-line', color: 'text-emerald-400', label: 'Accounts' },
+	apple_finance: { icon: 'ri:apple-fill', color: 'text-gray-900', label: 'Apple Finance' }
 };
 
 /**
@@ -58,7 +59,7 @@ export const TOOL_DISPLAY: Record<string, DisplayInfo> = {
 		color: 'text-violet-500',
 		label: 'Narratives'
 	},
-	virtues_query_axiology: { icon: 'ri:heart-3-line', color: 'text-rose-500', label: 'Values' },
+
 	virtues_semantic_search: {
 		icon: 'ri:search-eye-line',
 		color: 'text-violet-500',
@@ -87,7 +88,7 @@ export const DEFAULT_DISPLAY: DisplayInfo = {
 
 /**
  * Extract ontology table name from a SQL query
- * Looks for patterns like "FROM data.health_sleep" or "FROM data.praxis_calendar"
+ * Looks for patterns like "FROM data.health_sleep" or "FROM data.calendar"
  */
 export function extractOntologyFromQuery(query: string): string | null {
 	// Match "FROM data.table_name" pattern (case insensitive)
@@ -117,6 +118,10 @@ export function getDisplayInfo(
 	if (toolName === 'virtues_query_ontology' && toolArgs?.query) {
 		const ontology = extractOntologyFromQuery(toolArgs.query as string);
 		if (ontology && ONTOLOGY_DISPLAY[ontology]) {
+			// Special case for financial transactions to show provider icon if possible
+			if (ontology === 'financial_transaction' && (toolArgs.query as string).includes('apple_finance')) {
+				return ONTOLOGY_DISPLAY.apple_finance;
+			}
 			return ONTOLOGY_DISPLAY[ontology];
 		}
 	}
@@ -134,13 +139,12 @@ export function getDisplayInfo(
  */
 export function inferSourceType(
 	toolName: string
-): 'ontology' | 'axiology' | 'web_search' | 'narratives' | 'location' | 'generic' {
+): 'ontology' | 'web_search' | 'narratives' | 'location' | 'generic' {
 	switch (toolName) {
 		case 'virtues_query_ontology':
 		case 'virtues_semantic_search':
 			return 'ontology';
-		case 'virtues_query_axiology':
-			return 'axiology';
+
 		case 'virtues_query_narratives':
 			return 'narratives';
 		case 'web_search':
