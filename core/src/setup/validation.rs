@@ -24,33 +24,6 @@ pub async fn test_database_connection(database_url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Test S3/MinIO connection by attempting to access the bucket
-pub async fn test_s3_connection(
-    endpoint: Option<String>,
-    bucket: &str,
-    access_key: &str,
-    secret_key: &str,
-) -> Result<()> {
-    let storage = Storage::s3(
-        bucket.to_string(),
-        endpoint,
-        Some(access_key.to_string()),
-        Some(secret_key.to_string()),
-    )
-    .await?;
-
-    // Test health check
-    let health = storage.health_check().await?;
-    if !health.is_healthy {
-        return Err(Error::S3(format!(
-            "S3 connection unhealthy: {}",
-            health.message
-        )));
-    }
-
-    Ok(())
-}
-
 /// Test local storage by creating the directory and writing a test file
 pub async fn test_local_storage(path: &str) -> Result<()> {
     let storage = Storage::local(path.to_string())?;

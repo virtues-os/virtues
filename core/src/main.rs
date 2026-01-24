@@ -78,21 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // Initialize Virtues client with optional S3/MinIO configuration
+    // Initialize Virtues client
+    // Storage path: STORAGE_PATH env var or ./core/data/lake default
     let mut builder = VirtuesBuilder::new().database(&database_url);
 
-    // Configure S3/MinIO storage if environment variables are present
-    if let Ok(bucket) = env::var("S3_BUCKET") {
-        builder = builder.s3_bucket(&bucket);
-
-        if let Ok(endpoint) = env::var("S3_ENDPOINT") {
-            builder = builder.s3_endpoint(&endpoint);
-        }
-        if let Ok(access_key) = env::var("S3_ACCESS_KEY") {
-            if let Ok(secret_key) = env::var("S3_SECRET_KEY") {
-                builder = builder.s3_credentials(&access_key, &secret_key);
-            }
-        }
+    // Configure storage path if specified
+    if let Ok(storage_path) = env::var("STORAGE_PATH") {
+        builder = builder.storage_path(&storage_path);
     }
 
     let virtues = builder.build().await?;

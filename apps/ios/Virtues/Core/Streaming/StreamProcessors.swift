@@ -30,9 +30,45 @@ enum StreamProcessorFactory {
         case "ios_contacts":
             return ContactsStreamProcessor()
 
+        case "ios_finance":
+            return FinanceKitStreamProcessor()
+
         default:
             return nil
         }
+    }
+}
+
+// MARK: - FinanceKit Stream Processor
+
+struct FinanceKitStreamProcessor: StreamDataProcessor {
+    typealias DataType = FinanceKitStreamData
+    typealias StreamDataType = FinanceKitStreamData
+
+    let streamName = "ios_finance"
+
+    func decode(_ data: Data) throws -> [FinanceKitStreamData] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let streamData = try decoder.decode(FinanceKitStreamData.self, from: data)
+        return [streamData]
+    }
+
+    func combine(_ items: [FinanceKitStreamData], deviceId: String) -> FinanceKitStreamData {
+        var allAccounts: [FinanceKitAccount] = []
+        var allTransactions: [FinanceKitTransaction] = []
+
+        for item in items {
+            allAccounts.append(contentsOf: item.accounts)
+            allTransactions.append(contentsOf: item.transactions)
+        }
+
+        // Deduplicate accounts by ID (keep the latest balance)
+        let uniqueAccounts = Array(Dictionary(grouping: allAccounts, by: { $0.id })
+            .compactMapValues { $0.last }
+            .values)
+
+        return FinanceKitStreamData(deviceId: deviceId, accounts: uniqueAccounts, transactions: allTransactions)
     }
 }
 

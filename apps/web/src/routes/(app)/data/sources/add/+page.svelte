@@ -18,6 +18,12 @@
 
 	let { data }: { data: PageData } = $props();
 
+	interface ConnectionLimits {
+		free: number;
+		starter: number;
+		pro: number;
+	}
+
 	interface CatalogSource {
 		name: string;
 		display_name: string;
@@ -25,6 +31,9 @@
 		auth_type: string;
 		stream_count: number;
 		icon?: string;
+		is_multi_instance?: boolean;
+		connection_limits?: ConnectionLimits;
+		current_connections?: number;
 	}
 
 	interface Stream {
@@ -65,6 +74,30 @@
 	let isConfigureMode = $state(!!data.existingSource);
 	let configureSource = $state(data.existingSource);
 	let configureStreams = $state<Stream[]>(data.availableStreams || []);
+
+	// Tier/limit state - for free tier (adjust when tier system is integrated)
+	const userTier = "free";
+
+	function getConnectionLimit(source: CatalogSource): number {
+		if (!source.connection_limits) return 1;
+		return source.connection_limits[userTier as keyof ConnectionLimits] ?? source.connection_limits.free;
+	}
+
+	function getCurrentConnections(source: CatalogSource): number {
+		return source.current_connections ?? 0;
+	}
+
+	function canAddSource(source: CatalogSource): boolean {
+		if (!source.is_multi_instance) {
+			return getCurrentConnections(source) === 0;
+		}
+		return getCurrentConnections(source) < getConnectionLimit(source);
+	}
+
+	function isAtLimit(source: CatalogSource | null): boolean {
+		if (!source) return false;
+		return !canAddSource(source);
+	}
 
 	$effect(() => {
 		if (data.catalog) {
@@ -119,17 +152,20 @@
 	async function handleAuthorize() {
 		if (!selectedSource) return;
 
+		// Check connection limits before proceeding
+		if (isAtLimit(selectedSource)) {
+			error = `You've reached your limit of ${getConnectionLimit(selectedSource)} ${selectedSource.display_name} connections. Upgrade to add more.`;
+			return;
+		}
+
 		isLoading = true;
 		error = null;
 
 		try {
-			// Build the callback URL for our app
-			const callbackUrl = `${window.location.origin}/oauth/callback`;
-
 			// Get the OAuth authorization URL from the backend
+			// Backend now handles callback URL and redirects back here
 			const oauthResponse = await api.initiateOAuth(
 				selectedSource.name,
-				callbackUrl,
 			);
 
 			// Redirect to the OAuth provider's authorization page
@@ -329,6 +365,28 @@
 			</div>
 		{/if}
 
+		{#if isAtLimit(selectedSource)}
+			<div class="mb-8 p-4 border border-warning bg-warning-subtle rounded-lg">
+				<div class="flex items-start gap-3">
+					<iconify-icon icon="ri:error-warning-line" class="text-xl text-warning mt-0.5"></iconify-icon>
+					<div>
+						<h3 class="font-medium text-foreground mb-1">Connection Limit Reached</h3>
+						<p class="text-sm text-foreground-muted mb-3">
+							You've reached your limit of {getConnectionLimit(selectedSource!)} {selectedSource!.display_name} 
+							{selectedSource!.is_multi_instance ? 'connections' : 'connection'} on the {userTier} plan.
+						</p>
+						<Button
+							variant="primary"
+							size="sm"
+							onclick={() => goto('/profile/account')}
+						>
+							Upgrade to Add More
+						</Button>
+					</div>
+				</div>
+			</div>
+		{/if}
+
 		<div class="space-y-12">
 			<!-- Step 1: Select Provider -->
 			<div>
@@ -354,6 +412,12 @@
 							{#snippet item(source)}
 								<div>
 									<div class="flex items-center gap-2 mb-1">
+										{#if source.icon}
+											<iconify-icon
+												icon={source.icon}
+												class="text-lg text-foreground-subtle"
+											></iconify-icon>
+										{/if}
 										<span class="text-foreground">
 											{source.display_name}
 										</span>
@@ -459,10 +523,16 @@
 							<!-- Plaid Link Flow -->
 							<div class="space-y-6">
 								{#if !plaidSourceId}
-									<PlaidLink
-										onSuccess={handlePlaidSuccess}
-										onCancel={handlePlaidCancel}
-									/>
+									{#if isAtLimit(selectedSource)}
+										<p class="text-sm text-foreground-muted">
+											You've reached your connection limit. Upgrade your plan to add more bank connections.
+										</p>
+									{:else}
+										<PlaidLink
+											onSuccess={handlePlaidSuccess}
+											onCancel={handlePlaidCancel}
+										/>
+									{/if}
 								{:else}
 									<div class="pt-6 border-t border-border">
 										<p
@@ -541,10 +611,13 @@
 										<Button
 											onclick={handleAuthorize}
 											disabled={isLoading ||
-												!sourceName.trim()}
+												!sourceName.trim() ||
+												isAtLimit(selectedSource)}
 										>
 											{#if isLoading}
 												Authorizing...
+											{:else if isAtLimit(selectedSource)}
+												Limit Reached
 											{:else}
 												Authorize
 											{/if}

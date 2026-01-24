@@ -1,7 +1,7 @@
 <script lang="ts">
-	import 'iconify-icon';
-	import { goto } from '$app/navigation';
-	import { chatSessions } from '$lib/stores/chatSessions.svelte';
+	import "iconify-icon";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 
 	interface Props {
 		open?: boolean;
@@ -10,16 +10,37 @@
 
 	let { open = false, onClose }: Props = $props();
 
-	let searchQuery = $state('');
+	let searchQuery = $state("");
 	let selectedIndex = $state(0);
 	let inputEl: HTMLInputElement | null = $state(null);
 
 	// Quick actions
 	const quickActions = [
-		{ id: 'new-chat', label: 'New Chat', icon: 'ri:add-line', shortcut: 'Cmd+N', action: () => goto('/') },
-		{ id: 'wiki', label: 'Go to Wiki', icon: 'ri:book-2-line', action: () => goto('/wiki') },
-		{ id: 'sources', label: 'Go to Sources', icon: 'ri:device-line', action: () => goto('/data/sources') },
-		{ id: 'settings', label: 'Open Settings', icon: 'ri:settings-4-line', action: () => goto('/profile/account') }
+		{
+			id: "new-chat",
+			label: "New Chat",
+			icon: "ri:add-line",
+			shortcut: "Cmd+N",
+			action: () => workspaceStore.openTabFromRoute("/"),
+		},
+		{
+			id: "wiki",
+			label: "Go to Wiki",
+			icon: "ri:book-2-line",
+			action: () => workspaceStore.openTabFromRoute("/wiki"),
+		},
+		{
+			id: "sources",
+			label: "Go to Sources",
+			icon: "ri:device-line",
+			action: () => workspaceStore.openTabFromRoute("/data/sources"),
+		},
+		{
+			id: "settings",
+			label: "Open Settings",
+			icon: "ri:settings-4-line",
+			action: () => workspaceStore.openTabFromRoute("/profile/account"),
+		},
 	];
 
 	// Filter results based on search
@@ -30,42 +51,44 @@
 			// Show quick actions and recent chats when empty
 			return {
 				actions: quickActions,
-				chats: chatSessions.sessions.slice(0, 5)
+				chats: chatSessions.sessions.slice(0, 5),
 			};
 		}
 
 		// Filter quick actions
 		const matchedActions = quickActions.filter((a) =>
-			a.label.toLowerCase().includes(query)
+			a.label.toLowerCase().includes(query),
 		);
 
 		// Filter chats
-		const matchedChats = chatSessions.sessions.filter((c) =>
-			(c.title || 'Untitled').toLowerCase().includes(query)
-		).slice(0, 5);
+		const matchedChats = chatSessions.sessions
+			.filter((c) =>
+				(c.title || "Untitled").toLowerCase().includes(query),
+			)
+			.slice(0, 5);
 
 		return {
 			actions: matchedActions,
-			chats: matchedChats
+			chats: matchedChats,
 		};
 	});
 
 	// Total results count for keyboard navigation
 	const totalResults = $derived(
-		filteredResults.actions.length + filteredResults.chats.length
+		filteredResults.actions.length + filteredResults.chats.length,
 	);
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
+		if (e.key === "Escape") {
 			e.preventDefault();
 			onClose();
-		} else if (e.key === 'ArrowDown') {
+		} else if (e.key === "ArrowDown") {
 			e.preventDefault();
 			selectedIndex = Math.min(selectedIndex + 1, totalResults - 1);
-		} else if (e.key === 'ArrowUp') {
+		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
 			selectedIndex = Math.max(selectedIndex - 1, 0);
-		} else if (e.key === 'Enter') {
+		} else if (e.key === "Enter") {
 			e.preventDefault();
 			selectCurrentItem();
 		}
@@ -84,7 +107,12 @@
 			const chatIndex = selectedIndex - actionsCount;
 			const chat = filteredResults.chats[chatIndex];
 			if (chat) {
-				goto(`/?conversationId=${chat.conversation_id}`);
+				workspaceStore.openTabFromRoute(
+					`/?conversationId=${chat.conversation_id}`,
+					{
+						label: chat.title || "Chat",
+					},
+				);
 				onClose();
 			}
 		}
@@ -100,7 +128,7 @@
 	$effect(() => {
 		if (open && inputEl) {
 			inputEl.focus();
-			searchQuery = '';
+			searchQuery = "";
 			selectedIndex = 0;
 		}
 	});
@@ -112,7 +140,11 @@
 		<div class="modal" role="dialog" aria-modal="true" aria-label="Search">
 			<!-- Search Input -->
 			<div class="search-input-container">
-				<iconify-icon icon="ri:search-line" width="18" class="search-icon"></iconify-icon>
+				<iconify-icon
+					icon="ri:search-line"
+					width="18"
+					class="search-icon"
+				></iconify-icon>
 				<input
 					bind:this={inputEl}
 					bind:value={searchQuery}
@@ -133,13 +165,22 @@
 							<button
 								class="result-item"
 								class:selected={selectedIndex === i}
-								onclick={() => { action.action(); onClose(); }}
-								onmouseenter={() => selectedIndex = i}
+								onclick={() => {
+									action.action();
+									onClose();
+								}}
+								onmouseenter={() => (selectedIndex = i)}
 							>
-								<iconify-icon icon={action.icon} width="16" class="result-icon"></iconify-icon>
+								<iconify-icon
+									icon={action.icon}
+									width="16"
+									class="result-icon"
+								></iconify-icon>
 								<span class="result-label">{action.label}</span>
 								{#if action.shortcut}
-									<kbd class="result-shortcut">{action.shortcut}</kbd>
+									<kbd class="result-shortcut"
+										>{action.shortcut}</kbd
+									>
 								{/if}
 							</button>
 						{/each}
@@ -154,11 +195,25 @@
 							<button
 								class="result-item"
 								class:selected={selectedIndex === index}
-								onclick={() => { goto(`/?conversationId=${chat.conversation_id}`); onClose(); }}
-								onmouseenter={() => selectedIndex = index}
+								onclick={() => {
+									workspaceStore.openTabFromRoute(
+										`/?conversationId=${chat.conversation_id}`,
+										{
+											label: chat.title || "Chat",
+										},
+									);
+									onClose();
+								}}
+								onmouseenter={() => (selectedIndex = index)}
 							>
-								<iconify-icon icon="ri:message-3-line" width="16" class="result-icon"></iconify-icon>
-								<span class="result-label">{chat.title || 'Untitled'}</span>
+								<iconify-icon
+									icon="ri:message-3-line"
+									width="16"
+									class="result-icon"
+								></iconify-icon>
+								<span class="result-label"
+									>{chat.title || "Untitled"}</span
+								>
 							</button>
 						{/each}
 					</div>
@@ -190,8 +245,12 @@
 	}
 
 	@keyframes backdrop-fade-in {
-		from { opacity: 0; }
-		to { opacity: 1; }
+		from {
+			opacity: 0;
+		}
+		to {
+			opacity: 1;
+		}
 	}
 
 	.modal {

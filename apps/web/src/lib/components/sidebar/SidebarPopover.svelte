@@ -80,8 +80,15 @@
 		animation: popover-fade-in 150ms ease-out;
 	}
 
-	:global([data-theme="dark"]) .popover,
-	:global([data-theme="night"]) .popover {
+	:global([data-theme="midnight-oil"]) .popover,
+	:global([data-theme="narnia-nights"]) .popover,
+	:global([data-theme="dumb-ox"]) .popover,
+	:global([data-theme="chiaroscuro"]) .popover,
+	:global([data-theme="stoa"]) .popover,
+	:global([data-theme="lyceum"]) .popover,
+	:global([data-theme="tabula-rasa"]) .popover,
+	:global([data-theme="hemlock"]) .popover,
+	:global([data-theme="shire"]) .popover {
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 	}
 

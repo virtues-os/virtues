@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-	import { goto } from "$app/navigation";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import { getAllOrganizations } from "$lib/wiki";
 	import type { OrganizationPage } from "$lib/wiki/types";
 	import "iconify-icon";
@@ -48,7 +48,7 @@
 
 	// Handle row click - navigate to organization page
 	function handleRowClick(org: OrganizationPage) {
-		goto(`/wiki/${org.slug}`);
+		workspaceStore.openTabFromRoute(`/wiki/${org.slug}`);
 	}
 </script>
 

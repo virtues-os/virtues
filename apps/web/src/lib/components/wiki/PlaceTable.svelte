@@ -5,7 +5,7 @@
 -->
 
 <script lang="ts">
-	import { goto } from "$app/navigation";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import { getAllPlaces } from "$lib/wiki";
 	import type { PlacePage } from "$lib/wiki/types";
 	import "iconify-icon";
@@ -43,7 +43,7 @@
 
 	// Handle row click - navigate to place page
 	function handleRowClick(place: PlacePage) {
-		goto(`/wiki/${place.slug}`);
+		workspaceStore.openTabFromRoute(`/wiki/${place.slug}`);
 	}
 </script>
 

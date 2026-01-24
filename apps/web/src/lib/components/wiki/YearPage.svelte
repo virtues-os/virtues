@@ -7,10 +7,9 @@
 
 <script lang="ts">
 	import type { YearPage as YearPageType } from "$lib/wiki/types";
-	import WikiEditor from "./WikiEditor.svelte";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import ActivityHeatmap from "./ActivityHeatmap.svelte";
-	import { goto } from "$app/navigation";
+	import { workspaceStore } from "$lib/stores/workspace.svelte";
 	import "iconify-icon";
 
 	interface Props {
@@ -18,12 +17,6 @@
 	}
 
 	let { page }: Props = $props();
-
-	let contentValue = $state(page.content);
-
-	$effect(() => {
-		contentValue = page.content;
-	});
 
 	// Generate activity data from months
 	const activityData = $derived.by(() => {
@@ -44,7 +37,7 @@
 	});
 
 	function handleDayClick(_date: Date, slug: string) {
-		goto(`/wiki/${slug}`);
+		workspaceStore.openTabFromRoute(`/wiki/${slug}`);
 	}
 
 	function formatPeriod(start: Date, end?: Date): string {
@@ -71,7 +64,7 @@
 	const weeksToShow = 52;
 
 	// Build content string for TOC
-	const fullContent = $derived(`${contentValue}
+	const fullContent = $derived(`${page.content || ''}
 
 ## Calendar
 
@@ -113,14 +106,11 @@
 			<hr class="divider" />
 
 			<!-- Content/Reflection -->
-			<section class="section" id="reflection">
-				<div class="content-editor">
-					<WikiEditor
-						bind:content={contentValue}
-						linkedPages={page.linkedPages}
-					/>
-				</div>
-			</section>
+			{#if page.content}
+				<section class="section" id="reflection">
+					<div class="notes-content">{page.content}</div>
+				</section>
+			{/if}
 
 			<!-- Calendar Heatmap -->
 			<section class="section" id="calendar">
@@ -343,8 +333,11 @@
 		margin: 0 0 0.75rem;
 	}
 
-	.content-editor {
-		min-height: 100px;
+	.notes-content {
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		line-height: 1.6;
+		white-space: pre-wrap;
 	}
 
 	.heatmap-container {

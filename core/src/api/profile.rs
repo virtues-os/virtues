@@ -44,7 +44,7 @@ pub async fn get_profile(db: &SqlitePool) -> Result<UserProfile> {
     let profile = sqlx::query_as::<_, UserProfile>(
         r#"
         SELECT *
-        FROM data_user_profile
+        FROM app_user_profile
         LIMIT 1
         "#,
     )
@@ -124,7 +124,7 @@ pub async fn update_profile(db: &SqlitePool, request: UpdateProfileRequest) -> R
     set_clauses.push("updated_at = datetime('now')");
 
     let query = format!(
-        "UPDATE data_user_profile SET {} WHERE id = '00000000-0000-0000-0000-000000000001'",
+        "UPDATE app_user_profile SET {} WHERE id = '00000000-0000-0000-0000-000000000001'",
         set_clauses.join(", ")
     );
 

@@ -13,7 +13,7 @@ impl OntologyDescriptor for FinancialAccountOntology {
             .description("Bank accounts, credit cards, and other financial accounts from Plaid")
             .domain("financial")
             .table_name("financial_account")
-            .source_streams(vec!["stream_plaid_accounts"])
+            .source_streams(vec!["stream_plaid_accounts", "stream_ios_finance"])
             // Accounts are not time-series events, but we need a timestamp for consistency
             // Using created_at as the "when was this account added" timestamp
             .timestamp_column("created_at")

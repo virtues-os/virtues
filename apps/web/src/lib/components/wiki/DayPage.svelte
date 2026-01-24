@@ -493,26 +493,6 @@
 		background-size: 100% 100%;
 	}
 
-	.citation-item {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0;
-	}
-
-	.citation-index {
-		font-size: 0.8125rem;
-		font-weight: 400;
-		color: var(--color-primary);
-		flex-shrink: 0;
-	}
-
-	.citation-label {
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		flex: 1;
-	}
-
 	.empty-placeholder {
 		font-size: 0.875rem;
 		color: var(--color-foreground-subtle);

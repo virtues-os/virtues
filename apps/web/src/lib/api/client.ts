@@ -77,6 +77,37 @@ export async function disableStream(sourceId: string, streamName: string) {
 	if (!res.ok) throw new Error(`Failed to disable stream: ${res.statusText}`);
 }
 
+export interface StreamUpdate {
+	stream_name: string;
+	is_enabled: boolean;
+	config?: Record<string, unknown>;
+}
+
+export interface BulkUpdateStreamsResponse {
+	updated_count: number;
+	streams: any[];
+}
+
+/**
+ * Bulk update multiple streams in a single request.
+ * More efficient than calling enableStream/disableStream for each stream.
+ */
+export async function bulkUpdateStreams(
+	sourceId: string,
+	streams: StreamUpdate[]
+): Promise<BulkUpdateStreamsResponse> {
+	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ streams })
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to update streams: ${res.statusText}`);
+	}
+	return res.json();
+}
+
 export async function syncStream(
 	sourceId: string,
 	streamName: string,
@@ -102,7 +133,7 @@ export interface Job {
 	source_id?: string;
 	source_name?: string; // Enriched in page load, not from API
 	stream_name?: string;
-	sync_mode?: 'full_refresh' | 'incremental';
+	sync_mode?: 'full_refresh' | 'incremental' | 'backfill';
 	transform_id?: string;
 	started_at: string;
 	completed_at?: string;
@@ -212,10 +243,23 @@ export async function getActivityMetrics(): Promise<ActivityMetrics> {
 }
 
 // OAuth
-export async function initiateOAuth(provider: string, redirectUri?: string, state?: string) {
+/**
+ * Initiate OAuth authorization flow
+ *
+ * @param provider - OAuth provider name (e.g., "google", "notion")
+ * @param returnUrl - Full URL where user should be redirected after OAuth completes.
+ *   This is validated against an allowlist on the backend. Examples:
+ *   - `http://localhost:5173/data/sources/add` (web dev)
+ *   - `https://app.virtues.com/data/sources/add` (web prod)
+ *   - `virtues://oauth/callback` (iOS app)
+ *   - `/data/sources/add` (relative path)
+ *
+ * The backend stores this in a signed state token and redirects the user here
+ * after OAuth completes, appending `?source_id=xxx&connected=true`.
+ */
+export async function initiateOAuth(provider: string, returnUrl?: string) {
 	const params = new URLSearchParams();
-	if (redirectUri) params.set('redirect_uri', redirectUri);
-	if (state) params.set('state', state);
+	if (returnUrl) params.set('state', returnUrl);
 
 	const url = `${API_BASE}/sources/${provider}/authorize${params.toString() ? `?${params}` : ''}`;
 	const res = await fetch(url, { method: 'POST' });
@@ -223,6 +267,10 @@ export async function initiateOAuth(provider: string, redirectUri?: string, stat
 	return res.json() as Promise<{ authorization_url: string; state: string }>;
 }
 
+/**
+ * @deprecated OAuth callbacks are now handled directly by backend at /oauth/callback
+ * This method is kept for backward compatibility only. The frontend no longer receives OAuth callbacks.
+ */
 export async function handleOAuthCallback(params: {
 	code?: string;
 	access_token?: string;
@@ -512,11 +560,21 @@ export interface DriveFile {
 }
 
 export interface DriveUsage {
+	/** Total bytes used (drive_bytes + data_lake_bytes) */
 	total_bytes: number;
+	/** User-uploaded files in /home/user/drive/ */
+	drive_bytes: number;
+	/** ELT archives in /home/user/data-lake/ */
+	data_lake_bytes: number;
+	/** Quota limit based on tier */
 	quota_bytes: number;
+	/** Number of user files */
 	file_count: number;
+	/** Number of user folders */
 	folder_count: number;
+	/** Usage percentage (total_bytes / quota_bytes * 100) */
 	usage_percent: number;
+	/** Tier name (free, standard, pro) */
 	tier: string;
 }
 
@@ -773,5 +831,387 @@ export async function createSession(
 		throw new Error(error.error || `Failed to create session: ${res.statusText}`);
 	}
 
+	return res.json();
+}
+
+// =============================================================================
+// Workspaces API
+// =============================================================================
+
+export interface Workspace {
+	id: string;
+	name: string;
+	icon: string | null;
+	is_system: boolean;
+	is_locked: boolean;
+	sort_order: number;
+	accent_color: string | null;
+	theme_mode: string | null;
+	active_tab_state_json: string | null;
+	expanded_nodes_json: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface WorkspaceSummary {
+	id: string;
+	name: string;
+	icon: string | null;
+	is_system: boolean;
+	is_locked: boolean;
+	sort_order: number;
+	accent_color: string | null;
+	theme_mode: string | null;
+}
+
+export interface WorkspaceListResponse {
+	workspaces: WorkspaceSummary[];
+}
+
+/**
+ * List all workspaces
+ */
+export async function listWorkspaces(): Promise<WorkspaceListResponse> {
+	const res = await fetch(`${API_BASE}/workspaces`);
+	if (!res.ok) throw new Error(`Failed to list workspaces: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Get a single workspace by ID
+ */
+export async function getWorkspace(id: string): Promise<Workspace> {
+	const res = await fetch(`${API_BASE}/workspaces/${id}`);
+	if (!res.ok) throw new Error(`Failed to get workspace: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Create a new workspace
+ */
+export async function createWorkspace(
+	name: string,
+	icon?: string,
+	accent_color?: string,
+	theme_mode?: string
+): Promise<Workspace> {
+	const res = await fetch(`${API_BASE}/workspaces`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name, icon, accent_color, theme_mode })
+	});
+	if (!res.ok) throw new Error(`Failed to create workspace: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Update an existing workspace
+ */
+export async function updateWorkspace(
+	id: string,
+	updates: {
+		name?: string;
+		icon?: string;
+		sort_order?: number;
+		accent_color?: string;
+		theme_mode?: string;
+		expanded_nodes_json?: string;
+	}
+): Promise<Workspace> {
+	const res = await fetch(`${API_BASE}/workspaces/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(updates)
+	});
+	if (!res.ok) throw new Error(`Failed to update workspace: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Delete a workspace by ID
+ */
+export async function deleteWorkspace(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/workspaces/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete workspace: ${res.statusText}`);
+}
+
+/**
+ * Save tab state for a workspace
+ */
+export async function saveWorkspaceTabState(id: string, tabStateJson: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/workspaces/${id}/tabs`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ active_tab_state_json: tabStateJson })
+	});
+	if (!res.ok) throw new Error(`Failed to save tab state: ${res.statusText}`);
+}
+
+// =============================================================================
+// Explorer Nodes API
+// =============================================================================
+
+export interface ExplorerNode {
+	id: string;
+	workspace_id: string;
+	parent_id: string | null;
+	sort_order: number;
+	node_type: 'folder' | 'view' | 'shortcut';
+	name: string | null;
+	icon: string | null;
+	entity_id: string | null;
+	view_config_json: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ExplorerTreeNode extends ExplorerNode {
+	children: ExplorerTreeNode[];
+}
+
+export interface WorkspaceTreeResponse {
+	workspace_id: string;
+	nodes: ExplorerTreeNode[];
+}
+
+export interface ViewConfig {
+	type: 'pages' | 'chats' | 'wiki' | 'drive' | 'sources';
+	subtype?: string;
+	folder_id?: string;
+	workspace_scoped?: boolean;
+	limit?: number;
+	show_more_link?: boolean;
+}
+
+export interface ViewEntity {
+	id: string;
+	name: string;
+	entity_type: string;
+	icon: string;
+	updated_at?: string;
+}
+
+export interface ViewResolutionResponse {
+	entities: ViewEntity[];
+	total: number;
+	has_more: boolean;
+}
+
+/**
+ * Get the explorer tree for a workspace
+ */
+export async function getWorkspaceTree(workspaceId: string): Promise<WorkspaceTreeResponse> {
+	const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/tree`);
+	if (!res.ok) throw new Error(`Failed to get workspace tree: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Create a new explorer node
+ */
+export async function createExplorerNode(
+	workspace_id: string,
+	node_type: 'folder' | 'view' | 'shortcut',
+	options: {
+		parent_id?: string;
+		name?: string;
+		icon?: string;
+		entity_id?: string;
+		view_config_json?: string;
+	}
+): Promise<ExplorerNode> {
+	const res = await fetch(`${API_BASE}/explorer-nodes`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ workspace_id, node_type, ...options })
+	});
+	if (!res.ok) throw new Error(`Failed to create node: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Update an explorer node
+ */
+export async function updateExplorerNode(
+	id: string,
+	updates: {
+		name?: string;
+		icon?: string;
+		parent_id?: string | null;
+		sort_order?: number;
+		view_config_json?: string;
+	}
+): Promise<ExplorerNode> {
+	const res = await fetch(`${API_BASE}/explorer-nodes/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(updates)
+	});
+	if (!res.ok) throw new Error(`Failed to update node: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Delete an explorer node
+ */
+export async function deleteExplorerNode(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/explorer-nodes/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete node: ${res.statusText}`);
+}
+
+/**
+ * Move nodes to a new parent
+ */
+export async function moveExplorerNodes(
+	node_ids: string[],
+	target_parent_id: string | null,
+	target_sort_order: number
+): Promise<void> {
+	const res = await fetch(`${API_BASE}/explorer-nodes/move`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ node_ids, target_parent_id, target_sort_order })
+	});
+	if (!res.ok) throw new Error(`Failed to move nodes: ${res.statusText}`);
+}
+
+/**
+ * Resolve a view configuration to actual entities
+ */
+export async function resolveView(
+	config: ViewConfig,
+	workspace_id: string,
+	limit?: number,
+	offset?: number
+): Promise<ViewResolutionResponse> {
+	const body = { config, workspace_id, limit, offset };
+	
+	const res = await fetch(`${API_BASE}/views/resolve`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	
+	if (!res.ok) {
+		const errorBody = await res.text();
+		console.error('[resolveView] Error:', res.status, 'Body:', errorBody, 'Request was:', JSON.stringify(body));
+		throw new Error(`Failed to resolve view: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+// =============================================================================
+// Pages API
+// =============================================================================
+
+export interface Page {
+	id: string;
+	title: string;
+	content: string;
+	workspace_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface PageSummary {
+	id: string;
+	title: string;
+	workspace_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface PageListResponse {
+	pages: PageSummary[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+export interface EntitySearchResult {
+	id: string;
+	name: string;
+	entity_type: string;
+	icon: string;
+}
+
+export interface EntitySearchResponse {
+	results: EntitySearchResult[];
+}
+
+/**
+ * List all pages with optional pagination and workspace filter
+ */
+export async function listPages(limit?: number, offset?: number, workspace_id?: string): Promise<PageListResponse> {
+	const params = new URLSearchParams();
+	if (limit !== undefined) params.set('limit', String(limit));
+	if (offset !== undefined) params.set('offset', String(offset));
+	if (workspace_id !== undefined) params.set('workspace_id', workspace_id);
+
+	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
+	const res = await fetch(url);
+
+	if (!res.ok) throw new Error(`Failed to list pages: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Get a single page by ID
+ */
+export async function getPage(id: string): Promise<Page> {
+	const res = await fetch(`${API_BASE}/pages/${id}`);
+	if (!res.ok) throw new Error(`Failed to get page: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Create a new page
+ */
+export async function createPage(title: string, content: string = '', workspace_id: string | null = null): Promise<Page> {
+	const res = await fetch(`${API_BASE}/pages`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ title, content, workspace_id })
+	});
+
+	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Update an existing page
+ */
+export async function updatePage(
+	id: string,
+	updates: { title?: string; content?: string; workspace_id?: string | null }
+): Promise<Page> {
+	const res = await fetch(`${API_BASE}/pages/${id}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(updates)
+	});
+
+	if (!res.ok) throw new Error(`Failed to update page: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Delete a page by ID
+ */
+export async function deletePage(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/pages/${id}`, {
+		method: 'DELETE'
+	});
+
+	if (!res.ok) throw new Error(`Failed to delete page: ${res.statusText}`);
+}
+
+/**
+ * Search entities for autocomplete in the page editor
+ * Used when typing [[ to link to entities
+ */
+export async function searchEntities(query: string): Promise<EntitySearchResponse> {
+	const res = await fetch(`${API_BASE}/pages/search/entities?q=${encodeURIComponent(query)}`);
+	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
 	return res.json();
 }

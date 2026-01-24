@@ -11,6 +11,8 @@ use sqlx::SqlitePool;
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::types::Timestamp;
+
 /// Services that are tracked for usage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -48,7 +50,7 @@ pub struct UsageLimitError {
     pub used: i64,
     pub limit: i64,
     pub unit: String,
-    pub resets_at: String,
+    pub resets_at: Timestamp,
 }
 
 /// Usage information for a single service
@@ -66,7 +68,7 @@ pub struct UsageSummary {
     pub period: String,
     pub tier: String,
     pub services: std::collections::HashMap<String, ServiceUsage>,
-    pub resets_at: String,
+    pub resets_at: Timestamp,
 }
 
 /// Remaining usage after a limit check
@@ -157,7 +159,7 @@ fn first_of_month() -> NaiveDate {
 }
 
 /// Get the first day of next month (reset time)
-fn first_of_next_month() -> String {
+fn first_of_next_month() -> Timestamp {
     let now = Utc::now();
     let (year, month) = if now.month() == 12 {
         (now.year() + 1, 1)
@@ -165,7 +167,8 @@ fn first_of_next_month() -> String {
         (now.year(), now.month() + 1)
     };
     let date = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
-    format!("{}T00:00:00Z", date)
+    let datetime = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+    Timestamp::from(datetime)
 }
 
 /// Initialize usage limits from TIER environment variable

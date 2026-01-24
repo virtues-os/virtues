@@ -3,6 +3,7 @@
 	import type { ModelOption } from "$lib/config/models";
 	import { getModels } from "$lib/stores/models.svelte";
 	import { getEnabledAgents } from "$lib/config/agents";
+	import { windowTabs, type FallbackView } from "$lib/stores/windowTabs.svelte";
 	import "iconify-icon";
 	import { onMount } from "svelte";
 
@@ -37,6 +38,7 @@
 	// UI preferences
 	let contextIndicatorAlwaysVisible = $state(false);
 	let contextIndicatorShowThreshold = $state(70);
+	let fallbackView = $state('empty');
 
 	// Tools fetched from API
 	let tools: Tool[] = $state([]);
@@ -95,6 +97,9 @@
 						profile.ui_preferences.contextIndicator.showThreshold ??
 						70;
 				}
+				
+				// Load fallback view preference
+				fallbackView = profile.ui_preferences?.fallbackView || 'empty';
 
 				// Update selected model
 				const foundModel = models.find((m) => m.id === defaultModelId);
@@ -159,11 +164,15 @@
 							alwaysVisible: contextIndicatorAlwaysVisible,
 							showThreshold: contextIndicatorShowThreshold,
 						},
+						fallbackView: fallbackView,
 					},
 				}),
 			});
 
 			if (response.ok) {
+				// Sync fallback preference to the tab store
+				windowTabs.setFallbackPreference(fallbackView as FallbackView);
+				
 				saveSuccess = true;
 				setTimeout(() => {
 					saveSuccess = false;
@@ -272,6 +281,39 @@
 							much of your model's context window is being used. It
 							helps you know when to start a new conversation to avoid
 							running out of space.
+						</p>
+					</div>
+				</div>
+
+				<!-- Homepage / Fallback View Section -->
+				<div class="bg-surface border border-border rounded-lg p-6">
+					<h2 class="text-lg font-medium text-foreground mb-4">
+						Homepage
+					</h2>
+					<p class="text-sm text-foreground-muted mb-6">
+						Choose what to display when all tabs are closed.
+					</p>
+
+					<div>
+						<label
+							for="fallbackView"
+							class="block text-sm font-medium text-foreground-muted mb-2"
+						>
+							Default View
+						</label>
+						<select
+							id="fallbackView"
+							bind:value={fallbackView}
+							class="w-full px-3 py-2 border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+						>
+							<option value="empty">Discovery Page (Default)</option>
+							<option value="chat">New Chat</option>
+							<option value="conway">Zen Garden (Game of Life)</option>
+							<option value="dog-jump">Dog Jump (Game)</option>
+							<option value="wiki-today">Wiki: Today</option>
+						</select>
+						<p class="text-xs text-foreground-subtle mt-2">
+							This view will appear when you close all your tabs or start fresh.
 						</p>
 					</div>
 				</div>

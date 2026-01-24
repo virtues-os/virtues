@@ -1,38 +1,30 @@
 //! Notion source registration for the catalog
+//!
+//! This module provides the unified registration for Notion sources, including
+//! both UI metadata and transform logic in a single place.
 
-use crate::registry::{AuthType, OAuthConfig, RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::registry::{RegisteredSource, RegisteredStream, SourceRegistry};
 use serde_json::json;
+
+// Import transform for unified registration
+use super::pages::transform::NotionPageTransform;
 
 /// Notion source registration
 pub struct NotionSource;
 
 impl SourceRegistry for NotionSource {
     fn descriptor() -> RegisteredSource {
+        let descriptor = virtues_registry::sources::get_source("notion")
+            .expect("Notion source not found in virtues-registry");
+
         RegisteredSource {
-            name: "notion",
-            display_name: "Notion",
-            description: "Sync pages, databases, and blocks from Notion workspaces",
-            auth_type: AuthType::OAuth2,
-            oauth_config: Some(OAuthConfig {
-                scopes: vec!["read_content"],
-                auth_url: "https://api.notion.com/v1/oauth/authorize",
-                token_url: "https://api.notion.com/v1/oauth/token",
-            }),
-            icon: Some("simple-icons:notion"),
+            descriptor,
             streams: vec![
-                // Pages stream
+                // Pages stream with unified transform
                 RegisteredStream::new("pages")
-                    .display_name("Notion Pages")
-                    .description(
-                        "Sync pages and their content from Notion databases and workspaces",
-                    )
-                    .table_name("stream_notion_pages")
-                    .target_ontologies(vec!["knowledge_document"])
                     .config_schema(pages_config_schema())
                     .config_example(pages_config_example())
-                    .supports_incremental(false) // Notion API doesn't provide incremental sync
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 */12 * * *") // Every 12 hours (6-field: sec min hour day month dow)
+                    .transform("knowledge_document", |_ctx| Ok(Box::new(NotionPageTransform)))
                     .build(),
             ],
         }
@@ -103,25 +95,26 @@ fn pages_config_example() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::AuthType;
 
     #[test]
     fn test_notion_descriptor() {
         let desc = NotionSource::descriptor();
-        assert_eq!(desc.name, "notion");
-        assert_eq!(desc.auth_type, AuthType::OAuth2);
-        assert!(desc.oauth_config.is_some());
+        assert_eq!(desc.descriptor.name, "notion");
+        assert_eq!(desc.descriptor.auth_type, AuthType::OAuth2);
+        assert!(desc.descriptor.oauth_config.is_some());
         assert_eq!(desc.streams.len(), 1);
     }
 
     #[test]
     fn test_pages_stream() {
         let desc = NotionSource::descriptor();
-        let pages = desc.streams.iter().find(|s| s.name == "pages");
+        let pages = desc.streams.iter().find(|s| s.descriptor.name == "pages");
         assert!(pages.is_some());
 
         let p = pages.unwrap();
-        assert_eq!(p.table_name, "stream_notion_pages");
-        assert!(!p.supports_incremental); // Notion doesn't support incremental sync
-        assert!(p.supports_full_refresh);
+        assert_eq!(p.descriptor.table_name, "stream_notion_pages");
+        assert!(!p.descriptor.supports_incremental); // Notion doesn't support incremental sync
+        assert!(p.descriptor.supports_full_refresh);
     }
 }

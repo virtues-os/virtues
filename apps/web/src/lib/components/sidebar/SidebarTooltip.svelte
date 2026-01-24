@@ -45,6 +45,7 @@
 	bind:this={triggerEl}
 	onmouseenter={handleMouseEnter}
 	onmouseleave={handleMouseLeave}
+	role="presentation"
 >
 	{@render children()}
 
@@ -102,8 +103,15 @@
 		white-space: nowrap;
 	}
 
-	:global([data-theme="dark"]) .tooltip-content,
-	:global([data-theme="night"]) .tooltip-content {
+	:global([data-theme="midnight-oil"]) .tooltip-content,
+	:global([data-theme="narnia-nights"]) .tooltip-content,
+	:global([data-theme="dumb-ox"]) .tooltip-content,
+	:global([data-theme="chiaroscuro"]) .tooltip-content,
+	:global([data-theme="stoa"]) .tooltip-content,
+	:global([data-theme="lyceum"]) .tooltip-content,
+	:global([data-theme="tabula-rasa"]) .tooltip-content,
+	:global([data-theme="hemlock"]) .tooltip-content,
+	:global([data-theme="shire"]) .tooltip-content {
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 	}
 </style>

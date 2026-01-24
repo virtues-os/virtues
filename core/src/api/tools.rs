@@ -1,9 +1,20 @@
-use crate::error::{Error, Result};
+//! API functions for tool management
+//!
+//! There are two types of tools:
+//! - **Built-in tools**: Read from virtues-registry (web_search, query_ontology, semantic_search)
+//! - **MCP tools**: Dynamically discovered from connected MCP servers (stored in app_mcp_tools)
+//!
+//! This module currently only handles built-in tools.
+//! MCP tool management will be added separately.
+
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use sqlx::SqlitePool;
 
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+use crate::error::{Error, Result};
+
+/// Tool information returned by API
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     pub id: String,
     pub name: String,
@@ -11,12 +22,33 @@ pub struct Tool {
     pub tool_type: String,
     pub category: Option<String>,
     pub icon: Option<String>,
-    pub default_params: Option<JsonValue>,
     pub display_order: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<String>,
+    pub enabled: bool,
+    /// For MCP tools
+    pub server_name: Option<String>,
+    pub input_schema: Option<serde_json::Value>,
+}
+
+impl Tool {
+    fn from_config(config: virtues_registry::tools::ToolConfig, enabled: bool) -> Self {
+        let tool_type = match config.tool_type {
+            virtues_registry::tools::ToolType::Builtin => "builtin".to_string(),
+            virtues_registry::tools::ToolType::Mcp => "mcp".to_string(),
+        };
+
+        Self {
+            id: config.id,
+            name: config.name,
+            description: Some(config.description),
+            tool_type,
+            category: Some(config.category),
+            icon: Some(config.icon),
+            display_order: Some(config.display_order),
+            enabled,
+            server_name: None,
+            input_schema: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,133 +56,137 @@ pub struct ListToolsQuery {
     pub category: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UpdateToolRequest {
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub tool_type: Option<String>,
-    pub category: Option<String>,
-    pub icon: Option<String>,
-    pub default_params: Option<JsonValue>,
-    pub display_order: Option<i32>,
+/// Get the enabled tools map from the assistant profile
+async fn get_enabled_tools_map(db: &SqlitePool) -> Result<HashMap<String, bool>> {
+    let row = sqlx::query!(
+        r#"
+        SELECT enabled_tools FROM app_assistant_profile
+        WHERE id = '00000000-0000-0000-0000-000000000001'
+        "#
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to fetch assistant profile: {}", e)))?;
+
+    let enabled_tools: HashMap<String, bool> = serde_json::from_str(&row.enabled_tools.unwrap_or_else(|| "{}".to_string()))
+        .map_err(|e| Error::Database(format!("Failed to parse enabled_tools JSON: {}", e)))?;
+
+    Ok(enabled_tools)
 }
 
-/// List all tools with optional filtering
+/// List all tools (Built-in + MCP) with enablement state
 pub async fn list_tools(db: &SqlitePool, params: ListToolsQuery) -> Result<Vec<Tool>> {
-    let mut query = "SELECT * FROM app_tools WHERE 1=1".to_string();
+    let enabled_map = get_enabled_tools_map(db).await?;
 
-    if let Some(category) = params.category {
-        query.push_str(&format!(" AND category = '{}'", category));
+    // 1. Get built-in tools from registry
+    let mut tools: Vec<Tool> = virtues_registry::tools::default_tools()
+        .into_iter()
+        .map(|config| {
+            let enabled = *enabled_map.get(&config.id).unwrap_or(&true);
+            Tool::from_config(config, enabled)
+        })
+        .collect();
+
+    // 2. Get MCP tools from SQLite
+    // Note: We use a raw query here to avoid SQLx offline issues until migrations are run
+    let mcp_rows = sqlx::query(
+        r#"
+        SELECT id, server_name, tool_name, description, input_schema, enabled
+        FROM app_mcp_tools
+        "#
+    )
+    .fetch_all(db)
+    .await
+    .unwrap_or_default(); // Fallback if table doesn't exist yet
+
+    for row in mcp_rows {
+        use sqlx::Row;
+        let id: String = row.get("id");
+        let server_name: String = row.get("server_name");
+        let tool_name: String = row.get("tool_name");
+        let description: Option<String> = row.get("description");
+        let input_schema_str: Option<String> = row.get("input_schema");
+        let enabled: bool = row.get("enabled");
+
+        let user_enabled = *enabled_map.get(&id).unwrap_or(&true);
+        let is_enabled = enabled && user_enabled;
+
+        tools.push(Tool {
+            id,
+            name: tool_name,
+            description,
+            tool_type: "mcp".to_string(),
+            category: Some("mcp".to_string()),
+            icon: Some("ri:plug-line".to_string()),
+            display_order: Some(100),
+            enabled: is_enabled,
+            server_name: Some(server_name),
+            input_schema: input_schema_str.and_then(|s| serde_json::from_str(&s).ok()),
+        });
     }
 
-    query.push_str(" ORDER BY display_order ASC NULLS LAST, name ASC");
+    // Filter by category if specified
+    if let Some(category) = params.category {
+        tools.retain(|t| t.category.as_ref() == Some(&category));
+    }
 
-    let tools = sqlx::query_as::<_, Tool>(&query)
-        .fetch_all(db)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to fetch tools: {}", e)))?;
+    // Sort by display_order
+    tools.sort_by_key(|t| t.display_order.unwrap_or(999));
 
     Ok(tools)
 }
 
-/// Get a single tool by ID
+/// Get a tool by ID (Built-in or MCP)
 pub async fn get_tool(db: &SqlitePool, id: String) -> Result<Tool> {
-    let tool = sqlx::query_as::<_, Tool>("SELECT * FROM app_tools WHERE id = $1")
-        .bind(&id)
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to fetch tool {}: {}", id, e)))?
-        .ok_or_else(|| Error::NotFound(format!("Tool not found: {}", id)))?;
+    let enabled_map = get_enabled_tools_map(db).await?;
 
-    Ok(tool)
+    // Try built-in first
+    if let Some(config) = virtues_registry::tools::default_tools().into_iter().find(|t| t.id == id) {
+        let enabled = *enabled_map.get(&id).unwrap_or(&true);
+        return Ok(Tool::from_config(config, enabled));
+    }
+
+    // Try MCP tool
+    let row = sqlx::query(
+        r#"
+        SELECT id, server_name, tool_name, description, input_schema, enabled
+        FROM app_mcp_tools
+        WHERE id = $1
+        "#
+    )
+    .bind(&id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to fetch MCP tool: {}", e)))?;
+
+    if let Some(row) = row {
+        use sqlx::Row;
+        let id: String = row.get("id");
+        let server_name: String = row.get("server_name");
+        let tool_name: String = row.get("tool_name");
+        let description: Option<String> = row.get("description");
+        let input_schema_str: Option<String> = row.get("input_schema");
+        let enabled: bool = row.get("enabled");
+
+        let user_enabled = *enabled_map.get(&id).unwrap_or(&true);
+        let is_enabled = enabled && user_enabled;
+
+        return Ok(Tool {
+            id,
+            name: tool_name,
+            description,
+            tool_type: "mcp".to_string(),
+            category: Some("mcp".to_string()),
+            icon: Some("ri:plug-line".to_string()),
+            display_order: Some(100),
+            enabled: is_enabled,
+            server_name: Some(server_name),
+            input_schema: input_schema_str.and_then(|s| serde_json::from_str(&s).ok()),
+        });
+    }
+
+    Err(Error::NotFound(format!("Tool not found: {}", id)))
 }
 
-/// Update a tool's metadata
-pub async fn update_tool(db: &SqlitePool, id: String, payload: UpdateToolRequest) -> Result<Tool> {
-    let mut updates = Vec::new();
-    let mut param_count = 1;
-
-    if payload.name.is_some() {
-        updates.push(format!("name = ${}", param_count));
-        param_count += 1;
-    }
-
-    if payload.description.is_some() {
-        updates.push(format!("description = ${}", param_count));
-        param_count += 1;
-    }
-
-    if payload.tool_type.is_some() {
-        updates.push(format!("tool_type = ${}", param_count));
-        param_count += 1;
-    }
-
-    if payload.category.is_some() {
-        updates.push(format!("category = ${}", param_count));
-        param_count += 1;
-    }
-
-    if payload.icon.is_some() {
-        updates.push(format!("icon = ${}", param_count));
-        param_count += 1;
-    }
-
-    if payload.display_order.is_some() {
-        updates.push(format!("display_order = ${}", param_count));
-        param_count += 1;
-    }
-
-    if payload.default_params.is_some() {
-        updates.push(format!("default_params = ${}", param_count));
-        param_count += 1;
-    }
-
-    if updates.is_empty() {
-        return Err(Error::InvalidInput("No fields to update".to_string()));
-    }
-
-    updates.push("updated_at = datetime('now')".to_string());
-
-    // Build the query
-    let query = format!(
-        "UPDATE app_tools SET {} WHERE id = ${} RETURNING *",
-        updates.join(", "),
-        param_count
-    );
-
-    // Start building the query and bind parameters in order
-    let mut sqlx_query = sqlx::query_as::<_, Tool>(&query);
-
-    if let Some(name) = payload.name {
-        sqlx_query = sqlx_query.bind(name);
-    }
-    if let Some(description) = payload.description {
-        sqlx_query = sqlx_query.bind(description);
-    }
-    if let Some(tool_type) = payload.tool_type {
-        sqlx_query = sqlx_query.bind(tool_type);
-    }
-    if let Some(category) = payload.category {
-        sqlx_query = sqlx_query.bind(category);
-    }
-    if let Some(icon) = payload.icon {
-        sqlx_query = sqlx_query.bind(icon);
-    }
-    if let Some(display_order) = payload.display_order {
-        sqlx_query = sqlx_query.bind(display_order);
-    }
-    if let Some(default_params) = payload.default_params {
-        sqlx_query = sqlx_query.bind(default_params);
-    }
-
-    // Bind the ID last
-    sqlx_query = sqlx_query.bind(&id);
-
-    let updated_tool = sqlx_query
-        .fetch_optional(db)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to update tool {}: {}", id, e)))?
-        .ok_or_else(|| Error::NotFound(format!("Tool not found: {}", id)))?;
-
-    Ok(updated_tool)
-}
+// Note: Built-in tools cannot be updated. They are read-only from the registry.
+// MCP tools can be managed via separate endpoints (to be implemented).

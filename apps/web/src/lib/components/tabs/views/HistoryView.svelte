@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
+	import type { Tab } from '$lib/tabs/types';
+	import { workspaceStore } from '$lib/stores/workspace.svelte';
 	import { Page } from '$lib';
 	import { onMount } from 'svelte';
 
@@ -107,7 +107,7 @@
 	const groupedSessions = $derived(groupByDate(sessions));
 
 	function handleSessionClick(conversationId: string, title: string | null) {
-		windowTabs.openTabFromRoute(`/?conversationId=${conversationId}`);
+		workspaceStore.openTabFromRoute(`/?conversationId=${conversationId}`);
 	}
 </script>
 

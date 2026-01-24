@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Configuration for Plaid transactions stream
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaidTransactionsConfig {
     /// List of account IDs to sync (empty = all accounts)
     #[serde(default)]
@@ -16,6 +16,16 @@ pub struct PlaidTransactionsConfig {
     /// Maximum transactions to fetch per sync
     #[serde(default = "default_max_transactions")]
     pub max_transactions_per_sync: i32,
+}
+
+impl Default for PlaidTransactionsConfig {
+    fn default() -> Self {
+        Self {
+            account_ids: Vec::new(),
+            include_pending: true,
+            max_transactions_per_sync: 500,
+        }
+    }
 }
 
 fn default_include_pending() -> bool {

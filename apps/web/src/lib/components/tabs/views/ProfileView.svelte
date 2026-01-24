@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
+	import type { Tab, FallbackView } from '$lib/tabs/types';
+	import { workspaceStore } from '$lib/stores/workspace.svelte';
 	import { Page, Input } from '$lib';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import 'iconify-icon';
@@ -11,6 +12,7 @@
 
 	let loading = $state(true);
 	let currentTheme = $state<Theme>('light');
+	let fallbackView = $state<FallbackView>('empty');
 
 	// Profile fields
 	let fullName = $state('');
@@ -40,8 +42,59 @@
 
 	onMount(async () => {
 		currentTheme = getTheme();
+		fallbackView = workspaceStore.fallbackPreference;
 		await loadProfile();
+		await loadAssistantProfile();
 	});
+
+	async function loadAssistantProfile() {
+		try {
+			const response = await fetch('/api/assistant-profile');
+			if (response.ok) {
+				const profile = await response.json();
+				if (profile.ui_preferences?.fallbackView) {
+					fallbackView = profile.ui_preferences.fallbackView;
+				}
+			}
+		} catch (error) {
+			console.error('Failed to load assistant profile:', error);
+		}
+	}
+
+	async function handleFallbackChange(newFallback: FallbackView) {
+		fallbackView = newFallback;
+		workspaceStore.setFallbackPreference(newFallback);
+
+		try {
+			const profileRes = await fetch('/api/assistant-profile');
+			let existingPrefs = {};
+			if (profileRes.ok) {
+				const profile = await profileRes.json();
+				existingPrefs = profile.ui_preferences || {};
+			}
+
+			await fetch('/api/assistant-profile', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					ui_preferences: {
+						...existingPrefs,
+						fallbackView: newFallback
+					}
+				})
+			});
+		} catch (error) {
+			console.error('Failed to save fallback preference:', error);
+		}
+	}
+
+	const fallbackOptions: { id: FallbackView; icon: string; title: string }[] = [
+		{ id: 'empty', icon: 'ri:checkbox-blank-line', title: 'Discovery' },
+		{ id: 'chat', icon: 'ri:chat-1-line', title: 'New Chat' },
+		{ id: 'conway', icon: 'ri:seedling-line', title: 'Zen Garden' },
+		{ id: 'dog-jump', icon: 'ri:run-line', title: 'Dog Jump' },
+		{ id: 'wiki-today', icon: 'ri:calendar-line', title: 'Today' }
+	];
 
 	async function loadProfile() {
 		loading = true;
@@ -105,6 +158,23 @@
 				<div class="bg-surface border border-border rounded-lg p-6">
 					<h2 class="text-lg font-medium text-foreground mb-4">Appearance</h2>
 					<ThemePicker value={currentTheme} onchange={handleThemeChange} />
+				</div>
+
+				<div class="bg-surface border border-border rounded-lg p-6">
+					<h2 class="text-lg font-medium text-foreground mb-2">Homepage</h2>
+					<p class="text-sm text-foreground-muted mb-4">What to show when all tabs are closed</p>
+					<div class="fallback-options">
+						{#each fallbackOptions as option}
+							<button
+								class="fallback-option"
+								class:active={fallbackView === option.id}
+								onclick={() => handleFallbackChange(option.id)}
+							>
+								<iconify-icon icon={option.icon} width="16"></iconify-icon>
+								<span>{option.title}</span>
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
 
@@ -251,3 +321,36 @@
 		{/if}
 	</div>
 </Page>
+
+<style>
+	.fallback-options {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.fallback-option {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface);
+		color: var(--color-foreground-muted);
+		font-size: 0.85rem;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.fallback-option:hover {
+		border-color: var(--color-foreground-muted);
+		color: var(--color-foreground);
+	}
+
+	.fallback-option.active {
+		border-color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+		color: var(--color-primary);
+	}
+</style>

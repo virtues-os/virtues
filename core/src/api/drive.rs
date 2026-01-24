@@ -1,7 +1,20 @@
 //! Drive API - User file storage and quota management
 //!
 //! Personal cloud storage for user-uploaded files (like Google Drive).
-//! ELT archive data stays in S3/MinIO - this is for user files only.
+//! Part of the unified storage structure at `/home/user/data/`:
+//!
+//! ```text
+//! /home/user/data/
+//! ├── drive/    # User files (this module)
+//! └── lake/     # ELT archives (elt_stream_objects)
+//! ```
+//!
+//! The "lake" folder appears as a virtual read-only folder within the Drive UI,
+//! allowing users to browse their archived data alongside their uploaded files.
+//!
+//! Environment variables:
+//! - `DRIVE_PATH`: Override drive storage location (default: `/home/user/data/drive`)
+//! - `DATA_LAKE_PATH`: Override lake storage location (default: `/home/user/data/lake`)
 //!
 //! Storage tiers:
 //! - Free:     100 GB
@@ -20,6 +33,7 @@ use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
+use crate::types::Timestamp;
 
 // =============================================================================
 // Constants
@@ -36,10 +50,19 @@ pub mod quotas {
 }
 
 /// Default drive path inside container
-const DEFAULT_DRIVE_PATH: &str = "/home/user/drive";
+const DEFAULT_DRIVE_PATH: &str = "/home/user/data/drive";
 
 /// Singleton ID for drive_usage table
 const USAGE_SINGLETON_ID: &str = "00000000-0000-0000-0000-000000000001";
+
+/// Virtual folder ID for the data lake
+const LAKE_VIRTUAL_ID: &str = "virtual:lake";
+
+/// Prefix for virtual lake stream folder IDs
+const LAKE_STREAM_PREFIX: &str = "virtual:lake:stream:";
+
+/// Prefix for virtual lake object IDs
+const LAKE_OBJECT_PREFIX: &str = "virtual:lake:object:";
 
 // =============================================================================
 // Types
@@ -113,19 +136,29 @@ pub struct DriveFile {
     pub is_folder: bool,
     pub parent_id: Option<String>,
     pub sha256_hash: Option<String>,
-    pub deleted_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub deleted_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
-/// Storage usage summary
+/// Storage usage summary with breakdown by category
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriveUsage {
+    /// Total bytes used (drive_bytes + data_lake_bytes)
     pub total_bytes: i64,
+    /// User-uploaded files in /home/user/drive/
+    pub drive_bytes: i64,
+    /// ELT archives in /home/user/data-lake/
+    pub data_lake_bytes: i64,
+    /// Quota limit based on tier
     pub quota_bytes: i64,
+    /// Number of user files
     pub file_count: i64,
+    /// Number of user folders
     pub folder_count: i64,
+    /// Usage percentage (total_bytes / quota_bytes * 100)
     pub usage_percent: f64,
+    /// Tier name (free, standard, pro)
     pub tier: String,
 }
 
@@ -280,11 +313,12 @@ pub async fn init_drive_quota(pool: &SqlitePool) -> Result<()> {
 // Usage Tracking
 // =============================================================================
 
-/// Get current drive usage statistics
+/// Get current drive usage statistics with breakdown
 pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
+    // Get drive usage from drive_usage table
     let row = sqlx::query_as::<_, (i64, i64, i64, i64)>(
         r#"
-        SELECT total_bytes, quota_bytes, file_count, folder_count
+        SELECT drive_bytes, quota_bytes, file_count, folder_count
         FROM drive_usage
         WHERE id = $1
         "#,
@@ -294,7 +328,20 @@ pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
     .await
     .map_err(|e| Error::Database(format!("Failed to get drive usage: {e}")))?;
 
-    let (total_bytes, quota_bytes, file_count, folder_count) = row;
+    let (drive_bytes, quota_bytes, file_count, folder_count) = row;
+
+    // Get data lake usage from elt_stream_objects
+    let data_lake_bytes: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COALESCE(SUM(size_bytes), 0)
+        FROM elt_stream_objects
+        "#,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get data lake usage: {e}")))?;
+
+    let total_bytes = drive_bytes + data_lake_bytes;
     let usage_percent = if quota_bytes > 0 {
         (total_bytes as f64 / quota_bytes as f64) * 100.0
     } else {
@@ -303,6 +350,8 @@ pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
 
     Ok(DriveUsage {
         total_bytes,
+        drive_bytes,
+        data_lake_bytes,
         quota_bytes,
         file_count,
         folder_count,
@@ -312,6 +361,7 @@ pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
 }
 
 /// Check if there's enough quota for an upload
+/// Checks against unified quota (drive + data lake)
 pub async fn check_quota(pool: &SqlitePool, size_bytes: i64) -> Result<bool> {
     let usage = get_drive_usage(pool).await?;
     Ok(usage.total_bytes + size_bytes <= usage.quota_bytes)
@@ -324,7 +374,8 @@ async fn update_usage_add(pool: &SqlitePool, size_bytes: i64, is_folder: bool) -
     sqlx::query(
         r#"
         UPDATE drive_usage
-        SET total_bytes = total_bytes + $1,
+        SET drive_bytes = drive_bytes + $1,
+            total_bytes = total_bytes + $1,
             file_count = file_count + $2,
             folder_count = folder_count + $3,
             updated_at = datetime('now')
@@ -349,7 +400,8 @@ async fn update_usage_remove(pool: &SqlitePool, size_bytes: i64, is_folder: bool
     sqlx::query(
         r#"
         UPDATE drive_usage
-        SET total_bytes = MAX(0, total_bytes - $1),
+        SET drive_bytes = MAX(0, drive_bytes - $1),
+            total_bytes = MAX(0, total_bytes - $1),
             file_count = MAX(0, file_count - $2),
             folder_count = MAX(0, folder_count - $3),
             updated_at = datetime('now')
@@ -441,12 +493,25 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
 // =============================================================================
 
 /// List files in a directory (empty path = root)
+///
+/// At root level, injects a virtual "lake" folder for browsing ELT archives.
+/// Paths starting with "lake/" are handled specially to browse elt_stream_objects.
 pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>> {
-    // Validate path
+    // Handle lake virtual folder paths
+    if path == "lake" {
+        return list_lake_streams(pool).await;
+    }
+    if let Some(stream_name) = path.strip_prefix("lake/") {
+        if !stream_name.is_empty() {
+            return list_lake_stream_objects(pool, stream_name).await;
+        }
+    }
+
+    // Validate path for regular drive paths
     let validated_path = validate_drive_path(path)?;
     let path_str = validated_path.to_string_lossy().to_string();
 
-    let files = if path_str.is_empty() {
+    let mut files = if path_str.is_empty() {
         // Root level - files with no parent (exclude deleted)
         sqlx::query_as::<_, DriveFile>(
             r#"
@@ -490,11 +555,204 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
         }
     };
 
+    // At root level, inject the virtual lake folder
+    if path_str.is_empty() {
+        // Get total lake size for display
+        let lake_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let now = Timestamp::now();
+        let lake_folder = DriveFile {
+            id: LAKE_VIRTUAL_ID.to_string(),
+            path: "lake".to_string(),
+            filename: "lake".to_string(),
+            mime_type: None,
+            size_bytes: lake_size,
+            is_folder: true,
+            parent_id: None,
+            sha256_hash: None,
+            deleted_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        // Insert lake folder at the beginning (folders first)
+        files.insert(0, lake_folder);
+    }
+
     Ok(files)
 }
 
+/// List stream names as virtual folders within the lake
+async fn list_lake_streams(pool: &SqlitePool) -> Result<Vec<DriveFile>> {
+    // Get distinct stream names with their total sizes and object counts
+    let streams = sqlx::query_as::<_, (String, i64, Timestamp)>(
+        r#"
+        SELECT 
+            stream_name,
+            SUM(size_bytes) as total_size,
+            MAX(created_at) as latest_created
+        FROM elt_stream_objects
+        GROUP BY stream_name
+        ORDER BY stream_name ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list lake streams: {e}")))?;
+
+    let folders: Vec<DriveFile> = streams
+        .into_iter()
+        .map(|(stream_name, total_size, latest_created)| DriveFile {
+            id: format!("{}{}", LAKE_STREAM_PREFIX, stream_name),
+            path: format!("lake/{}", stream_name),
+            filename: stream_name,
+            mime_type: None,
+            size_bytes: total_size,
+            is_folder: true,
+            parent_id: Some(LAKE_VIRTUAL_ID.to_string()),
+            sha256_hash: None,
+            deleted_at: None,
+            created_at: latest_created,
+            updated_at: latest_created,
+        })
+        .collect();
+
+    Ok(folders)
+}
+
+/// List stream objects as virtual files within a lake stream folder
+async fn list_lake_stream_objects(pool: &SqlitePool, stream_name: &str) -> Result<Vec<DriveFile>> {
+    let objects = sqlx::query_as::<_, (String, String, i64, Timestamp, Timestamp)>(
+        r#"
+        SELECT 
+            id,
+            storage_key,
+            size_bytes,
+            created_at,
+            updated_at
+        FROM elt_stream_objects
+        WHERE stream_name = $1
+        ORDER BY created_at DESC
+        "#,
+    )
+    .bind(stream_name)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list lake stream objects: {e}")))?;
+
+    let files: Vec<DriveFile> = objects
+        .into_iter()
+        .map(|(id, storage_key, size_bytes, created_at, updated_at)| {
+            // Extract filename from storage_key (e.g., "streams/gmail/.../records_123.jsonl" -> "records_123.jsonl")
+            let filename = storage_key
+                .rsplit('/')
+                .next()
+                .unwrap_or(&storage_key)
+                .to_string();
+
+            DriveFile {
+                id: format!("{}{}", LAKE_OBJECT_PREFIX, id),
+                path: format!("lake/{}/{}", stream_name, filename),
+                filename,
+                mime_type: Some("application/x-jsonlines".to_string()),
+                size_bytes,
+                is_folder: false,
+                parent_id: Some(format!("{}{}", LAKE_STREAM_PREFIX, stream_name)),
+                sha256_hash: None,
+                deleted_at: None,
+                created_at,
+                updated_at,
+            }
+        })
+        .collect();
+
+    Ok(files)
+}
+
+/// Check if a file ID is a virtual lake object
+pub fn is_lake_object_id(file_id: &str) -> bool {
+    file_id.starts_with(LAKE_OBJECT_PREFIX)
+}
+
+/// Extract the real object ID from a virtual lake object ID
+pub fn extract_lake_object_id(file_id: &str) -> Option<&str> {
+    file_id.strip_prefix(LAKE_OBJECT_PREFIX)
+}
+
+/// Check if a file ID is a virtual lake folder (lake root or stream folder)
+pub fn is_lake_folder_id(file_id: &str) -> bool {
+    file_id == LAKE_VIRTUAL_ID || file_id.starts_with(LAKE_STREAM_PREFIX)
+}
+
 /// Get file metadata by ID (includes deleted files)
+///
+/// Handles both regular drive files and virtual lake objects.
 pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<DriveFile> {
+    // Handle virtual lake folder IDs
+    if file_id == LAKE_VIRTUAL_ID {
+        let lake_size: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+        let now = Timestamp::now();
+        return Ok(DriveFile {
+            id: LAKE_VIRTUAL_ID.to_string(),
+            path: "lake".to_string(),
+            filename: "lake".to_string(),
+            mime_type: None,
+            size_bytes: lake_size,
+            is_folder: true,
+            parent_id: None,
+            sha256_hash: None,
+            deleted_at: None,
+            created_at: now,
+            updated_at: now,
+        });
+    }
+
+    // Handle virtual lake stream folder IDs
+    if let Some(stream_name) = file_id.strip_prefix(LAKE_STREAM_PREFIX) {
+        let stream_info = sqlx::query_as::<_, (i64, Timestamp)>(
+            r#"
+            SELECT SUM(size_bytes), MAX(created_at)
+            FROM elt_stream_objects
+            WHERE stream_name = $1
+            "#,
+        )
+        .bind(stream_name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to get stream info: {e}")))?
+        .ok_or_else(|| Error::NotFound(format!("Stream not found: {stream_name}")))?;
+
+        return Ok(DriveFile {
+            id: file_id.to_string(),
+            path: format!("lake/{}", stream_name),
+            filename: stream_name.to_string(),
+            mime_type: None,
+            size_bytes: stream_info.0,
+            is_folder: true,
+            parent_id: Some(LAKE_VIRTUAL_ID.to_string()),
+            sha256_hash: None,
+            deleted_at: None,
+            created_at: stream_info.1,
+            updated_at: stream_info.1,
+        });
+    }
+
+    // Handle virtual lake object IDs
+    if let Some(object_id) = file_id.strip_prefix(LAKE_OBJECT_PREFIX) {
+        return get_lake_object_metadata(pool, object_id).await;
+    }
+
+    // Regular drive file
     let file = sqlx::query_as::<_, DriveFile>(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
@@ -510,6 +768,45 @@ pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<Drive
     .ok_or_else(|| Error::NotFound(format!("File not found: {file_id}")))?;
 
     Ok(file)
+}
+
+/// Get metadata for a lake stream object by its real ID
+async fn get_lake_object_metadata(pool: &SqlitePool, object_id: &str) -> Result<DriveFile> {
+    let obj = sqlx::query_as::<_, (String, String, String, i64, Timestamp, Timestamp)>(
+        r#"
+        SELECT id, stream_name, storage_key, size_bytes, created_at, updated_at
+        FROM elt_stream_objects
+        WHERE id = $1
+        "#,
+    )
+    .bind(object_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get lake object: {e}")))?
+    .ok_or_else(|| Error::NotFound(format!("Lake object not found: {object_id}")))?;
+
+    let (id, stream_name, storage_key, size_bytes, created_at, updated_at) = obj;
+
+    // Extract filename from storage_key
+    let filename = storage_key
+        .rsplit('/')
+        .next()
+        .unwrap_or(&storage_key)
+        .to_string();
+
+    Ok(DriveFile {
+        id: format!("{}{}", LAKE_OBJECT_PREFIX, id),
+        path: format!("lake/{}/{}", stream_name, filename),
+        filename,
+        mime_type: Some("application/x-jsonlines".to_string()),
+        size_bytes,
+        is_folder: false,
+        parent_id: Some(format!("{}{}", LAKE_STREAM_PREFIX, stream_name)),
+        sha256_hash: None,
+        deleted_at: None,
+        created_at,
+        updated_at,
+    })
 }
 
 /// Upload a file
@@ -626,11 +923,25 @@ pub async fn upload_file(
 }
 
 /// Download a file (loads into memory - use download_file_stream for large files)
+///
+/// For lake objects (virtual:lake:object:*), use `download_lake_object` instead.
 pub async fn download_file(
     pool: &SqlitePool,
     config: &DriveConfig,
     file_id: &str,
 ) -> Result<(DriveFile, Vec<u8>)> {
+    // Check if this is a lake object - these need special handling via storage layer
+    if is_lake_object_id(file_id) {
+        return Err(Error::InvalidInput(
+            "Lake objects must be downloaded via the storage API".into(),
+        ));
+    }
+
+    // Check for lake folders
+    if is_lake_folder_id(file_id) {
+        return Err(Error::InvalidInput("Cannot download a folder".into()));
+    }
+
     let file = get_file_metadata(pool, file_id).await?;
 
     if file.is_folder {
@@ -650,15 +961,74 @@ pub async fn download_file(
     Ok((file, data))
 }
 
+/// Download a lake object (ELT stream archive)
+///
+/// Lake objects are stored in the data lake with optional encryption.
+/// This function retrieves the object using the storage abstraction.
+///
+/// # Arguments
+/// * `pool` - Database connection pool
+/// * `storage` - Storage backend (S3/local)
+/// * `file_id` - Virtual lake object ID (e.g., "virtual:lake:object:abc123")
+///
+/// # Returns
+/// Tuple of (DriveFile metadata, raw bytes)
+pub async fn download_lake_object(
+    pool: &SqlitePool,
+    storage: &crate::storage::Storage,
+    file_id: &str,
+) -> Result<(DriveFile, Vec<u8>)> {
+    // Extract the real object ID
+    let object_id = extract_lake_object_id(file_id)
+        .ok_or_else(|| Error::InvalidInput("Invalid lake object ID".into()))?;
+
+    // Get metadata
+    let file = get_lake_object_metadata(pool, object_id).await?;
+
+    // Query storage key and source info for decryption
+    let obj_info = sqlx::query_as::<_, (String, String, String)>(
+        r#"
+        SELECT source_connection_id, stream_name, storage_key
+        FROM elt_stream_objects
+        WHERE id = $1
+        "#,
+    )
+    .bind(object_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get lake object info: {e}")))?;
+
+    let (_source_connection_id, _stream_name, storage_key) = obj_info;
+
+    // Download from filesystem storage
+    let data = storage.download(&storage_key).await?;
+
+    Ok((file, data))
+}
+
 /// Download a file as a stream (memory-efficient for large files)
 ///
 /// Returns the file metadata and a stream of bytes. Use this for files
 /// larger than ~10MB to avoid loading the entire file into memory.
+///
+/// For lake objects, use `download_lake_object` instead (streaming not yet supported).
 pub async fn download_file_stream(
     pool: &SqlitePool,
     config: &DriveConfig,
     file_id: &str,
 ) -> Result<(DriveFile, impl Stream<Item = std::result::Result<Bytes, std::io::Error>>)> {
+    // Check if this is a lake object
+    if is_lake_object_id(file_id) {
+        return Err(Error::InvalidInput(
+            "Lake objects must be downloaded via the storage API".into(),
+        ));
+    }
+
+    // Check for lake folders
+    if is_lake_folder_id(file_id) {
+        return Err(Error::InvalidInput("Cannot download a folder".into()));
+    }
+
     let file = get_file_metadata(pool, file_id).await?;
 
     if file.is_folder {
@@ -1308,8 +1678,8 @@ async fn get_or_create_folder_record(pool: &SqlitePool, path: &str) -> Result<Op
 pub async fn reconcile_usage(pool: &SqlitePool, _config: &DriveConfig) -> Result<DriveUsage> {
     tracing::info!("Reconciling drive usage with filesystem");
 
-    // Calculate actual usage from database records
-    let (total_bytes, file_count, folder_count): (i64, i64, i64) = sqlx::query_as(
+    // Calculate actual drive usage from database records
+    let (drive_bytes, file_count, folder_count): (i64, i64, i64) = sqlx::query_as(
         r#"
         SELECT
             COALESCE(SUM(size_bytes), 0),
@@ -1322,11 +1692,12 @@ pub async fn reconcile_usage(pool: &SqlitePool, _config: &DriveConfig) -> Result
     .await
     .map_err(|e| Error::Database(format!("Failed to calculate usage: {e}")))?;
 
-    // Update usage table
+    // Update usage table (drive_bytes and total_bytes for backwards compat)
     sqlx::query(
         r#"
         UPDATE drive_usage
-        SET total_bytes = $1,
+        SET drive_bytes = $1,
+            total_bytes = $1,
             file_count = $2,
             folder_count = $3,
             last_scan_at = datetime('now'),
@@ -1335,7 +1706,7 @@ pub async fn reconcile_usage(pool: &SqlitePool, _config: &DriveConfig) -> Result
         WHERE id = $4
         "#,
     )
-    .bind(total_bytes)
+    .bind(drive_bytes)
     .bind(file_count)
     .bind(folder_count)
     .bind(USAGE_SINGLETON_ID)
@@ -1344,8 +1715,8 @@ pub async fn reconcile_usage(pool: &SqlitePool, _config: &DriveConfig) -> Result
     .map_err(|e| Error::Database(format!("Failed to update usage: {e}")))?;
 
     tracing::info!(
-        "Reconciled: {} total bytes, {} files, {} folders",
-        total_bytes,
+        "Reconciled: {} drive bytes, {} files, {} folders",
+        drive_bytes,
         file_count,
         folder_count
     );

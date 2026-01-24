@@ -20,7 +20,7 @@
 	</div>
 	<div class="actions">
 		<button type="button" class="btn compact" onclick={oncompact}> Compact Now </button>
-		<button type="button" class="btn dismiss" onclick={ondismiss}>
+		<button type="button" class="btn dismiss" onclick={ondismiss} aria-label="Dismiss">
 			<iconify-icon icon="ri:close-line" width="16"></iconify-icon>
 		</button>
 	</div>
