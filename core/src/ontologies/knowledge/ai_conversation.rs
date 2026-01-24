@@ -1,6 +1,8 @@
 //! AI Conversation ontology
 //!
-//! Exported chat sessions from Virtues AI conversations.
+//! Chat sessions from Virtues AI assistant, stored directly by the chat system.
+//! Note: This ontology doesn't have a source stream - messages are created
+//! directly by the chat API, not transformed from raw stream data.
 
 use crate::ontologies::{Ontology, OntologyBuilder, OntologyDescriptor};
 
@@ -13,7 +15,7 @@ impl OntologyDescriptor for AiConversationOntology {
             .description("Chat sessions from Virtues AI assistant")
             .domain("knowledge")
             .table_name("knowledge_ai_conversation")
-            .source_streams(vec!["stream_virtues_ai_chat"])
+            .source_streams(vec![]) // No source stream - messages created directly by chat API
             .timestamp_column("timestamp")
             .embedding(
                 "content",

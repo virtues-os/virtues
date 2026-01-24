@@ -17,7 +17,7 @@ class BatchUploadCoordinator: ObservableObject {
     @Published var lastUploadDate: Date?
     @Published var lastSuccessfulSyncDate: Date?
     @Published var uploadStats: (pending: Int, failed: Int, total: Int) = (0, 0, 0)
-    @Published var streamCounts: (healthkit: Int, location: Int, audio: Int) = (0, 0, 0)
+    @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int) = (0, 0, 0, 0)
 
     // MARK: - Dependencies
     private let configProvider: ConfigurationProvider
@@ -261,6 +261,10 @@ class BatchUploadCoordinator: ObservableObject {
         case "ios_contacts":
             let contactsProcessor = processor as! ContactsStreamProcessor
             return await uploadWithProcessor(processor: contactsProcessor, events: events, to: url)
+
+        case "ios_finance":
+            let financeProcessor = processor as! FinanceKitStreamProcessor
+            return await uploadWithProcessor(processor: financeProcessor, events: events, to: url)
 
         default:
             for event in events {

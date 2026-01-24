@@ -7,7 +7,6 @@
 
 <script lang="ts">
 	import type { ThingPage as ThingPageType } from "$lib/wiki/types";
-	import WikiEditor from "./WikiEditor.svelte";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import "iconify-icon";
 
@@ -16,12 +15,6 @@
 	}
 
 	let { page }: Props = $props();
-
-	let notesContent = $state(page.content);
-
-	$effect(() => {
-		notesContent = page.content;
-	});
 
 	function formatDate(date: Date): string {
 		return date.toLocaleDateString("en-US", {
@@ -45,7 +38,7 @@
 	}
 
 	// Build content string for TOC
-	const fullContent = $derived(`${notesContent}
+	const fullContent = $derived(`${page.content || ''}
 
 ## Discovery
 
@@ -79,14 +72,11 @@
 			<hr class="divider" />
 
 			<!-- Notes (main narrative content) -->
-			<section class="section" id="notes">
-				<div class="notes-editor">
-					<WikiEditor
-						bind:content={notesContent}
-						linkedPages={page.linkedPages}
-					/>
-				</div>
-			</section>
+			{#if page.content}
+				<section class="section" id="notes">
+					<div class="notes-content">{page.content}</div>
+				</section>
+			{/if}
 
 			<!-- Discovery -->
 			{#if page.firstEncountered || page.introducedBy}
@@ -343,8 +333,11 @@
 		margin: 0 0 0.75rem;
 	}
 
-	.notes-editor {
-		min-height: 150px;
+	.notes-content {
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		line-height: 1.6;
+		white-space: pre-wrap;
 	}
 
 	/* Info list */

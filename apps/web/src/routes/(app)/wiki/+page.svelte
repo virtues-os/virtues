@@ -60,7 +60,12 @@
 	});
 
 	// Entity types for display
-	const entityTypes: WikiPageType[] = ["person", "place", "organization", "thing"];
+	const entityTypes: WikiPageType[] = [
+		"person",
+		"place",
+		"organization",
+		"thing",
+	];
 
 	// Entity labels (plural)
 	const entityLabels: Record<string, string> = {
@@ -110,7 +115,11 @@
 	// Roman numeral conversion for act numbers
 	function toRoman(num: number): string {
 		const romanNumerals: [number, string][] = [
-			[10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]
+			[10, "X"],
+			[9, "IX"],
+			[5, "V"],
+			[4, "IV"],
+			[1, "I"],
 		];
 		let result = "";
 		for (const [value, numeral] of romanNumerals) {
@@ -124,108 +133,142 @@
 </script>
 
 <div class="wiki-page">
-		<header class="page-header">
-			<h1>Wiki</h1>
-		</header>
+	<header class="page-header">
+		<h1>Wiki</h1>
+	</header>
 
-		<!-- Context: Today & Current Act -->
-		<div class="context">
+	<!-- Context: Today & Current Act -->
+	<div class="context">
+		<p class="context-line">
+			Today is <a href="/wiki/{todaySlug}" class="context-link"
+				><span class="link-text">{todayFormatted}</span></a
+			>.
+		</p>
+		{#if currentAct}
 			<p class="context-line">
-				Today is <a href="/wiki/{todaySlug}" class="context-link"><span class="link-text">{todayFormatted}</span></a>.
+				You are in <a
+					href="/wiki/{currentAct.slug}"
+					class="context-link"
+					><span class="link-text"
+						>Act {toRoman(actNumber)}: {currentAct.title}</span
+					></a
+				>.
 			</p>
-			{#if currentAct}
-				<p class="context-line">
-					You are in <a href="/wiki/{currentAct.slug}" class="context-link"><span class="link-text">Act {toRoman(actNumber)}: {currentAct.title}</span></a>.
-				</p>
+		{/if}
+	</div>
+
+	<hr class="divider" />
+
+	<!-- Activity Heatmap -->
+	<section class="section category-section">
+		<h3 class="category-header">Activity</h3>
+		<p class="category-description">
+			Your context vector for each day—a measure of how complete the
+			picture is. Who you were with, what you did, when it happened, where
+			you were, why it mattered, how it unfolded.
+		</p>
+		<div class="heatmap-container">
+			<ActivityHeatmap {activityData} onDayClick={handleDayClick} />
+		</div>
+	</section>
+
+	<hr class="divider" />
+
+	<!-- Your Story intro -->
+	<section class="section intro-section">
+		<h2>Your Story</h2>
+		<p class="intro-text">The wiki organizes your life in three ways:</p>
+	</section>
+
+	<!-- NARRATIVE -->
+	<section class="section category-section">
+		<h3 class="category-header">Narrative</h3>
+		<p class="category-description">
+			How you've divided your life into meaning. Your story is told
+			through acts (major seasons) and chapters (arcs within them).
+		</p>
+
+		<div class="category-content">
+			{#each allActs as act, i}
+				<div class="act-row">
+					<a href="/wiki/{act.slug}" class="act-link">
+						<span class="act-number"
+							>{toRoman(allActs.length - i)}.</span
+						>
+						<span class="act-title">{act.title}</span>
+						<span class="act-period"
+							>{formatPeriod(
+								act.period.start,
+								act.period.end,
+							)}</span
+						>
+					</a>
+					{#if act.chapters.length > 0}
+						<div class="chapters-row">
+							{#each act.chapters as chapter, j}
+								<a
+									href="/wiki/{chapter.pageSlug}"
+									class="chapter-link"
+									>{chapter.displayName}</a
+								>{#if j < act.chapters.length - 1}<span
+										class="chapter-sep">·</span
+									>{/if}
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/each}
+
+			{#if allActs.length === 0}
+				<p class="empty-placeholder">No acts defined yet.</p>
 			{/if}
 		</div>
+	</section>
 
-		<hr class="divider" />
+	<!-- TEMPORAL -->
+	<section class="section category-section">
+		<h3 class="category-header">Temporal</h3>
+		<p class="category-description">
+			How time actually passed. Years and days exist whether you record
+			them or not.
+		</p>
 
-		<!-- Activity Heatmap -->
-		<section class="section">
-			<ActivityHeatmap {activityData} onDayClick={handleDayClick} />
-		</section>
-
-		<hr class="divider" />
-
-		<!-- Your Story intro -->
-		<section class="section intro-section">
-			<h2>Your Story</h2>
-			<p class="intro-text">
-				The wiki organizes your life in three ways:
-			</p>
-		</section>
-
-		<!-- NARRATIVE -->
-		<section class="section category-section">
-			<h3 class="category-header">Narrative</h3>
-			<p class="category-description">
-				How you've divided your life into meaning. Your story is told through acts (major seasons) and chapters (arcs within them).
-			</p>
-
-			<div class="category-content">
-				{#each allActs as act, i}
-					<div class="act-row">
-						<a href="/wiki/{act.slug}" class="act-link">
-							<span class="act-number">{toRoman(allActs.length - i)}.</span>
-							<span class="act-title">{act.title}</span>
-							<span class="act-period">{formatPeriod(act.period.start, act.period.end)}</span>
-						</a>
-						{#if act.chapters.length > 0}
-							<div class="chapters-row">
-								{#each act.chapters as chapter, j}
-									<a href="/wiki/{chapter.pageSlug}" class="chapter-link">{chapter.displayName}</a>{#if j < act.chapters.length - 1}<span class="chapter-sep">·</span>{/if}
-								{/each}
-							</div>
-						{/if}
-					</div>
-				{/each}
-
-				{#if allActs.length === 0}
-					<p class="empty-placeholder">No acts defined yet.</p>
-				{/if}
-			</div>
-		</section>
-
-		<!-- TEMPORAL -->
-		<section class="section category-section">
-			<h3 class="category-header">Temporal</h3>
-			<p class="category-description">
-				How time actually passed. Years and days exist whether you record them or not.
-			</p>
-
-			<div class="category-content">
-				{#if years.length > 0}
-					<div class="years-row">
-						{#each years as year, i}
-							<a href="/wiki/{year}" class="year-link">{year}</a>{#if i < years.length - 1}<span class="year-sep">·</span>{/if}
-						{/each}
-					</div>
-				{:else}
-					<p class="empty-placeholder">No years with data yet.</p>
-				{/if}
-			</div>
-		</section>
-
-		<!-- ENTITIES -->
-		<section class="section category-section">
-			<h3 class="category-header">Entities</h3>
-			<p class="category-description">
-				The people, places, and things in your story. Reference pages for who and what appears across your life.
-			</p>
-
-			<div class="category-content">
-				<div class="entity-row">
-					{#each entityTypes as type}
-						{@const count = pagesByType.get(type)?.length || 0}
-						<a href={entityRoutes[type]} class="entity-link">
-							{entityLabels[type]}{#if count > 0} ({count}){/if}
-						</a>
+		<div class="category-content">
+			{#if years.length > 0}
+				<div class="years-row">
+					{#each years as year, i}
+						<a href="/wiki/{year}" class="year-link">{year}</a
+						>{#if i < years.length - 1}<span class="year-sep"
+								>·</span
+							>{/if}
 					{/each}
 				</div>
+			{:else}
+				<p class="empty-placeholder">No years with data yet.</p>
+			{/if}
+		</div>
+	</section>
+
+	<!-- ENTITIES -->
+	<section class="section category-section">
+		<h3 class="category-header">Entities</h3>
+		<p class="category-description">
+			The people, places, and things in your story. Reference pages for
+			who and what appears across your life.
+		</p>
+
+		<div class="category-content">
+			<div class="entity-row">
+				{#each entityTypes as type}
+					{@const count = pagesByType.get(type)?.length || 0}
+					<a href={entityRoutes[type]} class="entity-link">
+						{entityLabels[type]}{#if count > 0}
+							({count}){/if}
+					</a>
+				{/each}
 			</div>
-		</section>
+		</div>
+	</section>
 </div>
 
 <style>
@@ -342,6 +385,11 @@
 	}
 
 	.category-content {
+		padding-left: 0.5rem;
+	}
+
+	/* Heatmap container */
+	.heatmap-container {
 		padding-left: 0.5rem;
 	}
 

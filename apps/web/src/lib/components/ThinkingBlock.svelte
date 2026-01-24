@@ -39,8 +39,12 @@
 		duration = 0,
 	}: Props = $props();
 
+	// Capture initial isThinking value for initial expanded state (intentionally captures initial value only)
+	// svelte-ignore state_referenced_locally
+	const initiallyThinking = isThinking;
+	
 	// Expansion state - starts collapsed for completed messages, expanded for active thinking
-	let expanded = $state(isThinking);
+	let expanded = $state(initiallyThinking);
 	let hasAutoCollapsed = $state(false);
 	let hasManuallyCollapsed = $state(false);
 

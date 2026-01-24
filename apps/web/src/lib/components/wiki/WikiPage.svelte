@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { WikiPage as WikiPageType } from "$lib/wiki";
 	import { PAGE_TYPE_META } from "$lib/wiki";
-	import WikiEditor from "./WikiEditor.svelte";
 	import WikiCitations from "./WikiCitations.svelte";
 	import WikiLinkedPages from "./WikiLinkedPages.svelte";
 	import WikiRelatedPages from "./WikiRelatedPages.svelte";
@@ -13,14 +12,6 @@
 
 	let { page }: Props = $props();
 
-	// Local state for editable markdown content
-	let markdownContent = $state<string>(page.content ?? "");
-
-	// When navigating between slugs, load the new page content into the editor.
-	$effect(() => {
-		markdownContent = page.content ?? "";
-	});
-
 	const typeMeta = $derived(PAGE_TYPE_META[page.type]);
 
 	function formatDate(date: Date): string {
@@ -29,10 +20,6 @@
 			day: "numeric",
 			year: "numeric",
 		});
-	}
-
-	function handleSave(newContent: string) {
-		markdownContent = newContent;
 	}
 </script>
 
@@ -106,14 +93,10 @@
 					{/if}
 				</header>
 
-				<!-- Body content (markdown editor) -->
-				<div class="py-4">
-					<WikiEditor
-						bind:content={markdownContent}
-						linkedPages={page.linkedPages}
-						onSave={handleSave}
-					/>
-				</div>
+				<!-- Body content -->
+				{#if page.content}
+					<div class="py-4 notes-content">{page.content}</div>
+				{/if}
 
 				<!-- Citations -->
 				{#if page.citations.length > 0}
@@ -140,10 +123,17 @@
 	</article>
 
 	<!-- Right Rail Panel -->
-	<WikiRightRail content={markdownContent} />
+	<WikiRightRail content={page.content || ''} />
 </div>
 
 <style>
+	.notes-content {
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		line-height: 1.6;
+		white-space: pre-wrap;
+	}
+
 	/* Scrollbar styling */
 	article {
 		scrollbar-width: thin;

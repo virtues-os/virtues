@@ -1,7 +1,12 @@
 //! Plaid API client wrapper
 //!
-//! Uses reqwest directly instead of the plaid crate due to httpclient bugs.
-//! Implements the specific endpoints we need for bank account integration.
+//! All Plaid API calls are proxied through Tollbooth for:
+//! 1. Security: Plaid keys stay on Tollbooth, not in distributed client code
+//! 2. Budget enforcement: Tollbooth can deduct costs from user's balance
+//! 3. Tier validation: Tollbooth can restrict Plaid access to certain tiers
+//!
+//! The client sends requests to Tollbooth's /v1/services/plaid/* endpoints,
+//! which then forward them to the actual Plaid API with proper credentials.
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -12,7 +17,7 @@ use tokio::sync::Semaphore;
 
 use crate::error::{Error, Result};
 
-/// Plaid API environment
+/// Plaid API environment (used for display/logging only - actual env is on Tollbooth)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaidEnvironment {
     Sandbox,
@@ -32,14 +37,6 @@ impl PlaidEnvironment {
             Self::Production
         } else {
             Self::Sandbox
-        }
-    }
-
-    fn base_url(&self) -> &'static str {
-        match self {
-            Self::Sandbox => "https://sandbox.plaid.com",
-            Self::Development => "https://development.plaid.com",
-            Self::Production => "https://production.plaid.com",
         }
     }
 }
@@ -76,31 +73,38 @@ impl Default for PlaidRateLimiter {
     }
 }
 
-/// Plaid API client using reqwest
+/// Plaid API client that proxies through Tollbooth
 pub struct PlaidClient {
     http: Client,
     pub environment: PlaidEnvironment,
     rate_limiter: PlaidRateLimiter,
-    client_id: String,
-    secret: String,
-    version: String,
+    /// Tollbooth URL (e.g., "http://localhost:9002")
+    tollbooth_url: String,
+    /// Internal secret for Tollbooth authentication
+    internal_secret: String,
+    /// User ID for budget tracking
+    user_id: String,
 }
 
 impl PlaidClient {
     /// Create a new Plaid client from environment variables
+    /// Requires TOLLBOOTH_URL and TOLLBOOTH_INTERNAL_SECRET
     pub fn from_env() -> Result<Self> {
-        let client_id = env::var("PLAID_CLIENT_ID")
-            .map_err(|_| Error::Configuration("PLAID_CLIENT_ID not set".to_string()))?;
+        Self::new(None)
+    }
 
-        let secret = env::var("PLAID_SECRET")
-            .map_err(|_| Error::Configuration("PLAID_SECRET not set".to_string()))?;
+    /// Create a new Plaid client with an optional user ID
+    pub fn new(user_id: Option<String>) -> Result<Self> {
+        let tollbooth_url = env::var("TOLLBOOTH_URL")
+            .unwrap_or_else(|_| "http://localhost:9002".to_string());
 
-        let version = env::var("PLAID_VERSION").unwrap_or_else(|_| "2020-09-14".to_string());
+        let internal_secret = env::var("TOLLBOOTH_INTERNAL_SECRET")
+            .map_err(|_| Error::Configuration("TOLLBOOTH_INTERNAL_SECRET not set".to_string()))?;
 
         let environment = PlaidEnvironment::from_env();
 
         let http = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(120))
             .build()
             .map_err(|e| Error::Other(format!("Failed to create HTTP client: {e}")))?;
 
@@ -108,18 +112,23 @@ impl PlaidClient {
             http,
             environment,
             rate_limiter: PlaidRateLimiter::new(),
-            client_id,
-            secret,
-            version,
+            tollbooth_url,
+            internal_secret,
+            user_id: user_id.unwrap_or_else(|| "system".to_string()),
         })
     }
 
-    /// Get the base URL for the current environment
-    pub fn base_url(&self) -> &'static str {
-        self.environment.base_url()
+    /// Create a new Plaid client with a specific user ID for budget tracking
+    pub fn with_user_id(user_id: String) -> Result<Self> {
+        Self::new(Some(user_id))
     }
 
-    /// Make a POST request to the Plaid API
+    /// Get the Tollbooth base URL
+    pub fn base_url(&self) -> &str {
+        &self.tollbooth_url
+    }
+
+    /// Make a POST request to Tollbooth's Plaid proxy
     async fn post<Req: Serialize, Res: for<'de> Deserialize<'de>>(
         &self,
         endpoint: &str,
@@ -127,19 +136,32 @@ impl PlaidClient {
     ) -> Result<Res> {
         let _permit = self.rate_limiter.acquire().await?;
 
-        let url = format!("{}{}", self.base_url(), endpoint);
+        // Map Plaid endpoints to Tollbooth proxy endpoints
+        let tollbooth_endpoint = match endpoint {
+            "/link/token/create" => "/v1/services/plaid/link-token",
+            "/item/public_token/exchange" => "/v1/services/plaid/exchange-token",
+            "/transactions/sync" => "/v1/services/plaid/transactions/sync",
+            "/accounts/get" | "/accounts/balance/get" => "/v1/services/plaid/accounts/get",
+            "/item/remove" => "/v1/services/plaid/item/remove",
+            // For endpoints not yet proxied, return an error
+            _ => return Err(Error::Source(format!(
+                "Plaid endpoint {} is not available through Tollbooth proxy",
+                endpoint
+            ))),
+        };
+
+        let url = format!("{}{}", self.tollbooth_url, tollbooth_endpoint);
 
         let response = self
             .http
             .post(&url)
             .header("Content-Type", "application/json")
-            .header("PLAID-CLIENT-ID", &self.client_id)
-            .header("PLAID-SECRET", &self.secret)
-            .header("Plaid-Version", &self.version)
+            .header("X-Internal-Secret", &self.internal_secret)
+            .header("X-User-Id", &self.user_id)
             .json(body)
             .send()
             .await
-            .map_err(|e| Error::Source(format!("Plaid request failed: {e}")))?;
+            .map_err(|e| Error::Source(format!("Tollbooth request failed: {e}")))?;
 
         let status = response.status();
         let body_text = response
@@ -148,7 +170,14 @@ impl PlaidClient {
             .map_err(|e| Error::Source(format!("Failed to read response: {e}")))?;
 
         if !status.is_success() {
-            // Try to parse as Plaid error
+            // Try to parse as Tollbooth/Plaid error
+            if let Ok(error) = serde_json::from_str::<TollboothPlaidError>(&body_text) {
+                return Err(Error::Source(format!(
+                    "Plaid error [{}]: {}",
+                    error.error.code, error.error.message
+                )));
+            }
+            // Try legacy Plaid error format
             if let Ok(error) = serde_json::from_str::<PlaidError>(&body_text) {
                 return Err(Error::Source(format!(
                     "Plaid error [{}]: {}",
@@ -176,14 +205,11 @@ impl PlaidClient {
         redirect_uri: Option<&str>,
         _webhook_url: Option<&str>,
     ) -> Result<LinkTokenCreateResponse> {
-        let request = LinkTokenCreateRequest {
-            client_name: "Virtues".to_string(),
-            user: LinkTokenUser {
-                client_user_id: user_client_id.to_string(),
-            },
+        // Use Tollbooth's request format
+        let request = TollboothLinkTokenRequest {
+            user_client_id: user_client_id.to_string(),
             products: products.iter().map(|s| s.to_string()).collect(),
             country_codes: country_codes.iter().map(|s| s.to_string()).collect(),
-            language: "en".to_string(),
             redirect_uri: redirect_uri.map(String::from),
         };
 
@@ -195,8 +221,19 @@ impl PlaidClient {
         &self,
         public_token: &str,
     ) -> Result<ItemPublicTokenExchangeResponse> {
-        let request = ItemPublicTokenExchangeRequest {
+        self.item_public_token_exchange_with_count(public_token, None).await
+    }
+
+    /// Exchange a public token for an access token with connection count for limit enforcement
+    pub async fn item_public_token_exchange_with_count(
+        &self,
+        public_token: &str,
+        current_plaid_count: Option<i64>,
+    ) -> Result<ItemPublicTokenExchangeResponse> {
+        // Use Tollbooth's request format
+        let request = TollboothExchangeTokenRequest {
             public_token: public_token.to_string(),
+            current_plaid_count,
         };
 
         self.post("/item/public_token/exchange", &request).await
@@ -280,26 +317,42 @@ impl PlaidClient {
 // Request/Response Types
 // ============================================================================
 
+/// Tollbooth proxy error format
+#[derive(Debug, Deserialize)]
+struct TollboothPlaidError {
+    error: TollboothPlaidErrorDetails,
+}
+
+#[derive(Debug, Deserialize)]
+struct TollboothPlaidErrorDetails {
+    message: String,
+    code: String,
+}
+
+/// Legacy Plaid error format (for direct API errors)
 #[derive(Debug, Deserialize)]
 struct PlaidError {
     error_code: String,
     error_message: String,
 }
 
+/// Tollbooth link token request format
 #[derive(Debug, Serialize)]
-struct LinkTokenCreateRequest {
-    client_name: String,
-    user: LinkTokenUser,
+struct TollboothLinkTokenRequest {
+    user_client_id: String,
     products: Vec<String>,
     country_codes: Vec<String>,
-    language: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     redirect_uri: Option<String>,
 }
 
+/// Tollbooth exchange token request format
 #[derive(Debug, Serialize)]
-struct LinkTokenUser {
-    client_user_id: String,
+struct TollboothExchangeTokenRequest {
+    public_token: String,
+    /// Current number of Plaid connections for tier-based limit enforcement
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_plaid_count: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,10 +362,6 @@ pub struct LinkTokenCreateResponse {
     pub request_id: String,
 }
 
-#[derive(Debug, Serialize)]
-struct ItemPublicTokenExchangeRequest {
-    public_token: String,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ItemPublicTokenExchangeResponse {
@@ -715,19 +764,11 @@ mod tests {
     }
 
     #[test]
-    fn test_base_urls() {
-        assert_eq!(
-            PlaidEnvironment::Sandbox.base_url(),
-            "https://sandbox.plaid.com"
-        );
-        assert_eq!(
-            PlaidEnvironment::Development.base_url(),
-            "https://development.plaid.com"
-        );
-        assert_eq!(
-            PlaidEnvironment::Production.base_url(),
-            "https://production.plaid.com"
-        );
+    fn test_environment_variants() {
+        // Just verify the enum variants exist and are distinct
+        assert_ne!(PlaidEnvironment::Sandbox, PlaidEnvironment::Development);
+        assert_ne!(PlaidEnvironment::Development, PlaidEnvironment::Production);
+        assert_ne!(PlaidEnvironment::Sandbox, PlaidEnvironment::Production);
     }
 
     #[test]

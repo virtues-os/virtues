@@ -20,10 +20,14 @@
 	const models = $derived(getModels());
 	const loading = $derived(isLoading());
 	const error = $derived(getError());
-	const DEFAULT_MODEL = $derived(getDefaultModel());
+	const defaultModel = $derived(getDefaultModel());
 
+	// Capture initial value (intentionally captures initial value only)
+	// svelte-ignore state_referenced_locally
+	const initialValue = value;
+	
 	// Local state for UniversalSelect binding
-	let localValue = $state<ModelOption | undefined>(value || DEFAULT_MODEL);
+	let localValue = $state<ModelOption | undefined>(initialValue);
 
 	// Sync local value with prop value
 	$effect(() => {
@@ -32,10 +36,10 @@
 		}
 	});
 
-	// Initialize localValue with DEFAULT_MODEL when models load
+	// Initialize localValue with defaultModel when models load
 	$effect(() => {
-		if (!localValue && DEFAULT_MODEL && models.length > 0) {
-			localValue = DEFAULT_MODEL;
+		if (!localValue && defaultModel && models.length > 0) {
+			localValue = defaultModel;
 		}
 	});
 
@@ -148,7 +152,7 @@
 					></iconify-icon>
 					<span class="text-sm text-foreground">
 						{model.displayName}
-						{#if DEFAULT_MODEL && model.id === DEFAULT_MODEL.id}
+						{#if defaultModel && model.id === defaultModel.id}
 							<span class="text-xs text-foreground-subtle ml-1">(recommended)</span>
 						{/if}
 					</span>

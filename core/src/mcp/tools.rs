@@ -333,8 +333,8 @@ pub struct SourceInfo {
     pub source_type: String,
     pub status: String,
     pub enabled_streams: i32,
-    pub created_at: String,
-    pub last_sync: Option<String>,
+    pub created_at: crate::types::Timestamp,
+    pub last_sync: Option<crate::types::Timestamp>,
 }
 
 /// List all data sources and their status
@@ -355,9 +355,9 @@ pub async fn list_sources(pool: &SqlitePool) -> Result<ListSourcesResponse, Stri
             COUNT(DISTINCT st.stream_name) FILTER (WHERE st.is_enabled = true)::int as enabled_streams,
             s.created_at::text as created_at,
             MAX(j.completed_at)::text as last_sync
-        FROM data_source_connections s
-        LEFT JOIN data_stream_connections st ON st.source_connection_id = s.id
-        LEFT JOIN data_jobs j ON j.source_connection_id = s.id AND j.status = 'succeeded'
+        FROM elt_source_connections s
+        LEFT JOIN elt_stream_connections st ON st.source_connection_id = s.id
+        LEFT JOIN elt_jobs j ON j.source_connection_id = s.id AND j.status = 'succeeded'
         GROUP BY s.id, s.name, s.source, s.is_active, s.pairing_status, s.error_message, s.created_at
         ORDER BY s.created_at DESC
         "#

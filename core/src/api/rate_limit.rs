@@ -4,6 +4,7 @@
 //! In an instance-per-user deployment model, each user gets their own database,
 //! so these limits apply to each user's instance independently.
 
+use crate::types::Timestamp;
 use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::SqlitePool;
 use thiserror::Error;
@@ -15,14 +16,14 @@ pub enum RateLimitError {
     DailyLimitExceeded {
         current: i32,
         limit: i32,
-        reset_at: String,
+        reset_at: Timestamp,
     },
 
     #[error("Daily token limit exceeded: {current}/{limit} tokens. Resets at {reset_at}")]
     TokenLimitExceeded {
         current: i32,
         limit: i32,
-        reset_at: String,
+        reset_at: Timestamp,
     },
 
     #[error("Database error: {0}")]
@@ -170,13 +171,12 @@ pub async fn check_rate_limit(
             .unwrap_or(day_bucket)
             .and_hms_opt(0, 0, 0)
             .unwrap()
-            .and_utc()
-            .to_rfc3339();
+            .and_utc();
 
         return Err(RateLimitError::DailyLimitExceeded {
             current: new_count,
             limit: daily_request_limit,
-            reset_at,
+            reset_at: Timestamp::from(reset_at),
         });
     }
 
@@ -189,13 +189,12 @@ pub async fn check_rate_limit(
             .unwrap_or(day_bucket)
             .and_hms_opt(0, 0, 0)
             .unwrap()
-            .and_utc()
-            .to_rfc3339();
+            .and_utc();
 
         return Err(RateLimitError::TokenLimitExceeded {
             current: total_daily_tokens,
             limit: limits.chat_tokens_per_day,
-            reset_at,
+            reset_at: Timestamp::from(reset_at),
         });
     }
 

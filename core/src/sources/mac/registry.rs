@@ -1,58 +1,44 @@
 //! macOS source registration for the catalog
+//!
+//! This module provides the unified registration for macOS sources, including
+//! both UI metadata and transform logic in a single place.
 
-use crate::registry::{AuthType, RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::registry::{RegisteredSource, RegisteredStream, SourceRegistry};
 use serde_json::json;
+
+// Import transforms for unified registration
+use super::transform::{MacAppsTransform, MacBrowserTransform, MacIMessageTransform};
 
 /// macOS source registration
 pub struct MacSource;
 
 impl SourceRegistry for MacSource {
     fn descriptor() -> RegisteredSource {
+        let descriptor = virtues_registry::sources::get_source("mac")
+            .expect("macOS source not found in virtues-registry");
+
         RegisteredSource {
-            name: "mac",
-            display_name: "macOS",
-            description: "Personal data from macOS devices (App usage, Browser history, iMessage)",
-            auth_type: AuthType::Device,
-            oauth_config: None,
-            icon: Some("ri:macbook-line"),
+            descriptor,
             streams: vec![
-                // Apps stream
+                // Apps stream with unified transform
                 RegisteredStream::new("apps")
-                    .display_name("Application Usage")
-                    .description("Active applications, window titles, and usage duration")
-                    .table_name("stream_mac_apps")
-                    .target_ontologies(vec!["activity_app_usage"])
                     .config_schema(apps_config_schema())
                     .config_example(apps_config_example())
-                    .supports_incremental(false)
-                    .supports_full_refresh(false)  // Push-based
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes (6-field: sec min hour day month dow)
+                    .transform("activity_app_usage", |_ctx| Ok(Box::new(MacAppsTransform)))
                     .build(),
 
-                // Browser stream
+                // Browser stream with unified transform
                 RegisteredStream::new("browser")
-                    .display_name("Browser History")
-                    .description("URLs visited, page titles, and visit durations from Safari, Chrome, Firefox")
-                    .table_name("stream_mac_browser")
-                    .target_ontologies(vec!["activity_web_browsing"])
                     .config_schema(browser_config_schema())
                     .config_example(browser_config_example())
-                    .supports_incremental(false)
-                    .supports_full_refresh(false)  // Push-based
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes (6-field: sec min hour day month dow)
+                    .transform("activity_web_browsing", |_ctx| Ok(Box::new(MacBrowserTransform)))
                     .build(),
 
-                // iMessage stream
+                // iMessage stream with unified transform
                 RegisteredStream::new("imessage")
-                    .display_name("iMessage")
-                    .description("Message history including SMS and iMessage conversations")
-                    .table_name("stream_mac_imessage")
-                    .target_ontologies(vec!["social_message"])
                     .config_schema(imessage_config_schema())
                     .config_example(imessage_config_example())
-                    .supports_incremental(false)
-                    .supports_full_refresh(false)  // Push-based
-                    .default_cron_schedule("0 */5 * * * *")  // Every 5 minutes (6-field: sec min hour day month dow)
+                    .transform("social_message", |_ctx| Ok(Box::new(MacIMessageTransform)))
                     .build(),
             ],
         }
@@ -163,12 +149,13 @@ fn imessage_config_example() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::AuthType;
 
     #[test]
     fn test_mac_descriptor() {
         let desc = MacSource::descriptor();
-        assert_eq!(desc.name, "mac");
-        assert_eq!(desc.auth_type, AuthType::Device);
+        assert_eq!(desc.descriptor.name, "mac");
+        assert_eq!(desc.descriptor.auth_type, AuthType::Device);
         assert_eq!(desc.streams.len(), 3);
     }
 
@@ -178,12 +165,12 @@ mod tests {
         let apps = desc
             .streams
             .iter()
-            .find(|s| s.name == "apps")
+            .find(|s| s.descriptor.name == "apps")
             .expect("Apps stream not found");
 
-        assert_eq!(apps.display_name, "Application Usage");
-        assert_eq!(apps.table_name, "stream_mac_apps");
-        assert!(!apps.supports_incremental);
+        assert_eq!(apps.descriptor.display_name, "Application Usage");
+        assert_eq!(apps.descriptor.table_name, "stream_mac_apps");
+        assert!(!apps.descriptor.supports_incremental);
     }
 
     #[test]
@@ -192,11 +179,11 @@ mod tests {
         let browser = desc
             .streams
             .iter()
-            .find(|s| s.name == "browser")
+            .find(|s| s.descriptor.name == "browser")
             .expect("Browser stream not found");
 
-        assert_eq!(browser.display_name, "Browser History");
-        assert_eq!(browser.table_name, "stream_mac_browser");
+        assert_eq!(browser.descriptor.display_name, "Browser History");
+        assert_eq!(browser.descriptor.table_name, "stream_mac_browser");
     }
 
     #[test]
@@ -205,10 +192,10 @@ mod tests {
         let imessage = desc
             .streams
             .iter()
-            .find(|s| s.name == "imessage")
+            .find(|s| s.descriptor.name == "imessage")
             .expect("iMessage stream not found");
 
-        assert_eq!(imessage.display_name, "iMessage");
-        assert_eq!(imessage.table_name, "stream_mac_imessage");
+        assert_eq!(imessage.descriptor.display_name, "iMessage");
+        assert_eq!(imessage.descriptor.table_name, "stream_mac_imessage");
     }
 }

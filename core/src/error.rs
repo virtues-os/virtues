@@ -61,10 +61,6 @@ pub enum Error {
     #[error("SQL error: {0}")]
     Sql(#[from] sqlx::Error),
 
-    /// S3 errors
-    #[error("S3 error: {0}")]
-    S3(String),
-
     /// Reqwest HTTP client errors
     #[error("HTTP client error: {0}")]
     Reqwest(#[from] reqwest::Error),
@@ -107,7 +103,6 @@ impl Error {
                 | Error::Storage(_)
                 | Error::Configuration(_)
                 | Error::Network(_)
-                | Error::S3(_)
                 | Error::Sql(_)
                 | Error::Io(_)
                 | Error::Anyhow(_)

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
+	import type { Tab } from '$lib/tabs/types';
 	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();

@@ -239,94 +239,57 @@ class HealthKitManager: ObservableObject {
             }
         }
         
-        // Get initial sync days from configuration (default to 90 if not configured)
-        let initialSyncDays = configProvider.getInitialSyncDays(for: "healthkit")
+        // Full history sync: go back 10 years in yearly chunks
+        let yearsToSync = 10
+        let now = Date()
+        var allSuccess = true
         
-        let endDate = Date()
-        let startDate = Calendar.current.date(byAdding: .day, value: -initialSyncDays, to: endDate)!
+        print("🏁 Starting HealthKit full history sync for \(yearsToSync) years")
         
-        print("🏁 Starting HealthKit initial sync for \(initialSyncDays) days from \(startDate) to \(endDate)")
-        
-        var allMetrics: [HealthKitMetric] = []
-        let totalTypes = healthKitTypes.count
-        var processedTypes = 0
-        
-        // Collect data for each type
-        for type in healthKitTypes {
-            if let metrics = await collectData(for: type, from: startDate, to: endDate) {
-                allMetrics.append(contentsOf: metrics)
-                print("✅ Collected \(metrics.count) metrics for \(getTypeString(for: type))")
-            } else {
-                print("⚠️ No data for \(getTypeString(for: type))")
+        for yearOffset in 0..<yearsToSync {
+            let chunkEndDate = Calendar.current.date(byAdding: .year, value: -yearOffset, to: now)!
+            let chunkStartDate = Calendar.current.date(byAdding: .year, value: -1, to: chunkEndDate)!
+            
+            print("📅 Syncing HealthKit chunk: \(chunkStartDate) to \(chunkEndDate)")
+            
+            var chunkMetrics: [HealthKitMetric] = []
+            
+            for type in healthKitTypes {
+                if let metrics = await collectData(for: type, from: chunkStartDate, to: chunkEndDate) {
+                    chunkMetrics.append(contentsOf: metrics)
+                }
             }
             
-            processedTypes += 1
-            let collectionProgress = Double(processedTypes) / Double(totalTypes) * 0.5 // First 50% for collection
-            await MainActor.run {
-                progressHandler(collectionProgress)
-            }
-        }
-        
-        print("📦 Total metrics collected: \(allMetrics.count)")
-        
-        // Save to upload queue in batches
-        if !allMetrics.isEmpty {
-            let batchSize = 1000
-            let totalBatches = (allMetrics.count + batchSize - 1) / batchSize
-            var savedBatches = 0
-            var allSuccess = true
-            
-            print("📦 Saving \(allMetrics.count) metrics in \(totalBatches) batches of up to \(batchSize) each")
-            
-            for batchIndex in 0..<totalBatches {
-                let startIndex = batchIndex * batchSize
-                let endIndex = min((batchIndex + 1) * batchSize, allMetrics.count)
-                let batch = Array(allMetrics[startIndex..<endIndex])
-                
-                print("💾 Saving batch \(batchIndex + 1)/\(totalBatches) with \(batch.count) metrics")
-                let success = await saveMetricsToQueue(batch)
-                
-                if success {
-                    savedBatches += 1
-                    print("✅ Batch \(batchIndex + 1) saved successfully")
-                } else {
-                    print("❌ Failed to save batch \(batchIndex + 1)")
+            if !chunkMetrics.isEmpty {
+                print("📦 Collected \(chunkMetrics.count) metrics for chunk. Saving...")
+                let success = await saveMetricsToQueue(chunkMetrics)
+                if !success {
                     allSuccess = false
                 }
-                
-                // Update progress (second 50% for saving)
-                let saveProgress = 0.5 + (Double(savedBatches) / Double(totalBatches) * 0.5)
-                await MainActor.run {
-                    progressHandler(saveProgress)
-                }
             }
             
-            if allSuccess {
-                print("✅ All \(totalBatches) batches saved successfully")
-                saveLastSyncDate(endDate)
-
-                // Capture current anchors for future incremental syncs
-                // This must be done via anchored queries - HKQueryAnchor(fromValue:) is not valid
-                print("📍 Capturing anchors for incremental sync...")
-                for type in healthKitTypes {
-                    if let newAnchor = await captureCurrentAnchor(for: type) {
-                        let typeKey = getAnchorKey(for: type)
-                        anchors[typeKey] = newAnchor
-                        saveAnchor(newAnchor, for: typeKey)
-                    }
-                }
-                print("✅ Anchors captured for future incremental syncs")
-            } else {
-                print("⚠️ Some batches failed to save")
+            // Update progress
+            let progress = Double(yearOffset + 1) / Double(yearsToSync)
+            await MainActor.run {
+                progressHandler(progress)
             }
-            
-            return allSuccess
-        } else {
-            print("⚠️ No metrics to save")
-            progressHandler(1.0) // Complete if no data
         }
         
-        return true
+        if allSuccess {
+            saveLastSyncDate(now)
+            
+            // Capture current anchors for future incremental syncs
+            print("📍 Capturing anchors for incremental sync...")
+            for type in healthKitTypes {
+                if let newAnchor = await captureCurrentAnchor(for: type) {
+                    let typeKey = getAnchorKey(for: type)
+                    anchors[typeKey] = newAnchor
+                    saveAnchor(newAnchor, for: typeKey)
+                }
+            }
+        }
+        
+        return allSuccess
     }
     
     

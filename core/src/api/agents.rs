@@ -1,9 +1,11 @@
 //! API functions for agent management
+//!
+//! Agents are read directly from the shared virtues-registry crate.
+//! No SQLite tables needed for static agent configuration.
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 /// Agent information returned by API
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,52 +19,38 @@ pub struct AgentInfo {
     pub sort_order: i32,
 }
 
-/// List all system default agents (user_id IS NULL)
-pub async fn list_agents(db: &SqlitePool) -> Result<Vec<AgentInfo>> {
-    // SQLite returns INTEGER as i64, need explicit type casts
-    let agents = sqlx::query_as!(
-        AgentInfo,
-        r#"
-        SELECT
-            agent_id,
-            name,
-            description,
-            color,
-            icon,
-            enabled as "enabled: bool",
-            sort_order as "sort_order: i32"
-        FROM app_agents
-        WHERE user_id IS NULL AND enabled = true
-        ORDER BY sort_order ASC
-        "#
-    )
-    .fetch_all(db)
-    .await?;
+impl From<virtues_registry::agents::AgentConfig> for AgentInfo {
+    fn from(config: virtues_registry::agents::AgentConfig) -> Self {
+        Self {
+            agent_id: config.agent_id,
+            name: config.name,
+            description: Some(config.description),
+            color: Some(config.color),
+            icon: Some(config.icon),
+            enabled: config.enabled,
+            sort_order: config.sort_order,
+        }
+    }
+}
+
+/// List all enabled agents from the registry
+pub async fn list_agents() -> Result<Vec<AgentInfo>> {
+    let agents: Vec<AgentInfo> = virtues_registry::agents::default_agents()
+        .into_iter()
+        .filter(|a| a.enabled)
+        .map(AgentInfo::from)
+        .collect();
 
     Ok(agents)
 }
 
 /// Get a specific agent by ID
-pub async fn get_agent(db: &SqlitePool, agent_id: &str) -> Result<AgentInfo> {
-    // SQLite returns INTEGER as i64, need explicit type casts
-    let agent = sqlx::query_as!(
-        AgentInfo,
-        r#"
-        SELECT
-            agent_id,
-            name,
-            description,
-            color,
-            icon,
-            enabled as "enabled: bool",
-            sort_order as "sort_order: i32"
-        FROM app_agents
-        WHERE user_id IS NULL AND agent_id = $1
-        "#,
-        agent_id
-    )
-    .fetch_one(db)
-    .await?;
+pub async fn get_agent(agent_id: &str) -> Result<AgentInfo> {
+    let agent = virtues_registry::agents::default_agents()
+        .into_iter()
+        .find(|a| a.agent_id == agent_id)
+        .map(AgentInfo::from)
+        .ok_or_else(|| Error::NotFound(format!("Agent not found: {}", agent_id)))?;
 
     Ok(agent)
 }

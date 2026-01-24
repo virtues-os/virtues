@@ -4,6 +4,24 @@
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";
 
+/* ===================================
+   SHIKI CSS VARIABLES MAPPING
+   Maps our theme's code colors to Shiki's expected variable names
+   =================================== */
+:root {
+	--shiki-color-background: var(--code-bg);
+	--shiki-color-text: var(--code-fg);
+	--shiki-token-comment: var(--code-comment);
+	--shiki-token-keyword: var(--code-keyword);
+	--shiki-token-string: var(--code-string);
+	--shiki-token-string-expression: var(--code-string);
+	--shiki-token-function: var(--code-function);
+	--shiki-token-constant: var(--code-constant);
+	--shiki-token-parameter: var(--code-fg);
+	--shiki-token-punctuation: var(--code-comment);
+	--shiki-token-link: var(--code-string);
+}
+
 /* Global text selection/highlight styling */
 ::selection {
 	background-color: var(--color-highlight);
@@ -238,4 +256,36 @@ h1, h2, h3, h4, h5, h6 {
 
 .btn-ghost:hover:not(:disabled) {
 	background-color: var(--color-background);
+}
+
+/* ===================================
+   TOAST STYLES (svelte-sonner)
+   =================================== */
+
+[data-sonner-toast][data-type="success"] {
+	background: var(--success-subtle) !important;
+	border-color: var(--success) !important;
+	color: var(--success) !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+	background: var(--error-subtle) !important;
+	border-color: var(--error) !important;
+	color: var(--error) !important;
+}
+
+[data-sonner-toast][data-type="warning"] {
+	background: var(--warning-subtle) !important;
+	border-color: var(--warning) !important;
+	color: var(--warning) !important;
+}
+
+[data-sonner-toast][data-type="info"] {
+	background: var(--info-subtle) !important;
+	border-color: var(--info) !important;
+	color: var(--info) !important;
+}
+
+[data-sonner-toast] [data-description] {
+	color: var(--foreground-muted) !important;
 }

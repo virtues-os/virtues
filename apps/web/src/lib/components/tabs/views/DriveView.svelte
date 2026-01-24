@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Tab } from '$lib/stores/windowTabs.svelte';
+	import type { Tab } from '$lib/tabs/types';
 	import { Page } from '$lib';
 	import type { DriveFile, DriveUsage } from '$lib/api/client';
 	import {
@@ -57,7 +57,15 @@
 	let toastTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	// File input ref
-	let fileInput: HTMLInputElement;
+	let fileInput = $state<HTMLInputElement | null>(null);
+
+	// Detect if we're in the read-only lake folder
+	const isLakePath = $derived(currentPath === 'lake' || currentPath.startsWith('lake/'));
+
+	// Check if a file is a lake virtual item (starts with virtual:lake)
+	function isLakeFile(file: DriveFile): boolean {
+		return file.id.startsWith('virtual:lake');
+	}
 
 	onMount(async () => {
 		await loadData();
@@ -120,13 +128,15 @@
 
 	// Breadcrumb navigation
 	const breadcrumbs = $derived(() => {
-		if (!currentPath) return [{ name: 'Drive', path: '' }];
+		if (!currentPath) return [{ name: 'Drive', path: '', isLake: false }];
 		const parts = currentPath.split('/');
-		const crumbs = [{ name: 'Drive', path: '' }];
+		const crumbs = [{ name: 'Drive', path: '', isLake: false }];
 		let pathSoFar = '';
 		for (const part of parts) {
 			pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
-			crumbs.push({ name: part, path: pathSoFar });
+			// Capitalize 'lake' to 'Lake' for display
+			const displayName = part === 'lake' ? 'Lake' : part;
+			crumbs.push({ name: displayName, path: pathSoFar, isLake: pathSoFar === 'lake' || pathSoFar.startsWith('lake/') });
 		}
 		return crumbs;
 	});
@@ -151,6 +161,9 @@
 
 	// Get icon for file type
 	function getFileIcon(file: DriveFile): string {
+		// Special icon for lake virtual folder
+		if (file.id === 'virtual:lake') return 'ri:database-2-fill';
+		if (file.id.startsWith('virtual:lake:stream:')) return 'ri:folder-chart-fill';
 		if (file.is_folder) return 'ri:folder-fill';
 
 		const ext = file.filename.split('.').pop()?.toLowerCase();
@@ -184,6 +197,8 @@
 
 	// Get icon color for file type
 	function getFileIconColor(file: DriveFile): string {
+		// Purple for lake virtual items
+		if (file.id.startsWith('virtual:lake')) return 'text-purple-500';
 		if (file.is_folder) return 'text-yellow-500';
 
 		const ext = file.filename.split('.').pop()?.toLowerCase();
@@ -414,6 +429,8 @@
 
 		<!-- Usage Bar -->
 		{#if usage}
+			{@const drivePercent = usage.quota_bytes > 0 ? (usage.drive_bytes / usage.quota_bytes) * 100 : 0}
+			{@const dataLakePercent = usage.quota_bytes > 0 ? (usage.data_lake_bytes / usage.quota_bytes) * 100 : 0}
 			<div class="bg-surface border border-border rounded-lg p-4 mb-6">
 				<div class="flex items-center justify-between mb-2">
 					<span class="text-sm text-foreground-muted">
@@ -423,16 +440,37 @@
 						{usage.tier} tier
 					</span>
 				</div>
-				<div class="h-2 bg-border rounded-full overflow-hidden">
-					<div
-						class="h-full transition-all duration-300 rounded-full"
-						class:bg-emerald-500={usage.usage_percent < 80}
-						class:bg-yellow-500={usage.usage_percent >= 80 && usage.usage_percent < 90}
-						class:bg-red-500={usage.usage_percent >= 90}
-						style="width: {Math.min(usage.usage_percent, 100)}%"
-					></div>
+				<!-- Segmented progress bar -->
+				<div class="h-3 bg-border rounded-full overflow-hidden flex">
+					{#if drivePercent > 0}
+						<div
+							class="h-full bg-blue-500 transition-all duration-300"
+							style="width: {Math.min(drivePercent, 100 - dataLakePercent)}%"
+						></div>
+					{/if}
+					{#if dataLakePercent > 0}
+						<div
+							class="h-full bg-purple-500 transition-all duration-300"
+							style="width: {Math.min(dataLakePercent, 100 - drivePercent)}%"
+						></div>
+					{/if}
 				</div>
-				<div class="flex gap-4 mt-3 text-xs text-foreground-subtle">
+				<!-- Legend -->
+				<div class="flex flex-wrap gap-4 mt-3 text-xs text-foreground-muted">
+					<span class="flex items-center gap-1.5">
+						<span class="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span>
+						Drive ({formatBytes(usage.drive_bytes)})
+					</span>
+					<span class="flex items-center gap-1.5">
+						<span class="w-2.5 h-2.5 bg-purple-500 rounded-sm"></span>
+						Data Lake ({formatBytes(usage.data_lake_bytes)})
+					</span>
+					<span class="flex items-center gap-1.5">
+						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
+						Available ({formatBytes(usage.quota_bytes - usage.total_bytes)})
+					</span>
+				</div>
+				<div class="flex gap-4 mt-2 text-xs text-foreground-subtle">
 					<span>{usage.file_count} files</span>
 					<span>{usage.folder_count} folders</span>
 				</div>
@@ -500,28 +538,37 @@
 
 				<!-- Actions -->
 				<div class="flex items-center gap-2">
-					<button
-						class="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
-						onclick={() => (showNewFolderModal = true)}
-					>
-						<iconify-icon icon="ri:folder-add-line"></iconify-icon>
-						New folder
-					</button>
-					<button
-						class="flex items-center gap-2 px-3 py-1.5 text-sm bg-foreground text-background hover:bg-foreground/90 rounded-lg transition-colors"
-						onclick={() => fileInput?.click()}
-						disabled={uploading}
-					>
-						<iconify-icon icon="ri:upload-2-line"></iconify-icon>
-						Upload
-					</button>
+					{#if isLakePath}
+						<!-- Read-only indicator for lake folder -->
+						<span class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-purple-600 dark:text-purple-400 bg-purple-500/10 rounded-lg">
+							<iconify-icon icon="ri:database-2-line"></iconify-icon>
+							Read-only
+						</span>
+					{:else}
+						<button
+							class="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
+							onclick={() => (showNewFolderModal = true)}
+						>
+							<iconify-icon icon="ri:folder-add-line"></iconify-icon>
+							New folder
+						</button>
+						<button
+							class="flex items-center gap-2 px-3 py-1.5 text-sm bg-foreground text-background hover:bg-foreground/90 rounded-lg transition-colors"
+							onclick={() => fileInput?.click()}
+							disabled={uploading}
+						>
+							<iconify-icon icon="ri:upload-2-line"></iconify-icon>
+							Upload
+						</button>
 					<input
 						bind:this={fileInput}
 						type="file"
 						multiple
 						class="hidden"
+						aria-hidden="true"
 						onchange={(e) => e.currentTarget.files && handleUpload(e.currentTarget.files)}
 					/>
+					{/if}
 				</div>
 			</div>
 		{:else}
@@ -572,12 +619,12 @@
 		{#if viewMode === 'files'}
 			<div
 				class="border rounded-lg overflow-hidden transition-colors"
-				class:border-border={!dragOver}
-				class:border-blue-500={dragOver}
-				style:background-color={dragOver ? 'rgba(59, 130, 246, 0.05)' : undefined}
-				ondrop={handleDrop}
-				ondragover={handleDragOver}
-				ondragleave={handleDragLeave}
+				class:border-border={!dragOver || isLakePath}
+				class:border-blue-500={dragOver && !isLakePath}
+				style:background-color={dragOver && !isLakePath ? 'rgba(59, 130, 246, 0.05)' : undefined}
+				ondrop={isLakePath ? undefined : handleDrop}
+				ondragover={isLakePath ? undefined : handleDragOver}
+				ondragleave={isLakePath ? undefined : handleDragLeave}
 				role="region"
 				aria-label="File drop zone"
 			>
@@ -588,20 +635,28 @@
 					</div>
 				{:else if files.length === 0}
 					<div class="p-12 text-center">
-						<iconify-icon icon="ri:folder-open-line" class="text-6xl text-foreground-subtle mb-4"></iconify-icon>
-						<h3 class="text-lg font-medium text-foreground mb-2">
-							{currentPath ? 'This folder is empty' : 'No files yet'}
-						</h3>
-						<p class="text-foreground-muted mb-4">
-							Drag and drop files here or click Upload to get started
-						</p>
-						<button
-							class="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors"
-							onclick={() => fileInput?.click()}
-						>
-							<iconify-icon icon="ri:upload-2-line"></iconify-icon>
-							Upload files
-						</button>
+						{#if isLakePath}
+							<iconify-icon icon="ri:database-2-line" class="text-6xl text-foreground-subtle mb-4"></iconify-icon>
+							<h3 class="text-lg font-medium text-foreground mb-2">No archived data yet</h3>
+							<p class="text-foreground-muted">
+								Data from connected sources will appear here after syncing
+							</p>
+						{:else}
+							<iconify-icon icon="ri:folder-open-line" class="text-6xl text-foreground-subtle mb-4"></iconify-icon>
+							<h3 class="text-lg font-medium text-foreground mb-2">
+								{currentPath ? 'This folder is empty' : 'No files yet'}
+							</h3>
+							<p class="text-foreground-muted mb-4">
+								Drag and drop files here or click Upload to get started
+							</p>
+							<button
+								class="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors"
+								onclick={() => fileInput?.click()}
+							>
+								<iconify-icon icon="ri:upload-2-line"></iconify-icon>
+								Upload files
+							</button>
+						{/if}
 					</div>
 				{:else}
 					<table class="w-full">
@@ -622,9 +677,7 @@
 						<tbody class="divide-y divide-border">
 							{#each files as file}
 								<tr
-									class="group hover:bg-surface-elevated transition-colors"
-									role="button"
-									tabindex="0"
+									class="group hover:bg-surface-elevated transition-colors cursor-pointer"
 									onclick={() => handleFileClick(file)}
 									onkeydown={(e) => e.key === 'Enter' && handleFileClick(file)}
 								>
@@ -644,16 +697,18 @@
 										{formatDate(file.updated_at)}
 									</td>
 									<td class="px-4 py-3 text-right">
-										<button
-											class="opacity-0 group-hover:opacity-100 p-1 text-foreground-subtle hover:text-red-500 transition-all"
-											onclick={(e) => {
-												e.stopPropagation();
-												fileToDelete = file;
-											}}
-											aria-label="Delete {file.filename}"
-										>
-											<iconify-icon icon="ri:delete-bin-line"></iconify-icon>
-										</button>
+										{#if !isLakeFile(file)}
+											<button
+												class="opacity-0 group-hover:opacity-100 p-1 text-foreground-subtle hover:text-red-500 transition-all"
+												onclick={(e) => {
+													e.stopPropagation();
+													fileToDelete = file;
+												}}
+												aria-label="Delete {file.filename}"
+											>
+												<iconify-icon icon="ri:delete-bin-line"></iconify-icon>
+											</button>
+										{/if}
 									</td>
 								</tr>
 							{/each}
@@ -772,6 +827,7 @@
 
 <!-- New Folder Modal -->
 {#if showNewFolderModal}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
 		onclick={() => (showNewFolderModal = false)}
@@ -780,6 +836,7 @@
 		aria-modal="true"
 		tabindex="-1"
 	>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 		<div
 			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
 			onclick={(e) => e.stopPropagation()}
@@ -814,6 +871,7 @@
 
 <!-- Delete Confirmation Modal (Soft Delete) -->
 {#if fileToDelete}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
 		onclick={() => (fileToDelete = null)}
@@ -822,6 +880,7 @@
 		aria-modal="true"
 		tabindex="-1"
 	>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 		<div
 			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
 			onclick={(e) => e.stopPropagation()}
@@ -856,6 +915,7 @@
 
 <!-- Restore Confirmation Modal -->
 {#if fileToRestore}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
 		onclick={() => (fileToRestore = null)}
@@ -864,6 +924,7 @@
 		aria-modal="true"
 		tabindex="-1"
 	>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 		<div
 			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
 			onclick={(e) => e.stopPropagation()}
@@ -897,6 +958,7 @@
 
 <!-- Purge Confirmation Modal (Permanent Delete) -->
 {#if fileToPurge}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
 		onclick={() => (fileToPurge = null)}
@@ -905,6 +967,7 @@
 		aria-modal="true"
 		tabindex="-1"
 	>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 		<div
 			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
 			onclick={(e) => e.stopPropagation()}
@@ -939,6 +1002,7 @@
 
 <!-- Empty Trash Confirmation Modal -->
 {#if showEmptyTrashModal}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
 		onclick={() => (showEmptyTrashModal = false)}
@@ -947,6 +1011,7 @@
 		aria-modal="true"
 		tabindex="-1"
 	>
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
 		<div
 			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
 			onclick={(e) => e.stopPropagation()}

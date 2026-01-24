@@ -31,7 +31,7 @@
 	let open = $state(false);
 	let highlightedIndex = $state(0);
 	let inputElement: HTMLInputElement;
-	let dropdownElement: HTMLDivElement;
+	let dropdownElement = $state<HTMLDivElement | null>(null);
 
 	// Filter items based on search input
 	let filteredItems = $derived(

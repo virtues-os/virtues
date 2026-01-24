@@ -1,6 +1,11 @@
 -- Drive: User file storage and quota tracking (SQLite)
 -- Personal cloud storage for user-uploaded files (like Google Drive)
--- ELT archive data stays in S3/MinIO - this is for user files only
+-- 
+-- Storage is unified under /home/user/:
+--   /home/user/drive/      - User uploads (full CRUD)
+--   /home/user/data-lake/  - ELT archives (system-managed, read-only)
+--
+-- Both count against the same quota allocation per tenant.
 
 --------------------------------------------------------------------------------
 -- DRIVE FILES
@@ -52,15 +57,22 @@ END;
 -- DRIVE USAGE (singleton)
 --------------------------------------------------------------------------------
 
--- Tracks storage usage for quota enforcement
+-- Tracks unified storage usage for quota enforcement
 -- Updated on file operations, periodically reconciled with filesystem
 CREATE TABLE IF NOT EXISTS drive_usage (
     id TEXT PRIMARY KEY DEFAULT '00000000-0000-0000-0000-000000000001',
 
-    -- Current usage (bytes)
+    -- Drive usage: user-uploaded files in /home/user/drive/
+    drive_bytes INTEGER NOT NULL DEFAULT 0 CHECK (drive_bytes >= 0),
+
+    -- Data lake usage: ELT archives in /home/user/data-lake/
+    -- Computed from sum of elt_stream_objects.size_bytes
+    data_lake_bytes INTEGER NOT NULL DEFAULT 0 CHECK (data_lake_bytes >= 0),
+
+    -- Legacy column for backwards compatibility (equals drive_bytes)
     total_bytes INTEGER NOT NULL DEFAULT 0 CHECK (total_bytes >= 0),
 
-    -- File counts
+    -- File counts (drive only)
     file_count INTEGER NOT NULL DEFAULT 0 CHECK (file_count >= 0),
     folder_count INTEGER NOT NULL DEFAULT 0 CHECK (folder_count >= 0),
 

@@ -6,5 +6,9 @@
 	<true/>
 	<key>com.apple.developer.healthkit.background-delivery</key>
 	<true/>
+	<key>com.apple.developer.financekit</key>
+	<array>
+		<string>financial-records</string>
+	</array>
 </dict>
 </plist>

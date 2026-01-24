@@ -35,7 +35,7 @@ pub async fn get_or_create_device_source(
 
     // Try to get existing source connection by device_id
     let existing: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM data_source_connections WHERE source = $1 AND device_id = $2 AND auth_type = 'device'"
+        "SELECT id FROM elt_source_connections WHERE source = $1 AND device_id = $2 AND auth_type = 'device'"
     )
     .bind(source_name)
     .bind(device_id)
@@ -54,7 +54,7 @@ pub async fn get_or_create_device_source(
     let name = format!("{}-{}", source_name, device_id);
 
     let (id_str,): (String,) = sqlx::query_as(
-        "INSERT INTO data_source_connections (id, source, name, device_id, auth_type, is_active, is_internal)
+        "INSERT INTO elt_source_connections (id, source, name, device_id, auth_type, is_active, is_internal)
          VALUES ($1, $2, $3, $4, 'device', true, false)
          ON CONFLICT (source, device_id) WHERE device_id IS NOT NULL
          DO UPDATE SET updated_at = datetime('now')

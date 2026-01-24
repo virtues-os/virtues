@@ -22,12 +22,30 @@
 		conversationId = undefined as string | undefined,
 		contextUsage = undefined as ContextUsage | undefined,
 		onContextClick = (() => {}) as () => void,
+	}: {
+		value?: string;
+		disabled?: boolean;
+		sendDisabled?: boolean;
+		maxWidth?: string;
+		focused?: boolean;
+		selectedModel?: ModelOption;
+		showToolbar?: boolean;
+		conversationId?: string;
+		contextUsage?: ContextUsage;
+		onContextClick?: () => void;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{ submit: string }>();
 
 	let textarea: HTMLTextAreaElement;
 	let isFocused = $state(false);
+
+	// Autocomplete state
+	let showAutocomplete = $state(false);
+	let autocompleteQuery = $state("");
+	let autocompleteResults = $state<any[]>([]);
+	let selectedIndex = $state(0);
+	let autocompletePos = $state({ top: 0, left: 0 });
 
 	// Derive placeholder based on toolbar visibility
 	const placeholder = $derived(showToolbar ? "What can I do for you?" : "Message...");
@@ -37,14 +55,98 @@
 		focused = isFocused;
 	});
 
+	// Handle autocomplete search
+	$effect(() => {
+		if (showAutocomplete) {
+			const fetchResults = async () => {
+				try {
+					const response = await fetch(`/api/pages/search/entities?q=${encodeURIComponent(autocompleteQuery)}`);
+					if (response.ok) {
+						const data = await response.json();
+						autocompleteResults = data.results || [];
+						selectedIndex = 0;
+					}
+				} catch (e) {
+					console.error("Autocomplete fetch error:", e);
+				}
+			};
+			fetchResults();
+		}
+	});
+
 	// Simple auto-resize: measure scrollHeight and set height
 	function syncSize() {
 		if (!textarea) return;
 		textarea.style.height = 'auto';
 		textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+
+		// Check for @ trigger
+		const text = value || "";
+		const cursorPos = textarea.selectionStart || 0;
+		const textBeforeCursor = text.slice(0, cursorPos);
+		const match = textBeforeCursor.match(/@(\w*)$/);
+
+		if (match) {
+			showAutocomplete = true;
+			autocompleteQuery = match[1];
+			
+			// Position the dropdown (rough estimate)
+			const { offsetTop, offsetLeft } = textarea;
+			// This is a very basic positioning, ideally we'd use a library or more complex logic
+			// but for a textarea we can just show it above/below the input area
+			autocompletePos = { top: offsetTop - 40, left: offsetLeft + 20 };
+		} else {
+			showAutocomplete = false;
+		}
+	}
+
+	function selectEntity(entity: any) {
+		const text = value;
+		const cursorPos = textarea.selectionStart;
+		const textBeforeCursor = text.slice(0, cursorPos);
+		const textAfterCursor = text.slice(cursorPos);
+		
+		const match = textBeforeCursor.match(/@(\w*)$/);
+		if (match) {
+			const beforeMatch = textBeforeCursor.slice(0, match.index);
+			const replacement = `[${entity.name}](entity:${entity.id})`;
+			value = beforeMatch + replacement + textAfterCursor;
+			
+			// Reset state
+			showAutocomplete = false;
+			
+			// Set cursor position after insertion
+			setTimeout(() => {
+				const newPos = beforeMatch.length + replacement.length;
+				textarea.setSelectionRange(newPos, newPos);
+				textarea.focus();
+			}, 0);
+		}
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
+		if (showAutocomplete && autocompleteResults.length > 0) {
+			if (e.key === "ArrowDown") {
+				e.preventDefault();
+				selectedIndex = (selectedIndex + 1) % autocompleteResults.length;
+				return;
+			}
+			if (e.key === "ArrowUp") {
+				e.preventDefault();
+				selectedIndex = (selectedIndex - 1 + autocompleteResults.length) % autocompleteResults.length;
+				return;
+			}
+			if (e.key === "Enter" || e.key === "Tab") {
+				e.preventDefault();
+				selectEntity(autocompleteResults[selectedIndex]);
+				return;
+			}
+			if (e.key === "Escape") {
+				showAutocomplete = false;
+				return;
+			}
+		}
+
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			handleSubmit();
@@ -87,12 +189,13 @@
 </script>
 
 <div class="chat-input-container {maxWidth} w-full">
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div
 		aria-label="Chat input"
 		class="chat-input-wrapper bg-surface border border-border-strong hover:border-primary/60 cursor-text"
 		class:focused={isFocused}
 		onclick={handleWrapperClick}
-		role="button"
+		role="textbox"
 		tabindex="-1"
 	>
 		<label for="chat-input" class="sr-only">Message</label>
@@ -103,8 +206,10 @@
 				bind:value
 				oninput={syncSize}
 				onkeydown={handleKeydown}
+				onclick={syncSize}
 				onfocus={() => {
 					isFocused = true;
+					syncSize();
 				}}
 				onblur={() => {
 					isFocused = false;
@@ -185,6 +290,28 @@
 				</button>
 			</div>
 		{/if}
+
+		{#if showAutocomplete && autocompleteResults.length > 0}
+			<div 
+				class="autocomplete-dropdown absolute z-50 bg-surface border border-border shadow-xl rounded-lg overflow-hidden flex flex-col min-w-[200px]"
+				style="bottom: 100%; left: 20px; margin-bottom: 8px;"
+			>
+				{#each autocompleteResults as entity, i}
+					<button
+						type="button"
+						class="px-3 py-2 text-left flex items-center gap-2 hover:bg-primary/10 transition-colors border-b border-border/50 last:border-0"
+						class:bg-primary-hover={i === selectedIndex}
+						onclick={() => selectEntity(entity)}
+					>
+						<iconify-icon icon={entity.icon} width="14" class="text-foreground-subtle"></iconify-icon>
+						<div class="flex flex-col">
+							<span class="text-sm font-medium text-foreground">{entity.name}</span>
+							<span class="text-[10px] uppercase tracking-wider text-foreground-muted">{entity.entity_type}</span>
+						</div>
+					</button>
+				{/each}
+			</div>
+		{/if}
 	</div>
 </div>
 
@@ -247,6 +374,7 @@
 
 	.toolbar {
 		/* No background - clean look */
+		display: flex;
 	}
 
 	.picker-wrapper {

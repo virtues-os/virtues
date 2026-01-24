@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tokio::time::{interval, Duration};
 
 use crate::config::Config;
+use crate::tier::TierManager;
 
 /// Thread-safe budget entry with atomic balance
 pub struct BudgetEntry {
@@ -64,12 +65,14 @@ pub struct BudgetManager {
     atlas_url: Option<String>,
     /// Atlas secret (if configured)
     atlas_secret: Option<String>,
+    /// Reference to tier manager for populating tiers during hydration
+    tier_manager: TierManager,
 }
 
 impl BudgetManager {
     /// Create a new budget manager
-    /// If Atlas is configured, hydrates budgets from Atlas on startup
-    pub async fn new(config: &Config) -> anyhow::Result<Self> {
+    /// If Atlas is configured, hydrates budgets and tiers from Atlas on startup
+    pub async fn new(config: &Config, tier_manager: &TierManager) -> anyhow::Result<Self> {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;
@@ -80,13 +83,14 @@ impl BudgetManager {
             http_client,
             atlas_url: config.atlas_url.clone(),
             atlas_secret: config.atlas_secret.clone(),
+            tier_manager: tier_manager.clone(),
         };
 
         // Hydrate from Atlas if configured
         if config.has_atlas() {
             match manager.hydrate_from_atlas().await {
                 Ok(count) => {
-                    tracing::info!("Hydrated {} user budgets from Atlas", count);
+                    tracing::info!("Hydrated {} user budgets/tiers from Atlas", count);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -131,10 +135,15 @@ impl BudgetManager {
         let count = budgets.len();
 
         for budget in budgets {
+            // Store budget
             self.budgets.insert(
-                budget.user_id,
+                budget.user_id.clone(),
                 Arc::new(BudgetEntry::new(budget.balance_usd)),
             );
+            // Store tier (if provided)
+            if let Some(tier) = &budget.tier {
+                self.tier_manager.set_tier(&budget.user_id, tier);
+            }
         }
 
         Ok(count)

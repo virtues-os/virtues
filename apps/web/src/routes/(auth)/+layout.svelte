@@ -14,7 +14,17 @@
 	});
 </script>
 
-<Toaster position="top-center" />
+<Toaster 
+	position="top-center" 
+	toastOptions={{
+		style: `
+			background: var(--surface);
+			color: var(--foreground);
+			border: 1px solid var(--border);
+			font-family: var(--font-sans);
+		`,
+	}}
+/>
 
 <div class="flex min-h-screen overscroll-none">
 	<!-- Left: Visual Panel (33%) - Fixed -->
