@@ -16,11 +16,10 @@ export type WikiPageType =
 	// Temporal (calendar-based - objective time)
 	| "year"
 	| "day"
-	// Entity (reference pages - people, places, things)
+	// Entity (reference pages - people, places, orgs)
 	| "person"
 	| "place"
-	| "organization"
-	| "thing";
+	| "organization";
 
 export const PAGE_TYPE_META: Record<WikiPageType, { label: string; icon: string }> = {
 	telos: { label: "Telos", icon: "ri:compass-3-line" },
@@ -31,7 +30,6 @@ export const PAGE_TYPE_META: Record<WikiPageType, { label: string; icon: string 
 	person: { label: "Person", icon: "ri:user-line" },
 	place: { label: "Place", icon: "ri:map-pin-line" },
 	organization: { label: "Organization", icon: "ri:building-line" },
-	thing: { label: "Thing", icon: "ri:box-3-line" },
 };
 
 // Narrative page types (story structure)
@@ -41,7 +39,7 @@ export const NARRATIVE_PAGE_TYPES: WikiPageType[] = ["telos", "act", "chapter"];
 export const TEMPORAL_PAGE_TYPES: WikiPageType[] = ["year", "day"];
 
 // Entity page types (reference pages)
-export const ENTITY_PAGE_TYPES: WikiPageType[] = ["person", "place", "organization", "thing"];
+export const ENTITY_PAGE_TYPES: WikiPageType[] = ["person", "place", "organization"];
 
 // =============================================================================
 // AUTHORSHIP

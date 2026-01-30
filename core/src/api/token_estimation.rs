@@ -3,7 +3,7 @@
 //! Provides token counting utilities for context management.
 //! Uses heuristic-based estimation since exact tokenization varies by model.
 
-use crate::api::sessions::ChatMessage;
+use crate::api::chats::ChatMessage;
 
 /// Estimate tokens for a text string.
 ///
@@ -201,6 +201,8 @@ mod tests {
             reasoning: None,
             intent: None,
             subject: None,
+            thought_signature: None,
+            parts: None,
         }];
 
         let estimate = estimate_session_context(&messages, None, None, 1000);

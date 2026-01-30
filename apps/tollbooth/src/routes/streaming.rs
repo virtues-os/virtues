@@ -56,6 +56,18 @@ pub struct StreamingRequest {
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Tool definitions for function calling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<serde_json::Value>>,
+    /// Tool choice: "auto", "none", "required", or specific tool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+    /// Provider-specific options (e.g., thinking config for Claude)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_options: Option<serde_json::Value>,
+    /// Gemini thought signature (required for subsequent tool calls)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Create SSE streaming response with budget tracking
@@ -76,22 +88,52 @@ pub async fn create_streaming_response(
     // Build request body with stream_options for usage tracking
     let body = if provider.is_anthropic {
         // Anthropic uses different format
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": provider.model_name,
             "messages": request.messages,
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "stream": true
-        })
+        });
+
+        // Add tools for Anthropic
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::json!(tools);
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+
+        body
     } else {
         // OpenAI-compatible format (OpenAI, Cerebras, etc.)
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": provider.model_name,
             "messages": request.messages,
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "temperature": request.temperature.unwrap_or(0.7),
             "stream": true,
             "stream_options": { "include_usage": true }
-        })
+        });
+
+        // Add Gemini thought signature if provided
+        if let Some(sig) = &request.thought_signature {
+            body["thought_signature"] = serde_json::json!(sig);
+        }
+
+        // Add tools if provided
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::json!(tools);
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+
+        // Add provider-specific options (e.g., thinking config)
+        if let Some(provider_options) = &request.provider_options {
+            body["provider_options"] = provider_options.clone();
+        }
+
+        body
     };
 
     let mut req_builder = client
@@ -106,6 +148,15 @@ pub async fn create_streaming_response(
         // Vertex AI uses OAuth2 access tokens
         let access_token = get_vertex_ai_token().await?;
         req_builder = req_builder.header("Authorization", format!("Bearer {}", access_token));
+
+        // Debug logging for thought signature
+        if let Some(sig) = &request.thought_signature {
+            tracing::info!(
+                model = %request.model,
+                signature_len = sig.len(),
+                "Forwarding streaming request with thought_signature"
+            );
+        }
     } else {
         // OpenAI, Cerebras, xAI - all use API keys
         req_builder = req_builder.header(

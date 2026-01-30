@@ -1,16 +1,15 @@
 <!--
 	PagesSidebarSection.svelte
 
-	Navigation for user-authored pages in the sidebar.
-	Uses a hierarchical tree view with folders and pages.
+	Quick access to pinned and recent pages in the sidebar.
+	Shows pinned items first, then recent items to fill remaining slots.
 -->
 
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import FileExplorerItem from "./FileExplorerItem.svelte";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		collapsed?: boolean;
@@ -19,47 +18,52 @@
 
 	let { collapsed = false, baseAnimationDelay = 0 }: Props = $props();
 
+	// Get quick access items (pinned + recent)
+	const sidebarItems = $derived(pagesStore.getSidebarItems(8));
+	const loading = $derived(pagesStore.pagesLoading);
+
 	onMount(async () => {
-		await pagesStore.init();
+		// Load pages so getSidebarItems has data to work with
+		await pagesStore.loadPages();
 	});
 
 	async function handleNewPage() {
 		const page = await pagesStore.createNewPage();
-		workspaceStore.openTabFromRoute(`/pages/${page.id}`, {
+		pagesStore.addPage(page);
+		pagesStore.markAsRecent(page.id);
+		spaceStore.openTabFromRoute(`/page/${page.id}`, {
 			label: page.title,
 			preferEmptyPane: true,
 		});
 	}
 
-	async function handleNewFolder() {
-		await pagesStore.createNewFolder();
+	function handlePageClick(pageId: string, title: string, e: MouseEvent) {
+		pagesStore.markAsRecent(pageId);
+		const forceNew = e.metaKey || e.ctrlKey;
+		spaceStore.openTabFromRoute(`/page/${pageId}`, {
+			forceNew,
+			label: title,
+			preferEmptyPane: true,
+		});
 	}
 
-	let isRootDragOver = $state(false);
+	function handleViewAll(e: MouseEvent) {
+		const forceNew = e.metaKey || e.ctrlKey;
+		spaceStore.openTabFromRoute('/page', {
+			forceNew,
+			label: 'All Pages',
+			preferEmptyPane: true,
+		});
+	}
 
-	function onDragOver(e: DragEvent) {
+	function handleContextMenu(e: MouseEvent, pageId: string) {
 		e.preventDefault();
-		isRootDragOver = true;
-		if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+		// Toggle pin on right-click for now (could add proper context menu later)
+		pagesStore.togglePin(pageId);
 	}
 
-	function onDragLeave() {
-		isRootDragOver = false;
-	}
-
-	async function onDrop(e: DragEvent) {
-		e.preventDefault();
-		isRootDragOver = false;
-
-		const data = e.dataTransfer?.getData("application/virtues-node");
-		if (!data) return;
-
-		const dragged = JSON.parse(data);
-		if (dragged.type === "page") {
-			await pagesStore.movePage(dragged.id, null);
-		} else {
-			await pagesStore.moveFolder(dragged.id, null);
-		}
+	function getPageIcon(page: { icon: string | null }): string {
+		return page.icon || 'ri:file-text-line';
 	}
 </script>
 
@@ -67,32 +71,45 @@
 	{#if !collapsed}
 		<div class="section-actions">
 			<button onclick={handleNewPage} title="New Page" class="action-btn">
-				<iconify-icon icon="ri:add-line" width="14"></iconify-icon>
-			</button>
-			<button onclick={handleNewFolder} title="New Folder" class="action-btn">
-				<iconify-icon icon="ri:folder-add-line" width="14"></iconify-icon>
+				<Icon icon="ri:add-line" width="14"/>
 			</button>
 		</div>
 	{/if}
 
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div 
-		class="explorer-tree" 
-		class:drag-over={isRootDragOver}
-		ondragover={onDragOver}
-		ondragleave={onDragLeave}
-		ondrop={onDrop}
-	>
-		{#if pagesStore.loading && pagesStore.tree.length === 0}
+	<div class="pages-list">
+		{#if loading && sidebarItems.length === 0}
 			<div class="loading-state">Loading...</div>
-		{:else if pagesStore.tree.length === 0}
+		{:else if sidebarItems.length === 0}
 			<div class="empty-state">No pages yet</div>
 		{:else}
-			{#each pagesStore.tree as node}
-				<FileExplorerItem {node} {collapsed} depth={0} />
+			{#each sidebarItems as page (page.id)}
+				{@const isPinned = pagesStore.isPinned(page.id)}
+				<button
+					class="page-item"
+					class:collapsed
+					onclick={(e) => handlePageClick(page.id, page.title, e)}
+					oncontextmenu={(e) => handleContextMenu(e, page.id)}
+					title={collapsed ? page.title : (isPinned ? 'Pinned • Right-click to unpin' : 'Right-click to pin')}
+				>
+					<Icon
+						icon={isPinned ? 'ri:pushpin-fill' : getPageIcon(page)}
+						width="14"
+						class="page-icon {isPinned ? 'pinned' : ''}"
+					/>
+					{#if !collapsed}
+						<span class="page-title">{page.title}</span>
+					{/if}
+				</button>
 			{/each}
 		{/if}
 	</div>
+
+	{#if !collapsed}
+		<button class="view-all-link" onclick={handleViewAll}>
+			<Icon icon="ri:arrow-right-s-line" width="14"/>
+			<span>View All Pages</span>
+		</button>
+	{/if}
 </div>
 
 <style>
@@ -101,7 +118,7 @@
 	.pages-section {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: 2px;
 		min-height: 40px;
 	}
 
@@ -132,17 +149,77 @@
 		color: var(--color-foreground);
 	}
 
-	.explorer-tree {
+	.pages-list {
 		display: flex;
 		flex-direction: column;
-		min-height: 20px;
-		border-radius: 6px;
-		transition: background-color 150ms var(--ease-premium);
+		gap: 1px;
 	}
 
-	.explorer-tree.drag-over {
-		background: var(--color-primary-subtle);
-		outline: 2px dashed var(--color-primary);
+	.page-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 12px;
+		border: none;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font-size: 13px;
+		text-align: left;
+		cursor: pointer;
+		border-radius: 6px;
+		transition: all 150ms var(--ease-premium);
+		width: 100%;
+	}
+
+	.page-item:hover {
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		color: var(--color-foreground);
+	}
+
+	.page-item.collapsed {
+		justify-content: center;
+		padding: 6px;
+	}
+
+	.page-item :global(.page-icon) {
+		flex-shrink: 0;
+		opacity: 0.6;
+	}
+
+	.page-item :global(.page-icon.pinned) {
+		color: var(--color-primary);
+		opacity: 1;
+	}
+
+	.page-item:hover :global(.page-icon) {
+		opacity: 1;
+	}
+
+	.page-title {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.view-all-link {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 6px 12px;
+		margin-top: 4px;
+		border: none;
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		font-size: 12px;
+		cursor: pointer;
+		border-radius: 6px;
+		transition: all 150ms var(--ease-premium);
+	}
+
+	.view-all-link:hover {
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		color: var(--color-foreground-muted);
 	}
 
 	.loading-state, .empty-state {

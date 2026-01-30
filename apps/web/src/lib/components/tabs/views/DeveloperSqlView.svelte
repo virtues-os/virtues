@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Tab } from "$lib/tabs/types";
-    import "iconify-icon";
+    import Icon from "$lib/components/Icon.svelte";
     import { onMount } from "svelte";
 
     let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -105,8 +105,8 @@
                             class="table-item"
                             class:active={selectedTable === table}
                         >
-                            <iconify-icon icon="ri:table-line" class="text-xs"
-                            ></iconify-icon>
+                            <Icon icon="ri:table-line" class="text-xs"
+                            />
                             {table}
                         </button>
                     {/each}
@@ -125,12 +125,12 @@
                 onclick={() => (queryExpanded = !queryExpanded)}
                 class="flex items-center gap-2 text-sm text-foreground-muted hover:text-foreground"
             >
-                <iconify-icon
+                <Icon
                     icon={queryExpanded
                         ? "ri:arrow-down-s-line"
                         : "ri:arrow-right-s-line"}
                     class="text-lg"
-                ></iconify-icon>
+                />
                 <span>Query</span>
                 {#if sql && !queryExpanded}
                     <span
@@ -144,8 +144,8 @@
                 <span class="text-xs text-warning">Read-only</span>
                 <div class="info-wrapper">
                     <button class="info-btn" title="Why read-only?">
-                        <iconify-icon icon="ri:information-line" class="text-sm"
-                        ></iconify-icon>
+                        <Icon icon="ri:information-line" class="text-sm"
+                        />
                     </button>
                     <div class="info-popover">
                         <div class="info-title">Database is Read-Only</div>
@@ -186,7 +186,7 @@
                             disabled={loading}
                             class="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-foreground-muted hover:bg-surface-elevated hover:text-foreground disabled:opacity-50"
                         >
-                            <iconify-icon icon="ri:play-fill"></iconify-icon>
+                            <Icon icon="ri:play-fill"/>
                             {loading ? "Running..." : "Run"}
                         </button>
                     </div>
@@ -201,8 +201,8 @@
                     class="m-8 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-destructive"
                 >
                     <div class="flex items-center gap-2 font-medium">
-                        <iconify-icon icon="ri:error-warning-line"
-                        ></iconify-icon>
+                        <Icon icon="ri:error-warning-line"
+                        />
                         Query Failed
                     </div>
                     <pre class="mt-2 whitespace-pre-wrap text-xs">{error}</pre>
@@ -227,10 +227,10 @@
                                             <div
                                                 class="flex items-center gap-1"
                                             >
-                                                <iconify-icon
+                                                <Icon
                                                     icon="ri:table-line"
                                                     class="opacity-50"
-                                                ></iconify-icon>
+                                                />
                                                 {header}
                                             </div>
                                         </th>
@@ -262,8 +262,8 @@
                 <div
                     class="flex h-full flex-col items-center justify-center text-foreground-muted opacity-50"
                 >
-                    <iconify-icon icon="ri:database-2-line" class="text-4xl"
-                    ></iconify-icon>
+                    <Icon icon="ri:database-2-line" class="text-4xl"
+                    />
                     <p class="mt-2 text-sm">Select a table to execute query</p>
                 </div>
             {/if}
@@ -281,7 +281,7 @@
         padding: 0.375rem 0.5rem;
         border-radius: 0.375rem;
         text-align: left;
-        font-size: 0.875rem;
+        font-size: 0.75rem;
         color: var(--color-foreground-muted);
         background: transparent;
         border: none;

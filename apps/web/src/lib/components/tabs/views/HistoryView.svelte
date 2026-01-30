@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { workspaceStore } from '$lib/stores/workspace.svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
 	import { Page } from '$lib';
 	import { onMount } from 'svelte';
 
@@ -26,7 +26,7 @@
 		loading = true;
 		error = null;
 		try {
-			const response = await fetch('/api/sessions');
+			const response = await fetch('/api/chats');
 			if (!response.ok) throw new Error('Failed to load sessions');
 			const data = await response.json();
 			sessions = data.conversations || [];
@@ -106,8 +106,10 @@
 
 	const groupedSessions = $derived(groupByDate(sessions));
 
-	function handleSessionClick(conversationId: string, title: string | null) {
-		workspaceStore.openTabFromRoute(`/?conversationId=${conversationId}`);
+	function handleChatClick(conversationId: string, title: string | null) {
+		spaceStore.openTabFromRoute(`/chat/${conversationId}`, {
+			label: title || 'Chat',
+		});
 	}
 </script>
 
@@ -141,7 +143,7 @@
 							{#each group.sessions as session}
 								<li>
 									<button
-										onclick={() => handleSessionClick(session.conversation_id, session.title)}
+										onclick={() => handleChatClick(session.conversation_id, session.title)}
 										class="w-full text-left block py-2 px-3 -mx-3 rounded-md hover:bg-surface-elevated transition-colors group"
 									>
 										<span class="text-foreground group-hover:text-primary transition-colors">

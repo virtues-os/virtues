@@ -149,8 +149,8 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
                 token_url: "https://api.notion.com/v1/oauth/token",
             }),
             icon: Some("simple-icons:notion"),
-            enabled: false,
-            tier: SourceTier::Standard,
+            enabled: true,
+            tier: SourceTier::Free,
             connection_policy: ConnectionPolicy::MultiInstance {
                 limits: ConnectionLimits::new(2, 5, 20),
             },
@@ -158,7 +158,7 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
         // Plaid (Banking)
         SourceDescriptor {
             name: "plaid",
-            display_name: "Banking",
+            display_name: "Plaid",
             description:
                 "Connect your bank accounts and credit cards to sync transactions and balances",
             auth_type: AuthType::OAuth2,
@@ -167,7 +167,7 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
                 auth_url: "https://cdn.plaid.com/link/v2/stable/link.html",
                 token_url: "https://production.plaid.com/link/token/exchange",
             }),
-            icon: Some("simple-icons:plaid"),
+            icon: Some("ri:bank-line"),
             enabled: true,
             tier: SourceTier::Free,
             connection_policy: ConnectionPolicy::MultiInstance {

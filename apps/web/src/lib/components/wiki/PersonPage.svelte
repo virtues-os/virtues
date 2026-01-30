@@ -8,7 +8,7 @@
 <script lang="ts">
 	import type { PersonPage as PersonPageType } from "$lib/wiki/types";
 	import WikiRightRail from "./WikiRightRail.svelte";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		page: PersonPageType;

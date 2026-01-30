@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	// Note: This component uses a legacy TreeNode type, not the new ExplorerTreeNode
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 	import FileExplorerItem from "./FileExplorerItem.svelte";
 
 	// Legacy TreeNode type for backwards compatibility
@@ -40,7 +40,7 @@
 			toggleExpand(e);
 		} else {
 			const forceNew = e.metaKey || e.ctrlKey;
-			workspaceStore.openTabFromRoute(`/pages/${node.id}`, {
+			spaceStore.openTabFromRoute(`/page/${node.id}`, {
 				forceNew,
 				label: node.title,
 				preferEmptyPane: true,
@@ -59,7 +59,7 @@
 		const newName = renameValue.trim();
 		if (newName && ((node.type === "folder" && newName !== node.name) || (node.type === "page" && newName !== node.title))) {
 			if (node.type === "folder") {
-				// TODO: Folders are now managed via explorer_nodes - use workspaceStore.renameNode
+				// TODO: Folders are now managed via explorer_nodes - use spaceStore.renameNode
 				console.warn('[FileExplorerItem] Folder rename not implemented in new system');
 			} else {
 				await pagesStore.renamePage(node.id, newName);
@@ -107,11 +107,8 @@
 		const dragged = JSON.parse(data);
 		if (dragged.id === node.id) return; // Can't drop on self
 
-		if (dragged.type === "page") {
-			await pagesStore.movePage(dragged.id, node.id);
-		} else {
-			await pagesStore.moveFolder(dragged.id, node.id);
-		}
+		// Note: Page/folder DnD in FileExplorerItem is deprecated - use UnifiedSidebar instead
+		console.warn('[FileExplorerItem] DnD move not supported - use space folders for organization');
 	}
 
 	const icon = $derived(node.type === "folder" 
@@ -123,8 +120,8 @@
 	
 	const isActive = $derived.by(() => {
 		if (node.type === "folder") return false;
-		const activeTabs = workspaceStore.getActiveTabsForSidebar();
-		return activeTabs.some(t => t.route === `/pages/${node.id}`);
+		const activeTabs = spaceStore.getActiveTabsForSidebar();
+		return activeTabs.some(t => t.route === `/page/${node.id}`);
 	});
 </script>
 
@@ -149,13 +146,13 @@
 	>
 		{#if node.type === "folder"}
 			<button class="chevron" onclick={toggleExpand} class:expanded={isExpanded} aria-label={isExpanded ? "Collapse folder" : "Expand folder"}>
-				<iconify-icon icon="ri:arrow-right-s-line" width="14"></iconify-icon>
+				<Icon icon="ri:arrow-right-s-line" width="14"/>
 			</button>
 		{:else}
 			<div class="spacer"></div>
 		{/if}
 
-		<iconify-icon {icon} width="16" class="node-icon"></iconify-icon>
+		<Icon {icon} width="16" class="node-icon"/>
 
 		{#if !collapsed}
 			{#if isRenaming}

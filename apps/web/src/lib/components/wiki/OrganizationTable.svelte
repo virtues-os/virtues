@@ -5,10 +5,10 @@
 -->
 
 <script lang="ts">
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { getAllOrganizations } from "$lib/wiki";
 	import type { OrganizationPage } from "$lib/wiki/types";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	// Reactive list of organizations
 	let organizations = $state(getAllOrganizations());
@@ -48,7 +48,7 @@
 
 	// Handle row click - navigate to organization page
 	function handleRowClick(org: OrganizationPage) {
-		workspaceStore.openTabFromRoute(`/wiki/${org.slug}`);
+		spaceStore.openTabFromRoute(`/wiki/${org.slug}`);
 	}
 </script>
 
@@ -57,11 +57,11 @@
 	<div class="table-toolbar">
 		<div class="toolbar-left">
 			<button class="toolbar-btn">
-				<iconify-icon icon="ri:arrow-up-down-line" width="14"></iconify-icon>
+				<Icon icon="ri:arrow-up-down-line" width="14"/>
 				Sort
 			</button>
 			<button class="toolbar-btn">
-				<iconify-icon icon="ri:filter-3-line" width="14"></iconify-icon>
+				<Icon icon="ri:filter-3-line" width="14"/>
 				Filter
 			</button>
 		</div>
@@ -73,19 +73,19 @@
 			<thead>
 				<tr>
 					<th class="col-name">
-						<iconify-icon icon="ri:building-2-line" width="14"></iconify-icon>
+						<Icon icon="ri:building-2-line" width="14"/>
 						Name
 					</th>
 					<th class="col-type">
-						<iconify-icon icon="ri:price-tag-3-line" width="14"></iconify-icon>
+						<Icon icon="ri:price-tag-3-line" width="14"/>
 						Type
 					</th>
 					<th class="col-role">
-						<iconify-icon icon="ri:user-star-line" width="14"></iconify-icon>
+						<Icon icon="ri:user-star-line" width="14"/>
 						Role
 					</th>
 					<th class="col-period">
-						<iconify-icon icon="ri:calendar-line" width="14"></iconify-icon>
+						<Icon icon="ri:calendar-line" width="14"/>
 						Period
 					</th>
 				</tr>
@@ -120,7 +120,7 @@
 	<!-- Empty state -->
 	{#if organizations.length === 0}
 		<div class="empty-state">
-			<iconify-icon icon="ri:building-2-line" width="32"></iconify-icon>
+			<Icon icon="ri:building-2-line" width="32"/>
 			<p>No organizations yet</p>
 		</div>
 	{/if}
@@ -221,7 +221,7 @@
 		padding-right: 0;
 	}
 
-	th iconify-icon {
+	th :global(svg) {
 		vertical-align: -2px;
 		margin-right: 0.375rem;
 		opacity: 0.7;
@@ -348,7 +348,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.empty-state iconify-icon {
+	.empty-state :global(svg) {
 		opacity: 0.5;
 	}
 

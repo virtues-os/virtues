@@ -24,7 +24,7 @@
 <div class="user-message-container">
 	<div
 		bind:this={textContainer}
-		class="text-base whitespace-pre-wrap font-serif text-primary"
+		class="text-base whitespace-pre-wrap text-primary"
 		style="max-height: {maxHeight}; overflow: hidden;"
 	>
 		{text}
@@ -33,7 +33,7 @@
 	{#if shouldTruncate}
 		<button
 			onclick={() => (isExpanded = !isExpanded)}
-			class="font-serif text-sm text-primary bg-surface-elevated rounded px-2 py-1 mt-2 transition-colors hover:bg-primary/15 cursor-pointer"
+			class="block text-sm text-primary bg-surface-elevated rounded px-2 py-1 mt-2 transition-colors hover:bg-primary/15 cursor-pointer"
 			transition:slide={{ duration: 200 }}
 		>
 			{isExpanded ? '↑ Show less' : '↓ Show more'}

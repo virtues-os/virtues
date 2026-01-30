@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import './themes.css';
+@import './lib/styles/sidebar.css';
 
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";
@@ -33,6 +34,22 @@
 	color: var(--color-highlight-foreground);
 }
 
+/* ===================================
+   BACKGROUND TREATMENT
+   Applies gradient/texture overlays from theme
+   =================================== */
+
+/* App shell background - gradient applied via inline style in layout */
+.app-shell {
+	background-attachment: fixed;
+}
+
+/* Main content area background */
+.app-content {
+	background-image: var(--background-image, none);
+	background-attachment: fixed;
+}
+
 @font-face {
   font-family: 'Lora';
   src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
@@ -60,6 +77,8 @@ h1, h2, h3, h4, h5, h6 {
 	color: var(--color-foreground);
 	line-height: 1.5;
 	width: 100%;
+	overflow-wrap: break-word;
+	word-break: break-word;
 }
 
 .markdown h1 {

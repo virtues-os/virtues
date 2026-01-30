@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from "svelte";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import "iconify-icon";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 	import {
 		EditorView,
 		keymap,
 		placeholder,
 		drawSelection,
 	} from "@codemirror/view";
-	import { EditorState } from "@codemirror/state";
+	import { EditorState, Compartment } from "@codemirror/state";
 	import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 	import {
 		defaultKeymap,
@@ -21,23 +21,35 @@
 		pageSyntaxHighlighting,
 		livePreviewExtension,
 	} from "./page-theme";
+	import { criticMarkupExtension, type YjsDocument } from "$lib/yjs";
 
 	interface Props {
 		content: string;
 		onSave?: (content: string) => void;
 		placeholder?: string;
+		/** Optional Yjs document for real-time collaboration */
+		yjsDoc?: YjsDocument;
+		/** Whether the editor is disabled/loading (useful for waiting for Yjs sync) */
+		disabled?: boolean;
+		/** Whether connected to the sync server (for status display) */
+		isConnected?: boolean;
+		/** Whether synced with the server (for status display) */
+		isSynced?: boolean;
 	}
 
-	let { content = $bindable(), onSave, placeholder: placeholderText }: Props = $props();
+	let { content = $bindable(), onSave, placeholder: placeholderText, yjsDoc, disabled = false, isConnected = true, isSynced = true }: Props = $props();
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
 	let isExternalUpdate = false;
+	
+	// Compartment for dynamically updating editable state
+	const editableCompartment = new Compartment();
 
 	// Link picker state (for @ mentions - links to pages, people, places, files, etc.)
 	let showLinkPicker = $state(false);
 	let linkPickerQuery = $state("");
-	let linkPickerResults = $state<Array<{ id: string; name: string; entity_type: string; icon: string }>>([]);
+	let linkPickerResults = $state<Array<{ id: string; name: string; entity_type: string; icon: string; url: string; mime_type?: string }>>([]);
 	let linkPickerSelectedIndex = $state(0);
 	let linkPickerPos = $state({ x: 0, y: 0 });
 	let atSignPosition = $state<number | null>(null);
@@ -112,9 +124,48 @@
 		view?.focus();
 	}
 
-	function selectLink(item: { id: string; name: string }) {
+	// Check if a file is a media type (image, audio, video) based on extension or mime type
+	function isMediaFile(name: string, mimeType?: string): { isMedia: boolean; type: 'image' | 'audio' | 'video' | null } {
+		const ext = name.split('.').pop()?.toLowerCase() || '';
+
+		// Check by extension first
+		const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+		const audioExts = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'wma'];
+		const videoExts = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', 'wmv'];
+
+		if (imageExts.includes(ext)) return { isMedia: true, type: 'image' };
+		if (audioExts.includes(ext)) return { isMedia: true, type: 'audio' };
+		if (videoExts.includes(ext)) return { isMedia: true, type: 'video' };
+
+		// Fallback to mime type
+		if (mimeType) {
+			if (mimeType.startsWith('image/')) return { isMedia: true, type: 'image' };
+			if (mimeType.startsWith('audio/')) return { isMedia: true, type: 'audio' };
+			if (mimeType.startsWith('video/')) return { isMedia: true, type: 'video' };
+		}
+
+		return { isMedia: false, type: null };
+	}
+
+	function selectLink(item: { id: string; name: string; url: string; entity_type: string; mime_type?: string }) {
 		if (view && atSignPosition !== null) {
-			const linkText = `[${item.name}](entity:${item.id})`;
+			let linkText: string;
+
+			// For files, check if it's a media type and use image syntax
+			if (item.entity_type === 'file') {
+				const { isMedia } = isMediaFile(item.name, item.mime_type);
+				if (isMedia) {
+					// Use image syntax for media files (extension in name determines rendering)
+					linkText = `![${item.name}](${item.url})`;
+				} else {
+					// Regular link for non-media files
+					linkText = `[${item.name}](${item.url})`;
+				}
+			} else {
+				// Regular link for entities (person, place, page, etc.)
+				linkText = `[${item.name}](${item.url})`;
+			}
+
 			// Replace the @ with the link
 			view.dispatch({
 				changes: {
@@ -149,7 +200,6 @@
 		switch (type) {
 			case "person": return "ri:user-line";
 			case "place": return "ri:map-pin-line";
-			case "thing": return "ri:box-3-line";
 			case "file": return "ri:file-line";
 			case "page": return "ri:file-text-line";
 			default: return "ri:links-line";
@@ -157,10 +207,13 @@
 	}
 
 onMount(() => {
-		const extensions = [
-			// Core editing
-			history(),
-			keymap.of([...defaultKeymap, ...historyKeymap]),
+		// Build extensions based on whether Yjs is enabled
+		const baseExtensions = [
+			// Core editing (use Yjs extensions if available, otherwise CodeMirror history)
+			...(yjsDoc 
+				? yjsDoc.extensions 
+				: [history(), keymap.of([...defaultKeymap, ...historyKeymap])]
+			),
 			drawSelection(),
 
 			// Markdown language support with code highlighting
@@ -176,15 +229,31 @@ onMount(() => {
 			// Live preview (Obsidian-style)
 			livePreviewExtension,
 
+			// CriticMarkup for AI-proposed edits (inline accept/reject)
+			...criticMarkupExtension({
+				onAccept: (type, content) => {
+					console.log('[CriticMarkup] Accepted:', type, content.slice(0, 50));
+				},
+				onReject: (type, content) => {
+					console.log('[CriticMarkup] Rejected:', type, content.slice(0, 50));
+				}
+			}),
+
 			// Misc
 			placeholder(placeholderText ?? "Start writing... Use @ to link pages, people, places, and files."),
 			EditorView.lineWrapping,
+			// Disable editing when disabled prop is true (e.g., waiting for Yjs sync)
+			// Use compartment so we can update it dynamically when disabled changes
+			editableCompartment.of(EditorView.editable.of(!disabled)),
 
-			// Detect @ for entity picker
+			// Detect @ for entity picker + content sync
 			EditorView.updateListener.of((update) => {
 				if (update.docChanged && !isExternalUpdate) {
 					content = update.state.doc.toString();
-					onSave?.(content);
+					// Only call onSave if not using Yjs (Yjs handles persistence via WebSocket)
+					if (!yjsDoc) {
+						onSave?.(content);
+					}
 
 					// Check if @ was just typed
 					update.changes.iterChanges((_fromA, _toA, fromB, _toB, inserted) => {
@@ -193,11 +262,6 @@ onMount(() => {
 							// Get cursor position for popover placement
 							const cursorPos = update.state.selection.main.head;
 							const coords = view?.coordsAtPos(cursorPos);
-							
-							console.log("[link-picker] cursorPos:", cursorPos);
-							console.log("[link-picker] coords:", coords);
-							console.log("[link-picker] window size:", window.innerWidth, window.innerHeight);
-							console.log("[link-picker] editorContainer rect:", editorContainer?.getBoundingClientRect());
 							
 							if (coords) {
 								openLinkPicker(
@@ -211,10 +275,14 @@ onMount(() => {
 			}),
 		];
 
+		// For Yjs mode, content comes from ytext (synced via WebSocket)
+		// For non-Yjs mode, use the content prop
+		const initialDoc = yjsDoc ? yjsDoc.ytext.toString() : content;
+
 		view = new EditorView({
 			state: EditorState.create({
-				doc: content,
-				extensions,
+				doc: initialDoc,
+				extensions: baseExtensions,
 			}),
 			parent: editorContainer,
 		});
@@ -231,16 +299,17 @@ onMount(() => {
 		e.preventDefault();
 		e.stopPropagation();
 		
-		// Use windowTabs to open in split pane if available
-		workspaceStore.openTabFromRoute(e.detail.href, {
+		// Open in split pane if available
+		spaceStore.openTabFromRoute(e.detail.href, {
 			forceNew: true,
 			preferEmptyPane: true,
 		});
 	}
 
-	// Sync external content changes to editor
+	// Sync external content changes to editor (only when not using Yjs)
+	// Yjs handles sync automatically via the y-codemirror extension
 	$effect(() => {
-		if (view && content !== view.state.doc.toString()) {
+		if (!yjsDoc && view && content !== view.state.doc.toString()) {
 			isExternalUpdate = true;
 			view.dispatch({
 				changes: {
@@ -250,6 +319,16 @@ onMount(() => {
 				},
 			});
 			isExternalUpdate = false;
+		}
+	});
+
+	// Update editable state when disabled prop changes
+	// This reconfigures the compartment so CodeMirror respects the new state
+	$effect(() => {
+		if (view) {
+			view.dispatch({
+				effects: editableCompartment.reconfigure(EditorView.editable.of(!disabled))
+			});
 		}
 	});
 
@@ -263,7 +342,25 @@ onMount(() => {
 </script>
 
 <div class="page-editor-wrapper">
-	<div class="page-editor" bind:this={editorContainer}></div>
+	{#if disabled}
+		<div class="sync-status syncing">
+			<Icon icon="ri:loader-4-line" width="12" class="animate-spin" />
+			<span>Connecting...</span>
+		</div>
+	{:else if yjsDoc}
+		{#if !isConnected}
+			<div class="sync-status offline">
+				<Icon icon="ri:wifi-off-line" width="12" />
+				<span>Offline - changes will sync when reconnected</span>
+			</div>
+		{:else if !isSynced}
+			<div class="sync-status syncing">
+				<Icon icon="ri:loader-4-line" width="12" class="animate-spin" />
+				<span>Syncing...</span>
+			</div>
+		{/if}
+	{/if}
+	<div class="page-editor" class:disabled bind:this={editorContainer}></div>
 
 	{#if showLinkPicker}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -275,7 +372,7 @@ onMount(() => {
 			style="left: {linkPickerPos.x}px; top: {linkPickerPos.y}px;"
 		>
 			<div class="link-picker-search">
-				<iconify-icon icon="ri:search-line" width="16"></iconify-icon>
+				<Icon icon="ri:search-line" width="16"/>
 				<input
 					bind:this={searchInputEl}
 					type="text"
@@ -297,7 +394,7 @@ onMount(() => {
 							onclick={() => selectLink(item)}
 							onmouseenter={() => linkPickerSelectedIndex = i}
 						>
-							<iconify-icon icon={getLinkIcon(item.entity_type)} width="16"></iconify-icon>
+							<Icon icon={getLinkIcon(item.entity_type)} width="16"/>
 							<span class="link-name">{item.name}</span>
 							<span class="link-type">{item.entity_type}</span>
 						</button>
@@ -315,6 +412,41 @@ onMount(() => {
 
 	.page-editor {
 		min-height: 300px;
+	}
+
+	.page-editor.disabled {
+		opacity: 0.6;
+		pointer-events: none;
+	}
+
+	/* Sync status indicator */
+	.sync-status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 10px;
+		font-size: 12px;
+		border-radius: 4px;
+		margin-bottom: 8px;
+	}
+
+	.sync-status.offline {
+		background: var(--color-warning-subtle);
+		color: var(--color-warning);
+	}
+
+	.sync-status.syncing {
+		background: var(--color-primary-subtle);
+		color: var(--color-primary);
+	}
+
+	:global(.animate-spin) {
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
 	}
 
 	/* Remove default outlines */
@@ -375,7 +507,7 @@ onMount(() => {
 		background: var(--color-surface-elevated);
 	}
 
-	:global(.link-picker-search iconify-icon) {
+	:global(.link-picker-search :global(svg)) {
 		color: var(--color-foreground-muted);
 	}
 
@@ -426,7 +558,7 @@ onMount(() => {
 		background: var(--color-primary-subtle);
 	}
 
-	:global(.link-picker-item iconify-icon) {
+	:global(.link-picker-item :global(svg)) {
 		color: var(--color-foreground-muted);
 	}
 

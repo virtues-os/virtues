@@ -1,11 +1,11 @@
 /**
  * URL Serialization utilities for the tab system.
- * 
+ *
  * Provides functions to serialize/deserialize tab state to/from URL query parameters.
  * This enables shareable URLs that restore the exact tab configuration.
  */
 
-import type { Tab, TabType, SplitState } from './types';
+import type { Tab, TabType, PaneState } from './types';
 import { tabRegistry, parseRoute } from './registry';
 
 /**
@@ -13,31 +13,28 @@ import { tabRegistry, parseRoute } from './registry';
  * Types with hyphens must be checked before splitting on underscore.
  */
 const KNOWN_TYPES: TabType[] = [
-	'session-context',
-	'page-detail',
-	'wiki-list',
-	'data-sources-add',
-	'data-sources',
-	'data-entities',
-	'data-jobs',
-	'data-drive',
-	'developer-sql',
-	'developer-terminal',
+	// Hyphenated types first
 	'dog-jump',
+	// Then regular types
 	'chat',
-	'history',
-	'pages',
-	'wiki',
-	'usage',
-	'profile',
-	'feedback',
+	'page',
+	'person',
+	'place',
+	'org',
+	'thing',
+	'day',
+	'year',
+	'source',
+	'drive',
+	'trash',
+	'virtues',
 	'conway',
 ];
 
 /**
  * Serialize a tab to a URL-safe string.
  * Format: <type>[_<id>]
- * Examples: "chat", "chat_abc123", "wiki_rome", "page-detail_def456"
+ * Examples: "chat", "chat_chat_abc123", "person_person_def456"
  */
 export function serializeTab(tab: Tab): string {
 	const def = tabRegistry[tab.type];
@@ -45,32 +42,20 @@ export function serializeTab(tab: Tab): string {
 		return tab.type;
 	}
 
-	// Get the type-specific identifier
+	// Get the type-specific identifier from route or special fields
 	let id: string | undefined;
-	switch (tab.type) {
-		case 'chat':
-			id = tab.conversationId;
-			break;
-		case 'session-context':
-			id = tab.linkedConversationId;
-			break;
-		case 'page-detail':
-			id = tab.pageId;
-			break;
-		case 'wiki':
-			id = tab.slug;
-			break;
-		case 'wiki-list':
-			id = tab.wikiCategory;
-			break;
-		case 'data-sources':
-			id = tab.sourceId;
-			break;
-		case 'profile':
-			id = tab.profileSection;
-			break;
-		default:
-			id = undefined;
+
+	if (tab.storagePath) {
+		// Storage namespaces use storagePath
+		id = tab.storagePath;
+	} else if (tab.virtuesPage) {
+		// System namespace uses virtuesPage
+		id = tab.virtuesPage;
+	} else {
+		// Entity namespaces: extract entity ID from route
+		// Route format: /person/person_abc → entityId = person_abc
+		const match = tab.route.match(/^\/[a-z]+\/(.+)$/);
+		id = match?.[1];
 	}
 
 	return def.serialize(id);
@@ -120,35 +105,26 @@ export function deserializeTab(serialized: string): string {
  */
 export function createTabFromRoute(route: string): Tab {
 	const parsed = parseRoute(route);
-	
-	const base = {
+
+	return {
 		id: crypto.randomUUID(),
 		type: parsed.type,
 		label: parsed.label,
 		route,
 		icon: parsed.icon,
+		storagePath: parsed.storagePath,
+		virtuesPage: parsed.virtuesPage,
 		createdAt: Date.now(),
 	};
+}
 
-	// Add type-specific properties based on the parsed type
-	switch (parsed.type) {
-		case 'chat':
-			return { ...base, type: 'chat', conversationId: parsed.conversationId };
-		case 'session-context':
-			return { ...base, type: 'session-context', linkedConversationId: parsed.linkedConversationId || '' };
-		case 'page-detail':
-			return { ...base, type: 'page-detail', pageId: parsed.pageId || '' };
-		case 'wiki':
-			return { ...base, type: 'wiki', slug: parsed.slug };
-		case 'wiki-list':
-			return { ...base, type: 'wiki-list', wikiCategory: parsed.wikiCategory || 'people' };
-		case 'data-sources':
-			return { ...base, type: 'data-sources', sourceId: parsed.sourceId };
-		case 'profile':
-			return { ...base, type: 'profile', profileSection: parsed.profileSection || 'account' };
-		default:
-			return base as Tab;
-	}
+/**
+ * Split state for URL serialization.
+ */
+interface SplitState {
+	enabled: boolean;
+	panes: [PaneState, PaneState] | null;
+	activePaneId: 'left' | 'right';
 }
 
 interface SerializedState {

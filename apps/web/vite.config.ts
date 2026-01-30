@@ -19,6 +19,12 @@ export default defineConfig(({ mode }) => {
 				'/auth': {
 					target: env.ELT_API_URL || 'http://localhost:8000',
 					changeOrigin: true
+				},
+				// Proxy WebSocket connections for Yjs real-time sync
+				'/ws': {
+					target: env.ELT_API_URL || 'http://localhost:8000',
+					changeOrigin: true,
+					ws: true
 				}
 			}
 		}

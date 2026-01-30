@@ -1,5 +1,5 @@
 <script lang="ts">
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		collapsed?: boolean;
@@ -63,10 +63,9 @@
 			<button
 				class="collapse-btn"
 				onclick={onToggleCollapse}
-				title="Collapse sidebar (Cmd+[)"
+				title="Collapse sidebar (Cmd+S)"
 			>
-				<iconify-icon icon="ri:arrow-left-s-line" width="18"
-				></iconify-icon>
+				<Icon icon="ri:arrow-left-s-line" width="18" />
 			</button>
 		{/if}
 	</div>
@@ -119,7 +118,7 @@
 
 	.header-container {
 		@apply flex flex-col;
-		padding: 14px 8px 16px 8px;
+		padding: 14px 0 16px 8px;
 		gap: 14px;
 	}
 

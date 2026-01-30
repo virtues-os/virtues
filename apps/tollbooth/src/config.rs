@@ -72,7 +72,7 @@ pub struct Config {
     /// Default model for "smart" requests (default: gpt-4o)
     pub default_smart_model: String,
 
-    /// Default model for "instant" requests (default: cerebras/llama-3.3-70b)
+    /// Default model for "instant" requests (default: cerebras/gpt-oss-120b)
     pub default_instant_model: String,
 
     // =========================================================================
@@ -84,6 +84,9 @@ pub struct Config {
 
     /// Google API key (for Places autocomplete)
     pub google_api_key: Option<String>,
+
+    /// Unsplash API key (for cover image search)
+    pub unsplash_access_key: Option<String>,
 
     /// Plaid Client ID
     pub plaid_client_id: Option<String>,
@@ -143,11 +146,12 @@ impl Config {
             default_smart_model: std::env::var("DEFAULT_SMART_MODEL")
                 .unwrap_or_else(|_| "openai/gpt-4o".to_string()),
             default_instant_model: std::env::var("DEFAULT_INSTANT_MODEL")
-                .unwrap_or_else(|_| "cerebras/llama-3.3-70b".to_string()),
+                .unwrap_or_else(|_| "cerebras/gpt-oss-120b".to_string()),
 
             // External service API keys
             exa_api_key: std::env::var("EXA_API_KEY").ok(),
             google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
+            unsplash_access_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),
 
             // Plaid
             plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),

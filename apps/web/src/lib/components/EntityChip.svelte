@@ -1,36 +1,64 @@
 <script lang="ts">
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import "iconify-icon";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 
-	let { displayName, entityId } = $props<{
+	let { displayName, entityId, url } = $props<{
 		displayName: string;
-		entityId: string;
+		entityId?: string;
+		url?: string;
 	}>();
 
-	function getEntityIcon(id: string): string {
-		if (id.startsWith("person_")) return "ri:user-line";
-		if (id.startsWith("place_")) return "ri:map-pin-line";
-		if (id.startsWith("org_")) return "ri:building-line";
-		if (id.startsWith("file_")) return "ri:file-line";
-		if (id.startsWith("page_")) return "ri:file-text-line";
-		if (id.startsWith("thing_")) return "ri:box-3-line";
+	// Get icon based on URL pattern (new approach) or entity ID prefix (legacy)
+	function getIcon(): string {
+		if (url) {
+			if (url.startsWith("/person/")) return "ri:user-line";
+			if (url.startsWith("/place/")) return "ri:map-pin-line";
+			if (url.startsWith("/org/")) return "ri:building-line";
+			if (url.startsWith("/thing/")) return "ri:box-3-line";
+			if (url.startsWith("/page/")) return "ri:file-text-line";
+			if (url.startsWith("/day/")) return "ri:calendar-line";
+			if (url.startsWith("/year/")) return "ri:calendar-2-line";
+			if (url.startsWith("/source/")) return "ri:database-2-line";
+			if (url.startsWith("/chat/")) return "ri:chat-3-line";
+			if (url.startsWith("/drive/")) return "ri:file-line";
+		}
+		if (entityId) {
+			if (entityId.startsWith("person_")) return "ri:user-line";
+			if (entityId.startsWith("place_")) return "ri:map-pin-line";
+			if (entityId.startsWith("org_")) return "ri:building-line";
+			if (entityId.startsWith("file_")) return "ri:file-line";
+			if (entityId.startsWith("page_")) return "ri:file-text-line";
+			if (entityId.startsWith("thing_")) return "ri:box-3-line";
+		}
 		return "ri:links-line";
 	}
 
+	// Compute route from entity ID (legacy support)
 	function getEntityRoute(id: string): string {
-		if (id.startsWith("person_")) return `/wiki/people/${id}`;
-		if (id.startsWith("place_")) return `/wiki/places/${id}`;
-		if (id.startsWith("org_")) return `/wiki/orgs/${id}`;
-		if (id.startsWith("thing_")) return `/wiki/things/${id}`;
-		if (id.startsWith("file_")) return `/data/drive?file=${id}`;
-		if (id.startsWith("page_")) return `/pages/${id}`;
-		return `/wiki/${id}`;
+		if (id.startsWith("person_")) return `/person/${id}`;
+		if (id.startsWith("place_")) return `/place/${id}`;
+		if (id.startsWith("org_")) return `/org/${id}`;
+		if (id.startsWith("thing_")) return `/thing/${id}`;
+		if (id.startsWith("day_")) return `/day/${id}`;
+		if (id.startsWith("year_")) return `/year/${id}`;
+		if (id.startsWith("file_")) return `/drive/${id}`;
+		if (id.startsWith("page_")) return `/page/${id}`;
+		if (id.startsWith("chat_")) return `/chat/${id}`;
+		if (id.startsWith("source_")) return `/source/${id}`;
+		return `/person/${id}`; // fallback
+	}
+
+	// Get the navigation URL - prefer direct url, fall back to computed from entityId
+	function getNavigationUrl(): string {
+		if (url) return url;
+		if (entityId) return getEntityRoute(entityId);
+		return "#";
 	}
 
 	function handleClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		workspaceStore.openTabFromRoute(getEntityRoute(entityId), {
+		spaceStore.openTabFromRoute(getNavigationUrl(), {
 			forceNew: true,
 			preferEmptyPane: true,
 		});
@@ -39,7 +67,7 @@
 
 <button class="entity-chip" onclick={handleClick} title="View {displayName}">
 	<span class="entity-icon">
-		<iconify-icon icon={getEntityIcon(entityId)} width="14"></iconify-icon>
+		<Icon icon={getIcon()} width="14"/>
 	</span>
 	<span class="entity-text">{displayName}</span>
 </button>

@@ -24,43 +24,45 @@
 pub mod agents;
 pub mod assistant_profile;
 pub mod auth;
-pub mod bookmarks;
 pub mod chat;
+pub mod chats;
+pub mod chat_usage;
 pub mod code;
 pub mod compaction;
 pub mod device_pairing;
 pub mod drive;
+pub mod lake;
 pub mod entities;
 pub mod exa;
-pub mod explorer_nodes;
 pub mod internal;
 pub mod jobs;
 pub mod metrics;
 pub mod feedback;
 pub mod models;
+pub mod namespaces;
 pub mod oauth;
 
 pub mod ontologies;
 pub mod pages;
 pub mod places;
 pub mod plaid;
-pub mod workspaces;
+pub mod spaces;
 
 pub mod profile;
 pub mod rate_limit;
 pub mod registry;
 pub mod search;
 pub mod seed_testing;
-pub mod session_usage;
-pub mod sessions;
 pub mod sources;
 pub mod storage;
 pub mod streams;
 pub mod token_estimation;
 pub mod tools;
 pub mod types;
+pub mod unsplash;
 pub mod usage;
 pub mod validation;
+pub mod views;
 pub mod wiki;
 pub mod developer;
 pub mod terminal;
@@ -95,12 +97,6 @@ pub use auth::{
     UpdateOwnerEmailRequest,
     UpdateOwnerEmailResponse,
 };
-pub use bookmarks::{
-    create_entity_bookmark, create_tab_bookmark, delete_bookmark, delete_bookmark_by_entity,
-    delete_bookmark_by_route, is_entity_bookmarked, is_route_bookmarked, list_bookmarks,
-    toggle_entity_bookmark, toggle_route_bookmark, Bookmark, BookmarkStatus,
-    CreateEntityBookmarkRequest, CreateTabBookmarkRequest, ToggleBookmarkResponse,
-};
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
 pub use device_pairing::{
     check_pairing_status, complete_device_pairing, initiate_device_pairing, link_device_manually,
@@ -128,6 +124,7 @@ pub use drive::{
     purge_old_trash as purge_old_drive_trash,
     // Quota constants
     quotas as drive_quotas,
+    reconcile_folder as reconcile_drive_folder,
     reconcile_usage as reconcile_drive_usage,
     restore_file as restore_drive_file,
     upload_file as upload_drive_file,
@@ -150,6 +147,10 @@ pub use exa::{
     search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
 pub use feedback::{submit_feedback, FeedbackRequest};
+pub use unsplash::{
+    search as unsplash_search, SearchRequest as UnsplashSearchRequest,
+    SearchResponse as UnsplashSearchResponse,
+};
 pub use jobs::{
     cancel_job, get_job_history, get_job_status, query_jobs, trigger_stream_sync,
     CreateJobResponse, QueryJobsRequest,
@@ -180,19 +181,34 @@ pub use plaid::{
 };
 pub use pages::{
     create_page, delete_page, get_page, list_pages, search_entities, update_page,
+    // Version history
+    create_version, list_versions, get_version,
     CreatePageRequest, EntitySearchResponse, EntitySearchResult, Page, PageListResponse,
     PageSummary, UpdatePageRequest,
+    // Version types
+    CreateVersionRequest, PageVersionSummary, PageVersionDetail, PageVersionsListResponse,
 };
-pub use workspaces::{
-    create_workspace, delete_workspace, get_workspace, list_workspaces, save_tab_state,
-    update_workspace, CreateWorkspaceRequest, SaveTabStateRequest, UpdateWorkspaceRequest,
-    Workspace, WorkspaceListResponse, WorkspaceSummary,
+pub use spaces::{
+    create_space, delete_space, get_space, list_spaces, save_tab_state,
+    update_space, CreateSpaceRequest, SaveTabStateRequest, UpdateSpaceRequest,
+    Space, SpaceListResponse, SpaceSummary,
 };
-pub use explorer_nodes::{
-    create_node, delete_node, get_node, get_workspace_tree, move_nodes, resolve_view,
-    update_node, CreateNodeRequest, ExplorerNode, MoveNodesRequest, ResolveViewRequest,
-    TreeNode, UpdateNodeRequest, ViewConfig, ViewEntity, ViewResolutionResponse,
-    WorkspaceTreeResponse,
+pub use chats::{
+    append_message, create_chat, create_chat_from_request, delete_chat, generate_title,
+    get_chat, list_chats, update_chat_title, update_messages,
+    Chat, ChatDetailResponse, ChatListItem, ChatListResponse, ChatMessage,
+    ConversationMeta, CreateChatRequest, CreateChatResponse, DeleteChatResponse,
+    GenerateTitleRequest, GenerateTitleResponse, IntentMetadata, MessageResponse,
+    TimeRange, TitleMessage, ToolCall, UpdateChatResponse, UpdateTitleRequest,
+};
+pub use namespaces::{
+    get_namespace, list_entity_namespaces, list_namespaces, entity_id_to_route,
+    extract_namespace_from_entity_id, route_to_entity_id, Namespace, NamespaceListResponse,
+};
+pub use views::{
+    add_item_to_view, create_view, delete_view, get_view, list_views, remove_item_from_view,
+    resolve_view, update_view, CreateViewRequest, QueryConfig, UpdateViewRequest, View,
+    ViewEntity, ViewListResponse, ViewResolutionResponse, ViewSummary,
 };
 
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
@@ -218,9 +234,9 @@ pub use streams::{
 };
 pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
 pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
-pub use session_usage::{
-    calculate_cost as calculate_token_cost, check_compaction_needed, get_session_usage,
-    record_session_usage, CompactionStatus, SessionUsage, UsageData,
+pub use chat_usage::{
+    calculate_cost as calculate_token_cost, check_compaction_needed, get_chat_usage,
+    record_chat_usage, CompactionStatus, ChatUsageInfo, UsageData,
 };
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
@@ -259,9 +275,6 @@ pub use wiki::{
     get_person_by_slug,
     get_place_by_slug,
     get_telos_by_slug,
-    // Thing operations
-    get_thing,
-    get_thing_by_slug,
     // Place operations (wiki-specific)
     get_wiki_place,
     list_acts,
@@ -269,7 +282,6 @@ pub use wiki::{
     list_days,
     list_organizations,
     list_people,
-    list_things,
     list_wiki_places,
     resolve_slug,
     update_citation,
@@ -277,7 +289,6 @@ pub use wiki::{
     update_organization,
     update_person,
     update_temporal_event,
-    update_thing,
     update_wiki_place,
     // Citation types and operations
     Citation,
@@ -301,7 +312,6 @@ pub use wiki::{
     // Update requests
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    UpdateWikiThingRequest,
     WikiAct,
     WikiChapter,
     WikiDay,
@@ -314,6 +324,4 @@ pub use wiki::{
     WikiPlaceListItem,
     // Narrative types
     WikiTelos,
-    WikiThing,
-    WikiThingListItem,
 };

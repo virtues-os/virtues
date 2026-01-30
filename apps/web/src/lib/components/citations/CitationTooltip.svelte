@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Citation } from "$lib/types/Citation";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let { citation } = $props<{
 		citation: Citation;
@@ -18,25 +18,25 @@
 
 <div class="citation-tooltip" id="tooltip-{citation.id}" role="tooltip">
 	<div class="tooltip-header">
-		<iconify-icon
+		<Icon
 			icon={citation.icon}
 			class={citation.color}
 			width="16"
 			height="16"
-		></iconify-icon>
+		/>
 		<span class="tooltip-title">{citation.label}</span>
 	</div>
 
 	{#if citation.url}
 		<div class="tooltip-url">
-			<iconify-icon icon="ri:link" width="12" height="12"></iconify-icon>
+			<Icon icon="ri:link" width="12" height="12"/>
 			<span>{extractDomain(citation.url)}</span>
 		</div>
 	{/if}
 
 	<div class="tooltip-hint">
-		<iconify-icon icon="ri:cursor-line" width="12" height="12"
-		></iconify-icon>
+		<Icon icon="ri:cursor-line" width="12" height="12"
+		/>
 		<span>Click for details</span>
 	</div>
 </div>

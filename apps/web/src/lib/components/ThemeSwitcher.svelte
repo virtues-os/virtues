@@ -1,33 +1,27 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { getTheme, setTheme, getAvailableThemes, getThemeDisplayName, type Theme } from '$lib/utils/theme';
+	import { getAvailableThemes, getThemeDisplayName, getTheme, setTheme, type Theme } from '$lib/utils/theme';
 
-	let currentTheme = $state<Theme>('light');
 	let isOpen = $state(false);
+	let currentTheme = $state<Theme>(getTheme());
 
 	const themes = getAvailableThemes();
 
-	onMount(() => {
-		// Initialize current theme
-		currentTheme = getTheme();
-
-		// Listen for theme changes from other sources
-		const handleThemeChange = (e: Event) => {
-			const customEvent = e as CustomEvent<{ theme: Theme }>;
-			currentTheme = customEvent.detail.theme;
+	// Listen for theme changes
+	$effect(() => {
+		if (typeof window === 'undefined') return;
+		
+		const handleThemeChange = (e: CustomEvent<{ theme: Theme }>) => {
+			currentTheme = e.detail.theme;
 		};
-
-		window.addEventListener('themechange', handleThemeChange);
-
-		return () => {
-			window.removeEventListener('themechange', handleThemeChange);
-		};
+		
+		window.addEventListener('themechange', handleThemeChange as EventListener);
+		return () => window.removeEventListener('themechange', handleThemeChange as EventListener);
 	});
 
-	function handleThemeSelect(theme: Theme) {
-		setTheme(theme);
+	async function handleThemeSelect(theme: Theme) {
 		currentTheme = theme;
 		isOpen = false;
+		await setTheme(theme);
 	}
 
 	function toggleDropdown() {
@@ -66,7 +60,7 @@
 
 	{#if isOpen}
 		<div
-			class="absolute right-0 mt-2 w-48 bg-surface-overlay border border-border rounded-lg shadow-lg overflow-hidden z-50"
+			class="absolute right-0 mt-2 w-56 bg-surface-overlay border border-border rounded-lg shadow-lg overflow-hidden z-50"
 		>
 			{#each themes as theme}
 				<button

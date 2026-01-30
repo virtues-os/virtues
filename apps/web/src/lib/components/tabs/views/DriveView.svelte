@@ -8,23 +8,18 @@
 		downloadDriveFile,
 		deleteDriveFile,
 		createDriveFolder,
-		listDriveTrash,
-		restoreDriveFile,
-		purgeDriveFile,
-		emptyDriveTrash
+		moveDriveFile
 	} from '$lib/api/client';
-	import 'iconify-icon';
+	import Icon from '$lib/components/Icon.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 	import { onMount } from 'svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
+	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// View mode
-	type ViewMode = 'files' | 'trash';
-	let viewMode = $state<ViewMode>('files');
-
 	// State
 	let files = $state<DriveFile[]>([]);
-	let trashFiles = $state<DriveFile[]>([]);
 	let usage = $state<DriveUsage | null>(null);
 	let currentPath = $state('');
 	let loading = $state(true);
@@ -44,13 +39,10 @@
 	let fileToDelete = $state<DriveFile | null>(null);
 	let deleting = $state(false);
 
-	// Trash actions
-	let fileToRestore = $state<DriveFile | null>(null);
-	let restoring = $state(false);
-	let fileToPurge = $state<DriveFile | null>(null);
-	let purging = $state(false);
-	let emptyingTrash = $state(false);
-	let showEmptyTrashModal = $state(false);
+	// Rename state
+	let renamingFile = $state<DriveFile | null>(null);
+	let renameValue = $state('');
+	let renaming = $state(false);
 
 	// Toast notification
 	let toastMessage = $state<string | null>(null);
@@ -58,14 +50,6 @@
 
 	// File input ref
 	let fileInput = $state<HTMLInputElement | null>(null);
-
-	// Detect if we're in the read-only lake folder
-	const isLakePath = $derived(currentPath === 'lake' || currentPath.startsWith('lake/'));
-
-	// Check if a file is a lake virtual item (starts with virtual:lake)
-	function isLakeFile(file: DriveFile): boolean {
-		return file.id.startsWith('virtual:lake');
-	}
 
 	onMount(async () => {
 		await loadData();
@@ -83,24 +67,13 @@
 		loading = true;
 		error = null;
 		try {
-			if (viewMode === 'files') {
-				const [filesData, usageResponse] = await Promise.all([
-					listDriveFiles(currentPath),
-					fetch('/api/drive/usage')
-				]);
-				files = filesData;
-				if (usageResponse.ok) {
-					usage = await usageResponse.json();
-				}
-			} else {
-				const [trashData, usageResponse] = await Promise.all([
-					listDriveTrash(),
-					fetch('/api/drive/usage')
-				]);
-				trashFiles = trashData;
-				if (usageResponse.ok) {
-					usage = await usageResponse.json();
-				}
+			const [filesData, usageResponse] = await Promise.all([
+				listDriveFiles(currentPath),
+				fetch('/api/drive/usage')
+			]);
+			files = filesData;
+			if (usageResponse.ok) {
+				usage = await usageResponse.json();
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load drive data';
@@ -109,34 +82,15 @@
 		}
 	}
 
-	// Switch view mode
-	async function switchViewMode(mode: ViewMode) {
-		if (mode === viewMode) return;
-		viewMode = mode;
-		currentPath = '';
-		await loadData();
-	}
-
-	// Calculate days remaining until permanent deletion
-	function getDaysRemaining(deletedAt: string): number {
-		const deleted = new Date(deletedAt);
-		const now = new Date();
-		const thirtyDaysAfter = new Date(deleted.getTime() + 30 * 24 * 60 * 60 * 1000);
-		const remaining = thirtyDaysAfter.getTime() - now.getTime();
-		return Math.max(0, Math.ceil(remaining / (24 * 60 * 60 * 1000)));
-	}
-
 	// Breadcrumb navigation
 	const breadcrumbs = $derived(() => {
-		if (!currentPath) return [{ name: 'Drive', path: '', isLake: false }];
+		if (!currentPath) return [{ name: 'Drive', path: '' }];
 		const parts = currentPath.split('/');
-		const crumbs = [{ name: 'Drive', path: '', isLake: false }];
+		const crumbs = [{ name: 'Drive', path: '' }];
 		let pathSoFar = '';
 		for (const part of parts) {
 			pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
-			// Capitalize 'lake' to 'Lake' for display
-			const displayName = part === 'lake' ? 'Lake' : part;
-			crumbs.push({ name: displayName, path: pathSoFar, isLake: pathSoFar === 'lake' || pathSoFar.startsWith('lake/') });
+			crumbs.push({ name: part, path: pathSoFar });
 		}
 		return crumbs;
 	});
@@ -161,9 +115,6 @@
 
 	// Get icon for file type
 	function getFileIcon(file: DriveFile): string {
-		// Special icon for lake virtual folder
-		if (file.id === 'virtual:lake') return 'ri:database-2-fill';
-		if (file.id.startsWith('virtual:lake:stream:')) return 'ri:folder-chart-fill';
 		if (file.is_folder) return 'ri:folder-fill';
 
 		const ext = file.filename.split('.').pop()?.toLowerCase();
@@ -197,8 +148,6 @@
 
 	// Get icon color for file type
 	function getFileIconColor(file: DriveFile): string {
-		// Purple for lake virtual items
-		if (file.id.startsWith('virtual:lake')) return 'text-purple-500';
 		if (file.is_folder) return 'text-yellow-500';
 
 		const ext = file.filename.split('.').pop()?.toLowerCase();
@@ -352,69 +301,117 @@
 		}
 	}
 
-	// Restore file from trash
-	async function handleRestore() {
-		if (!fileToRestore) return;
+	function navigateToTrash() {
+		spaceStore.openTabFromRoute('/trash');
+	}
 
-		restoring = true;
+	// Context menu for files/folders
+	function showFileContextMenu(e: MouseEvent, file: DriveFile) {
+		e.preventDefault();
+		e.stopPropagation();
+
+		const items = file.is_folder
+			? [
+					{
+						id: 'open',
+						label: 'Open',
+						icon: 'ri:folder-open-line',
+						action: () => navigateToFolder(file.path)
+					},
+					{
+						id: 'rename',
+						label: 'Rename',
+						icon: 'ri:pencil-line',
+						dividerBefore: true,
+						action: () => {
+							renamingFile = file;
+							renameValue = file.filename;
+						}
+					},
+					{
+						id: 'delete',
+						label: 'Move to Trash',
+						icon: 'ri:delete-bin-line',
+						variant: 'destructive' as const,
+						dividerBefore: true,
+						action: () => {
+							fileToDelete = file;
+						}
+					}
+				]
+			: [
+					{
+						id: 'download',
+						label: 'Download',
+						icon: 'ri:download-line',
+						action: () => handleDownload(file)
+					},
+					{
+						id: 'rename',
+						label: 'Rename',
+						icon: 'ri:pencil-line',
+						dividerBefore: true,
+						action: () => {
+							renamingFile = file;
+							renameValue = file.filename;
+						}
+					},
+					{
+						id: 'delete',
+						label: 'Move to Trash',
+						icon: 'ri:delete-bin-line',
+						variant: 'destructive' as const,
+						dividerBefore: true,
+						action: () => {
+							fileToDelete = file;
+						}
+					}
+				];
+
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+	}
+
+	// Inline rename
+	async function handleRename() {
+		if (!renamingFile || !renameValue.trim() || renameValue.trim() === renamingFile.filename) {
+			cancelRename();
+			return;
+		}
+
+		renaming = true;
 		error = null;
 
 		try {
-			await restoreDriveFile(fileToRestore.id);
-			const newTrash = await listDriveTrash();
-			trashFiles = newTrash;
-			// Refresh usage
-			const res = await fetch('/api/drive/usage');
-			if (res.ok) usage = await res.json();
-			showToast(`"${fileToRestore.filename}" restored`);
-			fileToRestore = null;
+			const newPath = currentPath
+				? `${currentPath}/${renameValue.trim()}`
+				: renameValue.trim();
+			await moveDriveFile(renamingFile.id, newPath);
+			const newFiles = await listDriveFiles(currentPath);
+			files = newFiles;
+			showToast(`Renamed to "${renameValue.trim()}"`);
+			renamingFile = null;
+			renameValue = '';
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Restore failed';
+			error = e instanceof Error ? e.message : 'Rename failed';
 		} finally {
-			restoring = false;
+			renaming = false;
 		}
 	}
 
-	// Permanently delete file
-	async function handlePurge() {
-		if (!fileToPurge) return;
-
-		purging = true;
-		error = null;
-
-		try {
-			await purgeDriveFile(fileToPurge.id);
-			const newTrash = await listDriveTrash();
-			trashFiles = newTrash;
-			// Refresh usage
-			const res = await fetch('/api/drive/usage');
-			if (res.ok) usage = await res.json();
-			showToast(`"${fileToPurge.filename}" permanently deleted`);
-			fileToPurge = null;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Permanent delete failed';
-		} finally {
-			purging = false;
-		}
+	function cancelRename() {
+		renamingFile = null;
+		renameValue = '';
 	}
 
-	// Empty entire trash
-	async function handleEmptyTrash() {
-		emptyingTrash = true;
-		error = null;
-
-		try {
-			const result = await emptyDriveTrash();
-			trashFiles = [];
-			// Refresh usage
-			const res = await fetch('/api/drive/usage');
-			if (res.ok) usage = await res.json();
-			showToast(`${result.deleted_count} items permanently deleted`);
-			showEmptyTrashModal = false;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to empty trash';
-		} finally {
-			emptyingTrash = false;
+	// Svelte action to auto-focus an input element
+	function autofocus(node: HTMLInputElement) {
+		node.focus();
+		// Select filename without extension for files
+		const dotIndex = node.value.lastIndexOf('.');
+		if (dotIndex > 0) {
+			node.setSelectionRange(0, dotIndex);
+		} else {
+			node.select();
 		}
 	}
 </script>
@@ -461,10 +458,10 @@
 						<span class="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span>
 						Drive ({formatBytes(usage.drive_bytes)})
 					</span>
-					<span class="flex items-center gap-1.5">
+					<a href="/virtues/lake" class="flex items-center gap-1.5 hover:text-foreground transition-colors">
 						<span class="w-2.5 h-2.5 bg-purple-500 rounded-sm"></span>
-						Data Lake ({formatBytes(usage.data_lake_bytes)})
-					</span>
+						Lake ({formatBytes(usage.data_lake_bytes)})
+					</a>
 					<span class="flex items-center gap-1.5">
 						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
 						Available ({formatBytes(usage.quota_bytes - usage.total_bytes)})
@@ -477,117 +474,61 @@
 			</div>
 		{/if}
 
-		<!-- View Mode Tabs -->
-		<div class="flex items-center gap-1 mb-4 border-b border-border">
-			<button
-				class="px-4 py-2 text-sm font-medium transition-colors relative"
-				class:text-foreground={viewMode === 'files'}
-				class:text-foreground-muted={viewMode !== 'files'}
-				onclick={() => switchViewMode('files')}
-			>
-				<span class="flex items-center gap-2">
-					<iconify-icon icon="ri:folder-line"></iconify-icon>
-					Files
-				</span>
-				{#if viewMode === 'files'}
-					<div class="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground"></div>
-				{/if}
-			</button>
-			<button
-				class="px-4 py-2 text-sm font-medium transition-colors relative"
-				class:text-foreground={viewMode === 'trash'}
-				class:text-foreground-muted={viewMode !== 'trash'}
-				onclick={() => switchViewMode('trash')}
-			>
-				<span class="flex items-center gap-2">
-					<iconify-icon icon="ri:delete-bin-line"></iconify-icon>
-					Trash
-					{#if trashFiles.length > 0 || (viewMode === 'trash' && trashFiles.length > 0)}
-						<span class="ml-1 px-1.5 py-0.5 text-xs bg-foreground-subtle/20 rounded-full">
-							{trashFiles.length}
-						</span>
-					{/if}
-				</span>
-				{#if viewMode === 'trash'}
-					<div class="absolute bottom-0 left-0 right-0 h-0.5 bg-foreground"></div>
-				{/if}
-			</button>
-		</div>
-
 		<!-- Toolbar -->
-		{#if viewMode === 'files'}
-			<div class="flex items-center justify-between mb-4">
-				<!-- Breadcrumbs -->
-				<nav class="flex items-center gap-1 text-sm">
-					{#each breadcrumbs() as crumb, i}
-						{#if i > 0}
-							<iconify-icon icon="ri:arrow-right-s-line" class="text-foreground-subtle"></iconify-icon>
-						{/if}
-						{#if i === breadcrumbs().length - 1}
-							<span class="text-foreground font-medium">{crumb.name}</span>
-						{:else}
-							<button
-								class="text-foreground-muted hover:text-foreground transition-colors"
-								onclick={() => navigateToFolder(crumb.path)}
-							>
-								{crumb.name}
-							</button>
-						{/if}
-					{/each}
-				</nav>
-
-				<!-- Actions -->
-				<div class="flex items-center gap-2">
-					{#if isLakePath}
-						<!-- Read-only indicator for lake folder -->
-						<span class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-purple-600 dark:text-purple-400 bg-purple-500/10 rounded-lg">
-							<iconify-icon icon="ri:database-2-line"></iconify-icon>
-							Read-only
-						</span>
+		<div class="flex items-center justify-between mb-4">
+			<!-- Breadcrumbs -->
+			<nav class="flex items-center gap-1 text-sm">
+				{#each breadcrumbs() as crumb, i}
+					{#if i > 0}
+						<Icon icon="ri:arrow-right-s-line" class="text-foreground-subtle"/>
+					{/if}
+					{#if i === breadcrumbs().length - 1}
+						<span class="text-foreground font-medium">{crumb.name}</span>
 					{:else}
 						<button
-							class="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
-							onclick={() => (showNewFolderModal = true)}
+							class="text-foreground-muted hover:text-foreground transition-colors"
+							onclick={() => navigateToFolder(crumb.path)}
 						>
-							<iconify-icon icon="ri:folder-add-line"></iconify-icon>
-							New folder
+							{crumb.name}
 						</button>
-						<button
-							class="flex items-center gap-2 px-3 py-1.5 text-sm bg-foreground text-background hover:bg-foreground/90 rounded-lg transition-colors"
-							onclick={() => fileInput?.click()}
-							disabled={uploading}
-						>
-							<iconify-icon icon="ri:upload-2-line"></iconify-icon>
-							Upload
-						</button>
-					<input
-						bind:this={fileInput}
-						type="file"
-						multiple
-						class="hidden"
-						aria-hidden="true"
-						onchange={(e) => e.currentTarget.files && handleUpload(e.currentTarget.files)}
-					/>
 					{/if}
-				</div>
+				{/each}
+			</nav>
+
+			<!-- Actions -->
+			<div class="flex items-center gap-2">
+				<button
+					class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
+					onclick={navigateToTrash}
+				>
+					<Icon icon="ri:delete-bin-line"/>
+					Trash
+				</button>
+				<button
+					class="flex items-center gap-2 px-3 py-1.5 text-sm text-foreground-muted hover:text-foreground hover:bg-surface-elevated rounded-lg transition-colors"
+					onclick={() => (showNewFolderModal = true)}
+				>
+					<Icon icon="ri:folder-add-line"/>
+					New folder
+				</button>
+				<button
+					class="flex items-center gap-2 px-3 py-1.5 text-sm bg-foreground text-background hover:bg-foreground/90 rounded-lg transition-colors"
+					onclick={() => fileInput?.click()}
+					disabled={uploading}
+				>
+					<Icon icon="ri:upload-2-line"/>
+					Upload
+				</button>
+				<input
+					bind:this={fileInput}
+					type="file"
+					multiple
+					class="hidden"
+					aria-hidden="true"
+					onchange={(e) => e.currentTarget.files && handleUpload(e.currentTarget.files)}
+				/>
 			</div>
-		{:else}
-			<!-- Trash Toolbar -->
-			<div class="flex items-center justify-between mb-4">
-				<p class="text-sm text-foreground-muted">
-					Items in Trash are automatically deleted after 30 days
-				</p>
-				{#if trashFiles.length > 0}
-					<button
-						class="flex items-center gap-2 px-3 py-1.5 text-sm text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
-						onclick={() => (showEmptyTrashModal = true)}
-					>
-						<iconify-icon icon="ri:delete-bin-line"></iconify-icon>
-						Empty Trash
-					</button>
-				{/if}
-			</div>
-		{/if}
+		</div>
 
 		<!-- Error Message -->
 		{#if error}
@@ -600,7 +541,7 @@
 		{#if uploading}
 			<div class="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-4">
 				<div class="flex items-center gap-3">
-					<iconify-icon icon="ri:loader-4-line" class="animate-spin text-blue-500"></iconify-icon>
+					<Icon icon="ri:loader-4-line" class="animate-spin text-blue-500"/>
 					<div class="flex-1">
 						<div class="text-sm text-foreground mb-1">Uploading...</div>
 						<div class="h-1.5 bg-blue-500/20 rounded-full overflow-hidden">
@@ -615,204 +556,114 @@
 			</div>
 		{/if}
 
-		<!-- Files View -->
-		{#if viewMode === 'files'}
-			<div
-				class="border rounded-lg overflow-hidden transition-colors"
-				class:border-border={!dragOver || isLakePath}
-				class:border-blue-500={dragOver && !isLakePath}
-				style:background-color={dragOver && !isLakePath ? 'rgba(59, 130, 246, 0.05)' : undefined}
-				ondrop={isLakePath ? undefined : handleDrop}
-				ondragover={isLakePath ? undefined : handleDragOver}
-				ondragleave={isLakePath ? undefined : handleDragLeave}
-				role="region"
-				aria-label="File drop zone"
-			>
-				{#if loading}
-					<div class="p-12 text-center">
-						<iconify-icon icon="ri:loader-4-line" class="text-4xl text-foreground-subtle animate-spin"></iconify-icon>
-						<p class="text-foreground-muted mt-2">Loading...</p>
-					</div>
-				{:else if files.length === 0}
-					<div class="p-12 text-center">
-						{#if isLakePath}
-							<iconify-icon icon="ri:database-2-line" class="text-6xl text-foreground-subtle mb-4"></iconify-icon>
-							<h3 class="text-lg font-medium text-foreground mb-2">No archived data yet</h3>
-							<p class="text-foreground-muted">
-								Data from connected sources will appear here after syncing
-							</p>
-						{:else}
-							<iconify-icon icon="ri:folder-open-line" class="text-6xl text-foreground-subtle mb-4"></iconify-icon>
-							<h3 class="text-lg font-medium text-foreground mb-2">
-								{currentPath ? 'This folder is empty' : 'No files yet'}
-							</h3>
-							<p class="text-foreground-muted mb-4">
-								Drag and drop files here or click Upload to get started
-							</p>
-							<button
-								class="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors"
-								onclick={() => fileInput?.click()}
+		<!-- Files Table -->
+		<div
+			class="border rounded-lg overflow-hidden transition-colors"
+			class:border-border={!dragOver}
+			class:border-blue-500={dragOver}
+			style:background-color={dragOver ? 'rgba(59, 130, 246, 0.05)' : undefined}
+			ondrop={handleDrop}
+			ondragover={handleDragOver}
+			ondragleave={handleDragLeave}
+			role="region"
+			aria-label="File drop zone"
+		>
+			{#if loading}
+				<div class="p-12 text-center">
+					<Icon icon="ri:loader-4-line" class="text-4xl text-foreground-subtle animate-spin"/>
+					<p class="text-foreground-muted mt-2">Loading...</p>
+				</div>
+			{:else if files.length === 0}
+				<div class="p-12 text-center">
+					<Icon icon="ri:folder-open-line" class="text-6xl text-foreground-subtle mb-4"/>
+					<h3 class="text-lg font-medium text-foreground mb-2">
+						{currentPath ? 'This folder is empty' : 'No files yet'}
+					</h3>
+					<p class="text-foreground-muted mb-4">
+						Drag and drop files here or click Upload to get started
+					</p>
+					<button
+						class="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors"
+						onclick={() => fileInput?.click()}
+					>
+						<Icon icon="ri:upload-2-line"/>
+						Upload files
+					</button>
+				</div>
+			{:else}
+				<table class="w-full">
+					<thead class="bg-surface-elevated border-b border-border">
+						<tr>
+							<th class="px-4 py-3 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">
+								Name
+							</th>
+							<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
+								Size
+							</th>
+							<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
+								Modified
+							</th>
+							<th class="px-4 py-3 w-12"></th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-border">
+						{#each files as file}
+							<tr
+								class="group hover:bg-surface-elevated transition-colors cursor-pointer"
+								onclick={() => !renamingFile && handleFileClick(file)}
+								onkeydown={(e) => e.key === 'Enter' && !renamingFile && handleFileClick(file)}
+								oncontextmenu={(e) => showFileContextMenu(e, file)}
 							>
-								<iconify-icon icon="ri:upload-2-line"></iconify-icon>
-								Upload files
-							</button>
-						{/if}
-					</div>
-				{:else}
-					<table class="w-full">
-						<thead class="bg-surface-elevated border-b border-border">
-							<tr>
-								<th class="px-4 py-3 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Name
-								</th>
-								<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Size
-								</th>
-								<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Modified
-								</th>
-								<th class="px-4 py-3 w-12"></th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-border">
-							{#each files as file}
-								<tr
-									class="group hover:bg-surface-elevated transition-colors cursor-pointer"
-									onclick={() => handleFileClick(file)}
-									onkeydown={(e) => e.key === 'Enter' && handleFileClick(file)}
-								>
-									<td class="px-4 py-3">
-										<div class="flex items-center gap-3">
-											<iconify-icon
-												icon={getFileIcon(file)}
-												class="text-xl {getFileIconColor(file)}"
-											></iconify-icon>
-											<span class="text-sm text-foreground">{file.filename}</span>
-										</div>
-									</td>
-									<td class="px-4 py-3 text-right text-sm text-foreground-muted">
-										{file.is_folder ? '-' : formatBytes(file.size_bytes)}
-									</td>
-									<td class="px-4 py-3 text-right text-sm text-foreground-muted">
-										{formatDate(file.updated_at)}
-									</td>
-									<td class="px-4 py-3 text-right">
-										{#if !isLakeFile(file)}
-											<button
-												class="opacity-0 group-hover:opacity-100 p-1 text-foreground-subtle hover:text-red-500 transition-all"
-												onclick={(e) => {
+								<td class="px-4 py-3">
+									<div class="flex items-center gap-3">
+										<Icon
+											icon={getFileIcon(file)}
+											class="text-xl {getFileIconColor(file)}"
+										/>
+										{#if renamingFile?.id === file.id}
+											<input
+												type="text"
+												bind:value={renameValue}
+												use:autofocus
+												class="text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:border-blue-500 w-full max-w-xs"
+												onclick={(e) => e.stopPropagation()}
+												onkeydown={(e) => {
 													e.stopPropagation();
-													fileToDelete = file;
+													if (e.key === 'Enter') handleRename();
+													if (e.key === 'Escape') cancelRename();
 												}}
-												aria-label="Delete {file.filename}"
-											>
-												<iconify-icon icon="ri:delete-bin-line"></iconify-icon>
-											</button>
+												onblur={cancelRename}
+												disabled={renaming}
+											/>
+										{:else}
+											<span class="text-sm text-foreground">{file.filename}</span>
 										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				{/if}
-			</div>
-		{:else}
-			<!-- Trash View -->
-			<div class="border border-border rounded-lg overflow-hidden">
-				{#if loading}
-					<div class="p-12 text-center">
-						<iconify-icon icon="ri:loader-4-line" class="text-4xl text-foreground-subtle animate-spin"></iconify-icon>
-						<p class="text-foreground-muted mt-2">Loading...</p>
-					</div>
-				{:else if trashFiles.length === 0}
-					<div class="p-12 text-center">
-						<iconify-icon icon="ri:delete-bin-line" class="text-6xl text-foreground-subtle mb-4"></iconify-icon>
-						<h3 class="text-lg font-medium text-foreground mb-2">Trash is empty</h3>
-						<p class="text-foreground-muted">
-							Deleted files will appear here for 30 days before being permanently removed
-						</p>
-					</div>
-				{:else}
-					<table class="w-full">
-						<thead class="bg-surface-elevated border-b border-border">
-							<tr>
-								<th class="px-4 py-3 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Name
-								</th>
-								<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Size
-								</th>
-								<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Deleted
-								</th>
-								<th class="px-4 py-3 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">
-									Expires
-								</th>
-								<th class="px-4 py-3 w-24"></th>
+									</div>
+								</td>
+								<td class="px-4 py-3 text-right text-sm text-foreground-muted">
+									{file.is_folder ? '-' : formatBytes(file.size_bytes)}
+								</td>
+								<td class="px-4 py-3 text-right text-sm text-foreground-muted">
+									{formatDate(file.updated_at)}
+								</td>
+								<td class="px-4 py-3 text-right">
+									<button
+										class="opacity-0 group-hover:opacity-100 p-1 text-foreground-subtle hover:text-foreground transition-all"
+										onclick={(e) => {
+											e.stopPropagation();
+											showFileContextMenu(e, file);
+										}}
+										aria-label="Actions for {file.filename}"
+									>
+										<Icon icon="ri:more-2-fill"/>
+									</button>
+								</td>
 							</tr>
-						</thead>
-						<tbody class="divide-y divide-border">
-							{#each trashFiles as file}
-								{@const daysRemaining = file.deleted_at ? getDaysRemaining(file.deleted_at) : 30}
-								{@const isWarning = daysRemaining <= 7}
-								{@const isCritical = daysRemaining <= 3}
-								<tr class="group hover:bg-surface-elevated transition-colors">
-									<td class="px-4 py-3">
-										<div class="flex items-center gap-3">
-											<iconify-icon
-												icon={getFileIcon(file)}
-												class="text-xl {getFileIconColor(file)} opacity-50"
-											></iconify-icon>
-											<div>
-												<span class="text-sm text-foreground">{file.filename}</span>
-												<p class="text-xs text-foreground-subtle">{file.path}</p>
-											</div>
-										</div>
-									</td>
-									<td class="px-4 py-3 text-right text-sm text-foreground-muted">
-										{file.is_folder ? '-' : formatBytes(file.size_bytes)}
-									</td>
-									<td class="px-4 py-3 text-right text-sm text-foreground-muted">
-										{file.deleted_at ? formatDate(file.deleted_at) : '-'}
-									</td>
-									<td class="px-4 py-3 text-right">
-										<span
-											class="text-xs px-2 py-1 rounded-full {isCritical
-												? 'bg-red-500/10 text-red-600 dark:text-red-400'
-												: isWarning
-													? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
-													: 'text-foreground-muted'}"
-										>
-											{daysRemaining} {daysRemaining === 1 ? 'day' : 'days'}
-										</span>
-									</td>
-									<td class="px-4 py-3 text-right">
-										<div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-all">
-											<button
-												class="p-1 text-foreground-subtle hover:text-emerald-500 transition-colors"
-												onclick={() => (fileToRestore = file)}
-												aria-label="Restore {file.filename}"
-												title="Restore"
-											>
-												<iconify-icon icon="ri:arrow-go-back-line"></iconify-icon>
-											</button>
-											<button
-												class="p-1 text-foreground-subtle hover:text-red-500 transition-colors"
-												onclick={() => (fileToPurge = file)}
-												aria-label="Delete forever {file.filename}"
-												title="Delete forever"
-											>
-												<iconify-icon icon="ri:delete-bin-7-line"></iconify-icon>
-											</button>
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				{/if}
-			</div>
-		{/if}
+						{/each}
+					</tbody>
+				</table>
+			{/if}
+		</div>
 	</div>
 </Page>
 
@@ -826,217 +677,49 @@
 {/if}
 
 <!-- New Folder Modal -->
-{#if showNewFolderModal}
-	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-		onclick={() => (showNewFolderModal = false)}
-		onkeydown={(e) => e.key === 'Escape' && (showNewFolderModal = false)}
-		role="dialog"
-		aria-modal="true"
-		tabindex="-1"
-	>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-		<div
-			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
-			onclick={(e) => e.stopPropagation()}
-			role="document"
+<Modal open={showNewFolderModal} onClose={() => { showNewFolderModal = false; newFolderName = ''; }} title="New Folder" width="sm">
+	<input
+		type="text"
+		bind:value={newFolderName}
+		placeholder="Folder name"
+		class="modal-input"
+		onkeydown={(e) => e.key === 'Enter' && handleCreateFolder()}
+	/>
+	{#snippet footer()}
+		<button class="modal-btn modal-btn-secondary" onclick={() => { showNewFolderModal = false; newFolderName = ''; }}>
+			Cancel
+		</button>
+		<button
+			class="modal-btn modal-btn-primary"
+			onclick={handleCreateFolder}
+			disabled={creatingFolder || !newFolderName.trim()}
 		>
-			<h2 class="text-lg font-medium text-foreground mb-4">New Folder</h2>
-			<input
-				type="text"
-				bind:value={newFolderName}
-				placeholder="Folder name"
-				class="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground placeholder:text-foreground-subtle focus:outline-none focus:ring-2 focus:ring-foreground/20"
-				onkeydown={(e) => e.key === 'Enter' && handleCreateFolder()}
-			/>
-			<div class="flex justify-end gap-3 mt-6">
-				<button
-					class="px-4 py-2 text-sm text-foreground-muted hover:text-foreground transition-colors"
-					onclick={() => (showNewFolderModal = false)}
-				>
-					Cancel
-				</button>
-				<button
-					class="px-4 py-2 text-sm bg-foreground text-background rounded-lg hover:bg-foreground/90 transition-colors disabled:opacity-50"
-					onclick={handleCreateFolder}
-					disabled={creatingFolder || !newFolderName.trim()}
-				>
-					{creatingFolder ? 'Creating...' : 'Create'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+			{creatingFolder ? 'Creating...' : 'Create'}
+		</button>
+	{/snippet}
+</Modal>
 
 <!-- Delete Confirmation Modal (Soft Delete) -->
-{#if fileToDelete}
-	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-		onclick={() => (fileToDelete = null)}
-		onkeydown={(e) => e.key === 'Escape' && (fileToDelete = null)}
-		role="dialog"
-		aria-modal="true"
-		tabindex="-1"
-	>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-		<div
-			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
-			onclick={(e) => e.stopPropagation()}
-			role="document"
+<Modal open={!!fileToDelete} onClose={() => (fileToDelete = null)} title="Move to Trash?" width="sm">
+	{#if fileToDelete}
+		<p class="text-foreground-muted">
+			"{fileToDelete.filename}" will be moved to Trash.
+			{#if fileToDelete.is_folder}
+				This includes all contents inside the folder.
+			{/if}
+			You can restore it within 30 days.
+		</p>
+	{/if}
+	{#snippet footer()}
+		<button class="modal-btn modal-btn-secondary" onclick={() => (fileToDelete = null)}>
+			Cancel
+		</button>
+		<button
+			class="modal-btn bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
+			onclick={handleDelete}
+			disabled={deleting}
 		>
-			<h2 class="text-lg font-medium text-foreground mb-2">Move to Trash?</h2>
-			<p class="text-foreground-muted mb-6">
-				"{fileToDelete.filename}" will be moved to Trash.
-				{#if fileToDelete.is_folder}
-					This includes all contents inside the folder.
-				{/if}
-				You can restore it within 30 days.
-			</p>
-			<div class="flex justify-end gap-3">
-				<button
-					class="px-4 py-2 text-sm text-foreground-muted hover:text-foreground transition-colors"
-					onclick={() => (fileToDelete = null)}
-				>
-					Cancel
-				</button>
-				<button
-					class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
-					onclick={handleDelete}
-					disabled={deleting}
-				>
-					{deleting ? 'Moving...' : 'Move to Trash'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
-
-<!-- Restore Confirmation Modal -->
-{#if fileToRestore}
-	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-		onclick={() => (fileToRestore = null)}
-		onkeydown={(e) => e.key === 'Escape' && (fileToRestore = null)}
-		role="dialog"
-		aria-modal="true"
-		tabindex="-1"
-	>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-		<div
-			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
-			onclick={(e) => e.stopPropagation()}
-			role="document"
-		>
-			<h2 class="text-lg font-medium text-foreground mb-2">Restore {fileToRestore.is_folder ? 'Folder' : 'File'}?</h2>
-			<p class="text-foreground-muted mb-6">
-				"{fileToRestore.filename}" will be restored to its original location.
-				{#if fileToRestore.is_folder}
-					This includes all contents inside the folder.
-				{/if}
-			</p>
-			<div class="flex justify-end gap-3">
-				<button
-					class="px-4 py-2 text-sm text-foreground-muted hover:text-foreground transition-colors"
-					onclick={() => (fileToRestore = null)}
-				>
-					Cancel
-				</button>
-				<button
-					class="px-4 py-2 text-sm bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors disabled:opacity-50"
-					onclick={handleRestore}
-					disabled={restoring}
-				>
-					{restoring ? 'Restoring...' : 'Restore'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
-
-<!-- Purge Confirmation Modal (Permanent Delete) -->
-{#if fileToPurge}
-	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-		onclick={() => (fileToPurge = null)}
-		onkeydown={(e) => e.key === 'Escape' && (fileToPurge = null)}
-		role="dialog"
-		aria-modal="true"
-		tabindex="-1"
-	>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-		<div
-			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
-			onclick={(e) => e.stopPropagation()}
-			role="document"
-		>
-			<h2 class="text-lg font-medium text-foreground mb-2">Delete Forever?</h2>
-			<p class="text-foreground-muted mb-6">
-				"{fileToPurge.filename}" will be permanently deleted.
-				{#if fileToPurge.is_folder}
-					This includes all contents inside the folder.
-				{/if}
-				<strong class="text-red-500">This action cannot be undone.</strong>
-			</p>
-			<div class="flex justify-end gap-3">
-				<button
-					class="px-4 py-2 text-sm text-foreground-muted hover:text-foreground transition-colors"
-					onclick={() => (fileToPurge = null)}
-				>
-					Cancel
-				</button>
-				<button
-					class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
-					onclick={handlePurge}
-					disabled={purging}
-				>
-					{purging ? 'Deleting...' : 'Delete Forever'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
-
-<!-- Empty Trash Confirmation Modal -->
-{#if showEmptyTrashModal}
-	<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-		onclick={() => (showEmptyTrashModal = false)}
-		onkeydown={(e) => e.key === 'Escape' && (showEmptyTrashModal = false)}
-		role="dialog"
-		aria-modal="true"
-		tabindex="-1"
-	>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
-		<div
-			class="bg-surface border border-border rounded-xl shadow-xl p-6 w-full max-w-md"
-			onclick={(e) => e.stopPropagation()}
-			role="document"
-		>
-			<h2 class="text-lg font-medium text-foreground mb-2">Empty Trash?</h2>
-			<p class="text-foreground-muted mb-6">
-				All {trashFiles.length} {trashFiles.length === 1 ? 'item' : 'items'} in Trash will be permanently deleted.
-				<strong class="text-red-500">This action cannot be undone.</strong>
-			</p>
-			<div class="flex justify-end gap-3">
-				<button
-					class="px-4 py-2 text-sm text-foreground-muted hover:text-foreground transition-colors"
-					onclick={() => (showEmptyTrashModal = false)}
-				>
-					Cancel
-				</button>
-				<button
-					class="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
-					onclick={handleEmptyTrash}
-					disabled={emptyingTrash}
-				>
-					{emptyingTrash ? 'Emptying...' : 'Empty Trash'}
-				</button>
-			</div>
-		</div>
-	</div>
-{/if}
+			{deleting ? 'Moving...' : 'Move to Trash'}
+		</button>
+	{/snippet}
+</Modal>

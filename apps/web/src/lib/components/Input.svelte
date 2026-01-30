@@ -1,5 +1,5 @@
 <script lang="ts">
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let {
 		type = "text",
@@ -207,11 +207,11 @@
 						onclick={handleClear}
 						aria-label="Clear input"
 					>
-						<iconify-icon
-							icon="mdi:close-circle"
+						<Icon
+							icon="ri:close-circle-line"
 							width="14"
 							height="14"
-						></iconify-icon>
+						/>
 					</button>
 				{/if}
 
@@ -268,8 +268,8 @@
 						!saveError &&
 						!isSaving}
 				>
-					<iconify-icon icon="mdi:alert" width="14" height="14"
-					></iconify-icon>
+					<Icon icon="ri:alert-line" width="14" height="14"
+					/>
 				</div>
 
 				<!-- Saving/loading spinner -->
@@ -277,12 +277,12 @@
 					class="icon icon-saving"
 					class:visible={isSaving || loading}
 				>
-					<iconify-icon
-						icon="mdi:loading"
+					<Icon
+						icon="ri:loader-4-line"
 						width="14"
 						height="14"
 						class="spinner"
-					></iconify-icon>
+					/>
 				</div>
 
 				<!-- Saved check (unfocused, saved successfully or success prop) -->
@@ -295,8 +295,8 @@
 						!loading &&
 						!warning}
 				>
-					<iconify-icon icon="mdi:check" width="14" height="14"
-					></iconify-icon>
+					<Icon icon="ri:check-line" width="14" height="14"
+					/>
 				</div>
 
 				<!-- Error X -->
@@ -304,8 +304,8 @@
 					class="icon icon-error"
 					class:visible={saveError && !isFocused}
 				>
-					<iconify-icon icon="mdi:close" width="14" height="14"
-					></iconify-icon>
+					<Icon icon="ri:close-line" width="14" height="14"
+					/>
 				</div>
 			</div>
 

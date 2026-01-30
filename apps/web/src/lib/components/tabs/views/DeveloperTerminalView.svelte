@@ -1,6 +1,6 @@
 <script lang="ts">
     import type { Tab } from "$lib/tabs/types";
-    import "iconify-icon";
+    import Icon from "$lib/components/Icon.svelte";
     import { onMount, onDestroy } from "svelte";
     import { browser } from "$app/environment";
 
@@ -325,7 +325,7 @@
     <!-- Header -->
     <div class="terminal-header">
         <div class="header-left">
-            <iconify-icon icon="ri:terminal-box-line"></iconify-icon>
+            <Icon icon="ri:terminal-box-line"/>
             <span class="terminal-title">Terminal</span>
         </div>
         <div class="header-right">
@@ -335,14 +335,14 @@
                 class:error={connectionStatus === "error"}
             >
                 {#if connectionStatus === "connected"}
-                    <iconify-icon icon="ri:wifi-line"></iconify-icon>
+                    <Icon icon="ri:wifi-line"/>
                     Connected
                 {:else if connectionStatus === "connecting"}
-                    <iconify-icon icon="ri:loader-4-line" class="animate-spin"
-                    ></iconify-icon>
+                    <Icon icon="ri:loader-4-line" class="animate-spin"
+                    />
                     Connecting
                 {:else}
-                    <iconify-icon icon="ri:computer-line"></iconify-icon>
+                    <Icon icon="ri:computer-line"/>
                     Local
                 {/if}
             </span>

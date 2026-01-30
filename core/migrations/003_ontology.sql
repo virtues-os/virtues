@@ -1,4 +1,5 @@
 -- Ontology: Health, Location, Social, Activity, Knowledge, Speech, Financial (SQLite)
+-- Unchanged from original - data tables for ELT pipeline
 
 --------------------------------------------------------------------------------
 -- HEALTH: HEART RATE
@@ -19,8 +20,7 @@ CREATE TABLE IF NOT EXISTS data_health_heart_rate (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_heart_rate_timestamp
-    ON data_health_heart_rate(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_health_heart_rate_timestamp ON data_health_heart_rate(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_health_heart_rate_set_updated_at
     AFTER UPDATE ON data_health_heart_rate
@@ -49,8 +49,7 @@ CREATE TABLE IF NOT EXISTS data_health_hrv (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_hrv_timestamp
-    ON data_health_hrv(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_health_hrv_timestamp ON data_health_hrv(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_health_hrv_set_updated_at
     AFTER UPDATE ON data_health_hrv
@@ -79,8 +78,7 @@ CREATE TABLE IF NOT EXISTS data_health_steps (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_steps_timestamp
-    ON data_health_steps(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_health_steps_timestamp ON data_health_steps(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_health_steps_set_updated_at
     AFTER UPDATE ON data_health_steps
@@ -112,8 +110,7 @@ CREATE TABLE IF NOT EXISTS data_health_sleep (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_sleep_start
-    ON data_health_sleep(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_health_sleep_start ON data_health_sleep(start_time DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_health_sleep_set_updated_at
     AFTER UPDATE ON data_health_sleep
@@ -150,10 +147,8 @@ CREATE TABLE IF NOT EXISTS data_health_workout (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_health_workout_start
-    ON data_health_workout(start_time DESC);
-CREATE INDEX IF NOT EXISTS idx_health_workout_type
-    ON data_health_workout(workout_type);
+CREATE INDEX IF NOT EXISTS idx_health_workout_start ON data_health_workout(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_health_workout_type ON data_health_workout(workout_type);
 
 CREATE TRIGGER IF NOT EXISTS data_health_workout_set_updated_at
     AFTER UPDATE ON data_health_workout
@@ -186,10 +181,8 @@ CREATE TABLE IF NOT EXISTS data_location_point (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_location_point_timestamp
-    ON data_location_point(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_location_point_coords
-    ON data_location_point(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_location_point_timestamp ON data_location_point(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_location_point_coords ON data_location_point(latitude, longitude);
 
 CREATE TRIGGER IF NOT EXISTS data_location_point_set_updated_at
     AFTER UPDATE ON data_location_point
@@ -223,10 +216,8 @@ CREATE TABLE IF NOT EXISTS data_location_visit (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_location_visit_arrival
-    ON data_location_visit(arrival_time DESC);
-CREATE INDEX IF NOT EXISTS idx_location_visit_place
-    ON data_location_visit(place_id) WHERE place_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_location_visit_arrival ON data_location_visit(arrival_time DESC);
+CREATE INDEX IF NOT EXISTS idx_location_visit_place ON data_location_visit(place_id) WHERE place_id IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS data_location_visit_set_updated_at
     AFTER UPDATE ON data_location_visit
@@ -270,17 +261,13 @@ CREATE TABLE IF NOT EXISTS data_social_email (
     deleted_at_source TEXT,
     is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
-    -- Vector embedding deferred (removed for SQLite migration)
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_social_email_timestamp
-    ON data_social_email(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_social_email_thread
-    ON data_social_email(thread_id) WHERE thread_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_social_email_from_person
-    ON data_social_email(from_person_id) WHERE from_person_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_social_email_timestamp ON data_social_email(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_social_email_thread ON data_social_email(thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_social_email_from_person ON data_social_email(from_person_id) WHERE from_person_id IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS data_social_email_set_updated_at
     AFTER UPDATE ON data_social_email
@@ -317,17 +304,13 @@ CREATE TABLE IF NOT EXISTS data_social_message (
     deleted_at_source TEXT,
     is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
-    -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_social_message_timestamp
-    ON data_social_message(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_social_message_thread
-    ON data_social_message(thread_id) WHERE thread_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_social_message_channel
-    ON data_social_message(channel);
+CREATE INDEX IF NOT EXISTS idx_social_message_timestamp ON data_social_message(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_social_message_thread ON data_social_message(thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_social_message_channel ON data_social_message(channel);
 
 CREATE TRIGGER IF NOT EXISTS data_social_message_set_updated_at
     AFTER UPDATE ON data_social_message
@@ -352,7 +335,6 @@ CREATE TABLE IF NOT EXISTS data_activity_app_usage (
     window_title TEXT,
     document_path TEXT,
     url TEXT,
-    thing_id TEXT REFERENCES wiki_things(id),
     source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
@@ -363,12 +345,8 @@ CREATE TABLE IF NOT EXISTS data_activity_app_usage (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_activity_app_usage_start
-    ON data_activity_app_usage(start_time DESC);
-CREATE INDEX IF NOT EXISTS idx_activity_app_usage_app
-    ON data_activity_app_usage(app_name);
-CREATE INDEX IF NOT EXISTS idx_activity_app_usage_thing
-    ON data_activity_app_usage(thing_id) WHERE thing_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_activity_app_usage_start ON data_activity_app_usage(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_app_usage_app ON data_activity_app_usage(app_name);
 
 CREATE TRIGGER IF NOT EXISTS data_activity_app_usage_set_updated_at
     AFTER UPDATE ON data_activity_app_usage
@@ -391,7 +369,6 @@ CREATE TABLE IF NOT EXISTS data_activity_web_browsing (
     visit_duration_seconds INTEGER,
     scroll_depth_percent REAL,
     timestamp TEXT NOT NULL,
-    thing_id TEXT REFERENCES wiki_things(id),
     source_stream_id TEXT NOT NULL,
     source_table TEXT NOT NULL,
     source_provider TEXT NOT NULL,
@@ -402,12 +379,8 @@ CREATE TABLE IF NOT EXISTS data_activity_web_browsing (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_activity_web_browsing_timestamp
-    ON data_activity_web_browsing(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_activity_web_browsing_domain
-    ON data_activity_web_browsing(domain);
-CREATE INDEX IF NOT EXISTS idx_activity_web_browsing_thing
-    ON data_activity_web_browsing(thing_id) WHERE thing_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_activity_web_browsing_timestamp ON data_activity_web_browsing(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_web_browsing_domain ON data_activity_web_browsing(domain);
 
 CREATE TRIGGER IF NOT EXISTS data_activity_web_browsing_set_updated_at
     AFTER UPDATE ON data_activity_web_browsing
@@ -430,7 +403,6 @@ CREATE TABLE IF NOT EXISTS data_knowledge_document (
     document_type TEXT,
     external_id TEXT,
     external_url TEXT,
-    thing_id TEXT REFERENCES wiki_things(id),
     tags TEXT DEFAULT '[]',  -- JSON array
     is_authored INTEGER DEFAULT 0,
     created_time TEXT,
@@ -441,15 +413,11 @@ CREATE TABLE IF NOT EXISTS data_knowledge_document (
     deleted_at_source TEXT,
     is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
-    -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_knowledge_document_title
-    ON data_knowledge_document(title);
-CREATE INDEX IF NOT EXISTS idx_knowledge_document_thing
-    ON data_knowledge_document(thing_id) WHERE thing_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_knowledge_document_title ON data_knowledge_document(title);
 
 CREATE TRIGGER IF NOT EXISTS data_knowledge_document_set_updated_at
     AFTER UPDATE ON data_knowledge_document
@@ -472,7 +440,6 @@ CREATE TABLE IF NOT EXISTS data_knowledge_ai_conversation (
     content TEXT NOT NULL,
     model TEXT,
     provider TEXT NOT NULL,
-    thing_id TEXT REFERENCES wiki_things(id),
     tags TEXT DEFAULT '[]',  -- JSON array
     timestamp TEXT NOT NULL,
     source_stream_id TEXT NOT NULL,
@@ -481,17 +448,12 @@ CREATE TABLE IF NOT EXISTS data_knowledge_ai_conversation (
     deleted_at_source TEXT,
     is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
-    -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_knowledge_ai_conversation_conversation
-    ON data_knowledge_ai_conversation(conversation_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_knowledge_ai_conversation_timestamp
-    ON data_knowledge_ai_conversation(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_knowledge_ai_conversation_thing
-    ON data_knowledge_ai_conversation(thing_id) WHERE thing_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_knowledge_ai_conversation_conversation ON data_knowledge_ai_conversation(conversation_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_knowledge_ai_conversation_timestamp ON data_knowledge_ai_conversation(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_knowledge_ai_conversation_set_updated_at
     AFTER UPDATE ON data_knowledge_ai_conversation
@@ -526,8 +488,7 @@ CREATE TABLE IF NOT EXISTS data_speech_transcription (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_speech_transcription_start
-    ON data_speech_transcription(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_speech_transcription_start ON data_speech_transcription(start_time DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_speech_transcription_set_updated_at
     AFTER UPDATE ON data_speech_transcription
@@ -564,10 +525,8 @@ CREATE TABLE IF NOT EXISTS data_financial_account (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_financial_account_type
-    ON data_financial_account(account_type);
-CREATE INDEX IF NOT EXISTS idx_financial_account_active
-    ON data_financial_account(id) WHERE is_active = 1;
+CREATE INDEX IF NOT EXISTS idx_financial_account_type ON data_financial_account(account_type);
+CREATE INDEX IF NOT EXISTS idx_financial_account_active ON data_financial_account(id) WHERE is_active = 1;
 
 CREATE TRIGGER IF NOT EXISTS data_financial_account_set_updated_at
     AFTER UPDATE ON data_financial_account
@@ -604,17 +563,13 @@ CREATE TABLE IF NOT EXISTS data_financial_transaction (
     deleted_at_source TEXT,
     is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
-    -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_financial_transaction_timestamp
-    ON data_financial_transaction(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_financial_transaction_account
-    ON data_financial_transaction(account_id);
-CREATE INDEX IF NOT EXISTS idx_financial_transaction_merchant
-    ON data_financial_transaction(merchant_name) WHERE merchant_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_timestamp ON data_financial_transaction(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_account ON data_financial_transaction(account_id);
+CREATE INDEX IF NOT EXISTS idx_financial_transaction_merchant ON data_financial_transaction(merchant_name) WHERE merchant_name IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS data_financial_transaction_set_updated_at
     AFTER UPDATE ON data_financial_transaction
@@ -650,12 +605,9 @@ CREATE TABLE IF NOT EXISTS data_financial_asset (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_financial_asset_account
-    ON data_financial_asset(account_id);
-CREATE INDEX IF NOT EXISTS idx_financial_asset_symbol
-    ON data_financial_asset(symbol) WHERE symbol IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_financial_asset_timestamp
-    ON data_financial_asset(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_asset_account ON data_financial_asset(account_id);
+CREATE INDEX IF NOT EXISTS idx_financial_asset_symbol ON data_financial_asset(symbol) WHERE symbol IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_financial_asset_timestamp ON data_financial_asset(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_financial_asset_set_updated_at
     AFTER UPDATE ON data_financial_asset
@@ -692,12 +644,9 @@ CREATE TABLE IF NOT EXISTS data_financial_liability (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_financial_liability_account
-    ON data_financial_liability(account_id);
-CREATE INDEX IF NOT EXISTS idx_financial_liability_timestamp
-    ON data_financial_liability(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_financial_liability_next_payment
-    ON data_financial_liability(next_payment_due_date) WHERE next_payment_due_date IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_financial_liability_account ON data_financial_liability(account_id);
+CREATE INDEX IF NOT EXISTS idx_financial_liability_timestamp ON data_financial_liability(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_liability_next_payment ON data_financial_liability(next_payment_due_date) WHERE next_payment_due_date IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS data_financial_liability_set_updated_at
     AFTER UPDATE ON data_financial_liability
@@ -708,7 +657,7 @@ BEGIN
 END;
 
 --------------------------------------------------------------------------------
--- EMBEDDING JOBS (deferred - keep table for future use)
+-- EMBEDDING JOBS
 --------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS data_embedding_jobs (
@@ -727,8 +676,7 @@ CREATE TABLE IF NOT EXISTS data_embedding_jobs (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status
-    ON data_embedding_jobs(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_embedding_jobs_status ON data_embedding_jobs(status, created_at DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_embedding_jobs_set_updated_at
     AFTER UPDATE ON data_embedding_jobs
@@ -753,13 +701,12 @@ CREATE TABLE IF NOT EXISTS data_calendar (
     response_status TEXT, -- User's RSVP: accepted, declined, tentative, needsAction
 
     -- People
-    organizer_identifier TEXT, -- organizer_identifier
-    attendee_identifiers TEXT DEFAULT '[]',  -- attendee_identifiers (JSON array)
+    organizer_identifier TEXT,
+    attendee_identifiers TEXT DEFAULT '[]',  -- JSON array
     organizer_person_id TEXT REFERENCES wiki_people(id),
     attendee_person_ids TEXT DEFAULT '[]',  -- JSON array
 
     -- Context
-    thing_id TEXT REFERENCES wiki_things(id),
     place_id TEXT REFERENCES wiki_places(id),
     location_name TEXT,
 
@@ -788,19 +735,13 @@ CREATE TABLE IF NOT EXISTS data_calendar (
     deleted_at_source TEXT,
     is_archived INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
-    -- Vector embedding deferred
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_calendar_start
-    ON data_calendar(start_time DESC);
-CREATE INDEX IF NOT EXISTS idx_calendar_thing
-    ON data_calendar(thing_id) WHERE thing_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_calendar_place
-    ON data_calendar(place_id) WHERE place_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_calendar_block_type
-    ON data_calendar(block_type) WHERE block_type IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_calendar_start ON data_calendar(start_time DESC);
+CREATE INDEX IF NOT EXISTS idx_calendar_place ON data_calendar(place_id) WHERE place_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_calendar_block_type ON data_calendar(block_type) WHERE block_type IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS data_calendar_set_updated_at
     AFTER UPDATE ON data_calendar
@@ -829,8 +770,7 @@ CREATE TABLE IF NOT EXISTS data_device_battery (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_device_battery_timestamp
-    ON data_device_battery(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_device_battery_timestamp ON data_device_battery(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_device_battery_set_updated_at
     AFTER UPDATE ON data_device_battery
@@ -858,8 +798,7 @@ CREATE TABLE IF NOT EXISTS data_environment_pressure (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_environment_pressure_timestamp
-    ON data_environment_pressure(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_environment_pressure_timestamp ON data_environment_pressure(timestamp DESC);
 
 CREATE TRIGGER IF NOT EXISTS data_environment_pressure_set_updated_at
     AFTER UPDATE ON data_environment_pressure
