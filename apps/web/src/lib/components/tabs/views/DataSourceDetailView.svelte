@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { routeToEntityId } from "$lib/tabs/types";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { Button, Page } from "$lib";
 	import {
 		pauseSource,
@@ -11,10 +12,13 @@
 		getJobStatus,
 	} from "$lib/api/client";
 	import { toast } from "svelte-sonner";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// Extract sourceId from route (e.g., '/source/source_xyz' → 'source_xyz')
+	const sourceId = $derived(routeToEntityId(tab.route));
 
 	interface Source {
 		id: string;
@@ -78,7 +82,7 @@
 	});
 
 	async function loadData() {
-		if (!tab.sourceId) {
+		if (!sourceId) {
 			error = "No source ID provided";
 			loading = false;
 			return;
@@ -89,8 +93,8 @@
 
 		try {
 			const [sourceRes, streamsRes, catalogRes] = await Promise.all([
-				fetch(`/api/sources/${tab.sourceId}`),
-				fetch(`/api/sources/${tab.sourceId}/streams`),
+				fetch(`/api/sources/${sourceId}`),
+				fetch(`/api/sources/${sourceId}/streams`),
 				fetch(`/api/catalog/sources`),
 			]);
 
@@ -110,7 +114,7 @@
 
 			// Update tab label with source name
 			if (source?.name) {
-				workspaceStore.updateTab(tab.id, { label: source.name });
+				spaceStore.updateTab(tab.id, { label: source.name });
 			}
 
 			// Load Plaid accounts if this is a Plaid source
@@ -187,7 +191,7 @@
 		try {
 			await deleteSource(source.id);
 			// Navigate back to sources list
-			workspaceStore.openTabFromRoute("/data/sources");
+			spaceStore.openTabFromRoute("/source");
 		} catch (err) {
 			console.error("Failed to delete source:", err);
 			toast.error("Failed to delete source. Please try again.");
@@ -331,7 +335,7 @@
 	}
 
 	function handleBackToSources() {
-		workspaceStore.openTabFromRoute("/data/sources");
+		spaceStore.openTabFromRoute("/source");
 	}
 
 	async function loadPlaidAccounts() {
@@ -398,7 +402,7 @@
 				onclick={handleBackToSources}
 				class="inline-flex items-center gap-2 text-foreground hover:underline"
 			>
-				<iconify-icon icon="ri:arrow-left-line"></iconify-icon>
+				<Icon icon="ri:arrow-left-line"/>
 				Back to Sources
 			</button>
 		</div>
@@ -445,11 +449,11 @@
 								onclick={handleTogglePause}
 								disabled={isPausing}
 							>
-								<iconify-icon
+								<Icon
 									icon={source.is_active
 										? "ri:pause-line"
 										: "ri:play-line"}
-								></iconify-icon>
+								/>
 								<span
 									>{source.is_active
 										? "Pause"
@@ -462,8 +466,8 @@
 								onclick={handleDelete}
 								disabled={isDeleting}
 							>
-								<iconify-icon icon="ri:delete-bin-line"
-								></iconify-icon>
+								<Icon icon="ri:delete-bin-line"
+								/>
 								<span>Delete</span>
 							</Button>
 						</div>
@@ -507,10 +511,10 @@
 							{#each plaidAccounts as account}
 								<div class="p-4 bg-surface border border-border rounded-lg">
 									<div class="flex items-start gap-3 mb-3">
-										<iconify-icon
+										<Icon
 											icon={getAccountTypeIcon(account.account_type)}
 											class="text-xl text-foreground-subtle mt-0.5"
-										></iconify-icon>
+										/>
 										<div class="flex-1 min-w-0">
 											<h4 class="font-medium text-foreground truncate">
 												{account.name}

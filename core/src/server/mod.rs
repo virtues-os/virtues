@@ -2,6 +2,7 @@
 
 pub mod api;
 pub mod ingest;
+pub mod yjs;
 
 use axum::{
     extract::DefaultBodyLimit,
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use self::ingest::AppState;
+use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
 use crate::storage::stream_writer::StreamWriter;
@@ -79,10 +81,28 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         }
     });
 
+    // Create ToolExecutor (optional - fails gracefully if TOLLBOOTH_INTERNAL_SECRET not set)
+    let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())
+        .map(Arc::new)
+        .ok();
+
+    if tool_executor.is_some() {
+        tracing::info!("ToolExecutor initialized successfully");
+    } else {
+        tracing::warn!("ToolExecutor not initialized - TOLLBOOTH_INTERNAL_SECRET may not be set");
+    }
+
+    // Initialize Yjs state for real-time collaborative editing
+    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
+    yjs_state.start_save_processor();
+    tracing::info!("Yjs WebSocket server initialized");
+
     let state = AppState {
         db: client.database.clone(),
         storage: client.storage.clone(),
         stream_writer: stream_writer_arc.clone(),
+        tool_executor,
+        yjs_state: yjs_state.clone(),
     };
 
     let app = Router::new()
@@ -252,15 +272,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/seed/data-quality",
             get(api::seed_data_quality_handler),
         )
-        // Embedding API
-        .route(
-            "/api/embeddings/stats",
-            get(api::get_embedding_stats_handler),
-        )
-        .route(
-            "/api/embeddings/trigger",
-            post(api::trigger_embedding_handler),
-        )
         // Metrics API
         .route(
             "/api/metrics/activity",
@@ -289,6 +300,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/usage/check", get(api::usage_check_handler))
         // Search API (Exa)
         .route("/api/search/web", post(api::exa_search_handler))
+        // Unsplash API (cover image search)
+        .route("/api/unsplash/search", post(api::unsplash_search_handler))
         // Storage API
         .route(
             "/api/storage/objects",
@@ -360,12 +373,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/organization/:slug",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
-        // Wiki - Thing
-        .route("/api/wiki/things", get(api::wiki_list_things_handler))
-        .route(
-            "/api/wiki/thing/:slug",
-            get(api::wiki_get_thing_handler).put(api::wiki_update_thing_handler),
-        )
         // Wiki - Telos
         .route(
             "/api/wiki/telos/active",
@@ -428,30 +435,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Developer API
         .route("/api/developer/sql", post(api::execute_sql_handler))
         .route("/api/developer/tables", get(api::list_tables_handler))
-        // Bookmarks API
-        .route("/api/bookmarks", get(api::list_bookmarks_handler))
-        .route("/api/bookmarks/tab", post(api::create_tab_bookmark_handler))
-        .route(
-            "/api/bookmarks/entity",
-            post(api::create_entity_bookmark_handler),
-        )
-        .route("/api/bookmarks/:id", delete(api::delete_bookmark_handler))
-        .route(
-            "/api/bookmarks/toggle/tab",
-            post(api::toggle_route_bookmark_handler),
-        )
-        .route(
-            "/api/bookmarks/toggle/entity",
-            post(api::toggle_entity_bookmark_handler),
-        )
-        .route(
-            "/api/bookmarks/check/route",
-            get(api::check_route_bookmark_handler),
-        )
-        .route(
-            "/api/bookmarks/check/entity/:entity_id",
-            get(api::check_entity_bookmark_handler),
-        )
+        // Lake API
+        .route("/api/lake/summary", get(api::get_lake_summary_handler))
+        .route("/api/lake/streams", get(api::list_lake_streams_handler))
         // Pages API
         .route("/api/pages", get(api::list_pages_handler).post(api::create_page_handler))
         .route(
@@ -464,46 +450,63 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .put(api::update_page_handler)
                 .delete(api::delete_page_handler),
         )
-        // Workspaces API
-        .route("/api/workspaces", get(api::list_workspaces_handler).post(api::create_workspace_handler))
+        // Page Versions API
         .route(
-            "/api/workspaces/:id",
-            get(api::get_workspace_handler)
-                .put(api::update_workspace_handler)
-                .delete(api::delete_workspace_handler),
-        )
-        .route("/api/workspaces/:id/tree", get(api::get_workspace_tree_handler))
-        .route("/api/workspaces/:id/tabs", put(api::save_workspace_tabs_handler))
-        // Explorer Nodes API
-        .route("/api/explorer-nodes", post(api::create_explorer_node_handler))
-        .route(
-            "/api/explorer-nodes/:id",
-            put(api::update_explorer_node_handler)
-                .delete(api::delete_explorer_node_handler),
-        )
-        .route("/api/explorer-nodes/move", post(api::move_explorer_nodes_handler))
-        // View Resolution API
-        .route("/api/views/resolve", post(api::resolve_view_handler))
-        // Sessions API (chat sessions)
-        .route("/api/sessions", get(api::list_sessions_handler).post(api::create_session_handler))
-        .route(
-            "/api/sessions/:id",
-            get(api::get_session_handler)
-                .patch(api::update_session_handler)
-                .delete(api::delete_session_handler),
+            "/api/pages/:id/versions",
+            get(api::list_page_versions_handler)
+                .post(api::create_page_version_handler),
         )
         .route(
-            "/api/sessions/title",
-            post(api::generate_session_title_handler),
+            "/api/pages/versions/:version_id",
+            get(api::get_page_version_handler),
         )
-        // Session Usage & Compaction API
+        // Spaces API
+        .route("/api/spaces", get(api::list_spaces_handler).post(api::create_space_handler))
         .route(
-            "/api/sessions/:id/usage",
-            get(api::get_session_usage_handler),
+            "/api/spaces/:id",
+            get(api::get_space_handler)
+                .put(api::update_space_handler)
+                .delete(api::delete_space_handler),
+        )
+        .route("/api/spaces/:id/tabs", put(api::save_space_tabs_handler))
+        .route("/api/spaces/:id/views", get(api::list_space_views_handler))
+        // Space Items API (root-level items at space level, not in any folder)
+        .route("/api/spaces/:id/items", get(api::list_space_items_handler).post(api::add_space_item_handler).delete(api::remove_space_item_handler))
+        .route("/api/spaces/:id/items/reorder", put(api::reorder_space_items_handler))
+        // Namespaces API
+        .route("/api/namespaces", get(api::list_namespaces_handler))
+        .route("/api/namespaces/:name", get(api::get_namespace_handler))
+        // Views API
+        .route("/api/views", post(api::create_view_handler))
+        .route(
+            "/api/views/:id",
+            get(api::get_view_handler)
+                .put(api::update_view_handler)
+                .delete(api::delete_view_handler),
+        )
+        .route("/api/views/:id/resolve", post(api::resolve_view_handler))
+        .route("/api/views/:id/items", get(api::list_view_items_handler).post(api::add_view_item_handler).delete(api::remove_view_item_handler))
+        .route("/api/views/:id/items/reorder", put(api::reorder_view_items_handler))
+        // Chats API
+        .route("/api/chats", get(api::list_chats_handler).post(api::create_chat_handler))
+        .route(
+            "/api/chats/:id",
+            get(api::get_chat_handler)
+                .patch(api::update_chat_handler)
+                .delete(api::delete_chat_handler),
         )
         .route(
-            "/api/sessions/:id/compact",
-            post(api::compact_session_handler),
+            "/api/chats/title",
+            post(api::generate_chat_title_handler),
+        )
+        // Chat Usage & Compaction API
+        .route(
+            "/api/chats/:id/usage",
+            get(api::get_chat_usage_handler),
+        )
+        .route(
+            "/api/chats/:id/compact",
+            post(api::compact_chat_handler),
         )
         // Chat API (streaming)
         .route("/api/chat", post(api::chat_handler))
@@ -525,6 +528,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/feedback", post(crate::api::feedback::submit_feedback))
         // Terminal API (WebSocket)
         .route("/ws/terminal", get(crate::api::terminal::terminal_ws_handler))
+        // Yjs WebSocket (real-time collaborative editing)
+        .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
         .with_state(state.clone())
         .layer(DefaultBodyLimit::disable()) // Disable default 2MB limit
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)); // Set 20MB limit for audio files

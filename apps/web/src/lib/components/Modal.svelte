@@ -1,5 +1,5 @@
 <script lang="ts">
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 	import type { Snippet } from "svelte";
 
 	interface Props {
@@ -20,11 +20,15 @@
 		footer,
 	}: Props = $props();
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape") {
-			e.preventDefault();
-			onClose();
-		}
+	// Portal action - moves element to body
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
 	}
 
 	function handleBackdropClick(e: MouseEvent) {
@@ -56,13 +60,13 @@
 
 {#if open}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
-	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation">
+	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal>
 		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title}>
 			{#if title}
 				<div class="modal-header">
 					<h2 class="modal-title">{title}</h2>
 					<button class="close-btn" onclick={onClose} aria-label="Close">
-						<iconify-icon icon="ri:close-line" width="18"></iconify-icon>
+						<Icon icon="ri:close-line" width="18" />
 					</button>
 				</div>
 			{/if}

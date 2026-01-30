@@ -1,20 +1,9 @@
 //! Drive API - User file storage and quota management
 //!
 //! Personal cloud storage for user-uploaded files (like Google Drive).
-//! Part of the unified storage structure at `/home/user/data/`:
-//!
-//! ```text
-//! /home/user/data/
-//! ├── drive/    # User files (this module)
-//! └── lake/     # ELT archives (elt_stream_objects)
-//! ```
-//!
-//! The "lake" folder appears as a virtual read-only folder within the Drive UI,
-//! allowing users to browse their archived data alongside their uploaded files.
 //!
 //! Environment variables:
 //! - `DRIVE_PATH`: Override drive storage location (default: `/home/user/data/drive`)
-//! - `DATA_LAKE_PATH`: Override lake storage location (default: `/home/user/data/lake`)
 //!
 //! Storage tiers:
 //! - Free:     100 GB
@@ -26,6 +15,7 @@ use futures::Stream;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::path::{Component, PathBuf};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -492,26 +482,188 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
 // File Operations
 // =============================================================================
 
-/// List files in a directory (empty path = root)
+/// Reconcile a folder's database records with the actual filesystem.
 ///
-/// At root level, injects a virtual "lake" folder for browsing ELT archives.
-/// Paths starting with "lake/" are handled specially to browse elt_stream_objects.
-pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>> {
-    // Handle lake virtual folder paths
-    if path == "lake" {
-        return list_lake_streams(pool).await;
+/// Compares DB records against the filesystem directory and:
+/// - Auto-registers files found on disk but missing from DB
+/// - Removes ghost DB records for files no longer on disk
+///
+/// Called before listing files to keep DB in sync with reality.
+pub async fn reconcile_folder(pool: &SqlitePool, config: &DriveConfig, path: &str) -> Result<()> {
+    let validated_path = validate_drive_path(path)?;
+    let path_str = validated_path.to_string_lossy().to_string();
+
+    // Build filesystem path for this folder
+    let fs_dir = if path_str.is_empty() {
+        config.base_path.clone()
+    } else {
+        config.base_path.join(&path_str)
+    };
+
+    // Read directory contents — if it doesn't exist, nothing to reconcile
+    let mut dir = match fs::read_dir(&fs_dir).await {
+        Ok(dir) => dir,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(Error::Storage(format!(
+                "Failed to read directory {}: {e}",
+                fs_dir.display()
+            )));
+        }
+    };
+
+    // Collect filesystem entries: filename -> (is_dir, size_bytes)
+    let mut fs_entries: Vec<(String, bool, u64)> = Vec::new();
+    while let Some(entry) = dir
+        .next_entry()
+        .await
+        .map_err(|e| Error::Storage(format!("Failed to read dir entry: {e}")))?
+    {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Skip hidden files (consistent with validate_drive_path)
+        if name.starts_with('.') {
+            continue;
+        }
+        let metadata = entry
+            .metadata()
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to stat {name}: {e}")))?;
+        fs_entries.push((name, metadata.is_dir(), metadata.len()));
     }
-    if let Some(stream_name) = path.strip_prefix("lake/") {
-        if !stream_name.is_empty() {
-            return list_lake_stream_objects(pool, stream_name).await;
+
+    // Query ALL DB records for this folder (including soft-deleted)
+    // to avoid re-registering trashed files
+    let db_records: Vec<DriveFile> = if path_str.is_empty() {
+        sqlx::query_as::<_, DriveFile>(
+            r#"
+            SELECT id, path, filename, mime_type, size_bytes,
+                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+            FROM drive_files
+            WHERE parent_id IS NULL
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to query folder records: {e}")))?
+    } else {
+        // Look up parent folder ID
+        let parent_id = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+        )
+        .bind(&path_str)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find folder: {e}")))?;
+
+        match parent_id {
+            Some(pid) => {
+                sqlx::query_as::<_, DriveFile>(
+                    r#"
+                    SELECT id, path, filename, mime_type, size_bytes,
+                           is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                    FROM drive_files
+                    WHERE parent_id = $1
+                    "#,
+                )
+                .bind(pid)
+                .fetch_all(pool)
+                .await
+                .map_err(|e| Error::Database(format!("Failed to query folder records: {e}")))?
+            }
+            // Folder doesn't exist in DB yet — all FS entries are untracked
+            None => Vec::new(),
+        }
+    };
+
+    let db_filenames: HashSet<String> = db_records.iter().map(|f| f.filename.clone()).collect();
+    let fs_filenames: HashSet<String> = fs_entries.iter().map(|(name, _, _)| name.clone()).collect();
+
+    // --- Auto-register files on disk but not in DB ---
+    let untracked: Vec<&(String, bool, u64)> = fs_entries
+        .iter()
+        .filter(|(name, _, _)| !db_filenames.contains(name))
+        .collect();
+
+    if !untracked.is_empty() {
+        // Resolve parent_id (create folder record if needed for subdirectories)
+        let parent_id = if path_str.is_empty() {
+            None
+        } else {
+            get_or_create_folder_record(pool, &path_str).await?
+        };
+
+        for (filename, is_dir, size) in untracked {
+            let file_path = if path_str.is_empty() {
+                filename.clone()
+            } else {
+                format!("{}/{}", path_str, filename)
+            };
+
+            let mime_type = if !is_dir {
+                mime_guess::from_path(filename)
+                    .first()
+                    .map(|m| m.to_string())
+            } else {
+                None
+            };
+
+            let size_bytes = if *is_dir { 0i64 } else { *size as i64 };
+            let file_id = Uuid::new_v4().to_string();
+
+            let rows = sqlx::query(
+                r#"
+                INSERT OR IGNORE INTO drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                "#,
+            )
+            .bind(&file_id)
+            .bind(&file_path)
+            .bind(filename)
+            .bind(&mime_type)
+            .bind(size_bytes)
+            .bind(&parent_id)
+            .bind(*is_dir)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to auto-register {file_path}: {e}")))?;
+
+            if rows.rows_affected() > 0 {
+                update_usage_add(pool, size_bytes, *is_dir).await?;
+                tracing::info!("Auto-registered untracked file: {}", file_path);
+            }
         }
     }
 
+    // --- Remove ghost DB records (in DB but not on disk) ---
+    // Only remove non-deleted records (soft-deleted files missing from disk were likely purged correctly)
+    for file in &db_records {
+        if file.deleted_at.is_some() {
+            continue;
+        }
+        if !fs_filenames.contains(&file.filename) {
+            sqlx::query("DELETE FROM drive_files WHERE id = $1")
+                .bind(&file.id)
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    Error::Database(format!("Failed to remove ghost record {}: {e}", file.path))
+                })?;
+
+            update_usage_remove(pool, file.size_bytes, file.is_folder).await?;
+            tracing::info!("Removed ghost DB record: {}", file.path);
+        }
+    }
+
+    Ok(())
+}
+
+/// List files in a directory (empty path = root)
+pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>> {
     // Validate path for regular drive paths
     let validated_path = validate_drive_path(path)?;
     let path_str = validated_path.to_string_lossy().to_string();
 
-    let mut files = if path_str.is_empty() {
+    let files = if path_str.is_empty() {
         // Root level - files with no parent (exclude deleted)
         sqlx::query_as::<_, DriveFile>(
             r#"
@@ -554,121 +706,6 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
             }
         }
     };
-
-    // At root level, inject the virtual lake folder
-    if path_str.is_empty() {
-        // Get total lake size for display
-        let lake_size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-        let now = Timestamp::now();
-        let lake_folder = DriveFile {
-            id: LAKE_VIRTUAL_ID.to_string(),
-            path: "lake".to_string(),
-            filename: "lake".to_string(),
-            mime_type: None,
-            size_bytes: lake_size,
-            is_folder: true,
-            parent_id: None,
-            sha256_hash: None,
-            deleted_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-        // Insert lake folder at the beginning (folders first)
-        files.insert(0, lake_folder);
-    }
-
-    Ok(files)
-}
-
-/// List stream names as virtual folders within the lake
-async fn list_lake_streams(pool: &SqlitePool) -> Result<Vec<DriveFile>> {
-    // Get distinct stream names with their total sizes and object counts
-    let streams = sqlx::query_as::<_, (String, i64, Timestamp)>(
-        r#"
-        SELECT 
-            stream_name,
-            SUM(size_bytes) as total_size,
-            MAX(created_at) as latest_created
-        FROM elt_stream_objects
-        GROUP BY stream_name
-        ORDER BY stream_name ASC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list lake streams: {e}")))?;
-
-    let folders: Vec<DriveFile> = streams
-        .into_iter()
-        .map(|(stream_name, total_size, latest_created)| DriveFile {
-            id: format!("{}{}", LAKE_STREAM_PREFIX, stream_name),
-            path: format!("lake/{}", stream_name),
-            filename: stream_name,
-            mime_type: None,
-            size_bytes: total_size,
-            is_folder: true,
-            parent_id: Some(LAKE_VIRTUAL_ID.to_string()),
-            sha256_hash: None,
-            deleted_at: None,
-            created_at: latest_created,
-            updated_at: latest_created,
-        })
-        .collect();
-
-    Ok(folders)
-}
-
-/// List stream objects as virtual files within a lake stream folder
-async fn list_lake_stream_objects(pool: &SqlitePool, stream_name: &str) -> Result<Vec<DriveFile>> {
-    let objects = sqlx::query_as::<_, (String, String, i64, Timestamp, Timestamp)>(
-        r#"
-        SELECT 
-            id,
-            storage_key,
-            size_bytes,
-            created_at,
-            updated_at
-        FROM elt_stream_objects
-        WHERE stream_name = $1
-        ORDER BY created_at DESC
-        "#,
-    )
-    .bind(stream_name)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list lake stream objects: {e}")))?;
-
-    let files: Vec<DriveFile> = objects
-        .into_iter()
-        .map(|(id, storage_key, size_bytes, created_at, updated_at)| {
-            // Extract filename from storage_key (e.g., "streams/gmail/.../records_123.jsonl" -> "records_123.jsonl")
-            let filename = storage_key
-                .rsplit('/')
-                .next()
-                .unwrap_or(&storage_key)
-                .to_string();
-
-            DriveFile {
-                id: format!("{}{}", LAKE_OBJECT_PREFIX, id),
-                path: format!("lake/{}/{}", stream_name, filename),
-                filename,
-                mime_type: Some("application/x-jsonlines".to_string()),
-                size_bytes,
-                is_folder: false,
-                parent_id: Some(format!("{}{}", LAKE_STREAM_PREFIX, stream_name)),
-                sha256_hash: None,
-                deleted_at: None,
-                created_at,
-                updated_at,
-            }
-        })
-        .collect();
 
     Ok(files)
 }
@@ -1063,9 +1100,9 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
         return Err(Error::InvalidInput("File is already in trash".into()));
     }
 
-    if file.is_folder {
+    let (trash_bytes, trash_count) = if file.is_folder {
         // Recursively soft-delete folder contents
-        let _total_bytes = soft_delete_folder_recursive(pool, &file.id).await?;
+        soft_delete_folder_recursive(pool, &file.id).await?
     } else {
         // Soft delete single file (mark as deleted, keep on disk)
         sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
@@ -1073,19 +1110,21 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
             .execute(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
-    }
+        (file.size_bytes, 1i64)
+    };
 
-    // Update trash tracking
+    // Update trash tracking with actual bytes and count
     sqlx::query(
         r#"
         UPDATE drive_usage
         SET trash_bytes = trash_bytes + $1,
-            trash_count = trash_count + 1,
+            trash_count = trash_count + $2,
             updated_at = datetime('now')
-        WHERE id = $2
+        WHERE id = $3
         "#,
     )
-    .bind(file.size_bytes)
+    .bind(trash_bytes)
+    .bind(trash_count)
     .bind(USAGE_SINGLETON_ID)
     .execute(pool)
     .await
@@ -1094,8 +1133,9 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
     Ok(())
 }
 
-/// Recursively soft-delete a folder and its contents
-async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Result<i64> {
+/// Recursively soft-delete a folder and its contents.
+/// Returns (total_bytes, total_count) of all affected items.
+async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Result<(i64, i64)> {
     // Get all non-deleted children
     let children = sqlx::query_as::<_, DriveFile>(
         r#"
@@ -1111,11 +1151,15 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
     .map_err(|e| Error::Database(format!("Failed to list folder contents: {e}")))?;
 
     let mut total_bytes = 0i64;
+    let mut total_count = 0i64;
 
     // Recursively soft-delete children
     for child in children {
         if child.is_folder {
-            total_bytes += Box::pin(soft_delete_folder_recursive(pool, &child.id)).await?;
+            let (bytes, count) =
+                Box::pin(soft_delete_folder_recursive(pool, &child.id)).await?;
+            total_bytes += bytes;
+            total_count += count;
         } else {
             // Soft delete the file
             sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
@@ -1124,6 +1168,7 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
                 .await
                 .ok();
             total_bytes += child.size_bytes;
+            total_count += 1;
         }
     }
 
@@ -1134,7 +1179,9 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
         .await
         .map_err(|e| Error::Database(format!("Failed to soft delete folder: {e}")))?;
 
-    Ok(total_bytes)
+    total_count += 1; // count the folder itself
+
+    Ok((total_bytes, total_count))
 }
 
 /// Recursively permanently delete a folder and its contents from disk and DB
@@ -1583,7 +1630,7 @@ pub async fn move_file(
         None
     };
 
-    // Update database
+    // Update database record for the file/folder itself
     sqlx::query(
         r#"
         UPDATE drive_files
@@ -1598,6 +1645,27 @@ pub async fn move_file(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update file record: {e}")))?;
+
+    // For folders: update all descendant paths to reflect the new prefix.
+    // e.g. renaming "documents" → "docs" rewrites "documents/report.pdf" → "docs/report.pdf"
+    if file.is_folder {
+        let old_prefix_len = file.path.chars().count() as i64 + 1; // +1 because SQLite substr is 1-based (character count, not bytes)
+        let like_pattern = format!("{}/%", file.path);
+        sqlx::query(
+            r#"
+            UPDATE drive_files
+            SET path = $1 || substr(path, $2),
+                updated_at = datetime('now')
+            WHERE path LIKE $3
+            "#,
+        )
+        .bind(&new_path_str)
+        .bind(old_prefix_len)
+        .bind(&like_pattern)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update descendant paths: {e}")))?;
+    }
 
     get_file_metadata(pool, file_id).await
 }

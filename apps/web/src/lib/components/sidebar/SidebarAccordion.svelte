@@ -105,7 +105,7 @@
 	.accordion-header {
 		@apply flex w-full cursor-pointer items-center gap-2 rounded-lg;
 		@apply px-2.5 py-1.5;
-		margin-bottom: 2px;
+		margin-bottom: var(--sidebar-item-gap, 4px);
 		/* Staggered load animation (initial mount) */
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 		/* Staggered expand transition - uses --stagger-delay CSS var */
@@ -179,7 +179,7 @@
 		overflow: hidden;
 		min-height: 0;
 		@apply flex flex-col;
-		gap: 2px; /* Subtle gap between items */
+		gap: var(--sidebar-item-gap, 4px);
 		padding-top: 6px; /* More space after header */
 		padding-left: 0; /* No indent - cleaner look */
 		/* Enhanced slide animation with fade and horizontal movement */

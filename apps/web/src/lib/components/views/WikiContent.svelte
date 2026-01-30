@@ -1,11 +1,11 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, untrack } from 'svelte';
 	import {
 		resolveSlug,
 		getPersonBySlug,
 		getPlaceBySlug,
 		getOrganizationBySlug,
-		getThingBySlug,
 		getDayByDate,
 		getActBySlug,
 		getChapterBySlug,
@@ -15,7 +15,6 @@
 		apiToPersonPage,
 		apiToPlacePage,
 		apiToOrganizationPage,
-		apiToThingPage,
 		apiToDayPage,
 	} from '$lib/wiki/converters';
 	import { getPageBySlug, getOrCreateDayPage, getOrCreateYearPage, MOCK_DAY_PAGE } from '$lib/wiki';
@@ -26,7 +25,6 @@
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
-		ThingPage,
 	} from '$lib/components/wiki';
 	import {
 		isDayPage,
@@ -34,7 +32,6 @@
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
-		isThingPage,
 	} from '$lib/wiki/types';
 	import type { WikiPage as WikiPageType } from '$lib/wiki/types';
 
@@ -170,15 +167,7 @@
 					}
 					break;
 				}
-				case 'thing': {
-					const thing = await getThingBySlug(slug);
-					if (thing) {
-						wikiPage = apiToThingPage(thing);
-						updateLabel(thing.canonical_name);
-					}
-					break;
-				}
-				case 'day': {
+					case 'day': {
 					const day = await getDayByDate(slug);
 					if (day) {
 						wikiPage = apiToDayPage(day);
@@ -288,12 +277,12 @@
 <div class="wiki-content">
 	{#if loading}
 		<div class="loading">
-			<iconify-icon icon="ri:loader-4-line" class="animate-spin"></iconify-icon>
+			<Icon icon="ri:loader-4-line" class="animate-spin"/>
 			<span>Loading...</span>
 		</div>
 	{:else if error}
 		<div class="error">
-			<iconify-icon icon="ri:error-warning-line"></iconify-icon>
+			<Icon icon="ri:error-warning-line"/>
 			<h1>Page not found</h1>
 			<p>{error}</p>
 		</div>
@@ -308,14 +297,12 @@
 			<PlacePage page={wikiPage} />
 		{:else if isOrganizationPage(wikiPage)}
 			<OrganizationPage page={wikiPage} />
-		{:else if isThingPage(wikiPage)}
-			<ThingPage page={wikiPage} />
 		{:else}
 			<WikiPage page={wikiPage} />
 		{/if}
 	{:else}
 		<div class="error">
-			<iconify-icon icon="ri:file-unknow-line"></iconify-icon>
+			<Icon icon="ri:file-unknow-line"/>
 			<h1>Page not found</h1>
 			<p>The page "{slug}" doesn't exist yet.</p>
 		</div>
@@ -338,7 +325,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.loading iconify-icon {
+	.loading :global(svg) {
 		font-size: 32px;
 	}
 
@@ -362,7 +349,7 @@
 		padding: 2rem;
 	}
 
-	.error iconify-icon {
+	.error :global(svg) {
 		font-size: 48px;
 		color: var(--color-foreground-subtle);
 		margin-bottom: 8px;

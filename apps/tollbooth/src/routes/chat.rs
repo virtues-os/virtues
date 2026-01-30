@@ -36,19 +36,26 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub model: String,
-    pub messages: Vec<Message>,
+    /// Messages array - use Value to support complex message types (tool calls, etc.)
+    pub messages: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub role: String,
-    pub content: String,
+    /// Tool definitions for function calling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<serde_json::Value>>,
+    /// Tool choice: "auto", "none", "required", or specific tool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+    /// Provider-specific options (e.g., thinking config for Claude)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_options: Option<serde_json::Value>,
+    /// Gemini thought signature (required for subsequent tool calls)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Usage data for billing
@@ -203,13 +210,13 @@ async fn complete_with_billing(
         // Use streaming module for SSE passthrough
         let streaming_req = crate::routes::streaming::StreamingRequest {
             model: request.model.clone(),
-            messages: request
-                .messages
-                .iter()
-                .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
-                .collect(),
+            messages: request.messages.clone(),
             max_tokens: request.max_tokens,
             temperature: request.temperature,
+            tools: request.tools.clone(),
+            tool_choice: request.tool_choice.clone(),
+            provider_options: request.provider_options.clone(),
+            thought_signature: request.thought_signature.clone(),
         };
 
         return crate::routes::streaming::create_streaming_response(
@@ -242,14 +249,12 @@ async fn complete_with_billing(
             .messages
             .iter()
             .filter_map(|m| {
-                if m.role == "system" {
-                    system_prompt = Some(m.content.clone());
+                let role = m.get("role").and_then(|r| r.as_str()).unwrap_or("");
+                if role == "system" {
+                    system_prompt = m.get("content").and_then(|c| c.as_str()).map(String::from);
                     None
                 } else {
-                    Some(serde_json::json!({
-                        "role": m.role,
-                        "content": m.content
-                    }))
+                    Some(m.clone())
                 }
             })
             .collect();
@@ -268,20 +273,38 @@ async fn complete_with_billing(
             body["temperature"] = serde_json::json!(temp);
         }
 
+        // Add tools for Anthropic (they support tools natively)
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::json!(tools);
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+
         body
     } else {
         // OpenAI-compatible format (OpenAI, Cerebras, xAI, Vertex AI)
-        serde_json::json!({
+        let mut body = serde_json::json!({
             "model": provider.model_name,
-            "messages": request.messages.iter().map(|m| {
-                serde_json::json!({
-                    "role": m.role,
-                    "content": m.content
-                })
-            }).collect::<Vec<_>>(),
+            "messages": request.messages,
             "max_tokens": request.max_tokens.unwrap_or(4096),
             "temperature": request.temperature.unwrap_or(0.7)
-        })
+        });
+
+        // Add Gemini thought signature if provided
+        if let Some(sig) = &request.thought_signature {
+            body["thought_signature"] = serde_json::json!(sig);
+        }
+
+        // Add tools if provided
+        if let Some(tools) = &request.tools {
+            body["tools"] = serde_json::json!(tools);
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            body["tool_choice"] = tool_choice.clone();
+        }
+
+        body
     };
 
     // 5. Build HTTP request with proper auth headers
@@ -298,6 +321,15 @@ async fn complete_with_billing(
         // Vertex AI uses OAuth2 access tokens
         let access_token = get_vertex_ai_token().await?;
         req_builder = req_builder.header("Authorization", format!("Bearer {}", access_token));
+        
+        // Debug logging for thought signature
+        if let Some(sig) = &request.thought_signature {
+            tracing::info!(
+                model = %request.model,
+                signature_len = sig.len(),
+                "Forwarding request with thought_signature"
+            );
+        }
     } else {
         // OpenAI, Cerebras, xAI - all use API keys
         req_builder = req_builder.header(

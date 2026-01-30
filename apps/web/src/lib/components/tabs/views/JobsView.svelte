@@ -1,10 +1,10 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { workspaceStore } from '$lib/stores/workspace.svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
 	import { Page, Button, Badge } from '$lib';
 	import type { Job } from '$lib/api/client';
 	import { cancelJob } from '$lib/api/client';
-	import 'iconify-icon';
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -121,7 +121,7 @@
 	);
 
 	function handleSourceClick(sourceId: string) {
-		workspaceStore.openTabFromRoute(`/data/sources/${sourceId}`);
+		spaceStore.openTabFromRoute(`/source/${sourceId}`);
 	}
 </script>
 
@@ -135,7 +135,7 @@
 				</p>
 			</div>
 			<Button onclick={loadData} variant="secondary">
-				<iconify-icon icon="ri:refresh-line" class="text-lg"></iconify-icon>
+				<Icon icon="ri:refresh-line" class="text-lg"/>
 				Refresh
 			</Button>
 		</div>
@@ -146,8 +146,8 @@
 			<div class="p-4 bg-error-subtle border border-error rounded-lg text-error">{error}</div>
 		{:else if jobs.length === 0}
 			<div class="border-2 border-dashed border-border rounded-lg p-12 text-center bg-surface-elevated">
-				<iconify-icon icon="ri:history-line" class="text-6xl text-foreground-subtle mb-4"
-				></iconify-icon>
+				<Icon icon="ri:history-line" class="text-6xl text-foreground-subtle mb-4"
+				/>
 				<h3 class="text-lg font-medium text-foreground mb-2">No activity yet</h3>
 				<p class="text-foreground-muted">
 					System activity will appear here once your sources start syncing
@@ -195,7 +195,7 @@
 							{jobStats.active}
 						</span>
 						{#if jobStats.active > 0}
-							<iconify-icon icon="ri:loader-4-line" class="text-primary animate-spin"></iconify-icon>
+							<Icon icon="ri:loader-4-line" class="text-primary animate-spin"/>
 						{/if}
 					</div>
 				</div>
@@ -237,10 +237,10 @@
 								<td class="px-6 py-4 whitespace-nowrap">
 									<Badge variant={getStatusVariant(job.status)} outline class="capitalize">
 										{#if job.status === 'failed' && job.error_message}
-											<iconify-icon icon="ri:error-warning-line" class="text-xs"></iconify-icon>
+											<Icon icon="ri:error-warning-line" class="text-xs"/>
 										{/if}
 										{#if job.status === 'running'}
-											<iconify-icon icon="ri:loader-4-line" class="text-xs animate-spin"></iconify-icon>
+											<Icon icon="ri:loader-4-line" class="text-xs animate-spin"/>
 										{/if}
 										{job.status.replace('_', ' ')}
 									</Badge>

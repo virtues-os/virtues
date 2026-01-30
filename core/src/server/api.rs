@@ -1,6 +1,7 @@
 //! REST API handlers for source management
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -10,6 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use super::ingest::AppState;
 use crate::error::Error;
+
+/// Sanitize a filename for use in Content-Disposition headers.
+/// Removes characters that could cause header injection or parsing issues.
+fn sanitize_content_disposition(filename: &str) -> String {
+    filename
+        .replace('"', "'")
+        .replace('\\', "_")
+        .replace('\r', "")
+        .replace('\n', "")
+}
 
 /// Helper to convert Result to Response with proper status code
 fn api_response<T: Serialize>(result: crate::error::Result<T>) -> Response {
@@ -134,7 +145,14 @@ pub async fn oauth_callback_handler(
             .flatten()
     });
 
-    match crate::api::handle_oauth_callback(state.db.pool(), &params).await {
+    match crate::api::handle_oauth_callback(
+        state.db.pool(),
+        Some(&state.storage),
+        Some(state.stream_writer.clone()),
+        &params,
+    )
+    .await
+    {
         Ok(response) => {
             // Use return_url from response (same as state extraction, but validated)
             let return_url = response
@@ -1147,20 +1165,6 @@ pub async fn seed_data_quality_handler(
 }
 
 // ============================================================================
-// Embedding handlers
-// ============================================================================
-
-/// Get embedding statistics
-pub async fn get_embedding_stats_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::search::get_embedding_stats(state.db.pool()).await)
-}
-
-/// Trigger embedding job manually
-pub async fn trigger_embedding_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::search::trigger_embedding_job(state.db.pool()).await)
-}
-
-// ============================================================================
 // Metrics handlers
 // ============================================================================
 
@@ -1186,11 +1190,19 @@ pub async fn create_plaid_link_token_handler(
 /// Exchange a public token for an access token
 ///
 /// Called after the user completes the Plaid Link flow.
+/// Triggers initial sync for all enabled streams.
 pub async fn exchange_plaid_token_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::ExchangeTokenRequest>,
 ) -> Response {
-    match crate::api::exchange_public_token(state.db.pool(), request).await {
+    match crate::api::exchange_public_token(
+        state.db.pool(),
+        &state.storage,
+        state.stream_writer.clone(),
+        request,
+    )
+    .await
+    {
         Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
         Err(e) => error_response(e),
     }
@@ -1424,6 +1436,20 @@ pub async fn exa_search_handler(
 }
 
 // =============================================================================
+// Unsplash API Handler
+// =============================================================================
+
+/// Search Unsplash photos for cover images
+pub async fn unsplash_search_handler(
+    Json(request): Json<crate::api::UnsplashSearchRequest>,
+) -> Response {
+    match crate::api::unsplash_search(request).await {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+// =============================================================================
 // Storage API Handlers
 // =============================================================================
 
@@ -1591,30 +1617,6 @@ pub async fn wiki_update_organization_handler(
     Json(request): Json<crate::api::UpdateWikiOrganizationRequest>,
 ) -> Response {
     api_response(crate::api::update_organization(state.db.pool(), id, request).await)
-}
-
-// --- Thing ---
-
-/// Get a thing by slug
-pub async fn wiki_get_thing_handler(
-    State(state): State<AppState>,
-    Path(slug): Path<String>,
-) -> Response {
-    api_response(crate::api::get_thing_by_slug(state.db.pool(), &slug).await)
-}
-
-/// List all things
-pub async fn wiki_list_things_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_things(state.db.pool()).await)
-}
-
-/// Update a thing by ID
-pub async fn wiki_update_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiThingRequest>,
-) -> Response {
-    api_response(crate::api::update_thing(state.db.pool(), id, request).await)
 }
 
 // --- Telos ---
@@ -1879,110 +1881,30 @@ pub async fn execute_code_handler(Json(request): Json<crate::api::ExecuteCodeReq
 }
 
 // =============================================================================
-// Bookmarks API Handlers
+// Chat Usage & Compaction API Handlers
 // =============================================================================
 
-/// List all bookmarks
-pub async fn list_bookmarks_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_bookmarks(state.db.pool()).await)
-}
-
-/// Create a tab bookmark
-pub async fn create_tab_bookmark_handler(
+/// Get token usage for a chat
+pub async fn get_chat_usage_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateTabBookmarkRequest>,
+    Path(chat_id): Path<String>,
 ) -> Response {
-    match crate::api::create_tab_bookmark(state.db.pool(), request).await {
-        Ok(bookmark) => (StatusCode::CREATED, Json(bookmark)).into_response(),
-        Err(e) => error_response(e),
-    }
+    api_response(crate::api::get_chat_usage(state.db.pool(), chat_id).await)
 }
 
-/// Create an entity bookmark
-pub async fn create_entity_bookmark_handler(
+/// Compact a chat (summarize older messages)
+pub async fn compact_chat_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateEntityBookmarkRequest>,
-) -> Response {
-    match crate::api::create_entity_bookmark(state.db.pool(), request).await {
-        Ok(bookmark) => (StatusCode::CREATED, Json(bookmark)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Delete a bookmark by ID
-pub async fn delete_bookmark_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    match crate::api::delete_bookmark(state.db.pool(), id).await {
-        Ok(_) => success_message("Bookmark deleted"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Toggle bookmark for a route (create or delete)
-pub async fn toggle_route_bookmark_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateTabBookmarkRequest>,
-) -> Response {
-    api_response(crate::api::toggle_route_bookmark(state.db.pool(), request).await)
-}
-
-/// Toggle bookmark for an entity (create or delete)
-pub async fn toggle_entity_bookmark_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::CreateEntityBookmarkRequest>,
-) -> Response {
-    api_response(crate::api::toggle_entity_bookmark(state.db.pool(), request).await)
-}
-
-/// Query params for checking route bookmark status
-#[derive(Debug, Deserialize)]
-pub struct RouteBookmarkQuery {
-    pub route: String,
-}
-
-/// Check if a route is bookmarked
-pub async fn check_route_bookmark_handler(
-    State(state): State<AppState>,
-    Query(params): Query<RouteBookmarkQuery>,
-) -> Response {
-    api_response(crate::api::is_route_bookmarked(state.db.pool(), &params.route).await)
-}
-
-/// Check if an entity is bookmarked
-pub async fn check_entity_bookmark_handler(
-    State(state): State<AppState>,
-    Path(entity_id): Path<String>,
-) -> Response {
-    api_response(crate::api::is_entity_bookmarked(state.db.pool(), entity_id).await)
-}
-
-// =============================================================================
-// Session Usage & Compaction API Handlers
-// =============================================================================
-
-/// Get token usage for a session
-pub async fn get_session_usage_handler(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_session_usage(state.db.pool(), session_id).await)
-}
-
-/// Compact a session (summarize older messages)
-pub async fn compact_session_handler(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-    Json(request): Json<Option<CompactSessionRequest>>,
+    Path(chat_id): Path<String>,
+    Json(request): Json<Option<CompactChatRequest>>,
 ) -> Response {
     let options = request.unwrap_or_default().into();
-    api_response(crate::api::compaction::compact_session(state.db.pool(), session_id, options).await)
+    api_response(crate::api::compaction::compact_chat(state.db.pool(), chat_id, options).await)
 }
 
 /// Request body for compaction
 #[derive(Debug, Deserialize, Default)]
-pub struct CompactSessionRequest {
+pub struct CompactChatRequest {
     /// Number of recent exchanges to keep verbatim (default: 8)
     pub keep_recent_exchanges: Option<usize>,
     /// Force compaction even if under threshold
@@ -1990,8 +1912,8 @@ pub struct CompactSessionRequest {
     pub force: bool,
 }
 
-impl From<CompactSessionRequest> for crate::api::compaction::CompactionOptions {
-    fn from(req: CompactSessionRequest) -> Self {
+impl From<CompactChatRequest> for crate::api::compaction::CompactionOptions {
+    fn from(req: CompactChatRequest) -> Self {
         Self {
             keep_recent_exchanges: req.keep_recent_exchanges.unwrap_or(8),
             force: req.force,
@@ -2000,59 +1922,59 @@ impl From<CompactSessionRequest> for crate::api::compaction::CompactionOptions {
 }
 
 // =============================================================================
-// Sessions API Handlers
+// Chats API Handlers
 // =============================================================================
 
-/// List chat sessions
-pub async fn list_sessions_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::sessions::list_sessions(state.db.pool(), 25).await)
+/// List chats
+pub async fn list_chats_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::chats::list_chats(state.db.pool(), 25).await)
 }
 
-/// Create a new chat session with initial messages
-pub async fn create_session_handler(
+/// Create a new chat with initial messages
+pub async fn create_chat_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::sessions::CreateSessionRequest>,
+    Json(request): Json<crate::api::chats::CreateChatRequest>,
 ) -> Response {
-    api_response(crate::api::sessions::create_session_from_request(state.db.pool(), request).await)
+    api_response(crate::api::chats::create_chat_from_request(state.db.pool(), request).await)
 }
 
-/// Get a chat session by ID
-pub async fn get_session_handler(
+/// Get a chat by ID
+pub async fn get_chat_handler(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
+    Path(chat_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::sessions::get_session(state.db.pool(), session_id).await)
+    api_response(crate::api::chats::get_chat(state.db.pool(), chat_id).await)
 }
 
-/// Update a chat session title
-pub async fn update_session_handler(
+/// Update a chat title
+pub async fn update_chat_handler(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
-    Json(request): Json<crate::api::sessions::UpdateTitleRequest>,
+    Path(chat_id): Path<String>,
+    Json(request): Json<crate::api::chats::UpdateTitleRequest>,
 ) -> Response {
     api_response(
-        crate::api::sessions::update_session_title(state.db.pool(), session_id, &request.title)
+        crate::api::chats::update_chat_title(state.db.pool(), chat_id, &request.title)
             .await,
     )
 }
 
-/// Delete a chat session
-pub async fn delete_session_handler(
+/// Delete a chat
+pub async fn delete_chat_handler(
     State(state): State<AppState>,
-    Path(session_id): Path<String>,
+    Path(chat_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::sessions::delete_session(state.db.pool(), session_id).await)
+    api_response(crate::api::chats::delete_chat(state.db.pool(), chat_id).await)
 }
 
-/// Generate a title for a chat session
-pub async fn generate_session_title_handler(
+/// Generate a title for a chat
+pub async fn generate_chat_title_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::sessions::GenerateTitleRequest>,
+    Json(request): Json<crate::api::chats::GenerateTitleRequest>,
 ) -> Response {
     api_response(
-        crate::api::sessions::generate_title(
+        crate::api::chats::generate_title(
             state.db.pool(),
-            request.session_id,
+            request.chat_id,
             &request.messages,
         )
         .await,
@@ -2174,6 +2096,14 @@ pub async fn list_drive_files_handler(
     State(state): State<AppState>,
     Query(params): Query<ListDriveFilesQuery>,
 ) -> Response {
+    // Reconcile filesystem with database before listing
+    let config = crate::api::DriveConfig::from_env();
+    if let Err(e) =
+        crate::api::reconcile_drive_folder(state.db.pool(), &config, &params.path).await
+    {
+        tracing::warn!("Folder reconciliation failed: {e}");
+        // Non-fatal: continue with DB-only listing
+    }
     api_response(crate::api::list_drive_files(state.db.pool(), &params.path).await)
 }
 
@@ -2192,27 +2122,58 @@ pub async fn download_drive_file_handler(
 ) -> Response {
     let config = crate::api::DriveConfig::from_env();
 
-    // Check if this is a lake object - use storage-based download
-    let result = if crate::api::is_lake_object_id(&file_id) {
-        crate::api::download_lake_object(state.db.pool(), &state.storage, &file_id).await
-    } else {
-        crate::api::download_drive_file(state.db.pool(), &config, &file_id).await
-    };
+    // Lake objects use in-memory download (different storage layer)
+    if crate::api::is_lake_object_id(&file_id) {
+        let result =
+            crate::api::download_lake_object(state.db.pool(), &state.storage, &file_id).await;
+        return match result {
+            Ok((file, content)) => {
+                let content_type = file
+                    .mime_type
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+                let filename = sanitize_content_disposition(&file.filename);
+                (
+                    [
+                        (axum::http::header::CONTENT_TYPE, content_type),
+                        (
+                            axum::http::header::CONTENT_DISPOSITION,
+                            format!("attachment; filename=\"{}\"", filename),
+                        ),
+                        (
+                            axum::http::header::CONTENT_LENGTH,
+                            content.len().to_string(),
+                        ),
+                    ],
+                    content,
+                )
+                    .into_response()
+            }
+            Err(e) => error_response(e),
+        };
+    }
 
+    // Regular drive files: stream from disk to avoid loading entire file into memory
+    let result =
+        crate::api::download_drive_file_stream(state.db.pool(), &config, &file_id).await;
     match result {
-        Ok((file, content)) => {
+        Ok((file, stream)) => {
             let content_type = file
                 .mime_type
                 .unwrap_or_else(|| "application/octet-stream".to_string());
+            let filename = sanitize_content_disposition(&file.filename);
             (
                 [
                     (axum::http::header::CONTENT_TYPE, content_type),
                     (
                         axum::http::header::CONTENT_DISPOSITION,
-                        format!("attachment; filename=\"{}\"", file.filename),
+                        format!("attachment; filename=\"{}\"", filename),
+                    ),
+                    (
+                        axum::http::header::CONTENT_LENGTH,
+                        file.size_bytes.to_string(),
                     ),
                 ],
-                content,
+                Body::from_stream(stream),
             )
                 .into_response()
         }
@@ -2432,11 +2393,11 @@ pub async fn list_pages_handler(
     State(state): State<AppState>,
     Query(query): Query<ListPagesQuery>,
 ) -> Response {
+    // Note: workspace_id filter removed - views handle filtering now
     api_response(crate::api::list_pages(
-        state.db.pool(), 
-        query.limit, 
-        query.offset,
-        query.workspace_id.as_deref()
+        state.db.pool(),
+        query.limit,
+        query.offset
     ).await)
 }
 
@@ -2494,124 +2455,296 @@ pub async fn search_entities_handler(
 }
 
 // ============================================================================
-// Workspaces Handlers
+// Page Versions Handlers
 // ============================================================================
 
-/// GET /api/workspaces - List all workspaces
-pub async fn list_workspaces_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::workspaces::list_workspaces(state.db.pool()).await)
+/// Query params for versions list
+#[derive(Debug, Deserialize)]
+pub struct ListVersionsQuery {
+    pub limit: Option<i64>,
 }
 
-/// GET /api/workspaces/:id - Get a single workspace
-pub async fn get_workspace_handler(
+/// GET /api/pages/:id/versions - List versions for a page
+pub async fn list_page_versions_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<ListVersionsQuery>,
 ) -> Response {
-    api_response(crate::api::workspaces::get_workspace(state.db.pool(), &id).await)
+    api_response(crate::api::list_versions(state.db.pool(), &id, query.limit).await)
 }
 
-/// POST /api/workspaces - Create a new workspace
-pub async fn create_workspace_handler(
+/// POST /api/pages/:id/versions - Create a new version snapshot
+pub async fn create_page_version_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::workspaces::CreateWorkspaceRequest>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::CreateVersionRequest>,
 ) -> Response {
-    match crate::api::workspaces::create_workspace(state.db.pool(), request).await {
-        Ok(workspace) => (StatusCode::CREATED, Json(workspace)).into_response(),
+    match crate::api::create_version(state.db.pool(), &id, request).await {
+        Ok(version) => (StatusCode::CREATED, Json(version)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/workspaces/:id - Update a workspace
-pub async fn update_workspace_handler(
+/// GET /api/pages/versions/:version_id - Get a single version (with snapshot for restore)
+pub async fn get_page_version_handler(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::workspaces::UpdateWorkspaceRequest>,
+    Path(version_id): Path<String>,
 ) -> Response {
-    api_response(crate::api::workspaces::update_workspace(state.db.pool(), &id, request).await)
+    api_response(crate::api::get_version(state.db.pool(), &version_id).await)
 }
 
-/// DELETE /api/workspaces/:id - Delete a workspace
-pub async fn delete_workspace_handler(
+// ============================================================================
+// Spaces Handlers
+// ============================================================================
+
+/// GET /api/spaces - List all spaces
+pub async fn list_spaces_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::spaces::list_spaces(state.db.pool()).await)
+}
+
+/// GET /api/spaces/:id - Get a single space
+pub async fn get_space_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::workspaces::delete_workspace(state.db.pool(), &id).await {
-        Ok(_) => success_message("Workspace deleted successfully"),
+    api_response(crate::api::spaces::get_space(state.db.pool(), &id).await)
+}
+
+/// POST /api/spaces - Create a new space
+pub async fn create_space_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::spaces::CreateSpaceRequest>,
+) -> Response {
+    match crate::api::spaces::create_space(state.db.pool(), request).await {
+        Ok(space) => (StatusCode::CREATED, Json(space)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// GET /api/workspaces/:id/tree - Get the explorer tree for a workspace
-pub async fn get_workspace_tree_handler(
+/// PUT /api/spaces/:id - Update a space
+pub async fn update_space_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Json(request): Json<crate::api::spaces::UpdateSpaceRequest>,
 ) -> Response {
-    api_response(crate::api::explorer_nodes::get_workspace_tree(state.db.pool(), &id).await)
+    api_response(crate::api::spaces::update_space(state.db.pool(), &id, request).await)
 }
 
-/// PUT /api/workspaces/:id/tabs - Save tab state for a workspace
-pub async fn save_workspace_tabs_handler(
+/// DELETE /api/spaces/:id - Delete a space
+pub async fn delete_space_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::workspaces::SaveTabStateRequest>,
 ) -> Response {
-    match crate::api::workspaces::save_tab_state(state.db.pool(), &id, request).await {
+    match crate::api::spaces::delete_space(state.db.pool(), &id).await {
+        Ok(_) => success_message("Space deleted successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// PUT /api/spaces/:id/tabs - Save tab state for a space
+pub async fn save_space_tabs_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::spaces::SaveTabStateRequest>,
+) -> Response {
+    match crate::api::spaces::save_tab_state(state.db.pool(), &id, request).await {
         Ok(_) => success_message("Tab state saved"),
         Err(e) => error_response(e),
     }
 }
 
-// ============================================================================
-// Explorer Nodes Handlers
-// ============================================================================
-
-/// POST /api/explorer-nodes - Create a new node
-pub async fn create_explorer_node_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::explorer_nodes::CreateNodeRequest>,
-) -> Response {
-    match crate::api::explorer_nodes::create_node(state.db.pool(), request).await {
-        Ok(node) => (StatusCode::CREATED, Json(node)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// PUT /api/explorer-nodes/:id - Update a node
-pub async fn update_explorer_node_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::explorer_nodes::UpdateNodeRequest>,
-) -> Response {
-    api_response(crate::api::explorer_nodes::update_node(state.db.pool(), &id, request).await)
-}
-
-/// DELETE /api/explorer-nodes/:id - Delete a node
-pub async fn delete_explorer_node_handler(
+/// GET /api/spaces/:id/views - Get views for a space
+pub async fn list_space_views_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::explorer_nodes::delete_node(state.db.pool(), &id).await {
-        Ok(_) => success_message("Node deleted successfully"),
-        Err(e) => error_response(e),
-    }
+    api_response(crate::api::views::list_views(state.db.pool(), &id).await)
 }
 
-/// POST /api/explorer-nodes/move - Move nodes to a new parent
-pub async fn move_explorer_nodes_handler(
+/// GET /api/spaces/:id/items - Get root-level items for a space
+pub async fn list_space_items_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::explorer_nodes::MoveNodesRequest>,
+    Path(id): Path<String>,
 ) -> Response {
-    match crate::api::explorer_nodes::move_nodes(state.db.pool(), request).await {
-        Ok(_) => success_message("Nodes moved successfully"),
+    api_response(crate::api::views::resolve_space_items(state.db.pool(), &id).await)
+}
+
+/// POST /api/spaces/:id/items - Add item to space root level
+pub async fn add_space_item_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ViewItemRequest>,
+) -> Response {
+    match crate::api::views::add_space_item(state.db.pool(), &id, &request.url).await {
+        Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/views/resolve - Resolve a view configuration to entities
+/// DELETE /api/spaces/:id/items - Remove item from space root level
+pub async fn remove_space_item_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ViewItemRequest>,
+) -> Response {
+    match crate::api::views::remove_space_item(state.db.pool(), &id, &request.url).await {
+        Ok(_) => success_message("Item removed from space"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Request to reorder space items
+#[derive(serde::Deserialize)]
+pub struct ReorderSpaceItemsRequest {
+    pub url_order: Vec<String>,
+}
+
+/// PUT /api/spaces/:id/items/reorder - Reorder space root items
+pub async fn reorder_space_items_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ReorderSpaceItemsRequest>,
+) -> Response {
+    match crate::api::views::reorder_space_items(state.db.pool(), &id, request.url_order).await {
+        Ok(_) => success_message("Space items reordered"),
+        Err(e) => error_response(e),
+    }
+}
+
+// ============================================================================
+// Namespaces Handlers
+// ============================================================================
+
+/// GET /api/namespaces - List all namespaces
+pub async fn list_namespaces_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::namespaces::list_namespaces(state.db.pool()).await)
+}
+
+/// GET /api/namespaces/:name - Get a specific namespace
+pub async fn get_namespace_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    api_response(crate::api::namespaces::get_namespace(state.db.pool(), &name).await)
+}
+
+// ============================================================================
+// Views Handlers
+// ============================================================================
+
+/// POST /api/views - Create a new view
+pub async fn create_view_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::views::CreateViewRequest>,
+) -> Response {
+    match crate::api::views::create_view(state.db.pool(), request).await {
+        Ok(view) => (StatusCode::CREATED, Json(view)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/views/:id - Get a view
+pub async fn get_view_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::views::get_view(state.db.pool(), &id).await)
+}
+
+/// PUT /api/views/:id - Update a view
+pub async fn update_view_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::views::UpdateViewRequest>,
+) -> Response {
+    api_response(crate::api::views::update_view(state.db.pool(), &id, request).await)
+}
+
+/// DELETE /api/views/:id - Delete a view
+pub async fn delete_view_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::views::delete_view(state.db.pool(), &id).await {
+        Ok(_) => success_message("View deleted successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Request for resolve view with optional pagination
+#[derive(serde::Deserialize)]
+pub struct ResolveViewQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// POST /api/views/:id/resolve - Resolve a view to its entities
 pub async fn resolve_view_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::explorer_nodes::ResolveViewRequest>,
+    Path(id): Path<String>,
+    Query(query): Query<ResolveViewQuery>,
 ) -> Response {
-    api_response(crate::api::explorer_nodes::resolve_view(state.db.pool(), request).await)
+    api_response(crate::api::views::resolve_view(state.db.pool(), &id, query.limit, query.offset).await)
+}
+
+/// Request to add/remove item from view
+#[derive(serde::Deserialize)]
+pub struct ViewItemRequest {
+    pub url: String,
+}
+
+/// POST /api/views/:id/items - Add an item to a manual view
+pub async fn add_view_item_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ViewItemRequest>,
+) -> Response {
+    api_response(crate::api::views::add_item_to_view(state.db.pool(), &id, &request.url).await)
+}
+
+/// DELETE /api/views/:id/items - Remove an item from a manual view
+pub async fn remove_view_item_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ViewItemRequest>,
+) -> Response {
+    api_response(crate::api::views::remove_item_from_view(state.db.pool(), &id, &request.url).await)
+}
+
+/// GET /api/views/:id/items - List items in a manual view
+pub async fn list_view_items_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::views::list_view_items(state.db.pool(), &id).await)
+}
+
+/// Request to reorder view items
+#[derive(serde::Deserialize)]
+pub struct ReorderViewItemsRequest {
+    pub url_order: Vec<String>,
+}
+
+/// PUT /api/views/:id/items/reorder - Reorder items in a manual view
+pub async fn reorder_view_items_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<ReorderViewItemsRequest>,
+) -> Response {
+    api_response(crate::api::views::reorder_view_items(state.db.pool(), &id, request.url_order).await)
+}
+
+// ============================================================================
+// Lake API handlers
+// ============================================================================
+
+/// GET /api/lake/summary - Get lake summary statistics
+pub async fn get_lake_summary_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::lake::get_lake_summary(state.db.pool()).await)
+}
+
+/// GET /api/lake/streams - List all streams in the lake
+pub async fn list_lake_streams_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::lake::list_lake_streams(state.db.pool()).await)
 }
 

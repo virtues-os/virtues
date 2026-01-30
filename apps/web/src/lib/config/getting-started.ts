@@ -15,7 +15,7 @@ export interface GettingStartedStep {
 }
 
 export type StepAction =
-	| { type: 'createSession'; title: string; content: string }
+	| { type: 'createChat'; title: string; content: string }
 	| { type: 'navigate'; href: string }
 	| { type: 'focusInput'; placeholder?: string }
 	| { type: 'openExternal'; url: string }
@@ -79,7 +79,7 @@ export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 		description: 'Open a chat with prepopulated info',
 		icon: 'ri:chat-1-line',
 		action: {
-			type: 'createSession',
+			type: 'createChat',
 			title: INTRO_SESSION_TITLE,
 			content: INTRO_MESSAGE
 		}
@@ -89,7 +89,7 @@ export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 		title: 'Connections',
 		description: 'Add iOS, Gmail, Mac, etc.',
 		icon: 'ri:link',
-		action: { type: 'navigate', href: '/data/sources' },
+		action: { type: 'navigate', href: '/source' },
 		autoComplete: { type: 'hasSourcesConnected' }
 	},
 	{
@@ -97,7 +97,7 @@ export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 		title: 'Personalization',
 		description: 'Customize theme and settings',
 		icon: 'ri:user-settings-line',
-		action: { type: 'navigate', href: '/profile/assistant' }
+		action: { type: 'navigate', href: '/virtues/assistant' }
 	},
 	{
 		id: 'user-docs',

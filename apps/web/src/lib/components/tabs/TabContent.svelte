@@ -1,34 +1,35 @@
 <script lang="ts">
-	import type { Tab } from "$lib/tabs/types";
-	import { tabRegistry, getDetailComponent } from "$lib/tabs/registry";
+	import Icon from "$lib/components/Icon.svelte";
+	import { type Tab, routeToEntityId } from "$lib/tabs/types";
+	import { tabRegistry, getComponent, getVirtuesComponent, getSourceComponent } from "$lib/tabs/registry";
 	import type { Component } from "svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// Get the component to render from the registry
-	// Handles detail variants for types that have them (wiki, data-sources)
+	// Handles detail variants for entity namespaces
 	const ViewComponent = $derived.by((): Component => {
 		const def = tabRegistry[tab.type];
 		if (!def) {
-			// Fallback to chat if type not found
+			// Fallback to session if type not found
 			return tabRegistry.chat.component;
 		}
 
-		// Check if this type has a detail variant and if we should use it
-		if (def.hasDetail) {
-			// For wiki: use detail view if slug is present
-			if (tab.type === "wiki" && "slug" in tab && tab.slug) {
-				const detailComponent = getDetailComponent("wiki");
-				if (detailComponent) return detailComponent;
-			}
-			// For data-sources: use detail view if sourceId is present
-			if (tab.type === "data-sources" && "sourceId" in tab && tab.sourceId) {
-				const detailComponent = getDetailComponent("data-sources");
-				if (detailComponent) return detailComponent;
-			}
+		// Handle virtues namespace specially - dispatch to correct component
+		if (tab.type === 'virtues' && tab.virtuesPage) {
+			return getVirtuesComponent(tab.virtuesPage);
 		}
 
-		return def.component;
+		// Handle source namespace specially
+		if (tab.type === 'source') {
+			return getSourceComponent(!!routeToEntityId(tab.route));
+		}
+
+		// For all other types, use getComponent which handles list vs detail view
+		// Derive hasEntityId from route (e.g., '/person/person_abc' has entity, '/wiki' does not)
+		// Special case: "/" is a new chat (entityId: 'new' in registry), treat as having entity
+		const hasEntityId = tab.route === '/' || !!routeToEntityId(tab.route);
+		return getComponent(tab.type, hasEntityId);
 	});
 </script>
 
@@ -38,7 +39,7 @@
 	{:else}
 		<!-- Placeholder for unknown tab types -->
 		<div class="placeholder">
-			<iconify-icon icon="ri:file-line"></iconify-icon>
+			<Icon icon="ri:file-line" />
 			<span class="title">Unknown View</span>
 			<span class="subtitle">Tab type: {tab.type}</span>
 		</div>
@@ -63,7 +64,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.placeholder iconify-icon {
+	.placeholder :global(svg) {
 		font-size: 48px;
 		opacity: 0.4;
 		margin-bottom: 8px;

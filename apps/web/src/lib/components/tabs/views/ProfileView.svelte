@@ -1,17 +1,17 @@
 <script lang="ts">
 	import type { Tab, FallbackView } from '$lib/tabs/types';
-	import { workspaceStore } from '$lib/stores/workspace.svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
 	import { Page, Input } from '$lib';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
-	import 'iconify-icon';
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
-	import { getTheme, setTheme, type Theme } from '$lib/utils/theme';
+	import { getTheme, applyTheme, setTheme, type Theme, isValidTheme } from '$lib/utils/theme';
 	import { invalidate } from '$app/navigation';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	let loading = $state(true);
-	let currentTheme = $state<Theme>('light');
+	let currentTheme = $state<Theme>(getTheme());
 	let fallbackView = $state<FallbackView>('empty');
 
 	// Profile fields
@@ -41,8 +41,7 @@
 	}
 
 	onMount(async () => {
-		currentTheme = getTheme();
-		fallbackView = workspaceStore.fallbackPreference;
+		fallbackView = spaceStore.fallbackPreference;
 		await loadProfile();
 		await loadAssistantProfile();
 	});
@@ -63,7 +62,7 @@
 
 	async function handleFallbackChange(newFallback: FallbackView) {
 		fallbackView = newFallback;
-		workspaceStore.setFallbackPreference(newFallback);
+		spaceStore.setFallbackPreference(newFallback);
 
 		try {
 			const profileRes = await fetch('/api/assistant-profile');
@@ -112,9 +111,10 @@
 				occupation = profile.occupation || '';
 				employer = profile.employer || '';
 
-				if (profile.theme) {
+				if (profile.theme && isValidTheme(profile.theme)) {
 					currentTheme = profile.theme as Theme;
-					setTheme(currentTheme);
+					// Don't call setTheme here as it would trigger a DB write of the same value
+					applyTheme(currentTheme);
 				}
 			}
 		} catch (error) {
@@ -170,7 +170,7 @@
 								class:active={fallbackView === option.id}
 								onclick={() => handleFallbackChange(option.id)}
 							>
-								<iconify-icon icon={option.icon} width="16"></iconify-icon>
+								<Icon icon={option.icon} width="16"/>
 								<span>{option.title}</span>
 							</button>
 						{/each}

@@ -390,6 +390,95 @@ async fn google_places_details(
 }
 
 // =============================================================================
+// Unsplash Proxy
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+struct UnsplashSearchRequest {
+    query: String,
+    #[serde(default = "default_page")]
+    page: u32,
+    #[serde(default = "default_per_page")]
+    per_page: u32,
+}
+
+fn default_page() -> u32 { 1 }
+fn default_per_page() -> u32 { 20 }
+
+/// GET /v1/services/unsplash/search
+/// Search photos on Unsplash
+async fn unsplash_search(
+    State(state): State<Arc<AppState>>,
+    auth: AuthenticatedRequest,
+    Json(request): Json<UnsplashSearchRequest>,
+) -> Response {
+    // Check budget
+    if !state.budget.has_budget(&auth.user_id) {
+        return (StatusCode::PAYMENT_REQUIRED, Json(ServiceError::insufficient_budget()))
+            .into_response();
+    }
+
+    // Get API key
+    let access_key = match &state.config.unsplash_access_key {
+        Some(key) => key,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ServiceError::service_not_configured("Unsplash")),
+            )
+                .into_response();
+        }
+    };
+
+    // Forward request to Unsplash API
+    let response = match state
+        .http_client
+        .get("https://api.unsplash.com/search/photos")
+        .header("Authorization", format!("Client-ID {}", access_key))
+        .query(&[
+            ("query", request.query.as_str()),
+            ("page", &request.page.to_string()),
+            ("per_page", &request.per_page.to_string()),
+        ])
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(ServiceError::upstream_error(e.to_string())),
+            )
+                .into_response();
+        }
+    };
+
+    let upstream_status = response.status();
+    let status_code = StatusCode::from_u16(upstream_status.as_u16())
+        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let body: serde_json::Value = match response.json().await {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(ServiceError::upstream_error(e.to_string())),
+            )
+                .into_response();
+        }
+    };
+
+    if upstream_status.is_success() {
+        tracing::info!(
+            user_id = %auth.user_id,
+            query = %request.query,
+            "Unsplash search complete"
+        );
+    }
+
+    (status_code, Json(body)).into_response()
+}
+
+// =============================================================================
 // Budget Check Endpoint (for pre-flight checks)
 // =============================================================================
 
@@ -434,6 +523,8 @@ pub fn router() -> Router<Arc<AppState>> {
             "/services/google/places/:place_id",
             axum::routing::get(google_places_details),
         )
+        // Unsplash
+        .route("/services/unsplash/search", post(unsplash_search))
         // Feedback
         .route("/services/feedback", post(crate::routes::feedback::handle_feedback))
 }

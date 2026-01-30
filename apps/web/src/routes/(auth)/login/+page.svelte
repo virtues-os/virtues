@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { page } from "$app/stores";
 	import { Button } from "$lib";
 
@@ -48,10 +49,10 @@
 			<div
 				class="w-16 h-16 mx-auto mb-6 rounded-full bg-success-subtle flex items-center justify-center"
 			>
-				<iconify-icon
-					icon="lucide:mail-check"
+				<Icon
+					icon="ri:mail-check-line"
 					class="text-success text-3xl"
-				></iconify-icon>
+				/>
 			</div>
 			<h1 class="font-serif text-3xl font-normal text-foreground mb-3">
 				Check your email
@@ -125,8 +126,8 @@
 				class="w-full"
 			>
 				{#if isLoading}
-					<iconify-icon icon="lucide:loader-2" class="animate-spin"
-					></iconify-icon>
+					<Icon icon="ri:loader-4-line" class="animate-spin"
+					/>
 					Sending...
 				{:else}
 					Continue with Email

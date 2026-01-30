@@ -9,7 +9,8 @@ import { z } from 'zod';
  * converts Zod → JSON Schema and removes unsupported fields.
  */
 export const zodToJsonSchema = <T extends z.ZodTypeAny>(zodSchema: T): any => {
-	const jsonSchema = zodToJsonSchemaLib(zodSchema, {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const jsonSchema = zodToJsonSchemaLib(zodSchema as any, {
 		target: 'jsonSchema7',
 		$refStrategy: 'none'
 	});

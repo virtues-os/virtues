@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { onMount, onDestroy } from 'svelte';
-	import 'iconify-icon';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -215,7 +215,7 @@
 			<span class="stat">Pop: {population}</span>
 		</div>
 		<div class="speed-control">
-			<iconify-icon icon="ri:speed-line" width="14"></iconify-icon>
+			<Icon icon="ri:speed-line" width="14"/>
 			<input
 				type="range"
 				min="20"
@@ -232,21 +232,21 @@
 				onclick={() => (isRunning = !isRunning)}
 				title={isRunning ? 'Pause' : 'Play'}
 			>
-				<iconify-icon icon={isRunning ? 'ri:pause-line' : 'ri:play-line'} width="18"></iconify-icon>
+				<Icon icon={isRunning ? 'ri:pause-line' : 'ri:play-line'} width="18"/>
 			</button>
 			<button
 				class="control-btn"
 				onclick={() => initGrid(true)}
 				title="Randomize"
 			>
-				<iconify-icon icon="ri:refresh-line" width="18"></iconify-icon>
+				<Icon icon="ri:refresh-line" width="18"/>
 			</button>
 			<button
 				class="control-btn"
 				onclick={() => initGrid(false)}
 				title="Clear"
 			>
-				<iconify-icon icon="ri:delete-bin-line" width="18"></iconify-icon>
+				<Icon icon="ri:delete-bin-line" width="18"/>
 			</button>
 		</div>
 	</div>

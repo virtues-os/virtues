@@ -68,21 +68,6 @@ export interface WikiOrganizationApi {
 	updated_at: string;
 }
 
-export interface WikiThingApi {
-	id: string;
-	slug: string | null;
-	canonical_name: string;
-	content: string | null;
-	cover_image: string | null;
-	thing_type: string | null;
-	description: string | null;
-	first_mentioned: string | null;
-	last_mentioned: string | null;
-	mention_count: number | null;
-	created_at: string;
-	updated_at: string;
-}
-
 export interface WikiDayApi {
 	id: string;
 	date: string; // ISO date string
@@ -178,13 +163,6 @@ export interface WikiOrganizationListItem {
 	canonical_name: string;
 	organization_type: string | null;
 	relationship_type: string | null;
-}
-
-export interface WikiThingListItem {
-	id: string;
-	slug: string | null;
-	canonical_name: string;
-	thing_type: string | null;
 }
 
 // ============================================================================
@@ -292,37 +270,6 @@ export async function updateOrganization(
 	fetchFn: FetchFn = fetch
 ): Promise<WikiOrganizationApi | null> {
 	const res = await fetchFn(`/api/wiki/organization/${id}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
-// --- Thing ---
-
-export async function getThingBySlug(
-	slug: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(slug)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-export async function listThings(fetchFn: FetchFn = fetch): Promise<WikiThingListItem[]> {
-	const res = await fetchFn("/api/wiki/things");
-	if (!res.ok) return [];
-	return res.json();
-}
-
-export async function updateThing(
-	id: string,
-	data: Partial<WikiThingApi>,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${id}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),

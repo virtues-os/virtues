@@ -10,7 +10,6 @@ import type {
 	WikiPersonApi,
 	WikiPlaceApi,
 	WikiOrganizationApi,
-	WikiThingApi,
 	WikiDayApi,
 	WikiActApi,
 	WikiChapterApi,
@@ -20,7 +19,6 @@ import type {
 import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
-import type { ThingPage, ThingType } from "./types/thing";
 import type { DayPage, ContextVector, LinkedEntities, LinkedTemporal } from "./types/day";
 import type { ActPage } from "./types/act";
 import type { ChapterPage } from "./types/chapter";
@@ -35,7 +33,7 @@ function emptyContextVector(): ContextVector {
 }
 
 function emptyLinkedEntities(): LinkedEntities {
-	return { people: [], places: [], organizations: [], things: [] };
+	return { people: [], places: [], organizations: [] };
 }
 
 function emptyLinkedTemporal(): LinkedTemporal {
@@ -175,50 +173,6 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 		// Connections (populated from entity_edges later)
 		keyContacts: [],
 		locations: [],
-		narrativeContext: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
-
-// ============================================================================
-// Thing Converter
-// ============================================================================
-
-export function apiToThingPage(api: WikiThingApi): ThingPage {
-	// Map thing_type
-	const thingTypeMap: Record<string, ThingType> = {
-		philosophy: "philosophy",
-		framework: "framework",
-		belief: "belief",
-		book: "book",
-		object: "object",
-		concept: "concept",
-	};
-
-	return {
-		type: "thing",
-		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.canonical_name,
-		cover: api.cover_image ?? undefined,
-
-		// Thing-specific fields
-		thingType: api.thing_type ? (thingTypeMap[api.thing_type.toLowerCase()] ?? "other") : "other",
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from entity_edges later)
-		relatedThings: [],
-		associatedPeople: [],
-		associatedPlaces: [],
 		narrativeContext: [],
 
 		// Metadata

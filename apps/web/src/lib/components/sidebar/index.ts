@@ -11,7 +11,10 @@ export { default as SearchModal } from './SearchModal.svelte';
 // Workspace components
 export { default as WorkspaceHeader } from './WorkspaceHeader.svelte';
 export { default as WorkspaceSwitcher } from './WorkspaceSwitcher.svelte';
-export { default as ExplorerNode } from './ExplorerNode.svelte';
+export { default as UnifiedFolder } from './UnifiedFolder.svelte';
+
+// VirtuesWorkspaceNav is used internally by UnifiedSidebar, not exported
+
 
 // Types
 export type { SidebarNavItemData, SidebarSectionData, NavItemType } from './types';

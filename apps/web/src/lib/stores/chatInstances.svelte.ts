@@ -14,11 +14,20 @@ interface ChatInstanceEntry {
     refCount: number; // Number of tabs/views referencing this instance
     createdAt: number;
     cleanupTimeout?: ReturnType<typeof setTimeout>;
+    lastThoughtSignature?: string;
+}
+
+interface ActivePageContext {
+    page_id: string;
+    page_title?: string;
+    content?: string; // Current content from Yjs document
 }
 
 interface CreateChatConfig {
     conversationId: string;
     getModel: () => string; // Getter to always get current model
+    getSpaceId: () => string | null; // Getter for space ID (null for system space)
+    getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
 }
 
 class ChatInstanceStore {
@@ -31,7 +40,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel } = config;
+        const { conversationId, getModel, getSpaceId, getActivePageContext } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -44,23 +53,55 @@ class ChatInstanceStore {
             return existing.chat;
         }
 
-        // Create new Chat instance with transport that uses the getter
+        // Create new Chat instance with transport that uses the getters
         const chat = new Chat({
             id: conversationId,
             transport: new DefaultChatTransport({
                 api: '/api/chat',
                 prepareSendMessagesRequest: ({ messages }) => {
+                    const spaceId = getSpaceId();
+                    const activePage = getActivePageContext?.();
+                    const entry = this.instances.get(conversationId);
+                    const thoughtSignature = entry?.lastThoughtSignature;
+
                     return {
                         body: {
-                            sessionId: conversationId,
+                            chatId: conversationId,
                             model: getModel(),
                             agentId: 'auto',
-                            messages
+                            messages,
+                            // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
+                            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                            // Only include spaceId if not null (null = system space, don't auto-add)
+                            ...(spaceId && { spaceId }),
+                            // Include active page context if a page is bound
+                            ...(activePage && { activePage }),
+                            // Include thought signature if available
+                            ...(thoughtSignature && { thoughtSignature })
                         }
                     };
                 }
             }),
             messages: [],
+            onResponse: (response) => {
+                // Extract thought signature from headers if available
+                const sig = response.headers.get('x-gemini-thought-signature');
+                if (sig) {
+                    const entry = this.instances.get(conversationId);
+                    if (entry) {
+                        entry.lastThoughtSignature = sig;
+                    }
+                }
+            },
+            onChunk: (chunk) => {
+                // Extract thought signature from custom event if available
+                if (chunk.type === 'thought-signature') {
+                    const entry = this.instances.get(conversationId);
+                    if (entry) {
+                        entry.lastThoughtSignature = chunk.signature;
+                    }
+                }
+            },
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
             }

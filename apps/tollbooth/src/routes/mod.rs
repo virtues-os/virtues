@@ -6,6 +6,7 @@
 //! - /v1/chat/completions - LLM requests (OpenAI, Anthropic, Cerebras)
 //! - /v1/services/exa/* - Web search
 //! - /v1/services/google/places/* - Location autocomplete
+//! - /v1/services/unsplash/* - Image search
 //! - /v1/services/plaid/* - Bank account connections
 //! - /v1/limits/* - Connection limits and tier info
 //! - /v1/budget/check - Pre-flight budget check

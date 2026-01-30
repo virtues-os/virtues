@@ -9,7 +9,7 @@
 	import type { PlacePage as PlacePageType } from "$lib/wiki/types";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		page: PlacePageType;

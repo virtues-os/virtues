@@ -20,6 +20,7 @@ pub enum Service {
     AiGateway,
     GooglePlaces,
     Exa,
+    Unsplash,
 }
 
 impl Service {
@@ -28,11 +29,12 @@ impl Service {
             Service::AiGateway => "ai_gateway",
             Service::GooglePlaces => "google_places",
             Service::Exa => "exa",
+            Service::Unsplash => "unsplash",
         }
     }
 
     pub fn all() -> &'static [Service] {
-        &[Service::AiGateway, Service::GooglePlaces, Service::Exa]
+        &[Service::AiGateway, Service::GooglePlaces, Service::Exa, Service::Unsplash]
     }
 }
 
@@ -129,10 +131,12 @@ impl Tier {
             (Tier::Starter, Service::AiGateway) => 1_000_000,
             (Tier::Starter, Service::GooglePlaces) => 1_000,
             (Tier::Starter, Service::Exa) => 1_000,
+            (Tier::Starter, Service::Unsplash) => 1_000,
             // Pro tier
             (Tier::Pro, Service::AiGateway) => 5_000_000,
             (Tier::Pro, Service::GooglePlaces) => 5_000,
             (Tier::Pro, Service::Exa) => 5_000,
+            (Tier::Pro, Service::Unsplash) => 5_000,
         }
     }
 

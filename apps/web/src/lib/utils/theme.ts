@@ -1,16 +1,16 @@
 /**
  * Theme management utilities for Virtues
  *
- * Provides functions to get, set, and toggle themes across the application.
- * Themes are stored in localStorage and applied via data-theme attribute on <html>.
- * 
- * Workspace-specific theming:
- * - accent_color: Applied as --workspace-accent CSS variable
- * - theme_mode: Can override the user's global theme for a specific workspace
+ * Single global theme stored in user preferences (database) with localStorage cache.
+ * Themes are applied via data-theme attribute on <html> and CSS custom properties.
  */
 
 export type Theme =
 	| 'ivory-tower'
+	| 'ivory-noise'
+	| 'sunrise'
+	| 'notebook'
+	| 'dawn'
 	| 'scriptorium'
 	| 'forum'
 	| 'midnight-oil'
@@ -26,19 +26,14 @@ export type Theme =
 const THEME_STORAGE_KEY = 'virtues-theme';
 const DEFAULT_THEME: Theme = 'scriptorium';
 
-// Workspace theming
-let currentWorkspaceAccent: string | null = null;
-let currentWorkspaceTheme: Theme | null = null;
-
 /**
- * Get the current theme from localStorage or system preference
+ * Get the current theme from localStorage cache
  */
 export function getTheme(): Theme {
 	if (typeof window === 'undefined') {
 		return DEFAULT_THEME;
 	}
 
-	// Check localStorage first
 	const stored = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
 	if (stored && isValidTheme(stored)) {
 		return stored;
@@ -48,57 +43,110 @@ export function getTheme(): Theme {
 }
 
 /**
- * Set the theme and persist to localStorage
+ * Apply theme to the document (visual only, no persistence)
  */
-export function setTheme(theme: Theme): void {
-	if (typeof window === 'undefined') {
-		return;
+export function applyTheme(theme: Theme): void {
+	if (typeof window === 'undefined') return;
+
+	if (!isValidTheme(theme)) {
+		theme = DEFAULT_THEME;
 	}
 
-	// Validate theme
+	document.documentElement.setAttribute('data-theme', theme);
+	localStorage.setItem(THEME_STORAGE_KEY, theme);
+	window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
+}
+
+/**
+ * Set the theme - applies immediately and persists to database
+ */
+export async function setTheme(theme: Theme): Promise<void> {
+	if (typeof window === 'undefined') return;
+
 	if (!isValidTheme(theme)) {
 		console.warn(`Invalid theme: ${theme}. Using default.`);
 		theme = DEFAULT_THEME;
 	}
 
-	// Apply to document
-	document.documentElement.setAttribute('data-theme', theme);
+	// Apply immediately for instant feedback
+	applyTheme(theme);
 
-	// Persist to localStorage
-	localStorage.setItem(THEME_STORAGE_KEY, theme);
+	// Persist to database
+	try {
+		const profileRes = await fetch('/api/assistant-profile');
+		let existingPrefs = {};
+		if (profileRes.ok) {
+			const profile = await profileRes.json();
+			existingPrefs = profile.ui_preferences || {};
+		}
 
-	// Dispatch custom event for listeners
-	window.dispatchEvent(new CustomEvent('themechange', { detail: { theme } }));
+		await fetch('/api/assistant-profile', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				ui_preferences: {
+					...existingPrefs,
+					theme
+				}
+			})
+		});
+	} catch (error) {
+		console.error('Failed to save theme to database:', error);
+	}
 }
 
 /**
- * Toggle between light and dark themes
+ * Load theme from database and apply it
+ * Call this on app initialization
  */
-export function toggleTheme(): void {
-	const current = getTheme();
-	const next = current === 'midnight-oil' ? 'ivory-tower' : 'midnight-oil';
-	setTheme(next);
+export async function loadThemeFromDB(): Promise<Theme> {
+	if (typeof window === 'undefined') return DEFAULT_THEME;
+
+	try {
+		const response = await fetch('/api/assistant-profile');
+		if (response.ok) {
+			const profile = await response.json();
+			const theme = profile.ui_preferences?.theme as Theme;
+			if (theme && isValidTheme(theme)) {
+				applyTheme(theme);
+				return theme;
+			}
+		}
+	} catch (error) {
+		console.error('Failed to load theme from database:', error);
+	}
+
+	// Fall back to localStorage or default
+	const cached = getTheme();
+	applyTheme(cached);
+	return cached;
 }
 
 /**
  * Initialize theme on page load
- * Call this in your root layout or app component
+ * Uses localStorage cache for instant display, then syncs with DB
  */
 export function initTheme(): void {
-	if (typeof window === 'undefined') {
-		return;
-	}
+	if (typeof window === 'undefined') return;
 
-	const theme = getTheme();
-	document.documentElement.setAttribute('data-theme', theme);
+	// Apply cached theme immediately (no flash)
+	const cached = getTheme();
+	document.documentElement.setAttribute('data-theme', cached);
+
+	// Then load from DB and update if different
+	loadThemeFromDB();
 }
 
 /**
  * Type guard to check if a string is a valid theme
  */
-function isValidTheme(theme: string): theme is Theme {
+export function isValidTheme(theme: string): theme is Theme {
 	return [
 		'ivory-tower',
+		'ivory-noise',
+		'sunrise',
+		'notebook',
+		'dawn',
 		'scriptorium',
 		'forum',
 		'midnight-oil',
@@ -113,71 +161,6 @@ function isValidTheme(theme: string): theme is Theme {
 	].includes(theme);
 }
 
-/**
- * Apply workspace-specific accent color
- * This sets a CSS variable that can be used to tint workspace-specific elements
- */
-export function setWorkspaceAccent(accentColor: string | null): void {
-	if (typeof window === 'undefined') return;
-	
-	currentWorkspaceAccent = accentColor;
-	
-	if (accentColor) {
-		document.documentElement.style.setProperty('--workspace-accent', accentColor);
-		document.documentElement.style.setProperty('--workspace-accent-subtle', `${accentColor}20`);
-	} else {
-		document.documentElement.style.removeProperty('--workspace-accent');
-		document.documentElement.style.removeProperty('--workspace-accent-subtle');
-	}
-}
-
-/**
- * Get the current workspace accent color
- */
-export function getWorkspaceAccent(): string | null {
-	return currentWorkspaceAccent;
-}
-
-/**
- * Apply workspace-specific theme override
- * If a workspace has a theme_mode set, it temporarily overrides the user's theme
- */
-export function setWorkspaceTheme(themeMode: string | null): void {
-	if (typeof window === 'undefined') return;
-	
-	if (themeMode && isValidTheme(themeMode)) {
-		currentWorkspaceTheme = themeMode;
-		document.documentElement.setAttribute('data-theme', themeMode);
-	} else {
-		// Restore user's global theme
-		currentWorkspaceTheme = null;
-		const userTheme = getTheme();
-		document.documentElement.setAttribute('data-theme', userTheme);
-	}
-}
-
-/**
- * Get the effective current theme (workspace override or user theme)
- */
-export function getEffectiveTheme(): Theme {
-	return currentWorkspaceTheme || getTheme();
-}
-
-/**
- * Clear workspace-specific theming (call when switching workspaces)
- */
-export function clearWorkspaceTheming(): void {
-	setWorkspaceAccent(null);
-	setWorkspaceTheme(null);
-}
-
-/**
- * Apply workspace theming based on workspace settings
- */
-export function applyWorkspaceTheming(accentColor: string | null, themeMode: string | null): void {
-	setWorkspaceAccent(accentColor);
-	setWorkspaceTheme(themeMode);
-}
 
 /**
  * Get all available themes
@@ -185,6 +168,10 @@ export function applyWorkspaceTheming(accentColor: string | null, themeMode: str
 export function getAvailableThemes(): Theme[] {
 	return [
 		'ivory-tower',
+		'ivory-noise',
+		'sunrise',
+		'notebook',
+		'dawn',
 		'scriptorium',
 		'forum',
 		'midnight-oil',
@@ -205,6 +192,10 @@ export function getAvailableThemes(): Theme[] {
 export function getThemeDisplayName(theme: Theme): string {
 	const names: Record<Theme, string> = {
 		'ivory-tower': 'Ivory Tower',
+		'ivory-noise': 'Ivory Noise',
+		sunrise: 'Sunrise',
+		notebook: 'Notebook',
+		dawn: 'Dawn',
 		scriptorium: 'The Scriptorium',
 		forum: 'The Forum',
 		'midnight-oil': 'Midnight Oil',
@@ -244,6 +235,42 @@ export const themePreviewColors: Record<
 		foregroundMuted: '#525252',
 		primary: '#2883DE',
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+	},
+	'ivory-noise': {
+		background: '#FFFFFF',
+		surface: '#FFFFFF',
+		surfaceElevated: '#F5F5F5',
+		foreground: '#171717',
+		foregroundMuted: '#525252',
+		primary: '#2883DE',
+		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+	},
+	sunrise: {
+		background: '#FFFFFF',
+		surface: '#FFFFFF',
+		surfaceElevated: '#F5F5F5',
+		foreground: '#171717',
+		foregroundMuted: '#525252',
+		primary: '#D97757',
+		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+	},
+	notebook: {
+		background: '#FFFFFF',
+		surface: '#FFFFFF',
+		surfaceElevated: '#FAFAFA',
+		foreground: '#171717',
+		foregroundMuted: '#525252',
+		primary: '#2883DE',
+		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
+	},
+	dawn: {
+		background: '#1a1a2e',
+		surface: '#1f1f35',
+		surfaceElevated: '#25253d',
+		foreground: '#e8e8f0',
+		foregroundMuted: '#a0a0b8',
+		primary: '#E8A87C',
+		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
 	},
 	scriptorium: {
 		background: '#F7F7F4',
@@ -324,7 +351,7 @@ export const themePreviewColors: Record<
 		foreground: '#D4D4D4',
 		foregroundMuted: '#898989',
 		primary: '#88C0D0',
-		syntax: ['#81a1c1', '#a3be8c', '#88c0d0', '#b48ead', '#616e88', '#d8dee9']
+		syntax: ['#cb7676', '#c98a7d', '#80a665', '#e6cc77', '#758575', '#dbd7ca']
 	},
 	hemlock: {
 		background: '#282a36',
@@ -359,6 +386,22 @@ export const themeMetadata: Record<
 	'ivory-tower': {
 		icon: 'ph:building-bold',
 		description: 'Clean academic white'
+	},
+	'ivory-noise': {
+		icon: 'ph:film-strip-bold',
+		description: 'Ivory with film grain'
+	},
+	sunrise: {
+		icon: 'ph:sun-horizon-bold',
+		description: 'Blue to peach gradient'
+	},
+	notebook: {
+		icon: 'ph:dots-nine-bold',
+		description: 'Dotted paper background'
+	},
+	dawn: {
+		icon: 'ph:cloud-sun-bold',
+		description: 'Dark blue to warm gradient'
 	},
 	scriptorium: {
 		icon: 'ph:scroll-bold',

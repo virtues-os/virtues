@@ -33,6 +33,11 @@
 	--color-surface: var(--surface);
 	--color-surface-elevated: var(--surface-elevated);
 	--color-surface-overlay: var(--surface-overlay);
+	
+	/* Background Treatment (gradient/texture support) */
+	--color-background-image: var(--background-image);
+	--color-surface-elevated-image: var(--surface-elevated-image);
+	--color-surface-elevated-size: var(--surface-elevated-size);
 
 	/* Content Colors */
 	--color-foreground: var(--foreground);
@@ -93,6 +98,7 @@
 	--duration-slow: 300ms;
 	--ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
+	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* ===================================
@@ -102,6 +108,7 @@
    =================================== */
 :root {
 	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
 	--code-bg: #f6f8fa;
 	--code-fg: #24292f;
 	--code-comment: #6e7781;
@@ -115,6 +122,110 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	--accent: #2883DE;
+	--accent-hover: #4a9ae5;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+
+	/* Sidebar Component Tokens */
+	--sidebar-interactive-padding: 6px 10px;
+	--sidebar-interactive-radius: 8px;
+	--sidebar-interactive-gap: 10px;
+	--sidebar-interactive-font-size: 13px;
+	--sidebar-interactive-icon-size: 16px;
+	--sidebar-interactive-icon-size-small: 14px;
+	--sidebar-interactive-height: 28px;
+	--sidebar-interactive-color: var(--color-foreground);
+	--sidebar-padding-left-base: 10px;
+	--sidebar-indent-width: 12px;
+	--sidebar-transition-duration: 150ms;
+	--sidebar-transition-easing: var(--ease-premium);
+	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+	--sidebar-item-gap: 4px;
+}
+
+/* ===================================
+   IVORY NOISE
+   Ivory Tower with subtle film grain texture
+   =================================== */
+[data-theme="ivory-noise"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Film grain + subtle navy gradient */
+	--background-image: none;
+	--surface-elevated-image: 
+		url('/textures/noise.svg'),
+		linear-gradient(
+			180deg,
+			#FFFFFF 0%,
+			#FCFCFC 55%,
+			#EFF3F8 80%,
+			#E6ECF4 100%
+		);
 
 	/* Content Colors - Neutral grays */
 	--foreground: #171717;
@@ -166,11 +277,251 @@
 }
 
 /* ===================================
+   SUNRISE
+   Soft blue to warm peach gradient, Arc-inspired
+   =================================== */
+[data-theme="sunrise"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Blue to peach gradient */
+	--background-image: none;
+	--surface-elevated-image: 
+		url('/textures/noise.svg'),
+		linear-gradient(
+			180deg,
+			#E8F4F8 0%,
+			#F5F5F5 35%,
+			#FAF5F3 65%,
+			#F5E6E0 100%
+		);
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Warm accent */
+	--primary: #D97757;
+	--primary-hover: #E08B70;
+	--primary-active: #C46545;
+	--primary-subtle: #FEF3F0;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	--accent: #D97757;
+	--accent-hover: #E08B70;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #D97757;
+
+	/* Selection/Highlight - Soft peach */
+	--highlight: rgba(249, 215, 200, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   NOTEBOOK
+   Clean dotted paper like a dotted notebook
+   =================================== */
+[data-theme="notebook"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #FAFAFA;
+	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Dotted paper pattern via CSS gradient */
+	--background-image: none;
+	--surface-elevated-image: radial-gradient(#d4d4d4 1px, transparent 1px);
+	--surface-elevated-size: 20px 20px;
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	--accent: #2883DE;
+	--accent-hover: #4a9ae5;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   DAWN
+   Dark blue to warm peach gradient, pre-sunrise
+   =================================== */
+[data-theme="dawn"] {
+	/* Code Syntax Highlighting - Dark mode (Catppuccin Mocha) */
+	--shiki-theme: catppuccin-mocha;
+	--code-bg: #1e1e2e;
+	--code-fg: #cdd6f4;
+	--code-comment: #6c7086;
+	--code-keyword: #f38ba8;
+	--code-string: #a6e3a1;
+	--code-function: #cba6f7;
+	--code-constant: #89b4fa;
+
+	/* Surface Colors - Deep blue-purple */
+	--background: #1a1a2e;
+	--surface: #1f1f35;
+	--surface-elevated: #25253d;
+	--surface-overlay: #2a2a45;
+	
+	/* Background Treatment - Dark blue to warm gradient */
+	--background-image: none;
+	--surface-elevated-image: 
+		url('/textures/noise-dark.svg'),
+		linear-gradient(
+			180deg,
+			#1E2A4A 0%,
+			#25253d 35%,
+			#352D3D 65%,
+			#3D2D35 100%
+		);
+
+	/* Content Colors - Light for dark bg */
+	--foreground: #e8e8f0;
+	--foreground-muted: #a0a0b8;
+	--foreground-subtle: #707088;
+	--foreground-disabled: #505068;
+
+	/* Interactive Colors - Warm peach accent */
+	--primary: #E8A87C;
+	--primary-hover: #F0BC96;
+	--primary-active: #D89668;
+	--primary-subtle: rgba(232, 168, 124, 0.15);
+
+	--secondary: #e8e8f0;
+	--secondary-hover: #f0f0f8;
+	--secondary-active: #d0d0e0;
+
+	--accent: #E8A87C;
+	--accent-hover: #F0BC96;
+
+	/* Status Colors - Adjusted for dark */
+	--success: #4ade80;
+	--success-subtle: rgba(74, 222, 128, 0.15);
+	--warning: #fb923c;
+	--warning-subtle: rgba(251, 146, 60, 0.15);
+	--error: #f87171;
+	--error-subtle: rgba(248, 113, 113, 0.15);
+	--info: #60a5fa;
+	--info-subtle: rgba(96, 165, 250, 0.15);
+
+	/* Border Colors - Subtle for dark */
+	--border: #3a3a52;
+	--border-subtle: #2d2d42;
+	--border-strong: #4a4a65;
+	--border-focus: #E8A87C;
+
+	/* Selection/Highlight - Warm glow */
+	--highlight: rgba(232, 168, 124, 0.25);
+	--highlight-foreground: #e8e8f0;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: rgba(74, 222, 128, 0.15);
+	--diff-remove: #f87171;
+	--diff-remove-bg: rgba(248, 113, 113, 0.15);
+
+	/* Background Inverse */
+	--background-inverse: #f0f0f8;
+}
+
+/* ===================================
    THE SCRIPTORIUM
    Medieval writing room, warm paper, candlelight
    =================================== */
 [data-theme="scriptorium"] {
 	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
 	--code-bg: #f6f8fa;
 	--code-fg: #24292f;
 	--code-comment: #6e7781;
@@ -184,6 +535,10 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
 	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
 
 	/* Content Colors - Warm brown text */
 	--foreground: #26251E;
@@ -239,7 +594,8 @@
    Late night studying, burning the midnight oil
    =================================== */
 [data-theme="midnight-oil"] {
-	/* Code Syntax Highlighting */
+	/* Code Syntax Highlighting (GitHub Dark) */
+	--shiki-theme: github-dark;
 	--code-bg: #161b22;
 	--code-fg: #e6edf3;
 	--code-comment: #8b949e;
@@ -253,6 +609,15 @@
 	--surface: #171717;
 	--surface-elevated: #262626;
 	--surface-overlay: #2a2a2a;
+	
+	/* Background Treatment - Subtle dark gradient with hint of warmth */
+	--background-image: none;
+	--surface-elevated-image: linear-gradient(
+		160deg,
+		#262626 0%,
+		#1f1f1f 40%,
+		#262626 100%
+	);
 
 	/* Content Colors */
 	--foreground: #fafafa;
@@ -309,6 +674,7 @@
    =================================== */
 [data-theme="narnia-nights"] {
 	/* Code Syntax Highlighting (Tokyo Night) */
+	--shiki-theme: tokyo-night;
 	--code-bg: #1a1b26;
 	--code-fg: #a9b1d6;
 	--code-comment: #565f89;
@@ -378,6 +744,7 @@
    =================================== */
 [data-theme="dumb-ox"] {
 	/* Code Syntax Highlighting (Vitesse Dark) */
+	--shiki-theme: vitesse-dark;
 	--code-bg: #121212;
 	--code-fg: #dbd7ca;
 	--code-comment: #758575;
@@ -446,7 +813,8 @@
    Renaissance art technique, stark light and shadow
    =================================== */
 [data-theme="chiaroscuro"] {
-	/* Code Syntax Highlighting (High Contrast) */
+	/* Code Syntax Highlighting (GitHub Dark High Contrast) */
+	--shiki-theme: github-dark-high-contrast;
 	--code-bg: #0a0c10;
 	--code-fg: #f0f3f6;
 	--code-comment: #9198a1;
@@ -516,6 +884,7 @@
    =================================== */
 [data-theme="stoa"] {
 	/* Code Syntax Highlighting (Monokai) */
+	--shiki-theme: monokai;
 	--code-bg: #272822;
 	--code-fg: #f8f8f2;
 	--code-comment: #75715e;
@@ -585,6 +954,7 @@
    =================================== */
 [data-theme="lyceum"] {
 	/* Code Syntax Highlighting (One Dark) */
+	--shiki-theme: one-dark-pro;
 	--code-bg: #282c34;
 	--code-fg: #abb2bf;
 	--code-comment: #5c6370;
@@ -653,14 +1023,15 @@
    Blank slate, clean mind, muted nordic calm
    =================================== */
 [data-theme="tabula-rasa"] {
-	/* Code Syntax Highlighting (Nord) */
-	--code-bg: #2e3440;
-	--code-fg: #d8dee9;
-	--code-comment: #616e88;
-	--code-keyword: #81a1c1;
-	--code-string: #a3be8c;
-	--code-function: #88c0d0;
-	--code-constant: #b48ead;
+	/* Code Syntax Highlighting (Vitesse Dark) */
+	--shiki-theme: vitesse-dark;
+	--code-bg: #1e1e1e;
+	--code-fg: #dbd7ca;
+	--code-comment: #758575;
+	--code-keyword: #cb7676;
+	--code-string: #c98a7d;
+	--code-function: #80a665;
+	--code-constant: #e6cc77;
 
 	/* Surface Colors */
 	--background: #141414;
@@ -723,6 +1094,7 @@
    =================================== */
 [data-theme="forum"] {
 	/* Code Syntax Highlighting (Solarized Light) */
+	--shiki-theme: solarized-light;
 	--code-bg: #fdf6e3;
 	--code-fg: #657b83;
 	--code-comment: #93a1a1;
@@ -792,6 +1164,7 @@
    =================================== */
 [data-theme="hemlock"] {
 	/* Code Syntax Highlighting (Dracula) */
+	--shiki-theme: dracula;
 	--code-bg: #282a36;
 	--code-fg: #f8f8f2;
 	--code-comment: #6272a4;
@@ -860,7 +1233,8 @@
    Tolkien's cozy home, soft warm pastels
    =================================== */
 [data-theme="shire"] {
-	/* Code Syntax Highlighting (Rose Pine) */
+	/* Code Syntax Highlighting (Rose Pine Moon) */
+	--shiki-theme: rose-pine-moon;
 	--code-bg: #232136;
 	--code-fg: #e0def4;
 	--code-comment: #6e6a86;

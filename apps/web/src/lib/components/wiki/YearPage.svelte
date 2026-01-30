@@ -9,8 +9,8 @@
 	import type { YearPage as YearPageType } from "$lib/wiki/types";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import ActivityHeatmap from "./ActivityHeatmap.svelte";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import "iconify-icon";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		page: YearPageType;
@@ -37,7 +37,7 @@
 	});
 
 	function handleDayClick(_date: Date, slug: string) {
-		workspaceStore.openTabFromRoute(`/wiki/${slug}`);
+		spaceStore.openTabFromRoute(`/wiki/${slug}`);
 	}
 
 	function formatPeriod(start: Date, end?: Date): string {

@@ -80,6 +80,16 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let compacting = $state(false);
+	let expandedMessages = $state<Set<string>>(new Set());
+
+	function toggleExpand(id: string) {
+		if (expandedMessages.has(id)) {
+			expandedMessages.delete(id);
+		} else {
+			expandedMessages.add(id);
+		}
+		expandedMessages = new Set(expandedMessages);
+	}
 
 	const conversationId = $derived(tab.linkedConversationId);
 
@@ -93,8 +103,8 @@
 
 		try {
 			const [usageRes, sessionRes] = await Promise.all([
-				fetch(`/api/sessions/${conversationId}/usage`),
-				fetch(`/api/sessions/${conversationId}`)
+				fetch(`/api/chats/${conversationId}/usage`),
+				fetch(`/api/chats/${conversationId}`)
 			]);
 
 			if (!usageRes.ok) throw new Error(`Failed to fetch usage: ${usageRes.status}`);
@@ -116,7 +126,7 @@
 
 		compacting = true;
 		try {
-			const res = await fetch(`/api/sessions/${conversationId}/compact`, {
+			const res = await fetch(`/api/chats/${conversationId}/compact`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ force: true })
@@ -301,11 +311,50 @@
 			{#if session.messages && session.messages.length > 0}
 				<ul>
 					{#each session.messages as msg, i}
-						<li>
-							<span class="role">{msg.role}</span>
-							<span class="msg-id">{msg.id || `msg_${i}`}</span>
-							<span class="timestamp">{formatShortDate(msg.timestamp)}</span>
+						{@const msgId = msg.id || `msg_${i}`}
+						{@const isExpanded = expandedMessages.has(msgId)}
+						<li class="message-row" class:expanded={isExpanded}>
+							<button class="row-toggle" onclick={() => toggleExpand(msgId)}>
+								<span class="chevron">{isExpanded ? '▼' : '▶'}</span>
+								<span class="role {msg.role}">{msg.role}</span>
+								<span class="msg-id">{msgId}</span>
+								<span class="timestamp">{formatShortDate(msg.timestamp)}</span>
+							</button>
+							{#if isExpanded}
+								<div class="message-content">
+									<pre>{msg.content || '(empty)'}</pre>
+									{#if msg.reasoning}
+										<div class="content-label">Reasoning:</div>
+										<pre class="reasoning">{msg.reasoning}</pre>
+									{/if}
+								</div>
+							{/if}
 						</li>
+
+						{#if msg.tool_calls}
+							{#each msg.tool_calls as tc, ti}
+								{@const tcId = `${msgId}_tool_${ti}`}
+								{@const tcExpanded = expandedMessages.has(tcId)}
+								<li class="message-row tool-call" class:expanded={tcExpanded}>
+									<button class="row-toggle" onclick={() => toggleExpand(tcId)}>
+										<span class="chevron">{tcExpanded ? '▼' : '▶'}</span>
+										<span class="role tool">tool</span>
+										<span class="tool-name">{tc.tool_name}</span>
+										<span class="tool-id">{tc.tool_call_id || ''}</span>
+									</button>
+									{#if tcExpanded}
+										<div class="message-content">
+											<div class="content-label">Arguments:</div>
+											<pre>{JSON.stringify(tc.arguments, null, 2)}</pre>
+											{#if tc.result !== undefined}
+												<div class="content-label">Result:</div>
+												<pre>{JSON.stringify(tc.result, null, 2)}</pre>
+											{/if}
+										</div>
+									{/if}
+								</li>
+							{/each}
+						{/if}
 					{/each}
 				</ul>
 			{:else}
@@ -470,25 +519,64 @@
 		list-style: none;
 		padding: 0;
 		margin: 0.5rem 0 0 0;
-		max-height: 300px;
+		max-height: 400px;
 		overflow-y: auto;
 	}
 
-	.raw-messages li {
-		display: flex;
-		gap: 0.75rem;
-		padding: 0.375rem 0;
-		font-size: 0.8125rem;
+	.message-row {
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.raw-messages li:last-child {
+	.message-row:last-child {
 		border-bottom: none;
 	}
 
-	.raw-messages .role {
-		min-width: 70px;
+	.message-row.tool-call {
+		padding-left: 1rem;
+		background: var(--color-surface-alt);
+	}
+
+	.row-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		width: 100%;
+		padding: 0.375rem 0.25rem;
+		font-size: 0.8125rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		color: inherit;
+	}
+
+	.row-toggle:hover {
+		background: var(--color-surface-hover);
+	}
+
+	.chevron {
+		font-size: 0.625rem;
 		color: var(--color-text-secondary);
+		width: 0.75rem;
+		flex-shrink: 0;
+	}
+
+	.raw-messages .role {
+		min-width: 60px;
+		color: var(--color-text-secondary);
+		font-size: 0.75rem;
+	}
+
+	.raw-messages .role.user {
+		color: #10b981;
+	}
+
+	.raw-messages .role.assistant {
+		color: #ec4899;
+	}
+
+	.raw-messages .role.tool {
+		color: #eab308;
 	}
 
 	.raw-messages .msg-id {
@@ -500,9 +588,63 @@
 		text-overflow: ellipsis;
 	}
 
+	.raw-messages .tool-name {
+		flex: 1;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-text);
+	}
+
+	.raw-messages .tool-id {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-text-secondary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 120px;
+	}
+
 	.raw-messages .timestamp {
 		color: var(--color-text-secondary);
 		white-space: nowrap;
+		font-size: 0.75rem;
+	}
+
+	.message-content {
+		padding: 0.5rem 0.5rem 0.75rem 1.75rem;
+		border-top: 1px solid var(--color-border);
+		background: var(--color-surface);
+	}
+
+	.message-content pre {
+		margin: 0;
+		padding: 0.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		line-height: 1.4;
+		white-space: pre-wrap;
+		word-break: break-word;
+		background: var(--color-surface-alt);
+		border-radius: var(--radius-sm);
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.message-content pre.reasoning {
+		color: var(--color-text-secondary);
+		font-style: italic;
+	}
+
+	.content-label {
+		font-size: 0.6875rem;
+		color: var(--color-text-secondary);
+		margin: 0.75rem 0 0.25rem 0;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.content-label:first-child {
+		margin-top: 0;
 	}
 
 	/* Compact button */

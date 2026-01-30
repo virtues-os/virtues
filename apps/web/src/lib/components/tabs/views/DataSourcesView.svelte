@@ -1,11 +1,22 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { Button, Page, Badge } from "$lib";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
+	import { toast } from "svelte-sonner";
+	import { OAuthConnectModal, PlaidConnectModal, DevicePairModal } from "$lib/components/sources";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// Modal state
+	type ModalType = 
+		| { type: 'oauth'; provider: string; displayName: string }
+		| { type: 'plaid' }
+		| { type: 'device'; deviceType: 'ios' | 'mac'; displayName: string }
+		| null;
+	
+	let activeModal = $state<ModalType>(null);
 
 	interface Source {
 		id: string;
@@ -16,6 +27,16 @@
 		enabled_streams_count: number;
 		total_streams_count: number;
 		last_sync_at: string | null;
+	}
+
+	interface LakeStream {
+		source_id: string;
+		source_name: string;
+		source_type: string;
+		stream_name: string;
+		size_bytes: number;
+		record_count: number;
+		object_count: number;
 	}
 
 	interface ConnectionLimits {
@@ -38,10 +59,25 @@
 
 	let sources = $state<Source[]>([]);
 	let catalog = $state<CatalogSource[]>([]);
+	let lakeStreams = $state<LakeStream[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
 	onMount(async () => {
+		// Check for OAuth return (source_id in URL means OAuth completed)
+		const params = new URLSearchParams(window.location.search);
+		const sourceId = params.get('source_id');
+		const errorParam = params.get('error');
+		
+		if (sourceId) {
+			toast.success('Source connected successfully');
+			// Clean URL without reload
+			window.history.replaceState({}, '', window.location.pathname);
+		} else if (errorParam) {
+			toast.error('Failed to connect source');
+			window.history.replaceState({}, '', window.location.pathname);
+		}
+		
 		await loadData();
 	});
 
@@ -49,14 +85,18 @@
 		loading = true;
 		error = null;
 		try {
-			const [sourcesRes, catalogRes] = await Promise.all([
+			const [sourcesRes, catalogRes, lakeRes] = await Promise.all([
 				fetch("/api/sources"),
 				fetch("/api/catalog/sources"),
+				fetch("/api/lake/streams"),
 			]);
 			if (!sourcesRes.ok || !catalogRes.ok)
 				throw new Error("Failed to load data");
 			sources = await sourcesRes.json();
 			catalog = await catalogRes.json();
+			if (lakeRes.ok) {
+				lakeStreams = await lakeRes.json();
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to load data";
 		} finally {
@@ -80,6 +120,29 @@
 		if (diffDays < 7) return `${diffDays}d ago`;
 
 		return date.toLocaleDateString();
+	}
+
+	function getSourceStats(sourceId: string): { records: number; bytes: number } {
+		const streams = lakeStreams.filter((s) => s.source_id === sourceId);
+		return {
+			records: streams.reduce((sum, s) => sum + s.record_count, 0),
+			bytes: streams.reduce((sum, s) => sum + s.size_bytes, 0),
+		};
+	}
+
+	function formatBytes(bytes: number): string {
+		if (bytes === 0) return "—";
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+	}
+
+	function formatNumber(num: number): string {
+		if (num === 0) return "—";
+		if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+		if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+		return num.toLocaleString();
 	}
 
 	function isSourceConnected(catalogSourceName: string): boolean {
@@ -111,50 +174,67 @@
 		sources.filter((s) => s.source !== "virtues-app" && !s.is_internal),
 	);
 
-	// Group sources by type for display
-	const groupedSources = $derived(() => {
-		const plaidSources = filteredSources.filter((s) => s.source === "plaid");
-		const otherSources = filteredSources.filter((s) => s.source !== "plaid");
-		return { plaid: plaidSources, other: otherSources };
-	});
-
 	const availableCatalog = $derived(
 		catalog.filter((s) => s.auth_type !== "none"),
 	);
 
-	function handleSourceClick(sourceId: string) {
-		workspaceStore.openTabFromRoute(`/data/sources/${sourceId}`);
+	function getSourceTypeLabel(sourceType: string): string {
+		const labels: Record<string, string> = {
+			plaid: "Plaid",
+			google: "Google",
+			ios: "iOS",
+			mac: "Mac",
+			notion: "Notion",
+		};
+		return labels[sourceType] || sourceType;
 	}
 
-	function handleAddSource(type?: string) {
-		const route = type
-			? `/data/sources/add?type=${type}`
-			: "/data/sources/add";
-		workspaceStore.openTabFromRoute(route);
+	function handleSourceClick(sourceId: string) {
+		spaceStore.openTabFromRoute(`/source/${sourceId}`);
+	}
+
+	function handleAddSource(catalogSource: CatalogSource) {
+		// Check for Plaid first - it uses Plaid Link, not standard OAuth2
+		if (catalogSource.name === 'plaid') {
+			activeModal = { type: 'plaid' };
+		} else if (catalogSource.auth_type === 'oauth2') {
+			activeModal = { 
+				type: 'oauth', 
+				provider: catalogSource.name, 
+				displayName: catalogSource.display_name 
+			};
+		} else if (catalogSource.auth_type === 'device') {
+			activeModal = { 
+				type: 'device', 
+				deviceType: catalogSource.name as 'ios' | 'mac',
+				displayName: catalogSource.display_name
+			};
+		}
+	}
+
+	function handleModalSuccess(_sourceId: string, institutionName?: string) {
+		activeModal = null;
+		const name = institutionName || 'Source';
+		toast.success(`${name} connected successfully`);
+		loadData(); // Refresh the sources list
+	}
+
+	function closeModal() {
+		activeModal = null;
 	}
 </script>
 
 <Page>
 	<div class="max-w-7xl">
-		<div class="flex items-center justify-between">
-			<div>
-				<h1
-					class="text-3xl font-serif font-medium text-foreground mb-2"
-				>
-					Sources
-				</h1>
-				<p class="text-foreground-muted">
-					Manage your connected data sources and their sync schedules
-				</p>
-			</div>
-			<Button
-				variant="secondary"
-				class="flex items-center gap-2"
-				onclick={() => handleAddSource()}
+		<div>
+			<h1
+				class="text-3xl font-serif font-medium text-foreground mb-2"
 			>
-				<iconify-icon icon="ri:add-line" class="text-lg"></iconify-icon>
-				<span>Add Source</span>
-			</Button>
+				Sources
+			</h1>
+			<p class="text-foreground-muted">
+				Manage your connected data sources and their sync schedules
+			</p>
 		</div>
 
 		{#if loading}
@@ -182,137 +262,65 @@
 					<div
 						class="border border-border rounded-lg p-12 text-center bg-surface-elevated"
 					>
-						<iconify-icon
-							icon="ri:plug-line"
-							class="text-6xl text-foreground-subtle mb-4"
-						></iconify-icon>
 						<h3 class="text-lg font-medium text-foreground mb-2">
 							No sources connected
 						</h3>
-						<p class="text-foreground-muted mb-4">
-							Connect your first data source to start syncing your
-							personal data
+						<p class="text-foreground-muted">
+							Choose from the available sources below to start syncing your personal data.
 						</p>
-						<Button
-							variant="primary"
-							onclick={() => handleAddSource()}
-							>Add Your First Source</Button
-						>
 					</div>
 				{:else}
-					{@const groups = groupedSources()}
-					
-					<!-- Banking (Plaid) Sources -->
-					{#if groups.plaid.length > 0}
-						<div class="mb-6">
-							<div class="flex items-center gap-2 mb-3">
-								<iconify-icon icon="ri:bank-line" class="text-lg text-foreground-muted"></iconify-icon>
-								<h3 class="text-sm font-medium text-foreground-muted uppercase tracking-wide">
-									Banking
-								</h3>
-								<span class="text-xs text-foreground-subtle">
-									{groups.plaid.length} connected
-								</span>
-							</div>
-							<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-								{#each groups.plaid as source}
-									<button
+					<div class="border border-border rounded-lg overflow-hidden">
+						<table class="w-full">
+							<thead class="bg-surface-elevated border-b border-border">
+								<tr>
+									<th class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">Source</th>
+									<th class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">Type</th>
+									<th class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">Status</th>
+									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Streams</th>
+									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Records</th>
+									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Size</th>
+									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Last Sync</th>
+								</tr>
+							</thead>
+							<tbody class="divide-y divide-border">
+								{#each filteredSources as source}
+									{@const stats = getSourceStats(source.id)}
+									<tr 
+										class="hover:bg-surface-elevated transition-colors cursor-pointer"
 										onclick={() => handleSourceClick(source.id)}
-										class="text-left block p-6 bg-surface border border-border rounded-lg hover:border-border-subtle hover:bg-surface-elevated transition-all duration-200 cursor-pointer"
 									>
-										<div class="flex items-start justify-between mb-4">
-											<div class="flex items-center gap-3">
-												<iconify-icon icon="ri:bank-card-line" class="text-xl text-foreground-subtle"></iconify-icon>
-												<h3 class="font-medium text-foreground">
-													{source.name}
-												</h3>
-											</div>
-											{#if source.is_active}
-												<span class="inline-block w-2 h-2 bg-success rounded-full" title="Active"></span>
-											{:else}
-												<span class="inline-block w-2 h-2 bg-foreground-subtle rounded-full" title="Inactive"></span>
-											{/if}
-										</div>
-
-										<div class="space-y-2 text-sm">
-											<div class="flex items-center justify-between">
-												<span class="text-foreground-muted">Streams</span>
-												<span class="font-medium text-foreground">
-													{source.enabled_streams_count} of {source.total_streams_count} enabled
-												</span>
-											</div>
-											<div class="flex items-center justify-between">
-												<span class="text-foreground-muted">Last sync</span>
-												<span class="font-medium text-foreground">
-													{formatRelativeTime(source.last_sync_at)}
-												</span>
-											</div>
-										</div>
-
-										<div class="mt-4 pt-4 border-t border-border">
-											<span class="text-xs text-foreground-subtle">
-												View accounts and transactions
+										<td class="px-6 py-4">
+											<span class="font-serif text-foreground">{source.name}</span>
+										</td>
+										<td class="px-6 py-4">
+											<Badge variant="muted">{getSourceTypeLabel(source.source)}</Badge>
+										</td>
+										<td class="px-6 py-4">
+											<span class="flex items-center gap-2">
+												<span class="w-2 h-2 rounded-full {source.is_active ? 'bg-success' : 'bg-foreground-subtle'}"></span>
+												<span class="text-sm text-foreground-muted">{source.is_active ? 'Active' : 'Paused'}</span>
 											</span>
-										</div>
-									</button>
+										</td>
+										<td class="px-6 py-4 text-right">
+											<span class="text-sm text-foreground-muted">
+												{source.enabled_streams_count}/{source.total_streams_count}
+											</span>
+										</td>
+										<td class="px-6 py-4 text-right">
+											<span class="text-sm text-foreground-muted">{formatNumber(stats.records)}</span>
+										</td>
+										<td class="px-6 py-4 text-right">
+											<span class="text-sm text-foreground-muted">{formatBytes(stats.bytes)}</span>
+										</td>
+										<td class="px-6 py-4 text-right">
+											<span class="text-sm text-foreground-muted">{formatRelativeTime(source.last_sync_at)}</span>
+										</td>
+									</tr>
 								{/each}
-							</div>
-						</div>
-					{/if}
-
-					<!-- Other Sources -->
-					{#if groups.other.length > 0}
-						{#if groups.plaid.length > 0}
-							<div class="flex items-center gap-2 mb-3">
-								<iconify-icon icon="ri:apps-line" class="text-lg text-foreground-muted"></iconify-icon>
-								<h3 class="text-sm font-medium text-foreground-muted uppercase tracking-wide">
-									Other Sources
-								</h3>
-							</div>
-						{/if}
-						<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-							{#each groups.other as source}
-								<button
-									onclick={() => handleSourceClick(source.id)}
-									class="text-left block p-6 bg-surface border border-border rounded-lg hover:border-border-subtle hover:bg-surface-elevated transition-all duration-200 cursor-pointer"
-								>
-									<div class="flex items-start justify-between mb-4">
-										<div class="flex items-center gap-3">
-											<h3 class="font-medium text-foreground">
-												{source.name}
-											</h3>
-										</div>
-										{#if source.is_active}
-											<span class="inline-block w-2 h-2 bg-success rounded-full" title="Active"></span>
-										{:else}
-											<span class="inline-block w-2 h-2 bg-foreground-subtle rounded-full" title="Inactive"></span>
-										{/if}
-									</div>
-
-									<div class="space-y-2 text-sm">
-										<div class="flex items-center justify-between">
-											<span class="text-foreground-muted">Streams</span>
-											<span class="font-medium text-foreground">
-												{source.enabled_streams_count} of {source.total_streams_count} enabled
-											</span>
-										</div>
-										<div class="flex items-center justify-between">
-											<span class="text-foreground-muted">Last sync</span>
-											<span class="font-medium text-foreground">
-												{formatRelativeTime(source.last_sync_at)}
-											</span>
-										</div>
-									</div>
-
-									<div class="mt-4 pt-4 border-t border-border">
-										<span class="text-xs text-foreground-subtle">
-											View streams and sync history
-										</span>
-									</div>
-								</button>
-							{/each}
-						</div>
-					{/if}
+							</tbody>
+						</table>
+					</div>
 				{/if}
 			</div>
 
@@ -325,7 +333,7 @@
 				</h2>
 
 				<div
-					class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+					class="grid grid-cols-1 sm:grid-cols-2 gap-4"
 				>
 					{#each availableCatalog as catalogSource}
 						{@const connected = isSourceConnected(catalogSource.name)}
@@ -339,10 +347,10 @@
 							<div class="flex items-center justify-between mb-3">
 								<div class="flex items-center gap-3">
 									{#if catalogSource.icon}
-										<iconify-icon
+										<Icon
 											icon={catalogSource.icon}
 											class="text-2xl text-foreground-subtle"
-										></iconify-icon>
+										/>
 									{/if}
 									<h3 class="font-medium text-foreground">
 										{catalogSource.display_name}
@@ -356,7 +364,7 @@
 									{/if}
 									{#if connected}
 										<Badge variant="success">
-											<iconify-icon icon="ri:check-line"></iconify-icon>
+											<Icon icon="ri:check-line"/>
 											Connected
 										</Badge>
 									{/if}
@@ -374,7 +382,7 @@
 									class="flex items-center gap-3 text-xs text-foreground-subtle"
 								>
 									<span class="flex items-center gap-1">
-										<iconify-icon icon="ri:database-2-line"></iconify-icon>
+										<Icon icon="ri:database-2-line"/>
 										{catalogSource.stream_count}
 										{catalogSource.stream_count === 1 ? "stream" : "streams"}
 									</span>
@@ -388,7 +396,7 @@
 									<Button
 										variant="secondary"
 										size="sm"
-										onclick={() => workspaceStore.openTabFromRoute('/profile/account')}
+										onclick={() => spaceStore.openTabFromRoute('/profile/account')}
 									>
 										Upgrade
 									</Button>
@@ -396,7 +404,7 @@
 									<Button
 										variant="primary"
 										size="sm"
-										onclick={() => handleAddSource(catalogSource.name)}
+										onclick={() => handleAddSource(catalogSource)}
 									>
 										{connected ? "Add Another" : "Add"}
 									</Button>
@@ -409,3 +417,27 @@
 		{/if}
 	</div>
 </Page>
+
+<!-- Source Connection Modals -->
+{#if activeModal?.type === 'oauth'}
+	<OAuthConnectModal 
+		provider={activeModal.provider}
+		displayName={activeModal.displayName}
+		open={true}
+		onClose={closeModal}
+	/>
+{:else if activeModal?.type === 'plaid'}
+	<PlaidConnectModal
+		open={true}
+		onClose={closeModal}
+		onSuccess={handleModalSuccess}
+	/>
+{:else if activeModal?.type === 'device'}
+	<DevicePairModal
+		deviceType={activeModal.deviceType}
+		displayName={activeModal.displayName}
+		open={true}
+		onClose={closeModal}
+		onSuccess={(sourceId) => handleModalSuccess(sourceId)}
+	/>
+{/if}

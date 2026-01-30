@@ -89,13 +89,12 @@ export function getEventDisplayLocation(event: DayEvent): string | undefined {
 
 /**
  * Linked entities grouped by type.
- * These are the "nouns" of a day — people, places, things mentioned.
+ * These are the "nouns" of a day — people, places, orgs mentioned.
  */
 export interface LinkedEntities {
 	people: LinkedPage[];
 	places: LinkedPage[];
 	organizations: LinkedPage[];
-	things: LinkedPage[];
 }
 
 /**
@@ -106,7 +105,6 @@ export function emptyLinkedEntities(): LinkedEntities {
 		people: [],
 		places: [],
 		organizations: [],
-		things: [],
 	};
 }
 
@@ -115,7 +113,7 @@ export function emptyLinkedEntities(): LinkedEntities {
  * Useful for [[wiki link]] resolution in the editor.
  */
 export function flattenLinkedEntities(entities: LinkedEntities): LinkedPage[] {
-	return [...entities.people, ...entities.places, ...entities.organizations, ...entities.things];
+	return [...entities.people, ...entities.places, ...entities.organizations];
 }
 
 // =============================================================================

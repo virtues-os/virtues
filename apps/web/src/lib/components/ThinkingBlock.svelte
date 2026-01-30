@@ -139,6 +139,29 @@
 		switch (name) {
 			case "web_search":
 				return `Searched the web for "${input.query || "information"}"`;
+			case "sql_query": {
+				const op = input.operation as string;
+				if (op === "list_tables") {
+					return "Listed available data tables";
+				} else if (op === "get_schema") {
+					const tables = input.tables as string[] | undefined;
+					if (tables?.length) {
+						const formatted = tables.slice(0, 2).map(t => t.replace(/^data_|^wiki_|^narrative_/, "").replace(/_/g, " ")).join(", ");
+						return `Got schema for ${formatted}${tables.length > 2 ? ` +${tables.length - 2} more` : ""}`;
+					}
+					return "Got table schema";
+				} else if (op === "query") {
+					const sql = (input.sql as string) || "";
+					// Extract table name from query
+					const tableMatch = sql.match(/FROM\s+([a-z_]+)/i);
+					const tableName = tableMatch?.[1]?.replace(/^data_|^wiki_|^narrative_/, "").replace(/_/g, " ") || "";
+					if (tableName) {
+						return `Queried ${tableName}`;
+					}
+					return "Queried personal data";
+				}
+				return "Queried data";
+			}
 			case "query_database":
 			case "database_query":
 				return "Queried your personal data";
@@ -376,7 +399,7 @@
 		padding: 12px 16px;
 		background: var(--color-surface-elevated);
 		border-radius: 8px;
-		max-height: 200px;
+		max-height: 500px;
 		overflow-y: auto;
 		color: var(--color-foreground);
 		font-size: 13px;

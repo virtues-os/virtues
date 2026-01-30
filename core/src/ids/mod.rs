@@ -24,7 +24,6 @@ use sha2::{Digest, Sha256};
 pub const WIKI_PERSON_PREFIX: &str = "person";
 pub const WIKI_PLACE_PREFIX: &str = "place";
 pub const WIKI_ORG_PREFIX: &str = "org";
-pub const WIKI_THING_PREFIX: &str = "thing";
 pub const WIKI_CONNECTION_PREFIX: &str = "conn";
 pub const WIKI_CITATION_PREFIX: &str = "cite";
 pub const WIKI_DAY_PREFIX: &str = "day";
@@ -70,7 +69,6 @@ pub const MESSAGE_PREFIX: &str = "msg";
 pub const AGENT_PREFIX: &str = "agent";
 pub const MODEL_PREFIX: &str = "model";
 pub const TOOL_PREFIX: &str = "tool";
-pub const BOOKMARK_PREFIX: &str = "bookmark";
 pub const AUTH_SESSION_PREFIX: &str = "authsession";
 pub const AUTH_TOKEN_PREFIX: &str = "authtoken";
 
@@ -79,10 +77,15 @@ pub const DRIVE_FILE_PREFIX: &str = "file";
 
 // Pages Layer (User-authored knowledge documents)
 pub const PAGE_PREFIX: &str = "page";
+pub const PAGE_VERSION_PREFIX: &str = "ver";
 
-// Workspace Layer (Organization system)
-pub const WORKSPACE_PREFIX: &str = "ws";
-pub const EXPLORER_NODE_PREFIX: &str = "node";
+// Space Layer (Organization system)
+pub const SPACE_PREFIX: &str = "space";
+pub const WORKSPACE_PREFIX: &str = "ws";  // Deprecated: use SPACE_PREFIX
+
+// Chat Layer (Conversations)
+pub const CHAT_PREFIX: &str = "chat";
+pub const SESSION_PREFIX_DEPRECATED: &str = "session";  // Kept for backwards compat
 
 // ============================================================================
 // Universal ID Generation - ONE FUNCTION FOR EVERYTHING

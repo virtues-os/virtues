@@ -2,12 +2,10 @@
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
-		themePreviewColors,
 		setTheme,
+		themePreviewColors,
 		type Theme
 	} from '$lib/utils/theme';
-	import 'iconify-icon';
-
 	interface Props {
 		value: Theme;
 		onchange?: (theme: Theme) => void;
@@ -19,8 +17,8 @@
 
 	const themes = getAvailableThemes();
 
-	function selectTheme(theme: Theme) {
-		setTheme(theme);
+	async function selectTheme(theme: Theme) {
+		await setTheme(theme);
 		onchange?.(theme);
 	}
 </script>

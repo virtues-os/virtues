@@ -104,11 +104,11 @@ pub async fn get_assistant_name(db: &SqlitePool) -> Result<String> {
 
 /// Helper to get the background model for cheap tasks (titles, summaries)
 ///
-/// Returns background_model_id if set, otherwise falls back to "cerebras/llama-3.3-70b"
+/// Returns background_model_id if set, otherwise falls back to "cerebras/gpt-oss-120b"
 pub async fn get_background_model(db: &SqlitePool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
         .background_model_id
-        .unwrap_or_else(|| "cerebras/llama-3.3-70b".to_string()))
+        .unwrap_or_else(|| "cerebras/gpt-oss-120b".to_string()))
 }

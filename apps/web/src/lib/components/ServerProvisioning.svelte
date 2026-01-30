@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
     /**
      * Server Provisioning Overlay
      *
@@ -105,8 +106,8 @@
         <div class="overlay-card">
             {#if status === "error"}
                 <div class="icon-container error">
-                    <iconify-icon icon="ri:error-warning-line" width="48"
-                    ></iconify-icon>
+                    <Icon icon="ri:error-warning-line" width="48"
+                    />
                 </div>
             {:else}
                 <div class="spinner-container">

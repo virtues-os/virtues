@@ -28,7 +28,7 @@ class ChatSessionStore {
 		this.error = null;
 
 		try {
-			const response = await fetch('/api/sessions');
+			const response = await fetch('/api/chats');
 
 			if (!response.ok) {
 				throw new Error(`Failed to load sessions: ${response.statusText}`);

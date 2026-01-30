@@ -9,17 +9,6 @@
 
 <style>
     .page-container {
-        animation: slideInFromRight 0.3s ease-out forwards;
-    }
-
-    @keyframes slideInFromRight {
-        from {
-            opacity: 0;
-            transform: translateX(8px);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(0);
-        }
+        /* Animation removed - was causing unwanted slide-in effect on workspace switches */
     }
 </style>
