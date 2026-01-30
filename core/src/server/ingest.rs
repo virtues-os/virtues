@@ -67,12 +67,21 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub storage: Arc<Storage>,
     pub stream_writer: Arc<Mutex<StreamWriter>>,
+    pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
+    pub yjs_state: super::yjs::YjsState,
 }
 
 /// Enable extracting SqlitePool from AppState for auth middleware
 impl axum::extract::FromRef<AppState> for sqlx::SqlitePool {
     fn from_ref(state: &AppState) -> Self {
         state.db.pool().clone()
+    }
+}
+
+/// Enable extracting YjsState from AppState for WebSocket handlers
+impl axum::extract::FromRef<AppState> for super::yjs::YjsState {
+    fn from_ref(state: &AppState) -> Self {
+        state.yjs_state.clone()
     }
 }
 

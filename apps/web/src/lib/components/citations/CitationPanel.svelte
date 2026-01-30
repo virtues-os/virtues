@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Citation } from "$lib/types/Citation";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let {
 		citation = null,
@@ -161,12 +161,12 @@
 			<!-- Header -->
 			<header class="panel-header">
 				<div class="header-content">
-					<iconify-icon
+					<Icon
 						icon={citation.icon}
 						class={citation.color}
 						width="24"
 						height="24"
-					></iconify-icon>
+					/>
 					<div class="header-text">
 						<h2 class="panel-title">{citation.label}</h2>
 						<span class="panel-subtitle"
@@ -180,8 +180,8 @@
 					onclick={onClose}
 					aria-label="Close panel"
 				>
-					<iconify-icon icon="ri:close-line" width="20" height="20"
-					></iconify-icon>
+					<Icon icon="ri:close-line" width="20" height="20"
+					/>
 				</button>
 			</header>
 

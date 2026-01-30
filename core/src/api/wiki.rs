@@ -83,23 +83,6 @@ pub struct WikiOrganization {
     pub updated_at: DateTime<Utc>,
 }
 
-/// A thing wiki page
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiThing {
-    pub id: String,
-    pub slug: Option<String>,
-    pub canonical_name: String,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub thing_type: Option<String>,
-    pub description: Option<String>,
-    pub first_mentioned: Option<DateTime<Utc>>,
-    pub last_mentioned: Option<DateTime<Utc>>,
-    pub mention_count: Option<i32>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 // ============================================================================
 // Wiki Page Types - Narrative Views
 // ============================================================================
@@ -210,15 +193,6 @@ pub struct WikiOrganizationListItem {
     pub relationship_type: Option<String>,
 }
 
-/// A thing list item
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiThingListItem {
-    pub id: String,
-    pub slug: Option<String>,
-    pub canonical_name: String,
-    pub thing_type: Option<String>,
-}
-
 // ============================================================================
 // Update Request Types
 // ============================================================================
@@ -266,17 +240,6 @@ pub struct UpdateWikiOrganizationRequest {
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
-}
-
-/// Request to update a thing wiki page
-#[derive(Debug, Deserialize)]
-pub struct UpdateWikiThingRequest {
-    pub slug: Option<String>,
-    pub canonical_name: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub thing_type: Option<String>,
-    pub description: Option<String>,
 }
 
 /// Request to update a day wiki page
@@ -910,177 +873,6 @@ pub async fn update_organization(
     .map_err(|e| Error::Database(format!("Failed to update organization: {}", e)))?;
 
     get_organization(pool, id).await
-}
-
-// ============================================================================
-// Thing CRUD Operations
-// ============================================================================
-
-/// Get a thing by slug
-pub async fn get_thing_by_slug(pool: &SqlitePool, slug: &str) -> Result<WikiThing> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, slug, canonical_name, content, cover_image,
-            thing_type, description,
-            first_mentioned, last_mentioned, mention_count,
-            created_at, updated_at
-        FROM wiki_things
-        WHERE slug = $1
-        "#,
-        slug
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", slug)))?;
-
-    let id = row
-        .id
-        .clone()
-        .ok_or_else(|| Error::Database("Missing thing ID".to_string()))?;
-
-    Ok(WikiThing {
-        id,
-        slug: row.slug.clone(),
-        canonical_name: row.canonical_name.clone(),
-        content: row.content.clone(),
-        cover_image: row.cover_image.clone(),
-        thing_type: row.thing_type.clone(),
-        description: row.description.clone(),
-        first_mentioned: row
-            .first_mentioned
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc)),
-        last_mentioned: row
-            .last_mentioned
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc)),
-        mention_count: row.mention_count.map(|v| v as i32),
-        created_at: DateTime::parse_from_rfc3339(&row.created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-    })
-}
-
-/// Get a thing by ID
-pub async fn get_thing(pool: &SqlitePool, id: String) -> Result<WikiThing> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, slug, canonical_name, content, cover_image,
-            thing_type, description,
-            first_mentioned, last_mentioned, mention_count,
-            created_at, updated_at
-        FROM wiki_things
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", id)))?;
-
-    // Get ID as string
-    let row_id = row
-        .id
-        .clone()
-        .ok_or_else(|| Error::Database("Missing thing ID".to_string()))?;
-
-    Ok(WikiThing {
-        id: row_id,
-        slug: row.slug.clone(),
-        canonical_name: row.canonical_name.clone(),
-        content: row.content.clone(),
-        cover_image: row.cover_image.clone(),
-        thing_type: row.thing_type.clone(),
-        description: row.description.clone(),
-        first_mentioned: row
-            .first_mentioned
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc)),
-        last_mentioned: row
-            .last_mentioned
-            .as_ref()
-            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-            .map(|dt| dt.with_timezone(&Utc)),
-        mention_count: row.mention_count.map(|v| v as i32),
-        created_at: DateTime::parse_from_rfc3339(&row.created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-    })
-}
-
-/// List all things
-pub async fn list_things(pool: &SqlitePool) -> Result<Vec<WikiThingListItem>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id, slug, canonical_name, thing_type
-        FROM wiki_things
-        ORDER BY canonical_name ASC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list things: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .filter_map(|row| {
-            let id = row.id.clone()?;
-            Some(WikiThingListItem {
-                id,
-                slug: row.slug.clone(),
-                canonical_name: row.canonical_name.clone(),
-                thing_type: row.thing_type.clone(),
-            })
-        })
-        .collect())
-}
-
-/// Update a thing
-pub async fn update_thing(
-    pool: &SqlitePool,
-    id: String,
-    req: UpdateWikiThingRequest,
-) -> Result<WikiThing> {
-    sqlx::query!(
-        r#"
-        UPDATE wiki_things
-        SET
-            slug = COALESCE($2, slug),
-            canonical_name = COALESCE($3, canonical_name),
-            content = COALESCE($4, content),
-            cover_image = COALESCE($5, cover_image),
-            thing_type = COALESCE($6, thing_type),
-            description = COALESCE($7, description),
-            updated_at = datetime('now')
-        WHERE id = $1
-        "#,
-        id,
-        req.slug,
-        req.canonical_name,
-        req.content,
-        req.cover_image,
-        req.thing_type,
-        req.description
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update thing: {}", e)))?;
-
-    get_thing(pool, id).await
 }
 
 // ============================================================================
@@ -1721,14 +1513,6 @@ pub async fn resolve_slug(pool: &SqlitePool, slug: &str) -> Result<SlugResolutio
         return Ok(SlugResolution {
             entity_type: "organization".to_string(),
             id: org.id,
-        });
-    }
-
-    // Check thing
-    if let Ok(thing) = get_thing_by_slug(pool, slug).await {
-        return Ok(SlugResolution {
-            entity_type: "thing".to_string(),
-            id: thing.id,
         });
     }
 

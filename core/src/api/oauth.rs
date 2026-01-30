@@ -2,11 +2,14 @@
 
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use super::sources::get_source;
 use super::types::SourceConnection;
 use crate::error::{Error, Result};
 use crate::sources::base::TokenManager;
+use crate::storage::{stream_writer::StreamWriter, Storage};
 
 /// Allowed HTTPS domains for OAuth return URLs
 /// This allowlist prevents open redirect vulnerabilities
@@ -209,10 +212,57 @@ pub async fn initiate_oauth_flow(
     })
 }
 
+/// Fetch a meaningful source name based on the OAuth provider
+/// Falls back to "{Provider} Account" if fetching fails
+async fn fetch_source_name(provider: &str, access_token: &str, display_name: &str) -> String {
+    let client = reqwest::Client::new();
+    
+    match provider {
+        "google" => {
+            // Fetch user info from Google to get email
+            #[derive(serde::Deserialize)]
+            struct GoogleUserInfo {
+                email: Option<String>,
+                name: Option<String>,
+            }
+            
+            match client
+                .get("https://www.googleapis.com/oauth2/v2/userinfo")
+                .bearer_auth(access_token)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    if let Ok(info) = response.json::<GoogleUserInfo>().await {
+                        if let Some(email) = info.email {
+                            return email;
+                        }
+                        if let Some(name) = info.name {
+                            return name;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        "notion" => {
+            // Notion workspace name could be fetched from the /users/me endpoint
+            // but it requires additional setup - fallback to default for now
+        }
+        _ => {}
+    }
+    
+    // Fallback
+    format!("{} Account", display_name)
+}
+
 /// Handle OAuth callback and create source
 /// Supports both direct token flow and code exchange flow
+/// Triggers initial sync for all enabled streams if storage and stream_writer are provided.
 pub async fn handle_oauth_callback(
     db: &SqlitePool,
+    storage: Option<&Storage>,
+    stream_writer: Option<Arc<Mutex<StreamWriter>>>,
     params: &OAuthCallbackParams,
 ) -> Result<OAuthCallbackResponse> {
     // SECURITY: Validate state parameter and extract return URL
@@ -291,7 +341,8 @@ pub async fn handle_oauth_callback(
         ));
     };
 
-    let source_name = format!("{} Account", descriptor.descriptor.display_name);
+    // Fetch a meaningful name based on the provider
+    let source_name = fetch_source_name(&params.provider, &access_token, &descriptor.descriptor.display_name).await;
     let token_manager = std::sync::Arc::new(TokenManager::new(db.clone())?);
 
     let source_id = token_manager
@@ -305,6 +356,58 @@ pub async fn handle_oauth_callback(
         .await?;
 
     super::streams::enable_default_streams(db, source_id.clone(), &params.provider).await?;
+
+    // Trigger initial sync for all enabled streams (only if storage and stream_writer are provided)
+    if let (Some(storage), Some(stream_writer)) = (storage, stream_writer) {
+        let source_reg = crate::registry::get_source(&params.provider);
+        if let Some(reg) = source_reg {
+            for stream_reg in &reg.streams {
+                let stream_desc = &stream_reg.descriptor;
+                if !stream_desc.enabled {
+                    continue;
+                }
+
+                let db_clone = db.clone();
+                let storage_clone = storage.clone();
+                let stream_writer_clone = stream_writer.clone();
+                let stream_name = stream_desc.name.to_string();
+                let source_id_clone = source_id.clone();
+                let provider = params.provider.clone();
+
+                tokio::spawn(async move {
+                    match crate::api::jobs::trigger_stream_sync(
+                        &db_clone,
+                        &storage_clone,
+                        stream_writer_clone,
+                        source_id_clone.clone(),
+                        &stream_name,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(response) => {
+                            tracing::info!(
+                                source_id = %source_id_clone,
+                                provider = %provider,
+                                stream = %stream_name,
+                                job_id = %response.job_id,
+                                "Initial sync job created for OAuth stream"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                source_id = %source_id_clone,
+                                provider = %provider,
+                                stream = %stream_name,
+                                error = %e,
+                                "Failed to create initial sync job for OAuth stream"
+                            );
+                        }
+                    }
+                });
+            }
+        }
+    }
 
     let source = get_source(db, source_id).await?;
     Ok(OAuthCallbackResponse { source, return_url })

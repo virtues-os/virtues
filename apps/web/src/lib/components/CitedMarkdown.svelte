@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-import { Streamdown } from 'svelte-streamdown';
-import type { CitationContext, Citation } from '$lib/types/Citation';
-import InlineCitation from './citations/InlineCitation.svelte';
-import EntityChip from './EntityChip.svelte';
+	import { Streamdown } from 'svelte-streamdown';
+	import type { CitationContext, Citation } from '$lib/types/Citation';
+	import InlineCitation from './citations/InlineCitation.svelte';
+	import EntityChip from './EntityChip.svelte';
+	import type { BundledTheme } from 'shiki';
 
-interface Props {
+	interface Props {
 		content: string;
 		isStreaming?: boolean;
 		citations?: CitationContext;
@@ -13,6 +14,25 @@ interface Props {
 	}
 
 	let { content, isStreaming = false, citations, onCitationClick }: Props = $props();
+
+	// Read Shiki theme from CSS variable (defined in themes.css)
+	function getShikiTheme(): BundledTheme {
+		if (!browser) return 'github-light';
+		const theme = getComputedStyle(document.documentElement).getPropertyValue('--shiki-theme').trim();
+		return (theme || 'github-light') as BundledTheme;
+	}
+
+	let currentShikiTheme = $state<BundledTheme>(getShikiTheme());
+
+	// Update when theme changes
+	$effect(() => {
+		if (!browser) return;
+		const handleThemeChange = () => {
+			currentShikiTheme = getShikiTheme();
+		};
+		window.addEventListener('themechange', handleThemeChange);
+		return () => window.removeEventListener('themechange', handleThemeChange);
+	});
 
 	// Helper to get Citation from token key
 	function getCitation(key: string): Citation | undefined {
@@ -41,12 +61,14 @@ interface Props {
 	// Streamdown theme (code blocks only - citations use custom snippets)
 	const customTheme = {
 		code: {
-			container: 'my-4 w-full overflow-hidden rounded-xl border border-border',
+			base: 'my-4 w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col',
+			container: '',
 			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-[var(--code-bg)]',
 			languageLabel: 'text-foreground-muted font-medium',
 			copyButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			copyIcon: 'w-4 h-4',
 			pre: 'overflow-x-auto p-4 text-sm bg-[var(--code-bg)]',
+			skeleton: 'block text-[var(--code-fg)] bg-transparent animate-none',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
 		}
@@ -61,7 +83,7 @@ interface Props {
 			{sources}
 			inlineCitationsMode="list"
 			class="streamdown-content"
-			shikiTheme={'css-variables' as any}
+			shikiTheme={currentShikiTheme}
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
 			controls={{ table: false }}
@@ -86,16 +108,18 @@ interface Props {
 				<!-- Empty - we use CitationPanel at page level instead -->
 			{/snippet}
 
-			{#snippet link({ token }: { token: any })}
-				{#if token.url.startsWith('entity:')}
-					<EntityChip 
-						displayName={token.text} 
-						entityId={token.url.replace('entity:', '')} 
-					/>
-				{:else}
-					<a href={token.url} target="_blank" rel="noopener noreferrer">{token.text}</a>
-				{/if}
-			{/snippet}
+		{#snippet link({ token }: { token: any })}
+			{#if token.url?.startsWith('entity:')}
+				<EntityChip 
+					displayName={token.text} 
+					entityId={token.url.replace('entity:', '')} 
+				/>
+			{:else if token.url}
+				<a href={token.url} target="_blank" rel="noopener noreferrer">{token.text}</a>
+			{:else}
+				<span>{token.text}</span>
+			{/if}
+		{/snippet}
 		</Streamdown>
 	</div>
 {:else}

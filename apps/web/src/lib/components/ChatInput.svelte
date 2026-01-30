@@ -1,14 +1,21 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { createEventDispatcher } from "svelte";
 	import type { ModelOption } from "$lib/config/models";
 	import ModelPicker from "./ModelPicker.svelte";
 	import ContextIndicator from "./ContextIndicator.svelte";
+	import PageEditIndicator from "./chat/PageEditIndicator.svelte";
 
 	interface ContextUsage {
 		percentage: number;
 		tokens: number;
 		window: number;
 		status: 'healthy' | 'warning' | 'critical';
+	}
+
+	interface PageBinding {
+		pageId: string;
+		pageTitle: string;
 	}
 
 	let {
@@ -22,6 +29,10 @@
 		conversationId = undefined as string | undefined,
 		contextUsage = undefined as ContextUsage | undefined,
 		onContextClick = (() => {}) as () => void,
+		pageBinding = undefined as PageBinding | undefined,
+		onPageChange = (() => {}) as () => void,
+		onPageClear = (() => {}) as () => void,
+		onPageSelect = ((_pageId: string, _pageTitle: string) => {}) as (pageId: string, pageTitle: string) => void,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -33,6 +44,10 @@
 		conversationId?: string;
 		contextUsage?: ContextUsage;
 		onContextClick?: () => void;
+		pageBinding?: PageBinding;
+		onPageChange?: () => void;
+		onPageClear?: () => void;
+		onPageSelect?: (pageId: string, pageTitle: string) => void;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{ submit: string }>();
@@ -227,19 +242,19 @@
 					class="send-button absolute right-3 top-3 w-8 h-8 btn-primary cursor-pointer rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
 				>
 					{#if sendDisabled}
-						<iconify-icon
+						<Icon
 							icon="ri:loader-4-line"
 							class="animate-spin"
 							style="color: inherit"
 							width="16"
-						></iconify-icon>
+						/>
 					{:else}
-						<iconify-icon
+						<Icon
 							icon="ri:arrow-up-line"
 							width="16"
 							class="transition-transform duration-300 group-hover:rotate-45"
 							style="color: inherit"
-						></iconify-icon>
+						/>
 					{/if}
 				</button>
 			{/if}
@@ -265,27 +280,35 @@
 						/>
 					</div>
 				{/if}
+				<div>
+					<PageEditIndicator
+						boundPage={pageBinding ? { id: pageBinding.pageId, title: pageBinding.pageTitle } : null}
+						onChangePage={onPageChange}
+						onClear={onPageClear}
+						onSelectPage={onPageSelect}
+					/>
+				</div>
 				<div class="flex-1"></div>
 				<button
 					type="button"
 					onclick={handleSubmit}
 					disabled={!value.trim() || sendDisabled}
-					class="send-button-toolbar w-7 h-7 btn-primary cursor-pointer rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
+					class="send-button-toolbar w-6 h-6 btn-primary cursor-pointer rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
 				>
 					{#if sendDisabled}
-						<iconify-icon
+						<Icon
 							icon="ri:loader-4-line"
 							class="animate-spin"
 							style="color: inherit"
-							width="14"
-						></iconify-icon>
+							width="12"
+						/>
 					{:else}
-						<iconify-icon
+						<Icon
 							icon="ri:arrow-up-line"
-							width="14"
+							width="12"
 							class="transition-transform duration-300 group-hover:rotate-45"
 							style="color: inherit"
-						></iconify-icon>
+						/>
 					{/if}
 				</button>
 			</div>
@@ -303,7 +326,7 @@
 						class:bg-primary-hover={i === selectedIndex}
 						onclick={() => selectEntity(entity)}
 					>
-						<iconify-icon icon={entity.icon} width="14" class="text-foreground-subtle"></iconify-icon>
+						<Icon icon={entity.icon} width="14" class="text-foreground-subtle"/>
 						<div class="flex flex-col">
 							<span class="text-sm font-medium text-foreground">{entity.name}</span>
 							<span class="text-[10px] uppercase tracking-wider text-foreground-muted">{entity.entity_type}</span>
@@ -379,22 +402,5 @@
 
 	.picker-wrapper {
 		font-size: 0.8125rem;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		border-radius: 6px;
-	}
-
-	.picker-wrapper :global(button),
-	.picker-wrapper :global([role="button"]) {
-		border-radius: 6px !important;
-	}
-
-	.picker-wrapper :global(.px-3) {
-		padding-left: 0.5rem;
-		padding-right: 0.5rem;
-	}
-
-	.picker-wrapper :global(.py-1\.5) {
-		padding-top: 0.25rem;
-		padding-bottom: 0.25rem;
 	}
 </style>

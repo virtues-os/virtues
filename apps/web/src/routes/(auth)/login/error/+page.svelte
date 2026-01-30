@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { page } from "$app/stores";
 
 	const errorCode = $derived($page.url.searchParams.get("error"));
@@ -29,7 +30,7 @@
 	<div
 		class="w-16 h-16 mx-auto mb-6 rounded-full bg-error-subtle flex items-center justify-center"
 	>
-		<iconify-icon icon="lucide:alert-circle" class="text-error text-3xl"></iconify-icon>
+		<Icon icon="ri:error-warning-line" class="text-error text-3xl"/>
 	</div>
 
 	<h1 class="font-serif text-3xl font-normal text-foreground mb-3">
@@ -44,7 +45,7 @@
 		href="/login"
 		class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-foreground text-background font-medium hover:bg-foreground/90 focus:outline-none focus:ring-2 focus:ring-accent/50 transition-colors"
 	>
-		<iconify-icon icon="lucide:arrow-left" class="text-lg"></iconify-icon>
+		<Icon icon="ri:arrow-left-line" class="text-lg"/>
 		Back to Sign In
 	</a>
 </div>

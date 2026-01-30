@@ -2,12 +2,13 @@
 //!
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
+pub mod agent;
 pub mod api;
 pub mod cli;
 pub mod client;
 pub mod database;
-pub mod embeddings;
 pub mod entity_resolution;
+pub mod tools;
 pub mod error;
 pub mod geo;
 pub mod http_client;
@@ -41,6 +42,9 @@ pub use scheduler::Scheduler;
 
 // Re-export sync types
 pub use sources::base::SyncMode;
+
+// Re-export tools
+pub use tools::{get_tool_definitions_for_llm, ToolContext, ToolError, ToolExecutor, ToolResult};
 
 // Re-export library API functions
 pub use api::{

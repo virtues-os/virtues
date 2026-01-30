@@ -117,6 +117,6 @@
 		padding: 6px;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--sidebar-item-gap, 4px);
 	}
 </style>

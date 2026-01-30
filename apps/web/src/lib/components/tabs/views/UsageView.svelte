@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { Page, Badge } from '$lib';
-	import 'iconify-icon';
+	import Icon from '$lib/components/Icon.svelte';
 	import { onMount } from 'svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -115,7 +115,7 @@
 							</div>
 							<div class="text-xs text-foreground-subtle mt-1">Resets at midnight UTC</div>
 						</div>
-						<iconify-icon icon="ri:swap-line" class="text-foreground-subtle text-lg"></iconify-icon>
+						<Icon icon="ri:swap-line" class="text-foreground-subtle text-lg"/>
 					</div>
 
 					<div class="flex items-baseline gap-2 mb-3">
@@ -144,7 +144,7 @@
 							</div>
 							<div class="text-xs text-foreground-subtle mt-1">Input + output tokens</div>
 						</div>
-						<iconify-icon icon="ri:cpu-line" class="text-foreground-subtle text-lg"></iconify-icon>
+						<Icon icon="ri:cpu-line" class="text-foreground-subtle text-lg"/>
 					</div>
 
 					<div class="flex items-baseline gap-2 mb-3">

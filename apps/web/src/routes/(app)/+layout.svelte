@@ -1,17 +1,18 @@
 <script lang="ts">
 	import "../../app.css";
 	import { Toaster, toast } from "svelte-sonner";
-	import "iconify-icon";
+	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
+	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import { bookmarks } from "$lib/stores/bookmarks.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
 	import { goto } from "$app/navigation";
+	import { page } from "$app/stores";
 	import type { Snippet } from "svelte";
 
 	// Get session expiry from page data
@@ -27,15 +28,47 @@
 	// Track initialization state
 	let initialized = $state(false);
 
-	// Load chat sessions, bookmarks, workspaces, and initialize theme on mount
+	// Global keyboard shortcut handler for workspace switching (⌘1-9)
+	function handleGlobalKeydown(e: KeyboardEvent) {
+		// ⌘1-9 for workspace switching
+		if (e.metaKey && e.key >= '1' && e.key <= '9') {
+			e.preventDefault();
+			const index = parseInt(e.key) - 1;
+			const spaces = spaceStore.spaces;
+			if (index < spaces.length) {
+				spaceStore.switchSpace(spaces[index].id, true);
+			}
+		}
+	}
+
+	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
+		// Register global keyboard shortcuts
+		window.addEventListener('keydown', handleGlobalKeydown);
+		// Global dragover handler: Allow drops on document by preventing default
+		// This is a fallback to ensure drops are never blocked by missing handlers
+		document.addEventListener('dragover', (e) => {
+			e.preventDefault();
+			if (e.dataTransfer) {
+				e.dataTransfer.dropEffect = "move";
+			}
+		});
+
 		// Load global data
 		chatSessions.load();
-		bookmarks.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
-		await workspaceStore.init();
+		await spaceStore.init();
+
+		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
+		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
+		const urlPath = $page.url.pathname;
+		const rightParam = $page.url.searchParams.get('right');
+		spaceStore.handleDeepLink(urlPath, rightParam);
+
+		// Enable URL sync for future navigation
+		spaceStore.initUrlSync();
 
 		// Mark as initialized
 		initialized = true;
@@ -78,11 +111,17 @@
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}
+		spaceStore.destroyUrlSync();
+
+		// Clean up global keyboard shortcut listener
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('keydown', handleGlobalKeydown);
+		}
 	});
 </script>
 
-<Toaster 
-	position="top-center" 
+<Toaster
+	position="top-center"
 	toastOptions={{
 		style: `
 			background: var(--surface);
@@ -94,7 +133,13 @@
 	}}
 />
 
-<div class="flex h-screen w-full bg-surface-elevated">
+<!-- Global Context Menu Provider -->
+<ContextMenuProvider />
+
+<div
+	class="app-shell flex h-screen w-full bg-surface-elevated"
+	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
+>
 	<!-- Unified Sidebar -->
 	<UnifiedSidebar />
 

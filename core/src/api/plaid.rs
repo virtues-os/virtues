@@ -14,10 +14,13 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::error::{Error, Result};
 use crate::sources::base::oauth::encryption::TokenEncryptor;
 use crate::sources::plaid::client::PlaidClient;
+use crate::storage::{stream_writer::StreamWriter, Storage};
 
 /// Plaid source metadata stored in source_connections.metadata
 /// Note: access_token is stored separately in the encrypted access_token column
@@ -144,8 +147,11 @@ pub async fn create_link_token(
 /// Called after the user completes the Plaid Link flow.
 /// Creates a new source connection with the access token (encrypted).
 /// Also fetches connected accounts to determine which streams are relevant.
+/// Triggers initial sync for all enabled streams.
 pub async fn exchange_public_token(
     db: &SqlitePool,
+    storage: &Storage,
+    stream_writer: Arc<Mutex<StreamWriter>>,
     request: ExchangeTokenRequest,
 ) -> Result<ExchangeTokenResponse> {
     let client = PlaidClient::from_env()?;
@@ -256,6 +262,53 @@ pub async fn exchange_public_token(
         institution = ?request.institution_name,
         "Plaid source connection created with encrypted token"
     );
+
+    // Trigger initial sync for all enabled streams
+    let source_reg = crate::registry::get_source("plaid");
+    if let Some(reg) = source_reg {
+        for stream_reg in &reg.streams {
+            let stream_desc = &stream_reg.descriptor;
+            if !stream_desc.enabled {
+                continue;
+            }
+
+            let db_clone = db.clone();
+            let storage_clone = storage.clone();
+            let stream_writer_clone = stream_writer.clone();
+            let stream_name = stream_desc.name.to_string();
+            let source_id_clone = source_id.clone();
+
+            tokio::spawn(async move {
+                match crate::api::jobs::trigger_stream_sync(
+                    &db_clone,
+                    &storage_clone,
+                    stream_writer_clone,
+                    source_id_clone.clone(),
+                    &stream_name,
+                    None,
+                )
+                .await
+                {
+                    Ok(response) => {
+                        tracing::info!(
+                            source_id = %source_id_clone,
+                            stream = %stream_name,
+                            job_id = %response.job_id,
+                            "Initial sync job created for Plaid stream"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            source_id = %source_id_clone,
+                            stream = %stream_name,
+                            error = %e,
+                            "Failed to create initial sync job for Plaid stream"
+                        );
+                    }
+                }
+            });
+        }
+    }
 
     Ok(ExchangeTokenResponse {
         source_id,

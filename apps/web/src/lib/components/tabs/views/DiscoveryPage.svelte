@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { FallbackView } from '$lib/tabs/types';
-	import { workspaceStore } from '$lib/stores/workspace.svelte';
-	import 'iconify-icon';
+	import { spaceStore } from '$lib/stores/space.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let saving = $state(false);
 
@@ -9,7 +9,7 @@
 		saving = true;
 		
 		// Save to localStorage via store
-		workspaceStore.setFallbackPreference(option);
+		spaceStore.setFallbackPreference(option);
 		
 		// Also save to backend profile for persistence across devices
 		try {
@@ -38,14 +38,14 @@
 
 		// Open the selected view (unless 'empty' which keeps this page)
 		if (option === 'chat') {
-			workspaceStore.openTabFromRoute('/');
+			spaceStore.openTabFromRoute('/');
 		} else if (option === 'conway') {
-			workspaceStore.openTabFromRoute('/life');
+			spaceStore.openTabFromRoute('/life');
 		} else if (option === 'dog-jump') {
-			workspaceStore.openTabFromRoute('/jump');
+			spaceStore.openTabFromRoute('/jump');
 		} else if (option === 'wiki-today') {
 			const today = new Date().toISOString().split('T')[0];
-			workspaceStore.openTabFromRoute(`/wiki/${today}`);
+			spaceStore.openTabFromRoute(`/wiki/${today}`);
 		}
 	}
 
@@ -69,7 +69,7 @@
 					onclick={() => selectOption(option.id)}
 					disabled={saving}
 				>
-					<iconify-icon icon={option.icon} width="18"></iconify-icon>
+					<Icon icon={option.icon} width="18"/>
 					<span>{option.title}</span>
 				</button>
 			{/each}

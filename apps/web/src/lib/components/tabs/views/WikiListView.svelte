@@ -1,11 +1,14 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
+	import { PersonTable, PlaceTable, OrganizationTable } from '$lib/components/wiki';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// Determine which component to render based on wikiCategory
-	const category = $derived(tab.wikiCategory || 'people');
+	// Extract category from route (e.g., '/wiki/people' → 'people')
+	const category = $derived.by(() => {
+		const match = tab.route.match(/^\/wiki\/([a-z]+)$/);
+		return match?.[1] || 'people';
+	});
 </script>
 
 <div class="wiki-list-view">
@@ -19,8 +22,6 @@
 		<PlaceTable />
 	{:else if category === 'organizations' || category === 'orgs'}
 		<OrganizationTable />
-	{:else if category === 'things'}
-		<ThingTable />
 	{:else}
 		<div class="placeholder">
 			<p>Unknown category: {category}</p>

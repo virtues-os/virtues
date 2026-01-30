@@ -105,6 +105,7 @@ wheels/
 data/*
 core/data/
 core/data/*
+tmp/*
 
 # Exception: Allow oauth-proxy dist/ for Vercel deployment
 !/apps/oauth-proxy/dist/
@@ -116,3 +117,6 @@ core/data/*
 /apps/oauth-proxy/dist
 /apps/oauth-proxy/dist
 /apps/oauth-proxy/dist
+/apps/mac/.build
+/packages/virtues-registry/target
+/packages/virtues-registry/target

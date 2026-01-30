@@ -94,30 +94,56 @@ function isExternalUrl(url: string): boolean {
 }
 
 /**
- * Get icon name based on entity ID prefix
+ * Get icon name based on URL pattern (everything is a URL)
  */
-function getEntityIcon(id: string): string {
-	if (id.startsWith("person_")) return "ri:user-line";
-	if (id.startsWith("place_")) return "ri:map-pin-line";
-	if (id.startsWith("org_")) return "ri:building-line";
-	if (id.startsWith("file_")) return "ri:file-line";
-	if (id.startsWith("page_")) return "ri:file-text-line";
-	if (id.startsWith("thing_")) return "ri:box-3-line";
+function getEntityIconFromUrl(url: string): string {
+	if (url.startsWith("/person/")) return "ri:user-line";
+	if (url.startsWith("/place/")) return "ri:map-pin-line";
+	if (url.startsWith("/org/")) return "ri:building-line";
+	if (url.startsWith("/thing/")) return "ri:box-3-line";
+	if (url.startsWith("/page/")) return "ri:file-text-line";
+	if (url.startsWith("/day/")) return "ri:calendar-line";
+	if (url.startsWith("/year/")) return "ri:calendar-2-line";
+	if (url.startsWith("/source/")) return "ri:database-2-line";
+	if (url.startsWith("/chat/")) return "ri:chat-3-line";
+	if (url.startsWith("/drive/")) return "ri:file-line";
 	return "ri:links-line";
 }
 
 /**
- * Get route path based on entity ID prefix
+ * Check if URL is an entity link (internal app route)
  */
-function getEntityRoute(id: string): string {
-	if (id.startsWith("person_")) return `/wiki/${id}`;
-	if (id.startsWith("place_")) return `/wiki/${id}`;
-	if (id.startsWith("org_")) return `/wiki/${id}`;
-	if (id.startsWith("thing_")) return `/wiki/${id}`;
-	if (id.startsWith("file_")) return `/data/drive?file=${id}`;
-	if (id.startsWith("page_")) return `/pages/${id}`;
-	// Default to wiki slug lookup
-	return `/wiki/${id}`;
+function isEntityUrl(url: string): boolean {
+	const entityPrefixes = [
+		"/person/", "/place/", "/thing/", "/org/", "/page/",
+		"/day/", "/year/", "/source/", "/chat/", "/drive/"
+	];
+	return entityPrefixes.some(prefix => url.startsWith(prefix));
+}
+
+/**
+ * Get file extension from filename/path
+ */
+function getFileExtension(name: string): string {
+	const ext = name.split('.').pop()?.toLowerCase() || '';
+	return ext;
+}
+
+/**
+ * Detect media type from filename extension
+ */
+function getMediaType(name: string): 'image' | 'audio' | 'video' | null {
+	const ext = getFileExtension(name);
+
+	const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
+	const audioExts = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'wma'];
+	const videoExts = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', 'wmv'];
+
+	if (imageExts.includes(ext)) return 'image';
+	if (audioExts.includes(ext)) return 'audio';
+	if (videoExts.includes(ext)) return 'video';
+
+	return null;
 }
 
 // =============================================================================
@@ -125,13 +151,14 @@ function getEntityRoute(id: string): string {
 // =============================================================================
 
 /**
- * Entity link widget: [Display Name](entity:prefix_hash)
+ * Entity link widget: [Display Name](/type/id)
  * Renders as clickable chip with icon, dispatches custom event for SvelteKit navigation
+ * Used for internal entity URLs like /person/xxx, /page/xxx, /drive/xxx
  */
 class EntityLinkWidget extends WidgetType {
 	constructor(
 		readonly displayName: string,
-		readonly entityId: string
+		readonly url: string
 	) {
 		super();
 	}
@@ -139,32 +166,32 @@ class EntityLinkWidget extends WidgetType {
 	toDOM() {
 		const link = document.createElement("a");
 		link.className = "cm-entity-link";
-		
+
 		// Create icon element
 		const iconSpan = document.createElement("span");
 		iconSpan.className = "cm-entity-icon";
-		
-		// Use iconify-icon for the icon
+
+		// Use iconify-icon for the icon (determined by URL pattern)
 		const icon = document.createElement("iconify-icon");
-		icon.setAttribute("icon", getEntityIcon(this.entityId));
+		icon.setAttribute("icon", getEntityIconFromUrl(this.url));
 		icon.setAttribute("width", "14");
 		iconSpan.appendChild(icon);
 		link.appendChild(iconSpan);
-		
+
 		// Create text element
 		const text = document.createElement("span");
 		text.className = "cm-entity-text";
 		text.textContent = this.displayName;
 		link.appendChild(text);
-		
-		link.href = getEntityRoute(this.entityId);
+
+		link.href = this.url;
 		link.addEventListener("click", (e) => {
 			e.preventDefault();
 			e.stopPropagation();
 			link.dispatchEvent(
 				new CustomEvent("page-navigate", {
 					bubbles: true,
-					detail: { href: getEntityRoute(this.entityId), entityId: this.entityId },
+					detail: { href: this.url },
 				})
 			);
 		});
@@ -172,7 +199,7 @@ class EntityLinkWidget extends WidgetType {
 	}
 
 	eq(other: EntityLinkWidget) {
-		return other.displayName === this.displayName && other.entityId === this.entityId;
+		return other.displayName === this.displayName && other.url === this.url;
 	}
 
 	ignoreEvent() {
@@ -329,6 +356,221 @@ class ImageWidget extends WidgetType {
 }
 
 /**
+ * Audio player widget: ![audio.mp3](/drive/file_id)
+ * Renders inline audio player with controls
+ */
+class AudioPlayerWidget extends WidgetType {
+	constructor(
+		readonly src: string,
+		readonly name: string
+	) {
+		super();
+	}
+
+	toDOM() {
+		const wrapper = document.createElement("div");
+		wrapper.className = "cm-audio-wrapper";
+
+		// Create header with icon and name
+		const header = document.createElement("div");
+		header.className = "cm-audio-header";
+
+		const icon = document.createElement("iconify-icon");
+		icon.setAttribute("icon", "ri:music-2-line");
+		icon.setAttribute("width", "16");
+		header.appendChild(icon);
+
+		const nameSpan = document.createElement("span");
+		nameSpan.className = "cm-audio-name";
+		nameSpan.textContent = this.name;
+		header.appendChild(nameSpan);
+
+		wrapper.appendChild(header);
+
+		// Create audio element
+		const audio = document.createElement("audio");
+		audio.className = "cm-audio-player";
+		audio.src = this.src;
+		audio.controls = true;
+		audio.preload = "metadata";
+
+		wrapper.appendChild(audio);
+		return wrapper;
+	}
+
+	eq(other: AudioPlayerWidget) {
+		return other.src === this.src && other.name === this.name;
+	}
+
+	ignoreEvent() {
+		return true;
+	}
+}
+
+/**
+ * Video player widget: ![video.mp4](/drive/file_id)
+ * Renders inline video player with controls
+ */
+class VideoPlayerWidget extends WidgetType {
+	constructor(
+		readonly src: string,
+		readonly name: string
+	) {
+		super();
+	}
+
+	toDOM() {
+		const wrapper = document.createElement("div");
+		wrapper.className = "cm-video-wrapper";
+
+		// Create video element
+		const video = document.createElement("video");
+		video.className = "cm-video-player";
+		video.src = this.src;
+		video.controls = true;
+		video.preload = "metadata";
+
+		wrapper.appendChild(video);
+		return wrapper;
+	}
+
+	eq(other: VideoPlayerWidget) {
+		return other.src === this.src && other.name === this.name;
+	}
+
+	ignoreEvent() {
+		return true;
+	}
+}
+
+/**
+ * File card widget: [document.pdf](/drive/file_id)
+ * Renders as a styled file card for non-media files
+ */
+class FileCardWidget extends WidgetType {
+	constructor(
+		readonly url: string,
+		readonly name: string
+	) {
+		super();
+	}
+
+	toDOM() {
+		const wrapper = document.createElement("a");
+		wrapper.className = "cm-file-card";
+		wrapper.href = this.url;
+
+		// Get icon based on extension
+		const ext = getFileExtension(this.name);
+		let iconName = "ri:file-line";
+		if (['pdf'].includes(ext)) iconName = "ri:file-pdf-line";
+		else if (['doc', 'docx'].includes(ext)) iconName = "ri:file-word-line";
+		else if (['xls', 'xlsx'].includes(ext)) iconName = "ri:file-excel-line";
+		else if (['ppt', 'pptx'].includes(ext)) iconName = "ri:file-ppt-line";
+		else if (['zip', 'rar', 'tar', 'gz', '7z'].includes(ext)) iconName = "ri:file-zip-line";
+		else if (['txt', 'md'].includes(ext)) iconName = "ri:file-text-line";
+		else if (['js', 'ts', 'py', 'rs', 'go', 'java', 'c', 'cpp', 'h'].includes(ext)) iconName = "ri:file-code-line";
+
+		const icon = document.createElement("iconify-icon");
+		icon.setAttribute("icon", iconName);
+		icon.setAttribute("width", "20");
+		wrapper.appendChild(icon);
+
+		const nameSpan = document.createElement("span");
+		nameSpan.className = "cm-file-card-name";
+		nameSpan.textContent = this.name;
+		wrapper.appendChild(nameSpan);
+
+		wrapper.addEventListener("click", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			wrapper.dispatchEvent(
+				new CustomEvent("page-navigate", {
+					bubbles: true,
+					detail: { href: this.url },
+				})
+			);
+		});
+
+		return wrapper;
+	}
+
+	eq(other: FileCardWidget) {
+		return other.url === this.url && other.name === this.name;
+	}
+
+	ignoreEvent() {
+		return true;
+	}
+}
+
+/**
+ * Bullet widget: renders - as dash, * as •
+ */
+class BulletWidget extends WidgetType {
+	constructor(readonly marker: string) {
+		super();
+	}
+
+	toDOM() {
+		const span = document.createElement("span");
+		span.className = "cm-list-bullet-rendered";
+		// Convert * and + to bullet dot, keep - as dash
+		span.textContent = this.marker === "-" ? "–" : "•";
+		return span;
+	}
+
+	eq(other: BulletWidget) {
+		return other.marker === this.marker;
+	}
+
+	ignoreEvent() {
+		return false;
+	}
+}
+
+/**
+ * Checkbox widget: renders [ ] as unchecked, [x] as checked
+ */
+class CheckboxWidget extends WidgetType {
+	constructor(
+		readonly checked: boolean,
+		readonly pos: number
+	) {
+		super();
+	}
+
+	toDOM(view: EditorView) {
+		const checkbox = document.createElement("input");
+		checkbox.type = "checkbox";
+		checkbox.className = "cm-checkbox";
+		checkbox.checked = this.checked;
+
+		// Toggle checkbox on click
+		checkbox.addEventListener("mousedown", (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const newState = !this.checked;
+			const newText = newState ? "[x]" : "[ ]";
+			view.dispatch({
+				changes: { from: this.pos, to: this.pos + 3, insert: newText },
+			});
+		});
+
+		return checkbox;
+	}
+
+	eq(other: CheckboxWidget) {
+		return other.checked === this.checked && other.pos === this.pos;
+	}
+
+	ignoreEvent(e: Event) {
+		// Handle mouse events on the checkbox, let others through
+		return e.type === "mousedown" || e.type === "click";
+	}
+}
+
+/**
  * Horizontal rule widget: ---
  * Renders as styled <hr>
  */
@@ -374,11 +616,14 @@ export const pageEditorTheme = EditorView.theme({
 		borderLeftColor: "var(--color-primary)",
 		borderLeftWidth: "2px",
 	},
-	"&.cm-focused .cm-selectionBackground, ::selection": {
-		backgroundColor: "color-mix(in srgb, var(--color-primary) 20%, transparent)",
+	"& .cm-selectionLayer .cm-selectionBackground": {
+		backgroundColor: "var(--color-highlight) !important",
 	},
-	".cm-selectionBackground": {
-		backgroundColor: "color-mix(in srgb, var(--color-primary) 15%, transparent)",
+	"&.cm-focused .cm-selectionLayer .cm-selectionBackground": {
+		backgroundColor: "var(--color-highlight) !important",
+	},
+	".cm-content ::selection": {
+		backgroundColor: "var(--color-highlight) !important",
 	},
 	".cm-activeLine": {
 		backgroundColor: "color-mix(in srgb, var(--color-foreground) 3%, transparent)",
@@ -579,8 +824,136 @@ export const pageEditorTheme = EditorView.theme({
 	// ─────────────────────────────────────────────────────────────────────────
 	// LISTS
 	// ─────────────────────────────────────────────────────────────────────────
+	".cm-list-line": {
+		paddingLeft: "8px !important",
+	},
 	".cm-list-bullet": {
 		color: "var(--color-foreground-muted)",
+		paddingRight: "4px",
+	},
+	".cm-list-bullet-rendered": {
+		color: "var(--color-foreground-muted)",
+		paddingRight: "4px",
+		display: "inline-block",
+		width: "1ch",
+		textAlign: "center",
+	},
+	".cm-list-number": {
+		color: "var(--color-foreground-muted)",
+		paddingRight: "4px",
+		fontVariantNumeric: "tabular-nums",
+	},
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// TODO CHECKBOXES
+	// ─────────────────────────────────────────────────────────────────────────
+	".cm-todo-line": {
+		paddingLeft: "8px !important",
+	},
+	".cm-todo-checked": {
+		color: "var(--color-foreground-muted)",
+		textDecoration: "line-through",
+		textDecorationColor: "var(--color-border)",
+	},
+	".cm-checkbox": {
+		appearance: "none",
+		width: "14px",
+		height: "14px",
+		border: "1.5px solid var(--color-border)",
+		borderRadius: "3px",
+		backgroundColor: "transparent",
+		cursor: "pointer",
+		verticalAlign: "middle",
+		marginRight: "6px",
+		position: "relative",
+		transition: "all 0.15s ease",
+	},
+	".cm-checkbox:hover": {
+		borderColor: "var(--color-primary)",
+	},
+	".cm-checkbox:checked": {
+		backgroundColor: "var(--color-primary)",
+		borderColor: "var(--color-primary)",
+	},
+	".cm-checkbox:checked::after": {
+		content: '""',
+		position: "absolute",
+		left: "4px",
+		top: "1px",
+		width: "4px",
+		height: "8px",
+		border: "solid white",
+		borderWidth: "0 2px 2px 0",
+		transform: "rotate(45deg)",
+	},
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// AUDIO PLAYER
+	// ─────────────────────────────────────────────────────────────────────────
+	".cm-audio-wrapper": {
+		display: "block",
+		margin: "0.5rem 0",
+		padding: "0.75rem",
+		backgroundColor: "var(--color-surface)",
+		borderRadius: "0.5rem",
+		border: "1px solid var(--color-border)",
+	},
+	".cm-audio-header": {
+		display: "flex",
+		alignItems: "center",
+		gap: "0.5rem",
+		marginBottom: "0.5rem",
+		color: "var(--color-foreground-muted)",
+	},
+	".cm-audio-name": {
+		fontSize: "0.875rem",
+		fontWeight: "500",
+		color: "var(--color-foreground)",
+	},
+	".cm-audio-player": {
+		width: "100%",
+		height: "32px",
+		outline: "none",
+	},
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// VIDEO PLAYER
+	// ─────────────────────────────────────────────────────────────────────────
+	".cm-video-wrapper": {
+		display: "block",
+		margin: "0.5rem 0",
+	},
+	".cm-video-player": {
+		width: "100%",
+		maxWidth: "100%",
+		height: "auto",
+		borderRadius: "0.5rem",
+		backgroundColor: "var(--color-surface)",
+	},
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// FILE CARD
+	// ─────────────────────────────────────────────────────────────────────────
+	".cm-file-card": {
+		display: "inline-flex",
+		alignItems: "center",
+		gap: "0.5rem",
+		padding: "0.5rem 0.75rem",
+		backgroundColor: "var(--color-surface)",
+		border: "1px solid var(--color-border)",
+		borderRadius: "0.5rem",
+		color: "var(--color-foreground)",
+		textDecoration: "none",
+		cursor: "pointer",
+		transition: "background-color 0.15s ease, border-color 0.15s ease",
+	},
+	".cm-file-card:hover": {
+		backgroundColor: "var(--color-surface-elevated)",
+		borderColor: "var(--color-primary)",
+	},
+	".cm-file-card-name": {
+		fontSize: "0.875rem",
+		fontWeight: "500",
 	},
 });
 
@@ -628,9 +1001,89 @@ interface DecorationEntry {
 }
 
 /**
- * Decorate ATX headings (## Heading)
+ * Decorate ATX headings (## Heading) and Setext headings (underlined)
+ * Uses regex-based detection to work even without blank lines above headings
  */
 function decorateHeadings(
+	view: EditorView,
+	activeLines: Set<number>,
+	decorations: DecorationEntry[]
+) {
+	const doc = view.state.doc;
+	const decoratedLines = new Set<number>();
+
+	// Regex-based ATX heading detection (works regardless of blank lines)
+	for (let i = 1; i <= doc.lines; i++) {
+		const line = doc.line(i);
+		// Match # followed by space (standard) or # followed by text (lenient)
+		const match = line.text.match(/^(#{1,6})(\s+|\s*$)/);
+
+		if (match) {
+			const level = match[1].length;
+			const isActive = activeLines.has(i);
+			decoratedLines.add(i);
+
+			// Always add line styling
+			decorations.push({
+				from: line.from,
+				to: line.from,
+				deco: Decoration.line({ class: `cm-heading-line cm-heading-${level}` }),
+			});
+
+			// Hide the # markers when not on this line
+			if (!isActive && match[0].length > 0) {
+				decorations.push({
+					from: line.from,
+					to: line.from + match[0].length,
+					deco: Decoration.replace({}),
+				});
+			}
+		}
+	}
+
+	// Also check syntax tree for Setext headings (underlined style)
+	const tree = syntaxTree(view.state);
+	tree.iterate({
+		enter(node) {
+			if (node.name === "SetextHeading1" || node.name === "SetextHeading2") {
+				const level = node.name === "SetextHeading1" ? 1 : 2;
+				const startLine = doc.lineAt(node.from);
+				const endLine = doc.lineAt(node.to);
+
+				// Skip if already decorated by regex
+				if (decoratedLines.has(startLine.number)) return;
+
+				const isHeadingLineActive = activeLines.has(startLine.number);
+				const isUnderlineActive = activeLines.has(endLine.number);
+
+				decorations.push({
+					from: startLine.from,
+					to: startLine.from,
+					deco: Decoration.line({ class: `cm-heading-line cm-heading-${level}` }),
+				});
+
+				if (!isHeadingLineActive && !isUnderlineActive && endLine.number !== startLine.number) {
+					decorations.push({
+						from: endLine.from,
+						to: endLine.to,
+						deco: Decoration.replace({}),
+					});
+				} else if (endLine.number !== startLine.number) {
+					decorations.push({
+						from: endLine.from,
+						to: endLine.to,
+						deco: Decoration.mark({ class: "cm-syntax-dim" }),
+					});
+				}
+			}
+		},
+	});
+}
+
+/**
+ * Decorate list items (- item, * item, 1. item, - [ ] todo)
+ */
+function decorateLists(
 	view: EditorView,
 	activeLines: Set<number>,
 	decorations: DecorationEntry[]
@@ -640,23 +1093,99 @@ function decorateHeadings(
 
 	tree.iterate({
 		enter(node) {
-			if (/^ATXHeading[1-6]$/.test(node.name)) {
-				const level = parseInt(node.name.charAt(node.name.length - 1)) || 1;
+			// BulletList contains ListItem nodes
+			if (node.name === "ListItem") {
 				const line = doc.lineAt(node.from);
 				const isActive = activeLines.has(line.number);
-				const match = line.text.match(/^(#{1,6})\s*/);
 
+				// Check for todo item: - [ ] or - [x] or * [ ] etc
+				const todoMatch = line.text.match(/^(\s*)([-*+])\s\[([ xX])\]\s/);
+				if (todoMatch) {
+					const isChecked = todoMatch[3].toLowerCase() === "x";
+					const markerStart = line.from + todoMatch[1].length;
+					const checkboxStart = markerStart + 2; // after "- "
+					const checkboxEnd = checkboxStart + 3; // "[ ]" or "[x]"
+
+					// Add line decoration for todo item
+					decorations.push({
+						from: line.from,
+						to: line.from,
+						deco: Decoration.line({
+							class: `cm-list-line cm-todo-line${isChecked ? " cm-todo-checked" : ""}`,
+						}),
+					});
+
+					if (!isActive) {
+						// Hide the bullet marker
+						decorations.push({
+							from: markerStart,
+							to: markerStart + 2, // "- " or "* "
+							deco: Decoration.replace({}),
+						});
+						// Replace checkbox with interactive widget
+						decorations.push({
+							from: checkboxStart,
+							to: checkboxEnd,
+							deco: Decoration.replace({
+								widget: new CheckboxWidget(isChecked, checkboxStart),
+							}),
+						});
+					} else {
+						// Dim the syntax when active
+						decorations.push({
+							from: markerStart,
+							to: markerStart + 1,
+							deco: Decoration.mark({ class: "cm-list-bullet" }),
+						});
+						decorations.push({
+							from: checkboxStart,
+							to: checkboxEnd,
+							deco: Decoration.mark({ class: "cm-syntax-dim" }),
+						});
+					}
+					return; // Don't process as regular bullet
+				}
+
+				// Add line decoration for list item padding
 				decorations.push({
 					from: line.from,
 					to: line.from,
-					deco: Decoration.line({ class: `cm-heading-line cm-heading-${level}` }),
+					deco: Decoration.line({ class: "cm-list-line" }),
 				});
 
-				if (match && !isActive) {
+				// Check for bullet marker (-, *, +)
+				const bulletMatch = line.text.match(/^(\s*)([-*+])\s/);
+				if (bulletMatch) {
+					const markerStart = line.from + bulletMatch[1].length;
+					const markerEnd = markerStart + 1;
+					const marker = bulletMatch[2];
+
+					if (!isActive) {
+						// Replace with styled bullet widget
+						decorations.push({
+							from: markerStart,
+							to: markerEnd,
+							deco: Decoration.replace({ widget: new BulletWidget(marker) }),
+						});
+					} else {
+						// Just mark it when active
+						decorations.push({
+							from: markerStart,
+							to: markerEnd,
+							deco: Decoration.mark({ class: "cm-list-bullet" }),
+						});
+					}
+				}
+
+				// Check for ordered list marker (1., 2., etc)
+				const orderedMatch = line.text.match(/^(\s*)(\d+\.)\s/);
+				if (orderedMatch) {
+					const markerStart = line.from + orderedMatch[1].length;
+					const markerEnd = markerStart + orderedMatch[2].length;
 					decorations.push({
-						from: line.from,
-						to: line.from + match[0].length,
-						deco: Decoration.replace({}),
+						from: markerStart,
+						to: markerEnd,
+						deco: Decoration.mark({ class: "cm-list-number" }),
 					});
 				}
 			}
@@ -851,6 +1380,10 @@ function decorateHorizontalRules(
 
 /**
  * Decorate markdown links [text](url)
+ * - External URLs (http/https) → ExternalLinkWidget
+ * - Drive file URLs (/drive/xxx) → FileCardWidget (file card with icon)
+ * - Other entity URLs (/person/, /page/, etc.) → EntityLinkWidget (styled chip)
+ * - Other internal URLs → InternalLinkWidget
  */
 function decorateLinks(
 	view: EditorView,
@@ -874,12 +1407,28 @@ function decorateLinks(
 
 				if (!isActive) {
 					if (isExternalUrl(url)) {
+						// External link (http/https)
 						decorations.push({
 							from: node.from,
 							to: node.to,
 							deco: Decoration.replace({ widget: new ExternalLinkWidget(linkText, url) }),
 						});
+					} else if (url.startsWith("/drive/")) {
+						// Drive file link - render as file card
+						decorations.push({
+							from: node.from,
+							to: node.to,
+							deco: Decoration.replace({ widget: new FileCardWidget(url, linkText) }),
+						});
+					} else if (isEntityUrl(url)) {
+						// Entity link (/person/, /page/, etc.) - render as styled chip
+						decorations.push({
+							from: node.from,
+							to: node.to,
+							deco: Decoration.replace({ widget: new EntityLinkWidget(linkText, url) }),
+						});
 					} else {
+						// Other internal link
 						decorations.push({
 							from: node.from,
 							to: node.to,
@@ -893,7 +1442,11 @@ function decorateLinks(
 }
 
 /**
- * Decorate images ![alt](url)
+ * Decorate images/media ![alt](url)
+ * Detects media type by extension in the alt text (display name):
+ * - .jpg/.png/etc → ImageWidget
+ * - .mp3/.wav/etc → AudioPlayerWidget
+ * - .mp4/.mov/etc → VideoPlayerWidget
  */
 function decorateImages(
 	view: EditorView,
@@ -916,78 +1469,33 @@ function decorateImages(
 				const [, alt, src] = match;
 
 				if (!isActive) {
-					decorations.push({
-						from: node.from,
-						to: node.to,
-						deco: Decoration.replace({ widget: new ImageWidget(src, alt) }),
-					});
+					// Detect media type from the alt text (which contains filename with extension)
+					const mediaType = getMediaType(alt);
+
+					if (mediaType === 'audio') {
+						decorations.push({
+							from: node.from,
+							to: node.to,
+							deco: Decoration.replace({ widget: new AudioPlayerWidget(src, alt) }),
+						});
+					} else if (mediaType === 'video') {
+						decorations.push({
+							from: node.from,
+							to: node.to,
+							deco: Decoration.replace({ widget: new VideoPlayerWidget(src, alt) }),
+						});
+					} else {
+						// Default to image (including when no extension detected)
+						decorations.push({
+							from: node.from,
+							to: node.to,
+							deco: Decoration.replace({ widget: new ImageWidget(src, alt) }),
+						});
+					}
 				}
 			}
 		},
 	});
-}
-
-/**
- * Decorate entity links: [Display Name](entity:prefix_hash)
- * This is the new syntax for linking to entities in pages
- */
-function decorateEntityLinks(
-	view: EditorView,
-	activeLines: Set<number>,
-	decorations: DecorationEntry[]
-) {
-	const doc = view.state.doc;
-	const docText = doc.toString();
-
-	// Match [Display Name](entity:entity_id) pattern
-	const entityLinkRegex = /\[([^\]]+)\]\(entity:([^)]+)\)/g;
-	let match: RegExpExecArray | null = entityLinkRegex.exec(docText);
-
-	while (match !== null) {
-		const start = match.index;
-		const end = start + match[0].length;
-		const line = doc.lineAt(start);
-		const isActive = activeLines.has(line.number);
-
-		const displayName = match[1];
-		const entityId = match[2];
-
-		if (!isActive) {
-			decorations.push({
-				from: start,
-				to: end,
-				deco: Decoration.replace({ widget: new EntityLinkWidget(displayName, entityId) }),
-			});
-		} else {
-			// When active, show the full syntax with dim markers
-			decorations.push({
-				from: start,
-				to: start + 1, // [
-				deco: Decoration.mark({ class: "cm-syntax-dim" }),
-			});
-			decorations.push({
-				from: start + 1,
-				to: start + 1 + displayName.length, // Display Name
-				deco: Decoration.mark({ class: "cm-entity-link-raw" }),
-			});
-			decorations.push({
-				from: start + 1 + displayName.length,
-				to: start + 1 + displayName.length + 9, // ](entity:
-				deco: Decoration.mark({ class: "cm-syntax-dim" }),
-			});
-			decorations.push({
-				from: start + 1 + displayName.length + 9,
-				to: end - 1, // entity_id
-				deco: Decoration.mark({ class: "cm-syntax-dim" }),
-			});
-			decorations.push({
-				from: end - 1,
-				to: end, // )
-				deco: Decoration.mark({ class: "cm-syntax-dim" }),
-			});
-		}
-		match = entityLinkRegex.exec(docText);
-	}
 }
 
 // =============================================================================
@@ -1000,6 +1508,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
 	// Run all decoration builders
 	decorateHeadings(view, activeLines, decorations);
+	decorateLists(view, activeLines, decorations);
 	decorateEmphasis(view, activeLines, decorations);
 	decorateInlineCode(view, activeLines, decorations);
 	decorateBlockquotes(view, activeLines, decorations);
@@ -1007,7 +1516,6 @@ function buildDecorations(view: EditorView): DecorationSet {
 	decorateHorizontalRules(view, activeLines, decorations);
 	decorateLinks(view, activeLines, decorations);
 	decorateImages(view, activeLines, decorations);
-	decorateEntityLinks(view, activeLines, decorations);
 
 	// Sort decorations by position
 	decorations.sort((a, b) => {

@@ -1,9 +1,10 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import type { Tab } from "$lib/tabs/types";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import Page from "$lib/components/Page.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
-	import ContextWarningToast from "$lib/components/ContextWarningToast.svelte";
+	import { toast } from "svelte-sonner";
 	import GettingStarted from "$lib/components/GettingStarted.svelte";
 	import {
 		getSelectedModel,
@@ -22,27 +23,59 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
+	// Active page editing imports
+	import { activePageStore } from "$lib/stores/activePage.svelte";
+	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
+	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
+	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
+	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import { createYjsDocument } from "$lib/yjs";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
+	// Extract conversationId from tab route (format: /chat/chat_abc123 or / for new chat)
+	// Returns the full chat ID including 'chat_' prefix, or undefined for new chat
+	// Strips query params like ?view=context
+	// svelte-ignore state_referenced_locally
+	function extractConversationId(route: string): string | undefined {
+		// Strip query params first
+		const pathOnly = route.split('?')[0];
+		if (pathOnly === '/' || pathOnly === '/chat') return undefined;
+		// Route format: /chat/chat_abc123 → extract chat_abc123 (full ID)
+		const match = pathOnly.match(/^\/chat\/(chat_[^/]+)$/);
+		return match?.[1];
+	}
+
+	// Check if route has ?view=context query param
+	function isContextViewRoute(route: string): boolean {
+		return route.includes('?view=context');
+	}
+
+	// Derived: are we showing the context panel?
+	const isContextView = $derived(isContextViewRoute(tab.route));
+
+	// Check if route represents a new/unsaved chat
+	function isNewChat(route: string): boolean {
+		const pathOnly = route.split('?')[0];
+		return pathOnly === '/' || pathOnly === '/chat';
+	}
+
 	// Capture initial conversationId from tab prop (intentionally captures initial value only)
 	// svelte-ignore state_referenced_locally
-	const initialConversationId = tab.conversationId;
+	const initialConversationId = extractConversationId(tab.route);
 	
 	// UI state
-	let conversationId = $state(initialConversationId || crypto.randomUUID());
+	let conversationId = $state(initialConversationId || `chat_${crypto.randomUUID()}`);
 	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
 	let isLoading = $state(true);
 	let loadedMessages = $state<any[]>([]);
 
-	// Track tab.conversationId to reset state when switching conversations
+	// Track tab route to reset state when switching conversations
 	// svelte-ignore state_referenced_locally
-	let previousTabConversationId = $state<string | undefined>(
-		initialConversationId,
-	);
+	let previousTabRoute = $state<string>(tab.route);
 	let preferredName = $state<string | undefined>(undefined);
 
 	// AbortController for cancelling in-flight requests on tab switch
@@ -81,6 +114,69 @@
 		selectedCitation = null;
 	}
 
+	// Active page editing handlers
+	function handlePageChangePage() {
+		// Legacy handler - not used with inline picker
+	}
+
+	function handlePageClear() {
+		activePageStore.unbind();
+	}
+
+	function handlePageSelect(pageId: string, pageTitle: string) {
+		// Create Yjs document for the page and bind
+		const yjsDoc = createYjsDocument(pageId);
+		activePageStore.bind(pageId, pageTitle, yjsDoc);
+
+		// Auto-open page in split view for side-by-side editing
+		if (!spaceStore.isSplit) {
+			spaceStore.enableSplit();
+		}
+		spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+	}
+
+	// Track processed page creates to avoid re-opening (session-only, not edits)
+	let processedPageCreates = new Set<string>();
+
+	/**
+	 * Handle create_page tool result - auto-open the new page
+	 * Called from $effect when create_page completes
+	 */
+	function handlePageCreated(pageId: string, title: string, createKey: string) {
+		if (processedPageCreates.has(createKey)) return;
+		processedPageCreates.add(createKey);
+		
+		// Auto-bind and open the newly created page in split view
+		const yjsDoc = createYjsDocument(pageId);
+		activePageStore.bind(pageId, title, yjsDoc);
+		
+		if (!spaceStore.isSplit) {
+			spaceStore.enableSplit();
+		}
+		spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+	}
+
+	// Effect to handle create_page side effects (auto-open new pages)
+	$effect(() => {
+		if (!chat?.messages) return;
+		
+		for (const message of chat.messages) {
+			if (message.role !== 'assistant') continue;
+			
+			for (const part of message.parts) {
+				const partType = (part as any).type;
+				if (partType === 'tool-create_page' && (part as any).state === 'output-available') {
+					const toolPart = part as any;
+					const output = toolPart.output;
+					if (output?.page_id) {
+						const createKey = `${toolPart.toolCallId}_${output.page_id}`;
+						handlePageCreated(output.page_id, output.title, createKey);
+					}
+				}
+			}
+		}
+	});
+
 	// Context usage state
 	interface ContextUsageState {
 		percentage: number;
@@ -89,15 +185,14 @@
 		status: "healthy" | "warning" | "critical";
 	}
 	let contextUsage = $state<ContextUsageState | undefined>(undefined);
-	let showContextWarning = $state(false);
 	let hasShownWarning = $state(false);
 
 	// Fetch context usage from API
 	async function refreshContextUsage() {
-		if (!conversationId || !tab.conversationId) return;
+		if (!conversationId || isNewChat(tab.route)) return;
 
 		try {
-			const res = await fetch(`/api/sessions/${conversationId}/usage`);
+			const res = await fetch(`/api/chats/${conversationId}/usage`);
 			if (!res.ok) return;
 
 			const data = await res.json();
@@ -117,7 +212,9 @@
 
 			// Show warning toast once when crossing 70%
 			if (status === "warning" && !hasShownWarning) {
-				showContextWarning = true;
+				toast.warning(`Context filling up (${data.usage_percentage.toFixed(0)}%)`, {
+					description: "Older messages will be summarized at 85%"
+				});
 				hasShownWarning = true;
 			}
 		} catch {
@@ -125,27 +222,196 @@
 		}
 	}
 
-	// Handle context indicator click - open context tab in split view
-	function handleContextClick() {
-		const currentPane = workspaceStore.findTabPane(tab.id);
-		workspaceStore.openSessionContext(conversationId, currentPane);
+	// ==========================================================================
+	// Context View - Detailed session data (for ?view=context mode)
+	// ==========================================================================
+	interface SessionUsage {
+		session_id: string;
+		model: string;
+		context_window: number;
+		total_tokens: number;
+		usage_percentage: number;
+		input_tokens: number;
+		output_tokens: number;
+		reasoning_tokens: number;
+		cache_read_tokens: number;
+		cache_write_tokens: number;
+		total_cost_usd: number;
+		user_message_count: number;
+		assistant_message_count: number;
+		first_message_at: string | null;
+		last_message_at: string | null;
+		compaction_status: {
+			summary_exists: boolean;
+			messages_summarized: number;
+			messages_verbatim: number;
+			summary_version: number;
+			last_compacted_at: string | null;
+		};
+		context_status: string;
 	}
 
-	// Handle compact from warning toast
-	async function handleCompactNow() {
-		if (!conversationId) return;
+	interface SessionDetail {
+		conversation: {
+			conversation_id: string;
+			title: string;
+			first_message_at: string;
+			last_message_at: string;
+			message_count: number;
+			model?: string;
+			provider?: string;
+		};
+		messages: Array<{
+			id: string;
+			role: string;
+			content: string;
+			timestamp: string;
+			model?: string;
+			tool_calls?: Array<{
+				tool_name: string;
+				tool_call_id?: string;
+				arguments: unknown;
+				result?: unknown;
+				timestamp: string;
+			}>;
+			reasoning?: string;
+		}>;
+	}
+
+	interface Breakdown {
+		user: { tokens: number; pct: number };
+		assistant: { tokens: number; pct: number };
+		toolCalls: { tokens: number; pct: number };
+		other: { tokens: number; pct: number };
+	}
+
+	let sessionUsage = $state<SessionUsage | null>(null);
+	let sessionDetail = $state<SessionDetail | null>(null);
+	let contextViewLoading = $state(false);
+	let contextViewError = $state<string | null>(null);
+	let compacting = $state(false);
+
+	// Fetch detailed session data for context view
+	async function fetchContextViewData() {
+		if (!conversationId || isNewChat(tab.route)) {
+			contextViewError = 'No conversation ID';
+			return;
+		}
+
+		contextViewLoading = true;
+		contextViewError = null;
 
 		try {
-			await fetch(`/api/sessions/${conversationId}/compact`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ force: true }),
-			});
-			await refreshContextUsage();
-			showContextWarning = false;
-		} catch {
-			// Handle error silently
+			const [usageRes, sessionRes] = await Promise.all([
+				fetch(`/api/chats/${conversationId}/usage`),
+				fetch(`/api/chats/${conversationId}`)
+			]);
+
+			if (!usageRes.ok) throw new Error(`Failed to fetch usage: ${usageRes.status}`);
+			if (!sessionRes.ok) throw new Error(`Failed to fetch session: ${sessionRes.status}`);
+
+			sessionUsage = await usageRes.json();
+			sessionDetail = await sessionRes.json();
+		} catch (e) {
+			contextViewError = e instanceof Error ? e.message : 'Unknown error';
+		} finally {
+			contextViewLoading = false;
 		}
+	}
+
+	// Compact the session
+	async function handleCompact() {
+		if (!conversationId || compacting) return;
+
+		compacting = true;
+		try {
+			const res = await fetch(`/api/chats/${conversationId}/compact`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ force: true })
+			});
+
+			if (!res.ok) throw new Error(`Failed to compact: ${res.status}`);
+			await fetchContextViewData();
+		} catch (e) {
+			contextViewError = e instanceof Error ? e.message : 'Compaction failed';
+		} finally {
+			compacting = false;
+		}
+	}
+
+	// Calculate token breakdown from messages
+	function calculateBreakdown(messages: SessionDetail['messages']): Breakdown {
+		let user = 0, assistant = 0, toolCalls = 0, other = 0;
+
+		for (const msg of messages) {
+			const contentTokens = Math.ceil((msg.content?.length || 0) / 4);
+
+			if (msg.role === 'user') {
+				user += contentTokens;
+			} else if (msg.role === 'assistant') {
+				assistant += contentTokens;
+				if (msg.tool_calls) {
+					for (const tc of msg.tool_calls) {
+						toolCalls += Math.ceil(JSON.stringify(tc).length / 4);
+					}
+				}
+				if (msg.reasoning) {
+					other += Math.ceil(msg.reasoning.length / 4);
+				}
+			} else {
+				other += contentTokens;
+			}
+		}
+
+		const total = user + assistant + toolCalls + other || 1;
+		return {
+			user: { tokens: user, pct: (user / total) * 100 },
+			assistant: { tokens: assistant, pct: (assistant / total) * 100 },
+			toolCalls: { tokens: toolCalls, pct: (toolCalls / total) * 100 },
+			other: { tokens: other, pct: (other / total) * 100 }
+		};
+	}
+
+	// Format helpers for context view
+	function formatTokens(tokens: number): string {
+		if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
+		if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
+		return tokens.toLocaleString();
+	}
+
+	function formatCost(cost: number): string {
+		if (cost < 0.01) return `$${cost.toFixed(4)}`;
+		return `$${cost.toFixed(2)}`;
+	}
+
+	function formatDate(date: string | null): string {
+		if (!date) return '—';
+		return new Date(date).toLocaleString();
+	}
+
+	function formatShortDate(date: string): string {
+		return new Date(date).toLocaleString('en-US', {
+			month: 'short',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: '2-digit'
+		});
+	}
+
+	const breakdown = $derived(sessionDetail ? calculateBreakdown(sessionDetail.messages) : null);
+
+	// Fetch context data when entering context view mode
+	$effect(() => {
+		if (isContextView && active && conversationId) {
+			fetchContextViewData();
+		}
+	});
+
+	// Handle context indicator click - open context tab in split view
+	function handleContextClick() {
+		const currentPane = spaceStore.findTabPane(tab.id);
+		spaceStore.openChatContext(conversationId, currentPane);
 	}
 
 	// Helper function to convert database messages to Chat parts
@@ -214,6 +480,13 @@
 		return selectedModelValue?.id || getDefaultModel()?.id || "";
 	}
 
+	// Getter for current space ID - used by Chat transport for auto-add
+	// Returns null for system space (Virtues) so chats don't get auto-added
+	function getSpaceId(): string | null {
+		if (spaceStore.isSystemSpace) return null;
+		return spaceStore.activeSpaceId;
+	}
+
 	// Get or create chat instance for the current conversationId
 	function ensureChatInstance() {
 		if (currentChatConversationId !== conversationId) {
@@ -221,10 +494,27 @@
 			if (currentChatConversationId) {
 				chatInstances.release(currentChatConversationId);
 			}
-			// Get or create new instance with model getter
+			// Get or create new instance with model, space, and active page getters
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: getCurrentModel,
+				getSpaceId,
+				getActivePageContext: () => {
+					const pageId = activePageStore.getBoundPageId();
+					const pageTitle = activePageStore.getBoundPageTitle();
+					const yjsDoc = activePageStore.getYjsDoc();
+					
+					if (!pageId) return null;
+					
+					// Include the current Yjs content so AI edits match what's in the editor
+					const content = yjsDoc?.ytext.toString() || '';
+					
+					return { 
+						page_id: pageId, 
+						page_title: pageTitle || undefined,
+						content: content
+					};
+				},
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -235,22 +525,36 @@
 		ensureChatInstance();
 	});
 
-	// Watch for tab.conversationId changes to reset state when switching conversations
+	// Watch for tab.route changes to reset state when switching conversations
 	$effect(() => {
-		const currentTabConversationId = tab.conversationId;
+		const currentTabRoute = tab.route;
+		const currentTabConversationId = extractConversationId(currentTabRoute);
 
-		// If the tab's conversationId changed, reset the chat state
-		if (currentTabConversationId !== previousTabConversationId) {
+		// If the tab's route changed, reset the chat state
+		if (currentTabRoute !== previousTabRoute) {
+			// IMPORTANT: Skip reset if we're just transitioning from 'new' to a real chat ID
+			// This happens after the first message is sent - we're not switching conversations,
+			// just updating the tab's route to reflect the persisted chat
+			const isSameConversation =
+				isNewChat(previousTabRoute) &&
+				currentTabConversationId === conversationId;
+
+			if (isSameConversation) {
+				// Just update the tracking variable, don't reset state
+				previousTabRoute = currentTabRoute;
+				return;
+			}
+
 			// Cancel any in-flight requests from previous tab
 			tabSwitchAbortController?.abort();
 			tabSwitchAbortController = new AbortController();
 			const signal = tabSwitchAbortController.signal;
 
-			previousTabConversationId = currentTabConversationId;
+			previousTabRoute = currentTabRoute;
 
-			// Generate new conversationId for new chats, or use the tab's conversationId
+			// Generate new conversationId for new chats, or use the extracted conversationId
 			const newConversationId =
-				currentTabConversationId || crypto.randomUUID();
+				currentTabConversationId || `chat_${crypto.randomUUID()}`;
 			conversationId = newConversationId;
 
 			// Reset chat state
@@ -262,14 +566,18 @@
 			hasShownWarning = false;
 			thinkingIndicatorVisible = false;
 			minTimeElapsed = false;
+			// Reset page create tracking (for auto-open)
+			processedPageCreates = new Set();
+			// Unbind any active page when switching chats
+			activePageStore.unbind();
 
 			// Load conversation if switching to an existing one
-			if (currentTabConversationId) {
+			if (currentTabConversationId && !isNewChat(currentTabRoute)) {
 				isLoading = true;
 				(async () => {
 					try {
 						const response = await fetch(
-							`/api/sessions/${currentTabConversationId}`,
+							`/api/chats/${currentTabConversationId}`,
 							{ signal },
 						);
 						if (signal.aborted) return; // Check if we were aborted
@@ -347,11 +655,12 @@
 				// Non-critical, continue without preferred name
 			}
 
-			// Load conversation if it exists
-			if (tab.conversationId) {
+			// Load conversation if it exists (not a new chat)
+			const tabConversationId = extractConversationId(tab.route);
+			if (tabConversationId) {
 				try {
 					const response = await fetch(
-						`/api/sessions/${tab.conversationId}`,
+						`/api/chats/${tabConversationId}`,
 					);
 					if (response.ok) {
 						const data = await response.json();
@@ -509,9 +818,9 @@
 	});
 
 	// Reactive messages with subjects
-	// Refresh session data (placeholder for future use)
-	async function refreshSessionData() {
-		// Function intentionally empty - can be used for future session data refresh needs
+	// Refresh chat data (placeholder for future use)
+	async function refreshChatData() {
+		// Function intentionally empty - can be used for future chat data refresh needs
 	}
 
 	// Safety timeout
@@ -529,7 +838,7 @@
 						chat.clearError();
 					}
 				}
-			}, 30000);
+			}, 300000); // 5 minutes to match backend streaming timeout
 
 			return () => {
 				if (thinkingTimeout) {
@@ -548,28 +857,21 @@
 
 	// Time-based greeting
 	function getTimeBasedGreeting(): string {
-		const hour = new Date().getHours();
-		if (hour >= 3 && hour < 12) {
-			return "Good Morning";
-		} else if (hour >= 12 && hour < 17) {
-			return "Good Afternoon";
-		} else {
-			return "Good Evening";
-		}
+		return "";
 	}
 
-	let greeting = $state(getTimeBasedGreeting());
+	let greeting = $state("");
 
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
 
 		try {
-			const response = await fetch("/api/sessions/title", {
+			const response = await fetch("/api/chats/title", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					sessionId: conversationId,
+					chatId: conversationId,
 					messages: chat.messages.map((m) => ({
 						role: m.role,
 						content:
@@ -583,7 +885,7 @@
 				titleGenerated = true;
 				// Update tab label with the new title
 				if (data.title) {
-					workspaceStore.updateTab(tab.id, { label: data.title });
+					spaceStore.updateTab(tab.id, { label: data.title });
 				}
 			}
 		} catch (error) {
@@ -592,9 +894,9 @@
 	}
 
 	// Getting Started handlers
-	function handleGettingStartedCreateSession(sessionId: string) {
-		// Open the new session in a tab and navigate to it
-		workspaceStore.openTabFromRoute(`/?conversationId=${sessionId}`, {
+	function handleGettingStartedCreateChat(chatId: string) {
+		// Open the new chat in a tab and navigate to it
+		spaceStore.openTabFromRoute(`/chat/${chatId}`, {
 			forceNew: true,
 			label: "Welcome to Virtues",
 		});
@@ -634,23 +936,30 @@
 
 			if (chat.messages.length === 2) {
 				await generateTitle();
-				// Update tab with conversationId if it's a new chat
-				if (!tab.conversationId) {
-					// Update previousTabConversationId first to prevent the tab-switch effect
+				// Update tab route if it's a new chat
+				if (isNewChat(tab.route)) {
+					// Update previousTabRoute first to prevent the tab-switch effect
 					// from treating this as a tab change and resetting state
-					previousTabConversationId = conversationId;
+					const newRoute = `/chat/${conversationId}`;
+					previousTabRoute = newRoute;
 					console.log(
-						"[ChatView] Updating tab with conversationId:",
+						"[ChatView] Updating tab with route:",
 						{
 							tabId: tab.id,
 							conversationId,
-							newRoute: `/?conversationId=${conversationId}`,
+							newRoute,
 						},
 					);
-					workspaceStore.updateTab(tab.id, {
-						conversationId,
-						route: `/?conversationId=${conversationId}`,
+					spaceStore.updateTab(tab.id, {
+						route: newRoute,
 					});
+					// Invalidate the Chats view cache so it refreshes with the new chat
+					spaceStore.invalidateViewCache('chat');
+					// Reload space items so new chat appears in sidebar
+					// (Backend already added it via chat.rs auto-add logic)
+					if (!spaceStore.isSystemSpace) {
+						await spaceStore.loadSpaceItems();
+					}
 				}
 				await chatSessions.refresh();
 			}
@@ -659,7 +968,7 @@
 				clearTimeout(refreshDataTimeout as any);
 			}
 			refreshDataTimeout = setTimeout(() => {
-				refreshSessionData();
+				refreshChatData();
 				// Refresh context usage after message completes
 				refreshContextUsage();
 				refreshDataTimeout = null;
@@ -674,6 +983,124 @@
 {#if isLoading}
 	<div class="loading-container">
 		<div class="loading-spinner"></div>
+	</div>
+{:else if isContextView}
+	<!-- Context View - Full session details -->
+	<div class="context-view">
+		{#if contextViewLoading}
+			<div class="cv-loading">Loading...</div>
+		{:else if contextViewError}
+			<div class="cv-error">
+				<span>{contextViewError}</span>
+				<button type="button" onclick={fetchContextViewData}>Retry</button>
+			</div>
+		{:else if sessionUsage && sessionDetail}
+			<dl class="info-grid">
+				<dt>Session</dt>
+				<dd class="title">{sessionDetail.conversation.title || 'Untitled'}</dd>
+
+				<dt>Messages</dt>
+				<dd>{sessionDetail.conversation.message_count}</dd>
+
+				<dt>Provider</dt>
+				<dd>{sessionDetail.conversation.provider || '—'}</dd>
+
+				<dt>Model</dt>
+				<dd class="mono">{sessionUsage.model}</dd>
+
+				<dt>Context Limit</dt>
+				<dd class="mono">{formatTokens(sessionUsage.context_window)}</dd>
+
+				<dt>Total Tokens</dt>
+				<dd class="mono">{formatTokens(sessionUsage.total_tokens)}</dd>
+
+				<dt>Usage</dt>
+				<dd class="mono">{sessionUsage.usage_percentage.toFixed(1)}%</dd>
+
+				<dt>Input Tokens</dt>
+				<dd class="mono">{formatTokens(sessionUsage.input_tokens)}</dd>
+
+				<dt>Output Tokens</dt>
+				<dd class="mono">{formatTokens(sessionUsage.output_tokens)}</dd>
+
+				<dt>Reasoning Tokens</dt>
+				<dd class="mono">{formatTokens(sessionUsage.reasoning_tokens)}</dd>
+
+				<dt>Cache Tokens</dt>
+				<dd class="mono">{formatTokens(sessionUsage.cache_read_tokens)} / {formatTokens(sessionUsage.cache_write_tokens)}</dd>
+
+				<dt>User Messages</dt>
+				<dd>{sessionUsage.user_message_count}</dd>
+
+				<dt>Assistant Messages</dt>
+				<dd>{sessionUsage.assistant_message_count}</dd>
+
+				<dt>Total Cost</dt>
+				<dd class="mono">{formatCost(sessionUsage.total_cost_usd)}</dd>
+
+				<dt>Session Created</dt>
+				<dd>{formatDate(sessionUsage.first_message_at)}</dd>
+
+				<dt>Last Activity</dt>
+				<dd>{formatDate(sessionUsage.last_message_at)}</dd>
+			</dl>
+
+			<!-- Context Breakdown Bar -->
+			<div class="cv-breakdown">
+				<div class="cv-breakdown-label">Context Breakdown</div>
+				{#if breakdown && (breakdown.user.pct > 0 || breakdown.assistant.pct > 0 || breakdown.toolCalls.pct > 0 || breakdown.other.pct > 0)}
+					<div class="cv-bar">
+						{#if breakdown.user.pct > 0}
+							<div class="cv-segment cv-user" style="width: {breakdown.user.pct}%"></div>
+						{/if}
+						{#if breakdown.assistant.pct > 0}
+							<div class="cv-segment cv-assistant" style="width: {breakdown.assistant.pct}%"></div>
+						{/if}
+						{#if breakdown.toolCalls.pct > 0}
+							<div class="cv-segment cv-tools" style="width: {breakdown.toolCalls.pct}%"></div>
+						{/if}
+						{#if breakdown.other.pct > 0}
+							<div class="cv-segment cv-other" style="width: {breakdown.other.pct}%"></div>
+						{/if}
+					</div>
+					<div class="cv-legend">
+						<span><i class="cv-dot cv-user"></i> User {breakdown.user.pct.toFixed(1)}%</span>
+						<span><i class="cv-dot cv-assistant"></i> Assistant {breakdown.assistant.pct.toFixed(1)}%</span>
+						<span><i class="cv-dot cv-tools"></i> Tool Calls {breakdown.toolCalls.pct.toFixed(1)}%</span>
+						<span><i class="cv-dot cv-other"></i> Other {breakdown.other.pct.toFixed(1)}%</span>
+					</div>
+				{:else}
+					<div class="cv-bar cv-empty"></div>
+					<div class="cv-empty-note">No message data available for breakdown</div>
+				{/if}
+			</div>
+
+			<!-- Raw Messages -->
+			<div class="cv-raw-messages">
+				<div class="cv-section-label">Raw messages ({sessionDetail.messages?.length || 0})</div>
+				{#if sessionDetail.messages && sessionDetail.messages.length > 0}
+					<ul>
+						{#each sessionDetail.messages as msg, i}
+							<li>
+								<span class="cv-role">{msg.role}</span>
+								<span class="cv-msg-id">{msg.id || `msg_${i}`}</span>
+								<span class="cv-timestamp">{formatShortDate(msg.timestamp)}</span>
+							</li>
+						{/each}
+					</ul>
+				{:else}
+					<div class="cv-empty-note">No messages found in session data</div>
+				{/if}
+			</div>
+
+			{#if sessionUsage.usage_percentage > 20}
+				<button class="cv-compact-btn" onclick={handleCompact} disabled={compacting}>
+					{compacting ? 'Compacting...' : 'Compact Session'}
+				</button>
+			{/if}
+		{:else}
+			<div class="cv-loading">Loading session data...</div>
+		{/if}
 	</div>
 {:else}
 	<Page scrollable={false} className="h-full p-0!">
@@ -726,7 +1153,7 @@
 													uniqueMessages.length - 1
 												]?.id}
 											{@const isStreaming =
-												chat.status === "streaming" &&
+												(chat.status === "streaming" || chat.status === "submitted") &&
 												isLastMessage}
 											{@const messageReasoningParts =
 												message.parts.filter(
@@ -776,6 +1203,50 @@
 															onCitationClick={openCitationPanel}
 														/>
 													</div>
+											{:else if part.type === "tool-create_page" && (part as any).state === "output-available"}
+												{@const output = (part as any).output}
+												{#if output?.page_id}
+													<PageEditResult
+														type="page_created"
+														title={output.title}
+														pageId={output.page_id}
+														onOpenPage={(id) => spaceStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' })}
+													/>
+												{/if}
+											{:else if part.type === "tool-edit_page" && (part as any).state === "output-available"}
+												{@const output = (part as any).output}
+												{#if output?.needs_binding}
+													<PageBindingInline
+														message={output.message}
+														onBind={handlePageSelect}
+													/>
+												{:else if output?.edit}
+													<!-- Edit was applied server-side, show as historical record -->
+													<EditDiffCard
+														status="applied"
+														find={output.edit.find || ''}
+														replace={output.edit.replace || ''}
+														isFullReplace={!output.edit.find}
+														onViewPage={output.edit.page_id ? () => spaceStore.openTabFromRoute(`/page/${output.edit.page_id}`, { paneId: 'right' }) : undefined}
+													/>
+												{/if}
+											{:else if part.type === "tool-get_page_content" && (part as any).state === "output-available"}
+												{@const output = (part as any).output}
+												{#if output?.needs_binding}
+													<PageBindingInline
+														message={output.message}
+														onBind={handlePageSelect}
+													/>
+												{/if}
+											{:else if part.type === "tool-code_interpreter"}
+												{@const toolPart = part as any}
+												{@const isRunning = toolPart.state === "pending" || toolPart.state === "input-available"}
+												{@const isError = toolPart.state === "output-error"}
+												<CodeInterpreterCard
+													status={isRunning ? 'running' : isError ? 'error' : 'success'}
+													code={toolPart.input?.code || ''}
+													output={toolPart.output}
+												/>
 												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
@@ -837,12 +1308,12 @@
 										class:rate-limit-error={isRateLimitError}
 									>
 										<div class="error-icon">
-											<iconify-icon
+											<Icon
 												icon={isRateLimitError
 													? "ri:time-line"
 													: "ri:error-warning-line"}
 												width="20"
-											></iconify-icon>
+											/>
 										</div>
 										<div class="error-content">
 											<div class="error-title">
@@ -868,10 +1339,10 @@
 														href="/usage"
 														class="usage-link"
 													>
-														<iconify-icon
+														<Icon
 															icon="ri:bar-chart-line"
 															width="16"
-														></iconify-icon>
+														/>
 														View Usage Dashboard
 													</a>
 												{:else}
@@ -882,10 +1353,10 @@
 															chat.regenerate();
 														}}
 													>
-														<iconify-icon
+														<Icon
 															icon="ri:refresh-line"
 															width="16"
-														></iconify-icon>
+														/>
 														Retry
 													</button>
 												{/if}
@@ -905,20 +1376,6 @@
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
 					>
-						<div
-							class="hero-section"
-							class:visible={isEmpty}
-							class:transitions-enabled={enableTransitions}
-						>
-							<h1
-								class="hero-title shiny-title font-serif text-4xl text-navy mb-6"
-							>
-								{greeting}{preferredName
-									? `, ${preferredName}`
-									: ""}
-							</h1>
-						</div>
-
 						<ChatInput
 							bind:value={input}
 							bind:focused={inputFocused}
@@ -927,9 +1384,13 @@
 							sendDisabled={chat.status !== "ready"}
 							maxWidth="max-w-3xl"
 							showToolbar={true}
-							conversationId={tab.conversationId}
+							conversationId={extractConversationId(tab.route)}
 							{contextUsage}
 							onContextClick={handleContextClick}
+							pageBinding={activePageStore.boundPageId ? { pageId: activePageStore.boundPageId, pageTitle: activePageStore.boundPageTitle || 'Untitled' } : undefined}
+							onPageChange={handlePageChangePage}
+							onPageClear={handlePageClear}
+							onPageSelect={handlePageSelect}
 							on:submit={(e) => {
 								if (chat.status === "ready") {
 									handleChatSubmit(e.detail);
@@ -939,7 +1400,7 @@
 
 						{#if isEmpty}
 							<GettingStarted
-								onCreateSession={handleGettingStartedCreateSession}
+								onCreateChat={handleGettingStartedCreateChat}
 								onFocusInput={handleGettingStartedFocusInput}
 							/>
 						{/if}
@@ -954,17 +1415,6 @@
 		open={citationPanelOpen}
 		onClose={closeCitationPanel}
 	/>
-
-	<!-- Context Warning Toast -->
-	{#if showContextWarning && contextUsage}
-		<div class="toast-container">
-			<ContextWarningToast
-				usagePercentage={contextUsage.percentage}
-				oncompact={handleCompactNow}
-				ondismiss={() => (showContextWarning = false)}
-			/>
-		</div>
-	{/if}
 {/if}
 
 <style>
@@ -988,6 +1438,191 @@
 		to {
 			transform: rotate(360deg);
 		}
+	}
+
+	/* Context View Styles */
+	.context-view {
+		height: 100%;
+		overflow-y: auto;
+		padding: 1.5rem;
+		max-width: 600px;
+	}
+
+	.cv-loading,
+	.cv-error {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 3rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.cv-error {
+		color: var(--color-error);
+	}
+
+	.cv-error button {
+		padding: 0.5rem 1rem;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface);
+		border-radius: 6px;
+		cursor: pointer;
+	}
+
+	.info-grid {
+		display: grid;
+		grid-template-columns: 140px 1fr;
+		gap: 0.5rem 1rem;
+		margin: 0;
+	}
+
+	.info-grid dt {
+		color: var(--color-foreground-muted);
+		font-size: 0.875rem;
+	}
+
+	.info-grid dd {
+		margin: 0;
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+	}
+
+	.info-grid dd.title {
+		font-weight: 500;
+	}
+
+	.info-grid dd.mono {
+		font-family: var(--font-mono);
+	}
+
+	/* Breakdown bar */
+	.cv-breakdown {
+		margin-top: 2rem;
+	}
+
+	.cv-breakdown-label,
+	.cv-section-label {
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		margin-bottom: 0.5rem;
+	}
+
+	.cv-bar {
+		display: flex;
+		height: 8px;
+		border-radius: 4px;
+		overflow: hidden;
+		background: var(--color-surface-elevated);
+	}
+
+	.cv-segment {
+		min-width: 2px;
+	}
+
+	.cv-segment.cv-user { background: #10b981; }
+	.cv-segment.cv-assistant { background: #ec4899; }
+	.cv-segment.cv-tools { background: #eab308; }
+	.cv-segment.cv-other { background: #6b7280; }
+
+	.cv-legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+		margin-top: 0.5rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.cv-dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		margin-right: 4px;
+		vertical-align: middle;
+	}
+
+	.cv-dot.cv-user { background: #10b981; }
+	.cv-dot.cv-assistant { background: #ec4899; }
+	.cv-dot.cv-tools { background: #eab308; }
+	.cv-dot.cv-other { background: #6b7280; }
+
+	.cv-bar.cv-empty {
+		background: var(--color-surface-elevated);
+	}
+
+	.cv-empty-note {
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		font-style: italic;
+		margin-top: 0.5rem;
+	}
+
+	/* Raw messages */
+	.cv-raw-messages {
+		margin-top: 2rem;
+	}
+
+	.cv-raw-messages ul {
+		list-style: none;
+		padding: 0;
+		margin: 0.5rem 0 0 0;
+		max-height: 300px;
+		overflow-y: auto;
+	}
+
+	.cv-raw-messages li {
+		display: flex;
+		gap: 0.75rem;
+		padding: 0.375rem 0;
+		font-size: 0.8125rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.cv-raw-messages li:last-child {
+		border-bottom: none;
+	}
+
+	.cv-role {
+		min-width: 70px;
+		color: var(--color-foreground-muted);
+	}
+
+	.cv-msg-id {
+		flex: 1;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.cv-timestamp {
+		color: var(--color-foreground-muted);
+		white-space: nowrap;
+	}
+
+	/* Compact button */
+	.cv-compact-btn {
+		margin-top: 2rem;
+		padding: 0.5rem 1rem;
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		cursor: pointer;
+		transition: background-color 0.15s ease;
+	}
+
+	.cv-compact-btn:hover:not(:disabled) {
+		background: var(--color-surface-hover);
+	}
+
+	.cv-compact-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.chat-container {
@@ -1114,6 +1749,9 @@
 		position: relative;
 		width: 100%;
 		padding: 0.5rem 0;
+		min-width: 0;
+		overflow-wrap: break-word;
+		word-break: break-word;
 	}
 
 	.message-wrapper :global(h1),
@@ -1268,12 +1906,5 @@
 		100% {
 			background-position: 0% center;
 		}
-	}
-
-	.toast-container {
-		position: fixed;
-		top: 1rem;
-		right: 1rem;
-		z-index: 100;
 	}
 </style>

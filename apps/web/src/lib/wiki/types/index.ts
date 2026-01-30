@@ -53,7 +53,6 @@ export {
 export type { PersonPage, ConnectionTier, ContactFrequency, SocialLinks } from "./person";
 export type { PlacePage, PlaceType, Coordinates } from "./place";
 export type { OrganizationPage, OrganizationType } from "./organization";
-export type { ThingPage, ThingType } from "./thing";
 
 // =============================================================================
 // UNION TYPE
@@ -67,7 +66,6 @@ import type { DayPage } from "./day";
 import type { PersonPage } from "./person";
 import type { PlacePage } from "./place";
 import type { OrganizationPage } from "./organization";
-import type { ThingPage } from "./thing";
 
 /**
  * Discriminated union of all wiki page types.
@@ -81,8 +79,7 @@ export type WikiPage =
 	| DayPage
 	| PersonPage
 	| PlacePage
-	| OrganizationPage
-	| ThingPage;
+	| OrganizationPage;
 
 // =============================================================================
 // TYPE GUARDS
@@ -120,10 +117,6 @@ export function isOrganizationPage(page: WikiPage): page is OrganizationPage {
 	return page.type === "organization";
 }
 
-export function isThingPage(page: WikiPage): page is ThingPage {
-	return page.type === "thing";
-}
-
 // =============================================================================
 // PAGE CATEGORY TYPES
 // =============================================================================
@@ -134,8 +127,8 @@ export type NarrativePage = TelosPage | ActPage | ChapterPage;
 // Temporal pages - calendar-based (objective time)
 export type TemporalPage = YearPage | DayPage;
 
-// Entity pages - reference pages (people, places, things)
-export type EntityPage = PersonPage | PlacePage | OrganizationPage | ThingPage;
+// Entity pages - reference pages (people, places, orgs)
+export type EntityPage = PersonPage | PlacePage | OrganizationPage;
 
 export function isNarrativePage(page: WikiPage): page is NarrativePage {
 	return ["telos", "act", "chapter"].includes(page.type);
@@ -146,5 +139,5 @@ export function isTemporalPage(page: WikiPage): page is TemporalPage {
 }
 
 export function isEntityPage(page: WikiPage): page is EntityPage {
-	return ["person", "place", "organization", "thing"].includes(page.type);
+	return ["person", "place", "organization"].includes(page.type);
 }

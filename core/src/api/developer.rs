@@ -81,7 +81,15 @@ pub async fn execute_sql(
                             None => serde_json::Value::Null
                         }
                     }
-                    // Default to string for TEXT, BLOB, etc.
+                    // Handle BLOB data - show byte count since it can't be displayed as text
+                    "BLOB" => {
+                        let v: Option<Vec<u8>> = row.try_get(col.ordinal()).ok();
+                        match v {
+                            Some(bytes) => serde_json::Value::String(format!("<BLOB: {} bytes>", bytes.len())),
+                            None => serde_json::Value::Null
+                        }
+                    }
+                    // Default to string for TEXT, etc.
                     _ => {
                         let v: Option<String> = row.try_get(col.ordinal()).ok();
                         match v {

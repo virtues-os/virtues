@@ -1,5 +1,5 @@
 <script lang="ts">
-    import "iconify-icon";
+    import Icon from "$lib/components/Icon.svelte";
     import type { Tab } from "$lib/tabs/types";
     import { Page, Textarea, Button } from "$lib";
 
@@ -56,11 +56,11 @@
             <div
                 class="mb-6 flex items-center gap-3 rounded-lg border border-success/20 bg-success/10 px-4 py-3 text-success animate-in fade-in slide-in-from-top-2"
             >
-                <iconify-icon
+                <Icon
                     icon="ri:checkbox-circle-line"
                     width="20"
                     height="20"
-                ></iconify-icon>
+                />
                 <span class="font-medium"
                     >Thanks for your feedback! We'll take a look.</span
                 >
@@ -85,8 +85,8 @@
                             <div
                                 class="flex items-center justify-center gap-2 rounded-lg border border-border bg-surface px-4 py-3 text-sm font-medium text-foreground-muted transition-all peer-checked:border-foreground peer-checked:text-foreground peer-checked:bg-surface-elevated hover:bg-surface-elevated hover:text-foreground"
                             >
-                                <iconify-icon icon={option.icon} width="16"
-                                ></iconify-icon>
+                                <Icon icon={option.icon} width="16"
+                                />
                                 {option.label}
                             </div>
                         </label>
@@ -110,11 +110,11 @@
                 >
                     {#if loading}
                         <div class="flex items-center gap-2">
-                            <iconify-icon
+                            <Icon
                                 icon="ri:loader-4-line"
                                 class="animate-spin"
                                 width="16"
-                            ></iconify-icon>
+                            />
                             <span>Sending...</span>
                         </div>
                     {:else}

@@ -36,7 +36,7 @@
 		id: "wiki-today",
 		type: "link",
 		label: "Today",
-		href: `/wiki/${todaySlug}`,
+		href: `/day/day_${todaySlug}`,
 		icon: "ri:calendar-check-line",
 	}}
 	{collapsed}
@@ -47,9 +47,9 @@
 		id: "wiki-people",
 		type: "link",
 		label: "People",
-		href: "/wiki/people",
+		href: "/person",
 		icon: PAGE_TYPE_META.person.icon,
-		pagespace: "wiki/people",
+		pagespace: "person",
 	}}
 	{collapsed}
 />
@@ -59,9 +59,9 @@
 		id: "wiki-places",
 		type: "link",
 		label: "Places",
-		href: "/wiki/places",
+		href: "/place",
 		icon: PAGE_TYPE_META.place.icon,
-		pagespace: "wiki/places",
+		pagespace: "place",
 	}}
 	{collapsed}
 />
@@ -71,21 +71,9 @@
 		id: "wiki-orgs",
 		type: "link",
 		label: "Orgs",
-		href: "/wiki/orgs",
+		href: "/org",
 		icon: PAGE_TYPE_META.organization.icon,
-		pagespace: "wiki/orgs",
-	}}
-	{collapsed}
-/>
-
-<SidebarNavItem
-	item={{
-		id: "wiki-things",
-		type: "link",
-		label: "Things",
-		href: "/wiki/things",
-		icon: PAGE_TYPE_META.thing.icon,
-		pagespace: "wiki/things",
+		pagespace: "org",
 	}}
 	{collapsed}
 />
@@ -95,9 +83,9 @@
 		id: "wiki-drive",
 		type: "link",
 		label: "Drive",
-		href: "/data/drive",
+		href: "/drive",
 		icon: "ri:hard-drive-2-line",
-		pagespace: "data/drive",
+		pagespace: "drive",
 	}}
 	{collapsed}
 />

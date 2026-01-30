@@ -149,6 +149,11 @@ tempfile = "3.12"
 russh = "0.48"
 russh-keys = "0.48"
 
+# Yjs/CRDT support
+yrs = "0.18"
+y-sync = "0.4"
+moka = { version = "0.12", features = ["sync"] }
+
 [build-dependencies]
 chrono = "0.4"
 

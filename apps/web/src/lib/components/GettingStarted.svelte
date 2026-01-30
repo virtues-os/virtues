@@ -1,18 +1,19 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
 	import {
 		GETTING_STARTED_STEPS,
 		type GettingStartedStep,
 	} from "$lib/config/getting-started";
-	import { createSession, listSources } from "$lib/api/client";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { createChat, listSources } from "$lib/api/client";
+	import { spaceStore } from "$lib/stores/space.svelte";
 
 	interface Props {
-		onCreateSession?: (sessionId: string) => void;
+		onCreateChat?: (chatId: string) => void;
 		onFocusInput?: (placeholder?: string) => void;
 	}
 
-	let { onCreateSession, onFocusInput }: Props = $props();
+	let { onCreateChat, onFocusInput }: Props = $props();
 
 	// State
 	let expanded = $state(false);
@@ -58,11 +59,11 @@
 					s.auth_type === "device" && s.pairing_status === "active",
 			);
 
-			// Check sessions
-			const sessionsRes = await fetch("/api/sessions");
-			if (sessionsRes.ok) {
-				const sessions = await sessionsRes.json();
-				hasChatSessions = (sessions.conversations?.length ?? 0) > 0;
+			// Check chats
+			const chatsRes = await fetch("/api/chats");
+			if (chatsRes.ok) {
+				const chats = await chatsRes.json();
+				hasChatSessions = (chats.conversations?.length ?? 0) > 0;
 			}
 		} catch (error) {
 			console.error("Failed to load auto-complete data:", error);
@@ -100,9 +101,9 @@
 		if (isStepDone(step)) return;
 
 		switch (step.action.type) {
-			case "createSession": {
+			case "createChat": {
 				try {
-					const response = await createSession(step.action.title, [
+					const response = await createChat(step.action.title, [
 						{
 							role: "assistant",
 							content: step.action.content,
@@ -110,15 +111,15 @@
 						},
 					]);
 					await markStepComplete(step.id);
-					onCreateSession?.(response.id);
+					onCreateChat?.(response.id);
 				} catch (error) {
-					console.error("Failed to create intro session:", error);
+					console.error("Failed to create intro chat:", error);
 				}
 				break;
 			}
 			case "navigate":
 				// Open in tab system instead of simple navigation
-				workspaceStore.openTabFromRoute(step.action.href, {
+				spaceStore.openTabFromRoute(step.action.href, {
 					label: step.title,
 				});
 				break;
@@ -242,20 +243,20 @@
 							>
 								<div class="step-indicator">
 									{#if isComplete}
-										<iconify-icon
+										<Icon
 											icon="ri:check-line"
 											width="14"
-										></iconify-icon>
+										/>
 									{:else if isLocked}
-										<iconify-icon
+										<Icon
 											icon="ri:lock-line"
 											width="12"
-										></iconify-icon>
+										/>
 									{:else if isSkipped}
-										<iconify-icon
+										<Icon
 											icon="ri:subtract-line"
 											width="14"
-										></iconify-icon>
+										/>
 									{:else}
 										<span class="step-number"
 											>{index + 1}</span
@@ -270,10 +271,10 @@
 								</div>
 								{#if !isLocked}
 									<div class="step-icon">
-										<iconify-icon
+										<Icon
 											icon={step.icon}
 											width="18"
-										></iconify-icon>
+										/>
 									</div>
 								{/if}
 							</button>

@@ -9,6 +9,7 @@
 		disabled?: boolean;
 		width?: string;
 		maxHeight?: string;
+		position?: 'auto' | 'top' | 'bottom';
 		getKey: (item: T) => string | number;
 		getValue?: (item: T) => V;
 		onSelect?: (item: T) => void;
@@ -20,6 +21,7 @@
 		disabled = false,
 		width = 'w-64',
 		maxHeight = 'max-h-80',
+		position = 'auto',
 		getKey,
 		getValue,
 		onSelect,
@@ -39,6 +41,12 @@
 	const currentItem = $derived(
 		items.find(item => extractValue(item) === value) || items[0]
 	);
+
+	$effect(() => {
+		if (value === undefined && items.length > 0) {
+			value = extractValue(items[0]);
+		}
+	});
 
 	let open = $state(false);
 	let dropdownPosition = $state<'top' | 'bottom'>('bottom');
@@ -67,6 +75,12 @@
 	}
 
 	function calculateDropdownPosition() {
+		// If position is forced, use it directly
+		if (position !== 'auto') {
+			dropdownPosition = position;
+			return;
+		}
+
 		if (!buttonElement) return;
 
 		const rect = buttonElement.getBoundingClientRect();
@@ -105,11 +119,9 @@
 		type="button"
 		onclick={toggleDropdown}
 		disabled={disabled}
-		class="flex cursor-pointer items-center gap-2 rounded bg-surface text-sm transition-all duration-200"
+		class="flex cursor-pointer items-center gap-2 rounded text-sm transition-all duration-200"
 		class:opacity-50={disabled}
 		class:cursor-not-allowed={disabled}
-		class:bg-surface-elevated={disabled}
-		class:hover:bg-surface-elevated={!disabled}
 	>
 		{@render trigger(currentItem, disabled, open)}
 	</button>
@@ -117,7 +129,7 @@
 	{#if open && !disabled}
 		<div
 			bind:this={dropdownElement}
-			class="absolute z-50 left-0 {width} bg-surface border border-border shadow-lg rounded-lg overflow-hidden"
+			class="absolute z-50 left-0 {width} bg-surface border border-border shadow-xl rounded-xl overflow-hidden backdrop-blur-sm"
 			class:top-full={dropdownPosition === 'bottom'}
 			class:mt-2={dropdownPosition === 'bottom'}
 			class:bottom-full={dropdownPosition === 'top'}
@@ -128,17 +140,21 @@
 				easing: cubicOut
 			}}
 		>
-			<div class="{maxHeight} overflow-y-auto">
+			<div class="{maxHeight} overflow-y-auto py-1">
 				{#each items as listItem (getKey(listItem))}
 					{@const isSelected = extractValue(listItem) === value}
 					<button
 						type="button"
-						class="w-full text-left transition-colors border-b border-border-subtle last:border-b-0"
-						class:bg-surface-elevated={isSelected}
-						class:hover:bg-surface-elevated={!isSelected}
+						class="w-full text-left transition-all duration-150 px-1"
 						onclick={() => selectItem(listItem)}
 					>
-						{@render item(listItem, isSelected)}
+						<div 
+							class="rounded-lg transition-colors"
+							class:bg-primary-subtle={isSelected}
+							class:hover:bg-surface-elevated={!isSelected}
+						>
+							{@render item(listItem, isSelected)}
+						</div>
 					</button>
 				{/each}
 			</div>

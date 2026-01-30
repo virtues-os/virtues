@@ -5,10 +5,10 @@
 -->
 
 <script lang="ts">
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { getAllPlaces } from "$lib/wiki";
 	import type { PlacePage } from "$lib/wiki/types";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	// Reactive list of places
 	let places = $state(getAllPlaces());
@@ -43,7 +43,7 @@
 
 	// Handle row click - navigate to place page
 	function handleRowClick(place: PlacePage) {
-		workspaceStore.openTabFromRoute(`/wiki/${place.slug}`);
+		spaceStore.openTabFromRoute(`/wiki/${place.slug}`);
 	}
 </script>
 
@@ -52,11 +52,11 @@
 	<div class="table-toolbar">
 		<div class="toolbar-left">
 			<button class="toolbar-btn">
-				<iconify-icon icon="ri:arrow-up-down-line" width="14"></iconify-icon>
+				<Icon icon="ri:arrow-up-down-line" width="14"/>
 				Sort
 			</button>
 			<button class="toolbar-btn">
-				<iconify-icon icon="ri:filter-3-line" width="14"></iconify-icon>
+				<Icon icon="ri:filter-3-line" width="14"/>
 				Filter
 			</button>
 		</div>
@@ -68,19 +68,19 @@
 			<thead>
 				<tr>
 					<th class="col-name">
-						<iconify-icon icon="ri:map-pin-line" width="14"></iconify-icon>
+						<Icon icon="ri:map-pin-line" width="14"/>
 						Name
 					</th>
 					<th class="col-type">
-						<iconify-icon icon="ri:building-line" width="14"></iconify-icon>
+						<Icon icon="ri:building-line" width="14"/>
 						Type
 					</th>
 					<th class="col-city">
-						<iconify-icon icon="ri:map-2-line" width="14"></iconify-icon>
+						<Icon icon="ri:map-2-line" width="14"/>
 						City
 					</th>
 					<th class="col-visits">
-						<iconify-icon icon="ri:footprint-line" width="14"></iconify-icon>
+						<Icon icon="ri:footprint-line" width="14"/>
 						Visits
 					</th>
 				</tr>
@@ -119,7 +119,7 @@
 	<!-- Empty state -->
 	{#if places.length === 0}
 		<div class="empty-state">
-			<iconify-icon icon="ri:map-pin-add-line" width="32"></iconify-icon>
+			<Icon icon="ri:map-pin-add-line" width="32"/>
 			<p>No places yet</p>
 		</div>
 	{/if}
@@ -220,7 +220,7 @@
 		padding-right: 0;
 	}
 
-	th iconify-icon {
+	th :global(svg) {
 		vertical-align: -2px;
 		margin-right: 0.375rem;
 		opacity: 0.7;
@@ -347,7 +347,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.empty-state iconify-icon {
+	.empty-state :global(svg) {
 		opacity: 0.5;
 	}
 

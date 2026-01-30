@@ -65,7 +65,9 @@ pub async fn handle_add_source(
     let callback_params = parse_callback_url(&redirect_url, source_type)?;
 
     // Handle callback and create source
-    let response = crate::handle_oauth_callback(virtues.database.pool(), &callback_params).await?;
+    // Note: We pass None for storage/stream_writer since CLI doesn't have server context
+    // Initial sync won't be triggered - user can manually sync after
+    let response = crate::handle_oauth_callback(virtues.database.pool(), None, None, &callback_params).await?;
 
     println!("\n✅ Source created successfully!");
     println!("   Name: {}", response.source.name);

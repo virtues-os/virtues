@@ -6,10 +6,10 @@
 -->
 
 <script lang="ts">
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { getAllPersons, addPerson } from "$lib/wiki";
 	import type { PersonPage, ContactFrequency } from "$lib/wiki/types";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	// Reactive list of people
 	let people = $state(getAllPersons());
@@ -102,7 +102,7 @@
 
 	// Handle row click - navigate to person page
 	function handleRowClick(person: PersonPage) {
-		workspaceStore.openTabFromRoute(`/wiki/${person.slug}`);
+		spaceStore.openTabFromRoute(`/wiki/${person.slug}`);
 	}
 
 	// Start adding a new row
@@ -158,16 +158,16 @@
 	<div class="table-toolbar">
 		<div class="toolbar-left">
 			<button class="toolbar-btn">
-				<iconify-icon icon="ri:arrow-up-down-line" width="14"></iconify-icon>
+				<Icon icon="ri:arrow-up-down-line" width="14"/>
 				Sort
 			</button>
 			<button class="toolbar-btn">
-				<iconify-icon icon="ri:filter-3-line" width="14"></iconify-icon>
+				<Icon icon="ri:filter-3-line" width="14"/>
 				Filter
 			</button>
 		</div>
 		<button class="toolbar-btn toolbar-btn-primary" onclick={startAddingRow}>
-			<iconify-icon icon="ri:add-line" width="14"></iconify-icon>
+			<Icon icon="ri:add-line" width="14"/>
 			Add person
 		</button>
 	</div>
@@ -178,23 +178,23 @@
 			<thead>
 				<tr>
 					<th class="col-name">
-						<iconify-icon icon="ri:user-line" width="14"></iconify-icon>
+						<Icon icon="ri:user-line" width="14"/>
 						Name
 					</th>
 					<th class="col-relationship">
-						<iconify-icon icon="ri:heart-line" width="14"></iconify-icon>
+						<Icon icon="ri:heart-line" width="14"/>
 						Relationship
 					</th>
 					<th class="col-location">
-						<iconify-icon icon="ri:map-pin-line" width="14"></iconify-icon>
+						<Icon icon="ri:map-pin-line" width="14"/>
 						Location
 					</th>
 					<th class="col-frequency">
-						<iconify-icon icon="ri:time-line" width="14"></iconify-icon>
+						<Icon icon="ri:time-line" width="14"/>
 						Frequency
 					</th>
 					<th class="col-last-contact">
-						<iconify-icon icon="ri:calendar-line" width="14"></iconify-icon>
+						<Icon icon="ri:calendar-line" width="14"/>
 						Last Contact
 					</th>
 				</tr>
@@ -284,7 +284,7 @@
 	<!-- Empty state -->
 	{#if people.length === 0 && !isAddingRow}
 		<div class="empty-state">
-			<iconify-icon icon="ri:user-add-line" width="32"></iconify-icon>
+			<Icon icon="ri:user-add-line" width="32"/>
 			<p>No people yet</p>
 			<button class="empty-add-btn" onclick={startAddingRow}>Add your first person</button>
 		</div>
@@ -400,7 +400,7 @@
 		border-bottom: none;
 	}
 
-	th iconify-icon {
+	th :global(svg) {
 		vertical-align: -2px;
 		margin-right: 0.375rem;
 		opacity: 0.7;
@@ -626,7 +626,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.empty-state iconify-icon {
+	.empty-state :global(svg) {
 		opacity: 0.5;
 	}
 

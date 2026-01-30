@@ -11,7 +11,6 @@ import type {
 	YearPage,
 	PersonPage,
 	PlacePage,
-	ThingPage,
 	OrganizationPage,
 	DayPage,
 	DayEvent,
@@ -236,7 +235,6 @@ This act established several patterns that would persist through my life: my rel
 	// Linked pages (for [[wiki link]] resolution)
 	linkedPages: [
 		{ displayName: "UT Austin", pageSlug: "ut-austin", pageType: "place" },
-		{ displayName: "Stoicism", pageSlug: "stoicism", pageType: "thing", preview: "The philosophy that grounds my life" },
 		{ displayName: "Sarah Chen", pageSlug: "sarah-chen", pageType: "person", preview: "Best friend since college" },
 		{ displayName: "Tom Wilson", pageSlug: "tom-wilson", pageType: "person" },
 		{ displayName: "Prof. Miller", pageSlug: "prof-miller", pageType: "person" },
@@ -247,9 +245,7 @@ This act established several patterns that would persist through my life: my rel
 		{ displayName: "Main Library", pageSlug: "main-library", pageType: "place" },
 	],
 
-	relatedPages: [
-		{ slug: "stoicism", title: "Stoicism", pageType: "thing", preview: "The philosophy that grounds my life" },
-	],
+	relatedPages: [],
 
 	tags: ["education", "philosophy", "personal-growth", "formative"],
 	createdAt: new Date(2024, 0, 15),
@@ -322,7 +318,6 @@ Weekly calls every Sunday, 7 PM her time. Shares my interest in [[Stoicism]].`,
 	linkedPages: [
 		{ displayName: "Freshman Year", pageSlug: "freshman-year", pageType: "chapter" },
 		{ displayName: "Main Library", pageSlug: "main-library", pageType: "place" },
-		{ displayName: "Stoicism", pageSlug: "stoicism", pageType: "thing" },
 	],
 
 	relatedPages: [{ slug: "college-years", title: "College Years", pageType: "act" }],
@@ -427,120 +422,6 @@ This is where I first read Marcus Aurelius[1]. Where I met [[Sarah Chen]] for ou
 };
 
 // =============================================================================
-// THING: Stoicism
-// =============================================================================
-
-export const THING_STOICISM: ThingPage = {
-	id: "thing-stoicism",
-	type: "thing",
-	slug: "stoicism",
-	title: "Stoicism",
-	subtitle: "The philosophy that grounds my life",
-
-	// Classification
-	thingType: "philosophy",
-
-	// Discovery
-	firstEncountered: {
-		date: new Date(2011, 9, 1),
-		context: "Prof. Miller's philosophy class, reading Marcus Aurelius",
-	},
-	introducedBy: { displayName: "Prof. Miller", pageSlug: "prof-miller", pageType: "person" },
-
-	// Narrative
-	content: `Stoicism is the ancient philosophy that has most shaped my approach to life. I encountered it through [[Prof. Miller]]'s class during the [[College Years]].
-
-## What Is Stoicism?
-
-Stoicism is a Hellenistic philosophy founded in Athens around 300 BCE. Its core insights:
-
-- **The dichotomy of control** — Focus only on what you can control
-- **Virtue as the highest good** — External goods are "preferred indifferents"
-- **Living according to nature** — Align with reason and the logos
-- **Memento mori** — Remember death as motivation to live fully
-
-## My Encounter
-
-I first read Marcus Aurelius in October 2011[1], sitting in the [[Main Library]] late at night.
-
-> "You have power over your mind — not outside events. Realize this, and you will find strength." — Marcus Aurelius
-
-## How I Apply It
-
-- **The dichotomy of control** — Constant reminder during difficulty
-- **Premeditatio malorum** — Visualizing challenges before they arrive
-- **Evening reflection** — Reviewing the day's actions against values`,
-
-	// Structure
-	coreTenets: [
-		"The dichotomy of control",
-		"Virtue as the highest good",
-		"Living according to nature",
-		"Memento mori",
-	],
-	keyTexts: [
-		{ title: "Meditations", author: "Marcus Aurelius", year: 180 },
-		{ title: "Letters from a Stoic", author: "Seneca", year: 65 },
-		{ title: "Discourses", author: "Epictetus", year: 108 },
-	],
-
-	// Connections
-	relatedThings: [],
-	associatedPeople: [
-		{ displayName: "Prof. Miller", pageSlug: "prof-miller", pageType: "person" },
-		{ displayName: "Sarah Chen", pageSlug: "sarah-chen", pageType: "person" },
-	],
-	associatedPlaces: [
-		{ displayName: "Main Library", pageSlug: "main-library", pageType: "place" },
-	],
-	narrativeContext: [
-		{ displayName: "College Years", pageSlug: "college-years", pageType: "act" },
-	],
-
-	// Infobox
-	infobox: {
-		fields: [
-			{ label: "Type", value: "Philosophy" },
-			{ label: "Origin", value: "Athens, ~300 BCE" },
-			{ label: "First Encountered", value: "October 2011" },
-			{ label: "Key Text", value: "Meditations" },
-		],
-		links: [
-			{ label: "College Years", pageSlug: "college-years" },
-		],
-	},
-
-	// Citations
-	citations: [
-		{
-			id: "c1",
-			index: 1,
-			sourceType: "ontology",
-			label: "Meditations by Marcus Aurelius",
-			preview: "47 highlights, first read October 2011",
-			timestamp: new Date(2011, 9, 1),
-			addedBy: "human",
-		},
-	],
-
-	// Linked pages
-	linkedPages: [
-		{ displayName: "Prof. Miller", pageSlug: "prof-miller", pageType: "person" },
-		{ displayName: "College Years", pageSlug: "college-years", pageType: "act" },
-		{ displayName: "Main Library", pageSlug: "main-library", pageType: "place" },
-	],
-
-	relatedPages: [
-		{ slug: "college-years", title: "College Years", pageType: "act" },
-	],
-
-	tags: ["philosophy", "stoicism", "virtue", "core-framework"],
-	createdAt: new Date(2024, 1, 1),
-	updatedAt: new Date(2024, 9, 15),
-	lastEditedBy: "human",
-};
-
-// =============================================================================
 // ORGANIZATION: UT Austin
 // =============================================================================
 
@@ -599,7 +480,6 @@ College was equal parts intellectual awakening and personal struggle. The [[Main
 
 	// Linked pages
 	linkedPages: [
-		{ displayName: "Stoicism", pageSlug: "stoicism", pageType: "thing" },
 		{ displayName: "Prof. Miller", pageSlug: "prof-miller", pageType: "person" },
 		{ displayName: "Main Library", pageSlug: "main-library", pageType: "place" },
 	],
@@ -768,14 +648,6 @@ const MOCK_LINKED_ENTITIES: LinkedEntities = {
 		{ displayName: "Gym", pageSlug: "gym", pageType: "place" },
 	],
 	organizations: [],
-	things: [
-		{
-			displayName: "Stoicism",
-			pageSlug: "stoicism",
-			pageType: "thing",
-			preview: "The philosophy that grounds my life",
-		},
-	],
 };
 
 const MOCK_LINKED_TEMPORAL: LinkedTemporal = {
@@ -946,12 +818,9 @@ The data shows a day split between focused work and scattered attention. The aft
 			pageSlug: "sarah-chen",
 			pageType: "person",
 		},
-		{ displayName: "Stoicism", pageSlug: "stoicism", pageType: "thing" },
 	],
 
-	relatedPages: [
-		{ slug: "stoicism", title: "Stoicism", pageType: "thing" },
-	],
+	relatedPages: [],
 
 	tags: ["daily", "timeline", "ontology", "transactions", "biometrics", "transcription"],
 	content: "", // DayPage uses autobiography field for content
@@ -972,7 +841,6 @@ export const MOCK_PAGES: Record<string, WikiPage> = {
 	// Entities
 	"sarah-chen": PERSON_SARAH_CHEN,
 	"main-library": PLACE_MAIN_LIBRARY,
-	stoicism: THING_STOICISM,
 	"ut-austin": ORG_UT_AUSTIN,
 	// Days
 	"2025-12-10": MOCK_DAY_PAGE,
@@ -1178,15 +1046,6 @@ export function getAllPlaces(): PlacePage[] {
 export function getAllOrganizations(): OrganizationPage[] {
 	return Object.values(MOCK_PAGES)
 		.filter((p): p is OrganizationPage => p.type === "organization")
-		.sort((a, b) => a.title.localeCompare(b.title));
-}
-
-/**
- * Get all Thing pages.
- */
-export function getAllThings(): ThingPage[] {
-	return Object.values(MOCK_PAGES)
-		.filter((p): p is ThingPage => p.type === "thing")
 		.sort((a, b) => a.title.localeCompare(b.title));
 }
 

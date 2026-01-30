@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { fade } from "svelte/transition";
 	import { getEnabledAgents, type AgentUIMetadata } from "$lib/config/agents";
 	import UniversalSelect from "./UniversalSelect.svelte";
@@ -53,25 +54,25 @@
 			aria-label="Select agent"
 		>
 			{#if isDisabled}
-				<iconify-icon
+				<Icon
 					icon={agent.icon}
 					style="color: {agent.color}"
 					width="16"
 					in:fade={{ duration: 200 }}
-				></iconify-icon>
+				/>
 			{:else}
-				<iconify-icon
+				<Icon
 					icon={agent.icon}
 					style="color: {agent.color}"
 					width="14"
-				></iconify-icon>
+				/>
 				<span class="text-foreground-muted">{agent.name}</span>
-				<iconify-icon
+				<Icon
 					icon="ri:arrow-down-s-line"
 					class="text-foreground-subtle transition-transform duration-200"
 					class:rotate-180={open}
 					width="16"
-				></iconify-icon>
+				/>
 			{/if}
 		</div>
 	{/snippet}
@@ -81,11 +82,11 @@
 			<div class="flex items-start justify-between gap-3">
 				<div class="flex items-start gap-3">
 					<div class="mt-0.5">
-						<iconify-icon
+						<Icon
 							icon={agent.icon}
 							style="color: {agent.color}"
 							width="18"
-						></iconify-icon>
+						/>
 					</div>
 					<div class="flex-1 min-w-0">
 						<div class="flex items-center gap-2">
@@ -102,11 +103,11 @@
 					</div>
 				</div>
 				{#if isSelected}
-					<iconify-icon
+					<Icon
 						icon="ri:check-line"
 						class="text-primary flex-shrink-0 mt-0.5"
 						width="16"
-					></iconify-icon>
+					/>
 				{/if}
 			</div>
 		</div>
