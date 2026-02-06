@@ -24,7 +24,7 @@ jobs:
   # Build unified image (Rust backend + SvelteKit static frontend)
   # ==========================================================================
   build-core:
-    runs-on: ubuntu-latest
+    runs-on: fast-runner
     permissions:
       contents: read
       packages: write
@@ -68,7 +68,7 @@ jobs:
   # Build Tollbooth AI proxy image
   # ==========================================================================
   build-tollbooth:
-    runs-on: ubuntu-latest
+    runs-on: fast-runner
     permissions:
       contents: read
       packages: write
