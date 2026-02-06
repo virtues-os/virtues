@@ -120,3 +120,4 @@ tmp/*
 /apps/mac/.build
 /packages/virtues-registry/target
 /packages/virtues-registry/target
+/core/core/
