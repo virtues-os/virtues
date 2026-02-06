@@ -10,8 +10,9 @@ RUN cargo install cargo-chef
 
 WORKDIR /app
 
-COPY Cargo.toml Cargo.lock* ./
-COPY src ./src
+COPY apps/tollbooth/Cargo.toml apps/tollbooth/Cargo.lock* ./
+COPY apps/tollbooth/src ./src
+COPY packages/virtues-registry /packages/virtues-registry
 
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -30,13 +31,16 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Copy path dependency
+COPY packages/virtues-registry /packages/virtues-registry
+
 # Cook dependencies from recipe (cached layer — only reruns when deps change)
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 # Copy actual source and build (only this layer reruns on code changes)
-COPY Cargo.toml Cargo.lock* ./
-COPY src ./src
+COPY apps/tollbooth/Cargo.toml apps/tollbooth/Cargo.lock* ./
+COPY apps/tollbooth/src ./src
 
 RUN cargo build --release
 
