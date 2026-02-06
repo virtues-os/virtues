@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO data_location_visit (\n            id,\n            place_id,\n            latitude,\n            longitude,\n            arrival_time,\n            departure_time,\n            duration_minutes,\n            source_stream_id,\n            source_table,\n            source_provider,\n            metadata\n        ) VALUES (\n            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11\n        )\n        ON CONFLICT (id) DO UPDATE SET\n            place_id = EXCLUDED.place_id,\n            departure_time = EXCLUDED.departure_time,\n            duration_minutes = EXCLUDED.duration_minutes,\n            latitude = EXCLUDED.latitude,\n            longitude = EXCLUDED.longitude,\n            metadata = EXCLUDED.metadata,\n            updated_at = datetime('now')\n        WHERE data_location_visit.departure_time < EXCLUDED.departure_time\n           OR data_location_visit.place_id IS NULL\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 11
+    },
+    "nullable": []
+  },
+  "hash": "a2aa3a32be372de0ef1a87868c82ef31c87ab7cbcd673dab13cd7f5fb4cf7f2d"
+}

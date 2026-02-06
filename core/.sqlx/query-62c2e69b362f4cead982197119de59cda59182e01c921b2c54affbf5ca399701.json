@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT emails, phones, birthday, metadata\n        FROM wiki_people\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "emails",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "phones",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "birthday",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "metadata",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "62c2e69b362f4cead982197119de59cda59182e01c921b2c54affbf5ca399701"
+}

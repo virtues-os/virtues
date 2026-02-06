@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT pairing_status, device_info\n        FROM elt_source_connections\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "pairing_status",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "device_info",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "0c0971b77391e6c1f0540c88e67d297534263e518a6d34d16e8eab3530cdd85a"
+}

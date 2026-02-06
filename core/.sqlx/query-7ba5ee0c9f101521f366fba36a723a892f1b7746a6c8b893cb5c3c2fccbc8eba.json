@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE wiki_people\n        SET\n            canonical_name = COALESCE($2, canonical_name),\n            content = COALESCE($3, content),\n            picture = COALESCE($4, picture),\n            cover_image = COALESCE($5, cover_image),\n            emails = COALESCE($6, emails),\n            phones = COALESCE($7, phones),\n            birthday = COALESCE($8, birthday),\n            instagram = COALESCE($9, instagram),\n            facebook = COALESCE($10, facebook),\n            linkedin = COALESCE($11, linkedin),\n            x = COALESCE($12, x),\n            relationship_category = COALESCE($13, relationship_category),\n            nickname = COALESCE($14, nickname),\n            notes = COALESCE($15, notes),\n            updated_at = datetime('now')\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 15
+    },
+    "nullable": []
+  },
+  "hash": "7ba5ee0c9f101521f366fba36a723a892f1b7746a6c8b893cb5c3c2fccbc8eba"
+}

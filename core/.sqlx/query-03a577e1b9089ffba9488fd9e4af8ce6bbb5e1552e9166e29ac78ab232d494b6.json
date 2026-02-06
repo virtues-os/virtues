@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id, canonical_name, picture, relationship_category, last_interaction\n        FROM wiki_people\n        ORDER BY canonical_name ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "picture",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "relationship_category",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_interaction",
+        "ordinal": 4,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "03a577e1b9089ffba9488fd9e4af8ce6bbb5e1552e9166e29ac78ab232d494b6"
+}

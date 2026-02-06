@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE wiki_people\n        SET emails = $1,\n            phones = $2,\n            birthday = COALESCE($3, birthday),\n            metadata = $4,\n            updated_at = datetime('now')\n        WHERE id = $5\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "d33b5bec953a9f7cb61b6e3a1961124a6e1f6784cda483f92d8266c6eee74404"
+}

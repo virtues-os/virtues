@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                        UPDATE elt_stream_connections\n                        SET cron_schedule = $1, updated_at = datetime('now')\n                        WHERE id = $2\n                        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8ef0c466b7ac3a9fb69ce6511037222e3d68f41d0765ec257859e8bbbf29bded"
+}

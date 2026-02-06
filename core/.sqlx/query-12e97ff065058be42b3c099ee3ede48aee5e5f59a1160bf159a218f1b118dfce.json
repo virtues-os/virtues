@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT enabled_tools FROM app_assistant_profile\n        WHERE id = '00000000-0000-0000-0000-000000000001'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "enabled_tools",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "12e97ff065058be42b3c099ee3ede48aee5e5f59a1160bf159a218f1b118dfce"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE wiki_orgs\n        SET\n            canonical_name = COALESCE($2, canonical_name),\n            content = COALESCE($3, content),\n            cover_image = COALESCE($4, cover_image),\n            organization_type = COALESCE($5, organization_type),\n            relationship_type = COALESCE($6, relationship_type),\n            role_title = COALESCE($7, role_title),\n            start_date = COALESCE($8, start_date),\n            end_date = COALESCE($9, end_date),\n            updated_at = datetime('now')\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 9
+    },
+    "nullable": []
+  },
+  "hash": "e9560151e5b2962ff175e4503a1dd11b4fa3c092b3b4062a56fb21e5430fb1a0"
+}

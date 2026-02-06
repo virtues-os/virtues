@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE app_user_profile \n        SET \n            server_status = 'ready',\n            onboarding_status = 'complete',\n            updated_at = datetime('now')\n        WHERE id = '00000000-0000-0000-0000-000000000001'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "4632855dc76d5e24365f550844d95864d96a6c8a320c50b682f09fefa3cbb3ab"
+}

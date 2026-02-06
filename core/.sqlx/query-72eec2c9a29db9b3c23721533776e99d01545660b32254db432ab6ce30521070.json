@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_orgs (\n            id,\n            canonical_name,\n            organization_type,\n            relationship_type,\n            metadata\n        ) VALUES ($1, $2, $3, 'vendor', $4)\n        ON CONFLICT (id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "72eec2c9a29db9b3c23721533776e99d01545660b32254db432ab6ce30521070"
+}

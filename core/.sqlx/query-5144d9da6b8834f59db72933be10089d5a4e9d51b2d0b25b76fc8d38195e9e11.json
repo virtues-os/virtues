@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE data_financial_transaction\n        SET metadata = json_set(\n            COALESCE(metadata, '{}'),\n            '$.merchant_org_id', $1\n        ),\n        updated_at = datetime('now')\n        WHERE id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "5144d9da6b8834f59db72933be10089d5a4e9d51b2d0b25b76fc8d38195e9e11"
+}

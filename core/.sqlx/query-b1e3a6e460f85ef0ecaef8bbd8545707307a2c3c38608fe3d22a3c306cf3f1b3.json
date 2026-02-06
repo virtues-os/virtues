@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT COALESCE(SUM(token_count), 0) as \"total_tokens!: i64\"\n        FROM app_api_usage\n        WHERE day_bucket = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "total_tokens!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "b1e3a6e460f85ef0ecaef8bbd8545707307a2c3c38608fe3d22a3c306cf3f1b3"
+}

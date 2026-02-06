@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id\n        FROM wiki_people\n        WHERE EXISTS (\n            SELECT 1 FROM json_each(emails) WHERE value = $1\n        )\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "508eea880c08b5824dadd8c65da98836b9b8a9b959530e351c4d9ff193d8a959"
+}

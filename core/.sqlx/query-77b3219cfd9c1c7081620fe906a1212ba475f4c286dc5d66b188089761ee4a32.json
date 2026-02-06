@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO app_api_usage\n            (id, endpoint, day_bucket, request_count)\n        VALUES ($1, $2, $3, 1)\n        ON CONFLICT (endpoint, day_bucket)\n        DO UPDATE SET\n            request_count = request_count + 1,\n            updated_at = datetime('now')\n        RETURNING request_count as \"count!: i32\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "count!: i32",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "77b3219cfd9c1c7081620fe906a1212ba475f4c286dc5d66b188089761ee4a32"
+}

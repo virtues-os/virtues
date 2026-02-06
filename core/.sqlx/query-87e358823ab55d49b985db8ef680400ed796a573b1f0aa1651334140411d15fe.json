@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            from_email,\n            from_name\n        FROM data_social_email\n        WHERE timestamp >= $1\n          AND timestamp < $2\n          AND from_person_id IS NULL\n          AND from_email IS NOT NULL\n          AND from_email != ''\n        ORDER BY timestamp ASC\n        LIMIT 1000\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "from_email",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "from_name",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "87e358823ab55d49b985db8ef680400ed796a573b1f0aa1651334140411d15fe"
+}

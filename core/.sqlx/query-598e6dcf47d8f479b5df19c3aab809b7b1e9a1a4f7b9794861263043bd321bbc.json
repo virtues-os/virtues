@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT name as table_name\n        FROM sqlite_master\n        WHERE type = 'table'\n          AND name LIKE 'data_%'\n          AND name NOT LIKE 'data_stream_%'\n          AND name NOT IN ('data_sources', 'data_streams', 'data_sync_logs')\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "table_name",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "598e6dcf47d8f479b5df19c3aab809b7b1e9a1a4f7b9794861263043bd321bbc"
+}

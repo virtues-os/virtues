@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO app_auth_user (id, email, email_verified)\n        VALUES ($1, $2, datetime('now'))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "61fa30493bfcc70e8dc81df6dbdfc498cfe152979a7cc9a7dd5aa4181d75b5ec"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE wiki_places\n        SET\n            name = COALESCE($2, name),\n            category = COALESCE($3, category),\n            address = COALESCE($4, address),\n            latitude = COALESCE($5, latitude),\n            longitude = COALESCE($6, longitude),\n            metadata = $7,\n            updated_at = datetime('now')\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "3927dbdca600ce5d90c5019b63dde717fbf680da97a0a72c09a9c5085b954b10"
+}

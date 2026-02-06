@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE app_assistant_profile\n        SET\n            assistant_name = COALESCE(assistant_name, $1),\n            default_agent_id = COALESCE(default_agent_id, $2),\n            default_model_id = COALESCE(default_model_id, $3),\n            enabled_tools = COALESCE(enabled_tools, $4),\n            ui_preferences = COALESCE(ui_preferences, $5),\n            updated_at = datetime('now')\n        WHERE id = $6\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "353314a0fa8ca1f0e70eb1c0ec2d980e856b555341e0a28d25ad260b34a62fa2"
+}

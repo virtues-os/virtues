@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO app_auth_verification_token (identifier, token, expires)\n        VALUES ($1, $2, $3)\n        ON CONFLICT (identifier, token) DO UPDATE SET expires = $3\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f168cfb47880155b1251f943a76151f56a849e299176402b3e90d6541f4b66a2"
+}

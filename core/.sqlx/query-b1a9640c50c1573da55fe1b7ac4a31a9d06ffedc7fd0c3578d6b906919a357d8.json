@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id, canonical_name, organization_type, relationship_type\n        FROM wiki_orgs\n        ORDER BY canonical_name ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "organization_type",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "relationship_type",
+        "ordinal": 3,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "b1a9640c50c1573da55fe1b7ac4a31a9d06ffedc7fd0c3578d6b906919a357d8"
+}

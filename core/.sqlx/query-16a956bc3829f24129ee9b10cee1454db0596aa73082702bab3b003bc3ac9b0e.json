@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            latitude,\n            longitude,\n            timestamp,\n            horizontal_accuracy\n        FROM data_location_point\n        WHERE timestamp >= $1\n          AND timestamp < $2\n          AND (horizontal_accuracy IS NULL OR horizontal_accuracy < $3)\n        ORDER BY timestamp ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "latitude",
+        "ordinal": 1,
+        "type_info": "Float"
+      },
+      {
+        "name": "longitude",
+        "ordinal": 2,
+        "type_info": "Float"
+      },
+      {
+        "name": "timestamp",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "horizontal_accuracy",
+        "ordinal": 4,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "16a956bc3829f24129ee9b10cee1454db0596aa73082702bab3b003bc3ac9b0e"
+}

@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        DELETE FROM app_auth_verification_token\n        WHERE identifier = $1 AND token = $2 AND expires > datetime('now')\n        RETURNING identifier, token, expires\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "identifier",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "token",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "expires",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "875f09edfc65264be755cab5b49247096d9e5dab0f93ba12db34bdb5f540696b"
+}

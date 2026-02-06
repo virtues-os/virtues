@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id, end_time, duration_minutes, sleep_quality_score\n        FROM data_health_sleep\n        WHERE end_time >= $1 AND end_time <= $2\n        ORDER BY end_time ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "end_time",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "duration_minutes",
+        "ordinal": 2,
+        "type_info": "Integer"
+      },
+      {
+        "name": "sleep_quality_score",
+        "ordinal": 3,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "9b8a8460fbb20b965a0b80cebc59c549578c5259c3d39b19e247a0d86d531641"
+}

@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id, canonical_name, content, cover_image,\n            organization_type, relationship_type, role_title,\n            start_date, end_date, interaction_count,\n            first_interaction, last_interaction,\n            created_at, updated_at\n        FROM wiki_orgs\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "canonical_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "cover_image",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "organization_type",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "relationship_type",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "role_title",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "start_date",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "end_date",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "interaction_count",
+        "ordinal": 9,
+        "type_info": "Integer"
+      },
+      {
+        "name": "first_interaction",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_interaction",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 13,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "c1cf945755fcc5e0df9ab05b958e946cf6c5a8b481c2e045318d477fd9652258"
+}

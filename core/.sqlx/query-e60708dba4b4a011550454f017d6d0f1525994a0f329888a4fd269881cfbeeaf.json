@@ -1,0 +1,92 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id, name, content, cover_image, category, address,\n            latitude, longitude,\n            visit_count, first_visit, last_visit,\n            created_at, updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "cover_image",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "address",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "latitude",
+        "ordinal": 6,
+        "type_info": "Float"
+      },
+      {
+        "name": "longitude",
+        "ordinal": 7,
+        "type_info": "Float"
+      },
+      {
+        "name": "visit_count",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "first_visit",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_visit",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "e60708dba4b4a011550454f017d6d0f1525994a0f329888a4fd269881cfbeeaf"
+}

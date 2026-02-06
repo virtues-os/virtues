@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_people (\n            id,\n            canonical_name,\n            emails,\n            phones,\n            birthday,\n            metadata\n        ) VALUES ($1, $2, $3, $4, $5, $6)\n        ON CONFLICT (id) DO UPDATE SET\n            emails = EXCLUDED.emails,\n            phones = EXCLUDED.phones,\n            birthday = COALESCE(EXCLUDED.birthday, wiki_people.birthday),\n            metadata = EXCLUDED.metadata,\n            updated_at = datetime('now')\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "a57112c28e3048e3f0cf6a15dfa3bb08b3336cf37dc112b2f44e988a45506faf"
+}

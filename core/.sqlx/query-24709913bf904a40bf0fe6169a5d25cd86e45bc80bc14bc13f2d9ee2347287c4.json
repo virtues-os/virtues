@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_days (id, date)\n        VALUES ($1, $2)\n        RETURNING\n            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,\n            last_edited_by, cover_image, act_id, chapter_id,\n            created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "date",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "start_timezone",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "end_timezone",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "autobiography",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "autobiography_sections",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "last_edited_by",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "cover_image",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "act_id",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "chapter_id",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "24709913bf904a40bf0fe6169a5d25cd86e45bc80bc14bc13f2d9ee2347287c4"
+}

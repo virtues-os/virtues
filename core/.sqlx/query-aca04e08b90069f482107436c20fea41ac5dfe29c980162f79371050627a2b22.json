@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE app_user_profile \n        SET \n            owner_email = $1,\n            full_name = COALESCE($2, full_name),\n            preferred_name = COALESCE($3, preferred_name),\n            server_status = 'ready',\n            onboarding_status = 'complete',\n            updated_at = datetime('now')\n        WHERE id = '00000000-0000-0000-0000-000000000001'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "aca04e08b90069f482107436c20fea41ac5dfe29c980162f79371050627a2b22"
+}
