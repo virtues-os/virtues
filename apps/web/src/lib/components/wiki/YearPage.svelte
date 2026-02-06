@@ -9,8 +9,8 @@
 	import type { YearPage as YearPageType } from "$lib/wiki/types";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import ActivityHeatmap from "./ActivityHeatmap.svelte";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import "iconify-icon";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		page: YearPageType;
@@ -37,7 +37,7 @@
 	});
 
 	function handleDayClick(_date: Date, slug: string) {
-		workspaceStore.openTabFromRoute(`/wiki/${slug}`);
+		spaceStore.openTabFromRoute(`/wiki/${slug}`);
 	}
 
 	function formatPeriod(start: Date, end?: Date): string {
@@ -131,7 +131,7 @@
 					<ul class="footer-list">
 						{#each page.acts as act}
 							<li>
-								<a href="/wiki/{act.pageSlug}" class="footer-link">
+								<a href="/wiki/{act.pageId}" class="footer-link">
 									<span class="link-text">{act.displayName}</span>
 									<span class="link-type">act</span>
 								</a>
@@ -139,7 +139,7 @@
 						{/each}
 						{#each page.chapters as chapter}
 							<li>
-								<a href="/wiki/{chapter.pageSlug}" class="footer-link">
+								<a href="/wiki/{chapter.pageId}" class="footer-link">
 									<span class="link-text">{chapter.displayName}</span>
 									<span class="link-type">chapter</span>
 								</a>
@@ -158,7 +158,7 @@
 					<ul class="footer-list">
 						{#each page.keyPeople as person}
 							<li>
-								<a href="/wiki/{person.pageSlug}" class="footer-link">
+								<a href="/wiki/{person.pageId}" class="footer-link">
 									<span class="link-text">{person.displayName}</span>
 								</a>
 							</li>
@@ -176,7 +176,7 @@
 					<ul class="footer-list">
 						{#each page.keyPlaces as place}
 							<li>
-								<a href="/wiki/{place.pageSlug}" class="footer-link">
+								<a href="/wiki/{place.pageId}" class="footer-link">
 									<span class="link-text">{place.displayName}</span>
 								</a>
 							</li>
@@ -194,7 +194,7 @@
 					<ul class="footer-list">
 						{#each page.significantDays as day}
 							<li>
-								<a href="/wiki/{day.pageSlug}" class="footer-link">
+								<a href="/wiki/{day.pageId}" class="footer-link">
 									<span class="link-text">{day.displayName}</span>
 								</a>
 							</li>

@@ -24,6 +24,7 @@ pub mod agents;
 pub mod assistant;
 pub mod models;
 pub mod ontologies;
+pub mod personas;
 pub mod sources;
 pub mod streams;
 pub mod tools;
@@ -38,4 +39,5 @@ pub use sources::{
     ConnectionLimits, ConnectionPolicy, OAuthConfig, SourceDescriptor, SourceTier,
 };
 pub use streams::{registered_streams, StreamDescriptor};
+pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use tools::{default_tools, ToolConfig};

@@ -7,9 +7,21 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::error::{Error, Result};
+use crate::ids;
+
+/// Parse SQLite datetime format ("YYYY-MM-DD HH:MM:SS") to chrono DateTime<Utc>
+fn parse_sqlite_datetime(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    // Try RFC3339 first (in case data was inserted with Z suffix)
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    // Fall back to SQLite's native format
+    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+        .ok()
+        .map(|dt| dt.and_utc())
+}
 
 // ============================================================================
 // Place Types
@@ -18,9 +30,10 @@ use crate::error::{Error, Result};
 /// A place entity from the database
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Place {
-    pub id: Uuid,
+    pub id: String,
     pub name: String,
     pub category: Option<String>,
+    pub address: Option<String>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub radius_m: Option<f64>,
@@ -63,7 +76,7 @@ pub struct UpdatePlaceRequest {
 /// Response for created place
 #[derive(Debug, Serialize)]
 pub struct CreatePlaceResponse {
-    pub id: Uuid,
+    pub id: String,
     pub name: String,
     pub is_home: bool,
 }
@@ -80,6 +93,7 @@ pub async fn list_places(pool: &SqlitePool) -> Result<Vec<Place>> {
             id,
             name,
             category,
+            address,
             latitude,
             longitude,
             radius_m,
@@ -87,7 +101,7 @@ pub async fn list_places(pool: &SqlitePool) -> Result<Vec<Place>> {
             metadata,
             created_at,
             updated_at
-        FROM data_entities_place
+        FROM wiki_places
         WHERE json_extract(metadata, '$.is_known_location') = 'true'
         ORDER BY created_at ASC
         "#
@@ -99,12 +113,13 @@ pub async fn list_places(pool: &SqlitePool) -> Result<Vec<Place>> {
     let places = rows
         .into_iter()
         .filter_map(|row| {
-            // SQLite returns id as Option<String>, but name/created_at/updated_at are NOT NULL (String)
-            let id_str = row.id.as_ref()?;
+            // SQLite returns id as Option<String>
+            let id = row.id.clone()?;
             Some(Place {
-                id: Uuid::parse_str(id_str).ok()?,
+                id,
                 name: row.name.clone(),
                 category: row.category.clone(),
+                address: row.address.clone(),
                 latitude: row.latitude,
                 longitude: row.longitude,
                 radius_m: row.radius_m,
@@ -113,12 +128,8 @@ pub async fn list_places(pool: &SqlitePool) -> Result<Vec<Place>> {
                     .metadata
                     .as_ref()
                     .and_then(|m| serde_json::from_str(m).ok()),
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-                    .ok()?
-                    .with_timezone(&chrono::Utc),
-                updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
-                    .ok()?
-                    .with_timezone(&chrono::Utc),
+                created_at: parse_sqlite_datetime(&row.created_at)?,
+                updated_at: parse_sqlite_datetime(&row.updated_at)?,
             })
         })
         .collect();
@@ -127,14 +138,15 @@ pub async fn list_places(pool: &SqlitePool) -> Result<Vec<Place>> {
 }
 
 /// Get a single place by ID
-pub async fn get_place(pool: &SqlitePool, id: Uuid) -> Result<Place> {
-    let id_str = id.to_string();
+pub async fn get_place(pool: &SqlitePool, id: String) -> Result<Place> {
+    let id_str = &id;
     let row = sqlx::query!(
         r#"
         SELECT
             id,
             name,
             category,
+            address,
             latitude,
             longitude,
             radius_m,
@@ -142,7 +154,7 @@ pub async fn get_place(pool: &SqlitePool, id: Uuid) -> Result<Place> {
             metadata,
             created_at,
             updated_at
-        FROM data_entities_place
+        FROM wiki_places
         WHERE id = $1
         "#,
         id_str
@@ -152,16 +164,17 @@ pub async fn get_place(pool: &SqlitePool, id: Uuid) -> Result<Place> {
     .map_err(|e| Error::Database(format!("Failed to get place: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
 
-    // SQLite returns id as Option<String>, but name/created_at/updated_at are NOT NULL (String)
-    let id_str = row
+    // SQLite returns id as Option<String>
+    let row_id = row
         .id
         .as_ref()
         .ok_or_else(|| Error::Database("Place ID is null".to_string()))?;
-
+ 
     Ok(Place {
-        id: Uuid::parse_str(id_str).map_err(|e| Error::Database(format!("Invalid UUID: {}", e)))?,
+        id: row_id.clone(),
         name: row.name.clone(),
         category: row.category.clone(),
+        address: row.address.clone(),
         latitude: row.latitude,
         longitude: row.longitude,
         radius_m: row.radius_m,
@@ -170,12 +183,10 @@ pub async fn get_place(pool: &SqlitePool, id: Uuid) -> Result<Place> {
             .metadata
             .as_ref()
             .and_then(|m| serde_json::from_str(m).ok()),
-        created_at: chrono::DateTime::parse_from_rfc3339(&row.created_at)
-            .map_err(|e| Error::Database(format!("Invalid timestamp: {}", e)))?
-            .with_timezone(&chrono::Utc),
-        updated_at: chrono::DateTime::parse_from_rfc3339(&row.updated_at)
-            .map_err(|e| Error::Database(format!("Invalid timestamp: {}", e)))?
-            .with_timezone(&chrono::Utc),
+        created_at: parse_sqlite_datetime(&row.created_at)
+            .ok_or_else(|| Error::Database("Invalid created_at timestamp".to_string()))?,
+        updated_at: parse_sqlite_datetime(&row.updated_at)
+            .ok_or_else(|| Error::Database("Invalid updated_at timestamp".to_string()))?,
     })
 }
 
@@ -185,7 +196,6 @@ pub async fn create_place(
     req: CreatePlaceRequest,
 ) -> Result<CreatePlaceResponse> {
     let metadata = serde_json::json!({
-        "formatted_address": req.formatted_address,
         "google_place_id": req.google_place_id,
         "is_known_location": true,
         "source": "user"
@@ -193,12 +203,16 @@ pub async fn create_place(
     let metadata_str = serde_json::to_string(&metadata)
         .map_err(|e| Error::Database(format!("Failed to serialize metadata: {}", e)))?;
 
-    let id = Uuid::new_v4();
-    let id_str = id.to_string();
+    // Generate ID with proper prefix (place_{hash16})
+    let id = ids::generate_id(
+        ids::WIKI_PLACE_PREFIX,
+        &[&req.label, &req.latitude.to_string(), &req.longitude.to_string()],
+    );
+    let id_str = id.clone();
 
     sqlx::query!(
         r#"
-        INSERT INTO data_entities_place (
+        INSERT INTO wiki_places (
             id,
             name,
             category,
@@ -226,7 +240,7 @@ pub async fn create_place(
     // Set as home if requested
     let is_home = req.set_as_home.unwrap_or(false);
     if is_home {
-        set_home_place(pool, id).await?;
+        set_home_place(pool, id.clone()).await?;
     }
 
     Ok(CreatePlaceResponse {
@@ -237,44 +251,41 @@ pub async fn create_place(
 }
 
 /// Update an existing place
-pub async fn update_place(pool: &SqlitePool, id: Uuid, req: UpdatePlaceRequest) -> Result<Place> {
+pub async fn update_place(pool: &SqlitePool, id: String, req: UpdatePlaceRequest) -> Result<Place> {
     // First get the existing place to preserve metadata
-    let existing = get_place(pool, id).await?;
+    let existing = get_place(pool, id.clone()).await?;
     let mut metadata = existing.metadata.unwrap_or_else(|| serde_json::json!({}));
-
-    // Update metadata fields if provided
-    if let Some(ref addr) = req.formatted_address {
-        metadata["formatted_address"] = serde_json::json!(addr);
-    }
+ 
+    // Update metadata fields if provided (only google_place_id goes in metadata now)
     if let Some(ref gid) = req.google_place_id {
         metadata["google_place_id"] = serde_json::json!(gid);
     }
     let metadata_str = serde_json::to_string(&metadata)
         .map_err(|e| Error::Database(format!("Failed to serialize metadata: {}", e)))?;
-
-    let id_str = id.to_string();
+ 
+    let id_str = &id;
 
     // SQLite doesn't support RETURNING with complex updates, so we do update then select
     sqlx::query!(
         r#"
-        UPDATE data_entities_place
+        UPDATE wiki_places
         SET
             name = COALESCE($2, name),
             category = COALESCE($3, category),
-            address = COALESCE($7, address),
-            latitude = COALESCE($4, latitude),
-            longitude = COALESCE($5, longitude),
-            metadata = $6,
+            address = COALESCE($4, address),
+            latitude = COALESCE($5, latitude),
+            longitude = COALESCE($6, longitude),
+            metadata = $7,
             updated_at = datetime('now')
         WHERE id = $1
         "#,
         id_str,
         req.label,
         req.category,
+        req.formatted_address,
         req.latitude,
         req.longitude,
-        metadata_str,
-        req.formatted_address
+        metadata_str
     )
     .execute(pool)
     .await
@@ -285,14 +296,14 @@ pub async fn update_place(pool: &SqlitePool, id: Uuid, req: UpdatePlaceRequest) 
 }
 
 /// Delete a place by ID
-pub async fn delete_place(pool: &SqlitePool, id: Uuid) -> Result<()> {
+pub async fn delete_place(pool: &SqlitePool, id: String) -> Result<()> {
     // First, unset home_place_id if this place is currently set as home
     let profile_id_str = "00000000-0000-0000-0000-000000000001";
-    let id_str = id.to_string();
+    let id_str = &id;
 
     sqlx::query!(
         r#"
-        UPDATE data_user_profile
+        UPDATE app_user_profile
         SET home_place_id = NULL
         WHERE id = $1 AND home_place_id = $2
         "#,
@@ -306,7 +317,7 @@ pub async fn delete_place(pool: &SqlitePool, id: Uuid) -> Result<()> {
     // Delete the place
     let result = sqlx::query!(
         r#"
-        DELETE FROM data_entities_place
+        DELETE FROM wiki_places
         WHERE id = $1
         "#,
         id_str
@@ -323,13 +334,13 @@ pub async fn delete_place(pool: &SqlitePool, id: Uuid) -> Result<()> {
 }
 
 /// Set a place as the user's home (updates user_profile.home_place_id)
-pub async fn set_home_place(pool: &SqlitePool, place_id: Uuid) -> Result<()> {
+pub async fn set_home_place(pool: &SqlitePool, place_id: String) -> Result<()> {
     let profile_id_str = "00000000-0000-0000-0000-000000000001";
-    let place_id_str = place_id.to_string();
+    let place_id_str = &place_id;
 
     // Verify the place exists
     let exists = sqlx::query!(
-        r#"SELECT id FROM data_entities_place WHERE id = $1"#,
+        r#"SELECT id FROM wiki_places WHERE id = $1"#,
         place_id_str
     )
     .fetch_optional(pool)
@@ -343,7 +354,7 @@ pub async fn set_home_place(pool: &SqlitePool, place_id: Uuid) -> Result<()> {
     // Update user profile
     sqlx::query!(
         r#"
-        UPDATE data_user_profile
+        UPDATE app_user_profile
         SET home_place_id = $1
         WHERE id = $2
         "#,

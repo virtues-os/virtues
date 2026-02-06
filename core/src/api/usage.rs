@@ -20,6 +20,7 @@ pub enum Service {
     AiGateway,
     GooglePlaces,
     Exa,
+    Unsplash,
 }
 
 impl Service {
@@ -28,11 +29,12 @@ impl Service {
             Service::AiGateway => "ai_gateway",
             Service::GooglePlaces => "google_places",
             Service::Exa => "exa",
+            Service::Unsplash => "unsplash",
         }
     }
 
     pub fn all() -> &'static [Service] {
-        &[Service::AiGateway, Service::GooglePlaces, Service::Exa]
+        &[Service::AiGateway, Service::GooglePlaces, Service::Exa, Service::Unsplash]
     }
 }
 
@@ -103,7 +105,7 @@ impl LimitType {
 /// Tier configuration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
-    Starter,
+    Standard,
     Pro,
 }
 
@@ -111,13 +113,13 @@ impl Tier {
     pub fn from_env() -> Self {
         match std::env::var("TIER").as_deref() {
             Ok("pro") | Ok("Pro") | Ok("PRO") => Tier::Pro,
-            _ => Tier::Starter,
+            _ => Tier::Standard,
         }
     }
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Tier::Starter => "starter",
+            Tier::Standard => "standard",
             Tier::Pro => "pro",
         }
     }
@@ -126,13 +128,15 @@ impl Tier {
     pub fn limit_for(&self, service: Service) -> i64 {
         match (self, service) {
             // Starter tier
-            (Tier::Starter, Service::AiGateway) => 1_000_000,
-            (Tier::Starter, Service::GooglePlaces) => 1_000,
-            (Tier::Starter, Service::Exa) => 1_000,
+            (Tier::Standard, Service::AiGateway) => 1_000_000,
+            (Tier::Standard, Service::GooglePlaces) => 1_000,
+            (Tier::Standard, Service::Exa) => 1_000,
+            (Tier::Standard, Service::Unsplash) => 1_000,
             // Pro tier
             (Tier::Pro, Service::AiGateway) => 5_000_000,
             (Tier::Pro, Service::GooglePlaces) => 5_000,
             (Tier::Pro, Service::Exa) => 5_000,
+            (Tier::Pro, Service::Unsplash) => 5_000,
         }
     }
 
@@ -548,22 +552,22 @@ mod tests {
 
     #[test]
     fn test_tier_from_env() {
-        // Default is starter
+        // Default is standard
         std::env::remove_var("TIER");
-        assert_eq!(Tier::from_env(), Tier::Starter);
+        assert_eq!(Tier::from_env(), Tier::Standard);
 
         std::env::set_var("TIER", "pro");
         assert_eq!(Tier::from_env(), Tier::Pro);
 
-        std::env::set_var("TIER", "starter");
-        assert_eq!(Tier::from_env(), Tier::Starter);
+        std::env::set_var("TIER", "standard");
+        assert_eq!(Tier::from_env(), Tier::Standard);
     }
 
     #[test]
     fn test_tier_limits() {
-        assert_eq!(Tier::Starter.limit_for(Service::AiGateway), 1_000_000);
+        assert_eq!(Tier::Standard.limit_for(Service::AiGateway), 1_000_000);
         assert_eq!(Tier::Pro.limit_for(Service::AiGateway), 5_000_000);
-        assert_eq!(Tier::Starter.limit_for(Service::Exa), 1_000);
+        assert_eq!(Tier::Standard.limit_for(Service::Exa), 1_000);
         assert_eq!(Tier::Pro.limit_for(Service::Exa), 5_000);
     }
 

@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// Provides device configuration and stream settings
+/// Provides device configuration
 protocol ConfigurationProvider {
     /// Unique device identifier
     var deviceId: String { get }
@@ -24,25 +24,12 @@ protocol ConfigurationProvider {
 
     /// The full ingest URL for uploads
     var ingestURL: URL? { get }
-
-    /// Check if a specific stream is enabled
-    /// - Parameter streamKey: The stream identifier (e.g., "mic", "location", "healthkit")
-    /// - Returns: Whether the stream is enabled in the web app configuration
-    func isStreamEnabled(_ streamKey: String) -> Bool
-
-    /// Get initial sync days for a stream
-    /// - Parameter streamKey: The stream identifier
-    /// - Returns: Number of days to sync initially
-    func getInitialSyncDays(for streamKey: String) -> Int
 }
 
 /// Provides observable configuration updates for SwiftUI views
 protocol ObservableConfigurationProvider: ConfigurationProvider, ObservableObject {
     /// Current configuration state
     var configurationState: DeviceConfigurationState { get }
-
-    /// Number of configured streams
-    var configuredStreamCount: Int { get }
 }
 
 // MARK: - DeviceConfiguration Extension
@@ -62,13 +49,5 @@ extension DeviceManager: ObservableConfigurationProvider {
 
     var ingestURL: URL? {
         configuration.ingestURL
-    }
-
-    func isStreamEnabled(_ streamKey: String) -> Bool {
-        configuration.isStreamEnabled(streamKey)
-    }
-
-    func getInitialSyncDays(for streamKey: String) -> Int {
-        configuration.getInitialSyncDays(for: streamKey)
     }
 }

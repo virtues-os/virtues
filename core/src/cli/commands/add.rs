@@ -4,7 +4,6 @@ use crate::client::Virtues;
 use crate::DeviceInfo;
 use console::style;
 use std::env;
-use uuid::Uuid;
 
 /// Handle adding a new source (OAuth or device)
 pub async fn handle_add_source(
@@ -19,7 +18,7 @@ pub async fn handle_add_source(
     let descriptor = crate::get_source_info(source_type);
 
     let is_device_source = descriptor
-        .map(|d| matches!(d.auth_type, crate::registry::AuthType::Device))
+        .map(|d| matches!(d.descriptor.auth_type, crate::registry::AuthType::Device))
         .unwrap_or(false);
 
     if is_device_source {
@@ -66,16 +65,16 @@ pub async fn handle_add_source(
     let callback_params = parse_callback_url(&redirect_url, source_type)?;
 
     // Handle callback and create source
-    let response = crate::handle_oauth_callback(virtues.database.pool(), &callback_params).await?;
+    // Note: We pass None for storage/stream_writer since CLI doesn't have server context
+    // Initial sync won't be triggered - user can manually sync after
+    let response = crate::handle_oauth_callback(virtues.database.pool(), None, None, &callback_params).await?;
 
     println!("\n✅ Source created successfully!");
     println!("   Name: {}", response.source.name);
     println!("   ID: {}", response.source.id);
 
     // List available streams
-    let source_id = Uuid::parse_str(&response.source.id)
-        .map_err(|e| format!("Invalid source ID: {}", e))?;
-    let streams = crate::list_source_streams(virtues.database.pool(), source_id).await?;
+    let streams = crate::list_source_streams(virtues.database.pool(), response.source.id.clone()).await?;
     if !streams.is_empty() {
         println!("\n📊 Available streams (all disabled by default):");
         for stream in streams {
@@ -197,12 +196,12 @@ async fn handle_device_pairing(
                 app_version: None,
             };
 
-            display_pairing_success(&device_info, completed.source_id);
+            display_pairing_success(&device_info, &completed.source_id);
 
             // Fetch actual stream connections from DB to display correct status/types
             let streams =
-                crate::list_source_streams(virtues.database.pool(), completed.source_id).await?;
-            display_available_streams(&streams, completed.source_id);
+                crate::list_source_streams(virtues.database.pool(), completed.source_id.clone()).await?;
+            display_available_streams(&streams, &completed.source_id);
         }
         Err(e) => {
             println!(

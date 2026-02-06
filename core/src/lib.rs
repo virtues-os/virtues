@@ -2,15 +2,18 @@
 //!
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
+pub mod agent;
 pub mod api;
 pub mod cli;
 pub mod client;
 pub mod database;
-pub mod embeddings;
 pub mod entity_resolution;
+pub mod markdown;
+pub mod tools;
 pub mod error;
 pub mod geo;
 pub mod http_client;
+pub mod ids;
 pub mod jobs;
 pub mod llm;
 pub mod mcp;
@@ -25,10 +28,12 @@ pub mod setup;
 pub mod sources;
 pub mod storage;
 pub mod tollbooth;
+pub mod types;
 
 // Re-export main types
 pub use client::{Virtues, VirtuesBuilder};
 pub use error::{Error, Result};
+pub use types::Timestamp;
 
 // Re-export OAuth types
 pub use sources::base::TokenManager;
@@ -39,11 +44,15 @@ pub use scheduler::Scheduler;
 // Re-export sync types
 pub use sources::base::SyncMode;
 
+// Re-export tools
+pub use tools::{get_tool_definitions_for_llm, ToolContext, ToolError, ToolExecutor, ToolResult};
+
 // Re-export library API functions
 pub use api::{
     // Device pairing
     check_pairing_status,
     complete_device_pairing,
+    complete_pairing_by_source_id,
     create_source,
     delete_source,
     disable_stream,

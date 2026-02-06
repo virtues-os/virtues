@@ -38,7 +38,7 @@ protocol StorageProvider {
     func getQueueStats() -> (pending: Int, failed: Int, total: Int, totalSize: Int64)
 
     /// Get counts by stream type
-    func getStreamCounts() -> (healthkit: Int, location: Int, audio: Int)
+    func getStreamCounts() -> (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int, battery: Int, barometer: Int)
 
     /// Get total database size
     func getTotalDatabaseSize() -> Int64

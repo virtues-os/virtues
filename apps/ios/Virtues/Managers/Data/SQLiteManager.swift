@@ -619,11 +619,16 @@ class SQLiteManager {
         }
     }
     
-    func getStreamCounts() -> (healthkit: Int, location: Int, audio: Int) {
+    func getStreamCounts() -> (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int, battery: Int, barometer: Int) {
         queue.sync {
             var healthkit = 0
             var location = 0
             var audio = 0
+            var finance = 0
+            var eventkit = 0
+            var contacts = 0
+            var battery = 0
+            var barometer = 0
 
             let streamSQL = """
                 SELECT stream_name, COUNT(*) as count
@@ -646,6 +651,16 @@ class SQLiteManager {
                         location = count
                     case "ios_mic":
                         audio = count
+                    case "ios_finance":
+                        finance = count
+                    case "ios_eventkit":
+                        eventkit = count
+                    case "ios_contacts":
+                        contacts = count
+                    case "ios_battery":
+                        battery = count
+                    case "ios_barometer":
+                        barometer = count
                     default:
                         break
                     }
@@ -654,7 +669,7 @@ class SQLiteManager {
 
             sqlite3_finalize(statement)
 
-            return (healthkit, location, audio)
+            return (healthkit, location, audio, finance, eventkit, contacts, battery, barometer)
         }
     }
 

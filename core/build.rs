@@ -9,7 +9,7 @@ fn main() {
 
     // Get git commit SHA
     let output = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .output();
 
     let commit = match output {

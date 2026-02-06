@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schemas.tauri.app/capability/schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for the main window",
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-create",
+    "core:window:allow-get-all-windows",
+    "core:window:allow-set-focus",
+    "opener:default",
+    "shell:allow-open",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/virtues-collector",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/virtues-collector",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "open",
+          "args": true
+        }
+      ]
+    }
+  ],
+  "remote": {
+    "urls": ["https://virtues.com/*", "https://*.virtues.com/*", "https://localhost:*/*"]
+  }
+}

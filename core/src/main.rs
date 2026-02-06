@@ -79,7 +79,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Initialize Virtues client
-    // Storage path: STORAGE_PATH env var or ./core/data/lake default
+    // Storage path: STORAGE_PATH env var or ./data/lake default
     let mut builder = VirtuesBuilder::new().database(&database_url);
 
     // Configure storage path if specified

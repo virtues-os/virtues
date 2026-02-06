@@ -1,6 +1,7 @@
 <script lang="ts">
-	import type { Tab } from '$lib/tabs/types';
-	import { onMount } from 'svelte';
+	import type { Tab } from "$lib/tabs/types";
+	import Icon from "$lib/components/Icon.svelte";
+	import { onMount } from "svelte";
 
 	interface Props {
 		tab: Tab;
@@ -80,31 +81,45 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let compacting = $state(false);
+	let expandedMessages = $state<Set<string>>(new Set());
+
+	function toggleExpand(id: string) {
+		if (expandedMessages.has(id)) {
+			expandedMessages.delete(id);
+		} else {
+			expandedMessages.add(id);
+		}
+		expandedMessages = new Set(expandedMessages);
+	}
 
 	const conversationId = $derived(tab.linkedConversationId);
 
 	// Fetch session usage and detail data
 	async function fetchData() {
 		if (!conversationId) {
-			error = 'No conversation ID';
+			error = "No conversation ID";
 			loading = false;
 			return;
 		}
 
 		try {
 			const [usageRes, sessionRes] = await Promise.all([
-				fetch(`/api/sessions/${conversationId}/usage`),
-				fetch(`/api/sessions/${conversationId}`)
+				fetch(`/api/chats/${conversationId}/usage`),
+				fetch(`/api/chats/${conversationId}`),
 			]);
 
-			if (!usageRes.ok) throw new Error(`Failed to fetch usage: ${usageRes.status}`);
-			if (!sessionRes.ok) throw new Error(`Failed to fetch session: ${sessionRes.status}`);
+			if (!usageRes.ok)
+				throw new Error(`Failed to fetch usage: ${usageRes.status}`);
+			if (!sessionRes.ok)
+				throw new Error(
+					`Failed to fetch session: ${sessionRes.status}`,
+				);
 
 			usage = await usageRes.json();
 			session = await sessionRes.json();
 			error = null;
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Unknown error';
+			error = e instanceof Error ? e.message : "Unknown error";
 		} finally {
 			loading = false;
 		}
@@ -116,16 +131,16 @@
 
 		compacting = true;
 		try {
-			const res = await fetch(`/api/sessions/${conversationId}/compact`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ force: true })
+			const res = await fetch(`/api/chats/${conversationId}/compact`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ force: true }),
 			});
 
 			if (!res.ok) throw new Error(`Failed to compact: ${res.status}`);
 			await fetchData();
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Compaction failed';
+			error = e instanceof Error ? e.message : "Compaction failed";
 		} finally {
 			compacting = false;
 		}
@@ -141,9 +156,9 @@
 		for (const msg of messages) {
 			const contentTokens = Math.ceil((msg.content?.length || 0) / 4);
 
-			if (msg.role === 'user') {
+			if (msg.role === "user") {
 				user += contentTokens;
-			} else if (msg.role === 'assistant') {
+			} else if (msg.role === "assistant") {
 				assistant += contentTokens;
 				if (msg.tool_calls) {
 					for (const tc of msg.tool_calls) {
@@ -163,7 +178,7 @@
 			user: { tokens: user, pct: (user / total) * 100 },
 			assistant: { tokens: assistant, pct: (assistant / total) * 100 },
 			toolCalls: { tokens: toolCalls, pct: (toolCalls / total) * 100 },
-			other: { tokens: other, pct: (other / total) * 100 }
+			other: { tokens: other, pct: (other / total) * 100 },
 		};
 	}
 
@@ -180,16 +195,16 @@
 	}
 
 	function formatDate(date: string | null): string {
-		if (!date) return '—';
+		if (!date) return "—";
 		return new Date(date).toLocaleString();
 	}
 
 	function formatShortDate(date: string): string {
-		return new Date(date).toLocaleString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			hour: 'numeric',
-			minute: '2-digit'
+		return new Date(date).toLocaleString("en-US", {
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit",
 		});
 	}
 
@@ -203,12 +218,16 @@
 		}
 	});
 
-	const breakdown = $derived(session ? calculateBreakdown(session.messages) : null);
+	const breakdown = $derived(
+		session ? calculateBreakdown(session.messages) : null,
+	);
 </script>
 
 <div class="context-view">
 	{#if loading}
-		<div class="loading">Loading...</div>
+		<div class="flex items-center justify-center h-full">
+			<Icon icon="ri:loader-4-line" width="20" class="spin" />
+		</div>
 	{:else if error}
 		<div class="error">
 			<span>{error}</span>
@@ -217,13 +236,13 @@
 	{:else if usage && session}
 		<dl class="info-grid">
 			<dt>Session</dt>
-			<dd class="title">{session.conversation.title || 'Untitled'}</dd>
+			<dd class="title">{session.conversation.title || "Untitled"}</dd>
 
 			<dt>Messages</dt>
 			<dd>{session.conversation.message_count}</dd>
 
 			<dt>Provider</dt>
-			<dd>{session.conversation.provider || '—'}</dd>
+			<dd>{session.conversation.provider || "—"}</dd>
 
 			<dt>Model</dt>
 			<dd class="mono">{usage.model}</dd>
@@ -247,7 +266,11 @@
 			<dd class="mono">{formatTokens(usage.reasoning_tokens)}</dd>
 
 			<dt>Cache Tokens</dt>
-			<dd class="mono">{formatTokens(usage.cache_read_tokens)} / {formatTokens(usage.cache_write_tokens)}</dd>
+			<dd class="mono">
+				{formatTokens(usage.cache_read_tokens)} / {formatTokens(
+					usage.cache_write_tokens,
+				)}
+			</dd>
 
 			<dt>User Messages</dt>
 			<dd>{usage.user_message_count}</dd>
@@ -271,41 +294,146 @@
 			{#if breakdown && (breakdown.user.pct > 0 || breakdown.assistant.pct > 0 || breakdown.toolCalls.pct > 0 || breakdown.other.pct > 0)}
 				<div class="bar">
 					{#if breakdown.user.pct > 0}
-						<div class="segment user" style="width: {breakdown.user.pct}%"></div>
+						<div
+							class="segment user"
+							style="width: {breakdown.user.pct}%"
+						></div>
 					{/if}
 					{#if breakdown.assistant.pct > 0}
-						<div class="segment assistant" style="width: {breakdown.assistant.pct}%"></div>
+						<div
+							class="segment assistant"
+							style="width: {breakdown.assistant.pct}%"
+						></div>
 					{/if}
 					{#if breakdown.toolCalls.pct > 0}
-						<div class="segment tools" style="width: {breakdown.toolCalls.pct}%"></div>
+						<div
+							class="segment tools"
+							style="width: {breakdown.toolCalls.pct}%"
+						></div>
 					{/if}
 					{#if breakdown.other.pct > 0}
-						<div class="segment other" style="width: {breakdown.other.pct}%"></div>
+						<div
+							class="segment other"
+							style="width: {breakdown.other.pct}%"
+						></div>
 					{/if}
 				</div>
 				<div class="legend">
-					<span><i class="dot user"></i> User {breakdown.user.pct.toFixed(1)}%</span>
-					<span><i class="dot assistant"></i> Assistant {breakdown.assistant.pct.toFixed(1)}%</span>
-					<span><i class="dot tools"></i> Tool Calls {breakdown.toolCalls.pct.toFixed(1)}%</span>
-					<span><i class="dot other"></i> Other {breakdown.other.pct.toFixed(1)}%</span>
+					<span
+						><i class="dot user"></i> User {breakdown.user.pct.toFixed(
+							1,
+						)}%</span
+					>
+					<span
+						><i class="dot assistant"></i> Assistant {breakdown.assistant.pct.toFixed(
+							1,
+						)}%</span
+					>
+					<span
+						><i class="dot tools"></i> Tool Calls {breakdown.toolCalls.pct.toFixed(
+							1,
+						)}%</span
+					>
+					<span
+						><i class="dot other"></i> Other {breakdown.other.pct.toFixed(
+							1,
+						)}%</span
+					>
 				</div>
 			{:else}
 				<div class="bar empty"></div>
-				<div class="empty-note">No message data available for breakdown</div>
+				<div class="empty-note">
+					No message data available for breakdown
+				</div>
 			{/if}
 		</div>
 
 		<!-- Raw Messages -->
 		<div class="raw-messages">
-			<div class="section-label">Raw messages ({session.messages?.length || 0})</div>
+			<div class="section-label">
+				Raw messages ({session.messages?.length || 0})
+			</div>
 			{#if session.messages && session.messages.length > 0}
 				<ul>
 					{#each session.messages as msg, i}
-						<li>
-							<span class="role">{msg.role}</span>
-							<span class="msg-id">{msg.id || `msg_${i}`}</span>
-							<span class="timestamp">{formatShortDate(msg.timestamp)}</span>
+						{@const msgId = msg.id || `msg_${i}`}
+						{@const isExpanded = expandedMessages.has(msgId)}
+						<li class="message-row" class:expanded={isExpanded}>
+							<button
+								class="row-toggle"
+								onclick={() => toggleExpand(msgId)}
+							>
+								<span class="chevron"
+									>{isExpanded ? "▼" : "▶"}</span
+								>
+								<span class="role {msg.role}">{msg.role}</span>
+								<span class="msg-id">{msgId}</span>
+								<span class="timestamp"
+									>{formatShortDate(msg.timestamp)}</span
+								>
+							</button>
+							{#if isExpanded}
+								<div class="message-content">
+									<pre>{msg.content || "(empty)"}</pre>
+									{#if msg.reasoning}
+										<div class="content-label">
+											Reasoning:
+										</div>
+										<pre
+											class="reasoning">{msg.reasoning}</pre>
+									{/if}
+								</div>
+							{/if}
 						</li>
+
+						{#if msg.tool_calls}
+							{#each msg.tool_calls as tc, ti}
+								{@const tcId = `${msgId}_tool_${ti}`}
+								{@const tcExpanded = expandedMessages.has(tcId)}
+								<li
+									class="message-row tool-call"
+									class:expanded={tcExpanded}
+								>
+									<button
+										class="row-toggle"
+										onclick={() => toggleExpand(tcId)}
+									>
+										<span class="chevron"
+											>{tcExpanded ? "▼" : "▶"}</span
+										>
+										<span class="role tool">tool</span>
+										<span class="tool-name"
+											>{tc.tool_name}</span
+										>
+										<span class="tool-id"
+											>{tc.tool_call_id || ""}</span
+										>
+									</button>
+									{#if tcExpanded}
+										<div class="message-content">
+											<div class="content-label">
+												Arguments:
+											</div>
+											<pre>{JSON.stringify(
+													tc.arguments,
+													null,
+													2,
+												)}</pre>
+											{#if tc.result !== undefined}
+												<div class="content-label">
+													Result:
+												</div>
+												<pre>{JSON.stringify(
+														tc.result,
+														null,
+														2,
+													)}</pre>
+											{/if}
+										</div>
+									{/if}
+								</li>
+							{/each}
+						{/if}
 					{/each}
 				</ul>
 			{:else}
@@ -314,8 +442,12 @@
 		</div>
 
 		{#if usage.usage_percentage > 20}
-			<button class="compact-btn" onclick={handleCompact} disabled={compacting}>
-				{compacting ? 'Compacting...' : 'Compact Session'}
+			<button
+				class="compact-btn"
+				onclick={handleCompact}
+				disabled={compacting}
+			>
+				{compacting ? "Compacting..." : "Compact Session"}
 			</button>
 		{/if}
 	{/if}
@@ -336,7 +468,7 @@
 		align-items: center;
 		gap: 0.75rem;
 		padding: 3rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 	}
 
 	.error {
@@ -359,7 +491,7 @@
 	}
 
 	.info-grid dt {
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		font-size: 0.875rem;
 	}
 
@@ -384,7 +516,7 @@
 
 	.breakdown-label {
 		font-size: 0.75rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		margin-bottom: 0.5rem;
 	}
 
@@ -419,7 +551,7 @@
 		gap: 1rem;
 		margin-top: 0.5rem;
 		font-size: 0.75rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 	}
 
 	.dot {
@@ -450,14 +582,14 @@
 
 	.empty-note {
 		font-size: 0.75rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		font-style: italic;
 		margin-top: 0.5rem;
 	}
 
 	.section-label {
 		font-size: 0.75rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		margin-bottom: 0.5rem;
 	}
 
@@ -470,39 +602,132 @@
 		list-style: none;
 		padding: 0;
 		margin: 0.5rem 0 0 0;
-		max-height: 300px;
+		max-height: 400px;
 		overflow-y: auto;
 	}
 
-	.raw-messages li {
-		display: flex;
-		gap: 0.75rem;
-		padding: 0.375rem 0;
-		font-size: 0.8125rem;
+	.message-row {
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.raw-messages li:last-child {
+	.message-row:last-child {
 		border-bottom: none;
 	}
 
+	.message-row.tool-call {
+		padding-left: 1rem;
+		background: var(--color-surface-alt);
+	}
+
+	.row-toggle {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		width: 100%;
+		padding: 0.375rem 0.25rem;
+		font-size: 0.8125rem;
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		color: inherit;
+	}
+
+	.row-toggle:hover {
+		background: var(--color-surface-hover);
+	}
+
+	.chevron {
+		font-size: 0.625rem;
+		color: var(--color-foreground-muted);
+		width: 0.75rem;
+		flex-shrink: 0;
+	}
+
 	.raw-messages .role {
-		min-width: 70px;
-		color: var(--color-text-secondary);
+		min-width: 60px;
+		color: var(--color-foreground-muted);
+		font-size: 0.75rem;
+	}
+
+	.raw-messages .role.user {
+		color: #10b981;
+	}
+
+	.raw-messages .role.assistant {
+		color: #ec4899;
+	}
+
+	.raw-messages .role.tool {
+		color: #eab308;
 	}
 
 	.raw-messages .msg-id {
 		flex: 1;
 		font-family: var(--font-mono);
 		font-size: 0.75rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
+	.raw-messages .tool-name {
+		flex: 1;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-text);
+	}
+
+	.raw-messages .tool-id {
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 120px;
+	}
+
 	.raw-messages .timestamp {
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		white-space: nowrap;
+		font-size: 0.75rem;
+	}
+
+	.message-content {
+		padding: 0.5rem 0.5rem 0.75rem 1.75rem;
+		border-top: 1px solid var(--color-border);
+		background: var(--color-surface);
+	}
+
+	.message-content pre {
+		margin: 0;
+		padding: 0.5rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		line-height: 1.4;
+		white-space: pre-wrap;
+		word-break: break-word;
+		background: var(--color-surface-alt);
+		border-radius: var(--radius-sm);
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.message-content pre.reasoning {
+		color: var(--color-foreground-muted);
+		font-style: italic;
+	}
+
+	.content-label {
+		font-size: 0.6875rem;
+		color: var(--color-foreground-muted);
+		margin: 0.75rem 0 0.25rem 0;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.content-label:first-child {
+		margin-top: 0;
 	}
 
 	/* Compact button */

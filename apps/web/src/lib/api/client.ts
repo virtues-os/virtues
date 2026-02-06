@@ -5,9 +5,11 @@
  * via Vite proxy (see vite.config.ts).
  */
 
+import { sanitizeUrl } from '$lib/utils/urlUtils';
+
 const API_BASE = '/api';
 
-// Catalog
+// Catalog — returns { tier: string, sources: CatalogSource[] }
 export async function listCatalogSources() {
 	const res = await fetch(`${API_BASE}/catalog/sources`);
 	if (!res.ok) throw new Error(`Failed to list catalog sources: ${res.statusText}`);
@@ -278,7 +280,7 @@ export async function handleOAuthCallback(params: {
 	expires_in?: number;
 	provider: string;
 	state?: string;
-	workspace_id?: string;
+	space_id?: string;
 	workspace_name?: string;
 	bot_id?: string;
 }) {
@@ -574,7 +576,7 @@ export interface DriveUsage {
 	folder_count: number;
 	/** Usage percentage (total_bytes / quota_bytes * 100) */
 	usage_percent: number;
-	/** Tier name (free, standard, pro) */
+	/** Tier name (standard, pro) */
 	tier: string;
 }
 
@@ -796,7 +798,75 @@ export async function emptyDriveTrash(): Promise<{ deleted_count: number }> {
 }
 
 // =============================================================================
-// Sessions - Chat Session Management
+// Media - Content-addressed storage for page-embedded media
+// =============================================================================
+
+export interface MediaFile {
+	id: string;
+	url: string;
+	filename: string;
+	mime_type: string | null;
+	size_bytes: number;
+	width: number | null;
+	height: number | null;
+	deduplicated: boolean;
+}
+
+/**
+ * Upload a media file (image, video, audio) for embedding in pages.
+ * Uses content-addressed storage - duplicate uploads return existing file.
+ */
+export async function uploadMedia(
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<MediaFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('filename', file.name);
+
+	// Use XMLHttpRequest for progress tracking
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', `${API_BASE}/media/upload`);
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && onProgress) {
+				onProgress(Math.round((e.loaded / e.total) * 100));
+			}
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve(JSON.parse(xhr.responseText));
+			} else {
+				try {
+					const error = JSON.parse(xhr.responseText);
+					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
+				} catch {
+					reject(new Error(`Upload failed: ${xhr.statusText}`));
+				}
+			}
+		};
+
+		xhr.onerror = () => reject(new Error('Network error during upload'));
+		xhr.send(formData);
+	});
+}
+
+/**
+ * Get media file metadata by ID
+ */
+export async function getMedia(fileId: string): Promise<MediaFile> {
+	const res = await fetch(`${API_BASE}/media/${fileId}`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to get media: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+// =============================================================================
+// Chats - Chat Management
 // =============================================================================
 
 export interface ChatMessage {
@@ -805,7 +875,7 @@ export interface ChatMessage {
 	timestamp: string;
 }
 
-export interface CreateSessionResponse {
+export interface CreateChatResponse {
 	id: string;
 	title: string;
 	message_count: number;
@@ -813,14 +883,14 @@ export interface CreateSessionResponse {
 }
 
 /**
- * Create a new chat session with initial messages
- * Used for intro sessions and pre-populated conversations
+ * Create a new chat with initial messages
+ * Used for intro chats and pre-populated conversations
  */
-export async function createSession(
+export async function createChat(
 	title: string,
 	messages: ChatMessage[]
-): Promise<CreateSessionResponse> {
-	const res = await fetch(`${API_BASE}/sessions`, {
+): Promise<CreateChatResponse> {
+	const res = await fetch(`${API_BASE}/chats`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ title, messages })
@@ -828,118 +898,132 @@ export async function createSession(
 
 	if (!res.ok) {
 		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to create session: ${res.statusText}`);
+		throw new Error(error.error || `Failed to create chat: ${res.statusText}`);
+	}
+
+	return res.json();
+}
+
+/**
+ * Delete a chat
+ */
+export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
+	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
+		method: 'DELETE'
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to delete chat: ${res.statusText}`);
 	}
 
 	return res.json();
 }
 
 // =============================================================================
-// Workspaces API
+// Spaces API
 // =============================================================================
 
-export interface Workspace {
+export interface Space {
 	id: string;
 	name: string;
 	icon: string | null;
 	is_system: boolean;
-	is_locked: boolean;
 	sort_order: number;
+	theme_id: string;
 	accent_color: string | null;
-	theme_mode: string | null;
 	active_tab_state_json: string | null;
-	expanded_nodes_json: string | null;
 	created_at: string;
 	updated_at: string;
 }
 
-export interface WorkspaceSummary {
+export interface SpaceSummary {
 	id: string;
 	name: string;
 	icon: string | null;
 	is_system: boolean;
-	is_locked: boolean;
 	sort_order: number;
+	theme_id: string;
 	accent_color: string | null;
-	theme_mode: string | null;
+	created_at: string;
+	updated_at: string;
 }
 
-export interface WorkspaceListResponse {
-	workspaces: WorkspaceSummary[];
+export interface SpaceListResponse {
+	spaces: SpaceSummary[];
 }
 
 /**
- * List all workspaces
+ * List all spaces
  */
-export async function listWorkspaces(): Promise<WorkspaceListResponse> {
-	const res = await fetch(`${API_BASE}/workspaces`);
-	if (!res.ok) throw new Error(`Failed to list workspaces: ${res.statusText}`);
+export async function listSpaces(): Promise<SpaceListResponse> {
+	const res = await fetch(`${API_BASE}/spaces`);
+	if (!res.ok) throw new Error(`Failed to list spaces: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * Get a single workspace by ID
+ * Get a single space by ID
  */
-export async function getWorkspace(id: string): Promise<Workspace> {
-	const res = await fetch(`${API_BASE}/workspaces/${id}`);
-	if (!res.ok) throw new Error(`Failed to get workspace: ${res.statusText}`);
+export async function getSpace(id: string): Promise<Space> {
+	const res = await fetch(`${API_BASE}/spaces/${id}`);
+	if (!res.ok) throw new Error(`Failed to get space: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * Create a new workspace
+ * Create a new space
  */
-export async function createWorkspace(
+export async function createSpace(
 	name: string,
 	icon?: string,
-	accent_color?: string,
-	theme_mode?: string
-): Promise<Workspace> {
-	const res = await fetch(`${API_BASE}/workspaces`, {
+	theme_id?: string,
+	accent_color?: string
+): Promise<Space> {
+	const res = await fetch(`${API_BASE}/spaces`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, icon, accent_color, theme_mode })
+		body: JSON.stringify({ name, icon, theme_id, accent_color })
 	});
-	if (!res.ok) throw new Error(`Failed to create workspace: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to create space: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * Update an existing workspace
+ * Update an existing space
  */
-export async function updateWorkspace(
+export async function updateSpace(
 	id: string,
 	updates: {
 		name?: string;
 		icon?: string;
 		sort_order?: number;
+		theme_id?: string;
 		accent_color?: string;
-		theme_mode?: string;
-		expanded_nodes_json?: string;
 	}
-): Promise<Workspace> {
-	const res = await fetch(`${API_BASE}/workspaces/${id}`, {
+): Promise<Space> {
+	const res = await fetch(`${API_BASE}/spaces/${id}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(updates)
 	});
-	if (!res.ok) throw new Error(`Failed to update workspace: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to update space: ${res.statusText}`);
 	return res.json();
 }
 
 /**
- * Delete a workspace by ID
+ * Delete a space by ID
  */
-export async function deleteWorkspace(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/workspaces/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete workspace: ${res.statusText}`);
+export async function deleteSpace(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/spaces/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete space: ${res.statusText}`);
 }
 
 /**
- * Save tab state for a workspace
+ * Save tab state for a space
  */
-export async function saveWorkspaceTabState(id: string, tabStateJson: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/workspaces/${id}/tabs`, {
+export async function saveSpaceTabState(id: string, tabStateJson: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/spaces/${id}/tabs`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ active_tab_state_json: tabStateJson })
@@ -948,12 +1032,260 @@ export async function saveWorkspaceTabState(id: string, tabStateJson: string): P
 }
 
 // =============================================================================
-// Explorer Nodes API
+// Views API (replaces Explorer Nodes)
+// =============================================================================
+
+export interface View {
+	id: string;
+	space_id: string;
+	name: string;
+	icon: string | null;
+	sort_order: number;
+	view_type: 'manual' | 'smart';
+	query_config: string | null;
+	is_system: boolean;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ViewSummary {
+	id: string;
+	space_id: string;
+	name: string;
+	icon: string | null;
+	sort_order: number;
+	view_type: 'manual' | 'smart';
+	is_system: boolean;
+}
+
+export interface ViewListResponse {
+	views: ViewSummary[];
+}
+
+export interface ViewEntity {
+	id: string;
+	name: string;
+	namespace: string;
+	icon: string;
+	updated_at?: string;
+}
+
+export interface ViewResolutionResponse {
+	entities: ViewEntity[];
+	total: number;
+	has_more: boolean;
+}
+
+export interface CreateViewRequest {
+	name: string;
+	icon?: string;
+	view_type: 'manual' | 'smart';
+	query_config?: object;
+}
+
+/**
+ * List all views for a space
+ */
+export async function listViews(spaceId: string): Promise<ViewListResponse> {
+	const res = await fetch(`${API_BASE}/spaces/${spaceId}/views`);
+	if (!res.ok) throw new Error(`Failed to list views: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Get a single view by ID
+ */
+export async function getView(viewId: string): Promise<View> {
+	const res = await fetch(`${API_BASE}/views/${viewId}`);
+	if (!res.ok) throw new Error(`Failed to get view: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Create a new view in a space
+ */
+export async function createView(
+	spaceId: string,
+	request: CreateViewRequest
+): Promise<View> {
+	const res = await fetch(`${API_BASE}/views`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			space_id: spaceId,
+			...request
+		})
+	});
+	if (!res.ok) throw new Error(`Failed to create view: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Update an existing view
+ */
+export async function updateView(
+	viewId: string,
+	updates: {
+		name?: string;
+		icon?: string;
+		sort_order?: number;
+		query_config?: object;
+	}
+): Promise<View> {
+	const res = await fetch(`${API_BASE}/views/${viewId}`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(updates)
+	});
+	if (!res.ok) throw new Error(`Failed to update view: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Delete a view by ID
+ */
+export async function deleteView(viewId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/views/${viewId}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete view: ${res.statusText}`);
+}
+
+/**
+ * Resolve a view to its entities
+ */
+export async function resolveView(viewId: string): Promise<ViewResolutionResponse> {
+	const res = await fetch(`${API_BASE}/views/${viewId}/resolve`, {
+		method: 'POST'
+	});
+	if (!res.ok) throw new Error(`Failed to resolve view: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Add an item to a manual view
+ * @param viewId - The view to add the item to
+ * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
+ */
+export async function addViewItem(viewId: string, url: string): Promise<void> {
+	const sanitizedUrl = sanitizeUrl(url);
+	const res = await fetch(`${API_BASE}/views/${viewId}/items`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url: sanitizedUrl })
+	});
+	if (!res.ok) throw new Error(`Failed to add item to view: ${res.statusText}`);
+}
+
+/**
+ * Remove an item from a manual view
+ * @param viewId - The view to remove the item from
+ * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
+ */
+export async function removeViewItem(viewId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/views/${viewId}/items`, {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url })
+	});
+	if (!res.ok) throw new Error(`Failed to remove item from view: ${res.statusText}`);
+}
+
+/**
+ * View item as stored in the database
+ */
+export interface ViewItem {
+	id: number;
+	view_id: string;
+	url: string;
+	sort_order: number;
+	created_at: string;
+}
+
+/**
+ * List items in a manual view
+ */
+export async function listViewItems(viewId: string): Promise<ViewItem[]> {
+	const res = await fetch(`${API_BASE}/views/${viewId}/items`);
+	if (!res.ok) throw new Error(`Failed to list view items: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Reorder items in a manual view
+ */
+export async function reorderViewItems(viewId: string, urlOrder: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/views/${viewId}/items/reorder`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url_order: urlOrder })
+	});
+	if (!res.ok) throw new Error(`Failed to reorder view items: ${res.statusText}`);
+}
+
+// =============================================================================
+// Space Items API (root-level items at space level, not in any folder)
+// =============================================================================
+
+/**
+ * List items at space root level (not inside any folder)
+ * @param spaceId - The space ID
+ * @returns Resolved entities for the space's root items
+ */
+export async function listSpaceItems(spaceId: string): Promise<ViewEntity[]> {
+	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`);
+	if (!res.ok) throw new Error(`Failed to list space items: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Add an item to space root level
+ * @param spaceId - The space ID
+ * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
+ */
+export async function addSpaceItem(spaceId: string, url: string): Promise<void> {
+	const sanitizedUrl = sanitizeUrl(url);
+	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url: sanitizedUrl })
+	});
+	if (!res.ok) throw new Error(`Failed to add space item: ${res.statusText}`);
+}
+
+/**
+ * Remove an item from space root level
+ * @param spaceId - The space ID
+ * @param url - The URL of the item to remove
+ */
+export async function removeSpaceItem(spaceId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`, {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url })
+	});
+	if (!res.ok) throw new Error(`Failed to remove space item: ${res.statusText}`);
+}
+
+/**
+ * Reorder items at space root level
+ * @param spaceId - The space ID
+ * @param urlOrder - Array of URLs in the new desired order
+ */
+export async function reorderSpaceItems(spaceId: string, urlOrder: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items/reorder`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url_order: urlOrder })
+	});
+	if (!res.ok) throw new Error(`Failed to reorder space items: ${res.statusText}`);
+}
+
+// =============================================================================
+// Explorer Nodes API (DEPRECATED - use Views API)
 // =============================================================================
 
 export interface ExplorerNode {
 	id: string;
-	workspace_id: string;
+	space_id: string;
 	parent_id: string | null;
 	sort_order: number;
 	node_type: 'folder' | 'view' | 'shortcut';
@@ -969,8 +1301,8 @@ export interface ExplorerTreeNode extends ExplorerNode {
 	children: ExplorerTreeNode[];
 }
 
-export interface WorkspaceTreeResponse {
-	workspace_id: string;
+export interface SpaceTreeResponse {
+	space_id: string;
 	nodes: ExplorerTreeNode[];
 }
 
@@ -978,31 +1310,18 @@ export interface ViewConfig {
 	type: 'pages' | 'chats' | 'wiki' | 'drive' | 'sources';
 	subtype?: string;
 	folder_id?: string;
-	workspace_scoped?: boolean;
+	space_scoped?: boolean;
 	limit?: number;
 	show_more_link?: boolean;
 }
 
-export interface ViewEntity {
-	id: string;
-	name: string;
-	entity_type: string;
-	icon: string;
-	updated_at?: string;
-}
-
-export interface ViewResolutionResponse {
-	entities: ViewEntity[];
-	total: number;
-	has_more: boolean;
-}
-
 /**
- * Get the explorer tree for a workspace
+ * @deprecated Use Views API instead
+ * Get the explorer tree for a space
  */
-export async function getWorkspaceTree(workspaceId: string): Promise<WorkspaceTreeResponse> {
-	const res = await fetch(`${API_BASE}/workspaces/${workspaceId}/tree`);
-	if (!res.ok) throw new Error(`Failed to get workspace tree: ${res.statusText}`);
+export async function getSpaceTree(spaceId: string): Promise<SpaceTreeResponse> {
+	const res = await fetch(`${API_BASE}/spaces/${spaceId}/tree`);
+	if (!res.ok) throw new Error(`Failed to get space tree: ${res.statusText}`);
 	return res.json();
 }
 
@@ -1010,7 +1329,7 @@ export async function getWorkspaceTree(workspaceId: string): Promise<WorkspaceTr
  * Create a new explorer node
  */
 export async function createExplorerNode(
-	workspace_id: string,
+	space_id: string,
 	node_type: 'folder' | 'view' | 'shortcut',
 	options: {
 		parent_id?: string;
@@ -1023,7 +1342,7 @@ export async function createExplorerNode(
 	const res = await fetch(`${API_BASE}/explorer-nodes`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ workspace_id, node_type, ...options })
+		body: JSON.stringify({ space_id, node_type, ...options })
 	});
 	if (!res.ok) throw new Error(`Failed to create node: ${res.statusText}`);
 	return res.json();
@@ -1076,26 +1395,26 @@ export async function moveExplorerNodes(
 }
 
 /**
- * Resolve a view configuration to actual entities
+ * @deprecated Use resolveView(viewId) instead. This legacy function is kept for backward compatibility.
  */
-export async function resolveView(
+export async function resolveViewConfig(
 	config: ViewConfig,
-	workspace_id: string,
+	space_id: string,
 	limit?: number,
 	offset?: number
 ): Promise<ViewResolutionResponse> {
-	const body = { config, workspace_id, limit, offset };
-	
-	const res = await fetch(`${API_BASE}/views/resolve`, {
+	const body = { config, space_id, limit, offset };
+
+	const res = await fetch(`${API_BASE}/views/resolve-config`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(body)
 	});
-	
+
 	if (!res.ok) {
 		const errorBody = await res.text();
-		console.error('[resolveView] Error:', res.status, 'Body:', errorBody, 'Request was:', JSON.stringify(body));
-		throw new Error(`Failed to resolve view: ${res.statusText}`);
+		console.error('[resolveViewConfig] Error:', res.status, 'Body:', errorBody, 'Request was:', JSON.stringify(body));
+		throw new Error(`Failed to resolve view config: ${res.statusText}`);
 	}
 	return res.json();
 }
@@ -1108,7 +1427,10 @@ export interface Page {
 	id: string;
 	title: string;
 	content: string;
-	workspace_id: string | null;
+	space_id: string | null;
+	icon: string | null;
+	cover_url: string | null;
+	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
 	updated_at: string;
 }
@@ -1116,7 +1438,10 @@ export interface Page {
 export interface PageSummary {
 	id: string;
 	title: string;
-	workspace_id: string | null;
+	space_id: string | null;
+	icon: string | null;
+	cover_url: string | null;
+	tags: string | null; // JSON array string: '["tag1", "tag2"]'
 	created_at: string;
 	updated_at: string;
 }
@@ -1142,11 +1467,11 @@ export interface EntitySearchResponse {
 /**
  * List all pages with optional pagination and workspace filter
  */
-export async function listPages(limit?: number, offset?: number, workspace_id?: string): Promise<PageListResponse> {
+export async function listPages(limit?: number, offset?: number, space_id?: string): Promise<PageListResponse> {
 	const params = new URLSearchParams();
 	if (limit !== undefined) params.set('limit', String(limit));
 	if (offset !== undefined) params.set('offset', String(offset));
-	if (workspace_id !== undefined) params.set('workspace_id', workspace_id);
+	if (space_id !== undefined) params.set('space_id', space_id);
 
 	const url = params.toString() ? `${API_BASE}/pages?${params}` : `${API_BASE}/pages`;
 	const res = await fetch(url);
@@ -1167,11 +1492,16 @@ export async function getPage(id: string): Promise<Page> {
 /**
  * Create a new page
  */
-export async function createPage(title: string, content: string = '', workspace_id: string | null = null): Promise<Page> {
+export async function createPage(
+	title: string,
+	content: string = '',
+	space_id: string | null = null,
+	options?: { icon?: string; cover_url?: string; tags?: string }
+): Promise<Page> {
 	const res = await fetch(`${API_BASE}/pages`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ title, content, workspace_id })
+		body: JSON.stringify({ title, content, spaceId: space_id, ...options })
 	});
 
 	if (!res.ok) throw new Error(`Failed to create page: ${res.statusText}`);
@@ -1183,7 +1513,14 @@ export async function createPage(title: string, content: string = '', workspace_
  */
 export async function updatePage(
 	id: string,
-	updates: { title?: string; content?: string; workspace_id?: string | null }
+	updates: {
+		title?: string;
+		content?: string;
+		space_id?: string | null;
+		icon?: string | null;
+		cover_url?: string | null;
+		tags?: string | null;
+	}
 ): Promise<Page> {
 	const res = await fetch(`${API_BASE}/pages/${id}`, {
 		method: 'PUT',
@@ -1213,5 +1550,41 @@ export async function deletePage(id: string): Promise<void> {
 export async function searchEntities(query: string): Promise<EntitySearchResponse> {
 	const res = await fetch(`${API_BASE}/pages/search/entities?q=${encodeURIComponent(query)}`);
 	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
+	return res.json();
+}
+
+// =============================================================================
+// System Update API
+// =============================================================================
+
+export interface SystemUpdateStatus {
+	available: boolean;
+	current: string;
+	latest: string | null;
+	latest_image: string | null;
+}
+
+/**
+ * Check if a system update is available (pull-based updates via Tollbooth → Atlas)
+ */
+export async function checkSystemUpdate(): Promise<SystemUpdateStatus> {
+	const res = await fetch(`${API_BASE}/system/update-available`);
+	if (!res.ok) throw new Error(`Failed to check system update: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Trigger a system update (Core → Tollbooth → Atlas → Nomad rolling deploy)
+ * This will restart the container — the user should see an update overlay.
+ */
+export async function triggerSystemUpdate(): Promise<{ status: string }> {
+	const res = await fetch(`${API_BASE}/system/update`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' }
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to trigger update: ${res.statusText}`);
+	}
 	return res.json();
 }

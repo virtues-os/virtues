@@ -30,7 +30,7 @@ pub struct EmbeddingConfig {
 /// A registered ontology definition
 #[derive(Debug, Clone)]
 pub struct Ontology {
-    /// Unique ontology name (e.g., "health_sleep", "praxis_calendar")
+    /// Unique ontology name (e.g., "health_sleep", "calendar")
     pub name: &'static str,
 
     /// Human-readable display name

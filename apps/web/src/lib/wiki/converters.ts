@@ -10,7 +10,6 @@ import type {
 	WikiPersonApi,
 	WikiPlaceApi,
 	WikiOrganizationApi,
-	WikiThingApi,
 	WikiDayApi,
 	WikiActApi,
 	WikiChapterApi,
@@ -20,7 +19,6 @@ import type {
 import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
-import type { ThingPage, ThingType } from "./types/thing";
 import type { DayPage, ContextVector, LinkedEntities, LinkedTemporal } from "./types/day";
 import type { ActPage } from "./types/act";
 import type { ChapterPage } from "./types/chapter";
@@ -35,7 +33,7 @@ function emptyContextVector(): ContextVector {
 }
 
 function emptyLinkedEntities(): LinkedEntities {
-	return { people: [], places: [], organizations: [], things: [] };
+	return { people: [], places: [], organizations: [] };
 }
 
 function emptyLinkedTemporal(): LinkedTemporal {
@@ -50,8 +48,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 	return {
 		type: "person",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.canonical_name,
+				title: api.canonical_name,
 		cover: api.picture ?? undefined,
 
 		// Person-specific fields
@@ -100,8 +97,7 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 	return {
 		type: "place",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.name,
+				title: api.name,
 		cover: api.cover_image ?? undefined,
 
 		// Place-specific fields
@@ -153,8 +149,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 	return {
 		type: "organization",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.canonical_name,
+				title: api.canonical_name,
 		cover: api.cover_image ?? undefined,
 
 		// Org-specific fields
@@ -188,50 +183,6 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 }
 
 // ============================================================================
-// Thing Converter
-// ============================================================================
-
-export function apiToThingPage(api: WikiThingApi): ThingPage {
-	// Map thing_type
-	const thingTypeMap: Record<string, ThingType> = {
-		philosophy: "philosophy",
-		framework: "framework",
-		belief: "belief",
-		book: "book",
-		object: "object",
-		concept: "concept",
-	};
-
-	return {
-		type: "thing",
-		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.canonical_name,
-		cover: api.cover_image ?? undefined,
-
-		// Thing-specific fields
-		thingType: api.thing_type ? (thingTypeMap[api.thing_type.toLowerCase()] ?? "other") : "other",
-
-		// Content
-		content: api.content ?? api.description ?? "",
-
-		// Connections (populated from entity_edges later)
-		relatedThings: [],
-		associatedPeople: [],
-		associatedPlaces: [],
-		narrativeContext: [],
-
-		// Metadata
-		citations: [],
-		linkedPages: [],
-		tags: [],
-		createdAt: new Date(api.created_at),
-		updatedAt: new Date(api.updated_at),
-		lastEditedBy: "ai",
-	};
-}
-
-// ============================================================================
 // Day Converter
 // ============================================================================
 
@@ -242,8 +193,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 	return {
 		type: "day",
 		id: api.id,
-		slug: api.date,
-		title: formatDayTitle(date),
+				title: formatDayTitle(date),
 		cover: api.cover_image ?? undefined,
 
 		// Day-specific fields
@@ -290,8 +240,7 @@ export function apiToActPage(api: WikiActApi): ActPage {
 	return {
 		type: "act",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.title,
+				title: api.title,
 		subtitle: api.subtitle ?? undefined,
 		cover: api.cover_image ?? undefined,
 
@@ -330,8 +279,7 @@ export function apiToChapterPage(api: WikiChapterApi): ChapterPage {
 	return {
 		type: "chapter",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.title,
+				title: api.title,
 		subtitle: api.subtitle ?? undefined,
 		cover: api.cover_image ?? undefined,
 
@@ -370,8 +318,7 @@ export function apiToTelosPage(api: WikiTelosApi): TelosPage {
 	return {
 		type: "telos",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.title,
+				title: api.title,
 		cover: api.cover_image ?? undefined,
 
 		// Telos-specific fields

@@ -50,15 +50,16 @@ impl OntologyTransform for IosBatteryTransform {
             .read_with_checkpoint(&source_id, "battery", checkpoint_key)
             .await?;
 
-        let mut pending_records: Vec<(f64, String, bool, DateTime<Utc>, Uuid, serde_json::Value)> = Vec::new();
+        let mut pending_records: Vec<(String, f64, String, bool, DateTime<Utc>, String, serde_json::Value)> = Vec::new();
 
         for batch in batches {
             for record in &batch.records {
                 records_read += 1;
 
-                let battery_level = record.get("battery_level").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                let battery_state = record.get("battery_state").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
-                let is_low_power_mode = record.get("is_low_power_mode").and_then(|v| v.as_bool()).unwrap_or(false);
+                // iOS sends: level (0.0-1.0), state, isLowPowerMode
+                let battery_level = record.get("level").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let battery_state = record.get("state").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                let is_low_power_mode = record.get("isLowPowerMode").and_then(|v| v.as_bool()).unwrap_or(false);
                 
                 let timestamp = record
                     .get("timestamp")
@@ -69,12 +70,15 @@ impl OntologyTransform for IosBatteryTransform {
                 let stream_id = record
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_else(|| Uuid::new_v4());
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
 
                 let metadata = record.get("metadata").cloned().unwrap_or(serde_json::json!({}));
 
+                last_processed_id = Some(stream_id.clone());
+
                 pending_records.push((
+                    Uuid::new_v4().to_string(),
                     battery_level,
                     battery_state,
                     is_low_power_mode,
@@ -82,8 +86,6 @@ impl OntologyTransform for IosBatteryTransform {
                     stream_id,
                     metadata,
                 ));
-
-                last_processed_id = Some(stream_id.to_string());
 
                 if pending_records.len() >= BATCH_SIZE {
                     let written = execute_battery_batch_insert(db, &pending_records).await?;
@@ -116,7 +118,7 @@ impl OntologyTransform for IosBatteryTransform {
 
 async fn execute_battery_batch_insert(
     db: &Database,
-    records: &[(f64, String, bool, DateTime<Utc>, Uuid, serde_json::Value)],
+    records: &[(String, f64, String, bool, DateTime<Utc>, String, serde_json::Value)],
 ) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
@@ -125,6 +127,7 @@ async fn execute_battery_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_device_battery",
         &[
+            "id",
             "battery_level",
             "battery_state",
             "is_low_power_mode",
@@ -140,8 +143,9 @@ async fn execute_battery_batch_insert(
 
     let mut query = sqlx::query(&query_str);
 
-    for (level, state, low_power, ts, stream_id, meta) in records {
+    for (id, level, state, low_power, ts, stream_id, meta) in records {
         query = query
+            .bind(id)
             .bind(level)
             .bind(state)
             .bind(if *low_power { 1 } else { 0 })

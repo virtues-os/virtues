@@ -1,162 +1,183 @@
 <script lang="ts">
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
-	import { bookmarks } from '$lib/stores/bookmarks.svelte';
+	import { flip } from "svelte/animate";
+	import { dndzone } from "svelte-dnd-action";
+	import type { DndEvent } from "svelte-dnd-action";
+	import Icon from "$lib/components/Icon.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import type { Tab } from "$lib/stores/space.svelte";
+	import {
+		dndManager,
+		type DndTabItem,
+		type ZoneId,
+	} from "$lib/stores/dndManager.svelte";
+	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
+
+	const FLIP_DURATION_MS = 150;
 
 	interface Props {
-		paneId?: 'left' | 'right'; // When set, renders as a pane tab bar in split mode
+		paneId?: "left" | "right"; // When set, renders as a pane tab bar in split mode
 	}
 
 	let { paneId }: Props = $props();
 
-	// Context menu state
-	let contextMenu = $state<{ x: number; y: number; tabId: string } | null>(null);
-
-	// Drag state for pane-to-pane (only show highlight when dragging from different pane)
-	let dragOverFromOtherPane = $state(false);
-
-	// Drag state for reordering within pane
-	let draggedTabId = $state<string | null>(null);
-	let dropTargetIndex = $state<number | null>(null);
-
 	// Rename state
 	let renamingTabId = $state<string | null>(null);
-	let renameValue = $state('');
+	let renameValue = $state("");
+
+	// DnD items state - we need mutable state for svelte-dnd-action
+	let dndItems = $state<DndTabItem[]>([]);
+
+	// Zone identifier for this tab bar instance
+	const zoneId: ZoneId = $derived({
+		type: "tab-bar" as const,
+		paneId,
+	});
 
 	// Derive tabs and active state based on mode
 	const tabs = $derived(
 		paneId
-			? (paneId === 'left' ? windowTabs.leftPane?.tabs : windowTabs.rightPane?.tabs) || []
-			: windowTabs.tabs
+			? (paneId === "left"
+					? spaceStore.leftPane?.tabs
+					: spaceStore.rightPane?.tabs) || []
+			: spaceStore.tabs,
 	);
 
 	const activeTabId = $derived(
 		paneId
-			? (paneId === 'left' ? windowTabs.leftPane?.activeTabId : windowTabs.rightPane?.activeTabId)
-			: windowTabs.activeTabId
+			? paneId === "left"
+				? spaceStore.leftPane?.activeTabId
+				: spaceStore.rightPane?.activeTabId
+			: spaceStore.activeTabId,
 	);
 
-	const isActivePane = $derived(paneId ? windowTabs.split.activePaneId === paneId : true);
-	const isSplitMode = $derived(windowTabs.split.enabled);
+	const isActivePane = $derived(
+		paneId ? spaceStore.activePaneId === paneId : true,
+	);
+	const isSplitMode = $derived(spaceStore.isSplit);
+
+	// Build DnD items from tabs with source information
+	function buildDndItems(): DndTabItem[] {
+		return tabs.map((tab) => ({
+			id: tab.id,
+			url: tab.route,
+			label: tab.label,
+			icon: tab.icon,
+			source: zoneId,
+			tab,
+		}));
+	}
+
+	// Sync DnD items when tabs change
+	$effect(() => {
+		// Rebuild from tabs (the source of truth)
+		dndItems = buildDndItems();
+	});
 
 	function handleTabClick(id: string) {
 		if (paneId) {
-			windowTabs.setActiveTabInPane(id, paneId);
+			spaceStore.setActiveTabInPane(id, paneId);
 		} else {
-			windowTabs.setActiveTab(id);
+			spaceStore.setActiveTab(id);
 		}
 	}
 
 	function handleTabClose(e: MouseEvent, id: string) {
 		e.stopPropagation();
 		if (paneId) {
-			windowTabs.closeTabInPane(id, paneId);
+			spaceStore.closeTabInPane(id, paneId);
 		} else {
-			windowTabs.closeTab(id);
+			spaceStore.closeTab(id);
 		}
 	}
 
 	function handleToggleSplit() {
-		windowTabs.toggleSplit();
+		spaceStore.toggleSplit();
 	}
 
 	function handleMergePanes() {
-		windowTabs.disableSplit();
+		spaceStore.disableSplit();
 	}
 
 	function handleMiddleClick(e: MouseEvent, id: string) {
 		if (e.button === 1) {
 			e.preventDefault();
 			if (paneId) {
-				windowTabs.closeTabInPane(id, paneId);
+				spaceStore.closeTabInPane(id, paneId);
 			} else {
-				windowTabs.closeTab(id);
+				spaceStore.closeTab(id);
 			}
 		}
 	}
 
 	function handleContextMenu(e: MouseEvent, tabId: string) {
 		e.preventDefault();
-		contextMenu = { x: e.clientX, y: e.clientY, tabId };
-	}
 
-	function closeContextMenu() {
-		contextMenu = null;
-	}
+		const tab = tabs.find((t) => t.id === tabId);
+		if (!tab) return;
 
-	function handleCloseTab() {
-		if (!contextMenu) return;
-		if (paneId) {
-			windowTabs.closeTabInPane(contextMenu.tabId, paneId);
-		} else {
-			windowTabs.closeTab(contextMenu.tabId);
+		const tabIndex = tabs.findIndex((t) => t.id === tabId);
+		const hasTabsToRight = tabIndex !== -1 && tabIndex < tabs.length - 1;
+
+		// Build context menu items
+		const items: ContextMenuItem[] = [
+			// Compact/Expand
+			{
+				id: "compact",
+				label: tab.pinned ? "Expand" : "Compact",
+				icon: tab.pinned ? "ri:expand-left-right-line" : "ri:contract-left-right-line",
+				action: () => spaceStore.togglePin(tabId),
+			},
+			// Rename
+			{
+				id: "rename",
+				label: "Rename",
+				icon: "ri:edit-line",
+				action: () => {
+					renamingTabId = tabId;
+					renameValue = tab.label;
+				},
+			},
+			// Divider + Close actions
+			{
+				id: "close",
+				label: "Close",
+				dividerBefore: true,
+				action: () => {
+					if (paneId) {
+						spaceStore.closeTabInPane(tabId, paneId);
+					} else {
+						spaceStore.closeTab(tabId);
+					}
+				},
+			},
+		];
+
+		// Close Others (only if more than 1 tab)
+		if (tabs.length > 1) {
+			items.push({
+				id: "close-others",
+				label: "Close Others",
+				action: () => spaceStore.closeOtherTabs(tabId, paneId),
+			});
 		}
-		closeContextMenu();
-	}
 
-	function handleCloseOthers() {
-		if (!contextMenu) return;
-		windowTabs.closeOtherTabs(contextMenu.tabId, paneId);
-		closeContextMenu();
-	}
+		// Close to Right (only if tabs exist to the right)
+		if (hasTabsToRight) {
+			items.push({
+				id: "close-to-right",
+				label: "Close to the Right",
+				action: () => spaceStore.closeTabsToRight(tabId, paneId),
+			});
+		}
 
-	function handleCloseToRight() {
-		if (!contextMenu) return;
-		windowTabs.closeTabsToRight(contextMenu.tabId, paneId);
-		closeContextMenu();
-	}
+		// Add "Add to Folder" / "Move to Workspace" submenus if tab has a route
+		if (tab.route) {
+			items.push(...getWorkspaceMenuItems(tab.route));
+		}
 
-	function handleTogglePin() {
-		if (!contextMenu) return;
-		windowTabs.togglePin(contextMenu.tabId);
-		closeContextMenu();
-	}
-
-	// Check if there are tabs to the right
-	const hasTabsToRight = $derived(() => {
-		const menu = contextMenu;
-		if (!menu) return false;
-		const index = tabs.findIndex((t) => t.id === menu.tabId);
-		return index !== -1 && index < tabs.length - 1;
-	});
-
-	// Check if context menu tab is pinned
-	const isContextTabPinned = $derived(() => {
-		const menu = contextMenu;
-		if (!menu) return false;
-		const tab = tabs.find((t) => t.id === menu.tabId);
-		return tab?.pinned ?? false;
-	});
-
-	// Check if context menu tab is bookmarked
-	const isContextTabBookmarked = $derived(() => {
-		const menu = contextMenu;
-		if (!menu) return false;
-		const tab = tabs.find((t) => t.id === menu.tabId);
-		if (!tab) return false;
-		return bookmarks.isRouteBookmarked(tab.route);
-	});
-
-	async function handleToggleBookmark() {
-		if (!contextMenu) return;
-		const tab = tabs.find((t) => t.id === contextMenu.tabId);
-		if (!tab) return;
-
-		await bookmarks.toggleRouteBookmark({
-			route: tab.route,
-			tab_type: tab.type,
-			label: tab.label,
-			icon: tab.icon
-		});
-		closeContextMenu();
-	}
-
-	function handleStartRename() {
-		if (!contextMenu) return;
-		const tab = tabs.find((t) => t.id === contextMenu.tabId);
-		if (!tab) return;
-		renamingTabId = contextMenu.tabId;
-		renameValue = tab.label;
-		closeContextMenu();
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
 	function handleRenameSubmit() {
@@ -165,21 +186,21 @@
 			return;
 		}
 		const newLabel = renameValue.trim();
-		windowTabs.updateTab(renamingTabId, { label: newLabel });
+		spaceStore.updateTab(renamingTabId, { label: newLabel });
 		renamingTabId = null;
-		renameValue = '';
+		renameValue = "";
 	}
 
 	function handleRenameCancel() {
 		renamingTabId = null;
-		renameValue = '';
+		renameValue = "";
 	}
 
 	function handleRenameKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') {
+		if (e.key === "Enter") {
 			e.preventDefault();
 			handleRenameSubmit();
-		} else if (e.key === 'Escape') {
+		} else if (e.key === "Escape") {
 			e.preventDefault();
 			handleRenameCancel();
 		}
@@ -193,193 +214,107 @@
 		renameValue = tab.label;
 	}
 
-	// Drag and drop handlers
-	function handleDragStart(e: DragEvent, tabId: string) {
-		if (!e.dataTransfer) return;
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', JSON.stringify({ tabId, sourcePane: paneId }));
-		draggedTabId = tabId;
+	// svelte-dnd-action handlers - delegate to centralized dndManager
+	function handleDndConsider(e: CustomEvent<DndEvent<DndTabItem>>) {
+		// Pass current dndItems as originalItems - svelte-dnd-action modifies the array
+		// before firing consider, so we need the pre-modified version to find the dragged item
+		dndManager.handleConsider(
+			e,
+			zoneId,
+			(items) => {
+				dndItems = items;
+			},
+			dndItems,
+		);
 	}
 
-	function handleDragEnd() {
-		draggedTabId = null;
-		dropTargetIndex = null;
-		dragOverFromOtherPane = false;
-	}
-
-	function handleDragOver(e: DragEvent) {
-		e.preventDefault();
-		if (e.dataTransfer) {
-			e.dataTransfer.dropEffect = 'move';
-		}
-		// Only show pane highlight in split mode when drag might be from another pane
-		// We can't check the source during dragover, so we check if we're in split mode
-		// and the drag didn't originate from this pane (draggedTabId would be set if it did)
-		if (paneId && !draggedTabId) {
-			dragOverFromOtherPane = true;
-		}
-	}
-
-	function handleDragLeave() {
-		dragOverFromOtherPane = false;
-	}
-
-	// Handle drag over individual tab for reordering
-	function handleTabDragOver(e: DragEvent, index: number) {
-		e.preventDefault();
-		e.stopPropagation();
-
-		if (!e.dataTransfer) return;
-		e.dataTransfer.dropEffect = 'move';
-
-		// Calculate if we're in the left or right half of the tab
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		const midpoint = rect.left + rect.width / 2;
-		const insertIndex = e.clientX < midpoint ? index : index + 1;
-
-		dropTargetIndex = insertIndex;
-	}
-
-	function handleTabDragLeave() {
-		// Don't clear immediately - let the next dragover set it
-	}
-
-	function handleDrop(e: DragEvent) {
-		e.preventDefault();
-		dragOverFromOtherPane = false;
-
-		if (!e.dataTransfer) return;
-
-		try {
-			const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-			const { tabId, sourcePane } = data;
-
-			// Handle reordering within the same pane
-			if (sourcePane === paneId || (!sourcePane && !paneId)) {
-				if (dropTargetIndex !== null) {
-					const fromIndex = tabs.findIndex((t) => t.id === tabId);
-					if (fromIndex !== -1 && fromIndex !== dropTargetIndex && fromIndex !== dropTargetIndex - 1) {
-						// Adjust target index if we're moving forward
-						const toIndex = dropTargetIndex > fromIndex ? dropTargetIndex - 1 : dropTargetIndex;
-						if (paneId) {
-							windowTabs.reorderTabsInPane(fromIndex, toIndex, paneId);
-						} else {
-							windowTabs.reorderTabs(fromIndex, toIndex);
-						}
-					}
-				}
-			}
-			// Handle moving to a different pane
-			else if (sourcePane !== paneId && paneId && sourcePane) {
-				windowTabs.moveTabToPane(tabId, paneId);
-			}
-		} catch {
-			// Invalid data, ignore
-		}
-
-		draggedTabId = null;
-		dropTargetIndex = null;
+	function handleDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
+		dndManager.handleFinalize(e, zoneId, (items) => {
+			dndItems = items;
+		});
 	}
 
 	// Get icon for tab type
 	function getDefaultIcon(type: string): string {
 		switch (type) {
-			case 'chat':
-				return 'ri:chat-1-line';
-			case 'history':
-				return 'ri:history-line';
-			case 'wiki':
-				return 'ri:book-2-line';
-			case 'wiki-list':
-				return 'ri:list-check';
-			case 'data-sources':
-				return 'ri:database-2-line';
-			case 'data-sources-add':
-				return 'ri:add-circle-line';
-			case 'data-entities':
-				return 'ri:node-tree';
-			case 'data-jobs':
-				return 'ri:refresh-line';
-			case 'storage':
-				return 'ri:hard-drive-2-line';
-			case 'usage':
-				return 'ri:bar-chart-line';
-			case 'profile':
-				return 'ri:user-settings-line';
+			case "chat":
+				return "ri:chat-1-line";
+			case "history":
+				return "ri:history-line";
+			case "wiki":
+				return "ri:book-2-line";
+			case "wiki-list":
+				return "ri:list-check";
+			case "data-sources":
+				return "ri:database-2-line";
+			case "data-sources-add":
+				return "ri:add-circle-line";
+			case "data-jobs":
+				return "ri:refresh-line";
+			case "storage":
+				return "ri:hard-drive-2-line";
+			case "usage":
+				return "ri:bar-chart-line";
+			case "profile":
+				return "ri:user-settings-line";
 			default:
-				return 'ri:file-line';
+				return "ri:file-line";
 		}
 	}
 </script>
-
-<svelte:window onclick={closeContextMenu} />
 
 <div
 	class="tab-bar"
 	class:split-pane={!!paneId}
 	class:active-pane={isActivePane && !!paneId}
-	class:drag-over={dragOverFromOtherPane}
-	ondragover={paneId ? handleDragOver : undefined}
-	ondragleave={paneId ? handleDragLeave : undefined}
-	ondrop={paneId ? handleDrop : undefined}
+	role="toolbar"
+	aria-label="Tab bar"
+	tabindex="0"
 >
-	<!-- Only show nav buttons on left pane or when not in split mode -->
-	{#if !paneId || paneId === 'left'}
-		<div class="nav-buttons">
-			<button
-				class="nav-button"
-				class:disabled={!windowTabs.canGoBack()}
-				onclick={() => windowTabs.goBack()}
-				aria-label="Go back"
-				title="Go back"
-				disabled={!windowTabs.canGoBack()}
-			>
-				<iconify-icon icon="ri:arrow-left-s-line" />
-			</button>
-			<button
-				class="nav-button"
-				class:disabled={!windowTabs.canGoForward()}
-				onclick={() => windowTabs.goForward()}
-				aria-label="Go forward"
-				title="Go forward"
-				disabled={!windowTabs.canGoForward()}
-			>
-				<iconify-icon icon="ri:arrow-right-s-line" />
-			</button>
-		</div>
-	{/if}
-
-	<div class="tabs-scroll" ondragover={handleDragOver} ondragleave={handleDragLeave} ondrop={handleDrop}>
-		{#each tabs as tab, index (tab.id)}
-			{@const showDropIndicatorBefore = dropTargetIndex === index && draggedTabId !== tab.id}
-			{@const showDropIndicatorAfter = dropTargetIndex === index + 1 && index === tabs.length - 1 && draggedTabId !== tab.id}
-			{#if showDropIndicatorBefore}
-				<div class="drop-indicator"></div>
-			{/if}
+	<div
+		class="tabs-scroll"
+		role="tablist"
+		tabindex="0"
+		use:dndzone={{
+			items: dndItems,
+			type: "tab",
+			flipDurationMs: FLIP_DURATION_MS,
+			dropTargetStyle: {},
+			dragDisabled: renamingTabId !== null,
+		}}
+		onconsider={handleDndConsider}
+		onfinalize={handleDndFinalize}
+	>
+		{#each dndItems as item (item.id)}
+			{@const tab = item.tab}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
-				class:active-in-active-pane={tab.id === activeTabId && isActivePane}
-				class:dragging={tab.id === draggedTabId}
+				class:active-in-active-pane={tab.id === activeTabId &&
+					isActivePane}
 				class:pinned={tab.pinned}
 				class:renaming={tab.id === renamingTabId}
-				draggable={tab.id !== renamingTabId ? 'true' : 'false'}
-				ondragstart={(e) => handleDragStart(e, tab.id)}
-				ondragend={handleDragEnd}
-				ondragover={(e) => handleTabDragOver(e, index)}
-				ondragleave={handleTabDragLeave}
-				onclick={() => tab.id !== renamingTabId && handleTabClick(tab.id)}
+				animate:flip={{ duration: FLIP_DURATION_MS }}
+				onclick={() =>
+					tab.id !== renamingTabId && handleTabClick(tab.id)}
 				ondblclick={(e) => handleDoubleClick(e, tab.id)}
 				onauxclick={(e) => handleMiddleClick(e, tab.id)}
 				oncontextmenu={(e) => handleContextMenu(e, tab.id)}
-				onkeydown={(e) => e.key === 'Enter' && tab.id !== renamingTabId && handleTabClick(tab.id)}
-				title={tab.id === renamingTabId ? '' : tab.label}
+				onkeydown={(e) =>
+					e.key === "Enter" &&
+					tab.id !== renamingTabId &&
+					handleTabClick(tab.id)}
+				title={tab.id !== renamingTabId ? tab.label : ""}
 				role="button"
 				tabindex="0"
 			>
-				<iconify-icon icon={tab.icon || getDefaultIcon(tab.type)} class="tab-icon" />
+				<Icon
+					icon={item.icon || getDefaultIcon(tab.type)}
+					class="tab-icon"
+				/>
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
+						<!-- svelte-ignore a11y_autofocus -->
 						<input
 							type="text"
 							class="tab-rename-input"
@@ -399,13 +334,10 @@
 						onclick={(e) => handleTabClose(e, tab.id)}
 						aria-label="Close tab"
 					>
-						<iconify-icon icon="ri:close-line" />
+						<Icon icon="ri:close-line" />
 					</button>
 				{/if}
 			</div>
-			{#if showDropIndicatorAfter}
-				<div class="drop-indicator"></div>
-			{/if}
 		{/each}
 	</div>
 
@@ -416,57 +348,21 @@
 			aria-label="Split view"
 			title="Split view"
 		>
-			<iconify-icon icon="ri:layout-column-line" />
+			<Icon icon="ri:layout-column-line" />
 		</button>
 	{/if}
 
-	{#if paneId === 'right' && isSplitMode}
+	{#if paneId === "right" && isSplitMode}
 		<button
 			class="merge-toggle"
 			onclick={handleMergePanes}
 			aria-label="Merge panes"
 			title="Merge panes"
 		>
-			<iconify-icon icon="ri:layout-right-line" />
+			<Icon icon="ri:layout-right-line" />
 		</button>
 	{/if}
 </div>
-
-<!-- Context Menu -->
-{#if contextMenu}
-	<div
-		class="context-menu"
-		style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
-		role="menu"
-	>
-		<button class="context-menu-item" onclick={handleTogglePin} role="menuitem">
-			<iconify-icon icon={isContextTabPinned() ? 'ri:unpin-line' : 'ri:pushpin-line'} width="14"></iconify-icon>
-			{isContextTabPinned() ? 'Unpin' : 'Pin'}
-		</button>
-		<button class="context-menu-item" onclick={handleToggleBookmark} role="menuitem">
-			<iconify-icon icon={isContextTabBookmarked() ? 'ri:bookmark-fill' : 'ri:bookmark-line'} width="14"></iconify-icon>
-			{isContextTabBookmarked() ? 'Remove Bookmark' : 'Bookmark'}
-		</button>
-		<button class="context-menu-item" onclick={handleStartRename} role="menuitem">
-			<iconify-icon icon="ri:edit-line" width="14"></iconify-icon>
-			Rename
-		</button>
-		<div class="context-menu-divider"></div>
-		<button class="context-menu-item" onclick={handleCloseTab} role="menuitem">
-			Close
-		</button>
-		{#if tabs.length > 1}
-			<button class="context-menu-item" onclick={handleCloseOthers} role="menuitem">
-				Close Others
-			</button>
-		{/if}
-		{#if hasTabsToRight()}
-			<button class="context-menu-item" onclick={handleCloseToRight} role="menuitem">
-				Close to the Right
-			</button>
-		{/if}
-	</div>
-{/if}
 
 <style>
 	.tab-bar {
@@ -477,46 +373,8 @@
 		border-bottom: 1px solid var(--color-border);
 		background: var(--color-surface);
 		flex-shrink: 0;
-	}
-
-	.nav-buttons {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		margin-right: 4px;
-	}
-
-	.nav-button {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		font-size: 16px;
-		cursor: pointer;
-		transition:
-			background-color 150ms ease,
-			color 150ms ease;
-	}
-
-	.nav-button:hover {
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-	}
-
-	.nav-button:active:not(:disabled) {
-		background: var(--color-border);
-	}
-
-	.nav-button.disabled,
-	.nav-button:disabled {
-		opacity: 0.3;
-		cursor: default;
+		position: relative;
+		z-index: 110; /* Above global drag overlays */
 	}
 
 	/* Active pane in split mode gets elevated background */
@@ -527,7 +385,7 @@
 	.tabs-scroll {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 4px;
 		overflow-x: auto;
 		flex: 1;
 		scrollbar-width: none;
@@ -556,7 +414,8 @@
 		flex-shrink: 0;
 		transition:
 			background-color 150ms ease,
-			color 150ms ease;
+			color 150ms ease,
+			opacity 150ms ease;
 	}
 
 	.tab:hover {
@@ -574,6 +433,11 @@
 		background: var(--color-border);
 	}
 
+	/* Dragging state - svelte-dnd-action applies aria-grabbed */
+	:global(.tab[aria-grabbed="true"]) {
+		opacity: 0.5;
+	}
+
 	/* Pinned tabs are compact (icon only) with subtle tint */
 	.tab.pinned {
 		min-width: auto;
@@ -587,18 +451,18 @@
 		background: color-mix(in srgb, var(--color-primary) 25%, transparent);
 	}
 
-	.tab.pinned .tab-icon {
+	.tab.pinned :global(.tab-icon) {
 		color: var(--color-primary);
 		opacity: 1;
 	}
 
-	.tab-icon {
+	:global(.tab-icon) {
 		flex-shrink: 0;
 		font-size: 13px;
 		opacity: 0.7;
 	}
 
-	.tab.active .tab-icon {
+	.tab.active :global(.tab-icon) {
 		opacity: 1;
 	}
 
@@ -683,66 +547,27 @@
 		color: var(--color-foreground);
 	}
 
-	/* Drag over indicator */
-	.tab-bar.drag-over {
-		background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface));
-	}
-
-	/* Tab being dragged */
-	.tab.dragging {
-		opacity: 0.5;
-	}
-
-	/* Drop indicator line */
-	.drop-indicator {
-		width: 2px;
-		height: 20px;
-		background: var(--color-primary);
+	/* svelte-dnd-action drop indicator */
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-hint="true"]) {
+		width: 2px !important;
+		min-width: 2px !important;
+		max-width: 2px !important;
+		height: 20px !important;
+		padding: 0 !important;
+		margin: 0 2px;
+		background: var(--color-primary) !important;
 		border-radius: 1px;
-		flex-shrink: 0;
-		margin: 0 -1px;
+		opacity: 1;
+		animation: pulse 0.8s ease-in-out infinite;
 	}
 
-	/* Context Menu */
-	.context-menu {
-		position: fixed;
-		z-index: 1000;
-		min-width: 160px;
-		padding: 4px;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-	}
-
-	.context-menu-item {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: 100%;
-		padding: 8px 12px;
-		border: none;
-		border-radius: 4px;
-		background: transparent;
-		color: var(--color-foreground);
-		font-size: 13px;
-		text-align: left;
-		cursor: pointer;
-		transition: background-color 100ms ease;
-	}
-
-	.context-menu-item:hover {
-		background: var(--color-surface);
-	}
-
-	.context-menu-item iconify-icon {
-		color: var(--color-foreground-muted);
-		flex-shrink: 0;
-	}
-
-	.context-menu-divider {
-		height: 1px;
-		background: var(--color-border);
-		margin: 4px 0;
+	@keyframes pulse {
+		0%,
+		100% {
+			opacity: 1;
+		}
+		50% {
+			opacity: 0.5;
+		}
 	}
 </style>

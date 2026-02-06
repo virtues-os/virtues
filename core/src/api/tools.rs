@@ -1,11 +1,11 @@
 //! API functions for tool management
 //!
 //! There are two types of tools:
-//! - **Built-in tools**: Read from virtues-registry (web_search, query_ontology, semantic_search)
+//! - **Built-in tools**: Read from virtues-registry (web_search, sql_query, edit_page)
 //! - **MCP tools**: Dynamically discovered from connected MCP servers (stored in app_mcp_tools)
 //!
-//! This module currently only handles built-in tools.
-//! MCP tool management will be added separately.
+//! This module handles listing/getting tools for the API.
+//! Tool execution is handled by the tools module (core/src/tools/).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,6 +19,9 @@ pub struct Tool {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    /// Detailed description for LLM
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_description: Option<String>,
     pub tool_type: String,
     pub category: Option<String>,
     pub icon: Option<String>,
@@ -26,6 +29,7 @@ pub struct Tool {
     pub enabled: bool,
     /// For MCP tools
     pub server_name: Option<String>,
+    /// JSON Schema for parameters
     pub input_schema: Option<serde_json::Value>,
 }
 
@@ -36,17 +40,24 @@ impl Tool {
             virtues_registry::tools::ToolType::Mcp => "mcp".to_string(),
         };
 
+        let category = match config.category {
+            virtues_registry::tools::ToolCategory::Search => "search",
+            virtues_registry::tools::ToolCategory::Data => "data",
+            virtues_registry::tools::ToolCategory::Edit => "edit",
+        };
+
         Self {
             id: config.id,
             name: config.name,
             description: Some(config.description),
+            llm_description: Some(config.llm_description),
             tool_type,
-            category: Some(config.category),
+            category: Some(category.to_string()),
             icon: Some(config.icon),
             display_order: Some(config.display_order),
             enabled,
             server_name: None,
-            input_schema: None,
+            input_schema: Some(config.parameters),
         }
     }
 }
@@ -114,7 +125,8 @@ pub async fn list_tools(db: &SqlitePool, params: ListToolsQuery) -> Result<Vec<T
         tools.push(Tool {
             id,
             name: tool_name,
-            description,
+            description: description.clone(),
+            llm_description: description, // MCP tools use same description for LLM
             tool_type: "mcp".to_string(),
             category: Some("mcp".to_string()),
             icon: Some("ri:plug-line".to_string()),
@@ -174,7 +186,8 @@ pub async fn get_tool(db: &SqlitePool, id: String) -> Result<Tool> {
         return Ok(Tool {
             id,
             name: tool_name,
-            description,
+            description: description.clone(),
+            llm_description: description, // MCP tools use same description for LLM
             tool_type: "mcp".to_string(),
             category: Some("mcp".to_string()),
             icon: Some("ri:plug-line".to_string()),

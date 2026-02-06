@@ -45,7 +45,7 @@ impl IosMicrophoneStream {
 
 #[async_trait]
 impl PushStream for IosMicrophoneStream {
-    async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult> {
+    async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
         // Validate payload
         self.validate_payload(&payload)?;
 

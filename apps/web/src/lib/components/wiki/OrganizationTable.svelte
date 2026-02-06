@@ -1,291 +1,142 @@
 <!--
 	OrganizationTable.svelte
 
-	Table view for organizations in the wiki.
+	View for organizations in the wiki.
+	Uses UniversalDataGrid for table/card views.
 -->
 
 <script lang="ts">
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import { getAllOrganizations } from "$lib/wiki";
-	import type { OrganizationPage } from "$lib/wiki/types";
-	import "iconify-icon";
+	import { onMount } from 'svelte';
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import { listOrganizations, type WikiOrganizationListItem } from "$lib/wiki/api";
+	import UniversalDataGrid, { type Column } from "$lib/components/UniversalDataGrid.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 
-	// Reactive list of organizations
-	let organizations = $state(getAllOrganizations());
+	let organizations = $state<WikiOrganizationListItem[]>([]);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
 
-	// Organization type labels
-	const orgTypeLabels: Record<string, string> = {
-		employer: "Employer",
-		school: "School",
-		community: "Community",
-		institution: "Institution",
-		other: "Other",
-	};
-
-	// Organization type badge colors
 	const orgTypeColors: Record<string, string> = {
+		company: "badge-green",
 		employer: "badge-green",
 		school: "badge-blue",
+		university: "badge-blue",
 		community: "badge-purple",
-		institution: "badge-orange",
+		nonprofit: "badge-purple",
+		government: "badge-orange",
 		other: "badge-gray",
 	};
 
-	function getOrgTypeLabel(type: string): string {
-		return orgTypeLabels[type] || type;
+	const columns: Column<WikiOrganizationListItem>[] = [
+		{
+			key: 'canonical_name',
+			label: 'Name',
+			icon: 'ri:building-2-line',
+			width: '50%',
+			minWidth: '200px',
+		},
+		{
+			key: 'organization_type',
+			label: 'Type',
+			icon: 'ri:price-tag-3-line',
+			width: '25%',
+			minWidth: '120px',
+			format: 'badge',
+			badgeColors: orgTypeColors,
+		},
+		{
+			key: 'relationship_type',
+			label: 'Relationship',
+			icon: 'ri:links-line',
+			width: '25%',
+			minWidth: '120px',
+			hideOnMobile: true,
+		},
+	];
+
+	async function loadOrganizations() {
+		loading = true;
+		error = null;
+		try {
+			organizations = await listOrganizations();
+		} catch (e) {
+			console.error('Failed to load organizations:', e);
+			error = e instanceof Error ? e.message : 'Failed to load organizations';
+		} finally {
+			loading = false;
+		}
 	}
 
-	function getOrgTypeClass(type: string): string {
-		return orgTypeColors[type] || "badge-gray";
+	onMount(() => {
+		loadOrganizations();
+	});
+
+	function getOrgTypeClass(type?: string | null): string {
+		if (!type) return "badge-gray";
+		return orgTypeColors[type.toLowerCase()] || "badge-gray";
 	}
 
-	function formatPeriod(org: OrganizationPage): string {
-		if (!org.period) return "—";
-		const start = org.period.start.getFullYear();
-		const end = org.period.end ? org.period.end.getFullYear() : "Present";
-		return `${start}–${end}`;
-	}
-
-	// Handle row click - navigate to organization page
-	function handleRowClick(org: OrganizationPage) {
-		workspaceStore.openTabFromRoute(`/wiki/${org.slug}`);
+	function handleItemClick(org: WikiOrganizationListItem) {
+		const route = `/org/${org.id}`;
+		spaceStore.openTabFromRoute(route);
 	}
 </script>
 
-<div class="table-wrapper">
-	<!-- Toolbar -->
-	<div class="table-toolbar">
-		<div class="toolbar-left">
-			<button class="toolbar-btn">
-				<iconify-icon icon="ri:arrow-up-down-line" width="14"></iconify-icon>
-				Sort
-			</button>
-			<button class="toolbar-btn">
-				<iconify-icon icon="ri:filter-3-line" width="14"></iconify-icon>
-				Filter
-			</button>
+<UniversalDataGrid
+	items={organizations}
+	{columns}
+	entityType="org"
+	{loading}
+	{error}
+	emptyIcon="ri:building-2-line"
+	emptyMessage="No organizations yet"
+	loadingMessage="Loading organizations..."
+	searchPlaceholder="Search organizations..."
+	onItemClick={handleItemClick}
+	onRetry={loadOrganizations}
+>
+	<!-- Custom card -->
+	{#snippet card(org: WikiOrganizationListItem)}
+		<div class="card-content">
+			<div class="org-icon">
+				<Icon icon="ri:building-2-line" width="24" />
+			</div>
+			<span class="card-name">{org.canonical_name}</span>
+			{#if org.organization_type}
+				<span class="badge {getOrgTypeClass(org.organization_type)}">
+					{org.organization_type}
+				</span>
+			{/if}
 		</div>
-	</div>
-
-	<!-- Table -->
-	<div class="table-container">
-		<table class="data-table">
-			<thead>
-				<tr>
-					<th class="col-name">
-						<iconify-icon icon="ri:building-2-line" width="14"></iconify-icon>
-						Name
-					</th>
-					<th class="col-type">
-						<iconify-icon icon="ri:price-tag-3-line" width="14"></iconify-icon>
-						Type
-					</th>
-					<th class="col-role">
-						<iconify-icon icon="ri:user-star-line" width="14"></iconify-icon>
-						Role
-					</th>
-					<th class="col-period">
-						<iconify-icon icon="ri:calendar-line" width="14"></iconify-icon>
-						Period
-					</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each organizations as org}
-					<tr class="data-row" onclick={() => handleRowClick(org)}>
-						<td class="col-name">
-							<span class="name-text">{org.title}</span>
-						</td>
-						<td class="col-type">
-							<span class="badge {getOrgTypeClass(org.orgType)}">
-								{getOrgTypeLabel(org.orgType)}
-							</span>
-						</td>
-						<td class="col-role">
-							{#if org.role}
-								<span class="role-text">{org.role}</span>
-							{:else}
-								<span class="empty-cell">—</span>
-							{/if}
-						</td>
-						<td class="col-period">
-							<span class="period-text">{formatPeriod(org)}</span>
-						</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	</div>
-
-	<!-- Empty state -->
-	{#if organizations.length === 0}
-		<div class="empty-state">
-			<iconify-icon icon="ri:building-2-line" width="32"></iconify-icon>
-			<p>No organizations yet</p>
-		</div>
-	{/if}
-</div>
+	{/snippet}
+</UniversalDataGrid>
 
 <style>
-	.table-wrapper {
-		width: 100%;
-		padding: 0 2rem;
-		overflow: visible;
-	}
-
-	/* Toolbar */
-	.table-toolbar {
+	/* Card styles */
+	.card-content {
 		display: flex;
-		justify-content: space-between;
+		flex-direction: column;
 		align-items: center;
-		padding: 0.5rem 0;
-		position: relative;
+		gap: 0.75rem;
+		text-align: center;
 	}
 
-	.table-toolbar::after {
-		content: "";
-		position: absolute;
-		left: -2rem;
-		right: -2rem;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.toolbar-left {
+	.org-icon {
+		width: 48px;
+		height: 48px;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+		color: var(--color-primary);
 		display: flex;
-		gap: 0.5rem;
-	}
-
-	.toolbar-btn {
-		display: inline-flex;
 		align-items: center;
-		gap: 0.375rem;
-		padding: 0.375rem 0.625rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.15s ease;
+		justify-content: center;
 	}
 
-	.toolbar-btn:hover {
-		background: var(--color-background-hover);
+	.card-name {
+		font-weight: 600;
+		font-size: 0.9375rem;
 		color: var(--color-foreground);
-	}
-
-	/* Table container */
-	.table-container {
-		overflow: visible;
-	}
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.8125rem;
-		overflow: visible;
-	}
-
-	/* Header */
-	thead tr {
-		background: transparent;
-		position: relative;
-	}
-
-	thead tr::after {
-		content: "";
-		position: absolute;
-		left: -2rem;
-		right: -2rem;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	th {
-		text-align: left;
-		font-weight: 500;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		padding: 0.625rem 0.75rem;
-		white-space: nowrap;
-	}
-
-	th:first-child {
-		padding-left: 0;
-	}
-
-	th:last-child {
-		padding-right: 0;
-	}
-
-	th iconify-icon {
-		vertical-align: -2px;
-		margin-right: 0.375rem;
-		opacity: 0.7;
-	}
-
-	/* Column widths */
-	.col-name {
-		width: 35%;
-		min-width: 200px;
-	}
-
-	.col-type {
-		width: 20%;
-		min-width: 120px;
-	}
-
-	.col-role {
-		width: 25%;
-		min-width: 140px;
-	}
-
-	.col-period {
-		width: 20%;
-		min-width: 100px;
-	}
-
-	/* Data rows */
-	td {
-		padding: 0.5rem 0.75rem;
-		color: var(--color-foreground);
-		vertical-align: middle;
-	}
-
-	td:first-child {
-		padding-left: 0;
-	}
-
-	td:last-child {
-		padding-right: 0;
-	}
-
-	.data-row {
-		cursor: pointer;
-		transition: background-color 0.1s ease;
-		position: relative;
-	}
-
-	.data-row::after {
-		content: "";
-		position: absolute;
-		left: -2rem;
-		right: -2rem;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.data-row:hover {
-		background: var(--color-background-hover);
-	}
-
-	.name-text {
-		font-weight: 500;
-		color: var(--color-foreground);
+		line-height: 1.3;
 	}
 
 	/* Badges */
@@ -297,6 +148,7 @@
 		font-weight: 500;
 		border-radius: 9999px;
 		white-space: nowrap;
+		text-transform: capitalize;
 	}
 
 	.badge-gray {
@@ -322,54 +174,5 @@
 	.badge-orange {
 		background: color-mix(in srgb, #f97316 15%, transparent);
 		color: #ea580c;
-	}
-
-	/* Text styles */
-	.role-text {
-		color: var(--color-foreground);
-	}
-
-	.period-text {
-		color: var(--color-foreground-muted);
-	}
-
-	.empty-cell {
-		color: var(--color-foreground-subtle);
-	}
-
-	/* Empty state */
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 0.75rem;
-		padding: 3rem 2rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.empty-state iconify-icon {
-		opacity: 0.5;
-	}
-
-	.empty-state p {
-		margin: 0;
-		font-size: 0.875rem;
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.col-role,
-		.col-period {
-			display: none;
-		}
-
-		.col-name {
-			width: 60%;
-		}
-
-		.col-type {
-			width: 40%;
-		}
 	}
 </style>

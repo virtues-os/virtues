@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Citation } from "$lib/types/Citation";
 	import CitationTooltip from "./CitationTooltip.svelte";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let { citationId, citation, onPanelOpen } = $props<{
 		citationId: string;
@@ -64,8 +64,8 @@
 				? `tooltip-${citation.id}`
 				: undefined}
 		>
-			<iconify-icon icon={citation.icon} width="12" height="12"
-			></iconify-icon>
+			<Icon icon={citation.icon} width="12" height="12"
+			/>
 		</button>
 
 		{#if showTooltip}
@@ -104,7 +104,7 @@
 		font-family: inherit;
 	}
 
-	.citation-badge iconify-icon {
+	.citation-badge :global(svg) {
 		display: flex;
 		margin: auto;
 	}

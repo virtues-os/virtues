@@ -10,5 +10,5 @@ export * from "./types";
 // API client
 export * from "./api";
 
-// Mock data (will need updating to match new types)
-export * from "./mock-pages";
+// Converters
+export * from "./converters";

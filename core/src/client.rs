@@ -35,7 +35,7 @@ impl Virtues {
 
         // Count active sources
         let active_sources = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM data_source_connections WHERE is_active = true"
+            "SELECT COUNT(*) FROM elt_source_connections WHERE is_active = true"
         )
         .fetch_one(self.database.pool())
         .await
@@ -90,10 +90,6 @@ impl Clone for Virtues {
 #[derive(Default)]
 pub struct VirtuesBuilder {
     database_url: Option<String>,
-    s3_bucket: Option<String>,
-    s3_endpoint: Option<String>,
-    s3_access_key: Option<String>,
-    s3_secret_key: Option<String>,
     storage_path: Option<String>,
 }
 
@@ -109,44 +105,23 @@ impl VirtuesBuilder {
         self
     }
 
-    /// Set S3 bucket name
-    pub fn s3_bucket(mut self, bucket: &str) -> Self {
-        self.s3_bucket = Some(bucket.to_string());
-        self
-    }
-
-    /// Set S3 endpoint (for MinIO)
-    pub fn s3_endpoint(mut self, endpoint: &str) -> Self {
-        self.s3_endpoint = Some(endpoint.to_string());
-        self
-    }
-
-    /// Set S3 credentials
-    pub fn s3_credentials(mut self, access_key: &str, secret_key: &str) -> Self {
-        self.s3_access_key = Some(access_key.to_string());
-        self.s3_secret_key = Some(secret_key.to_string());
-        self
-    }
-
-    /// Set S3 access key
-    pub fn s3_access_key(mut self, access_key: &str) -> Self {
-        self.s3_access_key = Some(access_key.to_string());
-        self
-    }
-
-    /// Set S3 secret key
-    pub fn s3_secret_key(mut self, secret_key: &str) -> Self {
-        self.s3_secret_key = Some(secret_key.to_string());
-        self
-    }
-
-    /// Set local storage path
+    /// Set storage path for stream archives (local file storage only)
+    ///
+    /// Note: This is ignored when S3 is configured via environment variables.
+    ///
+    /// Default paths for file storage:
+    /// - Dev: ./core/data/lake
+    /// - Prod: Uses S3 storage instead
     pub fn storage_path(mut self, path: &str) -> Self {
         self.storage_path = Some(path.to_string());
         self
     }
 
     /// Build the Virtues client
+    ///
+    /// Storage backend selection:
+    /// - If S3_ENDPOINT is set, uses S3 storage (production)
+    /// - Otherwise, uses file storage (local development)
     pub async fn build(self) -> Result<Virtues> {
         let database_url = self
             .database_url
@@ -155,17 +130,20 @@ impl VirtuesBuilder {
 
         let database = Database::new(&database_url)?;
 
-        let storage = if let Some(bucket) = self.s3_bucket {
-            Storage::s3(
-                bucket,
-                self.s3_endpoint,
-                self.s3_access_key,
-                self.s3_secret_key,
-            )
-            .await?
+        // Storage backend selection:
+        // 1. If S3 is configured, use S3 storage
+        // 2. Otherwise, use file storage with explicit path or defaults
+        let storage = if crate::storage::S3Config::is_configured() {
+            tracing::info!("Using S3 storage backend");
+            Storage::s3_from_env().await?
         } else {
-            let path = self.storage_path.unwrap_or_else(|| "./data".to_string());
-            Storage::local(path)?
+            // File storage for local development
+            let storage_path = self
+                .storage_path
+                .or_else(|| std::env::var("STORAGE_PATH").ok())
+                .unwrap_or_else(|| "./data/lake".to_string());
+            tracing::info!(path = %storage_path, "Using file storage backend");
+            Storage::file(storage_path)?
         };
 
         Ok(Virtues {
@@ -202,11 +180,9 @@ mod tests {
     fn test_builder() {
         let builder = VirtuesBuilder::new()
             .database("sqlite:./data/test.db")
-            .s3_bucket("test-bucket")
-            .s3_endpoint("localhost:9000");
+            .storage_path("./test/storage");
 
         assert!(builder.database_url.is_some());
-        assert!(builder.s3_bucket.is_some());
-        assert!(builder.s3_endpoint.is_some());
+        assert!(builder.storage_path.is_some());
     }
 }

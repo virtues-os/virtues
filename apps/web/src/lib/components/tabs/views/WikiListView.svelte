@@ -1,29 +1,38 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
+	import { PersonTable, PlaceTable, OrganizationTable } from '$lib/components/wiki';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// Determine which component to render based on wikiCategory
-	const category = $derived(tab.wikiCategory || 'people');
+	// Extract entity type from route (e.g., '/person' → 'person', '/place' → 'place')
+	const entityType = $derived.by(() => {
+		// Routes are /{type} format (e.g., /person, /place, /org)
+		const match = tab.route.match(/^\/([a-z]+)$/);
+		return match?.[1] || 'person';
+	});
+
+	// Map entity types to display labels
+	const labels: Record<string, string> = {
+		person: 'People',
+		place: 'Places',
+		org: 'Organizations',
+	};
 </script>
 
 <div class="wiki-list-view">
 	<header class="page-header">
-		<h1>{tab.label}</h1>
+		<h1>{labels[entityType] || tab.label}</h1>
 	</header>
 
-	{#if category === 'people'}
+	{#if entityType === 'person'}
 		<PersonTable />
-	{:else if category === 'places'}
+	{:else if entityType === 'place'}
 		<PlaceTable />
-	{:else if category === 'organizations' || category === 'orgs'}
+	{:else if entityType === 'org'}
 		<OrganizationTable />
-	{:else if category === 'things'}
-		<ThingTable />
 	{:else}
 		<div class="placeholder">
-			<p>Unknown category: {category}</p>
+			<p>Unknown entity type: {entityType}</p>
 		</div>
 	{/if}
 </div>

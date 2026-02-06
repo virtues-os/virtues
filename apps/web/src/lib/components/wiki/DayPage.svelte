@@ -16,7 +16,7 @@
 	import ContextVector from "./ContextVector.svelte";
 	import DayTimeline from "./DayTimeline.svelte";
 	import WikiRightRail from "./WikiRightRail.svelte";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import { sampleLocationTrack, timeNsToMs } from "$lib/dev/sampleLocationTrack";
 
@@ -109,7 +109,7 @@
 
 	$effect(() => {
 		// Day pages are date-slugged (YYYY-MM-DD)
-		if (browser && page?.slug) loadMovement(page.slug);
+		if (browser && page?.slug) loadMovement(page.id);
 	});
 
 	// Use sample Rome location track for demo date (2025-12-10)
@@ -130,7 +130,7 @@
 					label: c.place_name ?? undefined,
 					timeMs: Date.parse(c.start_time),
 				}))
-			: page.slug === "2025-12-10"
+			: page.id === "2025-12-10"
 				? sampleStopPoints
 				: [],
 	);
@@ -185,7 +185,7 @@
 	}
 
 	$effect(() => {
-		if (browser && page?.slug) loadDataSources(page.slug);
+		if (browser && page?.slug) loadDataSources(page.id);
 	});
 
 	// Group sources by type for display
@@ -202,18 +202,18 @@
 	// Get icon for source type
 	function getSourceIcon(sourceType: string): string {
 		const iconMap: Record<string, string> = {
-			calendar: "mdi:calendar",
-			email: "mdi:email-outline",
-			location: "mdi:map-marker",
-			workout: "mdi:run",
-			sleep: "mdi:sleep",
-			transaction: "mdi:credit-card-outline",
+			calendar: "ri:calendar-line",
+			email: "ri:mail-line",
+			location: "ri:map-pin-line",
+			workout: "ri:run-line",
+			sleep: "ri:zzz-line",
+			transaction: "ri:bank-card-line",
 		};
 		// Handle message:platform types
 		if (sourceType.startsWith("message:")) {
-			return "mdi:message-text-outline";
+			return "ri:message-3-line";
 		}
-		return iconMap[sourceType] ?? "mdi:database";
+		return iconMap[sourceType] ?? "ri:database-2-line";
 	}
 
 	// Get display name for source type
@@ -299,7 +299,7 @@
 							/>
 						</div>
 						<div class="movement-empty-overlay">
-							<iconify-icon icon="mdi:map-marker-off" class="movement-empty-icon"></iconify-icon>
+							<Icon icon="ri:map-pin-line" class="movement-empty-icon"/>
 							<span class="movement-empty-text">No location data for this day</span>
 						</div>
 					</div>
@@ -316,7 +316,7 @@
 						{#each Object.entries(groupedSources()) as [sourceType, sources]}
 							<div class="source-group">
 								<div class="source-group-header">
-									<iconify-icon icon={getSourceIcon(sourceType)} class="source-group-icon"></iconify-icon>
+									<Icon icon={getSourceIcon(sourceType)} class="source-group-icon"/>
 									<span class="source-group-name">{getSourceTypeName(sourceType)}</span>
 									<span class="source-group-count">{sources.length}</span>
 								</div>
@@ -347,7 +347,7 @@
 						{#each allLinkedPages as entity}
 							<li>
 								<a
-									href="/wiki/{entity.pageSlug}"
+									href="/wiki/{entity.pageId}"
 									class="footer-link"
 								>
 									<span class="link-text"

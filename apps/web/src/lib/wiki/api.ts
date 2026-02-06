@@ -11,7 +11,6 @@
 
 export interface WikiPersonApi {
 	id: string;
-	slug: string | null;
 	canonical_name: string;
 	content: string | null;
 	picture: string | null;
@@ -35,7 +34,6 @@ export interface WikiPersonApi {
 
 export interface WikiPlaceApi {
 	id: string;
-	slug: string | null;
 	name: string;
 	content: string | null;
 	cover_image: string | null;
@@ -52,7 +50,6 @@ export interface WikiPlaceApi {
 
 export interface WikiOrganizationApi {
 	id: string;
-	slug: string | null;
 	canonical_name: string;
 	content: string | null;
 	cover_image: string | null;
@@ -64,21 +61,6 @@ export interface WikiOrganizationApi {
 	interaction_count: number | null;
 	first_interaction: string | null;
 	last_interaction: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface WikiThingApi {
-	id: string;
-	slug: string | null;
-	canonical_name: string;
-	content: string | null;
-	cover_image: string | null;
-	thing_type: string | null;
-	description: string | null;
-	first_mentioned: string | null;
-	last_mentioned: string | null;
-	mention_count: number | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -100,7 +82,6 @@ export interface WikiDayApi {
 
 export interface WikiActApi {
 	id: string;
-	slug: string | null;
 	title: string;
 	subtitle: string | null;
 	description: string | null;
@@ -118,7 +99,6 @@ export interface WikiActApi {
 
 export interface WikiChapterApi {
 	id: string;
-	slug: string | null;
 	title: string;
 	subtitle: string | null;
 	description: string | null;
@@ -135,7 +115,6 @@ export interface WikiChapterApi {
 
 export interface WikiTelosApi {
 	id: string;
-	slug: string | null;
 	title: string;
 	description: string | null;
 	content: string | null;
@@ -145,7 +124,7 @@ export interface WikiTelosApi {
 	updated_at: string;
 }
 
-export interface SlugResolution {
+export interface IdResolution {
 	entity_type: string;
 	id: string;
 }
@@ -156,7 +135,6 @@ export interface SlugResolution {
 
 export interface WikiPersonListItem {
 	id: string;
-	slug: string | null;
 	canonical_name: string;
 	picture: string | null;
 	relationship_category: string | null;
@@ -165,7 +143,6 @@ export interface WikiPersonListItem {
 
 export interface WikiPlaceListItem {
 	id: string;
-	slug: string | null;
 	name: string;
 	category: string | null;
 	address: string | null;
@@ -174,17 +151,9 @@ export interface WikiPlaceListItem {
 
 export interface WikiOrganizationListItem {
 	id: string;
-	slug: string | null;
 	canonical_name: string;
 	organization_type: string | null;
 	relationship_type: string | null;
-}
-
-export interface WikiThingListItem {
-	id: string;
-	slug: string | null;
-	canonical_name: string;
-	thing_type: string | null;
 }
 
 // ============================================================================
@@ -194,24 +163,25 @@ export interface WikiThingListItem {
 type FetchFn = typeof fetch;
 
 /**
- * Resolve a slug to find which entity type it belongs to.
+ * Parse an entity ID to extract the type.
+ * IDs follow the format: {type}_{hash} (e.g., person_abc123)
  */
-export async function resolveSlug(
-	slug: string,
-	fetchFn: FetchFn = fetch
-): Promise<SlugResolution | null> {
-	const res = await fetchFn(`/api/wiki/resolve/${encodeURIComponent(slug)}`);
-	if (!res.ok) return null;
-	return res.json();
+export function parseEntityId(id: string): IdResolution | null {
+	const parts = id.split('_');
+	if (parts.length < 2) return null;
+	return {
+		entity_type: parts[0],
+		id: id
+	};
 }
 
 // --- Person ---
 
-export async function getPersonBySlug(
-	slug: string,
+export async function getPersonById(
+	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiPersonApi | null> {
-	const res = await fetchFn(`/api/wiki/person/${encodeURIComponent(slug)}`);
+	const res = await fetchFn(`/api/wiki/person/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
@@ -238,11 +208,11 @@ export async function updatePerson(
 
 // --- Place ---
 
-export async function getPlaceBySlug(
-	slug: string,
+export async function getPlaceById(
+	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiPlaceApi | null> {
-	const res = await fetchFn(`/api/wiki/place/${encodeURIComponent(slug)}`);
+	const res = await fetchFn(`/api/wiki/place/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
@@ -269,11 +239,11 @@ export async function updatePlace(
 
 // --- Organization ---
 
-export async function getOrganizationBySlug(
-	slug: string,
+export async function getOrganizationById(
+	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiOrganizationApi | null> {
-	const res = await fetchFn(`/api/wiki/organization/${encodeURIComponent(slug)}`);
+	const res = await fetchFn(`/api/wiki/organization/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
@@ -300,37 +270,6 @@ export async function updateOrganization(
 	return res.json();
 }
 
-// --- Thing ---
-
-export async function getThingBySlug(
-	slug: string,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(slug)}`);
-	if (!res.ok) return null;
-	return res.json();
-}
-
-export async function listThings(fetchFn: FetchFn = fetch): Promise<WikiThingListItem[]> {
-	const res = await fetchFn("/api/wiki/things");
-	if (!res.ok) return [];
-	return res.json();
-}
-
-export async function updateThing(
-	id: string,
-	data: Partial<WikiThingApi>,
-	fetchFn: FetchFn = fetch
-): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${id}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(data),
-	});
-	if (!res.ok) return null;
-	return res.json();
-}
-
 // --- Telos ---
 
 export async function getActiveTelos(fetchFn: FetchFn = fetch): Promise<WikiTelosApi | null> {
@@ -339,22 +278,22 @@ export async function getActiveTelos(fetchFn: FetchFn = fetch): Promise<WikiTelo
 	return res.json();
 }
 
-export async function getTelosBySlug(
-	slug: string,
+export async function getTelosById(
+	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiTelosApi | null> {
-	const res = await fetchFn(`/api/wiki/telos/${encodeURIComponent(slug)}`);
+	const res = await fetchFn(`/api/wiki/telos/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
 
 // --- Act ---
 
-export async function getActBySlug(
-	slug: string,
+export async function getActById(
+	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiActApi | null> {
-	const res = await fetchFn(`/api/wiki/act/${encodeURIComponent(slug)}`);
+	const res = await fetchFn(`/api/wiki/act/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
@@ -367,11 +306,11 @@ export async function listActs(fetchFn: FetchFn = fetch): Promise<WikiActApi[]> 
 
 // --- Chapter ---
 
-export async function getChapterBySlug(
-	slug: string,
+export async function getChapterById(
+	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiChapterApi | null> {
-	const res = await fetchFn(`/api/wiki/chapter/${encodeURIComponent(slug)}`);
+	const res = await fetchFn(`/api/wiki/chapter/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }

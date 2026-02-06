@@ -14,10 +14,15 @@ struct SettingsView: View {
     @ObservedObject private var locationManager = LocationManager.shared
     @ObservedObject private var audioManager = AudioManager.shared
     @ObservedObject private var contactsManager = ContactsManager.shared
-    
+    @ObservedObject private var financeKitManager = FinanceKitManager.shared
+    @ObservedObject private var eventKitManager = EventKitManager.shared
+
     @State private var showingResetAlert = false
     @State private var showingStorageDetails = false
     @State private var showingEndpointEdit = false
+    @State private var showQRScanner = false
+    @State private var isCompletingPairing = false
+    @State private var pairingError: String?
     @State private var showCopiedToast = false
     
     var body: some View {
@@ -62,47 +67,47 @@ struct SettingsView: View {
                         }
                     }
 
-                    // Device ID (copyable)
-                    VStack(alignment: .leading, spacing: 8) {
+                    // QR Scan to pair (primary action)
+                    Button(action: {
+                        Haptics.light()
+                        pairingError = nil
+                        showQRScanner = true
+                    }) {
                         HStack {
-                            Text("Device ID")
-                            Spacer()
-                            Button(action: {
-                                Haptics.light()
-                                UIPasteboard.general.string = deviceManager.configuration.deviceId
-                                showCopiedToast = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                    showCopiedToast = false
-                                }
-                            }) {
-                                Image(systemName: "doc.on.doc")
-                                    .foregroundColor(.warmPrimary)
+                            if isCompletingPairing {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle())
+                                    .scaleEffect(0.8)
+                                Text("Connecting...")
+                            } else {
+                                Label("Scan QR Code to Pair", systemImage: "qrcode.viewfinder")
                             }
-                            .buttonStyle(PlainButtonStyle())
                         }
-                        
-                        Text(deviceManager.configuration.deviceId)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.warmForegroundMuted)
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 8)
-                            .background(Color.warmSurface)
-                            .cornerRadius(6)
+                        .foregroundColor(.warmPrimary)
                     }
-                    .padding(.vertical, 4)
+                    .disabled(isCompletingPairing)
 
-                    // Edit/Connect button
+                    if let error = pairingError {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.warmError)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.warmError)
+                        }
+                    }
+
+                    // Manual endpoint edit (secondary)
                     Button(action: {
                         Haptics.light()
                         showingEndpointEdit = true
                     }) {
                         Label(
-                            deviceManager.isConfigured ? "Edit Server" : "Connect to Server",
+                            deviceManager.isConfigured ? "Edit Server Manually" : "Manual Setup",
                             systemImage: "link"
                         )
-                        .foregroundColor(.warmPrimary)
+                        .foregroundColor(.warmForegroundMuted)
+                        .font(.subheadline)
                     }
                 }
                 
@@ -128,6 +133,16 @@ struct SettingsView: View {
                     PermissionStatusRow(
                         title: "Contacts",
                         status: contactsManager.isAuthorized ? .granted : .denied
+                    )
+
+                    PermissionStatusRow(
+                        title: "FinanceKit",
+                        status: financeKitManager.isAuthorized ? .granted : .denied
+                    )
+
+                    PermissionStatusRow(
+                        title: "EventKit",
+                        status: eventKitManager.hasAnyPermission ? .granted : .denied
                     )
 
                     Button(action: {
@@ -220,6 +235,12 @@ struct SettingsView: View {
             .sheet(isPresented: $showingEndpointEdit) {
                 EndpointEditView()
             }
+            .fullScreenCover(isPresented: $showQRScanner) {
+                QRScannerView(
+                    onScanned: handleQRScanResult,
+                    onCancel: { showQRScanner = false }
+                )
+            }
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
                     Text("Device ID copied to clipboard")
@@ -238,6 +259,40 @@ struct SettingsView: View {
         .navigationViewStyle(StackNavigationViewStyle())
     }
     
+    private func handleQRScanResult(endpoint: String, sourceId: String) {
+        showQRScanner = false
+        isCompletingPairing = true
+        pairingError = nil
+
+        Task {
+            do {
+                let _ = try await NetworkManager.shared.completePairing(
+                    endpoint: endpoint,
+                    sourceId: sourceId,
+                    deviceId: DeviceManager.shared.deviceId
+                )
+
+                await MainActor.run {
+                    deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    deviceManager.isConfigured = true
+                    deviceManager.configurationState = .configured
+                    isCompletingPairing = false
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isCompletingPairing = false
+                    if let networkError = error as? NetworkError {
+                        pairingError = networkError.errorDescription
+                    } else {
+                        pairingError = error.localizedDescription
+                    }
+                    Haptics.error()
+                }
+            }
+        }
+    }
+
     private func openAppSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(url)

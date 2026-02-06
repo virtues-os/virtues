@@ -1,4 +1,4 @@
-name: Build and Push Docker Images
+name: Build and Deploy
 
 on:
   push:
@@ -6,16 +6,23 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag (default: latest + git sha)'
+        description: "Image tag (default: latest + git sha)"
         required: false
-        default: ''
+        default: ""
+      skip_deploy:
+        description: "Skip deployment (build only)"
+        required: false
+        default: "false"
 
 env:
   REGISTRY: ghcr.io
   CORE_IMAGE: ghcr.io/virtues-os/virtues-core
-  WEB_IMAGE: ghcr.io/virtues-os/virtues-web
+  TOLLBOOTH_IMAGE: ghcr.io/virtues-os/tollbooth
 
 jobs:
+  # ==========================================================================
+  # Build unified image (Rust backend + SvelteKit static frontend)
+  # ==========================================================================
   build-core:
     runs-on: ubuntu-latest
     permissions:
@@ -47,7 +54,8 @@ jobs:
       - name: Build and push core
         uses: docker/build-push-action@v5
         with:
-          context: ./core
+          context: .
+          file: ./core/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -56,7 +64,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  build-web:
+  # ==========================================================================
+  # Build Tollbooth AI proxy image
+  # ==========================================================================
+  build-tollbooth:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -78,18 +89,68 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.WEB_IMAGE }}
+          images: ${{ env.TOLLBOOTH_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
 
-      - name: Build and push web
+      - name: Build and push tollbooth
         uses: docker/build-push-action@v5
         with:
-          context: ./apps/web
+          context: ./apps/tollbooth
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ==========================================================================
+  # Register version with Atlas (pull-based updates)
+  # ==========================================================================
+  register-version:
+    needs: [build-core, build-tollbooth]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Notify Atlas of new version
+        continue-on-error: true
+        run: |
+          curl -sf -X POST "${{ secrets.ATLAS_URL }}/api/internal/set-version" \
+            -H "X-Atlas-Secret: ${{ secrets.ATLAS_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "version": "${{ github.sha }}",
+              "core_image": "ghcr.io/virtues-os/virtues-core:${{ github.sha }}",
+              "tollbooth_image": "ghcr.io/virtues-os/tollbooth:${{ github.sha }}"
+            }'
+
+  # ==========================================================================
+  # Deploy to all Nomad clusters
+  # ==========================================================================
+  deploy:
+    needs: [build-core, build-tollbooth]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event.inputs.skip_deploy != 'true'
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Scan real hosts only (skip placeholders)
+          for host in $(jq -r '.clusters[].host' deploy/clusters.json); do
+            if [[ "$host" != "YOUR_SERVER_IP" && -n "$host" ]]; then
+              ssh-keyscan -H "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
+            fi
+          done
+
+      - name: Deploy to clusters
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: bash deploy/deploy.sh

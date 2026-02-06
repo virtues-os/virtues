@@ -58,9 +58,6 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 # Environment
 dotenvy = "0.15"
 
-# Google Cloud authentication (for Vertex AI)
-gcp_auth = "0.12"
-
 # Atomics for lock-free budget updates
 portable-atomic = { version = "1.6", features = ["float"] }
 

@@ -17,14 +17,7 @@ pub struct HealthResponse {
 pub struct ReadinessResponse {
     pub status: &'static str,
     pub budgets_loaded: usize,
-    pub providers: ProvidersStatus,
-}
-
-#[derive(Serialize)]
-pub struct ProvidersStatus {
-    pub openai: bool,
-    pub anthropic: bool,
-    pub cerebras: bool,
+    pub ai_gateway_configured: bool,
 }
 
 /// Liveness probe - is the service running?
@@ -39,22 +32,15 @@ pub async fn health_check() -> Json<HealthResponse> {
 /// Readiness probe - is the service ready to handle requests?
 pub async fn readiness_check(State(state): State<Arc<AppState>>) -> (StatusCode, Json<ReadinessResponse>) {
     let budgets_loaded = state.budget.budgets_count();
-
-    let providers = ProvidersStatus {
-        openai: state.config.openai_api_key.is_some(),
-        anthropic: state.config.anthropic_api_key.is_some(),
-        cerebras: state.config.cerebras_api_key.is_some(),
-    };
-
-    let has_any_provider = providers.openai || providers.anthropic || providers.cerebras;
+    let ai_gateway_configured = state.config.has_llm_provider();
 
     let response = ReadinessResponse {
-        status: if has_any_provider { "ready" } else { "degraded" },
+        status: if ai_gateway_configured { "ready" } else { "degraded" },
         budgets_loaded,
-        providers,
+        ai_gateway_configured,
     };
 
-    let status = if has_any_provider {
+    let status = if ai_gateway_configured {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE

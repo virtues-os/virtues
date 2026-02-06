@@ -35,11 +35,38 @@ pub struct ModelConfig {
     pub output_cost_per_1k: Option<f64>,
 }
 
+/// Model slot types for user preferences
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSlot {
+    /// Default chat model - used for general conversations
+    Chat,
+    /// Fast/lite model - used for titles, summaries, background jobs
+    Lite,
+    /// Reasoning model - used for complex analysis and thinking
+    Reasoning,
+    /// Coding model - used for code generation and technical tasks
+    Coding,
+}
+
+impl ModelSlot {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelSlot::Chat => "chat",
+            ModelSlot::Lite => "lite",
+            ModelSlot::Reasoning => "reasoning",
+            ModelSlot::Coding => "coding",
+        }
+    }
+}
+
 /// Get default model configurations
+/// These are the 4 slot defaults available via Vercel AI Gateway
 pub fn default_models() -> Vec<ModelConfig> {
     vec![
+        // CHAT: Default conversational model
         ModelConfig {
-            model_id: "google/gemini-3-flash-preview".to_string(),
+            model_id: "google/gemini-3-flash".to_string(),
             display_name: "Gemini 3 Flash".to_string(),
             provider: "Google".to_string(),
             sort_order: 1,
@@ -48,127 +75,62 @@ pub fn default_models() -> Vec<ModelConfig> {
             max_output_tokens: 8192,
             supports_tools: true,
             is_default: true,
-            input_cost_per_1k: Some(0.00015),
-            output_cost_per_1k: Some(0.0006),
+            input_cost_per_1k: Some(0.0001),
+            output_cost_per_1k: Some(0.0004),
         },
+        // LITE: Fast model for background tasks
         ModelConfig {
-            model_id: "anthropic/claude-sonnet-4-20250514".to_string(),
-            display_name: "Claude Sonnet 4".to_string(),
-            provider: "Anthropic".to_string(),
+            model_id: "zai/glm-4.7-flashx".to_string(),
+            display_name: "GLM 4.7 FlashX".to_string(),
+            provider: "Zhipu".to_string(),
             sort_order: 2,
             enabled: true,
-            context_window: 200000,
+            context_window: 128000,
             max_output_tokens: 8192,
             supports_tools: true,
             is_default: false,
-            input_cost_per_1k: Some(0.003),
-            output_cost_per_1k: Some(0.015),
+            input_cost_per_1k: Some(0.0001),
+            output_cost_per_1k: Some(0.0004),
         },
+        // REASONING: Complex analysis and thinking
         ModelConfig {
-            model_id: "anthropic/claude-opus-4-20250514".to_string(),
-            display_name: "Claude Opus 4".to_string(),
-            provider: "Anthropic".to_string(),
+            model_id: "google/gemini-3-pro-preview".to_string(),
+            display_name: "Gemini 3 Pro".to_string(),
+            provider: "Google".to_string(),
             sort_order: 3,
             enabled: true,
-            context_window: 200000,
-            max_output_tokens: 8192,
-            supports_tools: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.015),
-            output_cost_per_1k: Some(0.075),
-        },
-        ModelConfig {
-            model_id: "anthropic/claude-haiku-4-5-20251001".to_string(),
-            display_name: "Claude Haiku 4.5".to_string(),
-            provider: "Anthropic".to_string(),
-            sort_order: 4,
-            enabled: true,
-            context_window: 200000,
-            max_output_tokens: 8192,
-            supports_tools: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.0008),
-            output_cost_per_1k: Some(0.004),
-        },
-        ModelConfig {
-            model_id: "google/gemini-2.5-pro-preview-05-06".to_string(),
-            display_name: "Gemini 2.5 Pro".to_string(),
-            provider: "Google".to_string(),
-            sort_order: 5,
-            enabled: true,
             context_window: 1000000,
-            max_output_tokens: 8192,
+            max_output_tokens: 65536,
             supports_tools: true,
             is_default: false,
             input_cost_per_1k: Some(0.00125),
             output_cost_per_1k: Some(0.005),
         },
+        // CODING: Code generation and technical tasks
         ModelConfig {
-            model_id: "google/gemini-2.5-flash-preview-05-06".to_string(),
-            display_name: "Gemini 2.5 Flash".to_string(),
-            provider: "Google".to_string(),
-            sort_order: 6,
+            model_id: "anthropic/claude-opus-4.5".to_string(),
+            display_name: "Claude Opus 4.5".to_string(),
+            provider: "Anthropic".to_string(),
+            sort_order: 4,
             enabled: true,
-            context_window: 1000000,
-            max_output_tokens: 8192,
+            context_window: 200000,
+            max_output_tokens: 32000,
             supports_tools: true,
             is_default: false,
-            input_cost_per_1k: Some(0.000075),
-            output_cost_per_1k: Some(0.0003),
-        },
-        ModelConfig {
-            model_id: "openai/gpt-4o".to_string(),
-            display_name: "GPT-4o".to_string(),
-            provider: "OpenAI".to_string(),
-            sort_order: 7,
-            enabled: true,
-            context_window: 128000,
-            max_output_tokens: 16384,
-            supports_tools: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.0025),
-            output_cost_per_1k: Some(0.01),
-        },
-        ModelConfig {
-            model_id: "openai/gpt-4o-mini".to_string(),
-            display_name: "GPT-4o Mini".to_string(),
-            provider: "OpenAI".to_string(),
-            sort_order: 8,
-            enabled: true,
-            context_window: 128000,
-            max_output_tokens: 16384,
-            supports_tools: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.00015),
-            output_cost_per_1k: Some(0.0006),
-        },
-        ModelConfig {
-            model_id: "xai/grok-3".to_string(),
-            display_name: "Grok 3".to_string(),
-            provider: "xAI".to_string(),
-            sort_order: 9,
-            enabled: true,
-            context_window: 128000,
-            max_output_tokens: 16384,
-            supports_tools: true,
-            is_default: false,
-            input_cost_per_1k: Some(0.003),
-            output_cost_per_1k: Some(0.015),
-        },
-        ModelConfig {
-            model_id: "cerebras/llama-3.3-70b".to_string(),
-            display_name: "Llama 3.3 70B (Cerebras)".to_string(),
-            provider: "Cerebras".to_string(),
-            sort_order: 10,
-            enabled: true,
-            context_window: 8192,
-            max_output_tokens: 8192,
-            supports_tools: false,
-            is_default: false,
-            input_cost_per_1k: Some(0.00085),
-            output_cost_per_1k: Some(0.00085),
+            input_cost_per_1k: Some(0.015),
+            output_cost_per_1k: Some(0.075),
         },
     ]
+}
+
+/// Get the default model ID for a given slot
+pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
+    match slot {
+        ModelSlot::Chat => "google/gemini-3-flash",
+        ModelSlot::Lite => "zai/glm-4.7-flashx",
+        ModelSlot::Reasoning => "google/gemini-3-pro-preview",
+        ModelSlot::Coding => "anthropic/claude-opus-4.5",
+    }
 }
 
 /// Get pricing for a model by ID

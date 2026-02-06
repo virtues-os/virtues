@@ -2,15 +2,16 @@
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-/// Metadata for a stream data object stored in S3/MinIO
+use crate::types::Timestamp;
+
+/// Metadata for a stream data object stored in storage (S3/MinIO/local)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StreamObject {
-    pub id: Uuid,
-    pub source_id: Uuid,
+    pub id: String,
+    pub source_id: String,
     pub stream_name: String,
-    pub s3_key: String,
+    pub storage_key: String,
     pub record_count: i32,
     pub size_bytes: i64,
     pub min_timestamp: Option<chrono::DateTime<chrono::Utc>>,
@@ -21,13 +22,13 @@ pub struct StreamObject {
 /// Transform checkpoint tracking which objects have been processed
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StreamTransformCheckpoint {
-    pub id: Uuid,
-    pub source_id: Uuid,
+    pub id: String,
+    pub source_id: String,
     pub stream_name: String,
     pub transform_name: String,
-    pub last_processed_s3_key: Option<String>,
+    pub last_processed_storage_key: Option<String>,
     pub last_processed_timestamp: Option<chrono::DateTime<chrono::Utc>>,
-    pub last_processed_object_id: Option<Uuid>,
+    pub last_processed_object_id: Option<String>,
     pub records_processed: i64,
     pub objects_processed: i64,
     pub last_run_at: chrono::DateTime<chrono::Utc>,
@@ -51,8 +52,10 @@ pub struct UserProfile {
     pub employer: Option<String>,
     // Home place (FK to entities_place)
     pub home_place_id: Option<String>,
-    // Onboarding - single status field
+    // Onboarding - single status field (deprecated, kept for compatibility)
     pub onboarding_status: String,
+    // Server status - controls provisioning state (set by Tollbooth hydration)
+    pub server_status: String,
     // Preferences
     pub theme: Option<String>,
     pub update_check_hour: Option<i32>,
@@ -65,8 +68,8 @@ pub struct UserProfile {
     // Owner (Seed and Drift pattern)
     pub owner_email: Option<String>,
     // Audit
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// Assistant profile - AI assistant preferences (singleton table)
@@ -75,14 +78,24 @@ pub struct AssistantProfile {
     pub id: String,
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
+    // Legacy model fields (kept for backward compatibility)
     pub default_model_id: Option<String>,
     pub background_model_id: Option<String>,
+    // New model slot system (4 purpose-based slots)
+    pub chat_model_id: Option<String>,
+    pub lite_model_id: Option<String>,
+    pub reasoning_model_id: Option<String>,
+    pub coding_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
     pub embedding_model_id: Option<String>,
     pub ollama_endpoint: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    /// AI persona/tone: selected persona ID
+    pub persona: Option<String>,
+    /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }
+    pub personas: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
 }
 
 /// Validate subdomain format for security
@@ -123,7 +136,7 @@ pub fn validate_subdomain(subdomain: &str) -> Result<(), &'static str> {
 pub struct StreamKeyBuilder {
     tenant_prefix: Option<String>,
     provider: String,
-    source_id: Uuid,
+    source_id: String,
     stream_name: String,
     date: NaiveDate,
 }
@@ -147,7 +160,7 @@ impl StreamKeyBuilder {
     ///
     /// * `subdomain` - Optional subdomain (e.g., `Some("adamjace")`). Will be validated and prefixed.
     /// * `provider` - Source provider (e.g., "ios", "google")
-    /// * `source_id` - Source connection UUID
+    /// * `source_id` - Source connection ID (semantic string ID like "source_google-calendar")
     /// * `stream_name` - Stream name (e.g., "healthkit", "calendar")
     /// * `date` - Date for the data partition
     ///
@@ -163,7 +176,7 @@ impl StreamKeyBuilder {
     pub fn new(
         subdomain: Option<&str>,
         provider: impl Into<String>,
-        source_id: Uuid,
+        source_id: impl Into<String>,
         stream_name: impl Into<String>,
         date: NaiveDate,
     ) -> Result<Self, SubdomainValidationError> {
@@ -177,7 +190,7 @@ impl StreamKeyBuilder {
         Ok(Self {
             tenant_prefix,
             provider: provider.into(),
-            source_id,
+            source_id: source_id.into(),
             stream_name: stream_name.into(),
             date,
         })
@@ -297,15 +310,15 @@ impl StreamKeyParser {
 
     /// Extract source_id from key
     ///
-    /// Example: `streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/records_1736899200.jsonl`
-    /// Returns: `550e8400-e29b-41d4-a716-446655440000`
-    pub fn source_id(&self) -> Option<Uuid> {
+    /// Example: `streams/ios/source_google-calendar/healthkit/date=2025-01-15/records_1736899200.jsonl`
+    /// Returns: `source_google-calendar`
+    pub fn source_id(&self) -> Option<String> {
         let parts: Vec<&str> = self.key.split('/').collect();
         let offset = self.base_offset();
         if parts.len() <= offset + 2 || parts.get(offset) != Some(&"streams") {
             return None;
         }
-        Uuid::parse_str(parts[offset + 2]).ok()
+        Some(parts[offset + 2].to_string())
     }
 
     /// Extract stream name from key
@@ -361,7 +374,7 @@ impl StreamKeyParser {
     }
 
     /// Extract all metadata from key
-    pub fn parse_all(&self) -> Option<(String, Uuid, String, NaiveDate, i64)> {
+    pub fn parse_all(&self) -> Option<(String, String, String, NaiveDate, i64)> {
         Some((
             self.provider()?,
             self.source_id()?,
@@ -392,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_stream_key_builder_without_tenant() {
-        let source_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let source_id = "source_ios-healthkit";
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
 
         let builder = StreamKeyBuilder::new(None, "ios", source_id, "healthkit", date).unwrap();
@@ -400,25 +413,22 @@ mod tests {
         let key = builder.build_with_timestamp(1736899200);
         assert_eq!(
             key,
-            "streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/records_1736899200.jsonl"
+            "streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/records_1736899200.jsonl"
         );
 
         let prefix = builder.build_stream_prefix();
-        assert_eq!(
-            prefix,
-            "streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/"
-        );
+        assert_eq!(prefix, "streams/ios/source_ios-healthkit/healthkit/");
 
         let date_prefix = builder.build_date_prefix();
         assert_eq!(
             date_prefix,
-            "streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/"
+            "streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/"
         );
     }
 
     #[test]
     fn test_stream_key_builder_with_tenant() {
-        let source_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let source_id = "source_ios-healthkit";
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
 
         // Note: Now we pass raw subdomain, not "tenants/adamjace"
@@ -428,26 +438,26 @@ mod tests {
         let key = builder.build_with_timestamp(1736899200);
         assert_eq!(
             key,
-            "tenants/adamjace/streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/records_1736899200.jsonl"
+            "tenants/adamjace/streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/records_1736899200.jsonl"
         );
 
         let prefix = builder.build_stream_prefix();
         assert_eq!(
             prefix,
-            "tenants/adamjace/streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/"
+            "tenants/adamjace/streams/ios/source_ios-healthkit/healthkit/"
         );
 
         let date_prefix = builder.build_date_prefix();
         assert_eq!(
             date_prefix,
-            "tenants/adamjace/streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/"
+            "tenants/adamjace/streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/"
         );
     }
 
     // Security tests for path traversal and invalid subdomains
     #[test]
     fn test_subdomain_validation_rejects_path_traversal() {
-        let source_id = Uuid::new_v4();
+        let source_id = "source_test";
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
 
         // Path traversal attempts
@@ -471,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_subdomain_validation_rejects_special_chars() {
-        let source_id = Uuid::new_v4();
+        let source_id = "source_test";
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
 
         let too_long = "a".repeat(64);
@@ -497,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_subdomain_validation_accepts_valid() {
-        let source_id = Uuid::new_v4();
+        let source_id = "source_test";
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
 
         let max_length = "a".repeat(63);
@@ -522,15 +532,13 @@ mod tests {
 
     #[test]
     fn test_stream_key_parser_without_tenant() {
-        let key = "streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/records_1736899200.jsonl";
+        let key =
+            "streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/records_1736899200.jsonl";
         let parser = StreamKeyParser::new(key);
 
         assert!(parser.tenant().is_none());
         assert_eq!(parser.provider().unwrap(), "ios");
-        assert_eq!(
-            parser.source_id().unwrap(),
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-        );
+        assert_eq!(parser.source_id().unwrap(), "source_ios-healthkit");
         assert_eq!(parser.stream_name().unwrap(), "healthkit");
         assert_eq!(
             parser.date().unwrap(),
@@ -540,10 +548,7 @@ mod tests {
 
         let (provider, source_id, stream_name, date, timestamp) = parser.parse_all().unwrap();
         assert_eq!(provider, "ios");
-        assert_eq!(
-            source_id,
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-        );
+        assert_eq!(source_id, "source_ios-healthkit");
         assert_eq!(stream_name, "healthkit");
         assert_eq!(date, NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
         assert_eq!(timestamp, 1736899200);
@@ -551,15 +556,12 @@ mod tests {
 
     #[test]
     fn test_stream_key_parser_with_tenant() {
-        let key = "tenants/adamjace/streams/ios/550e8400-e29b-41d4-a716-446655440000/healthkit/date=2025-01-15/records_1736899200.jsonl";
+        let key = "tenants/adamjace/streams/ios/source_ios-healthkit/healthkit/date=2025-01-15/records_1736899200.jsonl";
         let parser = StreamKeyParser::new(key);
 
         assert_eq!(parser.tenant().unwrap(), "adamjace");
         assert_eq!(parser.provider().unwrap(), "ios");
-        assert_eq!(
-            parser.source_id().unwrap(),
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-        );
+        assert_eq!(parser.source_id().unwrap(), "source_ios-healthkit");
         assert_eq!(parser.stream_name().unwrap(), "healthkit");
         assert_eq!(
             parser.date().unwrap(),
@@ -569,10 +571,7 @@ mod tests {
 
         let (provider, source_id, stream_name, date, timestamp) = parser.parse_all().unwrap();
         assert_eq!(provider, "ios");
-        assert_eq!(
-            source_id,
-            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap()
-        );
+        assert_eq!(source_id, "source_ios-healthkit");
         assert_eq!(stream_name, "healthkit");
         assert_eq!(date, NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
         assert_eq!(timestamp, 1736899200);

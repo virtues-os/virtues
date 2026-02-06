@@ -1,87 +1,50 @@
 <script lang="ts">
-	import "iconify-icon";
-	import { workspaceStore } from "$lib/stores/workspace.svelte";
-	import type { WorkspaceSummary } from "$lib/api/client";
+	/**
+	 * WorkspaceSwitcher - Visual dot indicator for workspaces
+	 *
+	 * Shows dots for each workspace with the active one highlighted.
+	 * Click a dot to switch workspaces. For full workspace management,
+	 * use the WorkspaceDropdown via the header.
+	 */
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import type { SpaceSummary } from "$lib/api/client";
 
-	// Track swipe
-	let touchStartX = 0;
-	let swiping = false;
-
-	function handlePrev() {
-		workspaceStore.navigateWorkspace("prev");
-	}
-
-	function handleNext() {
-		workspaceStore.navigateWorkspace("next");
-	}
-
-	function handleDotClick(workspace: WorkspaceSummary) {
-		workspaceStore.switchWorkspace(workspace.id);
-	}
-
-	function handleTouchStart(e: TouchEvent) {
-		touchStartX = e.touches[0].clientX;
-		swiping = true;
-	}
-
-	function handleTouchEnd(e: TouchEvent) {
-		if (!swiping) return;
-		swiping = false;
-
-		const touchEndX = e.changedTouches[0].clientX;
-		const diff = touchEndX - touchStartX;
-		const threshold = 50;
-
-		if (diff > threshold) {
-			handlePrev();
-		} else if (diff < -threshold) {
-			handleNext();
-		}
+	function handleDotClick(workspace: SpaceSummary) {
+		spaceStore.switchSpace(workspace.id, true);
 	}
 
 	// Current workspace index for dot highlighting
 	const currentIndex = $derived(
-		workspaceStore.workspaces.findIndex(
-			(w) => w.id === workspaceStore.activeWorkspaceId
+		spaceStore.spaces.findIndex(
+			(w) => w.id === spaceStore.activeSpaceId
 		)
 	);
 
 	// Show max 5 dots, centered around current
 	const visibleDots = $derived.by(() => {
-		const total = workspaceStore.workspaces.length;
-		if (total <= 5) return workspaceStore.workspaces;
+		const total = spaceStore.spaces.length;
+		if (total <= 5) return spaceStore.spaces;
 
 		const start = Math.max(0, Math.min(currentIndex - 2, total - 5));
-		return workspaceStore.workspaces.slice(start, start + 5);
+		return spaceStore.spaces.slice(start, start + 5);
 	});
 </script>
 
 <div
 	class="workspace-switcher"
-	ontouchstart={handleTouchStart}
-	ontouchend={handleTouchEnd}
 	role="navigation"
 	aria-label="Workspace navigation"
 >
-	<button
-		class="nav-btn"
-		onclick={handlePrev}
-		aria-label="Previous workspace"
-		disabled={workspaceStore.workspaces.length <= 1}
-	>
-		<iconify-icon icon="ri:arrow-left-s-line" width="16"></iconify-icon>
-	</button>
-
 	<div class="dots">
 		{#each visibleDots as workspace}
 			<button
 				class="dot"
-				class:active={workspace.id === workspaceStore.activeWorkspaceId}
+				class:active={workspace.id === spaceStore.activeSpaceId}
 				class:system={workspace.is_system}
 				onclick={() => handleDotClick(workspace)}
 				title={workspace.name}
 				aria-label={workspace.name}
-				aria-current={workspace.id === workspaceStore.activeWorkspaceId
+				aria-current={workspace.id === spaceStore.activeSpaceId
 					? "true"
 					: undefined}
 			>
@@ -98,15 +61,6 @@
 			</button>
 		{/each}
 	</div>
-
-	<button
-		class="nav-btn"
-		onclick={handleNext}
-		aria-label="Next workspace"
-		disabled={workspaceStore.workspaces.length <= 1}
-	>
-		<iconify-icon icon="ri:arrow-right-s-line" width="16"></iconify-icon>
-	</button>
 </div>
 
 <style>
@@ -119,38 +73,10 @@
 	.workspace-switcher {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		justify-content: center;
 		width: 100%;
 		padding: 8px 0;
 		user-select: none;
-	}
-
-	.nav-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		border-radius: 4px;
-		background: transparent;
-		color: var(--color-foreground-subtle);
-		border: none;
-		cursor: pointer;
-		transition: all 150ms var(--ease-premium);
-	}
-
-	.nav-btn:hover:not(:disabled) {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		color: var(--color-foreground);
-	}
-
-	.nav-btn:active:not(:disabled) {
-		transform: scale(0.9);
-	}
-
-	.nav-btn:disabled {
-		opacity: 0.3;
-		cursor: not-allowed;
 	}
 
 	.dots {
@@ -158,7 +84,6 @@
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
-		flex: 1;
 	}
 
 	.dot {

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+
 
 use crate::Result;
 
@@ -19,7 +19,7 @@ use crate::Result;
 ///
 /// ```ignore
 /// impl PushStream for MacAppsStream {
-///     async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult> {
+///     async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
 ///         // 1. Validate payload structure
 ///         // 2. Transform records if needed
 ///         // 3. Write records to StreamWriter using source_id
@@ -40,7 +40,7 @@ pub trait PushStream: Send + Sync {
     /// # Arguments
     /// * `source_id` - The source connection ID (created by handler, single source of truth)
     /// * `payload` - The data pushed from the device
-    async fn receive_push(&self, source_id: Uuid, payload: IngestPayload) -> Result<PushResult>;
+    async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult>;
 
     /// Table name in data schema (e.g., "stream_mac_apps")
     fn table_name(&self) -> &str;

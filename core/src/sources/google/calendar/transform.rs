@@ -1,7 +1,7 @@
-//! Google Calendar to praxis_calendar ontology transformation
+//! Google Calendar to calendar ontology transformation
 //!
 //! Transforms raw calendar events from stream_google_calendar into the normalized
-//! praxis_calendar ontology table.
+//! calendar ontology table.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -9,13 +9,16 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::jobs::{chain_to_people_resolution, TransformContext};
+use crate::jobs::TransformContext;
 use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
 
 /// Transform Google Calendar events to praxis_calendar ontology
+///
+/// This transform is registered with the stream in the unified registry,
+/// so the standalone inventory registration is kept for backward compatibility.
 pub struct GoogleCalendarTransform;
 
 #[async_trait]
@@ -25,11 +28,11 @@ impl OntologyTransform for GoogleCalendarTransform {
     }
 
     fn target_table(&self) -> &str {
-        "praxis_calendar"
+        "calendar"
     }
 
     fn domain(&self) -> &str {
-        "praxis"
+        "calendar"
     }
 
     #[tracing::instrument(skip(self, db, context), fields(source_table = %self.source_table(), target_table = %self.target_table()))]
@@ -37,12 +40,12 @@ impl OntologyTransform for GoogleCalendarTransform {
         &self,
         db: &Database,
         context: &crate::jobs::transform_context::TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -58,7 +61,7 @@ impl OntologyTransform for GoogleCalendarTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "calendar", checkpoint_key)
+            .read_with_checkpoint(&source_id, "calendar", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -210,6 +213,7 @@ impl OntologyTransform for GoogleCalendarTransform {
                     "google_calendar_id": calendar_id,
                     "is_recurring": raw_json.get("recurringEventId").is_some(),
                     "google_raw": raw_json,
+                    "source_connection_id": source_id,
                 });
 
                 // Add to pending batch
@@ -232,7 +236,7 @@ impl OntologyTransform for GoogleCalendarTransform {
                     metadata,
                 ));
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -268,7 +272,7 @@ impl OntologyTransform for GoogleCalendarTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "calendar", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "calendar", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -324,8 +328,7 @@ impl OntologyTransform for GoogleCalendarTransform {
             records_written,
             records_failed,
             last_processed_id,
-            // Chain to entity resolution to resolve attendees to entities_person
-            chained_transforms: vec![chain_to_people_resolution(source_id)],
+            chained_transforms: vec![], // Entity resolution not yet implemented
         })
     }
 }
@@ -359,8 +362,9 @@ async fn execute_calendar_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data_praxis_calendar",
+        "data_calendar",
         &[
+            "id",
             "title",
             "description",
             "calendar_name",
@@ -376,11 +380,13 @@ async fn execute_calendar_batch_insert(
             "status",
             "response_status",
             "source_stream_id",
+            "source_connection_id",
             "metadata",
             "source_table",
             "source_provider",
+            "is_archived",
         ],
-        "source_stream_id",
+        "id",
         records.len(),
     );
 
@@ -410,7 +416,20 @@ async fn execute_calendar_batch_insert(
         let attendee_identifiers_json =
             serde_json::to_string(&attendee_identifiers).unwrap_or_else(|_| "[]".to_string());
 
+        // Extract internal_id from metadata for idempotent ID generation
+        let internal_id = metadata
+            .get("google_event_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        
+        // Find source_connection_id from metadata or context
+        let source_connection_id = metadata.get("source_connection_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        
+        // Generate deterministic ID for idempotency
+        let id = crate::ids::generate_id("calendar", &[source_connection_id, internal_id]);
+
         query = query
+            .bind(id)
             .bind(title)
             .bind(description)
             .bind(calendar_name)
@@ -426,9 +445,11 @@ async fn execute_calendar_batch_insert(
             .bind(status)
             .bind(response_status)
             .bind(stream_id)
+            .bind(source_connection_id)
             .bind(metadata)
             .bind("stream_google_calendar")
-            .bind("google");
+            .bind("google")
+            .bind(0); // is_archived
     }
 
     let result = query.execute(db.pool()).await?;
@@ -443,7 +464,7 @@ impl TransformRegistration for GoogleCalendarTransformRegistration {
         "stream_google_calendar"
     }
     fn target_table(&self) -> &'static str {
-        "praxis_calendar"
+        "calendar"
     }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(GoogleCalendarTransform))
@@ -462,7 +483,7 @@ mod tests {
     fn test_transform_metadata() {
         let transform = GoogleCalendarTransform;
         assert_eq!(transform.source_table(), "stream_google_calendar");
-        assert_eq!(transform.target_table(), "praxis_calendar");
-        assert_eq!(transform.domain(), "praxis");
+        assert_eq!(transform.target_table(), "calendar");
+        assert_eq!(transform.domain(), "calendar");
     }
 }

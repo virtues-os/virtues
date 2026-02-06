@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
-import { Streamdown } from 'svelte-streamdown';
-import type { CitationContext, Citation } from '$lib/types/Citation';
-import InlineCitation from './citations/InlineCitation.svelte';
-import EntityChip from './EntityChip.svelte';
+	import { Streamdown } from 'svelte-streamdown';
+	import type { CitationContext, Citation } from '$lib/types/Citation';
+	import InlineCitation from './citations/InlineCitation.svelte';
+	import EntityChip from './EntityChip.svelte';
+	import { parseEntityRoute } from '$lib/utils/entityRoutes';
+	import type { BundledTheme } from 'shiki';
 
-interface Props {
+	interface Props {
 		content: string;
 		isStreaming?: boolean;
 		citations?: CitationContext;
@@ -14,17 +16,37 @@ interface Props {
 
 	let { content, isStreaming = false, citations, onCitationClick }: Props = $props();
 
+	// Read Shiki theme from CSS variable (defined in themes.css)
+	function getShikiTheme(): BundledTheme {
+		if (!browser) return 'github-light';
+		const theme = getComputedStyle(document.documentElement).getPropertyValue('--shiki-theme').trim();
+		return (theme || 'github-light') as BundledTheme;
+	}
+
+	let currentShikiTheme = $state<BundledTheme>(getShikiTheme());
+
+	// Update when theme changes
+	$effect(() => {
+		if (!browser) return;
+		const handleThemeChange = () => {
+			currentShikiTheme = getShikiTheme();
+		};
+		window.addEventListener('themechange', handleThemeChange);
+		return () => window.removeEventListener('themechange', handleThemeChange);
+	});
+
 	// Helper to get Citation from token key
 	function getCitation(key: string): Citation | undefined {
 		return citations?.byId.get(key);
 	}
 
-	// Preprocess content to fix adjacent citations [1][2] -> [1] [2]
-	// markedCitations rejects adjacent ][ as it looks like markdown link syntax
-	const processedContent = $derived(content.replace(/\](\[\d+\])/g, '] $1'));
+	// Preprocess content: fix adjacent citations [1][2] -> [1] [2]
+	const processedContent = $derived.by(() => {
+		if (!content) return '';
+		return content.replace(/\](\[\d+\])/g, '] $1');
+	});
 
 	// Convert CitationContext to Streamdown's sources format
-	// Streamdown expects: { "1": { title, url, content }, "2": { ... } }
 	const sources = $derived.by(() => {
 		if (!citations) return {};
 		const result: Record<string, { title: string; url?: string; content?: string }> = {};
@@ -38,15 +60,20 @@ interface Props {
 		return result;
 	});
 
-	// Streamdown theme (code blocks only - citations use custom snippets)
+	// Get current origin for relative URL handling
+	const origin = browser ? window.location.origin : 'https://app.local';
+
+	// Streamdown theme
 	const customTheme = {
 		code: {
-			container: 'my-4 w-full overflow-hidden rounded-xl border border-border',
+			base: 'my-4 w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col',
+			container: '',
 			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-[var(--code-bg)]',
 			languageLabel: 'text-foreground-muted font-medium',
 			copyButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			copyIcon: 'w-4 h-4',
 			pre: 'overflow-x-auto p-4 text-sm bg-[var(--code-bg)]',
+			skeleton: 'block text-[var(--code-fg)] bg-transparent animate-none',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
 		}
@@ -54,17 +81,17 @@ interface Props {
 </script>
 
 {#if browser}
-	<!-- Pass sources to Streamdown with custom citation UI -->
 	<div class="markdown cited-markdown">
 		<Streamdown
 			content={processedContent}
 			{sources}
 			inlineCitationsMode="list"
 			class="streamdown-content"
-			shikiTheme={'css-variables' as any}
+			shikiTheme={currentShikiTheme}
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
 			controls={{ table: false }}
+			defaultOrigin={origin}
 			animation={{
 				enabled: isStreaming,
 				type: 'fade',
@@ -86,43 +113,39 @@ interface Props {
 				<!-- Empty - we use CitationPanel at page level instead -->
 			{/snippet}
 
-			{#snippet link({ token }: { token: any })}
-				{#if token.url.startsWith('entity:')}
-					<EntityChip 
-						displayName={token.text} 
-						entityId={token.url.replace('entity:', '')} 
-					/>
+			{#snippet link({ href, children, token }: { href: string; children: import('svelte').Snippet; token: any })}
+				{@const url = href || token?.href}
+				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
+				{#if isEntity}
+					<EntityChip displayName={token.text} url={url} />
+				{:else if url}
+					<a href={url} target="_blank" rel="noopener noreferrer">{@render children()}</a>
 				{:else}
-					<a href={token.url} target="_blank" rel="noopener noreferrer">{token.text}</a>
+					<span>{@render children()}</span>
 				{/if}
 			{/snippet}
 		</Streamdown>
 	</div>
 {:else}
-	<!-- SSR fallback: plain text with basic styling -->
 	<div class="markdown markdown-ssr">
-		<pre class="whitespace-pre-wrap text-foreground" style="line-height: 1.8;">{processedContent}</pre>
+		<pre class="whitespace-pre-wrap text-foreground" style="line-height: 1.8;">{content}</pre>
 	</div>
 {/if}
 
 <style>
-	/* Container inherits normal block flow from markdown */
 	.cited-markdown {
 		display: block;
 	}
 
-	/* Ensure streamdown content flows properly */
 	.cited-markdown :global(.streamdown-content) {
 		display: block;
 	}
 
-	/* Reset Streamdown's wrapper button - we use our own InlineCitation styling */
 	.cited-markdown :global([data-streamdown-citation-preview]) {
 		all: unset;
 		display: inline;
 	}
 
-	/* Hide Streamdown's popover - we use CitationPanel instead */
 	.cited-markdown :global([data-streamdown-citation-popover]) {
 		display: none !important;
 	}

@@ -1,80 +1,84 @@
 <script lang="ts">
 	import "../../app.css";
 	import { Toaster, toast } from "svelte-sonner";
-	import "iconify-icon";
+	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
-	import { WindowTabBar, SplitContainer } from "$lib/components/tabs";
+	import { SplitContainer } from "$lib/components/tabs";
+	import { ContextMenuProvider } from "$lib/components/contextMenu";
+	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
+	import UpdateOverlay from "$lib/components/UpdateOverlay.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
-	import { windowTabs } from "$lib/stores/windowTabs.svelte";
-	import { bookmarks } from "$lib/stores/bookmarks.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import { versionStore } from "$lib/stores/version.svelte";
+	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
-	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
+	import { page } from "$app/stores";
+	import type { Snippet } from "svelte";
 
 	// Get session expiry from page data
-	const { data } = $props();
+	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
+	// svelte-ignore slot_snippet_conflict
+	const { data, children }: { data: any; children: Snippet } = $props();
 	let sessionExpiryTimer: ReturnType<typeof setInterval> | null = null;
 	let warningShown = false;
 
 	// Create AI context for synchronized state across Chat instances
 	createAIContext();
 
-	// Track if we're in initial load
+	// Track initialization state
 	let initialized = $state(false);
 
-	// Sync URL changes to tab system (for back/forward, direct navigation)
-	$effect(() => {
-		if (!initialized) return;
-		// Skip if a programmatic tab change just occurred (prevents feedback loop)
-		if (windowTabs.shouldSkipUrlSync()) {
-			console.log('[Layout] Skipping URL sync (programmatic tab change)');
-			return;
-		}
-		const route = page.url.pathname + page.url.search;
-		console.log('[Layout] Syncing from URL:', route);
-		windowTabs.syncFromUrl(route);
-	});
-
-	// Sync active tab to URL (for bookmarking)
-	// Use history.replaceState directly to avoid triggering SvelteKit's load functions
-	// This prevents full page navigation when switching tabs internally
-	$effect(() => {
-		if (!initialized) return;
-		const activeRoute = windowTabs.activeRoute;
-		if (activeRoute) {
-			const currentRoute = window.location.pathname + window.location.search;
-			if (activeRoute !== currentRoute) {
-				console.log('[Layout] URL sync (shallow):', { from: currentRoute, to: activeRoute });
-				// Update URL without triggering SvelteKit navigation
-				history.replaceState(history.state, '', activeRoute);
+	// Global keyboard shortcut handler for workspace switching (⌘1-9)
+	function handleGlobalKeydown(e: KeyboardEvent) {
+		// ⌘1-9 for workspace switching
+		if (e.metaKey && e.key >= "1" && e.key <= "9") {
+			e.preventDefault();
+			const index = parseInt(e.key) - 1;
+			const spaces = spaceStore.spaces;
+			if (index < spaces.length) {
+				spaceStore.switchSpace(spaces[index].id, true);
 			}
 		}
-	});
+	}
 
-	// Load chat sessions, bookmarks, and initialize theme on mount
-	onMount(() => {
-		console.log('[Layout] onMount starting');
+	// Load chat sessions, workspaces, and initialize theme on mount
+	onMount(async () => {
+		// Register global keyboard shortcuts
+		window.addEventListener("keydown", handleGlobalKeydown);
+		// Global dragover handler: Allow drops on document by preventing default
+		// This is a fallback to ensure drops are never blocked by missing handlers
+		document.addEventListener("dragover", (e) => {
+			e.preventDefault();
+			if (e.dataTransfer) {
+				e.dataTransfer.dropEffect = "move";
+			}
+		});
+
+		// Load global data
 		chatSessions.load();
-		bookmarks.load();
 		initTheme();
 
-		// Initialize the tab store (restores from localStorage)
-		console.log('[Layout] Calling windowTabs.init()');
-		windowTabs.init();
-		console.log('[Layout] After init, getAllTabs().length:', windowTabs.getAllTabs().length);
+		// Initialize workspace store (loads workspaces, tree, and tabs)
+		await spaceStore.init();
 
-		// Initialize from current URL if no tabs exist (check both split and non-split modes)
-		const route = window.location.pathname + window.location.search;
-		if (windowTabs.getAllTabs().length === 0) {
-			console.log('[Layout] No tabs, opening from route:', route);
-			windowTabs.openTabFromRoute(route);
-		}
+		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
+		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
+		const urlPath = $page.url.pathname;
+		const rightParam = $page.url.searchParams.get("right");
+		spaceStore.handleDeepLink(urlPath, rightParam);
 
-		// Mark as initialized after first render
+		// Enable URL sync for future navigation
+		spaceStore.initUrlSync();
+
+		// Mark as initialized
 		initialized = true;
-		console.log('[Layout] onMount complete');
+
+		// Start polling for version updates and subscription status
+		versionStore.start();
+		subscriptionStore.start();
 
 		// Set up session expiry warning
 		if (data?.sessionExpires) {
@@ -89,17 +93,18 @@
 					warningShown = true;
 					const minutesLeft = Math.round(timeLeft / 60000);
 					toast.warning(`Session expires in ${minutesLeft} minutes`, {
-						description: "You'll be logged out soon. Save your work.",
-						duration: 30000
+						description:
+							"You'll be logged out soon. Save your work.",
+						duration: 30000,
 					});
 				}
 
 				// If session has expired, redirect to login
 				if (timeLeft <= 0) {
-					toast.error('Session expired', {
-						description: 'Please log in again.'
+					toast.error("Session expired", {
+						description: "Please log in again.",
 					});
-					goto('/login');
+					goto("/login");
 				}
 			};
 
@@ -113,27 +118,175 @@
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}
+		spaceStore.destroyUrlSync();
+		versionStore.stop();
+		subscriptionStore.stop();
+
+		// Clean up global keyboard shortcut listener
+		if (typeof window !== "undefined") {
+			window.removeEventListener("keydown", handleGlobalKeydown);
+		}
+	});
+
+	// Show toast when frontend code is out of sync with backend (needs page refresh)
+	let updateToastShown = false;
+	$effect(() => {
+		if (versionStore.updateAvailable && !updateToastShown) {
+			updateToastShown = true;
+			toast.info("New version available", {
+				description: "Click refresh to get the latest updates.",
+				duration: Infinity,
+				action: {
+					label: "Refresh",
+					onClick: () => location.reload(),
+				},
+			});
+		}
+	});
+
+	// Show toast when a system-level update is available (new image from Atlas)
+	let systemUpdateToastShown = false;
+	$effect(() => {
+		if (
+			versionStore.systemUpdateAvailable &&
+			!systemUpdateToastShown &&
+			!versionStore.updating
+		) {
+			systemUpdateToastShown = true;
+			toast.info("System update available", {
+				description: "A new version of Virtues is ready to install.",
+				duration: Infinity,
+				action: {
+					label: "Update",
+					onClick: () => {
+						versionStore.triggerUpdate().catch((e) => {
+							toast.error("Update failed", {
+								description:
+									e.message || "Please try again later.",
+							});
+						});
+					},
+				},
+			});
+		}
+	});
+
+	// Trial countdown toasts (day 5, 2, 1, 0)
+	let trialToastShownForDay: number | null = null;
+	$effect(() => {
+		const days = subscriptionStore.daysRemaining;
+		if (days === null || subscriptionStore.status !== "trialing") return;
+		if (trialToastShownForDay === days) return;
+
+		const openBilling = () =>
+			spaceStore.openTabFromRoute("/virtues/billing", {
+				label: "Billing",
+				preferEmptyPane: true,
+			});
+
+		if (days <= 5 && days > 2) {
+			trialToastShownForDay = days;
+			toast.warning(`Trial ends in ${days} days`, {
+				description: "Add a payment method to keep your data.",
+				duration: Infinity,
+				action: { label: "Billing", onClick: openBilling },
+			});
+		} else if (days <= 2 && days > 0) {
+			trialToastShownForDay = days;
+			toast.error(`Trial ends in ${days} day${days === 1 ? "" : "s"}`, {
+				description: "Your instance will be suspended without payment.",
+				duration: Infinity,
+				action: { label: "Add Payment", onClick: openBilling },
+			});
+		} else if (days <= 0) {
+			trialToastShownForDay = days;
+			toast.error("Trial expired", {
+				description: "Add a payment method to restore access.",
+				duration: Infinity,
+				action: { label: "Add Payment", onClick: openBilling },
+			});
+		}
+	});
+
+	// Show toast when subscription is expired (from 402 or polling)
+	let expiredToastShown = false;
+	$effect(() => {
+		if (
+			!subscriptionStore.isActive &&
+			subscriptionStore.status === "expired" &&
+			!expiredToastShown
+		) {
+			expiredToastShown = true;
+			toast.error("Subscription required", {
+				description:
+					"Your trial has ended. Subscribe to continue using AI features.",
+				duration: Infinity,
+				action: {
+					label: "Subscribe",
+					onClick: () =>
+						spaceStore.openTabFromRoute("/virtues/billing", {
+							label: "Billing",
+							preferEmptyPane: true,
+						}),
+				},
+			});
+		}
+		// Reset if subscription becomes active again
+		if (subscriptionStore.isActive) {
+			expiredToastShown = false;
+		}
 	});
 </script>
 
-<Toaster position="top-center" />
+<Toaster
+	position="top-center"
+	toastOptions={{
+		style: `
+			background: var(--surface);
+			color: var(--foreground);
+			border: 1px solid var(--border);
+			font-family: var(--font-sans);
+		`,
+		class: "themed-toast",
+	}}
+/>
 
-<div class="flex h-screen w-full bg-surface-elevated">
+<!-- Global Context Menu Provider -->
+<ContextMenuProvider />
+
+<div
+	class="app-shell flex h-screen w-full bg-surface-elevated"
+	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
+>
 	<!-- Unified Sidebar -->
 	<UnifiedSidebar />
 
 	<!-- Main Content -->
-	<main class="flex-1 flex flex-col z-0 min-w-0 bg-surface text-foreground m-3 rounded-lg border border-border overflow-hidden">
-		{#if windowTabs.split.enabled}
-			<!-- Split view mode - each pane has its own tab bar -->
-			<SplitContainer />
-		{:else}
-			<!-- Single pane mode -->
-			<WindowTabBar />
+	<main
+		class="flex-1 flex flex-col z-0 min-w-0 bg-surface text-foreground m-3 rounded-lg border border-border overflow-hidden"
+	>
+		{#if initialized}
+			<!-- SplitContainer handles both split and mono modes -->
 			<SplitContainer />
 		{/if}
 	</main>
 </div>
+
+<!-- Server Provisioning Overlay (shown while Tollbooth is hydrating) -->
+{#if data?.serverStatus && data.serverStatus !== "ready"}
+	<ServerProvisioning initialStatus={data.serverStatus} />
+{/if}
+
+<!-- Update Overlay (shown during system update / container restart) -->
+{#if versionStore.updating}
+	<UpdateOverlay />
+{/if}
+
+<!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->
+<!-- svelte-ignore slot_snippet_conflict -->
+{#if false}
+	{@render children()}
+{/if}
 
 <style>
 	main {

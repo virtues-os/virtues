@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { slide } from "svelte/transition";
 	import type { ContextVector } from "$lib/wiki";
 	import { computeCompleteness } from "$lib/wiki";
@@ -28,9 +29,9 @@
 <div class="context-vector">
 	<button class="toggle-btn" onclick={() => (expanded = !expanded)}>
 		<span class="toggle-label">Completeness · {completeness}%</span>
-		<iconify-icon
+		<Icon
 			icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
-		></iconify-icon>
+		/>
 	</button>
 
 	{#if expanded}

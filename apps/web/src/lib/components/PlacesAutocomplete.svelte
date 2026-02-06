@@ -1,6 +1,13 @@
 <script lang="ts">
+	/**
+	 * PlacesAutocomplete - Google Places autocomplete input
+	 *
+	 * Uses the floating UI system for smart positioning and dismiss handling.
+	 */
 	import { browser } from "$app/environment";
 	import { Input } from "$lib";
+	import { fade } from "svelte/transition";
+	import { FloatingContent, useClickOutside, useEscapeKey } from "$lib/floating";
 
 	interface PlaceResult {
 		formatted_address: string;
@@ -38,6 +45,25 @@
 	let selectedIndex = $state(-1);
 	let sessionToken = $state(crypto.randomUUID());
 	let debounceTimer: ReturnType<typeof setTimeout>;
+	let inputWrapper = $state<HTMLDivElement | null>(null);
+	let dropdownEl = $state<HTMLUListElement | null>(null);
+
+	// Use hooks for dismiss behavior (wrap callbacks to capture current values)
+	useClickOutside(
+		() => [inputWrapper, dropdownEl],
+		() => {
+			showDropdown = false;
+			selectedIndex = -1;
+		},
+		() => showDropdown
+	);
+	useEscapeKey(
+		() => {
+			showDropdown = false;
+			selectedIndex = -1;
+		},
+		() => showDropdown
+	);
 
 	// Debounced search
 	function handleInput() {
@@ -120,6 +146,7 @@
 	function handleKeydown(event: KeyboardEvent) {
 		if (!showDropdown || predictions.length === 0) return;
 
+		// Escape is handled by useEscapeKey hook
 		switch (event.key) {
 			case "ArrowDown":
 				event.preventDefault();
@@ -137,10 +164,6 @@
 				if (selectedIndex >= 0 && selectedIndex < predictions.length) {
 					selectPrediction(predictions[selectedIndex]);
 				}
-				break;
-			case "Escape":
-				showDropdown = false;
-				selectedIndex = -1;
 				break;
 		}
 	}
@@ -161,39 +184,52 @@
 </script>
 
 <div class="places-autocomplete {className}">
-	<Input
-		type="text"
-		bind:value
-		{placeholder}
-		{disabled}
-		{success}
-		loading={isLoading}
-		autocomplete="off"
-		oninput={handleInput}
-		onkeydown={handleKeydown}
-		onblur={handleBlur}
-		onfocus={handleFocus}
-	/>
+	<div bind:this={inputWrapper}>
+		<Input
+			type="text"
+			bind:value
+			{placeholder}
+			{disabled}
+			{success}
+			loading={isLoading}
+			autocomplete="off"
+			oninput={handleInput}
+			onkeydown={handleKeydown}
+			onblur={handleBlur}
+			onfocus={handleFocus}
+		/>
+	</div>
 
-	{#if showDropdown && predictions.length > 0}
-		<ul class="dropdown" role="listbox">
-			{#each predictions as prediction, index}
-				<li
-					role="option"
-					aria-selected={index === selectedIndex}
-					class="dropdown-item"
-					class:selected={index === selectedIndex}
-					onmousedown={() => selectPrediction(prediction)}
-				>
-					<div class="main-text">{prediction.main_text}</div>
-					{#if prediction.secondary_text}
-						<div class="secondary-text">
-							{prediction.secondary_text}
-						</div>
-					{/if}
-				</li>
-			{/each}
-		</ul>
+	{#if showDropdown && predictions.length > 0 && inputWrapper}
+		<FloatingContent
+			anchor={inputWrapper}
+			options={{ placement: 'bottom-start', offset: 4, flip: true, shift: true, padding: 8 }}
+			class="places-dropdown-container"
+		>
+			<ul
+				bind:this={dropdownEl}
+				class="dropdown"
+				role="listbox"
+				transition:fade={{ duration: 100 }}
+			>
+				{#each predictions as prediction, index}
+					<li
+						role="option"
+						aria-selected={index === selectedIndex}
+						class="dropdown-item"
+						class:selected={index === selectedIndex}
+						onmousedown={() => selectPrediction(prediction)}
+					>
+						<div class="main-text">{prediction.main_text}</div>
+						{#if prediction.secondary_text}
+							<div class="secondary-text">
+								{prediction.secondary_text}
+							</div>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</FloatingContent>
 	{/if}
 </div>
 
@@ -203,11 +239,18 @@
 		width: 100%;
 	}
 
-	.dropdown {
-		position: absolute;
-		z-index: 50;
+	/* FloatingContent wrapper styles */
+	:global(.places-dropdown-container) {
+		--z-floating: 50;
+		padding: 0;
+		background: transparent;
+		border: none;
+		box-shadow: none;
 		width: 100%;
-		margin-top: 4px;
+	}
+
+	.dropdown {
+		width: 100%;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
@@ -218,7 +261,7 @@
 		overflow: auto;
 		list-style: none;
 		padding: 4px;
-		margin: 4px 0 0 0;
+		margin: 0;
 	}
 
 	.dropdown-item {

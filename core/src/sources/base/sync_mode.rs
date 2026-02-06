@@ -6,7 +6,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 /// Sync strategies for data extraction
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,6 +18,14 @@ pub enum SyncMode {
     Incremental {
         /// Sync cursor/token from last successful sync
         cursor: Option<String>,
+    },
+
+    /// Backfill - fetch historical records for a specific time range
+    Backfill {
+        /// Start of the time range
+        start_date: DateTime<Utc>,
+        /// End of the time range
+        end_date: DateTime<Utc>,
     },
 }
 
@@ -37,6 +44,14 @@ impl SyncMode {
     /// Create an incremental sync mode with optional cursor
     pub fn incremental(cursor: Option<String>) -> Self {
         Self::Incremental { cursor }
+    }
+
+    /// Create a backfill sync mode for a specific range
+    pub fn backfill(start_date: DateTime<Utc>, end_date: DateTime<Utc>) -> Self {
+        Self::Backfill {
+            start_date,
+            end_date,
+        }
     }
 
     /// Check if this is a full refresh
@@ -68,6 +83,12 @@ pub struct SyncResult {
     /// New cursor for next incremental sync
     pub next_cursor: Option<String>,
 
+    /// Earliest timestamp in the synced records (for watermarking)
+    pub earliest_record_at: Option<DateTime<Utc>>,
+
+    /// Latest timestamp in the synced records (for watermarking)
+    pub latest_record_at: Option<DateTime<Utc>>,
+
     /// Timestamp when sync started
     pub started_at: DateTime<Utc>,
 
@@ -84,7 +105,7 @@ pub struct SyncResult {
     /// Optional for backward compatibility. When present, indicates that
     /// S3 archival is happening asynchronously in the background.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub archive_job_id: Option<Uuid>,
+    pub archive_job_id: Option<String>,
 }
 
 impl SyncResult {
@@ -95,6 +116,8 @@ impl SyncResult {
             records_written: 0,
             records_failed: 0,
             next_cursor: None,
+            earliest_record_at: None,
+            latest_record_at: None,
             started_at,
             completed_at: Utc::now(),
             records: None,

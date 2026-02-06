@@ -94,6 +94,27 @@
 
 <div class="space-y-6">
     <div class="bg-surface-elevated p-4 rounded-lg border border-border">
+        <div class="flex items-start gap-4 mb-4 pb-4 border-b border-border">
+            <img 
+                src="/images/app-store-qr.png" 
+                alt="Download Virtues from App Store" 
+                class="w-20 h-20"
+            />
+            <div>
+                <h4 class="text-sm font-medium text-foreground mb-1">
+                    Don't have the app yet?
+                </h4>
+                <p class="text-sm text-foreground-muted">
+                    Scan to download Virtues from the App Store, or visit
+                    <a 
+                        href="https://apps.apple.com/us/app/virtues-personal-ai/id6756082640" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        class="text-primary hover:underline"
+                    >apps.apple.com</a>
+                </p>
+            </div>
+        </div>
         <h4 class="text-sm font-medium text-foreground mb-3">
             Setup Instructions:
         </h4>

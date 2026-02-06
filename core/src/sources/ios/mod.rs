@@ -6,6 +6,7 @@
 pub mod barometer;
 pub mod battery;
 pub mod contacts;
+pub mod eventkit;
 pub mod financekit;
 pub mod healthkit;
 pub mod location;
@@ -16,6 +17,7 @@ pub mod registry;
 pub use barometer::IosBarometerStream;
 pub use battery::IosBatteryStream;
 pub use contacts::IosContactsStream;
+pub use eventkit::IosEventKitStream;
 pub use financekit::IosFinanceKitStream;
 pub use healthkit::IosHealthKitStream;
 pub use location::IosLocationStream;

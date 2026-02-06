@@ -14,7 +14,7 @@
 //! which causes the job system to create a child job that executes these transforms.
 
 use async_trait::async_trait;
-use uuid::Uuid;
+
 
 use crate::database::Database;
 use crate::entity_resolution::{self, TimeWindow};
@@ -51,7 +51,7 @@ impl OntologyTransform for PlaceResolutionTransform {
         &self,
         db: &Database,
         _context: &TransformContext,
-        _source_id: Uuid,
+        _source_id: String,
     ) -> Result<TransformResult> {
         // Entity resolution doesn't use the standard data source pattern.
         // It queries the ontology tables directly with a time window.
@@ -101,14 +101,14 @@ inventory::submit! {
 /// People Resolution Transform
 ///
 /// Resolves calendar attendees to entities_person records. Extracts email
-/// addresses from praxis_calendar.attendee_identifiers and creates/links
+/// addresses from calendar.attendee_identifiers and creates/links
 /// person entities.
 pub struct PeopleResolutionTransform;
 
 #[async_trait]
 impl OntologyTransform for PeopleResolutionTransform {
     fn source_table(&self) -> &str {
-        "praxis_calendar"
+        "calendar"
     }
 
     fn target_table(&self) -> &str {
@@ -123,7 +123,7 @@ impl OntologyTransform for PeopleResolutionTransform {
         &self,
         db: &Database,
         _context: &TransformContext,
-        _source_id: Uuid,
+        _source_id: String,
     ) -> Result<TransformResult> {
         // Entity resolution doesn't use the standard data source pattern.
         // It queries the ontology tables directly with a time window.
@@ -154,7 +154,7 @@ struct PeopleResolutionRegistration;
 
 impl TransformRegistration for PeopleResolutionRegistration {
     fn source_table(&self) -> &'static str {
-        "praxis_calendar"
+        "calendar"
     }
 
     fn target_table(&self) -> &'static str {
@@ -173,7 +173,7 @@ inventory::submit! {
 /// Helper function to create a ChainedTransform for place resolution
 ///
 /// Use this in location transforms to chain to entity resolution.
-pub fn chain_to_place_resolution(source_id: Uuid) -> ChainedTransform {
+pub fn chain_to_place_resolution(source_id: String) -> ChainedTransform {
     ChainedTransform {
         source_table: "location_point".to_string(),
         target_tables: vec!["location_visit".to_string(), "entities_place".to_string()],
@@ -186,9 +186,9 @@ pub fn chain_to_place_resolution(source_id: Uuid) -> ChainedTransform {
 /// Helper function to create a ChainedTransform for people resolution
 ///
 /// Use this in calendar transforms to chain to entity resolution.
-pub fn chain_to_people_resolution(source_id: Uuid) -> ChainedTransform {
+pub fn chain_to_people_resolution(source_id: String) -> ChainedTransform {
     ChainedTransform {
-        source_table: "praxis_calendar".to_string(),
+        source_table: "calendar".to_string(),
         target_tables: vec!["entities_person".to_string()],
         domain: "social".to_string(),
         source_record_id: source_id,

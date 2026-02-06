@@ -48,7 +48,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: true,
             default_cron_schedule: Some("0 */15 * * * *"), // Every 15 minutes
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "gmail",
@@ -61,7 +61,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: true,
             default_cron_schedule: Some("0 */15 * * * *"), // Every 15 minutes
             enabled: false,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         // ===== iOS Streams =====
         StreamDescriptor {
@@ -82,7 +82,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false, // Push-based
             default_cron_schedule: Some("0 */5 * * * *"), // Every 5 minutes
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "location",
@@ -95,7 +95,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false, // Push-based
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "microphone",
@@ -108,7 +108,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "contacts",
@@ -116,12 +116,12 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "Contacts",
             description: "Address book contacts from iOS device",
             table_name: "stream_ios_contacts",
-            target_ontologies: vec![],
+            target_ontologies: vec!["wiki_people"],
             supports_incremental: false,
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "battery",
@@ -134,7 +134,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "barometer",
@@ -147,7 +147,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "financekit",
@@ -160,7 +160,20 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false, // Push-based
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
+        },
+        StreamDescriptor {
+            name: "eventkit",
+            source: "ios",
+            display_name: "EventKit",
+            description: "Calendar events and reminders from iOS EventKit",
+            table_name: "stream_ios_eventkit",
+            target_ontologies: vec!["calendar"],
+            supports_incremental: false,
+            supports_full_refresh: false, // Push-based
+            default_cron_schedule: Some("0 */5 * * * *"),
+            enabled: true,
+            tier: SourceTier::Standard,
         },
         // ===== macOS Streams =====
         StreamDescriptor {
@@ -174,7 +187,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false, // Push-based
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "browser",
@@ -188,7 +201,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "imessage",
@@ -201,7 +214,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         // ===== Notion Streams =====
         StreamDescriptor {
@@ -215,7 +228,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: true,
             default_cron_schedule: Some("0 0 */12 * * *"), // Every 12 hours
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         // ===== Plaid Streams =====
         StreamDescriptor {
@@ -229,7 +242,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: true,
             default_cron_schedule: Some("0 0 */6 * * *"), // Every 6 hours
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "accounts",
@@ -244,7 +257,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             // Free API call (/accounts/get), so same frequency as transactions is fine
             default_cron_schedule: Some("0 55 5,11,17,23 * * *"), // At :55 of hours 5,11,17,23 (5 min before 6,12,18,0)
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "investments",
@@ -257,7 +270,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: true,
             default_cron_schedule: Some("0 0 0 * * *"),
             enabled: false, // Disabled: expensive API calls (~$0.25/call), no ontology yet
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
         StreamDescriptor {
             name: "liabilities",
@@ -270,7 +283,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             supports_full_refresh: true,
             default_cron_schedule: Some("0 0 0 * * *"),
             enabled: false, // Disabled: expensive API calls (~$0.25/call), no ontology yet
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
         },
     ]
 }
@@ -318,7 +331,7 @@ mod tests {
     #[test]
     fn test_get_streams_for_source() {
         let ios_streams = get_streams_for_source("ios");
-        assert!(ios_streams.len() >= 7); // healthkit, location, microphone, contacts, battery, barometer, financekit
+        assert!(ios_streams.len() >= 8); // healthkit, location, microphone, contacts, battery, barometer, financekit, eventkit
 
         let google_streams = get_streams_for_source("google");
         assert!(google_streams.len() >= 2); // calendar, gmail
