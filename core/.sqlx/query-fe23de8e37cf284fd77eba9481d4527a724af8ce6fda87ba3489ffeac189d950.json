@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id, name, category, address, visit_count\n        FROM wiki_places\n        ORDER BY name ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "address",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "visit_count",
+        "ordinal": 4,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "fe23de8e37cf284fd77eba9481d4527a724af8ce6fda87ba3489ffeac189d950"
+}

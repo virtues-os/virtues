@@ -1,0 +1,86 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_citations (\n            id, source_type, source_id, target_table, target_id,\n            citation_index, label, preview, is_hidden, added_by\n        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n        RETURNING\n            id, source_type, source_id, target_table, target_id,\n            citation_index, label, preview, is_hidden, added_by,\n            created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_type",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "source_id",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_table",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "target_id",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "citation_index",
+        "ordinal": 5,
+        "type_info": "Integer"
+      },
+      {
+        "name": "label",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "preview",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "is_hidden",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "added_by",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 11,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 10
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "b9103bae7e72669d498e337dab38f8a53094fd124afcf59fc416a14c51bf46cd"
+}

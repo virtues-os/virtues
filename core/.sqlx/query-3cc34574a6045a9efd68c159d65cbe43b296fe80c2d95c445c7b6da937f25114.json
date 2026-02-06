@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT server_status, preferred_name, full_name\n        FROM app_user_profile \n        WHERE id = '00000000-0000-0000-0000-000000000001'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "server_status",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "preferred_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "full_name",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "3cc34574a6045a9efd68c159d65cbe43b296fe80c2d95c445c7b6da937f25114"
+}

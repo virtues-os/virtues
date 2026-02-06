@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id\n        FROM wiki_orgs\n        WHERE LOWER(canonical_name) = LOWER($1)\n           OR LOWER(canonical_name) = LOWER($2)\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "bb47e8bc43db7913f4405f4cb8e4eab0aa54c4c17e0e36007e65f40aaaeaa594"
+}

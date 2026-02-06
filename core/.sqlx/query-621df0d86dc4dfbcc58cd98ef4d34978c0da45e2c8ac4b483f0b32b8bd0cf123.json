@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            merchant_name,\n            merchant_category\n        FROM data_financial_transaction\n        WHERE timestamp >= $1\n          AND timestamp < $2\n          AND merchant_name IS NOT NULL\n          AND merchant_name != ''\n          AND (metadata IS NULL OR json_extract(metadata, '$.merchant_org_id') IS NULL)\n        ORDER BY timestamp ASC\n        LIMIT 500\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "merchant_name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "merchant_category",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "621df0d86dc4dfbcc58cd98ef4d34978c0da45e2c8ac4b483f0b32b8bd0cf123"
+}

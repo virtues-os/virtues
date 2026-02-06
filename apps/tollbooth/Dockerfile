@@ -18,7 +18,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 # ============================================================================
 # Stage 2: Cook dependencies (cached unless Cargo.toml/lock change)
 # ============================================================================
-FROM rust:1.83-slim-bookworm AS builder
+FROM rust:1.88-slim-bookworm AS builder
 
 RUN cargo install cargo-chef
 

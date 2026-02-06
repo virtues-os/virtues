@@ -112,12 +112,7 @@ tmp/*
 /.pnpm-store
 /apps/web/.pnpm-store
 /apps/tollbooth/target
-/core/.sqlx
-/apps/tollbooth/target
-/apps/oauth-proxy/dist
-/apps/oauth-proxy/dist
 /apps/oauth-proxy/dist
 /apps/mac/.build
-/packages/virtues-registry/target
 /packages/virtues-registry/target
 /core/core/

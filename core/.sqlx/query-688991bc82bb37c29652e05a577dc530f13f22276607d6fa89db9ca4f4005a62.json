@@ -1,0 +1,44 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id, name, latitude, longitude, radius_m\n        FROM wiki_places\n        WHERE latitude IS NOT NULL\n          AND longitude IS NOT NULL\n          AND latitude BETWEEN $1 AND $2\n          AND longitude BETWEEN $3 AND $4\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "latitude",
+        "ordinal": 2,
+        "type_info": "Float"
+      },
+      {
+        "name": "longitude",
+        "ordinal": 3,
+        "type_info": "Float"
+      },
+      {
+        "name": "radius_m",
+        "ordinal": 4,
+        "type_info": "Float"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "688991bc82bb37c29652e05a577dc530f13f22276607d6fa89db9ca4f4005a62"
+}

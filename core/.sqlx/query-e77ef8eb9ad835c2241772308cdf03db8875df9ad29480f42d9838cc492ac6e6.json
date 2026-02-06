@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE app_api_usage\n        SET\n            token_count = token_count + $3,\n            input_tokens = input_tokens + $4,\n            output_tokens = output_tokens + $5,\n            estimated_cost_usd = estimated_cost_usd + $6,\n            updated_at = datetime('now')\n        WHERE endpoint = $1 AND day_bucket = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "e77ef8eb9ad835c2241772308cdf03db8875df9ad29480f42d9838cc492ac6e6"
+}

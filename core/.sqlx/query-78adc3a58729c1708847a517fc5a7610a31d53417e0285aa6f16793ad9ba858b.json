@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        DELETE FROM wiki_events\n        WHERE day_id = $1 AND is_user_added = false\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "78adc3a58729c1708847a517fc5a7610a31d53417e0285aa6f16793ad9ba858b"
+}

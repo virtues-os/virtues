@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_people (\n            id,\n            canonical_name,\n            emails\n        ) VALUES ($1, $2, $3)\n        ON CONFLICT (id) DO NOTHING\n        RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "d520505943d4812366714a6b44847e1b56aea7de6f03e9ba07cba4bb9f6d5eb8"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_places (\n            id,\n            name,\n            latitude,\n            longitude,\n            radius_m,\n            metadata\n        ) VALUES (\n            $1, $2, $3, $4, $5, '{}'\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "cf158b3dcf613472371d0e7753e0109647a6ba8685a3fc6e82694d02507f4b1a"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id\n        FROM wiki_people\n        WHERE phones LIKE $1\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "776d788466e4af74a0126e59b95174df3876a7deb68008525013767c66c32d3c"
+}

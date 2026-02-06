@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE app_user_profile\n        SET home_place_id = $1\n        WHERE id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "483eccb7fa9a7626013f21f6761d2b7abded00bfdcff4a7c2bb50d6c254f017b"
+}

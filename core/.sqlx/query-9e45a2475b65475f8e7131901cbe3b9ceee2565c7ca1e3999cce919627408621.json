@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    UPDATE wiki_people\n                    SET canonical_name = $1,\n                        updated_at = datetime('now')\n                    WHERE id = $2\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "9e45a2475b65475f8e7131901cbe3b9ceee2565c7ca1e3999cce919627408621"
+}

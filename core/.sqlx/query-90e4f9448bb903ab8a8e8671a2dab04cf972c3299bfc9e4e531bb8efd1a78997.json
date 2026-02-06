@@ -1,0 +1,80 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            name,\n            category,\n            address,\n            latitude,\n            longitude,\n            radius_m,\n            visit_count,\n            metadata,\n            created_at,\n            updated_at\n        FROM wiki_places\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "name",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "category",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "address",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "latitude",
+        "ordinal": 4,
+        "type_info": "Float"
+      },
+      {
+        "name": "longitude",
+        "ordinal": 5,
+        "type_info": "Float"
+      },
+      {
+        "name": "radius_m",
+        "ordinal": 6,
+        "type_info": "Float"
+      },
+      {
+        "name": "visit_count",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "metadata",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 9,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 10,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "90e4f9448bb903ab8a8e8671a2dab04cf972c3299bfc9e4e531bb8efd1a78997"
+}

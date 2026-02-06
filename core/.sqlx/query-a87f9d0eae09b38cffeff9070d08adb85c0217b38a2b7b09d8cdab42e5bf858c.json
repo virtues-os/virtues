@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO wiki_people (\n            id,\n            canonical_name,\n            emails\n        ) VALUES (\n            $1, $2, $3\n        )\n        RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a87f9d0eae09b38cffeff9070d08adb85c0217b38a2b7b09d8cdab42e5bf858c"
+}

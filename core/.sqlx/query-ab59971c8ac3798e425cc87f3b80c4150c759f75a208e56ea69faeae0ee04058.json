@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            COALESCE(request_count, 0) as \"request_count!: i32\",\n            COALESCE(token_count, 0) as \"token_count!: i32\"\n        FROM app_api_usage\n        WHERE endpoint = $1 AND day_bucket = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "request_count!: i32",
+        "ordinal": 0,
+        "type_info": "Null"
+      },
+      {
+        "name": "token_count!: i32",
+        "ordinal": 1,
+        "type_info": "Null"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "ab59971c8ac3798e425cc87f3b80c4150c759f75a208e56ea69faeae0ee04058"
+}

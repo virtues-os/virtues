@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM wiki_citations WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "f07d329105988c8a4ce197282602cf0f3fcf4719a3e87cea9b2788bba4b65f6e"
+}

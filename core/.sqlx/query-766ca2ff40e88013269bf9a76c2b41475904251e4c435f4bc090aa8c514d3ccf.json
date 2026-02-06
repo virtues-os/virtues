@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT id\n        FROM elt_source_connections\n        WHERE device_id = $1 AND source = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "766ca2ff40e88013269bf9a76c2b41475904251e4c435f4bc090aa8c514d3ccf"
+}
