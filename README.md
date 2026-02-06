@@ -1,256 +1,180 @@
-![Virtues Cover](.github/images/cover3.png)
+![Virtues](.github/images/cover3.png)
 
 # Virtues
 
-Personal data ELT platform. Extract data from Google, iOS, Mac, Notion → Store in SQLite + S3 → Query with SQL.
+A private intelligence that connects your digital life — health, finance, location, conversations — into a coherent, queryable picture of who you are. Self-hosted or cloud.
 
-> **Status**: Active development, beware. Things will break.
+> **Status**: Public beta. Actively developed. Expect rough edges.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT + ELv2](https://img.shields.io/badge/License-MIT%20%2B%20ELv2-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
 
-## What It Is
+## What It Does
 
-Virtues is a single-user ELT pipeline for personal data:
+Virtues replaces a fragmented app ecosystem with a single, unified system:
 
-- **Extract**: Pull from APIs (Google, Notion) and devices (iOS, Mac)
-- **Load**: Store raw streams in SQLite + S3 with full fidelity
-- **Transform**: Normalize into ontologies for cross-source analysis
+- **Ingest** your data from APIs (Google, Notion, Plaid) and devices (iOS sensors, Mac activity)
+- **Build** a living knowledge graph — people, places, organizations, events — linked to your raw data
+- **Write** an autobiography that maintains itself — daily summaries, narrative arcs, temporal navigation
+- **Query** your life with an AI that has real context — not a chatbot guessing, but an agent with access to your actual data via SQL, web search, and code execution
 
-Self-hosted, open source, Rust-based. Your data stays on your infrastructure.
-
-## Why Monolithic Rust?
-
-Unlike enterprise tools (Airbyte: Docker per source), Virtues uses **one Rust package** for all sources:
-
-**Personal data is different:**
-
-- **User experience first**: One person manages this (not a full-time ELT team). Must be maintain-less and simple.
-- **Device coupling**: iOS/Mac apps need direct hardware access (HealthKit, Location, Microphone) that can't run in containers.
-- **Real-time hot pipeline**: Sub-second latency for streaming data enables proactive personal AI (future).
-- **Single-user**: No multi-tenancy overhead = simpler code, better performance.
-
-**Extensibility**: Implement `Stream` trait in `core/src/sources/{provider}/` for custom sources.
-
-## Implementation Status
-
-| Source | Stream | Status |
-|--------|--------|--------|
-| Virtues | App Export | ✅ |
-| Google | Calendar | ✅ |
-| Google | Gmail | ✅ |
-| iOS | HealthKit | ✅ |
-| iOS | Location | ✅ |
-| iOS | Microphone | ✅ |
-| Mac | Apps | ✅ |
-| Mac | Browser | ✅ |
-| Mac | iMessage | ✅ |
-| Notion | Pages | ✅ |
-
-## Quick Start
-
-```bash
-# Clone and setup
-git clone https://github.com/virtues-os/virtues
-cd virtues
-
-# Start everything (infrastructure + migrations + servers)
-make dev
-
-# In separate terminals, run:
-cd apps/web && npm run build      # Build web app for production serving
-cd core && cargo run -- server    # Terminal 1: API server (serves static files too)
-
-# Optional: For hot reload during web development
-cd apps/web && npm run dev        # Terminal 2: Web UI dev server (optional)
-```
-
-Access: `http://localhost:8000` (backend serves web UI) | `http://localhost:5173` (dev server - optional)
-
-**First time setup**: `make dev` handles everything - Docker containers, database migrations, and SQLx cache generation.
+All of it runs on a single Rust server with a SQLite database and S3 storage. Your data stays on your infrastructure.
 
 ## Architecture
 
 ```
-Sources (OAuth: Google, Notion | Device: iOS, Mac)
-   ↓
-Ingest API / StreamWriter
-   ↓
-Storage (S3: raw JSONL streams | SQLite: metadata + ontologies)
-   ↓
-Ontologies (normalized domain primitives: health_*, location_*, social_*, etc.)
-   ↓
-Query with SQL
+┌─────────────────────────────────────────────────────────────┐
+│  Sources                                                    │
+│  OAuth: Google Calendar · Notion · Plaid                    │
+│  Device: HealthKit · Location · Microphone · Contacts       │
+│          Barometer · Battery · FinanceKit · EventKit        │
+└──────────────────────┬──────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Virtues Core (Rust · port 8000)                            │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌───────────┐  │
+│  │ Ingest   │  │ Transform │  │ Wiki &   │  │ AI Agent  │  │
+│  │ Engine   │  │ Pipeline  │  │ Entities │  │ + Tools   │  │
+│  └──────────┘  └───────────┘  └──────────┘  └───────────┘  │
+│  Storage: SQLite (metadata + ontologies) · S3 (raw streams) │
+└──────────────────────┬──────────────────────────────────────┘
+                       ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Tollbooth (Rust sidecar · port 9002)                       │
+│  API proxy with per-user budget enforcement                 │
+│  Routes to 100+ LLM providers via Vercel AI Gateway         │
+│  Holds all external API keys (AI, Exa, Plaid, Google, etc.) │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Extract:**
+**Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **Tollbooth** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
-- **Source** = Data origin (e.g., iOS, Google, Notion)
-- **Stream** = Raw, non-normalized data from a source (e.g., iOS → healthkit, location, microphone)
+## Data Sources
 
-**Load:**
+| Source | Streams | Method |
+|--------|---------|--------|
+| Google | Calendar | OAuth |
+| Notion | Pages | OAuth |
+| Plaid | Transactions, Accounts | OAuth |
+| iOS | HealthKit, Location, Microphone, Contacts, Battery, Barometer, FinanceKit, EventKit | Device |
+| macOS | Apps, Browser, iMessage | Device |
 
-- **Storage** = S3 for raw JSONL streams, SQLite for metadata + ontology tables
+Extensible: implement the `Stream` trait in `core/src/sources/{provider}/` to add new sources.
 
-**Transform:**
+## Features
 
-- **Ontologies** = Normalized domain tables for cross-source analysis (e.g., health_heart_rate, location_point, social_email)
+**Knowledge Graph** — People, places, organizations, and events extracted from your data. Entity resolution links mentions across sources (the "Sarah" in your calendar is the same one in your contacts).
 
-**Core**: Rust library with OAuth, schedulers, and device processors
-**Clients**: iOS/Mac apps push real-time data to ingestion server
+**Autobiography** — Daily summaries written from your data. Temporal navigation by day and year. Narrative structure: Telos (life purpose) → Acts (multi-year arcs) → Chapters → Days.
 
-## Database Schema
+**AI Chat** — Multi-model chat (Claude, GPT, Gemini, etc.) with tools:
 
-### Table Naming Convention
+- `sql_query` — read-only SQL against your ontology tables
+- `web_search` — Exa-powered web research
+- `code_interpreter` — Python sandbox (pandas, matplotlib, scipy)
+- `create_page` / `edit_page` — AI-authored documents
+- MCP server support for custom tool integrations
 
-| Prefix | Purpose | Examples |
-|--------|---------|----------|
-| `elt_*` | ELT pipeline infrastructure | `elt_source_connections`, `elt_stream_connections`, `elt_jobs` |
-| `data_*` | Normalized ontology data | `data_health_heart_rate`, `data_location_point`, `data_financial_transaction` |
-| `app_*` | Application config and state | `app_models`, `app_agents`, `app_user_profile`, `app_chat_sessions` |
-| `wiki_*` | Entity graph | `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_things` |
-| `narrative_*` | Narrative structure | `narrative_telos`, `narrative_acts`, `narrative_chapters` |
+**Pages** — Rich documents with version history, cover images, and AI editing.
 
-This convention separates concerns:
-- **`elt_*`** tables are pipeline plumbing (sources, streams, jobs, checkpoints)
-- **`data_*`** tables hold the actual user data (your ontologies)
-- **`app_*`** tables manage application state (models, agents, user preferences)
-- **`wiki_*`** tables form the entity graph (people, places, organizations)
-- **`narrative_*`** tables structure your life story
+**Drive** — File storage with S3 backend. Upload, organize, and reference files in chat.
 
-## Development
+**Developer Tools** — SQL console, lake browser, job inspector, sitemap viewer.
+
+## Quick Start
+
+### Prerequisites
+
+- Rust 1.75+
+- Node.js 18+ and pnpm
+- Docker (for local S3 via MinIO, optional)
+
+### Setup
 
 ```bash
-# Start development environment
-make dev              # Runs migrations and starts services
-
-# Run tests
-make test-rust        # Rust tests
-make test-web         # Web tests
-
-# Database commands
-make migrate          # Run migrations
-make prepare          # Regenerate SQLx cache (after schema changes)
-make db-reset         # Reset database (WARNING: deletes data)
-
-# View all commands
-make help
+git clone https://github.com/virtues-os/virtues
+cd virtues
+cp .env.example .env
+# Edit .env with your API keys (see comments in .env.example)
 ```
 
-### Testing Onboarding
-
-When testing the onboarding flow, you can reset your user status directly from the CLI without wiping your entire database:
+### Run
 
 ```bash
-# Reset onboarding status to 'welcome' (keeps your data)
-cd core && cargo run -p virtues -- onboarding reset
+# Terminal 1: Start Core server
+cd core && cargo run -- server
 
-# Full Reset: Back to 'welcome' AND wipe user-generated data (telos, aspirations, sources, etc.)
-cd core && cargo run -p virtues -- onboarding reset --full
+# Terminal 2: Build and serve web UI (production mode)
+cd apps/web && pnpm install && pnpm build
+
+# Or for development with hot reload:
+cd apps/web && pnpm dev
 ```
 
-## OAuth Testing Workflow
+Access: `http://localhost:8000` (Core serves the built web UI) or `http://localhost:5173` (dev server with hot reload).
 
-### Production-like Testing (Recommended)
-
-For production-like OAuth flows where the backend serves the static web app:
-
-1. Build the web app:
-   ```bash
-   cd apps/web && npm run build
-   ```
-
-2. Start the backend (serves static files from `apps/web/build`):
-   ```bash
-   cd core && cargo run -- server
-   ```
-
-3. Access the app at `http://localhost:8000`
-
-4. OAuth flow:
-   - Navigate to `http://localhost:8000/data/sources/add`
-   - Authorize with Google/Notion
-   - Google redirects to `http://localhost:8000/oauth/callback` (backend)
-   - Backend processes tokens and returns HTML redirect
-   - Browser redirects to `http://localhost:8000/data/sources/add?source_id=...&connected=true`
-
-### Development with Hot Reload
-
-For active web development with hot reload:
-
-1. Start backend server:
-   ```bash
-   cd core && cargo run -- server
-   ```
-
-2. Start web dev server in a separate terminal:
-   ```bash
-   cd apps/web && npm run dev
-   ```
-
-3. Access the app at `http://localhost:5173` for hot reload
-
-4. OAuth flow:
-   - Navigate to `http://localhost:5173/data/sources/add`
-   - Note: OAuth callbacks will still redirect to `http://localhost:8000/oauth/callback` (backend)
-   - The dev server won't receive OAuth callbacks - the backend handles them directly
-   - After OAuth, you'll be redirected to the production server at `http://localhost:8000`
-
-**Important**: When using the dev server with hot reload, the OAuth flow will redirect you to the production backend (8000). This is expected behavior as the backend handles all OAuth callbacks in the backend-first paradigm.
-
-**Requirements**:
-
-- Docker & Docker Compose (for infrastructure)
-- Rust 1.70+ (for core server)
-- Node.js 18+ (for web UI)
-- Make (for build commands)
-
-## iOS/Mac Development with ngrok
-
-iOS apps require HTTPS connections for production use. For local development, use ngrok to expose your Rust backend via a secure HTTPS tunnel:
+### Tollbooth (required for AI features)
 
 ```bash
-# Install ngrok (one-time setup)
-brew install ngrok
+# Terminal 3: Start Tollbooth sidecar
+cd apps/tollbooth && cargo run
+```
 
-# Sign up for free account and add your authtoken
-ngrok config add-authtoken YOUR_TOKEN
+Tollbooth runs on port 9002. Core connects to it via `TOLLBOOTH_URL=http://localhost:9002`. See `.env.example` for required API keys (`AI_GATEWAY_API_KEY`, `TOLLBOOTH_INTERNAL_SECRET`).
 
-# Start Rust server with ngrok tunnel (automatically starts both services)
+## Deployment
+
+**Self-hosted**: Run Core + Tollbooth on any machine. SQLite for the database, local filesystem or S3 for storage. Single binary, no external dependencies beyond what you choose to connect.
+
+**Cloud (managed)**: Virtues Cloud provisions a dedicated, isolated instance for each user — your own server, your own database, your own encryption keys. No shared infrastructure, no pooled data. Managed by [Atlas](https://github.com/virtues-os/atlas), our open-source orchestration layer.
+
+## iOS App
+
+The iOS companion app streams real-time sensor data to your Virtues instance:
+
+```bash
+# Expose your local server via HTTPS for iOS development
 cd core && cargo run -- ngrok
 ```
 
-**Get your HTTPS URL:**
+The ngrok command outputs an HTTPS URL. Enter it in the iOS app settings to pair your device. See `apps/ios/` for the Xcode project.
 
-The ngrok command will display your HTTPS URL in the terminal, for example:
+## Project Structure
+
 ```
-🌐 HTTPS URL: https://abc123.ngrok-free.app
+virtues/
+├── core/                    # Rust backend (API server, ingestion, AI agent, wiki)
+│   ├── src/
+│   │   ├── agent/           # AI agent loop, prompts, tool execution
+│   │   ├── api/             # HTTP route handlers
+│   │   ├── sources/         # Data source implementations (Google, iOS, Plaid, etc.)
+│   │   ├── entity_resolution/  # People, places extraction from raw data
+│   │   ├── storage/         # S3 and local filesystem abstraction
+│   │   └── tools/           # AI tool implementations (SQL, search, code, pages)
+│   └── migrations/          # SQLite schema migrations
+├── apps/
+│   ├── web/                 # SvelteKit web UI
+│   ├── tollbooth/           # Rust API proxy sidecar
+│   └── ios/                 # iOS companion app (Swift)
+├── packages/
+│   └── virtues-registry/    # Shared Rust crate (models, sources, tools, personas)
+└── deploy/                  # Nomad job specs, cluster config, deployment scripts
 ```
 
-Use this URL in your iOS/Mac app settings.
+## Database Schema
 
-**Note:** Free ngrok URLs change each time you restart. For persistent URLs, upgrade to a paid ngrok plan.
-
-**Alternative commands:**
-
-Start server separately without ngrok:
-```bash
-cd core && cargo run -- server
-```
-
-Start ngrok manually:
-```bash
-ngrok http 8000
-```
+| Prefix | Purpose | Examples |
+|--------|---------|----------|
+| `elt_*` | Pipeline infrastructure | `elt_source_connections`, `elt_stream_connections`, `elt_jobs` |
+| `data_*` | Normalized ontology data | `data_health_heart_rate`, `data_location_point`, `data_financial_transaction` |
+| `app_*` | Application state | `app_chat_sessions`, `app_user_profile` |
+| `wiki_*` | Entity graph | `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_events` |
+| `narrative_*` | Life narrative | `narrative_telos`, `narrative_acts`, `narrative_chapters` |
 
 ## License
 
-MIT (core library) + Elastic License v2 (ML modules)
-
-See [LICENSE](LICENSE) for details.
+MIT (core components) + Elastic License v2 (enterprise features). Self-host freely. See [LICENSE](LICENSE) for details.
 
 ---
 
-<p align="center">
-  <i>Your data. Your infrastructure. Your life.</i>
-</p>
+<p align="center"><i>Your data. Your infrastructure. Your narrative.</i></p>
