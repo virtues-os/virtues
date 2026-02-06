@@ -28,14 +28,16 @@ variable "tag" {
 locals {
   tier_config = {
     standard = {
-      memory     = 2048
-      memory_max = 2048   # No swap
-      cpu        = 1000   # 1 full core
+      memory         = 2048
+      memory_max     = 2048    # No swap
+      cpu            = 1000    # 1 full core
+      ephemeral_disk = 2048    # Matches gVisor overlay2 limit (2GB)
     }
     pro = {
-      memory     = 8192
-      memory_max = 8192   # No swap, guaranteed RAM
-      cpu        = 4000   # 4 cores
+      memory         = 8192
+      memory_max     = 8192    # No swap, guaranteed RAM
+      cpu            = 4000    # 4 cores
+      ephemeral_disk = 5120    # Matches gVisor overlay2 limit (5GB)
     }
   }
 
@@ -107,9 +109,10 @@ job "virtues-tenant-${var.subdomain}" {
       read_only = false
     }
 
-    # Ephemeral disk for scratch space
+    # Ephemeral disk — sized to match gVisor overlay2 limit per tier.
+    # This gives Nomad scheduling awareness of overlay disk consumption.
     ephemeral_disk {
-      size    = 500  # MB
+      size    = local.resources.ephemeral_disk
       migrate = false
       sticky  = false
     }
@@ -120,9 +123,13 @@ job "virtues-tenant-${var.subdomain}" {
 
       config {
         image   = "${var.ghcr_repo}/virtues-core:${var.tag}"
-        runtime = "io.containerd.runsc.v1"
 
-        # gVisor-specific options are configured in /etc/containerd/runsc.toml
+        # Tier-specific gVisor runtime with overlay2 enforcement:
+        #   runsc-standard: 2GB root filesystem overlay
+        #   runsc-pro:      5GB root filesystem overlay
+        # The /data bind mount (SQLite) is NOT governed by overlay —
+        # it uses ext4 project quotas set during tenant provisioning.
+        runtime = "io.containerd.runsc-${var.tier}.v1"
       }
 
       # Mount volume for SQLite database
