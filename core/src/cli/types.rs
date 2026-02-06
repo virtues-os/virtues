@@ -2,6 +2,15 @@
 
 use clap::{Parser, Subcommand};
 
+/// Default port: reads NOMAD_PORT_http env var (Nomad host networking),
+/// falling back to 8000 for local development.
+fn default_port() -> u16 {
+    std::env::var("NOMAD_PORT_http")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8000)
+}
+
 #[derive(Parser)]
 #[command(name = "virtues")]
 #[command(version, about = "Virtues personal data platform CLI", long_about = None)]
@@ -24,8 +33,8 @@ pub enum Commands {
         #[arg(long, default_value = "0.0.0.0")]
         host: String,
 
-        /// Port to bind to
-        #[arg(long, default_value = "8000")]
+        /// Port to bind to (defaults to NOMAD_PORT_http env var, or 8000)
+        #[arg(long, default_value_t = default_port())]
         port: u16,
     },
 
@@ -69,11 +78,7 @@ pub enum Commands {
 
     /// Start server with ngrok HTTPS tunnel (for iOS/Mac development)
     Ngrok,
-
-
 }
-
-
 
 #[derive(Subcommand)]
 pub enum CatalogCommands {

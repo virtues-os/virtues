@@ -661,11 +661,7 @@ job "virtues-tenant-${SUBDOMAIN}" {
     }
 
     network {
-      mode = "bridge"
-
-      port "http" {
-        to = 8000
-      }
+      port "http" {}
     }
 
     # Host volume for SQLite database (ext4 project quota enforced)

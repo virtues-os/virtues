@@ -106,10 +106,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("✅ Seeding complete");
         println!();
 
+        // In production (Nomad), NOMAD_PORT_http is set to the dynamically allocated port.
+        // Fall back to 8000 for local development.
+        let port = env::var("NOMAD_PORT_http")
+            .ok()
+            .and_then(|v| v.parse::<u16>().ok())
+            .unwrap_or(8000);
+
         Cli {
             command: Some(Commands::Server {
                 host: "0.0.0.0".to_string(),
-                port: 8000,
+                port,
             }),
         }
     } else {
