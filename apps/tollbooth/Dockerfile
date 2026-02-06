@@ -4,7 +4,7 @@
 # ============================================================================
 # Stage 1: Plan dependencies (cargo-chef)
 # ============================================================================
-FROM rust:1.83-slim-bookworm AS planner
+FROM rust:1.88-slim-bookworm AS planner
 
 RUN cargo install cargo-chef
 
