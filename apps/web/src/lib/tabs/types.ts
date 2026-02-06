@@ -11,6 +11,7 @@
 export type TabType =
 	// Entity namespaces (SQLite backend)
 	| 'chat' // Chat conversations: /, /chat, /chat/chat_{id}
+	| 'chat-history' // Chat history list: /chat-history
 	| 'page' // User documents: /page, /page/page_{id}
 	| 'wiki' // Wiki overview: /wiki
 	| 'person' // Wiki people: /person, /person/person_{id}
@@ -95,39 +96,6 @@ export function isTrashTab(tab: Tab): tab is Tab & { type: 'trash' } {
 
 export function isVirtuesTab(tab: Tab): tab is Tab & { type: 'virtues' } {
 	return tab.type === 'virtues';
-}
-
-// Fallback view preference type
-export type FallbackView = 'empty' | 'chat' | 'conway' | 'dog-jump' | 'day-today';
-
-// Domain groups for hybrid navigation (same domain = navigate in place)
-export type TabDomain = 'chat' | 'page' | 'wiki' | 'source' | 'storage' | 'virtues';
-
-export function getTabDomain(type: TabType): TabDomain {
-	switch (type) {
-		case 'chat':
-			return 'chat';
-		case 'page':
-			return 'page';
-		case 'wiki':
-		case 'person':
-		case 'place':
-		case 'org':
-		case 'day':
-		case 'year':
-			return 'wiki';
-		case 'source':
-			return 'source';
-		case 'drive':
-		case 'trash':
-			return 'storage';
-		case 'virtues':
-		case 'conway':
-		case 'dog-jump':
-			return 'virtues';
-		default:
-			return 'chat';
-	}
 }
 
 // Pane state - unified model where every tab lives in a pane

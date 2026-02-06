@@ -6,7 +6,11 @@
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import { type SidebarDndItem } from "$lib/stores/dndManager.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
-	import { updateView, removeViewItem, type ViewEntity } from "$lib/api/client";
+	import {
+		updateView,
+		removeViewItem,
+		type ViewEntity,
+	} from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import type { ViewSummary } from "$lib/api/client";
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
@@ -83,11 +87,12 @@
 	}
 
 	// Track DnD items per workspace (combined root items + folders)
-	let workspaceContentByWorkspace = $state<Map<string, WorkspaceDndItem[]>>(new Map());
+	let workspaceContentByWorkspace = $state<Map<string, WorkspaceDndItem[]>>(
+		new Map(),
+	);
 
 	// Flag to prevent $effect from running during DnD operations
 	let isDndInProgress = $state(false);
-
 
 	// Sync DnD items when workspace data changes
 	// IMPORTANT: Merges items and folders together, sorted by sort_order
@@ -114,7 +119,7 @@
 					itemType: "root-item",
 					entity,
 					sortOrder: i * 10, // Use index-based ordering
-					sourceSpaceId: ws.id
+					sourceSpaceId: ws.id,
 				});
 			}
 
@@ -129,13 +134,13 @@
 					itemType: "folder",
 					view,
 					sortOrder: view.sort_order ?? 0,
-					sourceSpaceId: ws.id
+					sourceSpaceId: ws.id,
 				});
 			}
 
 			// De-duplicate by URL before sorting (prevents "each_key_duplicate" errors)
 			const seenUrls = new Set<string>();
-			const dedupedItems = contentItems.filter(item => {
+			const dedupedItems = contentItems.filter((item) => {
 				if (seenUrls.has(item.url)) return false;
 				seenUrls.add(item.url);
 				return true;
@@ -173,21 +178,28 @@
 	// Current transition workspaces [prev, current, next]
 	// Derived from currentIndex (local) rather than activeSpaceId (store) so that
 	// scrollProgress and the workspace info update in the same render frame.
-	const transitionWorkspaces = $derived.by((): [WorkspaceInfo | null, WorkspaceInfo, WorkspaceInfo | null] => {
-		return [
-			getWorkspaceInfo(currentIndex - 1),
-			getWorkspaceInfo(currentIndex) || { name: "Workspace", icon: null, accentColor: null, isSystem: false },
-			getWorkspaceInfo(currentIndex + 1),
-		];
-	});
+	const transitionWorkspaces = $derived.by(
+		(): [WorkspaceInfo | null, WorkspaceInfo, WorkspaceInfo | null] => {
+			return [
+				getWorkspaceInfo(currentIndex - 1),
+				getWorkspaceInfo(currentIndex) || {
+					name: "Workspace",
+					icon: null,
+					accentColor: null,
+					isSystem: false,
+				},
+				getWorkspaceInfo(currentIndex + 1),
+			];
+		},
+	);
 
 	// Handle pointer/touch down - disable snap for free dragging (Arc-style)
 	function handlePointerDown() {
 		isPointerDown = true;
 		if (viewportEl) {
 			// Disable snap and smooth behavior for instant 1:1 tracking
-			viewportEl.style.scrollSnapType = 'none';
-			viewportEl.style.scrollBehavior = 'auto';
+			viewportEl.style.scrollSnapType = "none";
+			viewportEl.style.scrollBehavior = "auto";
 		}
 	}
 
@@ -205,8 +217,8 @@
 		if (viewportEl) {
 			// Re-enable smooth behavior first, then snap
 			// This ensures the snap animation is smooth
-			viewportEl.style.scrollBehavior = 'smooth';
-			viewportEl.style.scrollSnapType = 'x mandatory';
+			viewportEl.style.scrollBehavior = "smooth";
+			viewportEl.style.scrollSnapType = "x mandatory";
 
 			// Wait for snap animation to complete before finalizing
 			// The scroll events from snapping will reset this timeout,
@@ -240,17 +252,20 @@
 		const minScroll = Math.max(0, (scrollStartIndex - 1) * SLIDE_WIDTH);
 		const maxScroll = Math.min(
 			(spaceStore.spaces.length - 1) * SLIDE_WIDTH,
-			(scrollStartIndex + 1) * SLIDE_WIDTH
+			(scrollStartIndex + 1) * SLIDE_WIDTH,
 		);
 
 		if (scrollLeft < minScroll || scrollLeft > maxScroll) {
-			const clampedScroll = Math.max(minScroll, Math.min(maxScroll, scrollLeft));
+			const clampedScroll = Math.max(
+				minScroll,
+				Math.min(maxScroll, scrollLeft),
+			);
 			viewportEl.scrollLeft = clampedScroll;
 			return;
 		}
 
 		// Calculate progress relative to current index (-1 to 1)
-		const offset = scrollLeft - (currentIndex * SLIDE_WIDTH);
+		const offset = scrollLeft - currentIndex * SLIDE_WIDTH;
 		pendingProgress = Math.max(-1, Math.min(1, offset / SLIDE_WIDTH));
 
 		// Schedule ONE update per frame using rAF
@@ -332,9 +347,9 @@
 		currentIndex = targetIndex;
 
 		// Instant scroll to target (no smooth scroll = no scroll events)
-		viewportEl.style.scrollBehavior = 'auto';
+		viewportEl.style.scrollBehavior = "auto";
 		viewportEl.scrollLeft = targetIndex * SLIDE_WIDTH;
-		viewportEl.style.scrollBehavior = '';
+		viewportEl.style.scrollBehavior = "";
 
 		// Animate title transition: direction → 0
 		programmaticAnimCancelled = false;
@@ -346,7 +361,8 @@
 		const duration = 200; // ms
 
 		function animateTitle(now: number) {
-			if (programmaticAnimCancelled || capturedToken !== localCancelToken) return;
+			if (programmaticAnimCancelled || capturedToken !== localCancelToken)
+				return;
 			const elapsed = now - startTime;
 			const t = Math.min(1, elapsed / duration);
 			// Ease out cubic
@@ -375,7 +391,7 @@
 	$effect(() => {
 		if (!viewportEl || !storeReady || isScrolling) return;
 		const targetIndex = spaceStore.spaces.findIndex(
-			(w) => w.id === spaceStore.activeSpaceId
+			(w) => w.id === spaceStore.activeSpaceId,
 		);
 		if (targetIndex >= 0 && targetIndex !== currentIndex) {
 			navigateToIndex(targetIndex);
@@ -390,27 +406,31 @@
 		}
 
 		// Initialize workspace store
-		spaceStore.init()
+		spaceStore
+			.init()
 			.then(() => {
 				// Set initial scroll position BEFORE storeReady
 				// This prevents the $effect from triggering a smooth scroll animation
 				if (viewportEl) {
 					const idx = spaceStore.spaces.findIndex(
-						(w) => w.id === spaceStore.activeSpaceId
+						(w) => w.id === spaceStore.activeSpaceId,
 					);
 					if (idx >= 0) {
 						currentIndex = idx;
 						// Temporarily disable smooth scroll for instant initial position
-						viewportEl.style.scrollBehavior = 'auto';
+						viewportEl.style.scrollBehavior = "auto";
 						viewportEl.scrollLeft = idx * SLIDE_WIDTH;
 						// Re-enable smooth scroll for user interactions
-						viewportEl.style.scrollBehavior = '';
+						viewportEl.style.scrollBehavior = "";
 					}
 				}
 				storeReady = true;
 			})
 			.catch((err) => {
-				console.error("[UnifiedSidebar] Failed to initialize workspace store:", err);
+				console.error(
+					"[UnifiedSidebar] Failed to initialize workspace store:",
+					err,
+				);
 				storeReady = true;
 			});
 
@@ -529,7 +549,9 @@
 		if (!activeSpace) return;
 		showIconPicker = false;
 		try {
-			await spaceStore.updateSpace(activeSpace.id, { icon: icon ?? undefined });
+			await spaceStore.updateSpace(activeSpace.id, {
+				icon: icon ?? undefined,
+			});
 		} catch (e) {
 			console.error("Failed to update workspace icon:", e);
 		}
@@ -545,7 +567,9 @@
 		const activeSpace = spaceStore.activeSpace;
 		if (!activeSpace) return;
 		try {
-			await spaceStore.updateSpace(activeSpace.id, { accent_color: color ?? undefined });
+			await spaceStore.updateSpace(activeSpace.id, {
+				accent_color: color ?? undefined,
+			});
 		} catch (e) {
 			console.error("Failed to update workspace color:", e);
 		}
@@ -570,28 +594,7 @@
 	}
 
 	function handleGoHome() {
-		// Navigate based on user's fallback preference
-		const pref = spaceStore.fallbackPreference;
-		switch (pref) {
-			case "chat":
-				handleNewChat();
-				break;
-			case "conway":
-				spaceStore.openTabFromRoute("/life", { preferEmptyPane: true });
-				break;
-			case "dog-jump":
-				spaceStore.openTabFromRoute("/jump", { preferEmptyPane: true });
-				break;
-			case "wiki-today": {
-				const today = new Date().toISOString().split("T")[0];
-				spaceStore.openTabFromRoute(`/wiki/${today}`, { preferEmptyPane: true });
-				break;
-			}
-			case "empty":
-			default:
-				handleNewChat();
-				break;
-		}
+		handleNewChat();
 	}
 
 	function toggleCollapse() {
@@ -614,9 +617,12 @@
 			namespace: "chat",
 			sort: "updated_at",
 			sort_dir: "desc",
-			limit: 20
+			limit: 20,
 		};
-		const view = await spaceStore.createSmartView("New Smart Folder", defaultConfig);
+		const view = await spaceStore.createSmartView(
+			"New Smart Folder",
+			defaultConfig,
+		);
 		if (view) {
 			pendingRenameViewId = view.id;
 		}
@@ -625,7 +631,7 @@
 	// Helper to get href for entity
 	function getHrefForEntity(entity: ViewEntity): string {
 		// If already a full path, use as-is
-		if (entity.id.startsWith('/')) {
+		if (entity.id.startsWith("/")) {
 			return entity.id;
 		}
 		// Otherwise construct from namespace and id
@@ -646,31 +652,41 @@
 	// rapidly, making it impossible to hover on a folder long enough to trigger expand
 	function handlePointerMove(e: PointerEvent) {
 		// Get element under the cursor (skip the dragged item using pointer position)
-		const elementsUnderCursor = document.elementsFromPoint(e.clientX, e.clientY);
+		const elementsUnderCursor = document.elementsFromPoint(
+			e.clientX,
+			e.clientY,
+		);
 
 		// Find the currently dragged element to exclude it and its children
-		const draggedItem = document.querySelector('.sidebar-dragging');
+		const draggedItem = document.querySelector(".sidebar-dragging");
 
 		// Find a folder element under the cursor (skip the dragged element and its children)
 		let folderEl: HTMLElement | null = null;
 		for (const el of elementsUnderCursor) {
 			// Skip the dragging element and anything inside it
-			if (el.classList.contains('sidebar-dragging')) continue;
+			if (el.classList.contains("sidebar-dragging")) continue;
 			if (draggedItem?.contains(el)) continue;
 
 			const htmlEl = el as HTMLElement;
 			// Look for a folder - check both ancestor (closest) and descendant (querySelector)
-			const folder = htmlEl.closest('[data-folder-id]') as HTMLElement | null
-				|| htmlEl.querySelector?.('[data-folder-id]') as HTMLElement | null;
+			const folder =
+				(htmlEl.closest("[data-folder-id]") as HTMLElement | null) ||
+				(htmlEl.querySelector?.(
+					"[data-folder-id]",
+				) as HTMLElement | null);
 
 			// Skip if the folder is the dragged item or inside it
-			if (folder && !folder.classList.contains('sidebar-dragging') && !draggedItem?.contains(folder)) {
+			if (
+				folder &&
+				!folder.classList.contains("sidebar-dragging") &&
+				!draggedItem?.contains(folder)
+			) {
 				folderEl = folder;
 				break;
 			}
 		}
 
-		const folderId = folderEl?.getAttribute('data-folder-id');
+		const folderId = folderEl?.getAttribute("data-folder-id");
 
 		// Clear timer if we moved to a different folder (or no folder)
 		if (folderId !== pendingExpandFolderId) {
@@ -679,18 +695,20 @@
 
 		// Start expand timer for collapsed folders
 		if (folderId && !expandTimer && folderEl) {
-			const isExpanded = folderEl.classList.contains('expanded');
-			const isSmartView = folderEl.classList.contains('smart-view');
+			const isExpanded = folderEl.classList.contains("expanded");
+			const isSmartView = folderEl.classList.contains("smart-view");
 
 			if (!isExpanded && !isSmartView) {
 				pendingExpandFolderId = folderId;
 				// Add visual feedback immediately
-				folderEl.classList.add('expand-pending');
+				folderEl.classList.add("expand-pending");
 
 				expandTimer = setTimeout(() => {
 					// Dispatch custom event to expand folder
-					folderEl?.dispatchEvent(new CustomEvent('expandfolder', { bubbles: true }));
-					folderEl?.classList.remove('expand-pending');
+					folderEl?.dispatchEvent(
+						new CustomEvent("expandfolder", { bubbles: true }),
+					);
+					folderEl?.classList.remove("expand-pending");
 					expandTimer = null;
 					pendingExpandFolderId = null;
 				}, HOVER_EXPAND_DELAY_MS);
@@ -701,13 +719,13 @@
 	function startPointerTracking() {
 		if (isPointerTrackingActive) return;
 		isPointerTrackingActive = true;
-		document.addEventListener('pointermove', handlePointerMove);
+		document.addEventListener("pointermove", handlePointerMove);
 	}
 
 	function stopPointerTracking() {
 		if (!isPointerTrackingActive) return;
 		isPointerTrackingActive = false;
-		document.removeEventListener('pointermove', handlePointerMove);
+		document.removeEventListener("pointermove", handlePointerMove);
 	}
 
 	// Initialize SortableJS for each workspace when mounted
@@ -726,24 +744,26 @@
 	function initSortable(el: HTMLElement, workspaceId: string) {
 		return Sortable.create(el, {
 			group: {
-				name: 'sidebar',
+				name: "sidebar",
 				pull: true,
-				put: true
+				put: true,
 			},
 			animation: ANIMATION_DURATION_MS,
 			fallbackOnBody: true,
 			swapThreshold: 0.65,
 			emptyInsertThreshold: 20, // Allow drops into empty workspaces
-			ghostClass: 'sidebar-ghost',
-			chosenClass: 'sidebar-chosen',
-			dragClass: 'sidebar-dragging',
+			ghostClass: "sidebar-ghost",
+			chosenClass: "sidebar-chosen",
+			dragClass: "sidebar-dragging",
 
 			// onStart fires when drag actually begins (after delay)
 			onStart(evt: SortableEvent) {
 				// Hide folder contents during drag to make it easier to position
-				const expandableContent = evt.item.querySelector('.sidebar-expandable-content');
+				const expandableContent = evt.item.querySelector(
+					".sidebar-expandable-content",
+				);
 				if (expandableContent instanceof HTMLElement) {
-					expandableContent.style.display = 'none';
+					expandableContent.style.display = "none";
 				}
 				// Start tracking pointer for hover-to-expand
 				startPointerTracking();
@@ -755,20 +775,35 @@
 					// CAPTURE the FULL intended order from DOM BEFORE removing the element
 					// Must include BOTH items and folders for proper interleaving
 					const container = evt.to;
-					const domItems = Array.from(container.querySelectorAll(':scope > .sidebar-dnd-item'));
+					const domItems = Array.from(
+						container.querySelectorAll(
+							":scope > .sidebar-dnd-item",
+						),
+					);
 
-					const intendedFullOrder: Array<{ type: 'item' | 'folder'; url: string }> = [];
+					const intendedFullOrder: Array<{
+						type: "item" | "folder";
+						url: string;
+					}> = [];
 					for (const el of domItems) {
-						const url = el.getAttribute('data-url');
-						const isFolder = el.getAttribute('data-is-folder') === 'true';
+						const url = el.getAttribute("data-url");
+						const isFolder =
+							el.getAttribute("data-is-folder") === "true";
 						if (url) {
-							intendedFullOrder.push({ type: isFolder ? 'folder' : 'item', url });
+							intendedFullOrder.push({
+								type: isFolder ? "folder" : "item",
+								url,
+							});
 						}
 					}
 
 					// Remove the DOM element SortableJS added - we'll reload from API
 					evt.item.remove();
-					await handleCrossZoneMove(evt, workspaceId, intendedFullOrder);
+					await handleCrossZoneMove(
+						evt,
+						workspaceId,
+						intendedFullOrder,
+					);
 				} catch (error) {
 					console.error("[UnifiedSidebar] Error in onAdd:", error);
 					// On error, invalidate cache to reset state
@@ -783,9 +818,11 @@
 			async onEnd(evt: SortableEvent) {
 				try {
 					// Restore folder content visibility
-					const expandableContent = evt.item.querySelector('.sidebar-expandable-content');
+					const expandableContent = evt.item.querySelector(
+						".sidebar-expandable-content",
+					);
 					if (expandableContent instanceof HTMLElement) {
-						expandableContent.style.display = '';
+						expandableContent.style.display = "";
 					}
 
 					// Stop pointer tracking
@@ -802,7 +839,7 @@
 					// Always cleanup stuck visual state
 					cleanupStuckDndState();
 				}
-			}
+			},
 		});
 	}
 
@@ -812,8 +849,10 @@
 			expandTimer = null;
 		}
 		if (pendingExpandFolderId) {
-			const folderEl = document.querySelector(`[data-folder-id="${pendingExpandFolderId}"]`);
-			folderEl?.classList.remove('expand-pending');
+			const folderEl = document.querySelector(
+				`[data-folder-id="${pendingExpandFolderId}"]`,
+			);
+			folderEl?.classList.remove("expand-pending");
 			pendingExpandFolderId = null;
 		}
 	}
@@ -828,17 +867,19 @@
 		// Delay DOM cleanup to let SortableJS finish first
 		requestAnimationFrame(() => {
 			// Remove stuck classes from all elements - don't remove elements, just classes
-			document.querySelectorAll('.sidebar-ghost').forEach(el => {
-				el.classList.remove('sidebar-ghost');
+			document.querySelectorAll(".sidebar-ghost").forEach((el) => {
+				el.classList.remove("sidebar-ghost");
 			});
-			document.querySelectorAll('.sidebar-chosen, .sidebar-dragging').forEach(el => {
-				el.classList.remove('sidebar-chosen', 'sidebar-dragging');
-			});
-			document.querySelectorAll('.expand-pending').forEach(el => {
-				el.classList.remove('expand-pending');
+			document
+				.querySelectorAll(".sidebar-chosen, .sidebar-dragging")
+				.forEach((el) => {
+					el.classList.remove("sidebar-chosen", "sidebar-dragging");
+				});
+			document.querySelectorAll(".expand-pending").forEach((el) => {
+				el.classList.remove("expand-pending");
 			});
 			// Only remove sortable-fallback elements (these are definitely SortableJS artifacts)
-			document.querySelectorAll('.sortable-fallback').forEach(el => {
+			document.querySelectorAll(".sortable-fallback").forEach((el) => {
 				el.remove();
 			});
 		});
@@ -868,7 +909,10 @@
 			// Persist the reorder
 			await persistReorder(reorderedItems, workspaceId);
 		} catch (err) {
-			console.error("[UnifiedSidebar] Failed to persist drag operation, rolling back:", err);
+			console.error(
+				"[UnifiedSidebar] Failed to persist drag operation, rolling back:",
+				err,
+			);
 			workspaceContentByWorkspace = rollbackMap;
 			spaceStore.invalidateViewCache();
 		} finally {
@@ -877,18 +921,24 @@
 	}
 
 	// Persist reorder to backend
-	async function persistReorder(items: WorkspaceDndItem[], workspaceId: string) {
+	async function persistReorder(
+		items: WorkspaceDndItem[],
+		workspaceId: string,
+	) {
 		const rootItems: { url: string; sortOrder: number }[] = [];
 		const folderUpdates: { viewId: string; sortOrder: number }[] = [];
 
 		let itemCountSoFar = 0;
 		for (const item of items) {
-			if (item.itemType === 'root-item' && item.url) {
-				rootItems.push({ url: item.url, sortOrder: itemCountSoFar * 10 });
+			if (item.itemType === "root-item" && item.url) {
+				rootItems.push({
+					url: item.url,
+					sortOrder: itemCountSoFar * 10,
+				});
 				itemCountSoFar++;
-			} else if (item.itemType === 'folder' && item.view) {
-				const folderSortOrder = (itemCountSoFar * 10) - 5;
-				const viewId = item.id.replace('folder:', '');
+			} else if (item.itemType === "folder" && item.view) {
+				const folderSortOrder = itemCountSoFar * 10 - 5;
+				const viewId = item.id.replace("folder:", "");
 				folderUpdates.push({ viewId, sortOrder: folderSortOrder });
 			}
 		}
@@ -905,7 +955,7 @@
 
 		// Persist root items order
 		if (rootItems.length > 0) {
-			const urls = rootItems.map(r => r.url);
+			const urls = rootItems.map((r) => r.url);
 			await spaceStore.reorderSpaceItems(urls, workspaceId);
 		}
 	}
@@ -914,16 +964,17 @@
 	async function handleCrossZoneMove(
 		evt: SortableEvent,
 		workspaceId: string,
-		intendedFullOrder: Array<{ type: 'item' | 'folder'; url: string }>
+		intendedFullOrder: Array<{ type: "item" | "folder"; url: string }>,
 	) {
 		// Get the dropped item's data from the DOM element
 		const droppedEl = evt.item;
-		const itemUrl = droppedEl.getAttribute('data-url');
-		const sourceViewId = droppedEl.getAttribute('data-source-view-id');
-		const sourceIsSmartView = droppedEl.getAttribute('data-source-smart-view') === 'true';
+		const itemUrl = droppedEl.getAttribute("data-url");
+		const sourceViewId = droppedEl.getAttribute("data-source-view-id");
+		const sourceIsSmartView =
+			droppedEl.getAttribute("data-source-smart-view") === "true";
 
 		if (!itemUrl) {
-			console.warn('[UnifiedSidebar] Cross-zone drop missing item URL');
+			console.warn("[UnifiedSidebar] Cross-zone drop missing item URL");
 			return;
 		}
 
@@ -942,13 +993,13 @@
 
 		let itemCountSoFar = 0;
 		for (const entry of intendedFullOrder) {
-			if (entry.type === 'item') {
+			if (entry.type === "item") {
 				rootItemUrls.push(entry.url);
 				itemCountSoFar++;
 			} else {
 				// Folder - extract viewId from URL (/view/view_xxx)
-				const viewId = entry.url.replace('/view/', '');
-				const folderSortOrder = (itemCountSoFar * 10) - 5;
+				const viewId = entry.url.replace("/view/", "");
+				const folderSortOrder = itemCountSoFar * 10 - 5;
 				folderUpdates.push({ viewId, sortOrder: folderSortOrder });
 			}
 		}
@@ -969,17 +1020,23 @@
 	}
 
 	// Svelte action to initialize SortableJS on an element
-	function sortableAction(node: HTMLElement, params: { workspaceId: string }) {
+	function sortableAction(
+		node: HTMLElement,
+		params: { workspaceId: string },
+	) {
 		const sortable = initSortable(node, params.workspaceId);
 
 		return {
 			destroy() {
 				sortable.destroy();
-			}
+			},
 		};
 	}
 
-	function handleSidebarContextMenu(e: MouseEvent, workspace: typeof spaceStore.spaces[0]) {
+	function handleSidebarContextMenu(
+		e: MouseEvent,
+		workspace: (typeof spaceStore.spaces)[0],
+	) {
 		// Don't show create options for system workspace
 		if (workspace.is_system) return;
 
@@ -1006,12 +1063,11 @@
 	const STAGGER_DELAY = 30;
 
 	// Tailwind utility class strings
-	// Note: background-color transition (300ms) syncs with themes.css for smooth workspace theme changes
 	const sidebarClass = $derived.by(() =>
 		[
-			"relative h-full overflow-hidden bg-transparent",
-			"transition-[width,background-color,color] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
-			isCollapsed ? "w-6" : "w-52",
+			"sidebar-container relative h-full bg-transparent",
+			"transition-[width] duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]",
+			isCollapsed ? "sidebar-collapsed" : "w-52 overflow-hidden",
 		].join(" "),
 	);
 
@@ -1024,23 +1080,26 @@
 </script>
 
 <aside class={sidebarClass}>
-	<!-- Book Spine: When collapsed, the entire sidebar IS the clickable spine -->
+	<!-- Book Spine: When collapsed, show expand button on hover -->
 	{#if isCollapsed}
 		<button
-			class="group absolute inset-0 z-10 flex h-full w-full cursor-pointer items-center justify-center border-none bg-transparent"
+			class="sidebar-expand-button group absolute top-0 left-0 w-[36px] z-30 flex h-full cursor-pointer items-center justify-center border-none bg-transparent"
 			onclick={toggleCollapse}
 			aria-label="Expand sidebar"
 		>
 			<svg
-				class="h-4 w-4 -translate-x-1 opacity-0 transition-all duration-200 ease-[cubic-bezier(0.2,0,0,1)] group-hover:translate-x-0 group-hover:opacity-100 group-active:scale-95"
+				class="sidebar-expand-icon h-3.5 w-3.5 -translate-x-[3px] opacity-0 transition-all duration-200 ease-premium group-active:scale-95"
 				style="color: var(--color-foreground-subtle)"
-				viewBox="0 0 16 16"
-				fill="currentColor"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2"
+				stroke-linecap="round"
+				stroke-linejoin="round"
 			>
-				<path
-					d="M2 2.5A2.5 2.5 0 0 1 4.5 0h7A2.5 2.5 0 0 1 14 2.5v11a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 2 13.5v-11zM4.5 1A1.5 1.5 0 0 0 3 2.5v11A1.5 1.5 0 0 0 4.5 15h7a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 11.5 1h-7z"
-				/>
-				<path d="M5 4h6v1H5V4zm0 2h6v1H5V6zm0 2h3v1H5V8z" />
+				<!-- Double chevron right >> -->
+				<polyline points="6 17 11 12 6 7" />
+				<polyline points="13 17 18 12 13 7" />
 			</svg>
 		</button>
 	{/if}
@@ -1079,69 +1138,90 @@
 			ontouchstart={handleTouchStart}
 			ontouchend={handleTouchEnd}
 		>
-				{#each spaceStore.spaces as workspace (workspace.id)}
-					<nav
-						class="slide"
-						class:collapsed={isCollapsed}
-						oncontextmenu={(e) => handleSidebarContextMenu(e, workspace)}
-					>
-						{#if !storeReady}
-							<div class="loading-state">
-								<Icon icon="ri:loader-4-line" width="16" class="spinner" />
-								<span>Loading...</span>
-							</div>
-						{:else if workspace.is_system}
-							<!-- System workspace uses fixed code-driven navigation -->
-							<VirtuesWorkspaceNav collapsed={isCollapsed} />
-						{:else}
-							<!-- Unified workspace content (root items + folders together) -->
-							<!-- SortableJS handles drag-and-drop -->
-							{@const contentItems = workspaceContentByWorkspace.get(workspace.id) || []}
-							<div
-								class="workspace-content"
-								use:sortableAction={{ workspaceId: workspace.id }}
-							>
-								{#if contentItems.length === 0}
-									<div class="empty-state">
-										<p>This workspace is empty</p>
-										<p class="empty-hint">Drag items here or right-click to add folders</p>
+			{#each spaceStore.spaces as workspace (workspace.id)}
+				<nav
+					class="slide"
+					class:collapsed={isCollapsed}
+					oncontextmenu={(e) =>
+						handleSidebarContextMenu(e, workspace)}
+				>
+					{#if !storeReady}
+						<div class="loading-state">
+							<Icon
+								icon="ri:loader-4-line"
+								width="16"
+								class="spinner"
+							/>
+							<span>Loading...</span>
+						</div>
+					{:else if workspace.is_system}
+						<!-- System workspace uses fixed code-driven navigation -->
+						<VirtuesWorkspaceNav collapsed={isCollapsed} />
+					{:else}
+						<!-- Unified workspace content (root items + folders together) -->
+						<!-- SortableJS handles drag-and-drop -->
+						{@const contentItems =
+							workspaceContentByWorkspace.get(workspace.id) || []}
+						<div
+							class="workspace-content"
+							use:sortableAction={{ workspaceId: workspace.id }}
+						>
+							{#if contentItems.length === 0}
+								<div class="empty-state">
+									<p>This workspace is empty</p>
+									<p class="empty-hint">
+										Drag items here or right-click to add
+										folders
+									</p>
+								</div>
+							{:else}
+								{#each contentItems as item (item.id)}
+									<div
+										class="sidebar-dnd-item"
+										data-url={item.url}
+										data-is-folder={item.itemType ===
+										"folder"
+											? "true"
+											: null}
+										data-source-space-id={item.sourceSpaceId ||
+											null}
+										data-source-view-id={item.sourceViewId ||
+											null}
+										data-source-smart-view={item.sourceIsSmartView
+											? "true"
+											: null}
+									>
+										{#if item.itemType === "folder" && item.view}
+											<UnifiedFolder
+												view={item.view}
+												collapsed={isCollapsed}
+												autoFocusRename={pendingRenameViewId ===
+													item.view.id}
+												onRenameFocusConsumed={() =>
+													(pendingRenameViewId =
+														null)}
+											/>
+										{:else if item.entity}
+											<SidebarNavItem
+												item={{
+													id: item.entity.id,
+													type: "link",
+													label: item.entity.name,
+													icon:
+														item.entity.icon ||
+														"ri:file-text-line",
+													href: item.url,
+												}}
+												collapsed={isCollapsed}
+											/>
+										{/if}
 									</div>
-								{:else}
-									{#each contentItems as item (item.id)}
-										<div
-											class="sidebar-dnd-item"
-											data-url={item.url}
-											data-is-folder={item.itemType === 'folder' ? 'true' : null}
-											data-source-space-id={item.sourceSpaceId || null}
-											data-source-view-id={item.sourceViewId || null}
-											data-source-smart-view={item.sourceIsSmartView ? 'true' : null}
-										>
-											{#if item.itemType === 'folder' && item.view}
-												<UnifiedFolder
-													view={item.view}
-													collapsed={isCollapsed}
-													autoFocusRename={pendingRenameViewId === item.view.id}
-													onRenameFocusConsumed={() => pendingRenameViewId = null}
-												/>
-											{:else if item.entity}
-												<SidebarNavItem
-													item={{
-														id: item.entity.id,
-														type: "link",
-														label: item.entity.name,
-														icon: item.entity.icon || "ri:file-text-line",
-														href: item.url,
-													}}
-													collapsed={isCollapsed}
-												/>
-											{/if}
-										</div>
-									{/each}
-								{/if}
-							</div>
-						{/if}
-					</nav>
-				{/each}
+								{/each}
+							{/if}
+						</div>
+					{/if}
+				</nav>
+			{/each}
 		</div>
 
 		<SidebarFooter
@@ -1170,7 +1250,7 @@
 	<IconPicker
 		value={spaceStore.activeSpace?.icon ?? null}
 		onSelect={handleIconSelect}
-		onClose={() => showIconPicker = false}
+		onClose={() => (showIconPicker = false)}
 		showRemove={false}
 	/>
 {/if}
@@ -1178,12 +1258,42 @@
 	open={showColorPicker}
 	value={spaceStore.activeSpace?.accent_color ?? null}
 	onSelect={handleColorSelect}
-	onClose={() => showColorPicker = false}
+	onClose={() => (showColorPicker = false)}
 />
 
 <style>
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
+
+	/* Collapsed sidebar behavior */
+	.sidebar-collapsed {
+		width: 0;
+		overflow: visible; /* Allow hover zone to extend beyond 0-width */
+		/* Transition handled by Tailwind classes on parent */
+	}
+
+	/* Hover zone extends through the mini state + page padding area */
+	.sidebar-collapsed::before {
+		content: "";
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 36px; /* 20px mini state + padding area */
+		height: 100%;
+		z-index: 20;
+		pointer-events: auto;
+		cursor: pointer;
+	}
+
+	/* On hover, expand to show the open icon */
+	.sidebar-collapsed:hover {
+		width: 20px;
+	}
+
+	/* Show icon when sidebar is hovered */
+	.sidebar-collapsed:hover .sidebar-expand-icon {
+		opacity: 1;
+	}
 
 	@keyframes fadeSlideIn {
 		from {

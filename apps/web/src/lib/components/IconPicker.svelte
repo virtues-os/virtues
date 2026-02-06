@@ -1,9 +1,10 @@
 <script lang="ts">
 	/**
-	 * IconPicker - Icon and Emoji selection modal
+	 * IconPicker - Icon and Emoji selection popover content
 	 *
-	 * A centered modal for selecting icons or emojis.
+	 * Content component for selecting icons or emojis.
 	 * Supports search, tabs (Icons, Emoji, Recent), and recent selections.
+	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
 	import { addCollection } from '@iconify/svelte';
@@ -14,13 +15,13 @@
 		value?: string | null;
 		/** Called when an icon/emoji is selected */
 		onSelect: (value: string | null) => void;
-		/** Called when picker is closed */
-		onClose: () => void;
+		/** Close the popover */
+		close: () => void;
 		/** Whether to show the "Remove icon" option (default: true) */
 		showRemove?: boolean;
 	}
 
-	let { value = null, onSelect, onClose, showRemove = true }: Props = $props();
+	let { value = null, onSelect, close, showRemove = true }: Props = $props();
 
 	let search = $state('');
 	let activeTab = $state<'icons' | 'emoji' | 'recent'>('icons');
@@ -39,16 +40,6 @@
 	const hasMoreIcons = $derived(
 		paginatedAllIcons.length < allRiIconNames.length
 	);
-
-	// Portal action - moves element to body for proper z-index stacking
-	function portal(node: HTMLElement) {
-		document.body.appendChild(node);
-		return {
-			destroy() {
-				node.remove();
-			}
-		};
-	}
 
 	// Recent icons from localStorage
 	let recentIcons = $state<string[]>([]);
@@ -279,19 +270,12 @@
 	function handleSelect(icon: string) {
 		saveRecent(icon);
 		onSelect(icon);
-		onClose();
+		close();
 	}
 
 	function handleRemove() {
 		onSelect(null);
-		onClose();
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			onClose();
-		}
+		close();
 	}
 
 	// Check if value is an emoji (starts with emoji character) vs icon (contains :)
@@ -300,11 +284,7 @@
 	}
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="picker-backdrop" use:portal onclick={(e) => e.target === e.currentTarget && onClose()}>
-	<div class="icon-picker" bind:this={pickerEl}>
+<div class="icon-picker" bind:this={pickerEl}>
 	<!-- Search -->
 	<div class="picker-search">
 		<Icon icon="ri:search-line" width="14" />
@@ -444,57 +424,23 @@
 	</div>
 
 	<!-- Footer with remove option (conditional) -->
-		{#if showRemove && value}
-			<div class="picker-footer">
-				<button class="remove-btn" onclick={handleRemove}>
-					<Icon icon="ri:delete-bin-line" width="14" />
-					Remove icon
-				</button>
-			</div>
-		{/if}
-	</div>
+	{#if showRemove && value}
+		<div class="picker-footer">
+			<button class="remove-btn" onclick={handleRemove}>
+				<Icon icon="ri:delete-bin-line" width="14" />
+				Remove icon
+			</button>
+		</div>
+	{/if}
 </div>
 
 <style>
-	.picker-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 10000;
-		background: rgba(0, 0, 0, 0.4);
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding-top: 12vh;
-		animation: backdrop-in 150ms ease-out;
-	}
-
-	@keyframes backdrop-in {
-		from { opacity: 0; }
-		to { opacity: 1; }
-	}
-
 	.icon-picker {
 		width: 360px;
 		max-height: 480px;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		animation: picker-in 150ms ease-out;
-	}
-
-	@keyframes picker-in {
-		from {
-			opacity: 0;
-			transform: translateY(-8px) scale(0.96);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) scale(1);
-		}
 	}
 
 	.picker-search {
@@ -529,7 +475,7 @@
 		flex: 1;
 		padding: 10px 12px;
 		font-size: 13px;
-		font-weight: 500;
+		font-weight: 400;
 		color: var(--color-foreground-muted);
 		background: none;
 		border: none;
@@ -561,9 +507,7 @@
 
 	.category-name {
 		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
+		font-weight: 400;
 		color: var(--color-foreground-subtle);
 		padding: 4px 4px 8px;
 	}

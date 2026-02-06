@@ -871,6 +871,7 @@ mod tests {
             intent: None,
             subject: None,
             thought_signature: None,
+            parts: None,
         };
 
         let json = serde_json::to_string(&message).unwrap();

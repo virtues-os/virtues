@@ -1,0 +1,39 @@
+/**
+ * Entity Badge - Unified Styles
+ *
+ * Used by:
+ * - EntityChip.svelte (.entity-chip)
+ * - ChatInput.svelte (.mention-chip)
+ * - ProseMirror (.pm-entity-link)
+ *
+ * All render as @Name mentions.
+ */
+
+/* Base badge styles - applies to all variants */
+.entity-badge,
+.entity-chip,
+.mention-chip,
+.pm-entity-link {
+	display: inline;
+	padding: 1px 6px;
+	margin: 0 1px;
+	border-radius: 100px;
+	background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	color: var(--color-primary);
+	text-decoration: none;
+	cursor: pointer;
+	font-size: 0.8125rem;
+	font-weight: normal;
+	transition: background-color 0.15s ease;
+	border: none;
+	font-family: inherit;
+	user-select: none;
+}
+
+.entity-badge:hover,
+.entity-chip:hover,
+.mention-chip:hover,
+.pm-entity-link:hover {
+	background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+	text-decoration: none;
+}

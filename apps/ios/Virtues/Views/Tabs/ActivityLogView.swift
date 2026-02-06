@@ -50,6 +50,8 @@ struct ActivityLogView: View {
         case battery = "ios_battery"
         case contacts = "ios_contacts"
         case barometer = "ios_barometer"
+        case finance = "ios_finance"
+        case eventKit = "ios_eventkit"
 
         var displayName: String {
             switch self {
@@ -60,6 +62,8 @@ struct ActivityLogView: View {
             case .battery: return "Battery"
             case .contacts: return "Contacts"
             case .barometer: return "Barometer"
+            case .finance: return "Finance"
+            case .eventKit: return "EventKit"
             }
         }
     }

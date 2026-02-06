@@ -284,14 +284,10 @@ client {
   cni_path = "/opt/cni/bin"
   cni_config_dir = "/etc/cni/net.d"
 
-  # Host volumes
+  # Host volume for SQLite database only
+  # Drive/Lake/Media files are stored in S3
   host_volume "tenant_data" {
     path      = "/opt/tenants/${SUBDOMAIN}/data"
-    read_only = false
-  }
-
-  host_volume "infinite_drive" {
-    path      = "/mnt/infinite_drive/users/${SUBDOMAIN}"
     read_only = false
   }
 
@@ -454,35 +450,13 @@ else
 fi
 
 # ============================================================================
-# Mount Hetzner Storage Box (Infinite Drive)
+# S3 Storage Configuration
 # ============================================================================
+# Note: Drive, Lake, and Media files are stored in Hetzner S3-compatible storage.
+# No local volume mounts needed - S3 credentials are injected via environment.
+# Each tenant gets a unique prefix: users/${SUBDOMAIN}/
 
-if [ -n "${HETZNER_STORAGE_BOX_USER:-}" ] && [ -n "${HETZNER_STORAGE_BOX_PASSWORD:-}" ]; then
-    log "Mounting Hetzner Storage Box..."
-
-    mkdir -p /mnt/infinite_drive
-
-    # Create credentials file
-    cat > /etc/cifs-credentials << EOF
-username=${HETZNER_STORAGE_BOX_USER}
-password=${HETZNER_STORAGE_BOX_PASSWORD}
-EOF
-    chmod 600 /etc/cifs-credentials
-
-    # Add to fstab
-    STORAGE_HOST="${HETZNER_STORAGE_BOX_USER}.your-storagebox.de"
-    echo "//${STORAGE_HOST}/backup /mnt/infinite_drive cifs credentials=/etc/cifs-credentials,uid=1000,gid=1000,file_mode=0660,dir_mode=0770,_netdev 0 0" >> /etc/fstab
-
-    mount /mnt/infinite_drive 2>/dev/null || log "WARNING: Storage Box mount failed (may need manual intervention)"
-
-    # Create user directory
-    mkdir -p /mnt/infinite_drive/users/${SUBDOMAIN}
-
-    log "Hetzner Storage Box configured"
-else
-    log "Skipping Storage Box mount (credentials not provided)"
-    mkdir -p /mnt/infinite_drive/users/${SUBDOMAIN}
-fi
+log "Drive storage configured for S3 (S3_PREFIX=users/${SUBDOMAIN})"
 
 # ============================================================================
 # Generate Secrets
@@ -562,15 +536,10 @@ job "virtues-tenant-${SUBDOMAIN}" {
       }
     }
 
+    # Host volume for SQLite database only
     volume "tenant_data" {
       type      = "host"
       source    = "tenant_data"
-      read_only = false
-    }
-
-    volume "infinite_drive" {
-      type      = "host"
-      source    = "infinite_drive"
       read_only = false
     }
 
@@ -582,15 +551,10 @@ job "virtues-tenant-${SUBDOMAIN}" {
         runtime = "io.containerd.runsc.v1"
       }
 
+      # Mount volume for SQLite database
       volume_mount {
         volume      = "tenant_data"
         destination = "/data"
-        read_only   = false
-      }
-
-      volume_mount {
-        volume      = "infinite_drive"
-        destination = "/home/user/drive"
         read_only   = false
       }
 
@@ -598,6 +562,7 @@ job "virtues-tenant-${SUBDOMAIN}" {
         DATABASE_URL                  = "sqlite:/data/virtues.db"
         STATIC_DIR                    = "/app/static"
         RUST_LOG                      = "warn,virtues=info"
+        RUST_ENV                      = "production"
         TIER                          = "${TIER}"
         SUBDOMAIN                     = "${SUBDOMAIN}"
         VIRTUES_ENCRYPTION_KEY        = "${VIRTUES_ENCRYPTION_KEY}"
@@ -606,6 +571,7 @@ job "virtues-tenant-${SUBDOMAIN}" {
         S3_BUCKET                     = "${S3_BUCKET:-}"
         S3_ACCESS_KEY                 = "${S3_ACCESS_KEY:-}"
         S3_SECRET_KEY                 = "${S3_SECRET_KEY:-}"
+        S3_PREFIX                     = "users/${SUBDOMAIN}"
         GOOGLE_CLIENT_ID              = "${GOOGLE_CLIENT_ID:-}"
         GOOGLE_CLIENT_SECRET          = "${GOOGLE_CLIENT_SECRET:-}"
         EXA_API_KEY                   = "${EXA_API_KEY:-}"

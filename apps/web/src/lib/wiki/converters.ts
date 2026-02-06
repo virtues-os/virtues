@@ -48,8 +48,7 @@ export function apiToPersonPage(api: WikiPersonApi): PersonPage {
 	return {
 		type: "person",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.canonical_name,
+				title: api.canonical_name,
 		cover: api.picture ?? undefined,
 
 		// Person-specific fields
@@ -98,8 +97,7 @@ export function apiToPlacePage(api: WikiPlaceApi): PlacePage {
 	return {
 		type: "place",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.name,
+				title: api.name,
 		cover: api.cover_image ?? undefined,
 
 		// Place-specific fields
@@ -151,8 +149,7 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 	return {
 		type: "organization",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.canonical_name,
+				title: api.canonical_name,
 		cover: api.cover_image ?? undefined,
 
 		// Org-specific fields
@@ -196,8 +193,7 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 	return {
 		type: "day",
 		id: api.id,
-		slug: api.date,
-		title: formatDayTitle(date),
+				title: formatDayTitle(date),
 		cover: api.cover_image ?? undefined,
 
 		// Day-specific fields
@@ -244,8 +240,7 @@ export function apiToActPage(api: WikiActApi): ActPage {
 	return {
 		type: "act",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.title,
+				title: api.title,
 		subtitle: api.subtitle ?? undefined,
 		cover: api.cover_image ?? undefined,
 
@@ -284,8 +279,7 @@ export function apiToChapterPage(api: WikiChapterApi): ChapterPage {
 	return {
 		type: "chapter",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.title,
+				title: api.title,
 		subtitle: api.subtitle ?? undefined,
 		cover: api.cover_image ?? undefined,
 
@@ -324,8 +318,7 @@ export function apiToTelosPage(api: WikiTelosApi): TelosPage {
 	return {
 		type: "telos",
 		id: api.id,
-		slug: api.slug ?? api.id,
-		title: api.title,
+				title: api.title,
 		cover: api.cover_image ?? undefined,
 
 		// Telos-specific fields

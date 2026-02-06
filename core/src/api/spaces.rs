@@ -47,7 +47,7 @@ pub struct SpaceSummary {
 pub struct CreateSpaceRequest {
     pub name: String,
     pub icon: Option<String>,
-    pub theme_id: Option<String>,            // Defaults to 'scriptorium' if not provided
+    pub theme_id: Option<String>,            // Defaults to 'pemberley' if not provided
     pub accent_color: Option<String>,
 }
 
@@ -115,7 +115,7 @@ pub async fn get_space(pool: &SqlitePool, id: &str) -> Result<Space> {
 }
 
 /// Default theme for new spaces
-const DEFAULT_THEME_ID: &str = "scriptorium";
+const DEFAULT_THEME_ID: &str = "pemberley";
 
 /// Create a new space
 pub async fn create_space(pool: &SqlitePool, req: CreateSpaceRequest) -> Result<Space> {

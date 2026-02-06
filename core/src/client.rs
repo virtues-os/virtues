@@ -105,17 +105,23 @@ impl VirtuesBuilder {
         self
     }
 
-    /// Set storage path for stream archives
+    /// Set storage path for stream archives (local file storage only)
     ///
-    /// Default paths:
+    /// Note: This is ignored when S3 is configured via environment variables.
+    ///
+    /// Default paths for file storage:
     /// - Dev: ./core/data/lake
-    /// - Prod: /home/user/drive (Nomad bind mount from Storage Box)
+    /// - Prod: Uses S3 storage instead
     pub fn storage_path(mut self, path: &str) -> Self {
         self.storage_path = Some(path.to_string());
         self
     }
 
     /// Build the Virtues client
+    ///
+    /// Storage backend selection:
+    /// - If S3_ENDPOINT is set, uses S3 storage (production)
+    /// - Otherwise, uses file storage (local development)
     pub async fn build(self) -> Result<Virtues> {
         let database_url = self
             .database_url
@@ -124,16 +130,21 @@ impl VirtuesBuilder {
 
         let database = Database::new(&database_url)?;
 
-        // Storage path priority:
-        // 1. Explicit storage_path from builder
-        // 2. STORAGE_PATH env var
-        // 3. Default: ./core/data/lake (works for dev)
-        let storage_path = self
-            .storage_path
-            .or_else(|| std::env::var("STORAGE_PATH").ok())
-            .unwrap_or_else(|| "./core/data/lake".to_string());
-
-        let storage = Storage::file(storage_path)?;
+        // Storage backend selection:
+        // 1. If S3 is configured, use S3 storage
+        // 2. Otherwise, use file storage with explicit path or defaults
+        let storage = if crate::storage::S3Config::is_configured() {
+            tracing::info!("Using S3 storage backend");
+            Storage::s3_from_env().await?
+        } else {
+            // File storage for local development
+            let storage_path = self
+                .storage_path
+                .or_else(|| std::env::var("STORAGE_PATH").ok())
+                .unwrap_or_else(|| "./data/lake".to_string());
+            tracing::info!(path = %storage_path, "Using file storage backend");
+            Storage::file(storage_path)?
+        };
 
         Ok(Virtues {
             database: Arc::new(database),

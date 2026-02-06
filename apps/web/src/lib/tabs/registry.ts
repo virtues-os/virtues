@@ -13,6 +13,7 @@ import type { TabType, ParsedRoute } from './types';
 
 // Import all view components
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
+import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
 import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
@@ -21,6 +22,7 @@ import DataSourceDetailView from '$lib/components/tabs/views/DataSourceDetailVie
 import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 import JobsView from '$lib/components/tabs/views/JobsView.svelte';
 import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
+import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
 import TrashView from '$lib/components/tabs/views/TrashView.svelte';
 import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
@@ -28,6 +30,8 @@ import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalV
 import DeveloperSitemapView from '$lib/components/tabs/views/DeveloperSitemapView.svelte';
 import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svelte';
 // AddSourceView removed - source connection now handled via modals in DataSourcesView
+import BillingView from '$lib/components/tabs/views/BillingView.svelte';
+import ChangelogView from '$lib/components/tabs/views/ChangelogView.svelte';
 import FeedbackView from '$lib/components/tabs/views/FeedbackView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
@@ -96,6 +100,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// CHAT HISTORY: /chat-history
+	// ========================================================================
+	'chat-history': {
+		match: (path) => path === '/chat-history',
+		parse: () => ({
+			type: 'chat-history',
+			label: 'All Chats',
+			icon: 'ri:chat-history-line',
+		}),
+		serialize: () => 'chat-history',
+		deserialize: () => '/chat-history',
+		icon: 'ri:chat-history-line',
+		defaultLabel: 'All Chats',
+		component: HistoryView,
+	},
+
+	// ========================================================================
 	// PAGE NAMESPACE: /page, /page/page_{id}
 	// ========================================================================
 	page: {
@@ -149,10 +170,10 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// PERSON NAMESPACE: /person, /person/person_{id}
+	// PERSON NAMESPACE: /person, /person/{id}
 	// ========================================================================
 	person: {
-		match: (path) => path === '/person' || /^\/person\/person_[^/]+$/.test(path),
+		match: (path) => path === '/person' || /^\/person\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/person') {
 				return {
@@ -161,7 +182,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 					icon: 'ri:user-line',
 				};
 			}
-			const match = path.match(/^\/person\/(person_[^/]+)$/);
+			const match = path.match(/^\/person\/([^/]+)$/);
 			return {
 				type: 'person',
 				label: 'Person',
@@ -169,9 +190,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => (id ? `person_${id}` : 'person'),
+		serialize: (id) => id || 'person',
 		deserialize: (serialized) => {
-			if (serialized.startsWith('person_')) {
+			if (serialized && serialized !== 'person') {
 				return `/person/${serialized}`;
 			}
 			return '/person';
@@ -183,10 +204,10 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// PLACE NAMESPACE: /place, /place/place_{id}
+	// PLACE NAMESPACE: /place, /place/{id}
 	// ========================================================================
 	place: {
-		match: (path) => path === '/place' || /^\/place\/place_[^/]+$/.test(path),
+		match: (path) => path === '/place' || /^\/place\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/place') {
 				return {
@@ -195,7 +216,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 					icon: 'ri:map-pin-line',
 				};
 			}
-			const match = path.match(/^\/place\/(place_[^/]+)$/);
+			const match = path.match(/^\/place\/([^/]+)$/);
 			return {
 				type: 'place',
 				label: 'Place',
@@ -203,9 +224,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => (id ? `place_${id}` : 'place'),
+		serialize: (id) => id || 'place',
 		deserialize: (serialized) => {
-			if (serialized.startsWith('place_')) {
+			if (serialized && serialized !== 'place') {
 				return `/place/${serialized}`;
 			}
 			return '/place';
@@ -217,10 +238,10 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// ORG NAMESPACE: /org, /org/org_{id}
+	// ORG NAMESPACE: /org, /org/{id}
 	// ========================================================================
 	org: {
-		match: (path) => path === '/org' || /^\/org\/org_[^/]+$/.test(path),
+		match: (path) => path === '/org' || /^\/org\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/org') {
 				return {
@@ -229,7 +250,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 					icon: 'ri:building-line',
 				};
 			}
-			const match = path.match(/^\/org\/(org_[^/]+)$/);
+			const match = path.match(/^\/org\/([^/]+)$/);
 			return {
 				type: 'org',
 				label: 'Organization',
@@ -237,9 +258,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => (id ? `org_${id}` : 'org'),
+		serialize: (id) => id || 'org',
 		deserialize: (serialized) => {
-			if (serialized.startsWith('org_')) {
+			if (serialized && serialized !== 'org') {
 				return `/org/${serialized}`;
 			}
 			return '/org';
@@ -329,24 +350,24 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SOURCE NAMESPACE: /source, /source/source_{id}
-	// Note: /source/add now redirects to /source (modals handle add flow)
+	// SOURCE NAMESPACE: /sources, /sources/source_{id}
+	// Note: /source redirects to /sources for backwards compatibility
 	// ========================================================================
 	source: {
 		match: (path) =>
-			path === '/source' || path === '/source/add' || /^\/source\/source_[^/]+$/.test(path),
+			path === '/sources' || path === '/source' || /^\/sources\/source_[^/]+$/.test(path),
 		parse: (path) => {
-			// Redirect /source/add to /source (add flow now uses modals)
-			if (path === '/source/add' || path === '/source') {
+			// List view (redirect /source to /sources)
+			if (path === '/sources' || path === '/source') {
 				return {
 					type: 'source',
 					label: 'Sources',
 					icon: 'ri:database-2-line',
-					normalizedRoute: '/source', // Ensure /source/add redirects to /source
+					normalizedRoute: '/sources',
 				};
 			}
 			// Detail view
-			const match = path.match(/^\/source\/(source_[^/]+)$/);
+			const match = path.match(/^\/sources\/(source_[^/]+)$/);
 			return {
 				type: 'source',
 				label: 'Source',
@@ -356,13 +377,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		},
 		serialize: (id) => {
 			if (id) return `source_${id}`;
-			return 'source';
+			return 'sources';
 		},
 		deserialize: (serialized) => {
 			if (serialized.startsWith('source_')) {
-				return `/source/${serialized}`;
+				return `/sources/${serialized}`;
 			}
-			return '/source';
+			return '/sources';
 		},
 		icon: 'ri:database-2-line',
 		defaultLabel: 'Sources',
@@ -434,6 +455,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			const pageConfig: Record<string, { label: string; icon: string }> = {
 				account: { label: 'Account', icon: 'ri:user-settings-line' },
 				assistant: { label: 'Assistant', icon: 'ri:robot-line' },
+				billing: { label: 'Billing', icon: 'ri:bank-card-line' },
+				changelog: { label: "What's New", icon: 'ri:megaphone-line' },
 				usage: { label: 'Usage', icon: 'ri:bar-chart-line' },
 				jobs: { label: 'Jobs', icon: 'ri:refresh-line' },
 				lake: { label: 'Lake', icon: 'ri:database-2-line' },
@@ -514,7 +537,9 @@ export function getComponent(type: TabType, hasEntityId: boolean): Component<any
 export function getVirtuesComponent(page: string): Component<any> {
 	const componentMap: Record<string, Component<any>> = {
 		account: ProfileView,
-		assistant: ProfileView,
+		assistant: AssistantView,
+		billing: BillingView,
+		changelog: ChangelogView,
 		usage: UsageView,
 		jobs: JobsView,
 		lake: DeveloperLakeView,
@@ -552,6 +577,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'virtues', // Has /virtues/* pattern
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
+		'chat-history', // Chat history list (before 'chat')
 		// Entity namespaces
 		'chat', // Also matches /
 		'page',

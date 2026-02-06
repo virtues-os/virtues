@@ -1,14 +1,15 @@
 <script lang="ts">
 	/**
 	 * DevicePairModal - Handles device pairing for iOS and Mac.
-	 * iOS: Shows QR code + manual device ID entry
+	 * iOS: Shows QR code (primary) + manual device ID entry (fallback)
 	 * Mac: Shows pairing code for entry in the Mac app
 	 */
-	import { onMount, onDestroy } from "svelte";
+	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import { Button, Input } from "$lib";
 	import * as api from "$lib/api/client";
-	import type { PairingInitResponse, DeviceInfo } from "$lib/types/device-pairing";
+	import type { PairingInitResponse } from "$lib/types/device-pairing";
+	import QRCode from "qrcode";
 
 	interface Props {
 		deviceType: "ios" | "mac";
@@ -25,11 +26,17 @@
 	let apiEndpoint = $state("");
 	let isLoadingEndpoint = $state(true);
 
-	// iOS-specific state
+	// iOS QR pairing state
+	let qrDataUrl = $state<string>("");
+	let qrSourceId = $state<string>("");
+	let isGeneratingQR = $state(false);
+	let showManualEntry = $state(false);
+
+	// iOS manual fallback state
 	let deviceId = $state("");
 	let isLinking = $state(false);
 
-	// Mac-specific state
+	// Shared polling state (used by both iOS QR and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
 	let isInitiating = $state(false);
 	let isPolling = $state(false);
@@ -54,38 +61,82 @@
 		}
 	});
 
-	// Start Mac pairing when modal opens
+	// Start iOS QR pairing or Mac pairing when modal opens
 	$effect(() => {
+		if (open && deviceType === "ios" && !pairingData && !isInitiating && !qrSourceId) {
+			initiateQRPairing();
+		}
 		if (open && deviceType === "mac" && !pairingData && !isInitiating) {
 			initiateMacPairing();
 		}
 	});
 
-	async function copyEndpoint() {
+	// Generate QR code once we have both endpoint and source_id
+	$effect(() => {
+		if (qrSourceId && apiEndpoint && !isLoadingEndpoint && !qrDataUrl) {
+			generateQRCode(apiEndpoint, qrSourceId);
+		}
+	});
+
+	// --- iOS QR Flow ---
+
+	async function initiateQRPairing() {
+		isInitiating = true;
+		error = null;
+
 		try {
-			await navigator.clipboard.writeText(apiEndpoint);
+			const response = await api.initiatePairing(deviceType, displayName);
+			pairingData = response;
+			qrSourceId = response.source_id;
+			startPolling();
+			// Client-side 10 minute timer (server enforces actual expiry)
+			timeRemaining = 600;
+			startTimer();
 		} catch (err) {
-			console.error("Failed to copy endpoint:", err);
+			error = err instanceof Error ? err.message : "Failed to initiate pairing";
+		} finally {
+			isInitiating = false;
 		}
 	}
 
-	async function copyCode() {
-		if (!pairingData) return;
+	async function generateQRCode(endpoint: string, sourceId: string) {
+		isGeneratingQR = true;
 		try {
-			await navigator.clipboard.writeText(pairingData.code);
+			// Strip /api suffix — the QR payload should be the root server URL
+			const root = endpoint.replace(/\/api\/?$/, "");
+			const payload = JSON.stringify({ e: root, s: sourceId });
+			qrDataUrl = await QRCode.toDataURL(payload, {
+				width: 240,
+				margin: 2,
+				errorCorrectionLevel: "M",
+				color: { dark: "#26251E", light: "#FFFFFF" },
+			});
 		} catch (err) {
-			console.error("Failed to copy code:", err);
+			console.error("Failed to generate QR code:", err);
+			error = "Failed to generate QR code";
+		} finally {
+			isGeneratingQR = false;
 		}
 	}
 
-	// iOS: Validate UUID format
+	function retryQRPairing() {
+		hasTimedOut = false;
+		pairingData = null;
+		qrSourceId = "";
+		qrDataUrl = "";
+		error = null;
+		timeRemaining = 600;
+		initiateQRPairing();
+	}
+
+	// --- iOS Manual Fallback ---
+
 	let isValidId = $derived(
 		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
 			deviceId.trim(),
 		),
 	);
 
-	// iOS: Link device by ID
 	async function handleiOSLink() {
 		if (!isValidId) {
 			error = "Please enter a valid Device ID (UUID)";
@@ -101,6 +152,7 @@
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
 					device_id: deviceId.trim(),
+					name: displayName || "My Device",
 					device_type: deviceType,
 				}),
 			});
@@ -120,7 +172,8 @@
 		}
 	}
 
-	// Mac: Initiate pairing with code
+	// --- Mac Flow ---
+
 	async function initiateMacPairing() {
 		isInitiating = true;
 		error = null;
@@ -137,16 +190,44 @@
 		}
 	}
 
-	async function checkPairingStatus() {
+	async function copyEndpoint() {
+		try {
+			await navigator.clipboard.writeText(apiEndpoint);
+		} catch (err) {
+			console.error("Failed to copy endpoint:", err);
+		}
+	}
+
+	async function copyCode() {
 		if (!pairingData) return;
+		try {
+			await navigator.clipboard.writeText(pairingData.code);
+		} catch (err) {
+			console.error("Failed to copy code:", err);
+		}
+	}
+
+	function retryMacPairing() {
+		hasTimedOut = false;
+		pairingData = null;
+		error = null;
+		timeRemaining = 600;
+		initiateMacPairing();
+	}
+
+	// --- Shared Polling & Timer ---
+
+	async function checkPairingStatus() {
+		const sourceId = pairingData?.source_id || qrSourceId;
+		if (!sourceId) return;
 
 		try {
-			const status = await api.getPairingStatus(pairingData.source_id);
+			const status = await api.getPairingStatus(sourceId);
 
 			if (status.status === "active") {
 				stopPolling();
 				stopTimer();
-				onSuccess(pairingData.source_id);
+				onSuccess(sourceId);
 				onClose();
 			} else if (status.status === "revoked") {
 				error = "Pairing was cancelled";
@@ -174,15 +255,17 @@
 	}
 
 	function startTimer() {
-		if (timerInterval || !pairingData) return;
+		if (timerInterval) return;
 
-		const expiresAt = new Date(pairingData.expires_at);
-		const now = new Date();
-		const secondsRemaining = Math.floor(
-			(expiresAt.getTime() - now.getTime()) / 1000,
-		);
-
-		timeRemaining = Math.max(0, secondsRemaining);
+		// For Mac flow, use server-provided expiry; for iOS QR, use client-side 10min
+		if (deviceType === "mac" && pairingData?.expires_at) {
+			const expiresAt = new Date(pairingData.expires_at);
+			const now = new Date();
+			const secondsRemaining = Math.floor(
+				(expiresAt.getTime() - now.getTime()) / 1000,
+			);
+			timeRemaining = Math.max(0, secondsRemaining);
+		}
 
 		timerInterval = setInterval(() => {
 			timeRemaining--;
@@ -207,14 +290,6 @@
 		return `${mins}:${secs.toString().padStart(2, "0")}`;
 	}
 
-	function retryMacPairing() {
-		hasTimedOut = false;
-		pairingData = null;
-		error = null;
-		timeRemaining = 600;
-		initiateMacPairing();
-	}
-
 	function handleClose() {
 		stopPolling();
 		stopTimer();
@@ -229,91 +304,120 @@
 
 <Modal open={open} onClose={handleClose} title="Connect {displayName}" width="md">
 	{#if deviceType === "ios"}
-		<!-- iOS Flow: QR Code + Manual Device ID -->
-		<div class="space-y-6">
-			<div class="bg-surface-elevated p-4 rounded-lg border border-border">
-				<div class="flex items-start gap-4 mb-4 pb-4 border-b border-border">
-					<img 
-						src="/images/app-store-qr.png" 
-						alt="Download Virtues from App Store" 
-						class="w-20 h-20"
-					/>
-					<div>
-						<h4 class="text-sm font-medium text-foreground mb-1">
-							Don't have the app yet?
-						</h4>
-						<p class="text-sm text-foreground-muted">
-							Scan to download Virtues from the App Store, or visit
-							<a 
-								href="https://apps.apple.com/us/app/virtues-personal-ai/id6756082640" 
-								target="_blank" 
-								rel="noopener noreferrer"
-								class="text-primary hover:underline"
-							>apps.apple.com</a>
-						</p>
+		<!-- iOS Flow: QR Code Primary + Manual Fallback -->
+		<div class="space-y-5">
+
+			{#if hasTimedOut}
+				<!-- Expired state -->
+				<div class="text-center py-6">
+					<p class="font-serif text-lg text-foreground mb-2">QR Code Expired</p>
+					<p class="text-sm text-foreground-muted mb-6">
+						The pairing session timed out. No device connected.
+					</p>
+					<div class="flex justify-center gap-4">
+						<Button variant="ghost" onclick={handleClose}>Cancel</Button>
+						<Button variant="primary" onclick={retryQRPairing}>Generate New Code</Button>
 					</div>
 				</div>
-				<h4 class="text-sm font-medium text-foreground mb-3">
-					Setup Instructions:
-				</h4>
-				<ol class="list-decimal list-inside text-sm text-foreground-muted space-y-2">
-					<li>Open <strong>Settings</strong> in the Virtues iOS app</li>
-					<li>
-						Set <strong>Server Endpoint</strong> to:
-						<div class="flex items-center gap-2 mt-1 ml-4 bg-surface p-2 rounded border border-border w-fit max-w-full">
-							<code class="text-xs font-mono text-foreground break-all">
-								{isLoadingEndpoint ? "Loading..." : apiEndpoint}
-							</code>
-							<button
-								class="text-xs text-primary hover:underline whitespace-nowrap"
-								onclick={copyEndpoint}
-								type="button"
-							>
-								Copy
-							</button>
+
+			{:else}
+				<!-- QR Code pairing -->
+				<div class="flex flex-col items-center text-center">
+					<div class="mb-4">
+						<p class="text-sm text-foreground-muted mb-1">
+							Open the Virtues app on your iPhone and tap <strong>Scan QR Code</strong>
+						</p>
+					</div>
+
+					<!-- QR Code -->
+					<div class="bg-white rounded-xl p-4 shadow-sm border border-border mb-3">
+						{#if isGeneratingQR || isInitiating || isLoadingEndpoint}
+							<div class="w-[240px] h-[240px] flex items-center justify-center">
+								<p class="text-sm text-foreground-muted">Generating...</p>
+							</div>
+						{:else if qrDataUrl}
+							<img src={qrDataUrl} alt="Pairing QR Code" class="w-[240px] h-[240px]" />
+						{:else}
+							<div class="w-[240px] h-[240px] flex items-center justify-center">
+								<p class="text-sm text-error">Failed to generate QR</p>
+							</div>
+						{/if}
+					</div>
+
+					<!-- Status -->
+					<div class="flex items-center gap-2 text-sm text-foreground-muted">
+						{#if isPolling}
+							<span class="inline-block w-2 h-2 bg-primary rounded-full animate-pulse"></span>
+							<span>Waiting for device...</span>
+							<span class="text-foreground-subtle">{formatTime(timeRemaining)}</span>
+						{/if}
+					</div>
+				</div>
+
+				{#if error}
+					<div class="p-3 bg-error-subtle border border-error rounded-lg">
+						<p class="text-sm text-error">{error}</p>
+					</div>
+				{/if}
+
+				<!-- Manual entry fallback (collapsed) -->
+				<details bind:open={showManualEntry}>
+					<summary class="text-sm text-foreground-muted cursor-pointer hover:text-foreground select-none py-1">
+						Enter manually
+					</summary>
+
+					<div class="mt-4 space-y-4 pt-4 border-t border-border">
+						<div>
+							<p class="text-xs text-foreground-subtle mb-2">Server endpoint:</p>
+							<div class="flex items-center gap-2 bg-surface p-2 rounded border border-border">
+								<code class="text-xs font-mono text-foreground break-all flex-1">
+									{isLoadingEndpoint ? "Loading..." : apiEndpoint}
+								</code>
+								<button
+									class="text-xs text-primary hover:underline whitespace-nowrap"
+									onclick={copyEndpoint}
+									type="button"
+								>
+									Copy
+								</button>
+							</div>
 						</div>
-					</li>
-					<li>Copy your <strong>Device ID</strong> from the app</li>
-					<li>Paste it below to link</li>
-				</ol>
-			</div>
 
-			<div>
-				<label for="device-id" class="block text-sm text-foreground-muted mb-2">
-					Device ID (UUID)
-				</label>
-				<Input
-					id="device-id"
-					type="text"
-					bind:value={deviceId}
-					placeholder="e.g. 123e4567-e89b-..."
-					class="font-mono"
-					disabled={isLinking}
-				/>
-			</div>
+						<div>
+							<label for="device-id" class="block text-sm text-foreground-muted mb-2">
+								Device ID (UUID)
+							</label>
+							<Input
+								id="device-id"
+								type="text"
+								bind:value={deviceId}
+								placeholder="e.g. 123e4567-e89b-..."
+								class="font-mono"
+								disabled={isLinking}
+							/>
+						</div>
 
-			{#if error}
-				<div class="p-3 bg-error-subtle border border-error rounded-lg">
-					<p class="text-sm text-error">{error}</p>
+						<div class="flex justify-end gap-3">
+							<Button
+								variant="primary"
+								onclick={handleiOSLink}
+								disabled={!isValidId || isLinking}
+							>
+								{isLinking ? "Linking..." : "Link Device"}
+							</Button>
+						</div>
+					</div>
+				</details>
+
+				<!-- Cancel -->
+				<div class="flex justify-end pt-2 border-t border-border">
+					<Button variant="ghost" onclick={handleClose}>Cancel</Button>
 				</div>
 			{/if}
-
-			<div class="flex justify-end gap-3 pt-4 border-t border-border">
-				<Button variant="ghost" onclick={handleClose} disabled={isLinking}>
-					Cancel
-				</Button>
-				<Button
-					variant="primary"
-					onclick={handleiOSLink}
-					disabled={!isValidId || isLinking}
-				>
-					{isLinking ? "Linking..." : "Link Device"}
-				</Button>
-			</div>
 		</div>
 
 	{:else}
-		<!-- Mac Flow: Pairing Code -->
+		<!-- Mac Flow: Pairing Code (unchanged) -->
 		<div class="text-center py-4">
 			{#if error}
 				<p class="text-sm text-error mb-4">{error}</p>

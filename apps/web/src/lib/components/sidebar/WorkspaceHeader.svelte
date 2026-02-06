@@ -282,7 +282,7 @@
 				onclick={onToggleCollapse}
 				title="Collapse sidebar (Cmd+S)"
 			>
-				<Icon icon="ri:arrow-left-s-line" width="18" />
+				<Icon icon="ri:arrow-left-double-line" width="16" />
 			</button>
 		{/if}
 	</div>

@@ -8,6 +8,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use super::{PageEditorTool, SqlQueryTool, WebSearchTool};
+use crate::server::yjs::YjsState;
 
 /// Context provided to tools during execution
 #[derive(Debug, Clone)]
@@ -18,6 +19,8 @@ pub struct ToolContext {
     pub user_id: Option<String>,
     /// Space ID
     pub space_id: Option<String>,
+    /// Chat ID (for permission checking)
+    pub chat_id: Option<String>,
 }
 
 impl Default for ToolContext {
@@ -26,6 +29,7 @@ impl Default for ToolContext {
             page_id: None,
             user_id: None,
             space_id: None,
+            chat_id: None,
         }
     }
 }
@@ -99,7 +103,25 @@ impl ToolExecutor {
         Self {
             web_search: WebSearchTool::new(tollbooth_url.clone(), tollbooth_secret.clone()),
             sql_query: SqlQueryTool::new(pool.clone()),
-            page_editor: PageEditorTool::new(pool.clone()),
+            page_editor: PageEditorTool::new(pool.clone(), None),
+            pool,
+            tollbooth_url,
+            tollbooth_secret,
+        }
+    }
+
+    /// Create a new tool executor with YjsState for real-time page editing
+    pub fn new_with_yjs(
+        pool: SqlitePool,
+        tollbooth_url: String,
+        tollbooth_secret: String,
+        yjs_state: YjsState,
+    ) -> Self {
+        let pool = Arc::new(pool);
+        Self {
+            web_search: WebSearchTool::new(tollbooth_url.clone(), tollbooth_secret.clone()),
+            sql_query: SqlQueryTool::new(pool.clone()),
+            page_editor: PageEditorTool::new(pool.clone(), Some(yjs_state)),
             pool,
             tollbooth_url,
             tollbooth_secret,

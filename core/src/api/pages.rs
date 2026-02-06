@@ -11,8 +11,23 @@ use crate::error::{Error, Result};
 use crate::ids::{generate_id, PAGE_PREFIX, PAGE_VERSION_PREFIX};
 use crate::types::Timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::SqlitePool;
+
+/// Custom deserializer for Option<Option<T>> that distinguishes between:
+/// - Missing field → None (don't change)
+/// - Explicit null → Some(None) (clear the value)
+/// - A value → Some(Some(value)) (set the value)
+fn deserialize_double_option<'de, D, T>(deserializer: D) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    // This deserializer is only called when the field is present in JSON
+    // If the field is missing, serde uses the default (None) due to #[serde(default)]
+    // So if we're here, the field was present - deserialize its value
+    Ok(Some(Option::deserialize(deserializer)?))
+}
 
 // System space ID - pages created here don't get auto-added
 const SYSTEM_SPACE_ID: &str = "space_system";
@@ -64,8 +79,11 @@ pub struct CreatePageRequest {
 pub struct UpdatePageRequest {
     pub title: Option<String>,
     pub content: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub icon: Option<Option<String>>,      // None = don't change, Some(None) = clear, Some(Some(x)) = set
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub cover_url: Option<Option<String>>, // None = don't change, Some(None) = clear, Some(Some(x)) = set
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub tags: Option<Option<String>>,      // None = don't change, Some(None) = clear, Some(Some(x)) = set
 }
 
@@ -336,15 +354,18 @@ struct RawEntitySearchResult {
     entity_type: String,
     icon: String,
     mime_type: Option<String>,
+    updated_at: String,
+    relevance: i32,
 }
 
 /// Compute the canonical URL for an entity based on its type and ID
+/// All URLs follow the format: /{type}/{id}
 fn get_entity_url(entity_type: &str, id: &str) -> String {
     match entity_type {
         "person" => format!("/person/{}", id),
         "place" => format!("/place/{}", id),
-        "thing" => format!("/thing/{}", id),
         "org" => format!("/org/{}", id),
+        "thing" => format!("/thing/{}", id),
         "page" => format!("/page/{}", id),
         "day" => format!("/day/{}", id),
         "year" => format!("/year/{}", id),
@@ -358,43 +379,62 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
 /// Search for entities across wiki_people, wiki_places, wiki_organizations, pages, and files
 /// Used for autocomplete when typing @ in the editor
 /// Returns canonical URLs for each entity (everything is a URL)
+///
+/// Results are ranked by:
+/// 1. Relevance: prefix matches (name starts with query) come before contains matches
+/// 2. Recency: within each relevance tier, most recently updated items come first
 pub async fn search_entities(pool: &SqlitePool, query: &str) -> Result<EntitySearchResponse> {
     let query = query.trim();
-    let search_pattern = if query.is_empty() {
-        "%".to_string()
+
+    // For empty query, show most recent items
+    let (contains_pattern, prefix_pattern) = if query.is_empty() {
+        ("%".to_string(), "%".to_string())
     } else {
-        format!("%{}%", query)
+        (format!("%{}%", query), format!("{}%", query))
     };
 
-    let limit = 10i64;
+    let limit = 15i64;
 
     // Search across multiple tables with UNION
+    // Relevance: 0 = prefix match (highest), 1 = contains match
+    // Note: wiki_things table doesn't exist yet, so we skip it
     let raw_results = sqlx::query_as::<_, RawEntitySearchResult>(
         r#"
-        SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon, NULL as mime_type
+        SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_people
         WHERE canonical_name LIKE $1
         UNION ALL
-        SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon, NULL as mime_type
+        SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN name LIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_places
         WHERE name LIKE $1
         UNION ALL
-        SELECT id, canonical_name as name, 'thing' as entity_type, 'ri:box-3-line' as icon, NULL as mime_type
-        FROM wiki_things
+        SELECT id, canonical_name as name, 'org' as entity_type, 'ri:building-line' as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM wiki_orgs
         WHERE canonical_name LIKE $1
         UNION ALL
-        SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon, mime_type
+        SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
+               mime_type, updated_at,
+               CASE WHEN filename LIKE $2 THEN 0 ELSE 1 END as relevance
         FROM drive_files
         WHERE filename LIKE $1 AND deleted_at IS NULL
         UNION ALL
-        SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon, NULL as mime_type
+        SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN title LIKE $2 THEN 0 ELSE 1 END as relevance
         FROM pages
         WHERE title LIKE $1
-        ORDER BY name
-        LIMIT $2
+        ORDER BY relevance ASC, updated_at DESC
+        LIMIT $3
         "#,
     )
-    .bind(&search_pattern)
+    .bind(&contains_pattern)
+    .bind(&prefix_pattern)
     .bind(limit)
     .fetch_all(pool)
     .await

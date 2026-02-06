@@ -24,12 +24,35 @@
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
-	import { activePageStore } from "$lib/stores/activePage.svelte";
+	import { activePageStore, editAllowListStore } from "$lib/stores/activePage.svelte";
+	import { addPendingEdit, acceptEdit, rejectEdit, getPendingEdit, isEditPending } from "$lib/stores/pendingEdits.svelte";
+	import { dispatchAIEditHighlight, dispatchAIEditAccept, dispatchAIEditReject } from "$lib/events/aiEdit";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
 	import { createYjsDocument } from "$lib/yjs";
+	import type { EntityResult } from "$lib/components/EntityPicker.svelte";
+	import type { AgentModeId } from "$lib/config/agentModes";
+
+	// Generate a random 16-char hex ID (matches backend format)
+	function generateHex16(): string {
+		const bytes = new Uint8Array(8);
+		crypto.getRandomValues(bytes);
+		return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+	}
+
+	// Type for tool result parts in messages
+	interface ToolResultPart {
+		type: string;
+		state?: string;
+		toolCallId?: string;
+		output?: {
+			page_id?: string;
+			title?: string;
+		};
+	}
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -66,7 +89,7 @@
 	const initialConversationId = extractConversationId(tab.route);
 	
 	// UI state
-	let conversationId = $state(initialConversationId || `chat_${crypto.randomUUID()}`);
+	let conversationId = $state(initialConversationId || `chat_${generateHex16()}`);
 	let messagesContainer: HTMLDivElement | null = $state(null);
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
@@ -123,33 +146,141 @@
 		activePageStore.unbind();
 	}
 
-	function handlePageSelect(pageId: string, pageTitle: string) {
-		// Create Yjs document for the page and bind
-		const yjsDoc = createYjsDocument(pageId);
-		activePageStore.bind(pageId, pageTitle, yjsDoc);
-
-		// Auto-open page in split view for side-by-side editing
-		if (!spaceStore.isSplit) {
-			spaceStore.enableSplit();
-		}
-		spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+	function handleRemoveItem(type: string, id: string) {
+		editAllowListStore.remove(type as 'page' | 'folder' | 'wiki_entry', id);
 	}
 
-	// Track processed page creates to avoid re-opening (session-only, not edits)
-	let processedPageCreates = new Set<string>();
+	function handlePageSelect(pageId: string, pageTitle: string) {
+		// Create Yjs document for the page and bind
+		// NOTE: No auto-open - user can open the page manually if they want to see it
+		const yjsDoc = createYjsDocument(pageId);
+		activePageStore.bind(pageId, pageTitle, yjsDoc);
+	}
+
+	/**
+	 * Handle permission allow for AI edit
+	 * @param entityId - The entity to allow editing
+	 * @param entityType - Type of entity (page, person, etc.)
+	 * @param title - Display title
+	 * @param forChat - If true, add to allow list for entire chat session
+	 */
+	async function handlePermissionAllow(entityId: string, entityType: string, title: string, forChat: boolean) {
+		// Add to allow list (both "Allow" and "Allow for chat" add permission for retry)
+		// For MVP, both paths add to the list; "Allow once" could be refined later
+		const type = entityType === 'page' ? 'page' :
+		             entityType === 'folder' ? 'folder' : 'page';
+
+		if (entityType === 'page') {
+			const yjsDoc = createYjsDocument(entityId);
+			await editAllowListStore.addPage(entityId, title, yjsDoc);
+		} else {
+			await editAllowListStore.add({
+				type: type as 'page' | 'folder' | 'wiki_entry',
+				id: entityId,
+				title: title
+			});
+		}
+
+		// Auto-retry: Find the last user message and resend it
+		// This triggers the AI to retry the edit (now with permission granted)
+		const lastUserMessage = chat.messages
+			.filter(m => m.role === 'user')
+			.pop();
+
+		if (lastUserMessage) {
+			// Extract text from the message parts
+			const textPart = (lastUserMessage.parts as any[])?.find(p => p.type === 'text');
+			const messageText = textPart?.text || '';
+
+			if (messageText && chat.status === 'ready') {
+				// Small delay to ensure permission is saved to backend
+				setTimeout(async () => {
+					try {
+						await chat.sendMessage({ text: messageText });
+					} catch (error) {
+						console.error('[ChatView] Failed to retry after permission grant:', error);
+					}
+				}, 100);
+			}
+		}
+	}
+
+	/**
+	 * Handle permission deny for AI edit
+	 */
+	function handlePermissionDeny() {
+		// User denied permission - no action needed
+		// The tool result already shows the permission was needed
+	}
+
+	/**
+	 * Revert an AI edit by calling the backend with reversed find/replace
+	 */
+	async function revertEdit(pageId: string, editId: string) {
+		const edit = getPendingEdit(pageId, editId);
+		if (!edit) return;
+
+		try {
+			// Call backend with reversed arguments to undo the edit
+			const response = await fetch(`/api/pages/${pageId}/edit`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					find: edit.replace,    // Find what AI added
+					replace: edit.find,    // Replace with original
+				})
+			});
+
+			if (response.ok) {
+				// Remove from pending edits store
+				rejectEdit(pageId, editId);
+				// Dispatch reject event to remove highlight in PageEditor
+				dispatchAIEditReject({ pageId, editId });
+			} else {
+				console.error('[ChatView] Failed to revert edit:', await response.text());
+				toast.error('Failed to revert edit');
+			}
+		} catch (error) {
+			console.error('[ChatView] Error reverting edit:', error);
+			toast.error('Failed to revert edit');
+		}
+	}
+
+	function handleSelectEntities(entities: EntityResult[]) {
+		// Add each entity to the edit allow list
+		for (const entity of entities) {
+			// Map entity_type to our EditableResourceType
+			const type = entity.entity_type === 'page' ? 'page' :
+			             entity.entity_type === 'folder' ? 'folder' : 'page';
+
+			// For pages, create Yjs document for real-time sync
+			if (entity.entity_type === 'page') {
+				const yjsDoc = createYjsDocument(entity.id);
+				editAllowListStore.addPage(entity.id, entity.name, yjsDoc);
+			} else {
+				editAllowListStore.add({
+					type: type as 'page' | 'folder' | 'wiki_entry',
+					id: entity.id,
+					title: entity.name
+				});
+			}
+		}
+	}
+
+	// Track tool calls that were already complete when we mounted (loaded from history)
+	// Only auto-open pages created AFTER mount (during streaming)
+	let initialCompletedToolCalls: Set<string> | null = null;
+	let initialLoadComplete = false;
 
 	/**
 	 * Handle create_page tool result - auto-open the new page
-	 * Called from $effect when create_page completes
+	 * Called from $effect when create_page completes during streaming
 	 */
-	function handlePageCreated(pageId: string, title: string, createKey: string) {
-		if (processedPageCreates.has(createKey)) return;
-		processedPageCreates.add(createKey);
-		
+	function handlePageCreated(pageId: string, title: string) {
 		// Auto-bind and open the newly created page in split view
 		const yjsDoc = createYjsDocument(pageId);
 		activePageStore.bind(pageId, title, yjsDoc);
-		
+
 		if (!spaceStore.isSplit) {
 			spaceStore.enableSplit();
 		}
@@ -157,20 +288,81 @@
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
+	// Only triggers for pages created during this session, not when reopening old chats
 	$effect(() => {
 		if (!chat?.messages) return;
-		
+
+		// Don't auto-open during initial load - wait until loading is complete
+		if (isLoading) return;
+
+		// First run after load: capture already-completed tool calls (loaded from history)
+		if (initialCompletedToolCalls === null) {
+			initialCompletedToolCalls = new Set();
+			for (const message of chat.messages) {
+				if (message.role !== 'assistant') continue;
+				for (const part of message.parts as ToolResultPart[]) {
+					if (part.type === 'tool-create_page' && part.state === 'output-available') {
+						initialCompletedToolCalls.add(part.toolCallId);
+					}
+				}
+			}
+			initialLoadComplete = true;
+			return; // Don't auto-open on first run
+		}
+
+		// Only process new pages after initial load is complete
+		if (!initialLoadComplete) return;
+
+		// Subsequent runs: only auto-open for NEW completions (not loaded from history)
 		for (const message of chat.messages) {
 			if (message.role !== 'assistant') continue;
-			
-			for (const part of message.parts) {
-				const partType = (part as any).type;
-				if (partType === 'tool-create_page' && (part as any).state === 'output-available') {
-					const toolPart = part as any;
-					const output = toolPart.output;
-					if (output?.page_id) {
-						const createKey = `${toolPart.toolCallId}_${output.page_id}`;
-						handlePageCreated(output.page_id, output.title, createKey);
+
+			for (const part of message.parts as ToolResultPart[]) {
+				if (part.type === 'tool-create_page' && part.state === 'output-available') {
+					const output = part.output;
+					if (output?.page_id && !initialCompletedToolCalls.has(part.toolCallId)) {
+						handlePageCreated(output.page_id, output.title);
+						initialCompletedToolCalls.add(part.toolCallId); // Mark as handled
+					}
+				}
+			}
+		}
+	});
+
+	// Track completed edit_page tool calls to avoid re-registering
+	let registeredEditCalls = $state<Set<string>>(new Set());
+
+	// Effect to register new edit_page results as pending edits
+	$effect(() => {
+		if (!chat?.messages) return;
+		if (isLoading) return;
+
+		for (const message of chat.messages) {
+			if (message.role !== 'assistant') continue;
+
+			for (const part of message.parts as ToolResultPart[]) {
+				if (part.type === 'tool-edit_page' && part.state === 'output-available') {
+					const output = (part as any).output;
+					if (output?.edit?.edit_id && output?.edit?.page_id && !registeredEditCalls.has(part.toolCallId || '')) {
+						const { edit_id, page_id, find, replace } = output.edit;
+
+						// Register this edit as pending
+						addPendingEdit({
+							editId: edit_id,
+							pageId: page_id,
+							find: find || '',
+							replace: replace || '',
+							timestamp: Date.now()
+						});
+
+						// Dispatch event to highlight the edit in PageEditor
+						dispatchAIEditHighlight({
+							pageId: page_id,
+							editId: edit_id,
+							text: replace || ''
+						});
+
+						registeredEditCalls.add(part.toolCallId || '');
 					}
 				}
 			}
@@ -185,7 +377,6 @@
 		status: "healthy" | "warning" | "critical";
 	}
 	let contextUsage = $state<ContextUsageState | undefined>(undefined);
-	let hasShownWarning = $state(false);
 
 	// Fetch context usage from API
 	async function refreshContextUsage() {
@@ -210,13 +401,6 @@
 				status,
 			};
 
-			// Show warning toast once when crossing 70%
-			if (status === "warning" && !hasShownWarning) {
-				toast.warning(`Context filling up (${data.usage_percentage.toFixed(0)}%)`, {
-					description: "Older messages will be summarized at 85%"
-				});
-				hasShownWarning = true;
-			}
 		} catch {
 			// Non-critical, continue without usage data
 		}
@@ -332,7 +516,21 @@
 			});
 
 			if (!res.ok) throw new Error(`Failed to compact: ${res.status}`);
+
+			// Refresh context view data
 			await fetchContextViewData();
+
+			// Re-fetch messages to show the new checkpoint message
+			const messagesRes = await fetch(`/api/chats/${conversationId}`);
+			if (messagesRes.ok) {
+				const data = await messagesRes.json();
+				loadedMessages = data.messages || [];
+				chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
+					id: msg.id,
+					role: msg.role as "user" | "assistant" | "checkpoint",
+					parts: convertMessageToParts(msg),
+				}));
+			}
 		} catch (e) {
 			contextViewError = e instanceof Error ? e.message : 'Compaction failed';
 		} finally {
@@ -423,6 +621,12 @@
 			});
 		}
 
+		// If message already has parts array (e.g., checkpoint messages), use it directly
+		if (msg.parts && Array.isArray(msg.parts) && msg.parts.length > 0) {
+			return msg.parts;
+		}
+
+		// Otherwise, construct parts from individual fields (legacy format)
 		const parts: any[] = [];
 
 		if (msg.reasoning) {
@@ -494,7 +698,7 @@
 			if (currentChatConversationId) {
 				chatInstances.release(currentChatConversationId);
 			}
-			// Get or create new instance with model, space, and active page getters
+			// Get or create new instance with model, space, active page, persona, and agent mode getters
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: getCurrentModel,
@@ -503,18 +707,20 @@
 					const pageId = activePageStore.getBoundPageId();
 					const pageTitle = activePageStore.getBoundPageTitle();
 					const yjsDoc = activePageStore.getYjsDoc();
-					
+
 					if (!pageId) return null;
-					
+
 					// Include the current Yjs content so AI edits match what's in the editor
-					const content = yjsDoc?.ytext.toString() || '';
-					
-					return { 
-						page_id: pageId, 
+					const content = yjsDoc?.yxmlFragment.toString() || '';
+
+					return {
+						page_id: pageId,
 						page_title: pageTitle || undefined,
 						content: content
 					};
 				},
+				getPersona: () => selectedPersona,
+				getAgentMode: () => selectedAgentMode,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -554,7 +760,7 @@
 
 			// Generate new conversationId for new chats, or use the extracted conversationId
 			const newConversationId =
-				currentTabConversationId || `chat_${crypto.randomUUID()}`;
+				currentTabConversationId || `chat_${generateHex16()}`;
 			conversationId = newConversationId;
 
 			// Reset chat state
@@ -563,13 +769,14 @@
 			messageMetadata = new Map();
 			contextUsage = undefined;
 			titleGenerated = false;
-			hasShownWarning = false;
 			thinkingIndicatorVisible = false;
 			minTimeElapsed = false;
 			// Reset page create tracking (for auto-open)
-			processedPageCreates = new Set();
-			// Unbind any active page when switching chats
-			activePageStore.unbind();
+			initialCompletedToolCalls = null;
+			initialLoadComplete = false;
+			// NOTE: We no longer unbind the active page when switching chats.
+			// Binding is now additive/persistent to the chat session context.
+			// activePageStore.unbind();
 
 			// Load conversation if switching to an existing one
 			if (currentTabConversationId && !isNewChat(currentTabRoute)) {
@@ -589,7 +796,7 @@
 								loadedMessages,
 							).map((msg: any) => ({
 								id: msg.id,
-								role: msg.role as "user" | "assistant",
+								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
 							}));
 							if (data.conversation?.model) {
@@ -598,6 +805,8 @@
 								);
 							}
 							await refreshContextUsage();
+							// Initialize edit allow list for this chat
+							await editAllowListStore.init(currentTabConversationId);
 						}
 					} catch (error) {
 						// Ignore abort errors - they're expected when switching tabs
@@ -619,6 +828,8 @@
 					}
 				})();
 			} else {
+				// New chat - set chatId so permissions can sync when granted
+				editAllowListStore.setChatId(newConversationId);
 				isLoading = false;
 			}
 		}
@@ -632,6 +843,8 @@
 			await getInitializationPromise();
 
 			// Load assistant profile
+			let profileDefaultModelId: string | undefined;
+			let profileDefaultPersona: string | undefined;
 			try {
 				const profileResponse = await fetch("/api/assistant-profile");
 				if (profileResponse.ok) {
@@ -639,6 +852,9 @@
 					if (profile.ui_preferences) {
 						uiPreferences = profile.ui_preferences;
 					}
+					// Extract default model and persona for new chat initialization
+					profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
+					profileDefaultPersona = profile.persona;
 				}
 			} catch (error) {
 				console.error("Failed to load assistant profile:", error);
@@ -670,7 +886,7 @@
 						chat.messages = deduplicateMessages(loadedMessages).map(
 							(msg: any) => ({
 								id: msg.id,
-								role: msg.role as "user" | "assistant",
+								role: msg.role as "user" | "assistant" | "checkpoint",
 								parts: convertMessageToParts(msg),
 							}),
 						);
@@ -682,12 +898,28 @@
 
 						// Load initial context usage
 						await refreshContextUsage();
+
+						// Initialize edit allow list for this chat
+						await editAllowListStore.init(tabConversationId);
 					}
 				} catch (error) {
 					console.error(
 						"[ChatView] Error loading conversation:",
 						error,
 					);
+				}
+			} else {
+				// New chat - set the chatId so permissions can sync when granted
+				editAllowListStore.setChatId(conversationId);
+				// Initialize model and persona from assistant profile defaults
+				initializeSelectedModel(undefined, profileDefaultModelId);
+				// Also sync to local state for immediate UI update
+				const defaultModel = getSelectedModel() || getDefaultModel();
+				if (defaultModel) {
+					selectedModelValue = defaultModel;
+				}
+				if (profileDefaultPersona) {
+					selectedPersona = profileDefaultPersona;
 				}
 			}
 
@@ -715,21 +947,12 @@
 
 	// Derive thinking state from chat status
 	const isThinking = $derived.by(() => {
-		const status = chat.status;
+		const status = chat?.status;
 		return status === "submitted" || status === "streaming";
 	});
 
 	// Deduplicated messages for rendering
-	const uniqueMessages = $derived.by(() => {
-		const seen = new Set<string>();
-		return chat.messages.filter((msg) => {
-			if (seen.has(msg.id)) {
-				return false;
-			}
-			seen.add(msg.id);
-			return true;
-		});
-	});
+	const uniqueMessages = $derived(chat?.messages ? deduplicateMessages(chat.messages) : []);
 
 	// Get the last assistant message
 	const lastAssistantMessage = $derived.by(() => {
@@ -799,6 +1022,16 @@
 	let input = $state("");
 	let inputFocused = $state(false);
 
+	// Auto-focus chat input when new chat tab becomes active
+	$effect(() => {
+		if (active && isEmpty && !isLoading) {
+			// Small delay to ensure DOM is ready
+			setTimeout(() => {
+				inputFocused = true;
+			}, 50);
+		}
+	});
+
 	// Title generation state
 	let titleGenerated = $state(false);
 	let inactivityTimer: ReturnType<typeof setTimeout> | null = null;
@@ -808,6 +1041,10 @@
 	let selectedModelValue = $state<
 		import("$lib/config/models").ModelOption | undefined
 	>(undefined);
+
+	// Agent mode and persona selection state - used for tool filtering on backend
+	let selectedAgentMode = $state<AgentModeId>('agent');
+	let selectedPersona = $state<string>('default');
 
 	// Sync selected model with store (only on initial load)
 	$effect(() => {
@@ -919,6 +1156,22 @@
 		inputFocused = true;
 	}
 
+	async function handleChatStop() {
+		// Stop the client-side stream
+		chat.stop();
+
+		// Also notify the backend to cancel the agent loop
+		try {
+			await fetch('/api/chat/cancel', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ chatId: conversationId })
+			});
+		} catch (e) {
+			console.error('[ChatView] Failed to cancel chat:', e);
+		}
+	}
+
 	async function handleChatSubmit(value: string) {
 		const messageToSend = value.trim();
 		if (!messageToSend) return;
@@ -953,6 +1206,8 @@
 					spaceStore.updateTab(tab.id, {
 						route: newRoute,
 					});
+					// Mark chat as created so pending permissions sync to backend
+					await editAllowListStore.markChatCreated();
 					// Invalidate the Chats view cache so it refreshes with the new chat
 					spaceStore.invalidateViewCache('chat');
 					// Reload space items so new chat appears in sidebar
@@ -980,10 +1235,8 @@
 	}
 </script>
 
-{#if isLoading}
-	<div class="loading-container">
-		<div class="loading-spinner"></div>
-	</div>
+{#if !chat}
+	<!-- wait for chat to initialize -->
 {:else if isContextView}
 	<!-- Context View - Full session details -->
 	<div class="context-view">
@@ -1142,7 +1395,18 @@
 													p.type === "text" && p.text,
 											)}
 									>
-										{#if message.role === "assistant"}
+										{#if message.role === "checkpoint"}
+											<!-- Compaction checkpoint message -->
+											{@const checkpointPart = message.parts.find((p: any) => p.type === "checkpoint")}
+											{#if checkpointPart}
+												<CompactionCheckpoint
+													version={(checkpointPart as any).version}
+													messagesSummarized={(checkpointPart as any).messagesSummarized || (checkpointPart as any).messages_summarized}
+													summary={(checkpointPart as any).summary}
+													timestamp={(checkpointPart as any).timestamp}
+												/>
+											{/if}
+										{:else if message.role === "assistant"}
 											{@const citationContext =
 												buildCitationContextFromParts(
 													message.parts,
@@ -1210,30 +1474,74 @@
 														type="page_created"
 														title={output.title}
 														pageId={output.page_id}
-														onOpenPage={(id) => spaceStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' })}
+														onOpenPage={(id) => {
+													if (!spaceStore.isSplit) {
+														spaceStore.enableSplit();
+													}
+													spaceStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' });
+												}}
+														onBindPage={handlePageSelect}
 													/>
 												{/if}
 											{:else if part.type === "tool-edit_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
-												{#if output?.needs_binding}
+												{#if output?.permission_needed}
+													<!-- AI needs permission to edit this entity -->
 													<PageBindingInline
+														entityId={output.entity_id}
+														entityType={output.entity_type}
+														entityTitle={output.entity_title}
+														message={output.message}
+														proposedAction={output.proposed_action}
+														permissionMode={true}
+														onAllow={(id, type, title) => handlePermissionAllow(id, type, title, false)}
+														onAllowForChat={(id, type, title) => handlePermissionAllow(id, type, title, true)}
+														onDeny={() => handlePermissionDeny()}
+													/>
+												{:else if output?.needs_binding}
+													<PageBindingInline
+														entityId={output.page_id}
+														entityTitle={output.page_title}
 														message={output.message}
 														onBind={handlePageSelect}
 													/>
 												{:else if output?.edit}
-													<!-- Edit was applied server-side, show as historical record -->
+													<!-- Edit was applied server-side -->
+													{@const editPageId = output.edit.page_id}
+													{@const editId = output.edit.edit_id}
+													{@const isPending = editId && editPageId ? isEditPending(editPageId, editId) : false}
 													<EditDiffCard
-														status="applied"
+														status={isPending ? 'pending' : 'accepted'}
+														{editId}
+														pageId={editPageId}
 														find={output.edit.find || ''}
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
-														onViewPage={output.edit.page_id ? () => spaceStore.openTabFromRoute(`/page/${output.edit.page_id}`, { paneId: 'right' }) : undefined}
+														onViewPage={editPageId ? () => {
+															// Enable split mode if not already, then open page in right pane
+															if (!spaceStore.isSplit) {
+																spaceStore.enableSplit();
+															}
+															spaceStore.openTabFromRoute(`/page/${editPageId}`, { paneId: 'right', forceNew: true });
+														} : undefined}
+														onAccept={isPending && editId && editPageId ? () => {
+															// Accept: remove from pending (edit stays in document)
+															acceptEdit(editPageId, editId);
+															// Dispatch event to remove highlight in PageEditor
+															dispatchAIEditAccept({ pageId: editPageId, editId });
+														} : undefined}
+														onReject={isPending && editId && editPageId ? () => {
+															// Reject: revert the edit via API and remove highlight
+															revertEdit(editPageId, editId);
+														} : undefined}
 													/>
 												{/if}
 											{:else if part.type === "tool-get_page_content" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
 												{#if output?.needs_binding}
 													<PageBindingInline
+														pageId={output.page_id}
+														pageTitle={output.page_title}
 														message={output.message}
 														onBind={handlePageSelect}
 													/>
@@ -1380,22 +1688,29 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							bind:selectedModel={selectedModelValue}
+							bind:selectedAgentMode={selectedAgentMode}
+							bind:selectedPersona={selectedPersona}
 							disabled={false}
 							sendDisabled={chat.status !== "ready"}
+							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
 							showToolbar={true}
 							conversationId={extractConversationId(tab.route)}
 							{contextUsage}
 							onContextClick={handleContextClick}
+							editableItems={editAllowListStore.items}
 							pageBinding={activePageStore.boundPageId ? { pageId: activePageStore.boundPageId, pageTitle: activePageStore.boundPageTitle || 'Untitled' } : undefined}
 							onPageChange={handlePageChangePage}
 							onPageClear={handlePageClear}
+							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}
+							onSelectEntities={handleSelectEntities}
 							on:submit={(e) => {
 								if (chat.status === "ready") {
 									handleChatSubmit(e.detail);
 								}
 							}}
+							on:stop={() => handleChatStop()}
 						/>
 
 						{#if isEmpty}
@@ -1764,6 +2079,7 @@
 	/* User message card styling */
 	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
+		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		padding: 10px 16px;
 	}
@@ -1831,8 +2147,8 @@
 		align-items: center;
 		gap: 0.375rem;
 		padding: 0.375rem 0.75rem;
-		background-color: var(--color-surface);
-		border: 1px solid var(--color-error);
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
 		border-radius: 0.375rem;
 		color: var(--color-error);
 		font-size: 0.875rem;
@@ -1842,7 +2158,8 @@
 	}
 
 	.retry-button:hover {
-		background-color: var(--color-error-subtle);
+		background: var(--color-error);
+		color: white;
 	}
 
 	.retry-button:active {

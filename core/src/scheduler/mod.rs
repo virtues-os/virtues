@@ -34,6 +34,7 @@ use crate::{
 pub struct Scheduler {
     db: SqlitePool,
     storage: Storage,
+    drive_config: crate::api::DriveConfig,
     stream_writer: Arc<Mutex<StreamWriter>>,
     scheduler: JobScheduler,
 }
@@ -49,9 +50,13 @@ impl Scheduler {
             .await
             .map_err(|e| Error::Other(format!("Failed to create scheduler: {e}")))?;
 
+        // Create drive config from storage
+        let drive_config = crate::api::DriveConfig::new(std::sync::Arc::new(storage.clone()));
+
         Ok(Self {
             db,
             storage,
+            drive_config,
             stream_writer,
             scheduler,
         })
@@ -256,6 +261,7 @@ impl Scheduler {
     /// Permanently deletes files that have been in trash for more than 30 days.
     pub async fn schedule_drive_trash_purge_job(&self) -> Result<()> {
         let db = self.db.clone();
+        let drive_config = self.drive_config.clone();
 
         // Daily at 3am
         let cron_expr = "0 0 3 * * *";
@@ -264,11 +270,11 @@ impl Scheduler {
 
         let job = Job::new_async(cron_expr, move |_uuid, _lock| {
             let db = db.clone();
+            let config = drive_config.clone();
 
             Box::pin(async move {
                 tracing::info!("Running DriveTrashPurgeJob");
 
-                let config = crate::api::DriveConfig::from_env();
                 match crate::api::purge_old_drive_trash(&db, &config).await {
                     Ok(count) => {
                         if count > 0 {

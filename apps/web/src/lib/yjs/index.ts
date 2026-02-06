@@ -22,12 +22,4 @@ export {
 	type AIEditRange
 } from './ai-decorations';
 
-export {
-	criticMarkupExtension,
-	hasCriticMarkup,
-	acceptAllChanges,
-	rejectAllChanges,
-	type CriticMarkupConfig
-} from './critic-markup';
-
 export { saveVersion, listVersions, restoreVersion, type PageVersion } from './versions';

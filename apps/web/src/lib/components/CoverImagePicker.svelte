@@ -1,25 +1,31 @@
 <script lang="ts">
 	/**
-	 * CoverImagePicker - Cover image selection modal
+	 * CoverImagePicker - Cover image selection popover content
 	 *
-	 * A centered modal for selecting a cover image via upload, URL, or Unsplash.
-	 * Follows the same self-contained modal pattern as IconPicker.
+	 * Content component for selecting a cover image via upload, library, or Unsplash.
+	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
-	import { uploadDriveFile } from '$lib/api/client';
+	import { listDriveFiles, uploadMedia, type DriveFile } from '$lib/api/client';
 
 	interface Props {
 		/** Current cover URL */
 		value?: string | null;
 		/** Called when a cover is selected (url string) or removed (null) */
 		onSelect: (url: string | null) => void;
-		/** Called when picker is closed */
-		onClose: () => void;
+		/** Close the popover */
+		close: () => void;
 	}
 
-	let { value = null, onSelect, onClose }: Props = $props();
+	let { value = null, onSelect, close }: Props = $props();
 
-	let activeTab = $state<'upload' | 'link' | 'unsplash'>('upload');
+	let activeTab = $state<'upload' | 'library' | 'unsplash'>('unsplash');
+
+	// Topic suggestions for Unsplash empty state
+	const UNSPLASH_TOPICS = ['Nature', 'Abstract', 'Gradient', 'Landscape', 'Texture', 'Library'];
+
+	// Max file size: 20MB (matches server limit)
+	const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 	// Upload tab state
 	let uploading = $state(false);
@@ -28,10 +34,11 @@
 	let dragOver = $state(false);
 	let fileInputEl: HTMLInputElement;
 
-	// Link tab state
-	let linkUrl = $state('');
-	let linkPreviewLoaded = $state(false);
-	let linkPreviewError = $state(false);
+	// Library tab state
+	let libraryImages = $state<DriveFile[]>([]);
+	let libraryLoading = $state(false);
+	let libraryError = $state<string | null>(null);
+	let libraryLoaded = $state(false);
 
 	// Unsplash tab state
 	interface UnsplashPhoto {
@@ -49,23 +56,6 @@
 	let unsplashSearchTimeout: ReturnType<typeof setTimeout> | null = null;
 	let searchInputEl: HTMLInputElement;
 
-	// Portal action - moves element to body for proper z-index stacking
-	function portal(node: HTMLElement) {
-		document.body.appendChild(node);
-		return {
-			destroy() {
-				node.remove();
-			}
-		};
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			onClose();
-		}
-	}
-
 	// Upload handlers
 	async function handleFileSelect(files: FileList | null) {
 		if (!files || files.length === 0) return;
@@ -76,17 +66,21 @@
 			return;
 		}
 
+		if (file.size > MAX_FILE_SIZE) {
+			uploadError = 'Image must be under 20MB';
+			return;
+		}
+
 		uploading = true;
 		uploadProgress = 0;
 		uploadError = null;
 
 		try {
-			const driveFile = await uploadDriveFile('covers', file, (progress) => {
+			const mediaFile = await uploadMedia(file, (progress) => {
 				uploadProgress = progress;
 			});
-			const coverUrl = `/api/drive/files/${driveFile.id}/download`;
-			onSelect(coverUrl);
-			onClose();
+			onSelect(mediaFile.url);
+			close();
 		} catch (e) {
 			uploadError = e instanceof Error ? e.message : 'Upload failed';
 		} finally {
@@ -112,11 +106,51 @@
 		dragOver = false;
 	}
 
-	// Link handlers
-	function handleLinkSubmit() {
-		if (!linkUrl.trim()) return;
-		onSelect(linkUrl.trim());
-		onClose();
+	// Library handlers
+	async function loadLibraryImages() {
+		if (libraryLoaded) return;
+		libraryLoading = true;
+		libraryError = null;
+		try {
+			// Get all files from drive root and covers folder
+			const [rootFiles, coverFiles] = await Promise.all([
+				listDriveFiles('').catch(() => []),
+				listDriveFiles('covers').catch(() => [])
+			]);
+
+			// Filter for images only and combine
+			const isImage = (f: DriveFile) =>
+				!f.is_folder && f.mime_type?.startsWith('image/');
+
+			libraryImages = [...coverFiles.filter(isImage), ...rootFiles.filter(isImage)];
+			libraryLoaded = true;
+		} catch (e) {
+			libraryError = e instanceof Error ? e.message : 'Failed to load images';
+		} finally {
+			libraryLoading = false;
+		}
+	}
+
+	function selectLibraryImage(file: DriveFile) {
+		onSelect(`/api/drive/files/${file.id}/download`);
+		close();
+	}
+
+	// Handle tab changes: load library, auto-focus unsplash search
+	$effect(() => {
+		if (activeTab === 'library' && !libraryLoaded) {
+			loadLibraryImages();
+		}
+		if (activeTab === 'unsplash') {
+			// Delay focus to ensure element is rendered
+			setTimeout(() => searchInputEl?.focus(), 0);
+		}
+	});
+
+	// Handle topic suggestion click
+	function selectTopic(topic: string) {
+		unsplashQuery = topic;
+		searchUnsplash(topic);
 	}
 
 	// Unsplash handlers
@@ -131,7 +165,7 @@
 			const res = await fetch('/api/unsplash/search', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ query: query.trim(), per_page: 20 }),
+				body: JSON.stringify({ query: query.trim(), per_page: 16 }),
 			});
 			if (!res.ok) {
 				const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -157,22 +191,17 @@
 	function selectUnsplashPhoto(photo: UnsplashPhoto) {
 		// Use the regular size (1080px wide) — hotlinked per Unsplash requirements
 		onSelect(photo.urls.regular);
-		onClose();
+		close();
 	}
 
 	// Remove handler
 	function handleRemove() {
 		onSelect(null);
-		onClose();
+		close();
 	}
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="picker-backdrop" use:portal onclick={(e) => e.target === e.currentTarget && onClose()}>
-	<div class="cover-picker">
+<div class="cover-picker">
 		<!-- Tabs -->
 		<div class="picker-tabs">
 			<button
@@ -185,11 +214,11 @@
 			</button>
 			<button
 				class="tab"
-				class:active={activeTab === 'link'}
-				onclick={() => activeTab = 'link'}
+				class:active={activeTab === 'library'}
+				onclick={() => activeTab = 'library'}
 			>
-				<Icon icon="ri:link" width="14" />
-				Link
+				<Icon icon="ri:image-2-line" width="14" />
+				Library
 			</button>
 			<button
 				class="tab"
@@ -242,37 +271,38 @@
 					</div>
 				{/if}
 
-			{:else if activeTab === 'link'}
-				<div class="link-tab">
-					<div class="link-input-row">
-						<input
-							type="url"
-							bind:value={linkUrl}
-							placeholder="Paste an image URL..."
-							class="link-input"
-							onkeydown={(e) => e.key === 'Enter' && handleLinkSubmit()}
-						/>
-						<button
-							class="link-submit-btn"
-							onclick={handleLinkSubmit}
-							disabled={!linkUrl.trim()}
-						>
-							Apply
-						</button>
-					</div>
-					{#if linkUrl.trim()}
-						<div class="link-preview">
-							<img
-								src={linkUrl}
-								alt="Preview"
-								onload={() => { linkPreviewLoaded = true; linkPreviewError = false; }}
-								onerror={() => { linkPreviewError = true; linkPreviewLoaded = false; }}
-								class="preview-img"
-								class:loaded={linkPreviewLoaded}
-							/>
-							{#if linkPreviewError}
-								<div class="preview-error">Could not load image from this URL</div>
-							{/if}
+			{:else if activeTab === 'library'}
+				<div class="library-tab">
+					{#if libraryLoading}
+						<div class="library-status">
+							<Icon icon="ri:loader-4-line" width="20" />
+							<span>Loading images...</span>
+						</div>
+					{:else if libraryError}
+						<div class="library-status error">
+							<Icon icon="ri:error-warning-line" width="16" />
+							<span>{libraryError}</span>
+						</div>
+					{:else if libraryImages.length > 0}
+						<div class="photo-grid">
+							{#each libraryImages as file (file.id)}
+								<button
+									class="photo-item"
+									onclick={() => selectLibraryImage(file)}
+									title={file.filename}
+								>
+									<img
+										src={`/api/drive/files/${file.id}/download`}
+										alt={file.filename}
+										loading="lazy"
+									/>
+								</button>
+							{/each}
+						</div>
+					{:else}
+						<div class="library-status empty">
+							<Icon icon="ri:image-2-line" width="20" />
+							<span>No images in your library</span>
 						</div>
 					{/if}
 				</div>
@@ -322,9 +352,15 @@
 							<span>No results for "{unsplashQuery}"</span>
 						</div>
 					{:else}
-						<div class="unsplash-status empty">
-							<Icon icon="ri:search-line" width="20" />
-							<span>Search Unsplash for free photos</span>
+						<div class="topic-suggestions">
+							{#each UNSPLASH_TOPICS as topic}
+								<button
+									class="topic-chip"
+									onclick={() => selectTopic(topic)}
+								>
+									{topic}
+								</button>
+							{/each}
 						</div>
 					{/if}
 				</div>
@@ -332,57 +368,23 @@
 		</div>
 
 		<!-- Footer with remove option -->
-		{#if value}
-			<div class="picker-footer">
-				<button class="remove-btn" onclick={handleRemove}>
-					<Icon icon="ri:delete-bin-line" width="14" />
-					Remove cover
-				</button>
-			</div>
-		{/if}
-	</div>
+	{#if value}
+		<div class="picker-footer">
+			<button class="remove-btn" onclick={handleRemove}>
+				<Icon icon="ri:delete-bin-line" width="14" />
+				Remove cover
+			</button>
+		</div>
+	{/if}
 </div>
 
 <style>
-	.picker-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 10000;
-		background: rgba(0, 0, 0, 0.4);
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding-top: 12vh;
-		animation: backdrop-in 150ms ease-out;
-	}
-
-	@keyframes backdrop-in {
-		from { opacity: 0; }
-		to { opacity: 1; }
-	}
-
 	.cover-picker {
 		width: 420px;
 		max-height: 480px;
-		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.24);
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		animation: picker-in 150ms ease-out;
-	}
-
-	@keyframes picker-in {
-		from {
-			opacity: 0;
-			transform: translateY(-8px) scale(0.96);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) scale(1);
-		}
 	}
 
 	.picker-tabs {
@@ -399,7 +401,7 @@
 		gap: 6px;
 		padding: 10px 12px;
 		font-size: 13px;
-		font-weight: 500;
+		font-weight: 400;
 		color: var(--color-foreground-muted);
 		background: none;
 		border: none;
@@ -431,7 +433,7 @@
 		align-items: center;
 		justify-content: center;
 		gap: 8px;
-		padding: 32px 16px;
+		padding: 24px;
 		border: 2px dashed var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
@@ -486,84 +488,29 @@
 		border-radius: 6px;
 	}
 
-	/* Link tab */
-	.link-tab {
+	/* Library tab */
+	.library-tab {
 		display: flex;
 		flex-direction: column;
 		gap: 12px;
 	}
 
-	.link-input-row {
+	.library-status {
 		display: flex;
+		align-items: center;
+		justify-content: center;
 		gap: 8px;
-	}
-
-	.link-input {
-		flex: 1;
-		padding: 10px 12px;
-		font-size: 14px;
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		background: var(--color-background);
-		color: var(--color-foreground);
-		outline: none;
-	}
-
-	.link-input::placeholder {
-		color: var(--color-foreground-subtle);
-	}
-
-	.link-input:focus {
-		border-color: var(--color-primary);
-	}
-
-	.link-submit-btn {
-		padding: 10px 16px;
-		font-size: 13px;
-		font-weight: 500;
-		color: white;
-		background: var(--color-primary);
-		border: none;
-		border-radius: 8px;
-		cursor: pointer;
-		transition: opacity 150ms;
-		white-space: nowrap;
-	}
-
-	.link-submit-btn:hover {
-		opacity: 0.9;
-	}
-
-	.link-submit-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.link-preview {
-		border-radius: 8px;
-		overflow: hidden;
-		background: var(--color-surface-overlay);
-	}
-
-	.preview-img {
-		width: 100%;
-		height: auto;
-		object-fit: cover;
-		max-height: 160px;
-		opacity: 0;
-		transition: opacity 200ms;
-		display: block;
-	}
-
-	.preview-img.loaded {
-		opacity: 1;
-	}
-
-	.preview-error {
-		padding: 16px;
-		text-align: center;
-		font-size: 13px;
+		padding: 32px 16px;
 		color: var(--color-foreground-muted);
+		font-size: 14px;
+	}
+
+	.library-status.error {
+		color: var(--color-error);
+	}
+
+	.library-status.empty {
+		color: var(--color-foreground-subtle);
 	}
 
 	/* Unsplash tab */
@@ -611,18 +558,42 @@
 		color: var(--color-foreground-subtle);
 	}
 
+	/* Topic suggestions */
+	.topic-suggestions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		padding: 16px 0;
+	}
+
+	.topic-chip {
+		padding: 6px 12px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		background: var(--color-surface-elevated);
+		border: 1px solid var(--color-border);
+		border-radius: 16px;
+		cursor: pointer;
+		transition: all 150ms;
+	}
+
+	.topic-chip:hover {
+		color: var(--color-foreground);
+		border-color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+	}
+
 	.photo-grid {
 		display: grid;
-		grid-template-columns: repeat(3, 1fr);
+		grid-template-columns: repeat(2, 1fr);
 		gap: 4px;
 		max-height: 280px;
 		overflow-y: auto;
-		border-radius: 6px;
 	}
 
 	.photo-item {
 		position: relative;
-		aspect-ratio: 4 / 3;
+		aspect-ratio: 3 / 1;
 		overflow: hidden;
 		border: none;
 		padding: 0;

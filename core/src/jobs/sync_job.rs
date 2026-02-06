@@ -54,7 +54,7 @@ pub async fn execute_sync_job(
 
     // Get user tier (mocked for now, should come from profile/subscription)
     // TODO: Implement actual subscription check
-    let user_tier = virtues_registry::sources::SourceTier::Free;
+    let user_tier = virtues_registry::sources::SourceTier::Standard;
 
     if (registered_stream.descriptor.tier as u32) > (user_tier as u32) {
         let error_msg = format!(

@@ -83,7 +83,16 @@ pub async fn has_active_sync_job(
 
 /// Create a new job in the database
 pub async fn create_job(db: &SqlitePool, request: CreateJobRequest) -> Result<Job> {
-    let job_id = format!("{}_{}", crate::ids::JOB_PREFIX, uuid::Uuid::new_v4());
+    // Generate ID with proper prefix (job_{hash16})
+    let job_id = crate::ids::generate_id(
+        crate::ids::JOB_PREFIX,
+        &[
+            &request.job_type.to_string(),
+            request.source_connection_id.as_deref().unwrap_or(""),
+            request.stream_name.as_deref().unwrap_or(""),
+            &chrono::Utc::now().to_rfc3339(),
+        ],
+    );
     let row = sqlx::query(
         r#"
         INSERT INTO elt_jobs (
@@ -300,16 +309,26 @@ pub async fn create_chained_transform_job(
 ) -> Result<Job> {
     let metadata = serde_json::json!({
         "source_table": source_table,
+        "target_table": target_tables.first().unwrap_or(&""),
         "target_tables": target_tables,
         "domain": domain,
         "transform_stage": transform_stage,
     });
 
+    // Build a display-friendly stream_name from the transform stage and domain
+    // e.g. "entity_resolution" + "location" → "ER — place"
+    let stream_label = match (transform_stage, domain) {
+        ("entity_resolution", "location") => Some("ER — place".to_string()),
+        ("entity_resolution", "social") => Some("ER — people".to_string()),
+        ("entity_resolution", domain) => Some(format!("ER — {}", domain)),
+        (stage, domain) => Some(format!("{} — {}", stage, domain)),
+    };
+
     let request = CreateJobRequest {
         job_type: JobType::Transform,
         status: JobStatus::Pending,
         source_connection_id: Some(source_id.to_string()),
-        stream_name: None,
+        stream_name: stream_label,
         sync_mode: None,
         transform_id: None,
         transform_strategy: None,

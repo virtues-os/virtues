@@ -6,6 +6,7 @@
 	 * Shows different states: page_created, edit_applied, edit_failed
 	 */
 	import Icon from '$lib/components/Icon.svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
 
 	interface Props {
 		type: 'page_created' | 'edit_applied' | 'edit_failed';
@@ -41,6 +42,9 @@
 	function handleOpenPage() {
 		if (pageId && onOpenPage) {
 			onOpenPage(pageId);
+		} else if (pageId) {
+			// Fallback to direct store call if handler is missing
+			spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
 		}
 	}
 </script>
@@ -56,12 +60,14 @@
 			<span class="result-description">{description}</span>
 		{/if}
 	</div>
-	{#if config.showOpenButton && pageId}
-		<button class="open-page-btn" onclick={handleOpenPage} type="button">
-			<Icon icon="ri:external-link-line" width="14" />
-			Open
-		</button>
-	{/if}
+	<div class="result-actions">
+		{#if config.showOpenButton && pageId}
+			<button class="open-btn" onclick={handleOpenPage} type="button">
+				<Icon icon="ri:external-link-line" width="14" />
+				Open
+			</button>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -91,7 +97,8 @@
 	}
 
 	.result-title {
-		font-weight: 600;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-weight: 400;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -105,50 +112,49 @@
 		white-space: nowrap;
 	}
 
+	.result-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex-shrink: 0;
+	}
+
 	/* Color variants */
 	.result-created {
-		background: var(--color-primary-subtle);
-		border-color: var(--color-primary);
-		color: var(--color-primary);
+		background: var(--color-surface-elevated);
+		border-color: var(--color-border);
+		color: var(--color-foreground);
 	}
 
 	.result-success {
-		background: var(--color-success-subtle);
-		border-color: var(--color-success);
+		background: var(--color-surface-elevated);
+		border-color: var(--color-success-subtle);
 		color: var(--color-success);
 	}
 
 	.result-error {
-		background: var(--color-error-subtle);
-		border-color: var(--color-error);
+		background: var(--color-surface-elevated);
+		border-color: var(--color-error-subtle);
 		color: var(--color-error);
 	}
 
-	/* Open page button */
-	.open-page-btn {
+	/* Open button */
+	.open-btn {
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
 		padding: 0.375rem 0.625rem;
 		background: transparent;
-		border: 1px solid currentColor;
-		border-radius: 0.375rem;
+		border: none;
+		border-radius: 9999px;
 		font-size: 0.75rem;
 		font-weight: 500;
-		color: inherit;
+		color: var(--color-foreground-muted);
 		cursor: pointer;
 		transition: all 0.15s ease;
-		flex-shrink: 0;
 	}
 
-	.open-page-btn:hover {
-		background: currentColor;
-		color: white;
-	}
-
-	.result-created .open-page-btn:hover {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		color: white;
+	.open-btn:hover {
+		color: var(--color-foreground);
 	}
 </style>

@@ -93,7 +93,7 @@
 			icon: 'ri:chat-3-line',
 			items: [
 				...recentChatsItems,
-				{ route: '/chat', label: 'All Chats', icon: 'ri:chat-history-line' },
+				{ route: '/chat-history', label: 'All Chats', icon: 'ri:chat-history-line' },
 			]
 		},
 		{
@@ -123,7 +123,7 @@
 			icon: 'ri:database-2-line',
 			items: [
 				{ route: '/drive', label: 'Drive', icon: 'ri:folder-line' },
-				{ route: '/source', label: 'Sources', icon: 'ri:plug-line' },
+				{ route: '/sources', label: 'Sources', icon: 'ri:plug-line' },
 			]
 		},
 		{

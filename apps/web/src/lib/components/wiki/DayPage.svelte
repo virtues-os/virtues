@@ -109,7 +109,7 @@
 
 	$effect(() => {
 		// Day pages are date-slugged (YYYY-MM-DD)
-		if (browser && page?.slug) loadMovement(page.slug);
+		if (browser && page?.slug) loadMovement(page.id);
 	});
 
 	// Use sample Rome location track for demo date (2025-12-10)
@@ -130,7 +130,7 @@
 					label: c.place_name ?? undefined,
 					timeMs: Date.parse(c.start_time),
 				}))
-			: page.slug === "2025-12-10"
+			: page.id === "2025-12-10"
 				? sampleStopPoints
 				: [],
 	);
@@ -185,7 +185,7 @@
 	}
 
 	$effect(() => {
-		if (browser && page?.slug) loadDataSources(page.slug);
+		if (browser && page?.slug) loadDataSources(page.id);
 	});
 
 	// Group sources by type for display
@@ -347,7 +347,7 @@
 						{#each allLinkedPages as entity}
 							<li>
 								<a
-									href="/wiki/{entity.pageSlug}"
+									href="/wiki/{entity.pageId}"
 									class="footer-link"
 								>
 									<span class="link-text"

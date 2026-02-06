@@ -11,12 +11,12 @@
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// Derive slug from route
-	// Route format: /person/person_john-doe → slug = john-doe
-	// Route format: /day/day_2026-01-25 → slug = 2026-01-25
-	const slug = $derived.by(() => {
-		// Extract entity ID from route, then get the slug portion after the prefix
-		const match = tab.route.match(/^\/[a-z]+\/[a-z]+_(.+)$/);
+	// Derive entityId from route
+	// Route format: /person/person_abc123 → entityId = person_abc123
+	// Route format: /day/day_2026-01-25 → entityId = day_2026-01-25
+	const entityId = $derived.by(() => {
+		// Extract the entityId (last path segment) from the route
+		const match = tab.route.match(/^\/[a-z]+\/(.+)$/);
 		return match?.[1];
 	});
 
@@ -26,7 +26,7 @@
 </script>
 
 <WikiContent
-	{slug}
+	{entityId}
 	{active}
 	onLabelChange={handleLabelChange}
 />

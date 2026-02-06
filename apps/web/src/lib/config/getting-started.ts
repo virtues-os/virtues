@@ -86,10 +86,10 @@ export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 	},
 	{
 		id: 'connections',
-		title: 'Connections',
+		title: 'Add sources',
 		description: 'Add iOS, Gmail, Mac, etc.',
 		icon: 'ri:link',
-		action: { type: 'navigate', href: '/source' },
+		action: { type: 'navigate', href: '/sources' },
 		autoComplete: { type: 'hasSourcesConnected' }
 	},
 	{
@@ -97,7 +97,8 @@ export const GETTING_STARTED_STEPS: GettingStartedStep[] = [
 		title: 'Personalization',
 		description: 'Customize theme and settings',
 		icon: 'ri:user-settings-line',
-		action: { type: 'navigate', href: '/virtues/assistant' }
+		action: { type: 'navigate', href: '/virtues/account' },
+		autoComplete: { type: 'none' }
 	},
 	{
 		id: 'user-docs',

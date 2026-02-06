@@ -70,18 +70,16 @@ impl OntologyTransform for IosLocationTransform {
         );
 
         // Batch insert configuration
-        // Tuple: (id, point_wkt, latitude, longitude, altitude, accuracy, speed, course, timestamp, stream_id, metadata)
+        // Tuple: (id, latitude, longitude, altitude, horizontal_accuracy, vertical_accuracy, timestamp, stream_id, metadata)
         let mut pending_records: Vec<(
-            String,  // id (UUID)
-            String,  // point_wkt
-            f64,     // latitude
-            f64,     // longitude
+            String,      // id (UUID)
+            f64,         // latitude
+            f64,         // longitude
             Option<f64>, // altitude
-            Option<f64>, // accuracy
-            Option<f64>, // speed
-            Option<f64>, // course
+            Option<f64>, // horizontal_accuracy
+            Option<f64>, // vertical_accuracy
             DateTime<Utc>, // timestamp
-            Uuid,    // stream_id
+            String,      // stream_id
             serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
@@ -112,8 +110,8 @@ impl OntologyTransform for IosLocationTransform {
                 let stream_id = record
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_else(|| Uuid::new_v4());
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
 
                 let altitude = record.get("altitude").and_then(|v| v.as_f64());
                 // GPS returns -1.0 when speed is invalid/unavailable - normalize to NULL
@@ -124,6 +122,8 @@ impl OntologyTransform for IosLocationTransform {
                 let course = record.get("course").and_then(|v| v.as_f64());
                 let horizontal_accuracy =
                     record.get("horizontal_accuracy").and_then(|v| v.as_f64());
+                let vertical_accuracy =
+                    record.get("vertical_accuracy").and_then(|v| v.as_f64());
                 let activity_type = record
                     .get("activity_type")
                     .and_then(|v| v.as_str())
@@ -140,35 +140,31 @@ impl OntologyTransform for IosLocationTransform {
 
                 // Build metadata with iOS-specific fields
                 let metadata = serde_json::json!({
+                    "speed": speed,
+                    "course": course,
                     "activity_type": activity_type,
                     "activity_confidence": activity_confidence,
                     "floor_level": floor_level,
                     "ios_raw": raw_data,
                 });
 
-                // Create PostGIS POINT geography from lat/lon
-                // Format: POINT(longitude latitude)
-                let point_wkt = format!("POINT({} {})", longitude, latitude);
-
                 // Generate UUID for this record
                 let record_id = Uuid::new_v4().to_string();
+
+                last_processed_id = Some(stream_id.clone());
 
                 // Add to pending batch
                 pending_records.push((
                     record_id,
-                    point_wkt,
                     latitude,
                     longitude,
                     altitude,
                     horizontal_accuracy,
-                    speed,
-                    course,
+                    vertical_accuracy,
                     timestamp,
                     stream_id,
                     metadata,
                 ));
-
-                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -273,15 +269,13 @@ async fn execute_location_batch_insert(
     db: &Database,
     records: &[(
         String,      // id (UUID)
-        String,      // point_wkt
         f64,         // latitude
         f64,         // longitude
         Option<f64>, // altitude
-        Option<f64>, // accuracy
-        Option<f64>, // speed
-        Option<f64>, // course
+        Option<f64>, // horizontal_accuracy
+        Option<f64>, // vertical_accuracy
         DateTime<Utc>, // timestamp
-        Uuid,        // stream_id
+        String,      // stream_id
         serde_json::Value, // metadata
     )],
 ) -> Result<usize> {
@@ -289,68 +283,35 @@ async fn execute_location_batch_insert(
         return Ok(0);
     }
 
-    // Build custom batch insert query with PostGIS function
-    // We can't use the generic builder because coordinates needs ST_GeogFromText()
-    let num_cols = 13; // Added id column
-    let mut query_str = String::from("INSERT INTO data_location_point (");
-    query_str.push_str("id, coordinates, latitude, longitude, altitude_meters, ");
-    query_str.push_str("accuracy_meters, speed_meters_per_second, course_degrees, ");
-    query_str.push_str("timestamp, source_stream_id, source_table, source_provider, metadata");
-    query_str.push_str(") VALUES ");
+    let query_str = Database::build_batch_insert_query(
+        "data_location_point",
+        &[
+            "id",
+            "latitude",
+            "longitude",
+            "altitude",
+            "horizontal_accuracy",
+            "vertical_accuracy",
+            "timestamp",
+            "source_stream_id",
+            "source_table",
+            "source_provider",
+            "metadata",
+        ],
+        "source_stream_id",
+        records.len(),
+    );
 
-    // Build VALUES clauses with ST_GeogFromText for coordinates
-    let mut value_clauses = Vec::with_capacity(records.len());
-    for row_idx in 0..records.len() {
-        let base_param = row_idx * num_cols + 1;
-        // Parameters: id, ST_GeogFromText(wkt), lat, lon, alt, acc, speed, course, ts, stream_id, src_table, src_provider, metadata
-        let clause = format!(
-            "(${base_param}, ST_GeogFromText(${}), ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
-            base_param + 1,  // point_wkt for ST_GeogFromText
-            base_param + 2,  // latitude
-            base_param + 3,  // longitude
-            base_param + 4,  // altitude
-            base_param + 5,  // accuracy
-            base_param + 6,  // speed
-            base_param + 7,  // course
-            base_param + 8,  // timestamp
-            base_param + 9,  // stream_id
-            base_param + 10, // source_table
-            base_param + 11, // source_provider
-            base_param + 12, // metadata
-        );
-        value_clauses.push(clause);
-    }
-
-    query_str.push_str(&value_clauses.join(", "));
-    query_str.push_str(" ON CONFLICT (source_stream_id) DO NOTHING");
-
-    // Build query with proper parameter binding
     let mut query = sqlx::query(&query_str);
 
-    // Bind all parameters row by row
-    for (
-        id,
-        point_wkt,
-        latitude,
-        longitude,
-        altitude,
-        accuracy,
-        speed,
-        course,
-        timestamp,
-        stream_id,
-        metadata,
-    ) in records
-    {
+    for (id, latitude, longitude, altitude, horizontal_accuracy, vertical_accuracy, timestamp, stream_id, metadata) in records {
         query = query
             .bind(id)
-            .bind(format!("SRID=4326;{}", point_wkt))
             .bind(latitude)
             .bind(longitude)
             .bind(altitude)
-            .bind(accuracy)
-            .bind(speed)
-            .bind(course)
+            .bind(horizontal_accuracy)
+            .bind(vertical_accuracy)
             .bind(timestamp)
             .bind(stream_id)
             .bind("stream_ios_location")
@@ -358,7 +319,6 @@ async fn execute_location_batch_insert(
             .bind(metadata);
     }
 
-    // Execute batch insert
     let result = query.execute(db.pool()).await?;
     Ok(result.rows_affected() as usize)
 }

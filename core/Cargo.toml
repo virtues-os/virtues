@@ -38,7 +38,7 @@ clap = { version = "4.5", features = ["derive"] }
 
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
 async-trait = "0.1"
 
 # Database
@@ -72,6 +72,7 @@ tokio-stream = "0.1"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # OAuth
@@ -153,6 +154,15 @@ russh-keys = "0.48"
 yrs = "0.18"
 y-sync = "0.4"
 moka = { version = "0.12", features = ["sync"] }
+similar = "2.7.0"
+
+# Markdown parsing for AI editing
+pulldown-cmark = { version = "0.10", default-features = false, features = ["simd"] }
+
+# S3 Storage
+aws-sdk-s3 = "1.65"
+aws-config = { version = "1.5", features = ["behavior-version-latest"] }
+bytes = "1.7"
 
 [build-dependencies]
 chrono = "0.4"

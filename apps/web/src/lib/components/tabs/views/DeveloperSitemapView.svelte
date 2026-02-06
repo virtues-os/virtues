@@ -16,7 +16,7 @@
             graphColor: '#6b7280',
             routes: [
                 { route: '/', label: 'New Chat', icon: 'ri:add-line' },
-                { route: '/chat', label: 'All Chats', icon: 'ri:chat-history-line' },
+                { route: '/chat-history', label: 'All Chats', icon: 'ri:chat-history-line' },
                 { route: '/chat/{id}', label: 'Chat', icon: 'ri:chat-1-line', isPattern: true },
             ]
         },
@@ -54,8 +54,8 @@
             icon: 'ri:database-2-line',
             graphColor: '#6b7280',
             routes: [
-                { route: '/source', label: 'Sources', icon: 'ri:plug-line' },
-                { route: '/source/{id}', label: 'Source', icon: 'ri:database-2-line', isPattern: true },
+                { route: '/sources', label: 'Sources', icon: 'ri:plug-line' },
+                { route: '/sources/{id}', label: 'Source', icon: 'ri:database-2-line', isPattern: true },
                 { route: '/drive', label: 'Drive', icon: 'ri:hard-drive-2-line' },
                 { route: '/drive/{path}', label: 'File', icon: 'ri:file-line', isPattern: true },
             ]
@@ -681,6 +681,131 @@ function getEntityIdFromUrl(url: string): string {`{`}
 {`}`}
 // "/person/person_abc123" → "person_abc123"</pre>
             </div>
+        </section>
+
+        <!-- ID Format Reference -->
+        <section class="doc-section">
+            <h2>ID Format Reference</h2>
+            <p class="section-desc">All entity IDs follow a consistent format: <code>{`{type}_{hash16}`}</code></p>
+
+            <h3>Format</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>Description</th>
+                        <th>Example</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Type prefix</strong></td>
+                        <td>Entity type (chat, page, person, etc.)</td>
+                        <td><code>chat_</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Hash</strong></td>
+                        <td>16 hex chars (SHA-256, first 8 bytes)</td>
+                        <td><code>025a2a12e29fb97a</code></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>Examples</h3>
+            <div class="diagram-box">
+                <pre>chat_025a2a12e29fb97a     // Chat/conversation
+page_1f3c7a8b9d2e4f56     // User-authored page
+person_a1b2c3d4e5f67890   // Person entity
+place_9876543210abcdef    // Place entity
+org_fedcba9876543210      // Organization entity
+msg_abcdef1234567890      // Chat message
+file_1234567890abcdef     // Drive file
+user_fedcba0987654321     // User account
+job_a1b2c3d4e5f67890      // Background job
+edit_9876fedcba543210     // Page edit operation</pre>
+            </div>
+
+            <h3>ID Generation</h3>
+            <div class="diagram-box">
+                <pre>// Backend (Rust): Deterministic from uniqueness components
+let id = ids::generate_id("chat", &[title, &timestamp]);
+// → "chat_025a2a12e29fb97a"
+
+// SHA-256 hash of components, take first 8 bytes (16 hex chars)
+// Same components always produce the same ID</pre>
+            </div>
+
+            <p class="note">
+                <strong>Key properties:</strong> Deterministic (same inputs = same ID), collision-resistant,
+                human-readable prefix, URL-safe characters, compact (21-25 chars total).
+            </p>
+        </section>
+
+        <!-- @ Reference System -->
+        <section class="doc-section">
+            <h2>@ Reference System</h2>
+            <p class="section-desc">The <code>@</code> symbol triggers entity search across the app. One component, multiple contexts.</p>
+
+            <h3>Usage Contexts</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Location</th>
+                        <th>Trigger</th>
+                        <th>Result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Page Editor</strong></td>
+                        <td>Type <code>@</code></td>
+                        <td>Inserts <code>[name](url)</code> markdown link</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Chat Input</strong></td>
+                        <td>Type <code>@</code></td>
+                        <td>Inserts <code>[name](entity:id)</code> reference</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Edit Allow List</strong></td>
+                        <td>Click <code>[+ Add]</code></td>
+                        <td>Adds entity to AI edit permissions</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <h3>API Endpoint</h3>
+            <div class="diagram-box">
+                <pre>GET /api/pages/search/entities?q={`{`}query{`}`}
+
+Response: {`{`}
+  results: [{`{`}
+    id: "person_abc123",
+    name: "John Smith",
+    entity_type: "person",
+    icon: "ri:user-line",
+    url: "/person/person_abc123",
+    mime_type?: string  // for files only
+  {`}`}]
+{`}`}
+
+Searches: pages, people, places, things, files</pre>
+            </div>
+
+            <h3>Component</h3>
+            <div class="diagram-box">
+                <pre>// EntityPicker.svelte - unified picker component
+&lt;EntityPicker
+  mode="single" | "multi"
+  onSelect={`{`}(entity) => ...{`}`}
+  onSelectMultiple={`{`}(entities) => ...{`}`}
+  onClose={`{`}() => ...{`}`}
+  entityTypes={`{`}['page', 'person']{`}`}  // optional filter
+  excludeIds={`{`}['id1', 'id2']{`}`}         // already selected
+  showQuickActions={`{`}true{`}`}             // "All in space" etc.
+/&gt;</pre>
+            </div>
+            <p class="note">All @ interactions use the same <code>EntityPicker</code> component and API endpoint for consistency.</p>
         </section>
     </div>
 </Page>

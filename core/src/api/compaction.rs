@@ -23,7 +23,8 @@ use crate::llm::client::{LLMClient, LLMRequest, TollboothClient};
 // Note: Summarization model is now read from app_assistant_profile.background_model_id
 
 /// Number of recent exchanges to keep verbatim (user + assistant pairs)
-const DEFAULT_KEEP_RECENT_EXCHANGES: usize = 8;
+/// Lower value = more aggressive compaction, but less recent context preserved
+const DEFAULT_KEEP_RECENT_EXCHANGES: usize = 4;
 
 /// Maximum tokens for summary generation
 const SUMMARY_MAX_TOKENS: u32 = 1000;
@@ -50,12 +51,15 @@ pub struct CompactionResult {
 /// Options for compaction
 #[derive(Debug, Clone, Deserialize)]
 pub struct CompactionOptions {
-    /// Number of recent exchanges to keep verbatim (default: 8)
+    /// Number of recent exchanges to keep verbatim (default: 4)
     #[serde(default = "default_keep_recent")]
     pub keep_recent_exchanges: usize,
     /// Force compaction even if under threshold
     #[serde(default)]
     pub force: bool,
+    /// Model ID for context window lookup (uses default model if not specified)
+    #[serde(default)]
+    pub model_id: Option<String>,
 }
 
 fn default_keep_recent() -> usize {
@@ -67,6 +71,7 @@ impl Default for CompactionOptions {
         Self {
             keep_recent_exchanges: DEFAULT_KEEP_RECENT_EXCHANGES,
             force: false,
+            model_id: None,
         }
     }
 }
@@ -75,27 +80,53 @@ impl Default for CompactionOptions {
 // Summary Generation
 // ============================================================================
 
-/// System prompt for summary generation
-const SUMMARY_SYSTEM_PROMPT: &str = r#"You are a conversation summarizer. Create a concise context summary that will be injected into future messages to maintain conversation continuity.
+/// System prompt for summary generation - outputs structured XML
+const SUMMARY_SYSTEM_PROMPT: &str = r#"You are a conversation summarizer creating a checkpoint for conversation continuity.
 
-PRESERVE:
-- The user's goal and what they're trying to accomplish
-- All technical decisions made (libraries, patterns, approaches)
-- File paths, function names, and code locations mentioned
-- User-stated preferences and constraints
-- Any unresolved questions or pending tasks
-- Key errors encountered and how they were resolved
+Output your summary in this EXACT XML structure:
 
-FORMAT:
-- Use bullet points for clarity
-- Keep under 800 tokens
-- Be factual and specific, not general
-- Include concrete details (names, paths, values)
+<context>
+<!-- What the user is trying to accomplish - their primary goals -->
+- [Goal 1]
+- [Goal 2]
+</context>
 
-DO NOT include:
-- Pleasantries or meta-commentary
-- Redundant information
-- Step-by-step recreation of the conversation"#;
+<decisions>
+<!-- All technical decisions, preferences, and constraints established -->
+- [Decision 1]
+- [Decision 2]
+</decisions>
+
+<files>
+<!-- Files, paths, and code locations discussed or modified -->
+- [file/path 1]
+- [file/path 2]
+</files>
+
+<progress>
+<!-- What has been accomplished so far -->
+- [Completed item 1]
+- [Completed item 2]
+</progress>
+
+<pending>
+<!-- Unresolved questions, pending tasks, or next steps -->
+- [Pending item 1]
+- [Pending item 2]
+</pending>
+
+<errors>
+<!-- Key errors encountered and how they were resolved (if any) -->
+- [Error and resolution]
+</errors>
+
+RULES:
+- Keep total summary under 800 tokens
+- Be factual and specific with concrete details (names, paths, values)
+- Include ALL relevant technical details - this is a handoff document
+- Omit empty sections (e.g., if no errors, omit <errors>)
+- Do NOT include pleasantries, meta-commentary, or step-by-step recreation
+- This summary will be injected as prior context for a new conversation instance"#;
 
 /// Generate a summary of messages using the LLM
 async fn generate_summary(
@@ -312,13 +343,21 @@ pub async fn compact_chat(
     .map_err(|_| crate::Error::Other("Summary generation timed out after 60s".to_string()))??;
 
     // Calculate previous and new usage percentages
-    let context_window = 1_000_000i64; // Default Gemini context window
+    // Look up context window from model registry, fallback to conservative default
+    let context_window = if let Some(model_id) = &options.model_id {
+        match crate::api::models::get_model(model_id).await {
+            Ok(model_info) => model_info.context_window.unwrap_or(200_000) as i64,
+            Err(_) => 200_000, // Conservative default if model not found
+        }
+    } else {
+        200_000 // Conservative default if no model specified
+    };
     let previous_estimate = estimate_session_context(&messages, None, None, context_window);
     let verbatim_messages = &messages[split_index..];
     let new_estimate =
         estimate_session_context(verbatim_messages, Some(&new_summary), None, context_window);
 
-    // Update the chat
+    // Update the chat metadata
     let now = Utc::now().to_rfc3339();
     let new_version = summary_version + 1;
     let new_summary_index = split_index as i32;
@@ -335,7 +374,7 @@ pub async fn compact_chat(
         WHERE id = ?
         "#,
     )
-    .bind(new_summary)
+    .bind(&new_summary)
     .bind(new_summary_index)
     .bind(new_version)
     .bind(&now)
@@ -343,6 +382,37 @@ pub async fn compact_chat(
     .bind(&chat_id_str)
     .execute(pool)
     .await?;
+
+    // Insert checkpoint message into chat_messages
+    // This makes the checkpoint visible in the chat UI and queryable
+    tracing::info!(chat_id = %chat_id, version = new_version, "Creating checkpoint message");
+    let checkpoint_part = UIPart::Checkpoint {
+        version: new_version,
+        messages_summarized: new_summary_index,
+        summary: new_summary.clone(),
+        timestamp: now.clone(),
+    };
+
+    let checkpoint_message = ChatMessage {
+        id: None, // Will be generated
+        role: "checkpoint".to_string(),
+        content: format!("Checkpoint v{}: {} messages summarized", new_version, new_summary_index),
+        timestamp: now.clone(),
+        model: None,
+        provider: None,
+        agent_id: None,
+        reasoning: None,
+        tool_calls: None,
+        intent: None,
+        subject: None,
+        thought_signature: None,
+        parts: Some(vec![checkpoint_part]),
+    };
+
+    // Append the checkpoint message
+    tracing::info!(chat_id = %chat_id, "Inserting checkpoint message");
+    let checkpoint_msg_id = crate::api::chats::append_message(pool, chat_id.clone(), checkpoint_message).await?;
+    tracing::info!(chat_id = %chat_id, msg_id = %checkpoint_msg_id, "Checkpoint message inserted");
 
     Ok(CompactionResult {
         success: true,
@@ -355,9 +425,19 @@ pub async fn compact_chat(
     })
 }
 
-/// Build the context to send to the LLM, using summary + recent messages
+/// Build the context to send to the LLM, using checkpoint-based or legacy summary approach
+///
+/// This function now supports checkpoint messages:
+/// 1. Finds the latest checkpoint message in the messages array
+/// 2. Extracts the summary from that checkpoint
+/// 3. Includes only messages AFTER the checkpoint
+/// 4. Skips checkpoint messages in output (they're metadata, not conversation)
+///
+/// Falls back to legacy summary/summary_up_to_index if no checkpoint found.
 ///
 /// Returns a vector of messages in OpenAI format ready for the API.
+/// Note: Summary is combined into the system prompt to avoid multiple system messages,
+/// which most LLM providers don't handle well.
 pub fn build_context_for_llm(
     messages: &[ChatMessage],
     summary: Option<&str>,
@@ -366,32 +446,57 @@ pub fn build_context_for_llm(
 ) -> Vec<serde_json::Value> {
     let mut context = Vec::new();
 
-    // 1. System prompt
+    // Find the latest checkpoint message and its index
+    let (checkpoint_summary, checkpoint_index) = find_latest_checkpoint(messages);
+
+    // Determine which summary to use (checkpoint takes precedence over legacy)
+    let effective_summary = checkpoint_summary.as_deref().or(summary);
+    let effective_start_index = if checkpoint_summary.is_some() {
+        checkpoint_index + 1 // Start after the checkpoint message
+    } else {
+        summary_up_to_index
+    };
+
+    // 1. Build combined system content (prompt + summary in one message)
+    // Most LLM providers only properly handle one system message
+    let mut system_content = String::new();
     if let Some(prompt) = system_prompt {
+        system_content.push_str(prompt);
+    }
+
+    // Append summary as part of system prompt, not separate message
+    if let Some(summary_text) = effective_summary {
+        if !system_content.is_empty() {
+            system_content.push_str("\n\n");
+        }
+        system_content.push_str("<compacted_conversation>\n");
+        system_content.push_str(summary_text);
+        system_content.push_str("\n</compacted_conversation>");
+    }
+
+    // Only add system message if there's content
+    if !system_content.is_empty() {
         context.push(serde_json::json!({
             "role": "system",
-            "content": prompt
+            "content": system_content
         }));
     }
 
-    // 2. Conversation summary (if exists)
-    if let Some(summary_text) = summary {
-        context.push(serde_json::json!({
-            "role": "system",
-            "content": format!("Previous conversation context:\n{}", summary_text)
-        }));
-    }
-
-    // 3. Recent messages (after summary_up_to_index)
-    let recent_messages = if summary_up_to_index < messages.len() {
-        &messages[summary_up_to_index..]
+    // 2. Recent messages (after checkpoint or summary_up_to_index)
+    let recent_messages = if effective_start_index < messages.len() {
+        &messages[effective_start_index..]
     } else {
         messages
     };
 
     for msg in recent_messages {
+        // Skip checkpoint messages - they're metadata, not conversation
+        if msg.role == "checkpoint" {
+            continue;
+        }
+
         let mut parts = Vec::new();
-        
+
         // Handle parts if present
         if let Some(msg_parts) = &msg.parts {
             for part in msg_parts {
@@ -419,7 +524,7 @@ pub fn build_context_for_llm(
                             "name": tool_name,
                             "arguments": input
                         }));
-                        
+
                         if let Some(res) = output {
                             parts.push(serde_json::json!({
                                 "type": "tool_result",
@@ -427,6 +532,9 @@ pub fn build_context_for_llm(
                                 "content": res
                             }));
                         }
+                    }
+                    UIPart::Checkpoint { .. } => {
+                        // Skip checkpoint parts - handled above
                     }
                     UIPart::Unknown => {}
                 }
@@ -447,6 +555,27 @@ pub fn build_context_for_llm(
     }
 
     context
+}
+
+/// Find the latest checkpoint message and extract its summary
+///
+/// Returns (Option<summary_text>, checkpoint_index)
+/// If no checkpoint found, returns (None, 0)
+fn find_latest_checkpoint(messages: &[ChatMessage]) -> (Option<String>, usize) {
+    // Search from the end to find the most recent checkpoint
+    for (idx, msg) in messages.iter().enumerate().rev() {
+        if msg.role == "checkpoint" {
+            // Extract summary from checkpoint part
+            if let Some(parts) = &msg.parts {
+                for part in parts {
+                    if let UIPart::Checkpoint { summary, .. } = part {
+                        return (Some(summary.clone()), idx);
+                    }
+                }
+            }
+        }
+    }
+    (None, 0)
 }
 
 /// Check if a chat needs compaction based on context usage
@@ -654,12 +783,13 @@ mod tests {
             Some("You are helpful."),
         );
 
-        // Should have: system prompt, summary, 1 recent message
-        assert_eq!(context.len(), 3);
-        assert!(context[1]["content"]
-            .as_str()
-            .unwrap()
-            .contains("Previous conversation context"));
-        assert_eq!(context[2]["content"], "Recent message");
+        // Should have: combined system prompt (with summary), 1 recent message
+        assert_eq!(context.len(), 2);
+        // System message should contain both prompt and summary
+        let system_content = context[0]["content"].as_str().unwrap();
+        assert!(system_content.contains("You are helpful."));
+        assert!(system_content.contains("<conversation_history>"));
+        assert!(system_content.contains("User asked about something."));
+        assert_eq!(context[1]["content"], "Recent message");
     }
 }

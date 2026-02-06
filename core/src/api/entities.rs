@@ -203,9 +203,11 @@ pub async fn create_place(
     let metadata_str = serde_json::to_string(&metadata)
         .map_err(|e| Error::Database(format!("Failed to serialize metadata: {}", e)))?;
 
-    // Generate UUID-based ID for uniqueness (not label-based to avoid collisions)
-    let short_uuid = uuid::Uuid::new_v4().to_string()[..12].to_string();
-    let id = format!("{}_{}", ids::WIKI_PLACE_PREFIX, short_uuid);
+    // Generate ID with proper prefix (place_{hash16})
+    let id = ids::generate_id(
+        ids::WIKI_PLACE_PREFIX,
+        &[&req.label, &req.latitude.to_string(), &req.longitude.to_string()],
+    );
     let id_str = id.clone();
 
     sqlx::query!(

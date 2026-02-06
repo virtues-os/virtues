@@ -5,13 +5,26 @@
 # Routes requests directly to providers (OpenAI, Anthropic, Cerebras).
 #
 # Architecture:
-#   Tenant Container (172.17.0.x) → Tollbooth (9000) → Provider API
+#   Tenant Container (172.17.0.x) -> Tollbooth (9000) -> Provider API
+#
+# Usage:
+#   nomad job run -var="tag=abc123" tollbooth.nomad
+
+variable "ghcr_repo" {
+  type    = string
+  default = "ghcr.io/virtues-os"
+}
+
+variable "tag" {
+  type    = string
+  default = "latest"
+}
 
 job "tollbooth" {
   datacenters = ["dc1"]
   type        = "system"
 
-    group "tollbooth" {
+  group "tollbooth" {
     restart {
       attempts = 3
       interval = "2m"
@@ -31,39 +44,34 @@ job "tollbooth" {
       driver = "containerd-driver"
 
       config {
-        image   = "${GHCR_REPO}/tollbooth:${TAG}"
+        image   = "${var.ghcr_repo}/tollbooth:${var.tag}"
         runtime = "io.containerd.runsc.v1"  # gVisor for security
       }
 
+      # Secrets injected from Nomad server environment via template
+      template {
+        data        = <<-EOF
+          TOLLBOOTH_INTERNAL_SECRET={{ env "TOLLBOOTH_INTERNAL_SECRET" }}
+          AI_GATEWAY_API_KEY={{ env "AI_GATEWAY_API_KEY" }}
+          ATLAS_URL={{ env "ATLAS_URL" }}
+          ATLAS_SECRET={{ env "ATLAS_SECRET" }}
+          EXA_API_KEY={{ env "EXA_API_KEY" }}
+          GOOGLE_API_KEY={{ env "GOOGLE_API_KEY" }}
+          UNSPLASH_ACCESS_KEY={{ env "UNSPLASH_ACCESS_KEY" }}
+          PLAID_CLIENT_ID={{ env "PLAID_CLIENT_ID" }}
+          PLAID_SECRET={{ env "PLAID_SECRET" }}
+          PLAID_ENV={{ env "PLAID_ENV" }}
+        EOF
+        destination = "secrets/env"
+        env         = true
+      }
+
       env {
-        # Required: Shared secret for Core backend authentication
-        TOLLBOOTH_INTERNAL_SECRET = "${TOLLBOOTH_INTERNAL_SECRET}"
-
-        # Required: Database for budget persistence
-        DATABASE_URL             = "${DATABASE_URL}"
-
-        # LLM Provider API Keys (at least one required)
-        OPENAI_API_KEY           = "${OPENAI_API_KEY}"
-        ANTHROPIC_API_KEY        = "${ANTHROPIC_API_KEY}"
-        CEREBRAS_API_KEY         = "${CEREBRAS_API_KEY}"
-
-        # Model routing defaults
-        DEFAULT_SMART_MODEL      = "openai/gpt-4o"
-        DEFAULT_INSTANT_MODEL    = "cerebras/llama-3.3-70b"
-
-        # Budget flush interval (seconds)
-        TOLLBOOTH_FLUSH_INTERVAL = "30"
-
-        # Default budget for new users (USD)
-        TOLLBOOTH_DEFAULT_BUDGET = "5.0"
-
-        # Logging
-        RUST_LOG                 = "tollbooth=info"
-
-        # Plaid Configuration
-        PLAID_CLIENT_ID          = "${PLAID_CLIENT_ID}"
-        PLAID_SECRET             = "${PLAID_SECRET}"
-        PLAID_ENV                = "${PLAID_ENV}"
+        # Non-secret configuration
+        TOLLBOOTH_PORT            = "9000"
+        TOLLBOOTH_REPORT_INTERVAL = "30"
+        TOLLBOOTH_DEFAULT_BUDGET  = "5.0"
+        RUST_LOG                  = "tollbooth=info"
       }
 
       resources {

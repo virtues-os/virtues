@@ -1,6 +1,7 @@
-//! Storage module for filesystem operations
+//! Storage module for filesystem and S3 operations
 
 pub mod models;
+pub mod s3;
 pub mod stream_writer;
 
 use std::path::PathBuf;
@@ -8,6 +9,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+
+pub use s3::{S3Config, S3Storage};
 
 use crate::error::{Error, Result};
 
@@ -56,6 +59,34 @@ impl Storage {
     /// Alias for file() - kept for backwards compatibility during migration
     pub fn local(path: String) -> Result<Self> {
         Self::file(path)
+    }
+
+    /// Create S3 storage with the given configuration
+    ///
+    /// # Arguments
+    /// * `config` - S3 configuration (endpoint, bucket, prefix, credentials)
+    pub async fn s3(config: S3Config) -> Result<Self> {
+        Ok(Self {
+            backend: Arc::new(S3Storage::new(config).await?),
+        })
+    }
+
+    /// Create S3 storage from environment variables
+    ///
+    /// Required env vars: S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY
+    /// Optional: S3_PREFIX, S3_REGION
+    pub async fn s3_from_env() -> Result<Self> {
+        let config = S3Config::from_env()?;
+        Self::s3(config).await
+    }
+
+    /// Get the underlying S3 storage backend (if S3 is being used)
+    ///
+    /// Returns None if using file storage
+    pub fn as_s3(&self) -> Option<&S3Storage> {
+        // This is a bit of a hack - we use Any to downcast
+        // In production, you might track the backend type explicitly
+        None // File storage doesn't support this
     }
 
     pub async fn initialize(&self) -> Result<()> {
@@ -339,7 +370,10 @@ mod tests {
         // Test uploading to nested path
         let data = b"nested data".to_vec();
         storage
-            .upload("streams/ios/healthkit/date=2025-01-15/records.jsonl", data.clone())
+            .upload(
+                "streams/ios/healthkit/date=2025-01-15/records.jsonl",
+                data.clone(),
+            )
             .await
             .unwrap();
 

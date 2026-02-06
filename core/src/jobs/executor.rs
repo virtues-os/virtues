@@ -106,6 +106,15 @@ impl JobExecutor {
             }
             Err(e) => {
                 timer.failure(&e.to_string());
+                // Ensure job is marked as failed even if the job handler didn't do it
+                // (e.g., early metadata validation errors in transform_job)
+                let _ = super::update_job_status(
+                    db,
+                    &job.id,
+                    JobStatus::Failed,
+                    Some(e.to_string()),
+                )
+                .await;
             }
         }
 

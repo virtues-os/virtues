@@ -184,9 +184,17 @@ pub async fn oauth_callback_handler(
             });
 
             let error_url = if error_base.contains('?') {
-                format!("{}&error={}", error_base, urlencoding::encode(&e.to_string()))
+                format!(
+                    "{}&error={}",
+                    error_base,
+                    urlencoding::encode(&e.to_string())
+                )
             } else {
-                format!("{}?error={}", error_base, urlencoding::encode(&e.to_string()))
+                format!(
+                    "{}?error={}",
+                    error_base,
+                    urlencoding::encode(&e.to_string())
+                )
             };
 
             generate_redirect_html(&error_url, "An error occurred. Redirecting...")
@@ -468,8 +476,7 @@ pub struct SyncStreamRequest {
 /// Connection limits per tier
 #[derive(Debug, Serialize)]
 pub struct CatalogConnectionLimits {
-    pub free: u8,
-    pub starter: u8,
+    pub standard: u8,
     pub pro: u8,
 }
 
@@ -492,10 +499,53 @@ pub struct CatalogSource {
     pub current_connections: Option<i64>,
 }
 
+/// Fetch user tier from Tollbooth (which hydrates from Atlas)
+async fn fetch_user_tier() -> Result<String, String> {
+    let tollbooth_url =
+        std::env::var("TOLLBOOTH_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+    let secret = std::env::var("TOLLBOOTH_INTERNAL_SECRET")
+        .map_err(|_| "TOLLBOOTH_INTERNAL_SECRET not set".to_string())?;
+
+    let client = reqwest::Client::new();
+    let resp = crate::tollbooth::with_system_auth(
+        client.get(format!("{}/v1/limits/tier", tollbooth_url)),
+        &secret,
+    )
+    .send()
+    .await
+    .map_err(|e| format!("Tollbooth request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Tollbooth returned {}", resp.status()));
+    }
+
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Tollbooth response: {}", e))?;
+
+    body.get("tier")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Tollbooth response missing 'tier' field".to_string())
+}
+
 /// List all available source types from the registry
-pub async fn list_catalog_sources_handler(
-    State(state): State<AppState>,
-) -> Response {
+pub async fn list_catalog_sources_handler(State(state): State<AppState>) -> Response {
+    // Fetch tier from Tollbooth (fallback to TIER env var, then "standard")
+    let user_tier = match fetch_user_tier().await {
+        Ok(tier) => tier,
+        Err(e) => {
+            let fallback = std::env::var("TIER").unwrap_or_else(|_| "standard".to_string());
+            tracing::warn!(
+                "Failed to fetch tier from Tollbooth: {}, using fallback '{}'",
+                e,
+                fallback
+            );
+            fallback
+        }
+    };
+
     let sources = crate::registry::list_sources();
 
     // Get current connection counts per source type
@@ -513,15 +563,13 @@ pub async fn list_catalog_sources_handler(
         .map(|s| {
             let is_multi = virtues_registry::is_multi_instance(s.descriptor.name);
             let limits = if is_multi {
-                virtues_registry::get_connection_limit(s.descriptor.name, "free").map(|free| {
-                    CatalogConnectionLimits {
-                        free,
-                        starter: virtues_registry::get_connection_limit(s.descriptor.name, "starter")
-                            .unwrap_or(free),
+                virtues_registry::get_connection_limit(s.descriptor.name, "standard").map(
+                    |standard| CatalogConnectionLimits {
+                        standard,
                         pro: virtues_registry::get_connection_limit(s.descriptor.name, "pro")
-                            .unwrap_or(free),
-                    }
-                })
+                            .unwrap_or(standard),
+                    },
+                )
             } else {
                 None
             };
@@ -540,7 +588,14 @@ pub async fn list_catalog_sources_handler(
         })
         .collect();
 
-    (StatusCode::OK, Json(catalog)).into_response()
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "tier": user_tier,
+            "sources": catalog,
+        })),
+    )
+        .into_response()
 }
 
 // ============================================================================
@@ -561,7 +616,10 @@ pub async fn get_ontologies_overview_handler(State(state): State<AppState>) -> R
 // ============================================================================
 
 /// Get job status by ID
-pub async fn get_job_handler(State(state): State<AppState>, Path(job_id): Path<String>) -> Response {
+pub async fn get_job_handler(
+    State(state): State<AppState>,
+    Path(job_id): Path<String>,
+) -> Response {
     match crate::api::get_job_status(state.db.pool(), &job_id).await {
         Ok(job) => (StatusCode::OK, Json(job)).into_response(),
         Err(e) => (
@@ -596,7 +654,7 @@ pub async fn query_jobs_handler(
     let request = crate::api::QueryJobsRequest {
         source_id: params.source_id,
         status: statuses,
-        limit: params.limit,
+        limit: Some(params.limit.unwrap_or(16)),
     };
 
     match crate::api::query_jobs(state.db.pool(), request).await {
@@ -782,6 +840,53 @@ pub async fn complete_device_pairing_handler(
     }
 }
 
+/// Request to complete QR-based pairing (called by iOS app after scanning QR)
+#[derive(Debug, Deserialize)]
+pub struct CompleteQRPairingRequest {
+    pub device_id: String,
+    pub device_info: crate::DeviceInfo,
+}
+
+/// Complete QR-based device pairing by source ID
+pub async fn complete_qr_pairing_handler(
+    State(state): State<AppState>,
+    Path(source_id): Path<String>,
+    Json(request): Json<CompleteQRPairingRequest>,
+) -> Response {
+    match crate::api::complete_pairing_by_source_id(
+        state.db.pool(),
+        &source_id,
+        &request.device_id,
+        request.device_info,
+    )
+    .await
+    {
+        Ok(completed) => (
+            StatusCode::OK,
+            Json(CompletePairingResponse {
+                source_id: completed.source_id,
+                device_token: completed.device_token,
+                available_streams: completed.available_streams,
+            }),
+        )
+            .into_response(),
+        Err(e) => {
+            let status = match &e {
+                crate::Error::InvalidInput(_) => StatusCode::BAD_REQUEST,
+                crate::Error::Other(msg) if msg.contains("not found") => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (
+                status,
+                Json(serde_json::json!({
+                    "error": e.to_string()
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// Request to manually link a device (UUID flow)
 #[derive(Debug, Deserialize)]
 pub struct LinkDeviceRequest {
@@ -958,76 +1063,6 @@ pub async fn device_health_check_handler(
     }
 }
 
-/// Verify a device token and return configuration status
-///
-/// This is called by devices that already have a device_token
-/// to check if streams have been configured
-pub async fn verify_device_handler(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    // Extract Bearer token from Authorization header
-    let token = match headers.get(axum::http::header::AUTHORIZATION) {
-        Some(value) => {
-            let auth_str = value.to_str().unwrap_or("");
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                token
-            } else {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({
-                        "error": "Missing or invalid Authorization header. Expected: Bearer <token>"
-                    })),
-                )
-                    .into_response();
-            }
-        }
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "error": "Missing Authorization header"
-                })),
-            )
-                .into_response();
-        }
-    };
-
-    match crate::api::device_pairing::verify_device(state.db.pool(), token).await {
-        Ok(verified) => {
-            let response = serde_json::json!({
-                "source_id": verified.source_id,
-                "configuration_complete": verified.configuration_complete,
-                "enabled_streams": verified.enabled_streams.iter().map(|s| {
-                    serde_json::json!({
-                        "stream_name": s.stream_name,
-                        "display_name": s.display_name,
-                        "description": s.description,
-                        "is_enabled": s.is_enabled,
-                        "config": s.config,
-                        "supports_incremental": s.supports_incremental,
-                        "default_cron_schedule": s.default_cron_schedule,
-                    })
-                }).collect::<Vec<_>>(),
-            });
-            (StatusCode::OK, Json(response)).into_response()
-        }
-        Err(e) => {
-            let status = match e {
-                crate::Error::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
-            };
-            (
-                status,
-                Json(serde_json::json!({
-                    "error": e.to_string()
-                })),
-            )
-                .into_response()
-        }
-    }
-}
-
 // =============================================================================
 // Profile API
 // =============================================================================
@@ -1062,12 +1097,6 @@ pub async fn update_assistant_profile_handler(
     api_response(crate::api::update_assistant_profile(state.db.pool(), request).await)
 }
 
-
-
-
-
-
-
 // =============================================================================
 // Tools API
 // =============================================================================
@@ -1081,10 +1110,7 @@ pub async fn list_tools_handler(
 }
 
 /// Get a specific tool by ID
-pub async fn get_tool_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn get_tool_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::get_tool(state.db.pool(), id).await)
 }
 
@@ -1101,10 +1127,13 @@ pub async fn list_models_handler() -> Response {
 }
 
 /// Get a specific model by ID
-pub async fn get_model_handler(
-    Path(model_id): Path<String>,
-) -> Response {
+pub async fn get_model_handler(Path(model_id): Path<String>) -> Response {
     api_response(crate::api::get_model(&model_id).await)
+}
+
+/// List recommended models with slot assignments
+pub async fn list_recommended_models_handler() -> Response {
+    api_response(crate::api::list_recommended_models().await)
 }
 
 // =============================================================================
@@ -1117,10 +1146,63 @@ pub async fn list_agents_handler() -> Response {
 }
 
 /// Get a specific agent by ID
-pub async fn get_agent_handler(
-    Path(agent_id): Path<String>,
-) -> Response {
+pub async fn get_agent_handler(Path(agent_id): Path<String>) -> Response {
     api_response(crate::api::get_agent(&agent_id).await)
+}
+
+// =============================================================================
+// Personas API
+// =============================================================================
+
+/// List all personas (excluding hidden ones)
+pub async fn list_personas_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_personas(state.db.pool()).await)
+}
+
+/// Get a specific persona by ID
+pub async fn get_persona_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_persona(state.db.pool(), &id).await)
+}
+
+/// Create a new custom persona
+pub async fn create_persona_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::CreatePersonaRequest>,
+) -> Response {
+    api_response(crate::api::create_persona(state.db.pool(), request).await)
+}
+
+/// Update an existing persona
+pub async fn update_persona_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::UpdatePersonaRequest>,
+) -> Response {
+    api_response(crate::api::update_persona(state.db.pool(), &id, request).await)
+}
+
+/// Hide a persona (soft delete for system, hard delete for custom)
+pub async fn hide_persona_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::hide_persona(state.db.pool(), &id).await)
+}
+
+/// Unhide a previously hidden persona
+pub async fn unhide_persona_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::unhide_persona(state.db.pool(), &id).await)
+}
+
+/// Reset personas to defaults (re-seed from registry)
+pub async fn reset_personas_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::reset_personas(state.db.pool()).await)
 }
 
 // =============================================================================
@@ -1230,12 +1312,6 @@ pub async fn remove_plaid_item_handler(
 // ============================================================================
 // Onboarding API
 // ============================================================================
-
-
-
-
-
-
 
 // =============================================================================
 // Places API Handlers (Google Places proxy)
@@ -1391,6 +1467,86 @@ pub async fn usage_check_handler(
 }
 
 // =============================================================================
+// Subscription & Billing API Handlers
+// =============================================================================
+
+/// GET /api/subscription - Get subscription status (proxied from Tollbooth)
+///
+/// Returns a safe fallback when Tollbooth is unreachable (e.g., local dev without Tollbooth).
+/// This prevents 500 errors from spamming the browser console during development.
+pub async fn get_subscription_handler(user: crate::middleware::auth::AuthUser) -> Response {
+    match crate::api::subscription::get_subscription_status(&user.id).await {
+        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
+        Err(e) => {
+            tracing::debug!(
+                "Subscription check failed (Tollbooth may be unavailable): {}",
+                e
+            );
+            // Return a safe fallback: assume active so the app works without Tollbooth
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "status": "active",
+                    "trial_expires_at": null,
+                    "days_remaining": null,
+                    "is_active": true
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// POST /api/billing/portal - Create Stripe billing portal session (proxied via Tollbooth → Atlas)
+pub async fn create_billing_portal_handler(user: crate::middleware::auth::AuthUser) -> Response {
+    match crate::api::subscription::create_billing_portal(&user.id).await {
+        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+// =============================================================================
+// System Update API Handlers
+// =============================================================================
+
+/// GET /api/system/update-available - Check if a newer version is available
+///
+/// Returns cached update status from the background version checker.
+/// No Tollbooth call needed — the background task updates the state every 5 minutes.
+pub async fn get_update_available_handler(
+    State(state): State<AppState>,
+    _user: crate::middleware::auth::AuthUser,
+) -> Response {
+    let status = state.update_state.get().await;
+    (StatusCode::OK, Json(status)).into_response()
+}
+
+/// POST /api/system/update - Trigger a rolling update via Tollbooth → Atlas
+///
+/// The user clicks "Update" in the frontend, which calls this endpoint.
+/// This proxies through Tollbooth to Atlas, which orchestrates:
+/// 1. Backup SQLite to S3
+/// 2. Re-submit Nomad job with the new image tag
+/// 3. Nomad handles the rolling deploy (container restart)
+pub async fn trigger_update_handler(_user: crate::middleware::auth::AuthUser) -> Response {
+    match crate::api::trigger_system_update().await {
+        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
+        Err(e) => {
+            tracing::error!("Failed to trigger update: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}
+
+// =============================================================================
 // Exa Search API Handlers
 // =============================================================================
 
@@ -1539,22 +1695,22 @@ pub async fn set_place_as_home_handler(
 // Wiki API Handlers
 // ============================================================================
 
-/// Resolve a slug to its entity type
-pub async fn wiki_resolve_slug_handler(
-    State(state): State<AppState>,
-    Path(slug): Path<String>,
+/// Resolve an entity ID to its type
+pub async fn wiki_resolve_id_handler(
+    State(_state): State<AppState>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::resolve_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::resolve_id(&id))
 }
 
 // --- Person ---
 
-/// Get a person by slug
+/// Get a person by ID
 pub async fn wiki_get_person_handler(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_person_by_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::get_person(state.db.pool(), id).await)
 }
 
 /// List all people
@@ -1573,12 +1729,12 @@ pub async fn wiki_update_person_handler(
 
 // --- Place ---
 
-/// Get a place by slug
+/// Get a place by ID
 pub async fn wiki_get_place_handler(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_place_by_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::get_wiki_place(state.db.pool(), id).await)
 }
 
 /// List all places (wiki view)
@@ -1597,12 +1753,12 @@ pub async fn wiki_update_place_handler(
 
 // --- Organization ---
 
-/// Get an organization by slug
+/// Get an organization by ID
 pub async fn wiki_get_organization_handler(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_organization_by_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::get_organization(state.db.pool(), id).await)
 }
 
 /// List all organizations
@@ -1626,22 +1782,22 @@ pub async fn wiki_get_active_telos_handler(State(state): State<AppState>) -> Res
     api_response(crate::api::get_active_telos(state.db.pool()).await)
 }
 
-/// Get a telos by slug
+/// Get a telos by ID
 pub async fn wiki_get_telos_handler(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_telos_by_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::get_telos(state.db.pool(), &id).await)
 }
 
 // --- Act ---
 
-/// Get an act by slug
+/// Get an act by ID
 pub async fn wiki_get_act_handler(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_act_by_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::get_act(state.db.pool(), id).await)
 }
 
 /// List all acts
@@ -1651,12 +1807,12 @@ pub async fn wiki_list_acts_handler(State(state): State<AppState>) -> Response {
 
 // --- Chapter ---
 
-/// Get a chapter by slug
+/// Get a chapter by ID
 pub async fn wiki_get_chapter_handler(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::get_chapter_by_slug(state.db.pool(), &slug).await)
+    api_response(crate::api::get_chapter(state.db.pool(), id).await)
 }
 
 /// List chapters for an act
@@ -1905,7 +2061,7 @@ pub async fn compact_chat_handler(
 /// Request body for compaction
 #[derive(Debug, Deserialize, Default)]
 pub struct CompactChatRequest {
-    /// Number of recent exchanges to keep verbatim (default: 8)
+    /// Number of recent exchanges to keep verbatim (default: 4)
     pub keep_recent_exchanges: Option<usize>,
     /// Force compaction even if under threshold
     #[serde(default)]
@@ -1914,9 +2070,13 @@ pub struct CompactChatRequest {
 
 impl From<CompactChatRequest> for crate::api::compaction::CompactionOptions {
     fn from(req: CompactChatRequest) -> Self {
+        let default_opts = crate::api::compaction::CompactionOptions::default();
         Self {
-            keep_recent_exchanges: req.keep_recent_exchanges.unwrap_or(8),
+            keep_recent_exchanges: req
+                .keep_recent_exchanges
+                .unwrap_or(default_opts.keep_recent_exchanges),
             force: req.force,
+            model_id: None, // API compaction uses default model context window
         }
     }
 }
@@ -1953,8 +2113,7 @@ pub async fn update_chat_handler(
     Json(request): Json<crate::api::chats::UpdateTitleRequest>,
 ) -> Response {
     api_response(
-        crate::api::chats::update_chat_title(state.db.pool(), chat_id, &request.title)
-            .await,
+        crate::api::chats::update_chat_title(state.db.pool(), chat_id, &request.title).await,
     )
 }
 
@@ -1972,12 +2131,8 @@ pub async fn generate_chat_title_handler(
     Json(request): Json<crate::api::chats::GenerateTitleRequest>,
 ) -> Response {
     api_response(
-        crate::api::chats::generate_title(
-            state.db.pool(),
-            request.chat_id,
-            &request.messages,
-        )
-        .await,
+        crate::api::chats::generate_title(state.db.pool(), request.chat_id, &request.messages)
+            .await,
     )
 }
 
@@ -1993,10 +2148,62 @@ pub async fn chat_handler(
 ) -> Response {
     crate::api::chat::chat_handler(
         axum::extract::State(state.db.pool().clone()),
+        axum::extract::State(state.yjs_state.clone()),
+        axum::extract::State(state.chat_cancel_state.clone()),
         user,
         Json(request),
     )
     .await
+}
+
+/// POST /api/chat/cancel - Cancel an in-progress chat request
+pub async fn cancel_chat_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    Json(request): Json<crate::api::chat::CancelChatRequest>,
+) -> impl IntoResponse {
+    crate::api::chat::cancel_chat_handler(
+        axum::extract::State(state.chat_cancel_state.clone()),
+        user,
+        Json(request),
+    )
+    .await
+}
+
+// =============================================================================
+// Chat Edit Permissions API Handlers
+// =============================================================================
+
+/// GET /api/chats/:id/permissions - List edit permissions for a chat
+pub async fn list_chat_permissions_handler(
+    State(state): State<AppState>,
+    Path(chat_id): Path<String>,
+) -> Response {
+    api_response(crate::api::chat_permissions::list_permissions(state.db.pool(), &chat_id).await)
+}
+
+/// POST /api/chats/:id/permissions - Add an edit permission
+pub async fn add_chat_permission_handler(
+    State(state): State<AppState>,
+    Path(chat_id): Path<String>,
+    Json(request): Json<crate::api::chat_permissions::AddPermissionRequest>,
+) -> Response {
+    api_response(
+        crate::api::chat_permissions::add_permission(state.db.pool(), &chat_id, request).await,
+    )
+}
+
+/// DELETE /api/chats/:id/permissions/:entity_id - Remove an edit permission
+pub async fn remove_chat_permission_handler(
+    State(state): State<AppState>,
+    Path((chat_id, entity_id)): Path<(String, String)>,
+) -> Response {
+    match crate::api::chat_permissions::remove_permission(state.db.pool(), &chat_id, &entity_id)
+        .await
+    {
+        Ok(_) => success_message("Permission removed"),
+        Err(e) => error_response(e),
+    }
 }
 
 // =============================================================================
@@ -2096,10 +2303,9 @@ pub async fn list_drive_files_handler(
     State(state): State<AppState>,
     Query(params): Query<ListDriveFilesQuery>,
 ) -> Response {
-    // Reconcile filesystem with database before listing
-    let config = crate::api::DriveConfig::from_env();
+    // Reconcile storage with database before listing
     if let Err(e) =
-        crate::api::reconcile_drive_folder(state.db.pool(), &config, &params.path).await
+        crate::api::reconcile_drive_folder(state.db.pool(), &state.drive_config, &params.path).await
     {
         tracing::warn!("Folder reconciliation failed: {e}");
         // Non-fatal: continue with DB-only listing
@@ -2120,8 +2326,6 @@ pub async fn download_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-
     // Lake objects use in-memory download (different storage layer)
     if crate::api::is_lake_object_id(&file_id) {
         let result =
@@ -2152,9 +2356,10 @@ pub async fn download_drive_file_handler(
         };
     }
 
-    // Regular drive files: stream from disk to avoid loading entire file into memory
+    // Regular drive files: stream from storage
     let result =
-        crate::api::download_drive_file_stream(state.db.pool(), &config, &file_id).await;
+        crate::api::download_drive_file_stream(state.db.pool(), &state.drive_config, &file_id)
+            .await;
     match result {
         Ok((file, stream)) => {
             let content_type = file
@@ -2186,8 +2391,7 @@ pub async fn delete_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-    match crate::api::delete_drive_file(state.db.pool(), &config, &file_id).await {
+    match crate::api::delete_drive_file(state.db.pool(), &state.drive_config, &file_id).await {
         Ok(_) => success_message("File deleted"),
         Err(e) => error_response(e),
     }
@@ -2199,9 +2403,14 @@ pub async fn move_drive_file_handler(
     Path(file_id): Path<String>,
     Json(request): Json<crate::api::DriveMoveFileRequest>,
 ) -> Response {
-    let config = crate::api::DriveConfig::from_env();
     api_response(
-        crate::api::move_drive_file(state.db.pool(), &config, &file_id, &request.new_path).await,
+        crate::api::move_drive_file(
+            state.db.pool(),
+            &state.drive_config,
+            &file_id,
+            &request.new_path,
+        )
+        .await,
     )
 }
 
@@ -2210,8 +2419,6 @@ pub async fn upload_drive_file_handler(
     State(state): State<AppState>,
     mut multipart: axum::extract::Multipart,
 ) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-
     // Parse multipart form
     let mut path: Option<String> = None;
     let mut filename: Option<String> = None;
@@ -2245,7 +2452,14 @@ pub async fn upload_drive_file_handler(
 
     match data {
         Some(bytes) => {
-            match crate::api::upload_drive_file(state.db.pool(), &config, request, bytes).await {
+            match crate::api::upload_drive_file(
+                state.db.pool(),
+                &state.drive_config,
+                request,
+                bytes,
+            )
+            .await
+            {
                 Ok(file) => (StatusCode::CREATED, Json(file)).into_response(),
                 Err(e) => error_response(e),
             }
@@ -2261,17 +2475,15 @@ pub async fn create_drive_folder_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::DriveCreateFolderRequest>,
 ) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-    match crate::api::create_drive_folder(state.db.pool(), &config, request).await {
+    match crate::api::create_drive_folder(state.db.pool(), &state.drive_config, request).await {
         Ok(folder) => (StatusCode::CREATED, Json(folder)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/drive/reconcile - Reconcile usage with filesystem (admin)
+/// POST /api/drive/reconcile - Reconcile usage with storage (admin)
 pub async fn reconcile_drive_usage_handler(State(state): State<AppState>) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-    api_response(crate::api::reconcile_drive_usage(state.db.pool(), &config).await)
+    api_response(crate::api::reconcile_drive_usage(state.db.pool(), &state.drive_config).await)
 }
 
 // =============================================================================
@@ -2296,8 +2508,7 @@ pub async fn purge_drive_file_handler(
     State(state): State<AppState>,
     Path(file_id): Path<String>,
 ) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-    match crate::api::purge_drive_file(state.db.pool(), &config, &file_id).await {
+    match crate::api::purge_drive_file(state.db.pool(), &state.drive_config, &file_id).await {
         Ok(_) => success_message("File permanently deleted"),
         Err(e) => error_response(e),
     }
@@ -2305,13 +2516,88 @@ pub async fn purge_drive_file_handler(
 
 /// POST /api/drive/trash/empty - Empty all files from trash
 pub async fn empty_drive_trash_handler(State(state): State<AppState>) -> Response {
-    let config = crate::api::DriveConfig::from_env();
-    match crate::api::empty_drive_trash(state.db.pool(), &config).await {
-        Ok(count) => {
-            (StatusCode::OK, Json(serde_json::json!({ "deleted_count": count }))).into_response()
-        }
+    match crate::api::empty_drive_trash(state.db.pool(), &state.drive_config).await {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "deleted_count": count })),
+        )
+            .into_response(),
         Err(e) => error_response(e),
     }
+}
+
+// =============================================================================
+// Media Handlers
+// =============================================================================
+
+/// POST /api/media/upload - Upload media file with content-addressed dedup
+///
+/// Accepts multipart form with:
+/// - `file`: The file data (required)
+/// - `filename`: Override filename (optional, uses file's name by default)
+///
+/// Returns MediaFile with URL for embedding in pages.
+/// If identical content already exists, returns existing file (dedup).
+pub async fn upload_media_handler(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    // Parse multipart form
+    let mut filename: Option<String> = None;
+    let mut mime_type: Option<String> = None;
+    let mut data: Option<axum::body::Bytes> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().unwrap_or("").to_string();
+        match name.as_str() {
+            "filename" => {
+                if let Ok(text) = field.text().await {
+                    filename = Some(text);
+                }
+            }
+            "file" => {
+                // Use form field filename if no explicit filename provided
+                if filename.is_none() {
+                    filename = field.file_name().map(|s| s.to_string());
+                }
+                mime_type = field.content_type().map(|s| s.to_string());
+                if let Ok(bytes) = field.bytes().await {
+                    data = Some(bytes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let filename = filename.unwrap_or_else(|| "unnamed".to_string());
+
+    match data {
+        Some(bytes) => {
+            match crate::api::upload_media(
+                state.db.pool(),
+                &state.drive_config,
+                &filename,
+                mime_type,
+                bytes,
+            )
+            .await
+            {
+                Ok(file) => (StatusCode::CREATED, Json(file)).into_response(),
+                Err(e) => error_response(e),
+            }
+        }
+        None => error_response(crate::error::Error::InvalidInput(
+            "No file data provided".into(),
+        )),
+    }
+}
+
+/// GET /api/media/:id - Get media file metadata
+pub async fn get_media_handler(
+    State(state): State<AppState>,
+    Path(file_id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_media(state.db.pool(), &file_id).await)
 }
 
 // =============================================================================
@@ -2319,7 +2605,7 @@ pub async fn empty_drive_trash_handler(State(state): State<AppState>) -> Respons
 // =============================================================================
 
 /// POST /internal/hydrate - Hydrate user profile from Tollbooth
-/// 
+///
 /// This endpoint is called by Tollbooth on the first request to a newly
 /// provisioned container. It seeds the profile with data from Atlas
 /// provisioning and marks the server as ready.
@@ -2329,17 +2615,17 @@ pub async fn hydrate_profile_handler(
     Json(request): Json<crate::api::HydrateRequest>,
 ) -> Response {
     // Validate Tollbooth secret
-    let expected_secret = std::env::var("TOLLBOOTH_SECRET").unwrap_or_default();
+    let expected_secret = std::env::var("TOLLBOOTH_INTERNAL_SECRET").unwrap_or_default();
     let provided_secret = headers
         .get("X-Tollbooth-Secret")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    
+
     // In production, require the secret; in dev, allow any request
     let is_production = std::env::var("RUST_ENV")
         .map(|v| v == "production")
         .unwrap_or(false);
-    
+
     if is_production && (expected_secret.is_empty() || provided_secret != expected_secret) {
         return (
             StatusCode::UNAUTHORIZED,
@@ -2394,18 +2680,11 @@ pub async fn list_pages_handler(
     Query(query): Query<ListPagesQuery>,
 ) -> Response {
     // Note: workspace_id filter removed - views handle filtering now
-    api_response(crate::api::list_pages(
-        state.db.pool(),
-        query.limit,
-        query.offset
-    ).await)
+    api_response(crate::api::list_pages(state.db.pool(), query.limit, query.offset).await)
 }
 
 /// GET /api/pages/:id - Get a single page
-pub async fn get_page_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn get_page_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::get_page(state.db.pool(), &id).await)
 }
 
@@ -2503,10 +2782,7 @@ pub async fn list_spaces_handler(State(state): State<AppState>) -> Response {
 }
 
 /// GET /api/spaces/:id - Get a single space
-pub async fn get_space_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn get_space_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::spaces::get_space(state.db.pool(), &id).await)
 }
 
@@ -2644,10 +2920,7 @@ pub async fn create_view_handler(
 }
 
 /// GET /api/views/:id - Get a view
-pub async fn get_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn get_view_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::views::get_view(state.db.pool(), &id).await)
 }
 
@@ -2684,7 +2957,9 @@ pub async fn resolve_view_handler(
     Path(id): Path<String>,
     Query(query): Query<ResolveViewQuery>,
 ) -> Response {
-    api_response(crate::api::views::resolve_view(state.db.pool(), &id, query.limit, query.offset).await)
+    api_response(
+        crate::api::views::resolve_view(state.db.pool(), &id, query.limit, query.offset).await,
+    )
 }
 
 /// Request to add/remove item from view
@@ -2731,7 +3006,9 @@ pub async fn reorder_view_items_handler(
     Path(id): Path<String>,
     Json(request): Json<ReorderViewItemsRequest>,
 ) -> Response {
-    api_response(crate::api::views::reorder_view_items(state.db.pool(), &id, request.url_order).await)
+    api_response(
+        crate::api::views::reorder_view_items(state.db.pool(), &id, request.url_order).await,
+    )
 }
 
 // ============================================================================
@@ -2747,4 +3024,3 @@ pub async fn get_lake_summary_handler(State(state): State<AppState>) -> Response
 pub async fn list_lake_streams_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::lake::list_lake_streams(state.db.pool()).await)
 }
-

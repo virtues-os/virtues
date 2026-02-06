@@ -4,13 +4,15 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-
 use crate::{
-    error::{Error, Result},
+    error::Result,
     registry::RegisteredStream,
     sources::push_stream::{IngestPayload, PushResult, PushStream},
     storage::stream_writer::StreamWriter,
 };
+
+pub mod transform;
+pub use transform::IosContactsTransform;
 
 pub struct IosContactsStream {
     _db: SqlitePool,

@@ -52,3 +52,43 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         })
         .collect()
 }
+
+/// Get tool definitions filtered by agent mode
+///
+/// Agent modes:
+/// - "agent": All tools (full access)
+/// - "chat": No tools (pure conversation)
+/// - "research": Read-only tools (search, data queries, but no edit)
+pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
+    use virtues_registry::tools::ToolCategory;
+
+    match agent_mode {
+        "chat" => {
+            // No tools in chat mode
+            vec![]
+        }
+        "research" => {
+            // Only search and data tools (no edit)
+            virtues_registry::tools::default_tools()
+                .into_iter()
+                .filter(|tool| {
+                    matches!(tool.category, ToolCategory::Search | ToolCategory::Data)
+                })
+                .map(|tool| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": tool.id,
+                            "description": tool.llm_description,
+                            "parameters": tool.parameters,
+                        }
+                    })
+                })
+                .collect()
+        }
+        _ => {
+            // "agent" mode or default: all tools
+            get_tool_definitions_for_llm()
+        }
+    }
+}

@@ -3,12 +3,28 @@
 	import ContextMenuItem from './ContextMenuItem.svelte';
 	import ContextMenuSubmenu from './ContextMenuSubmenu.svelte';
 	import { onMount, onDestroy } from 'svelte';
+	import { useFloating } from '$lib/floating';
+	import type { Placement } from '@floating-ui/dom';
 
 	let menuRef = $state<HTMLElement | null>(null);
 	let menuRect = $state<DOMRect | null>(null);
 	let itemRects = $state<Map<string, DOMRect>>(new Map());
 
-	// Update menu rect when visible
+	// Use the new floating hook for smart positioning
+	const floating = useFloating(
+		() => contextMenu.anchor,
+		() => menuRef,
+		() => null,
+		{
+			placement: contextMenu.placement as Placement,
+			flip: true,
+			shift: true,
+			padding: 8,
+			offset: 4
+		}
+	);
+
+	// Update menu rect when visible (for submenu positioning)
 	$effect(() => {
 		if (contextMenu.visible && menuRef) {
 			// Use requestAnimationFrame to wait for render
@@ -18,6 +34,14 @@
 				}
 			});
 		}
+	});
+
+	// Compute actual position to use - use floating position when anchor provided, fallback to store position
+	const menuPosition = $derived.by(() => {
+		if (contextMenu.anchor) {
+			return floating.state;
+		}
+		return contextMenu.position;
 	});
 
 	// Find the rect for a submenu's parent item
@@ -115,7 +139,7 @@
 		<div
 			bind:this={menuRef}
 			class="context-menu"
-			style="top: {contextMenu.position.y}px; left: {contextMenu.position.x}px"
+			style="top: {menuPosition.y}px; left: {menuPosition.x}px"
 			role="menu"
 			aria-label="Context menu"
 			onclick={(e) => e.stopPropagation()}

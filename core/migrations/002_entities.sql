@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS wiki_people (
     interaction_count INTEGER DEFAULT 0,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     picture TEXT,
     cover_image TEXT,
@@ -33,7 +32,6 @@ CREATE TABLE IF NOT EXISTS wiki_people (
 );
 
 CREATE INDEX IF NOT EXISTS idx_wiki_people_name ON wiki_people(canonical_name);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_people_slug ON wiki_people(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS wiki_people_set_updated_at
     AFTER UPDATE ON wiki_people
@@ -54,14 +52,13 @@ CREATE TABLE IF NOT EXISTS wiki_places (
     address TEXT,
     latitude REAL,
     longitude REAL,
-    geo_boundary TEXT,  -- GeoJSON polygon
-    radius_m REAL,
+    radius_m REAL DEFAULT 100.0,
+    google_place_id TEXT,
     visit_count INTEGER DEFAULT 0,
     first_visit TEXT,
     last_visit TEXT,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     cover_image TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -70,7 +67,6 @@ CREATE TABLE IF NOT EXISTS wiki_places (
 
 CREATE INDEX IF NOT EXISTS idx_wiki_places_name ON wiki_places(name);
 CREATE INDEX IF NOT EXISTS idx_wiki_places_location ON wiki_places(latitude, longitude);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_places_slug ON wiki_places(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS wiki_places_set_updated_at
     AFTER UPDATE ON wiki_places
@@ -98,7 +94,6 @@ CREATE TABLE IF NOT EXISTS wiki_orgs (
     last_interaction TEXT,
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     cover_image TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -107,7 +102,6 @@ CREATE TABLE IF NOT EXISTS wiki_orgs (
 
 CREATE INDEX IF NOT EXISTS idx_wiki_orgs_name ON wiki_orgs(canonical_name);
 CREATE INDEX IF NOT EXISTS idx_wiki_orgs_type ON wiki_orgs(organization_type) WHERE organization_type IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_orgs_slug ON wiki_orgs(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS wiki_orgs_set_updated_at
     AFTER UPDATE ON wiki_orgs
@@ -160,7 +154,6 @@ CREATE TABLE IF NOT EXISTS narrative_telos (
     description TEXT,
     is_active INTEGER DEFAULT 1,
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     cover_image TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -168,7 +161,6 @@ CREATE TABLE IF NOT EXISTS narrative_telos (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_narrative_telos_single_active ON narrative_telos(is_active) WHERE is_active = 1;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_narrative_telos_slug ON narrative_telos(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS narrative_telos_set_updated_at
     AFTER UPDATE ON narrative_telos
@@ -194,7 +186,6 @@ CREATE TABLE IF NOT EXISTS narrative_acts (
     themes TEXT,  -- JSON array
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     cover_image TEXT,
     location TEXT,
@@ -205,7 +196,6 @@ CREATE TABLE IF NOT EXISTS narrative_acts (
 CREATE INDEX IF NOT EXISTS idx_narrative_acts_dates ON narrative_acts(start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_narrative_acts_order ON narrative_acts(sort_order);
 CREATE INDEX IF NOT EXISTS idx_narrative_acts_telos ON narrative_acts(telos_id) WHERE telos_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_narrative_acts_slug ON narrative_acts(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS narrative_acts_set_updated_at
     AFTER UPDATE ON narrative_acts
@@ -231,7 +221,6 @@ CREATE TABLE IF NOT EXISTS narrative_chapters (
     themes TEXT,  -- JSON array
     metadata TEXT DEFAULT '{}',  -- JSON
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     cover_image TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -241,7 +230,6 @@ CREATE TABLE IF NOT EXISTS narrative_chapters (
 CREATE INDEX IF NOT EXISTS idx_narrative_chapters_act ON narrative_chapters(act_id);
 CREATE INDEX IF NOT EXISTS idx_narrative_chapters_dates ON narrative_chapters(start_date, end_date);
 CREATE INDEX IF NOT EXISTS idx_narrative_chapters_order ON narrative_chapters(act_id, sort_order);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_narrative_chapters_slug ON narrative_chapters(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS narrative_chapters_set_updated_at
     AFTER UPDATE ON narrative_chapters
@@ -266,7 +254,7 @@ CREATE TABLE IF NOT EXISTS wiki_days (
     context_vector TEXT,  -- JSON
     act_id TEXT REFERENCES narrative_acts(id),
     chapter_id TEXT REFERENCES narrative_chapters(id),
-    -- Wiki fields (date serves as slug)
+    -- Wiki fields
     cover_image TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -291,11 +279,9 @@ END;
 CREATE TABLE IF NOT EXISTS wiki_years (
     id TEXT PRIMARY KEY,
     year INTEGER NOT NULL UNIQUE,
-    summary TEXT,
-    highlights TEXT,  -- JSON array
-    themes TEXT,      -- JSON array
+    title TEXT,
+    description TEXT,
     -- Wiki fields
-    slug TEXT UNIQUE,
     content TEXT,
     cover_image TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -303,7 +289,6 @@ CREATE TABLE IF NOT EXISTS wiki_years (
 );
 
 CREATE INDEX IF NOT EXISTS idx_wiki_years_year ON wiki_years(year DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_years_slug ON wiki_years(slug) WHERE slug IS NOT NULL;
 
 CREATE TRIGGER IF NOT EXISTS wiki_years_set_updated_at
     AFTER UPDATE ON wiki_years

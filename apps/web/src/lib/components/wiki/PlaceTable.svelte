@@ -1,290 +1,158 @@
 <!--
 	PlaceTable.svelte
 
-	Table view for places in the wiki.
+	View for places in the wiki.
+	Uses UniversalDataGrid for table/card views.
 -->
 
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import { getAllPlaces } from "$lib/wiki";
-	import type { PlacePage } from "$lib/wiki/types";
+	import { listPlaces, type WikiPlaceListItem } from "$lib/wiki/api";
+	import UniversalDataGrid, { type Column } from "$lib/components/UniversalDataGrid.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
-	// Reactive list of places
-	let places = $state(getAllPlaces());
+	let places = $state<WikiPlaceListItem[]>([]);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
 
-	// Place type labels
-	const placeTypeLabels: Record<string, string> = {
-		home: "Home",
-		work: "Work",
-		"third-place": "Third Place",
-		transit: "Transit",
-		travel: "Travel",
-		other: "Other",
-	};
-
-	// Place type badge colors
-	const placeTypeColors: Record<string, string> = {
+	const categoryColors: Record<string, string> = {
 		home: "badge-blue",
 		work: "badge-green",
-		"third-place": "badge-purple",
-		transit: "badge-gray",
-		travel: "badge-orange",
+		office: "badge-green",
+		museum: "badge-purple",
+		restaurant: "badge-orange",
+		cafe: "badge-orange",
+		gym: "badge-green",
 		other: "badge-gray",
 	};
 
-	function getPlaceTypeLabel(type: string): string {
-		return placeTypeLabels[type] || type;
+	const columns: Column<WikiPlaceListItem>[] = [
+		{
+			key: 'name',
+			label: 'Name',
+			icon: 'ri:map-pin-line',
+			width: '30%',
+			minWidth: '160px',
+		},
+		{
+			key: 'category',
+			label: 'Category',
+			icon: 'ri:price-tag-3-line',
+			width: '15%',
+			minWidth: '100px',
+			format: 'badge',
+			badgeColors: categoryColors,
+		},
+		{
+			key: 'address',
+			label: 'Address',
+			icon: 'ri:map-2-line',
+			width: '40%',
+			minWidth: '200px',
+			hideOnMobile: true,
+		},
+		{
+			key: 'visit_count',
+			label: 'Visits',
+			icon: 'ri:footprint-line',
+			width: '15%',
+			minWidth: '80px',
+			hideOnMobile: true,
+		},
+	];
+
+	async function loadPlaces() {
+		loading = true;
+		error = null;
+		try {
+			places = await listPlaces();
+		} catch (e) {
+			console.error('Failed to load places:', e);
+			error = e instanceof Error ? e.message : 'Failed to load places';
+		} finally {
+			loading = false;
+		}
 	}
 
-	function getPlaceTypeClass(type: string): string {
-		return placeTypeColors[type] || "badge-gray";
+	onMount(() => {
+		loadPlaces();
+	});
+
+	function getCategoryClass(category?: string | null): string {
+		if (!category) return "badge-gray";
+		return categoryColors[category.toLowerCase()] || "badge-gray";
 	}
 
-	// Handle row click - navigate to place page
-	function handleRowClick(place: PlacePage) {
-		spaceStore.openTabFromRoute(`/wiki/${place.slug}`);
+	function handleItemClick(place: WikiPlaceListItem) {
+		const route = `/place/${place.id}`;
+		spaceStore.openTabFromRoute(route);
 	}
 </script>
 
-<div class="table-wrapper">
-	<!-- Toolbar -->
-	<div class="table-toolbar">
-		<div class="toolbar-left">
-			<button class="toolbar-btn">
-				<Icon icon="ri:arrow-up-down-line" width="14"/>
-				Sort
-			</button>
-			<button class="toolbar-btn">
-				<Icon icon="ri:filter-3-line" width="14"/>
-				Filter
-			</button>
+<UniversalDataGrid
+	items={places}
+	{columns}
+	entityType="place"
+	{loading}
+	{error}
+	emptyIcon="ri:map-pin-add-line"
+	emptyMessage="No places yet"
+	loadingMessage="Loading places..."
+	searchPlaceholder="Search places..."
+	onItemClick={handleItemClick}
+	onRetry={loadPlaces}
+>
+	<!-- Custom card -->
+	{#snippet card(place: WikiPlaceListItem)}
+		<div class="card-content">
+			<div class="place-icon">
+				<Icon icon="ri:map-pin-line" width="24" />
+			</div>
+			<span class="card-name">{place.name}</span>
+			{#if place.category}
+				<span class="badge {getCategoryClass(place.category)}">
+					{place.category}
+				</span>
+			{/if}
+			{#if place.visit_count !== undefined && place.visit_count !== null}
+				<span class="visits-text">{place.visit_count} visits</span>
+			{/if}
 		</div>
-	</div>
-
-	<!-- Table -->
-	<div class="table-container">
-		<table class="data-table">
-			<thead>
-				<tr>
-					<th class="col-name">
-						<Icon icon="ri:map-pin-line" width="14"/>
-						Name
-					</th>
-					<th class="col-type">
-						<Icon icon="ri:building-line" width="14"/>
-						Type
-					</th>
-					<th class="col-city">
-						<Icon icon="ri:map-2-line" width="14"/>
-						City
-					</th>
-					<th class="col-visits">
-						<Icon icon="ri:footprint-line" width="14"/>
-						Visits
-					</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each places as place}
-					<tr class="data-row" onclick={() => handleRowClick(place)}>
-						<td class="col-name">
-							<span class="name-text">{place.title}</span>
-						</td>
-						<td class="col-type">
-							<span class="badge {getPlaceTypeClass(place.placeType)}">
-								{getPlaceTypeLabel(place.placeType)}
-							</span>
-						</td>
-						<td class="col-city">
-							{#if place.city}
-								<span class="city-text">{place.city}</span>
-							{:else}
-								<span class="empty-cell">—</span>
-							{/if}
-						</td>
-						<td class="col-visits">
-							{#if place.visitCount}
-								<span class="visits-text">{place.visitCount}</span>
-							{:else}
-								<span class="empty-cell">—</span>
-							{/if}
-						</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	</div>
-
-	<!-- Empty state -->
-	{#if places.length === 0}
-		<div class="empty-state">
-			<Icon icon="ri:map-pin-add-line" width="32"/>
-			<p>No places yet</p>
-		</div>
-	{/if}
-</div>
+	{/snippet}
+</UniversalDataGrid>
 
 <style>
-	.table-wrapper {
-		width: 100%;
-		padding: 0 2rem;
-		overflow: visible;
-	}
-
-	/* Toolbar */
-	.table-toolbar {
+	/* Card styles */
+	.card-content {
 		display: flex;
-		justify-content: space-between;
+		flex-direction: column;
 		align-items: center;
-		padding: 0.5rem 0;
-		position: relative;
+		gap: 0.75rem;
+		text-align: center;
 	}
 
-	.table-toolbar::after {
-		content: "";
-		position: absolute;
-		left: -2rem;
-		right: -2rem;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.toolbar-left {
+	.place-icon {
+		width: 48px;
+		height: 48px;
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+		color: var(--color-primary);
 		display: flex;
-		gap: 0.5rem;
+		align-items: center;
+		justify-content: center;
 	}
 
-	.toolbar-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.375rem 0.625rem;
+	.card-name {
+		font-weight: 600;
+		font-size: 0.9375rem;
+		color: var(--color-foreground);
+		line-height: 1.3;
+	}
+
+	.visits-text {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.toolbar-btn:hover {
-		background: var(--color-background-hover);
-		color: var(--color-foreground);
-	}
-
-	/* Table container */
-	.table-container {
-		overflow: visible;
-	}
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: 0.8125rem;
-		overflow: visible;
-	}
-
-	/* Header */
-	thead tr {
-		background: transparent;
-		position: relative;
-	}
-
-	thead tr::after {
-		content: "";
-		position: absolute;
-		left: -2rem;
-		right: -2rem;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	th {
-		text-align: left;
-		font-weight: 500;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		padding: 0.625rem 0.75rem;
-		white-space: nowrap;
-	}
-
-	th:first-child {
-		padding-left: 0;
-	}
-
-	th:last-child {
-		padding-right: 0;
-	}
-
-	th :global(svg) {
-		vertical-align: -2px;
-		margin-right: 0.375rem;
-		opacity: 0.7;
-	}
-
-	/* Column widths */
-	.col-name {
-		width: 40%;
-		min-width: 200px;
-	}
-
-	.col-type {
-		width: 20%;
-		min-width: 120px;
-	}
-
-	.col-city {
-		width: 25%;
-		min-width: 140px;
-	}
-
-	.col-visits {
-		width: 15%;
-		min-width: 80px;
-	}
-
-	/* Data rows */
-	td {
-		padding: 0.5rem 0.75rem;
-		color: var(--color-foreground);
-		vertical-align: middle;
-	}
-
-	td:first-child {
-		padding-left: 0;
-	}
-
-	td:last-child {
-		padding-right: 0;
-	}
-
-	.data-row {
-		cursor: pointer;
-		transition: background-color 0.1s ease;
-		position: relative;
-	}
-
-	.data-row::after {
-		content: "";
-		position: absolute;
-		left: -2rem;
-		right: -2rem;
-		bottom: 0;
-		height: 1px;
-		background: var(--color-border);
-	}
-
-	.data-row:hover {
-		background: var(--color-background-hover);
-	}
-
-	.name-text {
-		font-weight: 500;
-		color: var(--color-foreground);
 	}
 
 	/* Badges */
@@ -296,6 +164,7 @@
 		font-weight: 500;
 		border-radius: 9999px;
 		white-space: nowrap;
+		text-transform: capitalize;
 	}
 
 	.badge-gray {
@@ -321,54 +190,5 @@
 	.badge-orange {
 		background: color-mix(in srgb, #f97316 15%, transparent);
 		color: #ea580c;
-	}
-
-	/* Text styles */
-	.city-text {
-		color: var(--color-foreground);
-	}
-
-	.visits-text {
-		color: var(--color-foreground-muted);
-	}
-
-	.empty-cell {
-		color: var(--color-foreground-subtle);
-	}
-
-	/* Empty state */
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 0.75rem;
-		padding: 3rem 2rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.empty-state :global(svg) {
-		opacity: 0.5;
-	}
-
-	.empty-state p {
-		margin: 0;
-		font-size: 0.875rem;
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.col-city,
-		.col-visits {
-			display: none;
-		}
-
-		.col-name {
-			width: 60%;
-		}
-
-		.col-type {
-			width: 40%;
-		}
 	}
 </style>

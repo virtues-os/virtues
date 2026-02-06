@@ -12,17 +12,36 @@ pub async fn handle_ngrok_command(virtues: Virtues) -> Result<(), Box<dyn std::e
     // Check if ngrok is installed
     check_ngrok_installed()?;
 
+    // Run migrations and seed data (same as auto-setup mode)
+    println!("📊 Running migrations...");
+    virtues.database.initialize().await?;
+    println!("✅ Migrations complete");
+
+    println!("🌱 Seeding defaults...");
+    crate::seeding::prod_seed::seed_production_data(&virtues.database).await?;
+    println!("✅ Seeding complete");
+
     println!();
     println!("{}", style("🚀 Starting Virtues server with ngrok HTTPS tunnel...").bold());
+
+    // Check if BACKEND_URL already has an ngrok domain (persistent URL)
+    let known_ngrok_url = get_ngrok_domain_from_env();
 
     // Start ngrok in background
     let port = 8000;
     let mut ngrok_child = start_ngrok_process(port)?;
     println!("{} ngrok process started", style("✓").green());
 
-    // Wait for ngrok to initialize and get HTTPS URL
+    // Get the tunnel URL
     println!("{} Waiting for ngrok to initialize...", style("⏳").dim());
-    let ngrok_url = wait_for_ngrok_url(&mut ngrok_child).await?;
+    let ngrok_url = if let Some(url) = known_ngrok_url {
+        // We already know the URL from BACKEND_URL, just wait for ngrok to be ready
+        wait_for_ngrok_ready().await?;
+        url
+    } else {
+        // No persistent domain — parse URL from ngrok output
+        wait_for_ngrok_url(&mut ngrok_child).await?
+    };
     println!("{} ngrok tunnel ready", style("✓").green());
 
     // Display connection information
@@ -47,6 +66,34 @@ pub async fn handle_ngrok_command(virtues: Virtues) -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+/// If BACKEND_URL is an ngrok domain, return the full HTTPS URL
+fn get_ngrok_domain_from_env() -> Option<String> {
+    let backend_url = std::env::var("BACKEND_URL").ok()?;
+    let parsed = url::Url::parse(&backend_url).ok()?;
+    let host = parsed.host_str()?;
+    if host.ends_with(".ngrok-free.app") || host.ends_with(".ngrok.io") {
+        Some(format!("https://{}", host))
+    } else {
+        None
+    }
+}
+
+/// Wait for ngrok's local API to be responsive (persistent domain mode)
+async fn wait_for_ngrok_ready() -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?;
+
+    for _ in 0..15 {
+        if client.get("http://localhost:4040/api/tunnels").send().await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    Err("Timeout: ngrok API not responsive after 15 seconds. Check ngrok logs.".into())
+}
+
 /// Check if ngrok is installed and available in PATH
 fn check_ngrok_installed() -> Result<(), Box<dyn std::error::Error>> {
     let result = std::process::Command::new("ngrok")
@@ -64,11 +111,23 @@ fn check_ngrok_installed() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Start ngrok as a child process
+/// Start ngrok as a child process, using persistent domain from BACKEND_URL if available
 fn start_ngrok_process(port: u16) -> Result<Child, Box<dyn std::error::Error>> {
-    // Start ngrok in background and capture stdout for URL extraction
+    let mut args = vec!["http".to_string(), port.to_string(), "--log=stdout".to_string()];
+
+    // If BACKEND_URL is an ngrok domain, use --domain for a persistent URL
+    if let Ok(backend_url) = std::env::var("BACKEND_URL") {
+        if let Ok(url) = url::Url::parse(&backend_url) {
+            if let Some(host) = url.host_str() {
+                if host.ends_with(".ngrok-free.app") || host.ends_with(".ngrok.io") {
+                    args.push(format!("--domain={}", host));
+                }
+            }
+        }
+    }
+
     let child = Command::new("ngrok")
-        .args(["http", &port.to_string(), "--log=stdout"])
+        .args(&args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()?;
@@ -182,9 +241,8 @@ fn display_connection_info(https_url: &str, ngrok_dashboard: &str) {
     println!("{}", style("━".repeat(70)).dim());
     println!();
     println!(
-        "{}{}{}",
+        "{}{}",
         style("Note: ").dim(),
-        style("Free ngrok URLs change on restart. ").dim(),
         style("Press Ctrl+C to stop both services.").dim()
     );
     println!();

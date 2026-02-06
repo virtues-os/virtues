@@ -6,25 +6,25 @@
  */
 
 export type Theme =
-	| 'ivory-tower'
-	| 'ivory-noise'
-	| 'sunrise'
-	| 'notebook'
-	| 'dawn'
-	| 'scriptorium'
-	| 'forum'
-	| 'midnight-oil'
-	| 'narnia-nights'
-	| 'dumb-ox'
-	| 'chiaroscuro'
-	| 'stoa'
+	| 'pemberley'
+	| 'caladan'
+	| 'rivendell'
+	| 'oxford'
+	| 'lothlorien'
+	| 'hogwarts'
+	| 'tatooine'
+	| 'baker-street'
+	| 'narnia'
+	| 'canterbury'
+	| 'borghese'
+	| 'gatsby'
 	| 'lyceum'
-	| 'tabula-rasa'
-	| 'hemlock'
+	| 'asgard'
+	| 'agora'
 	| 'shire';
 
 const THEME_STORAGE_KEY = 'virtues-theme';
-const DEFAULT_THEME: Theme = 'scriptorium';
+const DEFAULT_THEME: Theme = 'tatooine';
 
 /**
  * Get the current theme from localStorage cache
@@ -142,21 +142,21 @@ export function initTheme(): void {
  */
 export function isValidTheme(theme: string): theme is Theme {
 	return [
-		'ivory-tower',
-		'ivory-noise',
-		'sunrise',
-		'notebook',
-		'dawn',
-		'scriptorium',
-		'forum',
-		'midnight-oil',
-		'narnia-nights',
-		'dumb-ox',
-		'chiaroscuro',
-		'stoa',
+		'pemberley',
+		'caladan',
+		'rivendell',
+		'oxford',
+		'lothlorien',
+		'hogwarts',
+		'tatooine',
+		'baker-street',
+		'narnia',
+		'canterbury',
+		'borghese',
+		'gatsby',
 		'lyceum',
-		'tabula-rasa',
-		'hemlock',
+		'asgard',
+		'agora',
 		'shire'
 	].includes(theme);
 }
@@ -167,21 +167,21 @@ export function isValidTheme(theme: string): theme is Theme {
  */
 export function getAvailableThemes(): Theme[] {
 	return [
-		'ivory-tower',
-		'ivory-noise',
-		'sunrise',
-		'notebook',
-		'dawn',
-		'scriptorium',
-		'forum',
-		'midnight-oil',
-		'narnia-nights',
-		'dumb-ox',
-		'chiaroscuro',
-		'stoa',
+		'pemberley',
+		'caladan',
+		'rivendell',
+		'oxford',
+		'lothlorien',
+		'hogwarts',
+		'tatooine',
+		'baker-street',
+		'narnia',
+		'canterbury',
+		'borghese',
+		'gatsby',
 		'lyceum',
-		'tabula-rasa',
-		'hemlock',
+		'asgard',
+		'agora',
 		'shire'
 	];
 }
@@ -191,21 +191,21 @@ export function getAvailableThemes(): Theme[] {
  */
 export function getThemeDisplayName(theme: Theme): string {
 	const names: Record<Theme, string> = {
-		'ivory-tower': 'Ivory Tower',
-		'ivory-noise': 'Ivory Noise',
-		sunrise: 'Sunrise',
-		notebook: 'Notebook',
-		dawn: 'Dawn',
-		scriptorium: 'The Scriptorium',
-		forum: 'The Forum',
-		'midnight-oil': 'Midnight Oil',
-		'narnia-nights': 'Narnia Nights',
-		'dumb-ox': 'The Dumb Ox',
-		chiaroscuro: 'Chiaroscuro',
-		stoa: 'The Stoa',
+		pemberley: 'Pemberley',
+		caladan: 'Caladan',
+		rivendell: 'Rivendell',
+		oxford: 'Oxford',
+		lothlorien: 'Lothlorien',
+		hogwarts: 'Hogwarts',
+		tatooine: 'Tatooine',
+		'baker-street': 'Baker Street',
+		narnia: 'Narnia',
+		canterbury: 'Canterbury',
+		borghese: 'Borghese',
+		gatsby: 'Gatsby',
 		lyceum: 'The Lyceum',
-		'tabula-rasa': 'Tabula Rasa',
-		hemlock: 'Hemlock',
+		asgard: 'Asgard',
+		agora: 'Agora',
 		shire: 'The Shire'
 	};
 	return names[theme];
@@ -227,7 +227,7 @@ export const themePreviewColors: Record<
 		syntax: string[];
 	}
 > = {
-	'ivory-tower': {
+	pemberley: {
 		background: '#FFFFFF',
 		surface: '#FFFFFF',
 		surfaceElevated: '#F5F5F5',
@@ -236,7 +236,7 @@ export const themePreviewColors: Record<
 		primary: '#2883DE',
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
-	'ivory-noise': {
+	caladan: {
 		background: '#FFFFFF',
 		surface: '#FFFFFF',
 		surfaceElevated: '#F5F5F5',
@@ -245,7 +245,7 @@ export const themePreviewColors: Record<
 		primary: '#2883DE',
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
-	sunrise: {
+	rivendell: {
 		background: '#FFFFFF',
 		surface: '#FFFFFF',
 		surfaceElevated: '#F5F5F5',
@@ -254,7 +254,7 @@ export const themePreviewColors: Record<
 		primary: '#D97757',
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
-	notebook: {
+	oxford: {
 		background: '#FFFFFF',
 		surface: '#FFFFFF',
 		surfaceElevated: '#FAFAFA',
@@ -263,7 +263,7 @@ export const themePreviewColors: Record<
 		primary: '#2883DE',
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
-	dawn: {
+	lothlorien: {
 		background: '#1a1a2e',
 		surface: '#1f1f35',
 		surfaceElevated: '#25253d',
@@ -272,7 +272,7 @@ export const themePreviewColors: Record<
 		primary: '#E8A87C',
 		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
 	},
-	scriptorium: {
+	hogwarts: {
 		background: '#F7F7F4',
 		surface: '#FFFFFF',
 		surfaceElevated: '#F0EFE9',
@@ -281,16 +281,16 @@ export const themePreviewColors: Record<
 		primary: '#EB5601',
 		syntax: ['#cf222e', '#0a3069', '#8250df', '#0550ae', '#6e7781', '#24292f']
 	},
-	forum: {
+	tatooine: {
 		background: '#fdf6e3',
 		surface: '#fdf6e3',
 		surfaceElevated: '#eee8d5',
-		foreground: '#073642',
-		foregroundMuted: '#586e75',
+		foreground: '#2d3632',
+		foregroundMuted: '#5d665e',
 		primary: '#268bd2',
-		syntax: ['#859900', '#2aa198', '#268bd2', '#cb4b16', '#93a1a1', '#657b83']
+		syntax: ['#859900', '#2aa198', '#268bd2', '#cb4b16', '#8f918a', '#5d665e']
 	},
-	'midnight-oil': {
+	'baker-street': {
 		background: '#0a0a0a',
 		surface: '#171717',
 		surfaceElevated: '#262626',
@@ -299,7 +299,7 @@ export const themePreviewColors: Record<
 		primary: '#60a5fa',
 		syntax: ['#ff7b72', '#a5d6ff', '#d2a8ff', '#79c0ff', '#8b949e', '#e6edf3']
 	},
-	'narnia-nights': {
+	narnia: {
 		background: '#0C0E13',
 		surface: '#161820',
 		surfaceElevated: '#1e2028',
@@ -308,7 +308,7 @@ export const themePreviewColors: Record<
 		primary: '#FF9D52',
 		syntax: ['#bb9af7', '#9ece6a', '#7aa2f7', '#ff9e64', '#565f89', '#a9b1d6']
 	},
-	'dumb-ox': {
+	canterbury: {
 		background: '#14120B',
 		surface: '#1B1913',
 		surfaceElevated: '#221E15',
@@ -317,7 +317,7 @@ export const themePreviewColors: Record<
 		primary: '#E4B873',
 		syntax: ['#cb7676', '#c98a7d', '#80a665', '#e6cc77', '#758575', '#dbd7ca']
 	},
-	chiaroscuro: {
+	borghese: {
 		background: '#000000',
 		surface: '#000000',
 		surfaceElevated: '#1a1a1a',
@@ -326,7 +326,7 @@ export const themePreviewColors: Record<
 		primary: '#FFFFFF',
 		syntax: ['#ff9492', '#addcff', '#dcbdfb', '#91cbff', '#9198a1', '#f0f3f6']
 	},
-	stoa: {
+	gatsby: {
 		background: '#272822',
 		surface: '#2d2a2e',
 		surfaceElevated: '#3e3d32',
@@ -344,7 +344,7 @@ export const themePreviewColors: Record<
 		primary: '#61afef',
 		syntax: ['#c678dd', '#98c379', '#61afef', '#d19a66', '#5c6370', '#abb2bf']
 	},
-	'tabula-rasa': {
+	asgard: {
 		background: '#141414',
 		surface: '#181818',
 		surfaceElevated: '#1e1e1e',
@@ -353,7 +353,7 @@ export const themePreviewColors: Record<
 		primary: '#88C0D0',
 		syntax: ['#cb7676', '#c98a7d', '#80a665', '#e6cc77', '#758575', '#dbd7ca']
 	},
-	hemlock: {
+	agora: {
 		background: '#282a36',
 		surface: '#2d303e',
 		surfaceElevated: '#343746',
@@ -383,65 +383,65 @@ export const themeMetadata: Record<
 		description: string;
 	}
 > = {
-	'ivory-tower': {
+	pemberley: {
 		icon: 'ph:building-bold',
-		description: 'Clean academic white'
+		description: 'Austen elegance, pristine'
 	},
-	'ivory-noise': {
-		icon: 'ph:film-strip-bold',
-		description: 'Ivory with film grain'
+	caladan: {
+		icon: 'ph:waves-bold',
+		description: 'Atreides ocean world'
 	},
-	sunrise: {
-		icon: 'ph:sun-horizon-bold',
-		description: 'Blue to peach gradient'
+	rivendell: {
+		icon: 'ph:leaf-bold',
+		description: 'Elven refuge, warm light'
 	},
-	notebook: {
-		icon: 'ph:dots-nine-bold',
-		description: 'Dotted paper background'
+	oxford: {
+		icon: 'ph:book-open-bold',
+		description: 'Academic, studious'
 	},
-	dawn: {
-		icon: 'ph:cloud-sun-bold',
-		description: 'Dark blue to warm gradient'
+	lothlorien: {
+		icon: 'ph:tree-bold',
+		description: 'Golden wood twilight'
 	},
-	scriptorium: {
-		icon: 'ph:scroll-bold',
-		description: 'Warm paper, candlelight'
+	hogwarts: {
+		icon: 'ph:magic-wand-bold',
+		description: 'Warm parchment, candlelit'
 	},
-	forum: {
+	tatooine: {
 		icon: 'ph:sun-bold',
-		description: 'Sunny Roman courtyard'
+		description: 'Twin suns, desert warmth'
 	},
-	'midnight-oil': {
-		icon: 'ph:moon-bold',
-		description: 'Late night studying'
+	'baker-street': {
+		icon: 'ph:magnifying-glass-bold',
+		description: 'Victorian gaslight'
 	},
-	'narnia-nights': {
+	narnia: {
 		icon: 'ph:lamp-bold',
 		description: 'Magical lamppost glow'
 	},
-	'dumb-ox': {
-		icon: 'ph:book-open-bold',
-		description: 'Thomistic warm earth'
+	canterbury: {
+		icon: 'ph:path-bold',
+		description: 'Pilgrim earth tones'
 	},
-	chiaroscuro: {
+	borghese: {
 		icon: 'ph:circle-half-bold',
-		description: 'Stark light and shadow'
+		description: 'Dramatic light and shadow'
 	},
-	stoa: {
-		icon: 'ph:columns-bold',
-		description: 'Vivid Stoic painted porch'
+	gatsby: {
+		icon: 'ph:champagne-bold',
+		description: 'Jazz age vivid glamour'
 	},
 	lyceum: {
 		icon: 'ph:student-bold',
 		description: 'Aristotelian cool blues'
 	},
-	'tabula-rasa': {
-		icon: 'ph:eraser-bold',
-		description: 'Blank slate, muted nordic'
+	asgard: {
+		icon: 'ph:lightning-bold',
+		description: 'Norse realm, cold majesty'
 	},
-	hemlock: {
-		icon: 'ph:skull-bold',
-		description: 'Gothic purple mystery'
+	agora: {
+		icon: 'ph:columns-bold',
+		description: 'Greek marketplace purple'
 	},
 	shire: {
 		icon: 'ph:house-bold',

@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 enum NetworkError: LocalizedError {
     case invalidURL
@@ -171,8 +172,87 @@ class NetworkManager: ObservableObject {
         }
     }
     
+    // MARK: - QR Pairing
+
+    /// Complete QR-based pairing: sends device identity to the server using the
+    /// source_id obtained from the scanned QR code.
+    func completePairing(
+        endpoint: String,
+        sourceId: String,
+        deviceId: String
+    ) async throws -> PairingCompleteResponse {
+        // Build URL: {endpoint}/api/devices/pairing/{sourceId}/complete
+        let baseURL = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
+        // Strip /api suffix if present so we can build the canonical path
+        let root = baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
+
+        guard let url = URL(string: "\(root)/api/devices/pairing/\(sourceId)/complete") else {
+            throw NetworkError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15.0
+
+        // Capture device info on MainActor (UIDevice properties are MainActor-isolated)
+        let deviceName = await UIDevice.current.name
+        let osVersion = await UIDevice.current.systemVersion
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+
+        let deviceInfo = PairingDeviceInfo(
+            device_id: deviceId,
+            device_name: deviceName,
+            device_model: Self.modelIdentifier,
+            os_version: osVersion,
+            app_version: appVersion
+        )
+
+        let body = PairingCompleteRequest(device_id: deviceId, device_info: deviceInfo)
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
+        }
+
+        switch httpResponse.statusCode {
+        case 200...299:
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(PairingCompleteResponse.self, from: data)
+        case 400:
+            let message: String
+            if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
+                message = errorResponse.error
+            } else {
+                message = "Pairing session expired or already claimed"
+            }
+            throw NetworkError.badRequest(message: message)
+        case 404:
+            throw NetworkError.badRequest(message: "Pairing session not found. The QR code may be invalid.")
+        case 500...599:
+            throw NetworkError.serverError(httpResponse.statusCode)
+        default:
+            throw NetworkError.unknown(NSError(domain: "HTTP \(httpResponse.statusCode)", code: httpResponse.statusCode))
+        }
+    }
+
+    /// Hardware model identifier (e.g. "iPhone16,1")
+    private static var modelIdentifier: String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let mirror = Mirror(reflecting: systemInfo.machine)
+        return mirror.children.reduce("") { identifier, element in
+            guard let value = element.value as? Int8, value != 0 else { return identifier }
+            return identifier + String(UnicodeScalar(UInt8(value)))
+        }
+    }
+
     // MARK: - Connection Test
-    
+
     func testConnection(endpoint: String) async -> Bool {
         guard let url = URL(string: endpoint) else { return false }
         
@@ -220,4 +300,24 @@ struct ErrorResponse: Codable {
     let error: String
     let details: String?
     let message: String? // Added to match backend
+}
+
+// MARK: - QR Pairing Models
+
+struct PairingDeviceInfo: Codable {
+    let device_id: String
+    let device_name: String
+    let device_model: String
+    let os_version: String
+    let app_version: String?
+}
+
+struct PairingCompleteRequest: Codable {
+    let device_id: String
+    let device_info: PairingDeviceInfo
+}
+
+struct PairingCompleteResponse: Codable {
+    let sourceId: String
+    let deviceToken: String
 }

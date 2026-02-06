@@ -2,7 +2,11 @@
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import { dndManager, type DndTabItem, type ZoneId } from "$lib/stores/dndManager.svelte";
+	import {
+		dndManager,
+		type DndTabItem,
+		type ZoneId,
+	} from "$lib/stores/dndManager.svelte";
 	import WindowTabBar from "./WindowTabBar.svelte";
 	import TabContent from "./TabContent.svelte";
 	import ChatView from "./views/ChatView.svelte";
@@ -15,8 +19,8 @@
 	let rightDropItems = $state<DndTabItem[]>([]);
 
 	// Zone IDs for split overlays
-	const leftZoneId: ZoneId = { type: 'split-overlay', paneId: 'left' };
-	const rightZoneId: ZoneId = { type: 'split-overlay', paneId: 'right' };
+	const leftZoneId: ZoneId = { type: "split-overlay", paneId: "left" };
+	const rightZoneId: ZoneId = { type: "split-overlay", paneId: "right" };
 
 	const MIN_WIDTH = 25; // minimum 25% (1/4) for each pane
 
@@ -39,6 +43,10 @@
 		spaceStore.panes[1]?.activeTabId ?? null,
 	);
 
+	// All tabs across all panes - single source for the unified {#each} loop
+	// Svelte 5 keyed {#each} preserves component identity when items stay in the array
+	const allTabs = $derived(spaceStore.getAllTabs());
+
 	// Compute widths
 	const leftWidth = $derived(
 		isSplitEnabled ? spaceStore.leftPane?.width || 50 : 100,
@@ -46,22 +54,6 @@
 
 	const rightWidth = $derived(
 		isSplitEnabled ? spaceStore.rightPane?.width || 50 : 0,
-	);
-
-	// Content key for triggering page transition animation
-	// Use tab ID (not route) so updating a tab's route/entityId doesn't trigger animation
-	// Animation fires when: switching workspaces, switching tabs, or opening new tabs
-	const leftActiveTab = $derived(
-		leftPaneTabs.find((t) => t.id === leftPaneActiveTabId),
-	);
-	const rightActiveTab = $derived(
-		rightPaneTabs.find((t) => t.id === rightPaneActiveTabId),
-	);
-	const leftContentKey = $derived(
-		`${spaceStore.activeSpaceId}-${leftPaneActiveTabId ?? "empty"}`,
-	);
-	const rightContentKey = $derived(
-		`${spaceStore.activeSpaceId}-${rightPaneActiveTabId ?? "empty"}`,
 	);
 
 	function handleMouseDown(e: MouseEvent) {
@@ -95,9 +87,14 @@
 	// svelte-dnd-action handlers delegated to centralized dndManager
 	function handleLeftDndConsider(e: CustomEvent<DndEvent<DndTabItem>>) {
 		// Pass current items as originalItems (overlays don't initiate drags but receive DRAG_STARTED broadcasts)
-		dndManager.handleConsider(e, leftZoneId, (items) => {
-			leftDropItems = items;
-		}, leftDropItems);
+		dndManager.handleConsider(
+			e,
+			leftZoneId,
+			(items) => {
+				leftDropItems = items;
+			},
+			leftDropItems,
+		);
 	}
 
 	async function handleLeftDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
@@ -109,12 +106,19 @@
 
 	function handleRightDndConsider(e: CustomEvent<DndEvent<DndTabItem>>) {
 		// Pass current items as originalItems (overlays don't initiate drags but receive DRAG_STARTED broadcasts)
-		dndManager.handleConsider(e, rightZoneId, (items) => {
-			rightDropItems = items;
-		}, rightDropItems);
+		dndManager.handleConsider(
+			e,
+			rightZoneId,
+			(items) => {
+				rightDropItems = items;
+			},
+			rightDropItems,
+		);
 	}
 
-	async function handleRightDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
+	async function handleRightDndFinalize(
+		e: CustomEvent<DndEvent<DndTabItem>>,
+	) {
 		await dndManager.handleFinalize(e, rightZoneId, (items) => {
 			rightDropItems = items;
 		});
@@ -129,6 +133,8 @@
 	bind:this={containerRef}
 	class:dragging={isResizing}
 	class:split-enabled={isSplitEnabled}
+	style:--left-width="{leftWidth}%"
+	style:--right-width="{rightWidth}%"
 >
 	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts -->
 	<div class="drag-overlays" class:visible={isDragging}>
@@ -142,7 +148,7 @@
 				flipDurationMs: 0,
 				dragDisabled: true,
 				dropFromOthersDisabled: !isDragging,
-				dropAnimationDisabled: true
+				dropAnimationDisabled: true,
 			}}
 			onconsider={handleLeftDndConsider}
 			onfinalize={handleLeftDndFinalize}
@@ -157,17 +163,17 @@
 				flipDurationMs: 0,
 				dragDisabled: true,
 				dropFromOthersDisabled: !isDragging,
-				dropAnimationDisabled: true
+				dropAnimationDisabled: true,
 			}}
 			onconsider={handleRightDndConsider}
 			onfinalize={handleRightDndFinalize}
 		></div>
 	</div>
 
-	<!-- Left Pane (always visible) -->
+	<!-- Left Pane Shell: tab bar + background + click zone (no content rendered here) -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
-		class="pane left-pane"
+		class="pane-shell left-pane"
 		class:active={!isSplitEnabled || spaceStore.activePaneId === "left"}
 		style:width="{leftWidth}%"
 		onclick={() => handlePaneClick("left")}
@@ -177,20 +183,6 @@
 		aria-label="Left pane"
 	>
 		<WindowTabBar paneId={isSplitEnabled ? "left" : undefined} />
-		{#key leftContentKey}
-			<div class="pane-content page-transition">
-				{#if leftPaneTabs.length === 0}
-					<ChatView tab={{ id: 'new-chat-left', type: 'chat', label: 'New Chat', route: '/chat', createdAt: Date.now() }} active={true} />
-				{:else}
-					{#each leftPaneTabs as tab (tab.id)}
-						<TabContent
-							{tab}
-							active={tab.id === leftPaneActiveTabId}
-						/>
-					{/each}
-				{/if}
-			</div>
-		{/key}
 	</div>
 
 	<!-- Resize Handle (only interactive in split mode) -->
@@ -207,10 +199,10 @@
 		<div class="handle-grip"></div>
 	</div>
 
-	<!-- Right Pane (always mounted, collapsed when not in split mode) -->
+	<!-- Right Pane Shell: tab bar + background + click zone (no content rendered here) -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
-		class="pane right-pane"
+		class="pane-shell right-pane"
 		class:active={isSplitEnabled && spaceStore.activePaneId === "right"}
 		class:collapsed={!isSplitEnabled}
 		style:width="{rightWidth}%"
@@ -224,25 +216,59 @@
 		{#if isSplitEnabled}
 			<WindowTabBar paneId="right" />
 		{/if}
-		{#key rightContentKey}
-			<div class="pane-content page-transition">
-				{#if rightPaneTabs.length === 0}
-					<ChatView tab={{ id: 'new-chat-right', type: 'chat', label: 'New Chat', route: '/chat', createdAt: Date.now() }} active={true} />
-				{:else}
-					{#each rightPaneTabs as tab (tab.id)}
-						<TabContent
-							{tab}
-							active={tab.id === rightPaneActiveTabId}
-						/>
-					{/each}
-				{/if}
-			</div>
-		{/key}
 	</div>
+
+	<!-- Tab Content Layer: single {#each} loop, absolutely positioned per-pane.
+	     When a tab moves between panes, only CSS classes change — the component
+	     instance is never destroyed. This preserves Yjs documents, WebSocket
+	     connections, chat streaming, undo history, and scroll position. -->
+	{#each allTabs as tab (tab.id)}
+		{@const paneId = spaceStore.findTabPane(tab.id) ?? 'left'}
+		{@const isActive = tab.id === (paneId === 'left' ? leftPaneActiveTabId : rightPaneActiveTabId)}
+		<div
+			class="tab-slot"
+			class:in-left={paneId === 'left' || !isSplitEnabled}
+			class:in-right={paneId === 'right' && isSplitEnabled}
+			style:display={isActive ? 'flex' : 'none'}
+		>
+			<TabContent {tab} active={isActive} />
+		</div>
+	{/each}
+
+	<!-- Empty pane fallbacks: ephemeral ChatView when a pane has no tabs -->
+	{#if leftPaneTabs.length === 0}
+		<div class="tab-slot in-left" style:display="flex">
+			<ChatView
+				tab={{
+					id: "new-chat-left",
+					type: "chat",
+					label: "New Chat",
+					route: "/chat",
+					createdAt: Date.now(),
+				}}
+				active={true}
+			/>
+		</div>
+	{/if}
+	{#if isSplitEnabled && rightPaneTabs.length === 0}
+		<div class="tab-slot in-right" style:display="flex">
+			<ChatView
+				tab={{
+					id: "new-chat-right",
+					type: "chat",
+					label: "New Chat",
+					route: "/chat",
+					createdAt: Date.now(),
+				}}
+				active={true}
+			/>
+		</div>
+	{/if}
 </div>
 
 <style>
 	.split-container {
+		--tab-bar-h: 41px; /* 6px padding + 28px tabs-scroll + 6px padding + 1px border */
 		display: flex;
 		flex: 1;
 		min-height: 0;
@@ -255,49 +281,55 @@
 		user-select: none;
 	}
 
-	.pane {
+	/* Pane shells: tab bar + background only, no content */
+	.pane-shell {
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
 		overflow: hidden;
-		border-radius: 0;
 		background: var(--color-background);
 		transition: width 150ms ease;
 	}
 
-	.split-container.dragging .pane {
+	.split-container.dragging .pane-shell {
 		transition: none;
 	}
 
 	/* Only show active indicator in split mode */
-	.split-enabled .pane.active {
-		box-shadow: inset 0 2px 0 0 var(--color-accent);
+	.split-enabled .pane-shell.active {
+		box-shadow: inset 0 2px 0 0 var(--color-primary);
 	}
 
 	/* Right pane collapsed styles */
-	.pane.collapsed {
+	.pane-shell.collapsed {
 		opacity: 0;
 		pointer-events: none;
 	}
 
-	.pane-content {
-		flex: 1;
-		position: relative;
-		min-height: 0;
+	/* Tab content slots: absolutely positioned into pane areas.
+	   Each slot covers the area below the tab bar within its pane.
+	   --tab-bar-h is the measured height: 6px padding + 28px scroll + 6px padding + 1px border */
+	.tab-slot {
+		position: absolute;
+		top: var(--tab-bar-h, 41px);
+		bottom: 0;
+		flex-direction: column;
 		overflow: hidden;
+		transition: width 150ms ease;
 	}
 
-	.page-transition {
-		animation: pageFadeIn 200ms ease both;
+	.split-container.dragging .tab-slot {
+		transition: none;
 	}
 
-	@keyframes pageFadeIn {
-		from {
-			opacity: 0;
-		}
-		to {
-			opacity: 1;
-		}
+	.tab-slot.in-left {
+		left: 0;
+		width: var(--left-width);
+	}
+
+	.tab-slot.in-right {
+		right: 0;
+		width: var(--right-width);
 	}
 
 	.resize-handle {

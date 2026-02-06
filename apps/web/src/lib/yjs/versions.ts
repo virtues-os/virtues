@@ -1,8 +1,8 @@
 /**
  * Version History for Yjs Documents
  *
- * Provides snapshot management for page version history.
- * Uses Yjs snapshots to capture document state at specific points.
+ * Stores full document state for reliable version restoration.
+ * Uses Y.encodeStateAsUpdate() which is self-contained and works with GC enabled.
  */
 
 import * as Y from 'yjs';
@@ -22,12 +22,10 @@ export interface PageVersion {
 }
 
 /**
- * Save a version snapshot of the current document state
+ * Save the current document state as a version
  *
- * @param ydoc - The Yjs document
- * @param pageId - The page ID
- * @param description - Optional description of this version
- * @param createdBy - Who created this version ('user' or 'ai')
+ * Uses encodeStateAsUpdate() which captures the complete document state.
+ * Unlike snapshots, this is self-contained and doesn't require gc: false.
  */
 export async function saveVersion(
 	ydoc: Y.Doc,
@@ -36,22 +34,21 @@ export async function saveVersion(
 	createdBy: 'user' | 'ai' = 'user'
 ): Promise<PageVersion | null> {
 	try {
-		// Create a Yjs snapshot
-		const snapshot = Y.snapshot(ydoc);
-		const snapshotData = Y.encodeSnapshot(snapshot);
+		// Capture complete document state (self-contained, works with GC)
+		const fullState = Y.encodeStateAsUpdate(ydoc);
 
-		// Get content preview
-		const text = ydoc.getText('content');
-		const contentPreview = text.toString().slice(0, 500);
+		// Get content preview from XmlFragment
+		const fragment = ydoc.getXmlFragment('content');
+		const contentPreview = fragment.toString().slice(0, 500);
 
-		// Encode snapshot as base64 for JSON transport
-		const snapshotBase64 = btoa(String.fromCharCode(...snapshotData));
+		// Encode as base64 for JSON transport
+		const stateBase64 = btoa(String.fromCharCode(...fullState));
 
 		const response = await fetch(`/api/pages/${pageId}/versions`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
-				snapshot: snapshotBase64,
+				snapshot: stateBase64,
 				content_preview: contentPreview,
 				description,
 				created_by: createdBy
@@ -71,9 +68,6 @@ export async function saveVersion(
 
 /**
  * List versions for a page
- *
- * @param pageId - The page ID
- * @param limit - Maximum number of versions to return
  */
 export async function listVersions(pageId: string, limit = 20): Promise<PageVersion[]> {
 	try {
@@ -92,11 +86,8 @@ export async function listVersions(pageId: string, limit = 20): Promise<PageVers
 /**
  * Restore a document to a specific version
  *
- * Note: This creates a new transaction with the restored content,
- * it doesn't revert the Yjs history.
- *
- * @param yjsDoc - The Yjs document wrapper
- * @param versionId - The version ID to restore
+ * Creates a fresh Y.Doc, applies the stored state, then clones
+ * the content into the live document.
  */
 export async function restoreVersion(
 	yjsDoc: YjsDocument,
@@ -113,25 +104,51 @@ export async function restoreVersion(
 			throw new Error('Version has no snapshot data');
 		}
 
-		// Decode base64 snapshot
-		const snapshotData = Uint8Array.from(atob(data.snapshot), (c) => c.charCodeAt(0));
-		const snapshot = Y.decodeSnapshot(snapshotData);
+		// Decode stored state
+		const stateData = Uint8Array.from(atob(data.snapshot), (c) => c.charCodeAt(0));
 
-		// Create a document from the snapshot
-		const restoredDoc = Y.createDocFromSnapshot(yjsDoc.ydoc, snapshot);
-		const restoredText = restoredDoc.getText('content');
-		const restoredContent = restoredText.toString();
+		// Create fresh doc and apply stored state (no history needed!)
+		const freshDoc = new Y.Doc();
+		Y.applyUpdate(freshDoc, stateData);
+		const restoredFragment = freshDoc.getXmlFragment('content');
 
-		// Replace current content with restored content
-		const { ytext, ydoc } = yjsDoc;
+		// Get the current fragment
+		const { yxmlFragment, ydoc } = yjsDoc;
+
 		ydoc.transact(() => {
-			ytext.delete(0, ytext.length);
-			ytext.insert(0, restoredContent);
+			// Clear current content
+			while (yxmlFragment.length > 0) {
+				yxmlFragment.delete(0, 1);
+			}
+
+			// Deep clone and insert each element from restored fragment
+			for (let i = 0; i < restoredFragment.length; i++) {
+				const node = restoredFragment.get(i);
+				if (node) {
+					const cloned = cloneYjsNode(node);
+					if (cloned) {
+						yxmlFragment.insert(i, [cloned]);
+					}
+				}
+			}
 		}, 'user');
+
+		// Cleanup
+		freshDoc.destroy();
 
 		return true;
 	} catch (err) {
 		console.error('Failed to restore version:', err);
 		return false;
 	}
+}
+
+/**
+ * Clone a Yjs XmlElement or XmlText node
+ *
+ * Uses Yjs's built-in clone() method which properly preserves
+ * all formatting attributes (bold, italic, links, etc.)
+ */
+function cloneYjsNode(node: Y.XmlElement | Y.XmlText): Y.XmlElement | Y.XmlText {
+	return node.clone();
 }

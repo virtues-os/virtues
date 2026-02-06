@@ -80,11 +80,11 @@ export interface Citation {
 /**
  * A linked page reference.
  * Inline syntax: [[Page Name]]
- * Resolution: look up displayName in linkedPages[] to get slug.
+ * Resolution: look up displayName in linkedPages[] to get id.
  */
 export interface LinkedPage {
 	displayName: string; // Matches [[...]] in content
-	pageSlug: string; // For navigation: /wiki/{pageSlug}
+	pageId: string; // For navigation: /{type}/{id}
 	pageType?: WikiPageType;
 	preview?: string; // Short description or subtitle
 }
@@ -94,7 +94,7 @@ export interface LinkedPage {
  * Displayed in the "Related Pages" section.
  */
 export interface RelatedPage {
-	slug: string;
+	id: string;
 	title: string;
 	pageType?: WikiPageType;
 	preview?: string;
@@ -132,7 +132,7 @@ export interface Infobox {
 	title?: string; // Optional override
 	image?: string; // Cover/profile image URL
 	fields: InfoboxField[];
-	links?: { label: string; pageSlug: string }[];
+	links?: { label: string; pageId: string }[];
 }
 
 // =============================================================================
@@ -145,7 +145,6 @@ export interface Infobox {
  */
 export interface WikiPageBase {
 	id: string;
-	slug: string;
 	title: string;
 	subtitle?: string;
 	cover?: string; // Cover image URL

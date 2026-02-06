@@ -18,7 +18,7 @@
 		<ul class="list-none m-0 p-0">
 			{#each relatedPages as page}
 				<li>
-					<a href="/wiki/{page.slug}" class="wiki-link">
+					<a href="/wiki/{page.id}" class="wiki-link">
 						<span class="link-text">{page.title}</span>
 					</a>
 				</li>

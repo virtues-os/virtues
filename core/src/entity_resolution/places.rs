@@ -1,15 +1,25 @@
-//! Place Resolution via Location Clustering
+//! Place Resolution
 //!
-//! Transforms raw location_point primitives into semantic location_visit records
-//! using density-adaptive HDBSCAN-like clustering, then links to entities_place.
+//! Resolves places from multiple sources to canonical wiki_places entities.
 //!
-//! ## Process
+//! ## Sources
+//!
+//! 1. **Location Clustering** - GPS points → location_visit → wiki_places
+//! 2. **Transaction Merchants** - Merchant names → wiki_orgs (with optional place links)
+//!
+//! ## Location Clustering Process
 //!
 //! 1. Fetch location_point records in time window
 //! 2. Auto-detect sampling rate (points/minute)
 //! 3. Run spatial-temporal clustering
 //! 4. Write location_visit records
 //! 5. Link visits to place entities (create if new)
+//!
+//! ## Merchant Resolution Process
+//!
+//! 1. Fetch transactions without org/place links
+//! 2. Resolve merchant_name to wiki_orgs (create if new)
+//! 3. Optionally link to wiki_places if location context available
 
 use chrono::{DateTime, Utc};
 use geo::HaversineDistance;
@@ -18,7 +28,8 @@ use uuid::Uuid;
 
 use super::TimeWindow;
 use crate::database::Database;
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::ids;
 
 /// Spatial clustering parameters
 const SPATIAL_EPSILON_METERS: f64 = 100.0; // Max distance within a cluster
@@ -48,17 +59,34 @@ struct Visit {
     end_time: DateTime<Utc>,
 }
 
-/// Resolve places for the given time window
+/// Resolve places from all sources in the given time window
 ///
-/// Returns the number of visits created/updated.
+/// Returns the total number of records processed.
 pub async fn resolve_places(db: &Database, window: TimeWindow) -> Result<usize> {
     tracing::info!(
         start = %window.start,
         end = %window.end,
-        "Resolving places via location clustering"
+        "Resolving places from all sources"
     );
 
-    // 1. Fetch location points in window
+    let mut total_resolved = 0;
+
+    // 1. Resolve from location clustering
+    total_resolved += resolve_location_visits(db, window).await?;
+
+    // 2. Resolve transaction merchants to organizations
+    total_resolved += resolve_transaction_merchants(db, window).await?;
+
+    tracing::info!(
+        total_resolved,
+        "Place resolution completed"
+    );
+
+    Ok(total_resolved)
+}
+
+/// Resolve places via location clustering
+async fn resolve_location_visits(db: &Database, window: TimeWindow) -> Result<usize> {
     let points = fetch_location_points(db, window).await?;
 
     if points.is_empty() {
@@ -68,16 +96,16 @@ pub async fn resolve_places(db: &Database, window: TimeWindow) -> Result<usize> 
 
     tracing::debug!(point_count = points.len(), "Fetched location points");
 
-    // 2. Auto-detect sampling rate
+    // Auto-detect sampling rate
     let sampling_rate = detect_sampling_rate(&points);
     tracing::debug!(points_per_minute = sampling_rate, "Detected sampling rate");
 
-    // 3. Run density-adaptive clustering
+    // Run density-adaptive clustering
     let visits = cluster_location_points(&points, sampling_rate)?;
 
     tracing::debug!(visit_count = visits.len(), "Completed clustering");
 
-    // 4. Write visits idempotently and link to place entities
+    // Write visits idempotently and link to place entities
     let mut records_written = 0;
     for visit in &visits {
         match write_visit_and_link_place(db, visit).await {
@@ -91,12 +119,284 @@ pub async fn resolve_places(db: &Database, window: TimeWindow) -> Result<usize> 
         }
     }
 
-    tracing::info!(
+    tracing::debug!(
         visits_written = records_written,
-        "Place resolution completed"
+        "Location clustering completed"
     );
 
     Ok(records_written)
+}
+
+/// Resolve transaction merchants to wiki_orgs
+///
+/// For each unique merchant name, creates or finds a wiki_orgs entity.
+/// Links transactions to the organization via metadata.
+async fn resolve_transaction_merchants(db: &Database, window: TimeWindow) -> Result<usize> {
+    // Fetch transactions without org resolution
+    let transactions = fetch_unresolved_transactions(db, window).await?;
+
+    if transactions.is_empty() {
+        tracing::debug!("No transactions to resolve for merchants");
+        return Ok(0);
+    }
+
+    tracing::debug!(
+        transaction_count = transactions.len(),
+        "Fetched transactions for merchant resolution"
+    );
+
+    let mut total_resolved = 0;
+    for txn in transactions {
+        match resolve_and_link_merchant(db, &txn).await {
+            Ok(true) => total_resolved += 1,
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(
+                    transaction_id = %txn.id,
+                    merchant = %txn.merchant_name,
+                    error = %e,
+                    "Failed to resolve merchant"
+                );
+            }
+        }
+    }
+
+    tracing::debug!(
+        merchants_resolved = total_resolved,
+        "Transaction merchant resolution completed"
+    );
+
+    Ok(total_resolved)
+}
+
+/// Transaction record for merchant resolution
+#[derive(Debug)]
+struct TransactionRecord {
+    id: String,
+    merchant_name: String,
+    merchant_category: Option<String>,
+}
+
+/// Fetch transactions without merchant organization resolution
+async fn fetch_unresolved_transactions(
+    db: &Database,
+    window: TimeWindow,
+) -> Result<Vec<TransactionRecord>> {
+    // Fetch transactions where metadata doesn't have merchant_org_id
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            id,
+            merchant_name,
+            merchant_category
+        FROM data_financial_transaction
+        WHERE timestamp >= $1
+          AND timestamp < $2
+          AND merchant_name IS NOT NULL
+          AND merchant_name != ''
+          AND (metadata IS NULL OR json_extract(metadata, '$.merchant_org_id') IS NULL)
+        ORDER BY timestamp ASC
+        LIMIT 500
+        "#,
+        window.start,
+        window.end
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    let transactions = rows
+        .into_iter()
+        .filter_map(|row| {
+            Some(TransactionRecord {
+                id: row.id?,
+                merchant_name: row.merchant_name?,
+                merchant_category: row.merchant_category,
+            })
+        })
+        .collect();
+
+    Ok(transactions)
+}
+
+/// Resolve merchant to wiki_orgs and link to transaction
+async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Result<bool> {
+    let merchant_name = txn.merchant_name.trim();
+    if merchant_name.is_empty() {
+        return Ok(false);
+    }
+
+    // Resolve or create organization for this merchant
+    let org_id = resolve_or_create_merchant_org(db, merchant_name, txn.merchant_category.as_deref())
+        .await?;
+
+    // Update transaction metadata with org reference
+    sqlx::query!(
+        r#"
+        UPDATE data_financial_transaction
+        SET metadata = json_set(
+            COALESCE(metadata, '{}'),
+            '$.merchant_org_id', $1
+        ),
+        updated_at = datetime('now')
+        WHERE id = $2
+        "#,
+        org_id,
+        txn.id
+    )
+    .execute(db.pool())
+    .await?;
+
+    tracing::debug!(
+        transaction_id = %txn.id,
+        merchant_name = %merchant_name,
+        org_id = %org_id,
+        "Linked transaction to merchant organization"
+    );
+
+    Ok(true)
+}
+
+/// Resolve or create a merchant organization in wiki_orgs
+async fn resolve_or_create_merchant_org(
+    db: &Database,
+    merchant_name: &str,
+    category: Option<&str>,
+) -> Result<String> {
+    // Normalize merchant name for matching
+    let normalized_name = normalize_merchant_name(merchant_name);
+
+    // Check if organization exists
+    let existing = sqlx::query!(
+        r#"
+        SELECT id
+        FROM wiki_orgs
+        WHERE LOWER(canonical_name) = LOWER($1)
+           OR LOWER(canonical_name) = LOWER($2)
+        LIMIT 1
+        "#,
+        merchant_name,
+        normalized_name
+    )
+    .fetch_optional(db.pool())
+    .await?;
+
+    if let Some(row) = existing {
+        if let Some(org_id) = row.id {
+            tracing::debug!(
+                merchant_name = %merchant_name,
+                org_id = %org_id,
+                "Found existing merchant organization"
+            );
+            return Ok(org_id);
+        }
+    }
+
+    // Create new organization
+    let org_id = ids::generate_id(ids::WIKI_ORG_PREFIX, &[&normalized_name]);
+
+    let organization_type = category
+        .map(|c| categorize_merchant(c))
+        .unwrap_or("merchant");
+
+    let metadata = serde_json::json!({
+        "source": "transaction_merchant",
+        "original_name": merchant_name,
+        "category": category,
+    });
+    let metadata_json = serde_json::to_string(&metadata)?;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO wiki_orgs (
+            id,
+            canonical_name,
+            organization_type,
+            relationship_type,
+            metadata
+        ) VALUES ($1, $2, $3, 'vendor', $4)
+        ON CONFLICT (id) DO NOTHING
+        "#,
+        org_id,
+        normalized_name,
+        organization_type,
+        metadata_json
+    )
+    .execute(db.pool())
+    .await?;
+
+    tracing::info!(
+        org_id = %org_id,
+        canonical_name = %normalized_name,
+        organization_type = %organization_type,
+        "Created new merchant organization"
+    );
+
+    Ok(org_id)
+}
+
+/// Normalize merchant name for matching
+///
+/// Removes common suffixes, special characters, and normalizes capitalization.
+fn normalize_merchant_name(name: &str) -> String {
+    let mut normalized = name.to_string();
+
+    // Remove common suffixes
+    let suffixes = [
+        " INC",
+        " LLC",
+        " LTD",
+        " CORP",
+        " CO",
+        " #",
+        "*",
+        " - ",
+        "  ",
+    ];
+    for suffix in &suffixes {
+        if let Some(pos) = normalized.to_uppercase().find(suffix) {
+            normalized.truncate(pos);
+        }
+    }
+
+    // Title case
+    normalized
+        .split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>()
+                        + &chars.as_str().to_lowercase()
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string()
+}
+
+/// Categorize merchant based on Plaid category
+fn categorize_merchant(category: &str) -> &'static str {
+    let cat_lower = category.to_lowercase();
+    if cat_lower.contains("restaurant") || cat_lower.contains("food") {
+        "restaurant"
+    } else if cat_lower.contains("grocery") || cat_lower.contains("supermarket") {
+        "grocery"
+    } else if cat_lower.contains("gas") || cat_lower.contains("fuel") {
+        "gas_station"
+    } else if cat_lower.contains("shop") || cat_lower.contains("retail") || cat_lower.contains("store") {
+        "retail"
+    } else if cat_lower.contains("travel") || cat_lower.contains("airline") || cat_lower.contains("hotel") {
+        "travel"
+    } else if cat_lower.contains("healthcare") || cat_lower.contains("medical") || cat_lower.contains("pharmacy") {
+        "healthcare"
+    } else if cat_lower.contains("subscription") || cat_lower.contains("streaming") {
+        "subscription"
+    } else {
+        "merchant"
+    }
 }
 
 /// Fetch location points from database in time window
@@ -366,7 +666,9 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
 /// This function checks if a place entity exists within its configured radius.
 /// Each place has its own radius_m (defaults to 100m). If found, returns its ID.
 /// If not, creates a new place entity with reverse geocoded name.
-async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uuid> {
+///
+/// Returns the place entity ID (format: place_{hash16}).
+async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<String> {
     // Use a generous bounding box to fetch candidates, then filter by each place's radius
     let max_search_radius = 500.0; // Fetch places within 500m, then check individual radii
     let (min_lat, max_lat, min_lon, max_lon) =
@@ -422,14 +724,16 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
             distance_m = %distance,
             "Found existing place entity"
         );
-        return Uuid::parse_str(place_id)
-            .map_err(|e| Error::Database(format!("Invalid UUID: {}", e)));
+        return Ok(place_id.to_string());
     }
 
     // Create new place entity with reverse geocoded name
     let place_name = reverse_geocode_stub(lat, lon);
-    let place_id = Uuid::new_v4();
-    let place_id_str = place_id.to_string();
+    // Generate ID with proper prefix (place_{hash16})
+    let place_id = ids::generate_id(
+        ids::WIKI_PLACE_PREFIX,
+        &[&lat.to_string(), &lon.to_string()],
+    );
 
     sqlx::query!(
         r#"
@@ -444,7 +748,7 @@ async fn resolve_or_create_place(db: &Database, lat: f64, lon: f64) -> Result<Uu
             $1, $2, $3, $4, $5, '{}'
         )
         "#,
-        place_id_str,
+        place_id,
         place_name,
         lat,
         lon,

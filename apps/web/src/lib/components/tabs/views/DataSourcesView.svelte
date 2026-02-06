@@ -5,17 +5,21 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
 	import { toast } from "svelte-sonner";
-	import { OAuthConnectModal, PlaidConnectModal, DevicePairModal } from "$lib/components/sources";
+	import {
+		OAuthConnectModal,
+		PlaidConnectModal,
+		DevicePairModal,
+	} from "$lib/components/sources";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// Modal state
-	type ModalType = 
-		| { type: 'oauth'; provider: string; displayName: string }
-		| { type: 'plaid' }
-		| { type: 'device'; deviceType: 'ios' | 'mac'; displayName: string }
+	type ModalType =
+		| { type: "oauth"; provider: string; displayName: string }
+		| { type: "plaid" }
+		| { type: "device"; deviceType: "ios" | "mac"; displayName: string }
 		| null;
-	
+
 	let activeModal = $state<ModalType>(null);
 
 	interface Source {
@@ -40,8 +44,7 @@
 	}
 
 	interface ConnectionLimits {
-		free: number;
-		starter: number;
+		standard: number;
 		pro: number;
 	}
 
@@ -66,18 +69,18 @@
 	onMount(async () => {
 		// Check for OAuth return (source_id in URL means OAuth completed)
 		const params = new URLSearchParams(window.location.search);
-		const sourceId = params.get('source_id');
-		const errorParam = params.get('error');
-		
+		const sourceId = params.get("source_id");
+		const errorParam = params.get("error");
+
 		if (sourceId) {
-			toast.success('Source connected successfully');
+			toast.success("Source connected successfully");
 			// Clean URL without reload
-			window.history.replaceState({}, '', window.location.pathname);
+			window.history.replaceState({}, "", window.location.pathname);
 		} else if (errorParam) {
-			toast.error('Failed to connect source');
-			window.history.replaceState({}, '', window.location.pathname);
+			toast.error("Failed to connect source");
+			window.history.replaceState({}, "", window.location.pathname);
 		}
-		
+
 		await loadData();
 	});
 
@@ -93,7 +96,9 @@
 			if (!sourcesRes.ok || !catalogRes.ok)
 				throw new Error("Failed to load data");
 			sources = await sourcesRes.json();
-			catalog = await catalogRes.json();
+			const catalogData = await catalogRes.json();
+			catalog = catalogData.sources ?? catalogData;
+			userTier = catalogData.tier ?? "standard";
 			if (lakeRes.ok) {
 				lakeStreams = await lakeRes.json();
 			}
@@ -122,7 +127,10 @@
 		return date.toLocaleDateString();
 	}
 
-	function getSourceStats(sourceId: string): { records: number; bytes: number } {
+	function getSourceStats(sourceId: string): {
+		records: number;
+		bytes: number;
+	} {
 		const streams = lakeStreams.filter((s) => s.source_id === sourceId);
 		return {
 			records: streams.reduce((sum, s) => sum + s.record_count, 0),
@@ -134,7 +142,8 @@
 		if (bytes === 0) return "—";
 		if (bytes < 1024) return `${bytes} B`;
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		if (bytes < 1024 * 1024 * 1024)
+			return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 	}
 
@@ -153,19 +162,21 @@
 		return sources.filter((s) => s.source === catalogSourceName).length;
 	}
 
-	// For free tier - adjust when tier system is integrated
-	const userTier = "free";
+	// Fetched from Tollbooth via Core (fallback: "standard")
+	let userTier = $state("standard");
 
 	function getConnectionLimit(limits: ConnectionLimits | undefined): number {
 		if (!limits) return 1;
-		return limits[userTier as keyof ConnectionLimits] ?? limits.free;
+		return limits[userTier as keyof ConnectionLimits] ?? limits.standard;
 	}
 
 	function canAddMore(catalogSource: CatalogSource): boolean {
 		if (!catalogSource.is_multi_instance) {
 			return !isSourceConnected(catalogSource.name);
 		}
-		const current = catalogSource.current_connections ?? getConnectionCount(catalogSource.name);
+		const current =
+			catalogSource.current_connections ??
+			getConnectionCount(catalogSource.name);
 		const limit = getConnectionLimit(catalogSource.connection_limits);
 		return current < limit;
 	}
@@ -190,31 +201,31 @@
 	}
 
 	function handleSourceClick(sourceId: string) {
-		spaceStore.openTabFromRoute(`/source/${sourceId}`);
+		spaceStore.openTabFromRoute(`/sources/${sourceId}`);
 	}
 
 	function handleAddSource(catalogSource: CatalogSource) {
 		// Check for Plaid first - it uses Plaid Link, not standard OAuth2
-		if (catalogSource.name === 'plaid') {
-			activeModal = { type: 'plaid' };
-		} else if (catalogSource.auth_type === 'oauth2') {
-			activeModal = { 
-				type: 'oauth', 
-				provider: catalogSource.name, 
-				displayName: catalogSource.display_name 
+		if (catalogSource.name === "plaid") {
+			activeModal = { type: "plaid" };
+		} else if (catalogSource.auth_type === "oauth2") {
+			activeModal = {
+				type: "oauth",
+				provider: catalogSource.name,
+				displayName: catalogSource.display_name,
 			};
-		} else if (catalogSource.auth_type === 'device') {
-			activeModal = { 
-				type: 'device', 
-				deviceType: catalogSource.name as 'ios' | 'mac',
-				displayName: catalogSource.display_name
+		} else if (catalogSource.auth_type === "device") {
+			activeModal = {
+				type: "device",
+				deviceType: catalogSource.name as "ios" | "mac",
+				displayName: catalogSource.display_name,
 			};
 		}
 	}
 
 	function handleModalSuccess(_sourceId: string, institutionName?: string) {
 		activeModal = null;
-		const name = institutionName || 'Source';
+		const name = institutionName || "Source";
 		toast.success(`${name} connected successfully`);
 		loadData(); // Refresh the sources list
 	}
@@ -227,9 +238,7 @@
 <Page>
 	<div class="max-w-7xl">
 		<div>
-			<h1
-				class="text-3xl font-serif font-medium text-foreground mb-2"
-			>
+			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
 				Sources
 			</h1>
 			<p class="text-foreground-muted">
@@ -238,8 +247,8 @@
 		</div>
 
 		{#if loading}
-			<div class="mt-8 text-center py-12 text-foreground-muted">
-				Loading...
+			<div class="flex items-center justify-center h-full">
+				<Icon icon="ri:loader-4-line" width="20" class="spin" />
 			</div>
 		{:else if error}
 			<div
@@ -266,55 +275,117 @@
 							No sources connected
 						</h3>
 						<p class="text-foreground-muted">
-							Choose from the available sources below to start syncing your personal data.
+							Choose from the available sources below to start
+							syncing your personal data.
 						</p>
 					</div>
 				{:else}
-					<div class="border border-border rounded-lg overflow-hidden">
+					<div
+						class="border border-border rounded-lg overflow-hidden"
+					>
 						<table class="w-full">
-							<thead class="bg-surface-elevated border-b border-border">
+							<thead
+								class="bg-surface-elevated border-b border-border"
+							>
 								<tr>
-									<th class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">Source</th>
-									<th class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">Type</th>
-									<th class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide">Status</th>
-									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Streams</th>
-									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Records</th>
-									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Size</th>
-									<th class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide">Last Sync</th>
+									<th
+										class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Source</th
+									>
+									<th
+										class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Type</th
+									>
+									<th
+										class="px-6 py-4 text-left text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Status</th
+									>
+									<th
+										class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Streams</th
+									>
+									<th
+										class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Records</th
+									>
+									<th
+										class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Size</th
+									>
+									<th
+										class="px-6 py-4 text-right text-xs font-medium text-foreground-subtle uppercase tracking-wide"
+										>Last Sync</th
+									>
 								</tr>
 							</thead>
 							<tbody class="divide-y divide-border">
 								{#each filteredSources as source}
 									{@const stats = getSourceStats(source.id)}
-									<tr 
+									<tr
 										class="hover:bg-surface-elevated transition-colors cursor-pointer"
-										onclick={() => handleSourceClick(source.id)}
+										onclick={() =>
+											handleSourceClick(source.id)}
 									>
 										<td class="px-6 py-4">
-											<span class="font-serif text-foreground">{source.name}</span>
+											<span
+												class="font-serif text-foreground"
+												>{source.name}</span
+											>
 										</td>
 										<td class="px-6 py-4">
-											<Badge variant="muted">{getSourceTypeLabel(source.source)}</Badge>
+											<Badge variant="muted"
+												>{getSourceTypeLabel(
+													source.source,
+												)}</Badge
+											>
 										</td>
 										<td class="px-6 py-4">
-											<span class="flex items-center gap-2">
-												<span class="w-2 h-2 rounded-full {source.is_active ? 'bg-success' : 'bg-foreground-subtle'}"></span>
-												<span class="text-sm text-foreground-muted">{source.is_active ? 'Active' : 'Paused'}</span>
+											<span
+												class="flex items-center gap-2"
+											>
+												<span
+													class="w-2 h-2 rounded-full {source.is_active
+														? 'bg-success'
+														: 'bg-foreground-subtle'}"
+												></span>
+												<span
+													class="text-sm text-foreground-muted"
+													>{source.is_active
+														? "Active"
+														: "Paused"}</span
+												>
 											</span>
 										</td>
 										<td class="px-6 py-4 text-right">
-											<span class="text-sm text-foreground-muted">
+											<span
+												class="text-sm text-foreground-muted"
+											>
 												{source.enabled_streams_count}/{source.total_streams_count}
 											</span>
 										</td>
 										<td class="px-6 py-4 text-right">
-											<span class="text-sm text-foreground-muted">{formatNumber(stats.records)}</span>
+											<span
+												class="text-sm text-foreground-muted"
+												>{formatNumber(
+													stats.records,
+												)}</span
+											>
 										</td>
 										<td class="px-6 py-4 text-right">
-											<span class="text-sm text-foreground-muted">{formatBytes(stats.bytes)}</span>
+											<span
+												class="text-sm text-foreground-muted"
+												>{formatBytes(
+													stats.bytes,
+												)}</span
+											>
 										</td>
 										<td class="px-6 py-4 text-right">
-											<span class="text-sm text-foreground-muted">{formatRelativeTime(source.last_sync_at)}</span>
+											<span
+												class="text-sm text-foreground-muted"
+												>{formatRelativeTime(
+													source.last_sync_at,
+												)}</span
+											>
 										</td>
 									</tr>
 								{/each}
@@ -332,15 +403,21 @@
 					>
 				</h2>
 
-				<div
-					class="grid grid-cols-1 sm:grid-cols-2 gap-4"
-				>
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 					{#each availableCatalog as catalogSource}
-						{@const connected = isSourceConnected(catalogSource.name)}
-						{@const connectionCount = catalogSource.current_connections ?? getConnectionCount(catalogSource.name)}
-						{@const limit = getConnectionLimit(catalogSource.connection_limits)}
+						{@const connected = isSourceConnected(
+							catalogSource.name,
+						)}
+						{@const connectionCount =
+							catalogSource.current_connections ??
+							getConnectionCount(catalogSource.name)}
+						{@const limit = getConnectionLimit(
+							catalogSource.connection_limits,
+						)}
 						{@const canAdd = canAddMore(catalogSource)}
-						{@const atLimit = catalogSource.is_multi_instance && connectionCount >= limit}
+						{@const atLimit =
+							catalogSource.is_multi_instance &&
+							connectionCount >= limit}
 						<div
 							class="p-6 bg-surface border border-border rounded-lg hover:border-border-subtle transition-all duration-200"
 						>
@@ -358,13 +435,15 @@
 								</div>
 								<div class="flex items-center gap-2">
 									{#if catalogSource.is_multi_instance && connected}
-										<span class="text-xs text-foreground-subtle">
+										<span
+											class="text-xs text-foreground-subtle"
+										>
 											{connectionCount}/{limit}
 										</span>
 									{/if}
 									{#if connected}
 										<Badge variant="success">
-											<Icon icon="ri:check-line"/>
+											<Icon icon="ri:check-line" />
 											Connected
 										</Badge>
 									{/if}
@@ -382,9 +461,11 @@
 									class="flex items-center gap-3 text-xs text-foreground-subtle"
 								>
 									<span class="flex items-center gap-1">
-										<Icon icon="ri:database-2-line"/>
+										<Icon icon="ri:database-2-line" />
 										{catalogSource.stream_count}
-										{catalogSource.stream_count === 1 ? "stream" : "streams"}
+										{catalogSource.stream_count === 1
+											? "stream"
+											: "streams"}
 									</span>
 									<Badge class="capitalize">
 										{catalogSource.auth_type === "oauth2"
@@ -396,7 +477,10 @@
 									<Button
 										variant="secondary"
 										size="sm"
-										onclick={() => spaceStore.openTabFromRoute('/profile/account')}
+										onclick={() =>
+											spaceStore.openTabFromRoute(
+												"/profile/account",
+											)}
 									>
 										Upgrade
 									</Button>
@@ -404,7 +488,8 @@
 									<Button
 										variant="primary"
 										size="sm"
-										onclick={() => handleAddSource(catalogSource)}
+										onclick={() =>
+											handleAddSource(catalogSource)}
 									>
 										{connected ? "Add Another" : "Add"}
 									</Button>
@@ -419,20 +504,20 @@
 </Page>
 
 <!-- Source Connection Modals -->
-{#if activeModal?.type === 'oauth'}
-	<OAuthConnectModal 
+{#if activeModal?.type === "oauth"}
+	<OAuthConnectModal
 		provider={activeModal.provider}
 		displayName={activeModal.displayName}
 		open={true}
 		onClose={closeModal}
 	/>
-{:else if activeModal?.type === 'plaid'}
+{:else if activeModal?.type === "plaid"}
 	<PlaidConnectModal
 		open={true}
 		onClose={closeModal}
 		onSuccess={handleModalSuccess}
 	/>
-{:else if activeModal?.type === 'device'}
+{:else if activeModal?.type === "device"}
 	<DevicePairModal
 		deviceType={activeModal.deviceType}
 		displayName={activeModal.displayName}

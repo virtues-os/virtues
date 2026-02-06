@@ -33,6 +33,9 @@ enum StreamProcessorFactory {
         case "ios_finance":
             return FinanceKitStreamProcessor()
 
+        case "ios_eventkit":
+            return EventKitStreamProcessor()
+
         default:
             return nil
         }
@@ -42,19 +45,19 @@ enum StreamProcessorFactory {
 // MARK: - FinanceKit Stream Processor
 
 struct FinanceKitStreamProcessor: StreamDataProcessor {
-    typealias DataType = FinanceKitStreamData
+    typealias DataType = FinanceKitRecord
     typealias StreamDataType = FinanceKitStreamData
 
     let streamName = "ios_finance"
 
-    func decode(_ data: Data) throws -> [FinanceKitStreamData] {
+    func decode(_ data: Data) throws -> [FinanceKitRecord] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let streamData = try decoder.decode(FinanceKitStreamData.self, from: data)
-        return [streamData]
+        return streamData.records
     }
 
-    func combine(_ items: [FinanceKitStreamData], deviceId: String) -> FinanceKitStreamData {
+    func combine(_ items: [FinanceKitRecord], deviceId: String) -> FinanceKitStreamData {
         var allAccounts: [FinanceKitAccount] = []
         var allTransactions: [FinanceKitTransaction] = []
 
@@ -189,5 +192,42 @@ struct ContactsStreamProcessor: StreamDataProcessor {
 
     func combine(_ items: [ContactRecord], deviceId: String) -> ContactsStreamData {
         return ContactsStreamData(deviceId: deviceId, syncTimestamp: Date(), contacts: items)
+    }
+}
+
+// MARK: - EventKit Stream Processor
+
+struct EventKitStreamProcessor: StreamDataProcessor {
+    typealias DataType = EventKitRecord
+    typealias StreamDataType = EventKitStreamData
+
+    let streamName = "ios_eventkit"
+
+    func decode(_ data: Data) throws -> [EventKitRecord] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let streamData = try decoder.decode(EventKitStreamData.self, from: data)
+        return streamData.records
+    }
+
+    func combine(_ items: [EventKitRecord], deviceId: String) -> EventKitStreamData {
+        var allEvents: [EventKitEvent] = []
+        var allReminders: [EventKitReminder] = []
+
+        for item in items {
+            allEvents.append(contentsOf: item.events)
+            allReminders.append(contentsOf: item.reminders)
+        }
+
+        // Deduplicate events and reminders by ID (keep the latest)
+        let uniqueEvents = Array(Dictionary(grouping: allEvents, by: { $0.id })
+            .compactMapValues { $0.last }
+            .values)
+
+        let uniqueReminders = Array(Dictionary(grouping: allReminders, by: { $0.id })
+            .compactMapValues { $0.last }
+            .values)
+
+        return EventKitStreamData(deviceId: deviceId, events: uniqueEvents, reminders: uniqueReminders)
     }
 }
