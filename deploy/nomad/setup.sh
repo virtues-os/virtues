@@ -104,7 +104,8 @@ apt-get install -y -qq \
     cifs-utils \
     sqlite3 \
     awscli \
-    dnsutils
+    dnsutils \
+    quota
 
 # ============================================================================
 # Install containerd (NOT Docker)
@@ -142,46 +143,92 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gviso
 apt-get update -qq
 apt-get install -y -qq runsc
 
-# Add runsc runtime to containerd config
+# ---------------------------------------------------------------------------
+# Create tier-specific gVisor runtime shim symlinks
+#
+# The gVisor containerd shim resolves its config file by name:
+#   containerd-shim-runsc-v1          -> /etc/containerd/runsc.toml
+#   containerd-shim-runsc-standard-v1 -> /etc/containerd/runsc-standard.toml
+#   containerd-shim-runsc-pro-v1      -> /etc/containerd/runsc-pro.toml
+#
+# This allows different overlay2 settings per tier using the same binary.
+# ---------------------------------------------------------------------------
+
+RUNSC_SHIM=$(command -v containerd-shim-runsc-v1)
+ln -sf "${RUNSC_SHIM}" /usr/local/bin/containerd-shim-runsc-standard-v1
+ln -sf "${RUNSC_SHIM}" /usr/local/bin/containerd-shim-runsc-pro-v1
+
+# Register all gVisor runtimes in containerd config
 cat >> /etc/containerd/config.toml << 'EOF'
 
-# gVisor runtime configuration
+# gVisor base runtime (no overlay — for stateless services like Tollbooth)
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
   runtime_type = "io.containerd.runsc.v1"
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
     TypeUrl = "io.containerd.runsc.v1.options"
     ConfigPath = "/etc/containerd/runsc.toml"
+
+# gVisor standard tier runtime (2GB root filesystem overlay)
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-standard]
+  runtime_type = "io.containerd.runsc-standard.v1"
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-standard.options]
+    TypeUrl = "io.containerd.runsc.v1.options"
+    ConfigPath = "/etc/containerd/runsc-standard.toml"
+
+# gVisor pro tier runtime (5GB root filesystem overlay)
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-pro]
+  runtime_type = "io.containerd.runsc-pro.v1"
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-pro.options]
+    TypeUrl = "io.containerd.runsc.v1.options"
+    ConfigPath = "/etc/containerd/runsc-pro.toml"
 EOF
 
-# Create runsc configuration
-cat > /etc/containerd/runsc.toml << 'EOF'
+# ---------------------------------------------------------------------------
+# Generate gVisor runtime configurations
+#
+# Shared settings (platform, network, file-access, etc.) are written by a
+# helper function so they stay in sync. Only overlay2 differs per tier.
+# ---------------------------------------------------------------------------
+
+generate_runsc_config() {
+    local config_path="$1"
+    local overlay_setting="$2"
+
+    cat > "${config_path}" << TOML
 [runsc]
-  # Platform: systrap is most compatible, kvm is faster if available
   platform = "systrap"
-
-  # Network: use sandbox mode (network namespace from containerd/CNI)
   network = "sandbox"
-
-  # File access: shared required for SQLite WAL mode
   file-access = "shared"
   fsgofer-host-uds = true
-
-  # Performance optimizations
   directfs = true
-
-  # Disable overlay for direct bind mount access
-  overlay2 = "none"
-
-  # Logging (disable in production for performance)
+  overlay2 = "${overlay_setting}"
   debug = false
-EOF
+TOML
+}
+
+# Base runtime — no overlay (Tollbooth and other stateless services)
+generate_runsc_config "/etc/containerd/runsc.toml" "none"
+
+# Tier-specific runtimes — overlay2 enforces per-container root fs limits.
+# The /data bind mount (SQLite database) is NOT governed by overlay —
+# it uses ext4 project quotas set during tenant provisioning.
+for tier_name in standard pro; do
+    case "${tier_name}" in
+        standard) OVERLAY_SIZE="2g" ;;
+        pro)      OVERLAY_SIZE="5g" ;;
+    esac
+
+    mkdir -p "/var/lib/runsc/runsc-${tier_name}/overlay"
+    generate_runsc_config "/etc/containerd/runsc-${tier_name}.toml" \
+        "root:dir:/var/lib/runsc/runsc-${tier_name}/overlay,size=${OVERLAY_SIZE}"
+done
 
 mkdir -p /var/log/runsc
 
 systemctl enable containerd
 systemctl restart containerd
 
-log "gVisor (runsc) installed and configured"
+log "gVisor installed: base (no overlay), standard (2GB overlay), pro (5GB overlay)"
 
 # ============================================================================
 # Install CNI Plugins
@@ -420,34 +467,116 @@ systemctl enable traefik
 log "Traefik installed"
 
 # ============================================================================
-# Setup ZFS (if available) or fallback to standard directories
+# Setup Storage and Disk Quotas (ext4 project quotas)
 # ============================================================================
+#
+# Per-tenant disk enforcement for the /data bind mount (SQLite database).
+# ext4 project quotas provide kernel-enforced per-directory limits.
+# The container root filesystem is separately limited by gVisor overlay2.
+#
+# Migration path: when 10+ tenants and monitoring/kernel-pinning in place,
+# migrate to ZFS for snapshots, compression (2-3x on SQLite), and send/receive.
 
-log "Setting up storage..."
+log "Setting up storage and disk quotas..."
 
-# Create tenant data directory
-mkdir -p /opt/tenants/${SUBDOMAIN}/data
-chmod 700 /opt/tenants/${SUBDOMAIN}
+# Enable ext4 project quota support on the root filesystem
+ROOT_DEV=$(findmnt -n -o SOURCE /)
+tune2fs -O project,quota "${ROOT_DEV}" 2>/dev/null \
+    || log "WARNING: Could not enable project quota feature (may already be enabled)"
 
-# Check if ZFS is available
-if command -v zfs &> /dev/null && zpool list &> /dev/null 2>&1; then
-    log "ZFS detected, creating dataset..."
-
-    # Determine quota based on tier
-    case "${TIER}" in
-        free)     QUOTA="1G" ;;
-        standard) QUOTA="20G" ;;
-        pro)      QUOTA="100G" ;;
-    esac
-
-    # Create ZFS dataset if tank pool exists
-    if zpool list tank &> /dev/null 2>&1; then
-        zfs create -o quota=${QUOTA} -o mountpoint=/opt/tenants/${SUBDOMAIN}/data tank/tenants/${SUBDOMAIN} 2>/dev/null || true
-        log "ZFS dataset created with ${QUOTA} quota"
-    fi
-else
-    log "ZFS not available, using standard directories"
+# Add prjquota to fstab mount options (survives reboot)
+if ! grep -q "prjquota" /etc/fstab; then
+    sed -i '/[[:space:]]\/[[:space:]]/s/\(ext4[[:space:]]\+\)\([^[:space:]]*\)/\1\2,prjquota/' /etc/fstab
+    log "Added prjquota to /etc/fstab"
 fi
+
+# Remount with project quotas active
+if ! findmnt -n -o OPTIONS / | grep -q "prjquota"; then
+    mount -o remount,prjquota / \
+        || log "WARNING: Could not remount with prjquota (may require reboot)"
+fi
+
+# Initialize and enable project quota tracking
+quotacheck -Pum / 2>/dev/null || true
+quotaon -P / 2>/dev/null || true
+
+# Create tenant base directory
+mkdir -p /opt/tenants
+
+# Initialize project quota mapping files
+touch /etc/projects /etc/projid
+
+# ---------------------------------------------------------------------------
+# Per-tenant provisioning script
+#
+# Called by:
+#   1. setup.sh during initial cloud-init bootstrap (first tenant)
+#   2. Atlas via SSH when onboarding additional tenants
+#
+# Creates the tenant data directory with ext4 project quota enforcement.
+# The project_id must be unique per server — Atlas tracks this in the
+# customer record (diskProjectId column). Convention: 1000 + tenantIndex.
+# ---------------------------------------------------------------------------
+
+cat > /usr/local/bin/atlas-provision-tenant.sh << 'PROVISION'
+#!/bin/bash
+set -euo pipefail
+
+SUBDOMAIN="${1:?Usage: atlas-provision-tenant.sh <subdomain> <quota_gb> <project_id>}"
+QUOTA_GB="${2:?Usage: atlas-provision-tenant.sh <subdomain> <quota_gb> <project_id>}"
+PROJECT_ID="${3:?Usage: atlas-provision-tenant.sh <subdomain> <quota_gb> <project_id>}"
+
+DATA_DIR="/opt/tenants/${SUBDOMAIN}/data"
+
+# Validate inputs
+if ! [[ "${SUBDOMAIN}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+    echo "ERROR: Invalid subdomain format: ${SUBDOMAIN}" >&2
+    exit 1
+fi
+
+if ! [[ "${QUOTA_GB}" =~ ^[0-9]+$ ]] || [ "${QUOTA_GB}" -eq 0 ]; then
+    echo "ERROR: quota_gb must be a positive integer, got: ${QUOTA_GB}" >&2
+    exit 1
+fi
+
+if ! [[ "${PROJECT_ID}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: project_id must be a positive integer, got: ${PROJECT_ID}" >&2
+    exit 1
+fi
+
+# Create data directory
+mkdir -p "${DATA_DIR}"
+chmod 700 "/opt/tenants/${SUBDOMAIN}"
+
+# Set project ID on the directory BEFORE any files are written.
+# +P makes the project ID inheritable — new files/dirs under this path
+# automatically belong to this project and count against the quota.
+chattr +P -p "${PROJECT_ID}" "${DATA_DIR}"
+
+# Register project ID mapping (used by repquota for human-readable output)
+grep -q "^${PROJECT_ID}:" /etc/projects 2>/dev/null \
+    || echo "${PROJECT_ID}:${DATA_DIR}" >> /etc/projects
+grep -q "^tenant_${SUBDOMAIN}:" /etc/projid 2>/dev/null \
+    || echo "tenant_${SUBDOMAIN}:${PROJECT_ID}" >> /etc/projid
+
+# Set hard disk quota (block limit in KB)
+QUOTA_KB=$((QUOTA_GB * 1024 * 1024))
+setquota -P "${PROJECT_ID}" 0 "${QUOTA_KB}" 0 0 /
+
+echo "OK: tenant=${SUBDOMAIN} quota=${QUOTA_GB}GB project_id=${PROJECT_ID} path=${DATA_DIR}"
+PROVISION
+chmod +x /usr/local/bin/atlas-provision-tenant.sh
+
+# Provision the initial tenant for this server
+case "${TIER}" in
+    standard) DATA_QUOTA_GB=10 ;;
+    pro)      DATA_QUOTA_GB=40 ;;
+    *)        DATA_QUOTA_GB=10 ;;
+esac
+
+/usr/local/bin/atlas-provision-tenant.sh "${SUBDOMAIN}" "${DATA_QUOTA_GB}" 1000
+
+log "Storage configured: ${DATA_QUOTA_GB}GB ext4 project quota on /opt/tenants/${SUBDOMAIN}/data"
 
 # ============================================================================
 # S3 Storage Configuration
@@ -490,16 +619,19 @@ case "${TIER}" in
         MEMORY=256
         MEMORY_MAX=768
         CPU=100
+        EPHEMERAL_DISK=2048
         ;;
     standard)
         MEMORY=2048
         MEMORY_MAX=2048
         CPU=1000
+        EPHEMERAL_DISK=2048
         ;;
     pro)
         MEMORY=8192
         MEMORY_MAX=8192
         CPU=4000
+        EPHEMERAL_DISK=5120
         ;;
 esac
 
@@ -536,11 +668,18 @@ job "virtues-tenant-${SUBDOMAIN}" {
       }
     }
 
-    # Host volume for SQLite database only
+    # Host volume for SQLite database (ext4 project quota enforced)
     volume "tenant_data" {
       type      = "host"
       source    = "tenant_data"
       read_only = false
+    }
+
+    # Ephemeral disk — sized to match gVisor overlay2 limit
+    ephemeral_disk {
+      size    = ${EPHEMERAL_DISK}
+      migrate = false
+      sticky  = false
     }
 
     task "core" {
@@ -548,7 +687,7 @@ job "virtues-tenant-${SUBDOMAIN}" {
 
       config {
         image   = "${GHCR_REPO}/virtues-core:${TAG:-latest}"
-        runtime = "io.containerd.runsc.v1"
+        runtime = "io.containerd.runsc-${TIER}.v1"
       }
 
       # Mount volume for SQLite database
