@@ -1,18 +1,17 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { workspaceStore } from '$lib/stores/workspace.svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
 	import { ActivityHeatmap } from '$lib/components/wiki';
 	import { onMount } from 'svelte';
-	import 'iconify-icon';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// Entity counts from API
-	let entityCounts = $state<{ people: number; places: number; orgs: number; things: number }>({
+	let entityCounts = $state<{ people: number; places: number; orgs: number }>({
 		people: 0,
 		places: 0,
-		orgs: 0,
-		things: 0
+		orgs: 0
 	});
 
 	// Activity data for heatmap (will come from API)
@@ -22,11 +21,10 @@
 	onMount(async () => {
 		// Load entity counts
 		try {
-			const [peopleRes, placesRes, orgsRes, thingsRes] = await Promise.all([
+			const [peopleRes, placesRes, orgsRes] = await Promise.all([
 				fetch('/api/wiki/people'),
 				fetch('/api/wiki/places'),
-				fetch('/api/wiki/organizations'),
-				fetch('/api/wiki/things')
+				fetch('/api/wiki/organizations')
 			]);
 
 			if (peopleRes.ok) {
@@ -40,10 +38,6 @@
 			if (orgsRes.ok) {
 				const orgs = await orgsRes.json();
 				entityCounts.orgs = Array.isArray(orgs) ? orgs.length : 0;
-			}
-			if (thingsRes.ok) {
-				const things = await thingsRes.json();
-				entityCounts.things = Array.isArray(things) ? things.length : 0;
 			}
 		} catch (e) {
 			console.error('Failed to load entity counts:', e);
@@ -82,12 +76,13 @@
 
 	// Handle day click from heatmap
 	function handleDayClick(_date: Date, slug: string) {
-		workspaceStore.openTabFromRoute(`/wiki/${slug}`);
+		// slug is a date string like "2026-01-24"
+		spaceStore.openTabFromRoute(`/day/day_${slug}`);
 	}
 
 	// Handle navigation
 	function navigateTo(route: string) {
-		workspaceStore.openTabFromRoute(route);
+		spaceStore.openTabFromRoute(route);
 	}
 
 	// Today's formatted date
@@ -102,10 +97,9 @@
 
 	// Entity display config
 	const entities = [
-		{ key: 'people', label: 'People', route: '/wiki/people', icon: 'ri:user-line' },
-		{ key: 'places', label: 'Places', route: '/wiki/places', icon: 'ri:map-pin-line' },
-		{ key: 'orgs', label: 'Organizations', route: '/wiki/orgs', icon: 'ri:building-line' },
-		{ key: 'things', label: 'Things', route: '/wiki/things', icon: 'ri:box-3-line' }
+		{ key: 'people', label: 'People', route: '/person', icon: 'ri:user-line' },
+		{ key: 'places', label: 'Places', route: '/place', icon: 'ri:map-pin-line' },
+		{ key: 'orgs', label: 'Organizations', route: '/org', icon: 'ri:building-line' }
 	] as const;
 </script>
 
@@ -120,7 +114,7 @@
 	<div class="today-context">
 		<p>
 			Today's entry is
-			<button onclick={() => navigateTo(`/wiki/${todaySlug}`)} class="today-link">
+			<button onclick={() => navigateTo(`/day/day_${todaySlug}`)} class="today-link">
 				{todayFormatted}
 			</button>
 		</p>
@@ -144,14 +138,14 @@
 	<section class="section">
 		<h2>Entities</h2>
 		<p class="section-description">
-			The people, places, organizations, and things that appear in your data.
+			The people, places, and organizations that appear in your data.
 		</p>
 
 		<div class="entity-grid">
 			{#each entities as entity}
 				{@const count = entityCounts[entity.key]}
 				<button onclick={() => navigateTo(entity.route)} class="entity-card">
-					<iconify-icon icon={entity.icon} class="entity-icon"></iconify-icon>
+					<Icon icon={entity.icon} class="entity-icon"/>
 					<span class="entity-label">{entity.label}</span>
 					<span class="entity-count">{count}</span>
 				</button>
@@ -164,7 +158,7 @@
 	<!-- Coming Soon -->
 	<section class="section coming-soon-section">
 		<div class="coming-soon-header">
-			<iconify-icon icon="ri:seedling-line" class="coming-soon-icon"></iconify-icon>
+			<Icon icon="ri:seedling-line" class="coming-soon-icon"/>
 			<h2>What's Next</h2>
 		</div>
 
@@ -175,7 +169,7 @@
 		<div class="feature-list">
 			<div class="feature-item">
 				<div class="feature-title">
-					<iconify-icon icon="ri:book-open-line"></iconify-icon>
+					<Icon icon="ri:book-open-line"/>
 					<span>Narrative Structure</span>
 				</div>
 				<p class="feature-description">
@@ -185,7 +179,7 @@
 
 			<div class="feature-item">
 				<div class="feature-title">
-					<iconify-icon icon="ri:calendar-line"></iconify-icon>
+					<Icon icon="ri:calendar-line"/>
 					<span>Temporal View</span>
 				</div>
 				<p class="feature-description">
@@ -195,7 +189,7 @@
 
 			<div class="feature-item">
 				<div class="feature-title">
-					<iconify-icon icon="ri:links-line"></iconify-icon>
+					<Icon icon="ri:links-line"/>
 					<span>Entity Resolution</span>
 				</div>
 				<p class="feature-description">
@@ -205,7 +199,7 @@
 
 			<div class="feature-item">
 				<div class="feature-title">
-					<iconify-icon icon="ri:edit-line"></iconify-icon>
+					<Icon icon="ri:edit-line"/>
 					<span>AI-Assisted Journaling</span>
 				</div>
 				<p class="feature-description">
@@ -410,7 +404,7 @@
 		margin-bottom: 0.5rem;
 	}
 
-	.feature-title iconify-icon {
+	.feature-title :global(svg) {
 		font-size: 1rem;
 		color: var(--color-foreground-muted);
 	}

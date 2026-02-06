@@ -41,12 +41,12 @@ impl OntologyTransform for MacAppsTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -62,7 +62,7 @@ impl OntologyTransform for MacAppsTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "apps", checkpoint_key)
+            .read_with_checkpoint(&source_id, "apps", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -105,8 +105,8 @@ impl OntologyTransform for MacAppsTransform {
                 let stream_id = record
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_else(|| Uuid::new_v4());
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
 
                 // Validate required fields
                 if let (Some(ts), Some(et), Some(an)) = (timestamp, event_type, app_name) {
@@ -143,26 +143,28 @@ impl OntologyTransform for MacAppsTransform {
 
         // Batch insert sessions
         let mut pending_records: Vec<(
+            String,         // id
             String,         // app_name
             Option<String>, // app_bundle_id
             DateTime<Utc>,  // start_time
             DateTime<Utc>,  // end_time
-            Uuid,           // source_stream_id
+            String,         // source_stream_id
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
         let mut batch_insert_count = 0;
         let processing_start = std::time::Instant::now();
 
         for session in sessions {
+            last_processed_id = Some(session.stream_id.clone());
+
             pending_records.push((
+                Uuid::new_v4().to_string(),
                 session.app_name.clone(),
                 session.bundle_id.clone(),
                 session.start_time,
                 session.end_time,
                 session.stream_id,
             ));
-
-            last_processed_id = Some(session.stream_id);
 
             // Execute batch insert when we reach batch size
             if pending_records.len() >= BATCH_SIZE {
@@ -227,7 +229,7 @@ impl OntologyTransform for MacAppsTransform {
         // Update checkpoint after processing all batches
         if let Some(max_ts) = max_batch_timestamp {
             data_source
-                .update_checkpoint(source_id, "apps", checkpoint_key, max_ts)
+                .update_checkpoint(&source_id, "apps", checkpoint_key, max_ts)
                 .await?;
         }
 
@@ -265,7 +267,7 @@ struct AppEvent {
     event_type: String,
     app_name: String,
     bundle_id: Option<String>,
-    stream_id: Uuid,
+    stream_id: String,
 }
 
 /// App usage session (temporal bounds)
@@ -275,7 +277,7 @@ struct AppSession {
     bundle_id: Option<String>,
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
-    stream_id: Uuid,
+    stream_id: String,
 }
 
 /// Aggregate discrete app events into temporal usage sessions
@@ -350,7 +352,7 @@ fn aggregate_app_events_to_sessions(events: Vec<AppEvent>) -> Vec<AppSession> {
 /// Execute batch insert for app usage records
 async fn execute_app_usage_batch_insert(
     db: &Database,
-    records: &[(String, Option<String>, DateTime<Utc>, DateTime<Utc>, Uuid)],
+    records: &[(String, String, Option<String>, DateTime<Utc>, DateTime<Utc>, String)],
 ) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
@@ -359,6 +361,7 @@ async fn execute_app_usage_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_activity_app_usage",
         &[
+            "id",
             "app_name",
             "app_bundle_id",
             "start_time",
@@ -374,8 +377,9 @@ async fn execute_app_usage_batch_insert(
     let mut query = sqlx::query(&query_str);
 
     // Bind all parameters row by row
-    for (app_name, app_bundle_id, start_time, end_time, stream_id) in records {
+    for (id, app_name, app_bundle_id, start_time, end_time, stream_id) in records {
         query = query
+            .bind(id)
             .bind(app_name)
             .bind(app_bundle_id)
             .bind(start_time)
@@ -415,12 +419,12 @@ impl OntologyTransform for MacBrowserTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -436,7 +440,7 @@ impl OntologyTransform for MacBrowserTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "browser", checkpoint_key)
+            .read_with_checkpoint(&source_id, "browser", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -449,12 +453,13 @@ impl OntologyTransform for MacBrowserTransform {
 
         // Batch insert configuration
         let mut pending_records: Vec<(
+            String,            // id
             String,            // url
             String,            // domain
             Option<String>,    // page_title
             Option<i32>,       // visit_duration_seconds
             DateTime<Utc>,     // timestamp
-            Uuid,              // source_stream_id
+            String,            // source_stream_id
             serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
@@ -491,8 +496,8 @@ impl OntologyTransform for MacBrowserTransform {
                 let stream_id = record
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_else(|| Uuid::new_v4());
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
 
                 let page_title = record
                     .get("page_title")
@@ -517,8 +522,11 @@ impl OntologyTransform for MacBrowserTransform {
                     "tab_count": tab_count,
                 });
 
+                last_processed_id = Some(stream_id.clone());
+
                 // Add to pending batch
                 pending_records.push((
+                    Uuid::new_v4().to_string(),
                     url,
                     domain,
                     page_title,
@@ -527,8 +535,6 @@ impl OntologyTransform for MacBrowserTransform {
                     stream_id,
                     metadata,
                 ));
-
-                last_processed_id = Some(stream_id);
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -564,7 +570,7 @@ impl OntologyTransform for MacBrowserTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "browser", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "browser", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -636,10 +642,11 @@ async fn execute_browser_batch_insert(
     records: &[(
         String,
         String,
+        String,
         Option<String>,
         Option<i32>,
         DateTime<Utc>,
-        Uuid,
+        String,
         serde_json::Value,
     )],
 ) -> Result<usize> {
@@ -650,6 +657,7 @@ async fn execute_browser_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_activity_web_browsing",
         &[
+            "id",
             "url",
             "domain",
             "page_title",
@@ -667,8 +675,9 @@ async fn execute_browser_batch_insert(
     let mut query = sqlx::query(&query_str);
 
     // Bind all parameters row by row
-    for (url, domain, page_title, visit_duration, timestamp, stream_id, metadata) in records {
+    for (id, url, domain, page_title, visit_duration, timestamp, stream_id, metadata) in records {
         query = query
+            .bind(id)
             .bind(url)
             .bind(domain)
             .bind(page_title)
@@ -710,12 +719,12 @@ impl OntologyTransform for MacIMessageTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -731,7 +740,7 @@ impl OntologyTransform for MacIMessageTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "imessage", checkpoint_key)
+            .read_with_checkpoint(&source_id, "imessage", checkpoint_key)
             .await?;
         let read_duration = read_start.elapsed();
 
@@ -744,6 +753,7 @@ impl OntologyTransform for MacIMessageTransform {
 
         // Batch insert configuration
         let mut pending_records: Vec<(
+            String,            // id
             String,            // message_id
             Option<String>,    // thread_id
             String,            // channel
@@ -757,7 +767,7 @@ impl OntologyTransform for MacIMessageTransform {
             Option<String>,    // group_name
             bool,              // has_attachments
             i32,               // attachment_count
-            Uuid,              // source_stream_id
+            String,            // source_stream_id
             serde_json::Value, // metadata
         )> = Vec::new();
         let mut batch_insert_total_ms = 0u128;
@@ -788,8 +798,8 @@ impl OntologyTransform for MacIMessageTransform {
                 let stream_id = record
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .unwrap_or_else(|| Uuid::new_v4());
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string());
 
                 let thread_id = record
                     .get("chat_id")
@@ -869,8 +879,11 @@ impl OntologyTransform for MacIMessageTransform {
                     "expressive_send_style_id": expressive_send_style_id,
                 });
 
+                last_processed_id = Some(stream_id.clone());
+
                 // Add to pending batch
                 pending_records.push((
+                    Uuid::new_v4().to_string(),
                     message_id,
                     thread_id,
                     channel,
@@ -887,8 +900,6 @@ impl OntologyTransform for MacIMessageTransform {
                     stream_id,
                     metadata,
                 ));
-
-                last_processed_id = Some(stream_id);
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -924,7 +935,7 @@ impl OntologyTransform for MacIMessageTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "messages", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "messages", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -989,21 +1000,22 @@ impl OntologyTransform for MacIMessageTransform {
 async fn execute_imessage_batch_insert(
     db: &Database,
     records: &[(
-        String,
-        Option<String>,
-        String,
-        Option<String>,
-        DateTime<Utc>,
-        Option<String>,
-        Vec<String>,
-        String,
-        bool,
-        bool,
-        Option<String>,
-        bool,
-        i32,
-        Uuid,
-        serde_json::Value,
+        String,         // id
+        String,         // message_id
+        Option<String>, // thread_id
+        String,         // channel
+        Option<String>, // body
+        DateTime<Utc>,  // timestamp
+        Option<String>, // from_identifier
+        Vec<String>,    // to_identifiers
+        String,         // direction
+        bool,           // is_read
+        bool,           // is_group_message
+        Option<String>, // group_name
+        bool,           // has_attachments
+        i32,            // attachment_count
+        String,         // source_stream_id
+        serde_json::Value, // metadata
     )],
 ) -> Result<usize> {
     if records.is_empty() {
@@ -1013,6 +1025,7 @@ async fn execute_imessage_batch_insert(
     let query_str = Database::build_batch_insert_query(
         "data_social_message",
         &[
+            "id",
             "message_id",
             "thread_id",
             "channel",
@@ -1039,6 +1052,7 @@ async fn execute_imessage_batch_insert(
 
     // Bind all parameters row by row
     for (
+        id,
         message_id,
         thread_id,
         channel,
@@ -1061,6 +1075,7 @@ async fn execute_imessage_batch_insert(
             serde_json::to_string(&to_identifiers).unwrap_or_else(|_| "[]".to_string());
 
         query = query
+            .bind(id)
             .bind(message_id)
             .bind(thread_id)
             .bind(channel)
@@ -1177,14 +1192,14 @@ mod tests {
                 event_type: "focus_gained".to_string(),
                 app_name: "VSCode".to_string(),
                 bundle_id: Some("com.microsoft.VSCode".to_string()),
-                stream_id: Uuid::new_v4(),
+                stream_id: Uuid::new_v4().to_string(),
             },
             AppEvent {
                 timestamp: "2024-01-01T10:05:00Z".parse().unwrap(),
                 event_type: "focus_lost".to_string(),
                 app_name: "VSCode".to_string(),
                 bundle_id: Some("com.microsoft.VSCode".to_string()),
-                stream_id: Uuid::new_v4(),
+                stream_id: Uuid::new_v4().to_string(),
             },
         ];
 

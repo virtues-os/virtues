@@ -1,10 +1,26 @@
 # Tollbooth - Open Source AI Budget Proxy
-# Multi-stage build for minimal image size
+# Multi-stage build with cargo-chef for dependency caching
 
 # ============================================================================
-# Build Stage
+# Stage 1: Plan dependencies (cargo-chef)
+# ============================================================================
+FROM rust:1.83-slim-bookworm AS planner
+
+RUN cargo install cargo-chef
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock* ./
+COPY src ./src
+
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================================================
+# Stage 2: Cook dependencies (cached unless Cargo.toml/lock change)
 # ============================================================================
 FROM rust:1.83-slim-bookworm AS builder
+
+RUN cargo install cargo-chef
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -14,27 +30,25 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy manifests first (for better caching)
+# Cook dependencies from recipe (cached layer — only reruns when deps change)
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Copy actual source and build (only this layer reruns on code changes)
 COPY Cargo.toml Cargo.lock* ./
-
-# Create dummy src to cache dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release && rm -rf src target/release/deps/tollbooth*
-
-# Copy actual source
 COPY src ./src
 
-# Build release binary
 RUN cargo build --release
 
 # ============================================================================
-# Runtime Stage
+# Stage 3: Runtime
 # ============================================================================
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
@@ -54,7 +68,7 @@ EXPOSE 9000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:9000/health || exit 1
+    CMD wget -qO- http://localhost:9000/health || exit 1
 
 # Run tollbooth
 CMD ["tollbooth"]

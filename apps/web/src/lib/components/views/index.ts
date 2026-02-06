@@ -22,7 +22,7 @@ export { default as DataSourcesContent } from '../tabs/views/DataSourcesView.sve
 export { default as DataSourceDetailContent } from '../tabs/views/DataSourceDetailView.svelte';
 export { default as DriveContent } from '../tabs/views/DriveView.svelte';
 export { default as ProfileContent } from '../tabs/views/ProfileView.svelte';
+export { default as AssistantContent } from '../tabs/views/AssistantView.svelte';
 export { default as UsageContent } from '../tabs/views/UsageView.svelte';
 export { default as HistoryContent } from '../tabs/views/HistoryView.svelte';
-export { default as EntitiesContent } from '../tabs/views/EntitiesView.svelte';
 export { default as JobsContent } from '../tabs/views/JobsView.svelte';

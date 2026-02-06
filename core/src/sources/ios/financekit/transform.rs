@@ -192,6 +192,7 @@ impl OntologyTransform for FinanceKitTransactionTransform {
                     pending_records.push((
                         internal_tx_id.to_string(),
                         internal_account_id.to_string(),
+                        apple_id.to_string(),  // transaction_id
                         (amount * 100.0) as i64,
                         merchant_name,
                         category,
@@ -276,7 +277,7 @@ async fn execute_account_batch_insert(
 
 async fn execute_transaction_batch_insert(
     db: &Database,
-    records: &[(String, String, i64, Option<String>, Option<String>, Option<String>, i32, DateTime<Utc>, String, serde_json::Value)],
+    records: &[(String, String, String, i64, Option<String>, Option<String>, Option<String>, i32, DateTime<Utc>, String, serde_json::Value)],
 ) -> Result<usize> {
     if records.is_empty() {
         return Ok(0);
@@ -284,7 +285,7 @@ async fn execute_transaction_batch_insert(
 
     let query_str = format!(
         "INSERT INTO data_financial_transaction (
-            id, account_id, amount, merchant_name, category, description, is_pending, timestamp, source_stream_id, source_table, source_provider, metadata
+            id, account_id, transaction_id, amount, merchant_name, category, description, is_pending, timestamp, source_stream_id, source_table, source_provider, metadata
         ) VALUES {}
         ON CONFLICT (id) DO UPDATE SET
             amount = EXCLUDED.amount,
@@ -295,18 +296,19 @@ async fn execute_transaction_batch_insert(
             metadata = EXCLUDED.metadata,
             updated_at = datetime('now')",
         (0..records.len())
-            .map(|i| format!("(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, 'stream_ios_financekit', 'apple_finance', ${})", 
-                i * 10 + 1, i * 10 + 2, i * 10 + 3, i * 10 + 4, i * 10 + 5, i * 10 + 6, i * 10 + 7, i * 10 + 8, i * 10 + 9, i * 10 + 10))
+            .map(|i| format!("(${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, 'stream_ios_financekit', 'apple_finance', ${})",
+                i * 11 + 1, i * 11 + 2, i * 11 + 3, i * 11 + 4, i * 11 + 5, i * 11 + 6, i * 11 + 7, i * 11 + 8, i * 11 + 9, i * 11 + 10, i * 11 + 11))
             .collect::<Vec<_>>()
             .join(", ")
     );
 
     let mut query = sqlx::query(&query_str);
 
-    for (id, account_id, amount, merchant, cat, desc, pending, ts, stream_id, meta) in records {
+    for (id, account_id, transaction_id, amount, merchant, cat, desc, pending, ts, stream_id, meta) in records {
         query = query
             .bind(id)
             .bind(account_id)
+            .bind(transaction_id)
             .bind(amount)
             .bind(merchant)
             .bind(cat)

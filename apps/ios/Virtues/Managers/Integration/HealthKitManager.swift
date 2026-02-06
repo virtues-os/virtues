@@ -775,21 +775,12 @@ extension HealthKitManager: HealthCheckable {
     }
 
     func performHealthCheck() -> HealthStatus {
-        // Check if stream is enabled
-        guard configProvider.isStreamEnabled("healthkit") else {
+        // Check authorization
+        guard isAuthorized else {
             return .disabled
         }
 
-        // Check authorization
-        guard isAuthorized else {
-            return .unhealthy(reason: "HealthKit not authorized")
-        }
-
-        // Check if monitoring should be running
-        let shouldBeMonitoring = true
-        let actuallyMonitoring = healthTimer != nil
-
-        if shouldBeMonitoring && !actuallyMonitoring {
+        if healthTimer == nil {
             // Attempt recovery
             startMonitoring()
             return .unhealthy(reason: "Monitoring stopped unexpectedly, restarting")

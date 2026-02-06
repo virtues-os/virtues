@@ -44,6 +44,8 @@ enum StreamType: String, CaseIterable, Codable {
     case battery = "ios_battery"
     case contacts = "ios_contacts"
     case barometer = "ios_barometer"
+    case finance = "ios_finance"
+    case eventKit = "ios_eventkit"
 
     /// User-friendly display name for UI
     var displayName: String {
@@ -54,6 +56,8 @@ enum StreamType: String, CaseIterable, Codable {
         case .battery: return "Battery"
         case .contacts: return "Contacts"
         case .barometer: return "Barometer"
+        case .finance: return "FinanceKit"
+        case .eventKit: return "EventKit"
         }
     }
 
@@ -66,6 +70,8 @@ enum StreamType: String, CaseIterable, Codable {
         case .battery: return "battery.100"
         case .contacts: return "person.crop.circle.fill"
         case .barometer: return "barometer"
+        case .finance: return "creditcard.fill"
+        case .eventKit: return "calendar"
         }
     }
 }

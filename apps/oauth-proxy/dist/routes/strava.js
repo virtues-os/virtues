@@ -7,6 +7,7 @@ exports.stravaRouter = void 0;
 const express_1 = __importDefault(require("express"));
 const oauth_apps_1 = require("../config/oauth-apps");
 const error_handler_1 = require("../middleware/error-handler");
+const url_validator_1 = require("../utils/url-validator");
 const router = express_1.default.Router();
 exports.stravaRouter = router;
 // Generate state parameter for CSRF protection
@@ -22,7 +23,7 @@ router.get('/auth', (req, res) => {
             throw (0, error_handler_1.createError)('Missing return_url parameter', 400);
         }
         // Validate return_url to prevent open redirect attacks
-        if (!isValidReturnUrl(return_url)) {
+        if (!(0, url_validator_1.isValidReturnUrl)(return_url)) {
             throw (0, error_handler_1.createError)('Invalid return_url parameter', 400);
         }
         const state = generateState();
@@ -72,7 +73,7 @@ router.get('/callback', async (req, res) => {
             throw (0, error_handler_1.createError)('Invalid state parameter', 400);
         }
         // Validate return_url again
-        if (!isValidReturnUrl(return_url)) {
+        if (!(0, url_validator_1.isValidReturnUrl)(return_url)) {
             throw (0, error_handler_1.createError)('Invalid return_url in state', 400);
         }
         // Exchange code for tokens HERE in the auth-proxy
@@ -196,24 +197,4 @@ router.post('/refresh', async (req, res) => {
         }
     }
 });
-// Validate return URL to prevent open redirect attacks
-function isValidReturnUrl(url) {
-    try {
-        const parsed = new URL(url);
-        // Allow localhost for development
-        if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-            return true;
-        }
-        // Allow specific domains (add your domain patterns here)
-        const allowedPatterns = [
-            /^.*\.virtues\.com$/,
-            /^.*\.local$/,
-            /^.*\.localhost$/
-        ];
-        return allowedPatterns.some(pattern => pattern.test(parsed.hostname));
-    }
-    catch {
-        return false;
-    }
-}
 //# sourceMappingURL=strava.js.map

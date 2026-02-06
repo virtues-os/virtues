@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { WikiPage } from "$lib/wiki";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		page: WikiPage;
@@ -128,16 +128,16 @@
 
 <div class="rail-history">
 	<div class="history-header">
-		<iconify-icon icon="ri:history-line" width="14" height="14"
-		></iconify-icon>
+		<Icon icon="ri:history-line" width="14" height="14"
+		/>
 		<span class="history-title">Edit History</span>
 		<span class="history-count">{historyEntries.length}</span>
 	</div>
 
 	{#if historyEntries.length === 0}
 		<div class="history-empty">
-			<iconify-icon icon="ri:history-line" width="24" height="24"
-			></iconify-icon>
+			<Icon icon="ri:history-line" width="24" height="24"
+			/>
 			<p>No edit history available</p>
 		</div>
 	{:else}
@@ -149,11 +149,11 @@
 							class="entry-icon"
 							class:is-ai={entry.author === "ai"}
 						>
-							<iconify-icon
+							<Icon
 								icon={getActionIcon(entry.action)}
 								width="12"
 								height="12"
-							></iconify-icon>
+							/>
 						</div>
 						{#if index < historyEntries.length - 1}
 							<div class="entry-line"></div>
@@ -189,8 +189,8 @@
 
 	<div class="history-footer">
 		<button class="history-action" disabled>
-			<iconify-icon icon="ri:time-line" width="14" height="14"
-			></iconify-icon>
+			<Icon icon="ri:time-line" width="14" height="14"
+			/>
 			<span>View Full History</span>
 		</button>
 	</div>

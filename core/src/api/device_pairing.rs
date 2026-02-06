@@ -2,7 +2,6 @@
 
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
-use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::registry::RegisteredStream;
@@ -11,7 +10,7 @@ use crate::sources::base::TokenEncryptor;
 /// Response when pairing is initiated
 #[derive(Debug, Clone)]
 pub struct PairingInitiated {
-    pub source_id: Uuid,
+    pub source_id: String,
     pub code: String,
     pub expires_at: DateTime<Utc>,
 }
@@ -19,7 +18,7 @@ pub struct PairingInitiated {
 /// Response when pairing is completed successfully
 #[derive(Debug, Clone)]
 pub struct PairingCompleted {
-    pub source_id: Uuid,
+    pub source_id: String,
     pub device_token: String,
     pub available_streams: Vec<RegisteredStream>,
 }
@@ -45,7 +44,7 @@ pub enum PairingStatus {
 /// Pending pairing information for display
 #[derive(Debug, Clone)]
 pub struct PendingPairing {
-    pub source_id: Uuid,
+    pub source_id: String,
     pub name: String,
     pub device_type: String,
     pub code: String,
@@ -72,7 +71,7 @@ pub async fn initiate_device_pairing(
     let existing_active: Option<(String,)> = sqlx::query_as(
         r#"
         SELECT id
-        FROM data_source_connections
+        FROM elt_source_connections
         WHERE source = $1 AND name = $2 AND pairing_status = 'active'
         "#,
     )
@@ -93,7 +92,7 @@ pub async fn initiate_device_pairing(
     let existing_pending: Option<(String,)> = sqlx::query_as(
         r#"
         SELECT id
-        FROM data_source_connections
+        FROM elt_source_connections
         WHERE source = $1 AND name = $2 AND pairing_status = 'pending'
         "#,
     )
@@ -105,39 +104,33 @@ pub async fn initiate_device_pairing(
 
     // If there's an existing pending pairing, return it
     if let Some((source_id_str,)) = existing_pending {
-        let source_id = Uuid::parse_str(&source_id_str)
-            .map_err(|e| Error::Database(format!("Invalid source ID: {e}")))?;
         return Ok(PairingInitiated {
-            source_id,
+            source_id: source_id_str,
             code: "".to_string(),   // Removed
             expires_at: Utc::now(), // Removed
         });
     }
 
     // Create pending source or update existing
-    let new_id = Uuid::new_v4();
-    let new_id_str = new_id.to_string();
-    let source_id_str = sqlx::query_scalar::<_, String>(
+    let new_id = crate::ids::generate_id(crate::ids::SOURCE_PREFIX, &[name, device_type]);
+    let source_id = sqlx::query_scalar::<_, String>(
         r#"
-        INSERT INTO data_source_connections (id, source, name, auth_type, pairing_status, is_active, is_internal)
+        INSERT INTO elt_source_connections (id, source, name, auth_type, pairing_status, is_active, is_internal)
         VALUES ($1, $2, $3, 'device', 'pending', false, false)
         ON CONFLICT (name)
         DO UPDATE SET
             pairing_status = 'pending',
             updated_at = datetime('now')
-        WHERE data_source_connections.pairing_status = 'pending' OR data_source_connections.pairing_status IS NULL
+        WHERE elt_source_connections.pairing_status = 'pending' OR elt_source_connections.pairing_status IS NULL
         RETURNING id
         "#,
     )
-    .bind(&new_id_str)
+    .bind(&new_id)
     .bind(device_type)
     .bind(name)
     .fetch_one(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to create pending pairing: {e}")))?;
-
-    let source_id = Uuid::parse_str(&source_id_str)
-        .map_err(|e| Error::Database(format!("Invalid source ID returned: {e}")))?;
 
     Ok(PairingInitiated {
         source_id,
@@ -146,20 +139,121 @@ pub async fn initiate_device_pairing(
     })
 }
 
-/// Complete device pairing with a valid pairing code
-///
-/// Validates the pairing code, updates the source with device information,
-/// generates a secure device token, and returns available streams.
+/// Complete device pairing with a valid pairing code (DEPRECATED)
 pub async fn complete_device_pairing(
     _db: &SqlitePool,
     _code: &str,
     _device_info: DeviceInfo,
 ) -> Result<PairingCompleted> {
-    // This flow is deprecated in favor of manual linking (link_device_manually)
-    // where the device ID is the token.
     Err(Error::Other(
-        "Pairing code flow is deprecated. Use /link endpoint.".to_string(),
+        "Pairing code flow is deprecated. Use /link or QR pairing endpoint.".to_string(),
     ))
+}
+
+/// Complete QR-based device pairing by source ID
+///
+/// Called by the iOS app after scanning a QR code that contains the source_id.
+/// Validates the session is pending and not expired, then links the device.
+pub async fn complete_pairing_by_source_id(
+    db: &SqlitePool,
+    source_id: &str,
+    device_id: &str,
+    device_info: DeviceInfo,
+) -> Result<PairingCompleted> {
+    if device_id.trim().is_empty() {
+        return Err(Error::InvalidInput("Device ID cannot be empty".to_string()));
+    }
+
+    // Fetch the pending source (source_type, pairing_status, created_at)
+    let source: (String, Option<String>, String) = sqlx::query_as(
+        r#"
+        SELECT source, pairing_status, created_at
+        FROM elt_source_connections
+        WHERE id = $1
+        "#,
+    )
+    .bind(source_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to fetch pairing session: {e}")))?
+    .ok_or_else(|| Error::Other("Pairing session not found".to_string()))?;
+
+    let (device_type, pairing_status, created_at) = source;
+
+    // Validate status
+    match pairing_status.as_deref() {
+        Some("active") => {
+            return Err(Error::InvalidInput(
+                "Pairing session already claimed by another device".to_string(),
+            ));
+        }
+        Some("revoked") => {
+            return Err(Error::InvalidInput(
+                "Pairing session was cancelled".to_string(),
+            ));
+        }
+        Some("pending") => {} // OK
+        _ => {
+            return Err(Error::Other("Invalid pairing session state".to_string()));
+        }
+    }
+
+    // Check expiration (10 minute window from creation)
+    if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&created_at) {
+        let elapsed = Utc::now() - created.with_timezone(&Utc);
+        if elapsed > chrono::Duration::minutes(10) {
+            return Err(Error::InvalidInput(
+                "Pairing session expired. Please generate a new QR code.".to_string(),
+            ));
+        }
+    }
+
+    // Encrypt device ID to use as token
+    let encryptor = TokenEncryptor::from_env()
+        .map_err(|e| Error::Other(format!("Failed to initialize encryption: {e}")))?;
+    let encrypted_token = encryptor
+        .encrypt(device_id)
+        .map_err(|e| Error::Other(format!("Failed to encrypt device token: {e}")))?;
+
+    // Serialize device info
+    let device_info_json = serde_json::to_string(&device_info)
+        .map_err(|e| Error::Other(format!("Failed to serialize device info: {e}")))?;
+
+    // Update source to active with device credentials
+    sqlx::query(
+        r#"
+        UPDATE elt_source_connections
+        SET device_id = $1,
+            device_token = $2,
+            device_info = $3,
+            pairing_status = 'active',
+            is_active = true,
+            last_seen_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = $4
+        "#,
+    )
+    .bind(device_id)
+    .bind(&encrypted_token)
+    .bind(&device_info_json)
+    .bind(source_id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to complete pairing: {e}")))?;
+
+    // Get available streams for this device type
+    let available_streams = crate::registry::get_source(&device_type)
+        .map(|info| info.streams.clone())
+        .unwrap_or_default();
+
+    // Enable default streams
+    crate::api::streams::enable_default_streams(db, source_id.to_string(), &device_type).await?;
+
+    Ok(PairingCompleted {
+        source_id: source_id.to_string(),
+        device_token: device_id.to_string(),
+        available_streams,
+    })
 }
 
 /// Link a device manually using its device ID as the token
@@ -191,7 +285,7 @@ pub async fn link_device_manually(
     let existing_source = sqlx::query!(
         r#"
         SELECT id
-        FROM data_source_connections
+        FROM elt_source_connections
         WHERE device_id = $1 AND source = $2
         "#,
         device_id,
@@ -205,15 +299,13 @@ pub async fn link_device_manually(
         // Parse existing ID from string
         let existing_id = row
             .id
-            .as_ref()
-            .and_then(|s| Uuid::parse_str(s).ok())
+            .clone()
             .ok_or_else(|| Error::Database("Invalid source ID".to_string()))?;
-        let id_str = existing_id.to_string();
 
         // Update existing source
         sqlx::query(
             r#"
-            UPDATE data_source_connections
+            UPDATE elt_source_connections
             SET name = $1,
                 device_token = $2,
                 pairing_status = 'active',
@@ -224,7 +316,7 @@ pub async fn link_device_manually(
         )
         .bind(name)
         .bind(&encrypted_token)
-        .bind(&id_str)
+        .bind(&existing_id)
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to update source: {e}")))?;
@@ -232,11 +324,10 @@ pub async fn link_device_manually(
         existing_id
     } else {
         // Create new source
-        let new_id = Uuid::new_v4();
-        let new_id_str = new_id.to_string();
+        let new_id = crate::ids::generate_id(crate::ids::SOURCE_PREFIX, &[device_id]);
         sqlx::query(
             r#"
-            INSERT INTO data_source_connections (
+            INSERT INTO elt_source_connections (
                 id, source, name, auth_type, pairing_status,
                 is_active, is_internal, device_id, device_token,
                 created_at, updated_at
@@ -244,7 +335,7 @@ pub async fn link_device_manually(
             VALUES ($1, $2, $3, 'device', 'active', true, false, $4, $5, datetime('now'), datetime('now'))
             "#,
         )
-        .bind(&new_id_str)
+        .bind(&new_id)
         .bind(device_type)
         .bind(name)
         .bind(device_id)
@@ -262,7 +353,7 @@ pub async fn link_device_manually(
         .unwrap_or_default();
 
     // Enable default streams
-    crate::api::streams::enable_default_streams(db, source_id, device_type).await?;
+    crate::api::streams::enable_default_streams(db, source_id.clone(), device_type).await?;
 
     Ok(PairingCompleted {
         source_id,
@@ -272,12 +363,12 @@ pub async fn link_device_manually(
 }
 
 /// Check the status of a pairing by source ID
-pub async fn check_pairing_status(db: &SqlitePool, source_id: Uuid) -> Result<PairingStatus> {
-    let source_id_str = source_id.to_string();
+pub async fn check_pairing_status(db: &SqlitePool, source_id: String) -> Result<PairingStatus> {
+    let source_id_str = &source_id;
     let source = sqlx::query!(
         r#"
         SELECT pairing_status, device_info
-        FROM data_source_connections
+        FROM elt_source_connections
         WHERE id = $1
         "#,
         source_id_str
@@ -311,7 +402,7 @@ pub async fn list_pending_pairings(db: &SqlitePool) -> Result<Vec<PendingPairing
             name,
             source as device_type,
             created_at
-        FROM data_source_connections
+        FROM elt_source_connections
         WHERE pairing_status = 'pending'
         ORDER BY created_at DESC
         "#
@@ -324,7 +415,7 @@ pub async fn list_pending_pairings(db: &SqlitePool) -> Result<Vec<PendingPairing
         .into_iter()
         .filter_map(|row| {
             // SQLite returns id as Option<String>, but name/device_type/created_at as String (NOT NULL)
-            let source_id = row.id.as_ref().and_then(|s| Uuid::parse_str(s).ok())?;
+            let source_id = row.id.clone()?;
             // These columns are NOT NULL, so they're String not Option<String>
             let name = row.name.clone();
             let device_type = row.device_type.clone();
@@ -346,7 +437,7 @@ pub async fn list_pending_pairings(db: &SqlitePool) -> Result<Vec<PendingPairing
 }
 
 /// Validate a device token and return the source ID
-pub async fn validate_device_token(db: &SqlitePool, token: &str) -> Result<Uuid> {
+pub async fn validate_device_token(db: &SqlitePool, token: &str) -> Result<String> {
     // Initialize encryptor
     let encryptor = TokenEncryptor::from_env()
         .map_err(|e| Error::Other(format!("Failed to initialize encryption: {e}")))?;
@@ -356,7 +447,7 @@ pub async fn validate_device_token(db: &SqlitePool, token: &str) -> Result<Uuid>
     let sources = sqlx::query_as::<_, (String, String)>(
         r#"
         SELECT id, device_token
-        FROM data_source_connections
+        FROM elt_source_connections
         WHERE device_token IS NOT NULL
         AND pairing_status = 'active'
         AND is_active = true
@@ -367,14 +458,11 @@ pub async fn validate_device_token(db: &SqlitePool, token: &str) -> Result<Uuid>
     .map_err(|e| Error::Database(format!("Failed to query device tokens: {e}")))?;
 
     // Try to decrypt each token and compare with the provided token
-    for (source_id_str, encrypted_token) in sources {
+    for (source_id, encrypted_token) in sources {
         // Decrypt stored token
         if let Ok(decrypted_token) = encryptor.decrypt(&encrypted_token) {
             // Compare with provided token
             if decrypted_token == token {
-                // Parse UUID from string
-                let source_id = Uuid::parse_str(&source_id_str)
-                    .map_err(|e| Error::Database(format!("Invalid source ID: {e}")))?;
                 return Ok(source_id);
             }
         }
@@ -387,16 +475,15 @@ pub async fn validate_device_token(db: &SqlitePool, token: &str) -> Result<Uuid>
 }
 
 /// Update the last seen timestamp for a device
-pub async fn update_last_seen(db: &SqlitePool, source_id: Uuid) -> Result<()> {
-    let source_id_str = source_id.to_string();
+pub async fn update_last_seen(db: &SqlitePool, source_id: &str) -> Result<()> {
     sqlx::query(
         r#"
-        UPDATE data_source_connections
+        UPDATE elt_source_connections
         SET last_seen_at = datetime('now')
         WHERE id = $1
         "#,
     )
-    .bind(&source_id_str)
+    .bind(source_id)
     .execute(db)
     .await
     .map_err(|e| Error::Database(format!("Failed to update last_seen: {e}")))?;
@@ -404,43 +491,8 @@ pub async fn update_last_seen(db: &SqlitePool, source_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-/// Response when verifying a device token
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DeviceVerified {
-    pub source_id: Uuid,
-    pub enabled_streams: Vec<crate::api::StreamConnection>,
-    pub configuration_complete: bool,
-}
-
-/// Verify a device token and return stream configuration status
-///
-/// This endpoint is called by devices that already have a device_token
-/// to check if streams have been configured in the web app.
-pub async fn verify_device(db: &SqlitePool, token: &str) -> Result<DeviceVerified> {
-    // Validate token and get source ID
-    let source_id = validate_device_token(db, token).await?;
-
-    // Update last seen
-    update_last_seen(db, source_id).await?;
-
-    // Get all streams for this source
-    let all_streams = crate::api::list_source_streams(db, source_id).await?;
-
-    // Filter to only enabled streams
-    let enabled_streams: Vec<crate::api::StreamConnection> =
-        all_streams.into_iter().filter(|s| s.is_enabled).collect();
-
-    // Configuration is complete if at least one stream is enabled
-    let configuration_complete = !enabled_streams.is_empty();
-
-    Ok(DeviceVerified {
-        source_id,
-        enabled_streams,
-        configuration_complete,
-    })
-}
-
 /// Generate a 6-character alphanumeric pairing code
+#[cfg(test)]
 fn generate_pairing_code() -> String {
     use rand::Rng;
     const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Removed ambiguous: 0, O, 1, I
@@ -455,6 +507,7 @@ fn generate_pairing_code() -> String {
 }
 
 /// Generate a secure 256-bit device token
+#[cfg(test)]
 fn generate_device_token() -> String {
     use rand::RngCore;
     let mut token = [0u8; 32]; // 256 bits

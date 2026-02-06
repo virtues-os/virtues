@@ -1,16 +1,25 @@
 //! Code execution API for AI sandbox
 //!
-//! Provides secure Python code execution. In production, isolation is provided
-//! by gVisor at the container level. No additional sandboxing (nsjail) is needed
-//! because each tenant runs in their own gVisor container.
+//! Provides secure Python code execution with platform-specific sandboxing:
+//!
+//! - **Production (Linux + gVisor)**: Uses bubblewrap for process isolation within
+//!   the tenant's gVisor container. The container provides tenant isolation, and
+//!   bubblewrap provides filesystem isolation for the Python process.
+//!
+//! - **Development (macOS)**: Uses Docker/OrbStack to run code in a Linux container
+//!   with bubblewrap. This allows testing the same sandboxing approach on macOS.
 //!
 //! Used by the AI agent's code_interpreter tool.
 
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use tempfile::TempDir;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
+
+/// Sandbox image name for Docker-based execution (dev mode)
+const SANDBOX_IMAGE: &str = "virtues-sandbox:latest";
 
 /// Request to execute Python code
 #[derive(Debug, Deserialize)]
@@ -45,43 +54,26 @@ pub struct ExecuteCodeResponse {
 /// Execute Python code
 ///
 /// Security model:
-/// - Production (gVisor): Container IS the sandbox. If user crashes Python,
-///   they crash their own container. If they try to escape, gVisor blocks it.
-/// - Development: Runs directly on dev machine (trusted environment).
+/// - Production (Linux + gVisor): bubblewrap provides filesystem isolation within
+///   the tenant's gVisor container
+/// - Development (macOS): Docker container with bubblewrap provides equivalent isolation
 pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
     let start = std::time::Instant::now();
 
     // Clamp timeout to valid range
     let timeout_secs = request.timeout.clamp(5, 120);
 
-    // Create isolated workspace for the code
-    let workspace = match TempDir::new() {
-        Ok(dir) => dir,
-        Err(e) => {
-            return ExecuteCodeResponse {
-                success: false,
-                stdout: String::new(),
-                stderr: String::new(),
-                error: Some(format!("Failed to create workspace: {}", e)),
-                execution_time_ms: start.elapsed().as_millis() as u64,
-            };
-        }
+    // Choose execution strategy based on platform
+    let output = if cfg!(target_os = "macos") {
+        // macOS: Use Docker/OrbStack with sandbox container
+        execute_with_docker(&request.code, timeout_secs).await
+    } else if cfg!(target_os = "linux") {
+        // Linux: Use bubblewrap directly (or fallback to direct execution)
+        execute_with_bubblewrap(&request.code, timeout_secs).await
+    } else {
+        // Fallback: Direct execution (not recommended for untrusted code)
+        execute_directly(&request.code, timeout_secs).await
     };
-
-    // Write code to file
-    let code_path = workspace.path().join("code.py");
-    if let Err(e) = tokio::fs::write(&code_path, &request.code).await {
-        return ExecuteCodeResponse {
-            success: false,
-            stdout: String::new(),
-            stderr: String::new(),
-            error: Some(format!("Failed to write code: {}", e)),
-            execution_time_ms: start.elapsed().as_millis() as u64,
-        };
-    }
-
-    // Execute Python directly - gVisor provides isolation in production
-    let output = execute_python(&code_path, timeout_secs).await;
 
     match output {
         Ok((stdout, stderr, success)) => ExecuteCodeResponse {
@@ -105,27 +97,165 @@ pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
     }
 }
 
-/// Execute Python code directly
+/// Execute Python code via Docker container (macOS development)
 ///
-/// In production (gVisor container), this is secure because:
-/// - The container runs with gVisor's syscall filtering
-/// - The user can only access their own filesystem
-/// - Resource limits are enforced by Nomad/cgroups
+/// Uses the virtues-sandbox Docker image which contains:
+/// - Python 3.12 with common packages
+/// - bubblewrap for process isolation
 ///
-/// In development, this trusts the local Python environment.
-async fn execute_python(
-    code_path: &std::path::Path,
+/// The container runs with --privileged to allow bubblewrap's namespace operations.
+/// This is acceptable for development; in production, gVisor provides the isolation.
+async fn execute_with_docker(
+    code: &str,
     timeout_secs: u32,
 ) -> Result<(String, String, bool), String> {
-    let mut cmd = Command::new("python3");
-    cmd.arg(code_path);
+    let mut cmd = Command::new("docker");
+    cmd.args([
+        "run",
+        "--rm",
+        "-i",
+        "--privileged",
+        "--network=none", // No network access for sandboxed code
+        SANDBOX_IMAGE,
+    ]);
+    cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    // Set working directory to the code's directory for relative imports
-    if let Some(parent) = code_path.parent() {
-        cmd.current_dir(parent);
+    let timeout_duration = Duration::from_secs(timeout_secs as u64);
+
+    // Spawn the process and write code to stdin
+    let mut child = cmd.spawn().map_err(|e| format!("Failed to start Docker: {}", e))?;
+
+    // Write code to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(code.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
+        // Close stdin to signal EOF
+        drop(stdin);
     }
+
+    // Wait for output with timeout
+    match timeout(timeout_duration, child.wait_with_output()).await {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Ok((stdout, stderr, output.status.success()))
+        }
+        Ok(Err(e)) => Err(format!("Process error: {}", e)),
+        Err(_) => {
+            // Timeout - kill the container
+            let _ = Command::new("docker")
+                .args(["kill", "--signal=KILL"])
+                .output()
+                .await;
+            Err("Execution timed out".to_string())
+        }
+    }
+}
+
+/// Execute Python code with bubblewrap isolation (Linux production)
+///
+/// Uses bubblewrap to create an isolated filesystem namespace:
+/// - Read-only access to Python and system libraries
+/// - Writable /tmp for temporary files
+/// - No access to application data directories
+async fn execute_with_bubblewrap(
+    code: &str,
+    timeout_secs: u32,
+) -> Result<(String, String, bool), String> {
+    // Create a temporary file for the code
+    let workspace = TempDir::new().map_err(|e| format!("Failed to create workspace: {}", e))?;
+    let code_path = workspace.path().join("code.py");
+    tokio::fs::write(&code_path, code)
+        .await
+        .map_err(|e| format!("Failed to write code: {}", e))?;
+
+    let mut cmd = Command::new("bwrap");
+    cmd.args([
+        "--ro-bind",
+        "/usr",
+        "/usr",
+        "--ro-bind",
+        "/lib",
+        "/lib",
+        "--ro-bind-try",
+        "/lib64",
+        "/lib64",
+        "--symlink",
+        "usr/bin",
+        "/bin",
+        "--symlink",
+        "usr/sbin",
+        "/sbin",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+        "--tmpfs",
+        "/tmp",
+        "--tmpfs",
+        "/home",
+        "--bind",
+        code_path.to_str().unwrap(),
+        "/tmp/code.py",
+        "--chdir",
+        "/tmp",
+        "--unshare-all",
+        "--share-net", // Can be removed to disable network
+        "--die-with-parent",
+        "--new-session",
+        "--",
+        "python3",
+        "/tmp/code.py",
+    ]);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let timeout_duration = Duration::from_secs(timeout_secs as u64);
+
+    match timeout(timeout_duration, cmd.output()).await {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Ok((stdout, stderr, output.status.success()))
+        }
+        Ok(Err(e)) => {
+            // bubblewrap not available, fall back to direct execution
+            if e.kind() == std::io::ErrorKind::NotFound {
+                tracing::warn!("bubblewrap not found, falling back to direct execution");
+                execute_directly(code, timeout_secs).await
+            } else {
+                Err(format!("Process error: {}", e))
+            }
+        }
+        Err(_) => Err("Execution timed out".to_string()),
+    }
+}
+
+/// Execute Python code directly (fallback, less secure)
+///
+/// Used when:
+/// - bubblewrap is not available
+/// - Running in a trusted environment
+async fn execute_directly(
+    code: &str,
+    timeout_secs: u32,
+) -> Result<(String, String, bool), String> {
+    // Create a temporary file for the code
+    let workspace = TempDir::new().map_err(|e| format!("Failed to create workspace: {}", e))?;
+    let code_path = workspace.path().join("code.py");
+    tokio::fs::write(&code_path, code)
+        .await
+        .map_err(|e| format!("Failed to write code: {}", e))?;
+
+    let mut cmd = Command::new("python3");
+    cmd.arg(&code_path);
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd.current_dir(workspace.path());
 
     let timeout_duration = Duration::from_secs(timeout_secs as u64);
 

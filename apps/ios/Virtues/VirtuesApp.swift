@@ -12,6 +12,8 @@ import UIKit
 @main
 struct VirtuesApp: App {
     @StateObject private var lifecycleObserver = AppLifecycleObserver()
+    @StateObject private var deviceManager = DeviceManager.shared
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
 
     init() {
@@ -31,6 +33,7 @@ struct VirtuesApp: App {
         _ = AudioManager.shared
         _ = BatteryManager.shared
         _ = ContactsManager.shared
+        _ = EventKitManager.shared
         _ = PermissionMonitor.shared
         _ = LowPowerModeMonitor.shared
         HealthCheckCoordinator.shared.startMonitoring()
@@ -89,6 +92,25 @@ struct VirtuesApp: App {
             .onAppear {
                 // Start services based on current configuration
                 startAllServices()
+
+                // Check if this app version meets the server minimum
+                Task {
+                    await deviceManager.checkMinimumVersion()
+                }
+            }
+            .fullScreenCover(isPresented: Binding(
+                get: { deviceManager.updateRequired },
+                set: { _ in }
+            )) {
+                UpdateRequiredView()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    // Re-check version when user returns from TestFlight update
+                    Task {
+                        await deviceManager.checkMinimumVersion()
+                    }
+                }
             }
         }
     }
@@ -99,15 +121,25 @@ struct VirtuesApp: App {
             forTaskWithIdentifier: "com.virtues.ios.refresh",
             using: nil
         ) { task in
-            handleBackgroundRefresh(task: task as! BGAppRefreshTask)
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                print("❌ Unexpected task type for refresh task")
+                task.setTaskCompleted(success: false)
+                return
+            }
+            handleBackgroundRefresh(task: refreshTask)
         }
-        
+
         // Register background processing task
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: "com.virtues.ios.processing",
             using: nil
         ) { task in
-            handleBackgroundProcessing(task: task as! BGProcessingTask)
+            guard let processingTask = task as? BGProcessingTask else {
+                print("❌ Unexpected task type for processing task")
+                task.setTaskCompleted(success: false)
+                return
+            }
+            handleBackgroundProcessing(task: processingTask)
         }
     }
     
@@ -168,6 +200,7 @@ struct VirtuesApp: App {
         let financeKitManager = FinanceKitManager.shared
         let batteryManager = BatteryManager.shared
         let contactsManager = ContactsManager.shared
+        let eventKitManager = EventKitManager.shared
 
         // Schedule background refresh task (required for background execution)
         scheduleBackgroundRefresh()
@@ -175,51 +208,87 @@ struct VirtuesApp: App {
         // Start periodic uploads (this now handles all data collection)
         uploadCoordinator.startPeriodicUploads()
 
-        let config = deviceManager.configuration
-
-        #if DEBUG
-        print("🚀 Starting services with configuration:")
-        print("   Stream configurations: \(config.streamConfigurations.count) streams")
-        for (key, streamConfig) in config.streamConfigurations {
-            print("     - \(key): enabled=\(streamConfig.enabled), initialSyncDays=\(streamConfig.initialSyncDays)")
-        }
-        #endif
-
-        // Start location tracking if authorized AND enabled
-        if locationManager.hasPermission && config.isStreamEnabled("location") {
+        // Start location tracking if authorized
+        if locationManager.hasPermission {
             locationManager.startTracking()
         }
 
-        // Start audio recording if authorized AND enabled
-        if audioManager.hasPermission && config.isStreamEnabled("microphone") {
+        // Start audio recording if authorized
+        if audioManager.hasPermission {
             audioManager.startRecording()
         }
 
-        // Start HealthKit monitoring if authorized AND enabled
-        if healthKitManager.isAuthorized && config.isStreamEnabled("healthkit") {
+        // Start HealthKit monitoring if authorized
+        if healthKitManager.isAuthorized {
             healthKitManager.startMonitoring()
         }
 
-        // Start FinanceKit monitoring if authorized AND enabled
-        if financeKitManager.isAuthorized && config.isStreamEnabled("financekit") {
+        // Start FinanceKit monitoring if authorized
+        if financeKitManager.isAuthorized {
             financeKitManager.startMonitoring()
         }
 
-        // Start battery monitoring if enabled (no permission required)
-        if config.isStreamEnabled("battery") {
-            batteryManager.startMonitoring()
-        }
+        // Start battery monitoring (no permission required)
+        batteryManager.startMonitoring()
 
-        // Start barometer monitoring if enabled and available (no permission required)
-        if config.isStreamEnabled("barometer") && BarometerManager.isAvailable {
+        // Start barometer monitoring if available (no permission required)
+        if BarometerManager.isAvailable {
             BarometerManager.shared.startMonitoring()
         }
 
-        // Sync contacts if authorized AND enabled
-        if contactsManager.isAuthorized && config.isStreamEnabled("contacts") {
+        // Start EventKit monitoring if authorized
+        if eventKitManager.hasAnyPermission {
+            eventKitManager.startMonitoring()
+        }
+
+        // Sync contacts if authorized
+        if contactsManager.isAuthorized {
             Task {
                 await contactsManager.syncIfNeeded()
             }
         }
+    }
+}
+
+// MARK: - Update Required View
+
+struct UpdateRequiredView: View {
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            Image(systemName: "arrow.down.app")
+                .font(.system(size: 56))
+                .foregroundColor(.orange)
+
+            Text("Update Required")
+                .font(.system(.title, design: .serif))
+                .fontWeight(.semibold)
+
+            Text("A newer version of Virtues is required to continue. Please update from TestFlight.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+
+            Button(action: {
+                // Open TestFlight
+                if let url = URL(string: "itms-beta://") {
+                    UIApplication.shared.open(url)
+                }
+            }) {
+                Text("Open TestFlight")
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.orange)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+            }
+            .padding(.horizontal, 40)
+
+            Spacer()
+        }
+        .background(Color.warmBackground)
     }
 }

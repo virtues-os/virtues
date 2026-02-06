@@ -32,6 +32,11 @@ class FinanceKitManager: ObservableObject {
         get { UserDefaults.standard.bool(forKey: hasRequestedAuthKey) }
         set { UserDefaults.standard.set(newValue, forKey: hasRequestedAuthKey) }
     }
+
+    /// Public accessor for UI to check if authorization has been requested
+    var hasRequestedFinanceKitAuthorization: Bool {
+        hasRequestedAuthorization
+    }
     
     /// Initialize with dependency injection
     init(configProvider: ConfigurationProvider,
@@ -113,10 +118,14 @@ class FinanceKitManager: ObservableObject {
     
     func checkAuthorizationStatus() {
         Task {
-            let status = await financeStore.authorizationStatus
-            let authorized = (status == .authorized)
-            await MainActor.run {
-                self.isAuthorized = authorized
+            do {
+                let status = try await financeStore.authorizationStatus()
+                let authorized = (status == .authorized)
+                await MainActor.run {
+                    self.isAuthorized = authorized
+                }
+            } catch {
+                print("❌ Failed to check FinanceKit authorization status: \(error)")
             }
         }
     }
@@ -216,15 +225,18 @@ class FinanceKitManager: ObservableObject {
     }
     
     private func fetchAccounts() async throws -> [FinanceKitAccount] {
-        let accounts = try await financeStore.accounts
+        let query = AccountQuery()
+        let accounts = try await financeStore.accounts(query: query)
         return accounts.map { FinanceKitAccount(from: $0) }
     }
     
     private func fetchTransactions(from startDate: Date, to endDate: Date) async throws -> [FinanceKitTransaction] {
-        let predicate = Transaction.predicate(forTransactionsAfter: startDate, before: endDate)
-        let descriptor = TransactionQueryDescriptor(predicate: predicate)
-        
-        let transactions = try await financeStore.transactions(matching: descriptor)
+        let predicate = #Predicate<Transaction> { transaction in
+            transaction.transactionDate >= startDate && transaction.transactionDate <= endDate
+        }
+        let query = TransactionQuery(sortDescriptors: [], predicate: predicate)
+
+        let transactions = try await financeStore.transactions(query: query)
         return transactions.map { FinanceKitTransaction(from: $0) }
     }
     
@@ -264,8 +276,33 @@ class FinanceKitManager: ObservableObject {
 
 // MARK: - Models
 
+/// Wrapper matching the server's IngestRequest schema
 struct FinanceKitStreamData: Codable {
+    let source: String
+    let stream: String
     let deviceId: String
+    let records: [FinanceKitRecord]
+    let timestamp: String
+    let checkpoint: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case source, stream
+        case deviceId = "device_id"
+        case records, timestamp, checkpoint
+    }
+
+    init(deviceId: String, accounts: [FinanceKitAccount], transactions: [FinanceKitTransaction], checkpoint: String? = nil) {
+        self.source = "ios"
+        self.stream = "financekit"
+        self.deviceId = deviceId
+        self.records = [FinanceKitRecord(accounts: accounts, transactions: transactions)]
+        self.timestamp = ISO8601DateFormatter().string(from: Date())
+        self.checkpoint = checkpoint
+    }
+}
+
+/// A single record within the FinanceKit ingest payload
+struct FinanceKitRecord: Codable {
     let accounts: [FinanceKitAccount]
     let transactions: [FinanceKitTransaction]
 }
@@ -274,17 +311,13 @@ struct FinanceKitAccount: Codable {
     let id: String
     let name: String
     let institutionName: String
-    let type: String
-    let currencyCode: String
-    let currentBalance: Double
-    
+    let accountDescription: String?
+
     init(from account: Account) {
         self.id = account.id.uuidString
         self.name = account.displayName
         self.institutionName = account.institutionName
-        self.type = "\(account.accountType)"
-        self.currencyCode = account.balance.currencyCode
-        self.currentBalance = Double(account.balance.currentBalance.value)
+        self.accountDescription = account.accountDescription
     }
 }
 
@@ -294,21 +327,29 @@ struct FinanceKitTransaction: Codable {
     let amount: Double
     let currencyCode: String
     let date: Date
+    let postedDate: Date?
     let merchantName: String?
-    let category: String?
-    let status: String
-    let description: String?
-    
+    let creditDebitIndicator: String
+    let transactionDescription: String?
+
     init(from transaction: Transaction) {
         self.id = transaction.id.uuidString
         self.accountId = transaction.accountID.uuidString
-        self.amount = Double(transaction.amount.value)
-        self.currencyCode = transaction.amount.currencyCode
+        self.amount = Double(truncating: transaction.transactionAmount.amount as NSNumber)
+        self.currencyCode = transaction.transactionAmount.currencyCode
         self.date = transaction.transactionDate
-        self.merchantName = transaction.merchant?.displayName
-        self.category = transaction.category?.displayName
-        self.status = "\(transaction.status)"
-        self.description = transaction.originalTransactionDescription
+        self.postedDate = transaction.postedDate
+        self.merchantName = transaction.merchantName
+        self.creditDebitIndicator = Self.mapCreditDebitIndicator(transaction.creditDebitIndicator)
+        self.transactionDescription = transaction.transactionDescription
+    }
+
+    private static func mapCreditDebitIndicator(_ indicator: CreditDebitIndicator) -> String {
+        switch indicator {
+        case .credit: return "credit"
+        case .debit: return "debit"
+        @unknown default: return "unknown"
+        }
     }
 }
 
@@ -318,8 +359,7 @@ extension FinanceKitManager: HealthCheckable {
     var healthCheckName: String { "FinanceKitManager" }
     
     func performHealthCheck() -> HealthStatus {
-        guard configProvider.isStreamEnabled("financekit") else { return .disabled }
-        guard isAuthorized else { return .unhealthy(reason: "FinanceKit not authorized") }
+        guard isAuthorized else { return .disabled }
         if isMonitoring && financeTimer == nil {
             startMonitoring()
             return .unhealthy(reason: "Timer stopped unexpectedly, restarting")

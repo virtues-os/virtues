@@ -1,54 +1,56 @@
 //! Google source registration for the catalog
+//!
+//! This module provides the unified registration for Google sources, including
+//! both UI metadata, transform logic, and stream creation in a single place.
 
-use crate::registry::{AuthType, OAuthConfig, RegisteredSource, RegisteredStream, SourceRegistry};
+use crate::registry::{RegisteredSource, RegisteredStream, SourceRegistry};
 use crate::sources::base::SyncStrategy;
+use crate::sources::stream_type::StreamType;
 use serde_json::json;
+
+// Import transforms and stream types for unified registration
+use super::calendar::{transform::GoogleCalendarTransform, GoogleCalendarStream};
+use super::gmail::{transform::GmailEmailTransform, GoogleGmailStream};
 
 /// Google source registration
 pub struct GoogleSource;
 
 impl SourceRegistry for GoogleSource {
     fn descriptor() -> RegisteredSource {
+        // Metadata is now in virtues-registry
+        let descriptor = virtues_registry::sources::get_source("google")
+            .expect("Google source not found in virtues-registry");
+
         RegisteredSource {
-            name: "google",
-            display_name: "Google",
-            description: "Sync data from Google Workspace services (Calendar, Gmail, Drive)",
-            auth_type: AuthType::OAuth2,
-            oauth_config: Some(OAuthConfig {
-                scopes: vec![
-                    "https://www.googleapis.com/auth/calendar.readonly",
-                    "https://www.googleapis.com/auth/gmail.readonly",
-                ],
-                auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
-                token_url: "https://oauth2.googleapis.com/token",
-            }),
-            icon: Some("ri:google-fill"),
+            descriptor,
             streams: vec![
-                // Calendar stream
+                // Calendar stream with unified transform and stream creator registration
                 RegisteredStream::new("calendar")
-                    .display_name("Google Calendar")
-                    .description(
-                        "Sync calendar events with attendees, locations, and conference details",
-                    )
-                    .table_name("stream_google_calendar")
-                    .target_ontologies(vec!["praxis_calendar"])
                     .config_schema(calendar_config_schema())
                     .config_example(calendar_config_example())
-                    .supports_incremental(true)
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 0 */6 * * *") // Every 6 hours (6-field: sec min hour day month dow)
+                    .transform("calendar", |_ctx| Ok(Box::new(GoogleCalendarTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Pull(Box::new(GoogleCalendarStream::new(
+                            ctx.source_id.clone(),
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                            ctx.auth.clone(),
+                        ))))
+                    })
                     .build(),
-                // Gmail stream
+                // Gmail stream with unified transform and stream creator registration
                 RegisteredStream::new("gmail")
-                    .display_name("Gmail")
-                    .description("Sync email messages and threads with full metadata")
-                    .table_name("stream_google_gmail")
-                    .target_ontologies(vec!["social_email"])
                     .config_schema(gmail_config_schema())
                     .config_example(gmail_config_example())
-                    .supports_incremental(true)
-                    .supports_full_refresh(true)
-                    .default_cron_schedule("0 */15 * * * *") // Every 15 minutes (6-field: sec min hour day month dow)
+                    .transform("social_email", |_ctx| Ok(Box::new(GmailEmailTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Pull(Box::new(GoogleGmailStream::new(
+                            ctx.source_id.clone(),
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                            ctx.auth.clone(),
+                        ))))
+                    })
                     .build(),
             ],
         }
@@ -164,37 +166,40 @@ fn gmail_config_example() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::AuthType;
 
     #[test]
     fn test_google_descriptor() {
         let desc = GoogleSource::descriptor();
-        assert_eq!(desc.name, "google");
-        assert_eq!(desc.auth_type, AuthType::OAuth2);
-        assert!(desc.oauth_config.is_some());
+        assert_eq!(desc.descriptor.name, "google");
+        assert_eq!(desc.descriptor.auth_type, AuthType::OAuth2);
+        assert!(desc.descriptor.oauth_config.is_some());
         assert_eq!(desc.streams.len(), 2);
     }
 
     #[test]
     fn test_calendar_stream() {
         let desc = GoogleSource::descriptor();
-        let calendar = desc.streams.iter().find(|s| s.name == "calendar");
+        let calendar = desc.streams.iter().find(|s| s.descriptor.name == "calendar");
         assert!(calendar.is_some());
 
         let cal = calendar.unwrap();
-        assert_eq!(cal.table_name, "stream_google_calendar");
-        assert!(cal.supports_incremental);
-        assert!(cal.supports_full_refresh);
+        assert_eq!(cal.descriptor.table_name, "stream_google_calendar");
+        assert!(cal.descriptor.supports_incremental);
+        assert!(cal.descriptor.supports_full_refresh);
     }
 
     #[test]
     fn test_gmail_stream() {
         let desc = GoogleSource::descriptor();
-        let gmail = desc.streams.iter().find(|s| s.name == "gmail");
+        let gmail = desc.streams.iter().find(|s| s.descriptor.name == "gmail");
         assert!(gmail.is_some());
 
         let gm = gmail.unwrap();
-        assert_eq!(gm.table_name, "stream_google_gmail");
-        assert!(gm.supports_incremental);
+        assert_eq!(gm.descriptor.table_name, "stream_google_gmail");
+        assert!(gm.descriptor.supports_incremental);
+        // Gmail is disabled in virtues-registry by default
+        assert!(!gm.descriptor.enabled);
     }
 
     #[test]

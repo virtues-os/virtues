@@ -6,7 +6,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use std::collections::HashMap;
-use uuid::Uuid;
 
 use crate::error::Result;
 
@@ -66,7 +65,7 @@ impl StreamWriter {
     /// Records accumulate in memory until extracted via `collect_records()`.
     pub fn write_record(
         &mut self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
         record: Value,
         timestamp: Option<DateTime<Utc>>,
@@ -87,7 +86,7 @@ impl StreamWriter {
     /// Returns: (records, min_timestamp, max_timestamp)
     pub fn collect_records(
         &mut self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
     ) -> Option<(Vec<Value>, Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
         let buffer_key = format!("{}:{}", source_id, stream_name);
@@ -102,7 +101,7 @@ impl StreamWriter {
     }
 
     /// Get record count for a stream (for monitoring)
-    pub fn buffer_count(&self, source_id: Uuid, stream_name: &str) -> usize {
+    pub fn buffer_count(&self, source_id: &str, stream_name: &str) -> usize {
         let buffer_key = format!("{}:{}", source_id, stream_name);
         self.buffers.get(&buffer_key).map_or(0, |b| b.records.len())
     }
@@ -122,7 +121,7 @@ mod tests {
     #[test]
     fn test_buffer_and_collect() {
         let mut writer = StreamWriter::new();
-        let source_id = Uuid::new_v4();
+        let source_id = "test-source";
         let stream_name = "test_stream";
 
         // Write records
@@ -150,7 +149,7 @@ mod tests {
     #[test]
     fn test_timestamp_tracking() {
         let mut writer = StreamWriter::new();
-        let source_id = Uuid::new_v4();
+        let source_id = "test-source";
         let stream_name = "test_stream";
 
         let ts1 = Utc::now();

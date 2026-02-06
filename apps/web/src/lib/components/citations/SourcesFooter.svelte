@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Citation, CitationContext } from "$lib/types/Citation";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let { context, onCitationClick } = $props<{
 		context: CitationContext | undefined;
@@ -37,8 +37,7 @@
 		switch (type) {
 			case "ontology":
 				return "Personal Data";
-			case "axiology":
-				return "Values";
+
 			case "web_search":
 				return "Web";
 			case "narratives":
@@ -59,13 +58,13 @@
 			aria-expanded={expanded}
 		>
 			<div class="header-left">
-				<iconify-icon
+				<Icon
 					icon={expanded
 						? "ri:arrow-down-s-line"
 						: "ri:arrow-right-s-line"}
 					width="16"
 					height="16"
-				></iconify-icon>
+				/>
 				<span class="header-title">Sources</span>
 				<span class="citation-count">({context.citations.length})</span>
 			</div>
@@ -75,11 +74,11 @@
 				<div class="pills-preview">
 					{#each context.citations.slice(0, 4) as citation}
 						<span class="preview-pill {citation.color}">
-							<iconify-icon
+							<Icon
 								icon={citation.icon}
 								width="12"
 								height="12"
-							></iconify-icon>
+							/>
 						</span>
 					{/each}
 					{#if context.citations.length > 4}
@@ -101,11 +100,11 @@
 							onkeydown={(e) => handleKeyDown(e, citation)}
 						>
 							<div class="source-icon {citation.color}">
-								<iconify-icon
+								<Icon
 									icon={citation.icon}
 									width="16"
 									height="16"
-								></iconify-icon>
+								/>
 							</div>
 							<div class="source-content">
 								<div class="source-header">
@@ -122,12 +121,12 @@
 									>{citation.preview}</span
 								>
 							</div>
-							<iconify-icon
+							<Icon
 								icon="ri:arrow-right-s-line"
 								width="16"
 								height="16"
 								class="arrow-icon"
-							></iconify-icon>
+							/>
 						</button>
 					</li>
 				{/each}

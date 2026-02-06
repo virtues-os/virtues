@@ -52,12 +52,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::Sync { source_id } => {
-            let source_id = source_id.parse()?;
-
             println!("Syncing source: {}...", source_id);
 
             // Get all enabled streams for this source
-            let streams = crate::list_source_streams(virtues.database.pool(), source_id).await?;
+            let streams = crate::list_source_streams(virtues.database.pool(), source_id.clone()).await?;
             let enabled_streams: Vec<_> = streams.iter().filter(|s| s.is_enabled).collect();
 
             if enabled_streams.is_empty() {
@@ -82,7 +80,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                     virtues.database.pool(),
                     &*virtues.storage,
                     stream_writer_arc.clone(),
-                    source_id,
+                    source_id.clone(),
                     &stream.stream_name,
                     Some(sync_mode.clone()),
                 )
@@ -111,6 +109,16 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::Server { host, port } => {
+            // Run migrations and seed data
+            println!("📊 Running migrations...");
+            virtues.database.initialize().await?;
+            println!("✅ Migrations complete");
+
+            println!("🌱 Seeding defaults...");
+            crate::seeding::prod_seed::seed_production_data(&virtues.database).await?;
+            println!("✅ Seeding complete");
+            println!();
+
             println!("Starting Virtues server on {}:{}", host, port);
             println!("API available at http://{}:{}/api", host, port);
             println!("Health check: http://{}:{}/health", host, port);
@@ -119,6 +127,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
             crate::server::run(virtues, &host, port).await?;
         }
+
+        Commands::Ngrok => {
+            commands::handle_ngrok_command(virtues).await?;
+        }
+
+
     }
 
     Ok(())

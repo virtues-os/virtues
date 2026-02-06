@@ -50,6 +50,8 @@ struct DataView: View {
     @ObservedObject private var batteryManager = BatteryManager.shared
     @ObservedObject private var contactsManager = ContactsManager.shared
     @ObservedObject private var barometerManager = BarometerManager.shared
+    @ObservedObject private var financeKitManager = FinanceKitManager.shared
+    @ObservedObject private var eventKitManager = EventKitManager.shared
 
     // Tab selection
     @State private var selectedTab: DataTab = .streams
@@ -61,6 +63,8 @@ struct DataView: View {
     @State private var showContactsInfo = false
     @State private var showBatteryInfo = false
     @State private var showBarometerInfo = false
+    @State private var showFinanceKitInfo = false
+    @State private var showEventKitInfo = false
 
     // Permission denial alert state
     @State private var showPermissionDeniedAlert = false
@@ -110,6 +114,12 @@ struct DataView: View {
         }
         .sheet(isPresented: $showBarometerInfo) {
             BarometerInfoView()
+        }
+        .sheet(isPresented: $showFinanceKitInfo) {
+            FinanceKitInfoView()
+        }
+        .sheet(isPresented: $showEventKitInfo) {
+            EventKitInfoView()
         }
         .alert("Permission Required", isPresented: $showPermissionDeniedAlert) {
             Button("OK", role: .cancel) { }
@@ -209,6 +219,34 @@ struct DataView: View {
                 )
 
                 StreamToggleRow(
+                    icon: "creditcard.fill",
+                    iconColor: .green,
+                    title: "FinanceKit",
+                    subtitle: "Apple Card & Cash",
+                    isEnabled: financeKitEnabled,
+                    onToggle: { enabled in
+                        Task { await toggleFinanceKit(enabled) }
+                    },
+                    onInfoTap: { showFinanceKitInfo = true },
+                    permissionState: financeKitPermissionState,
+                    onPermissionTap: financeKitPermissionState == .denied ? openSettings : nil
+                )
+
+                StreamToggleRow(
+                    icon: "calendar",
+                    iconColor: .red,
+                    title: "EventKit",
+                    subtitle: "Calendar & Reminders",
+                    isEnabled: eventKitEnabled,
+                    onToggle: { enabled in
+                        Task { await toggleEventKit(enabled) }
+                    },
+                    onInfoTap: { showEventKitInfo = true },
+                    permissionState: eventKitPermissionState,
+                    onPermissionTap: eventKitPermissionState == .denied ? openSettings : nil
+                )
+
+                StreamToggleRow(
                     icon: "battery.75percent",
                     iconColor: .warmSuccess,
                     title: "Battery",
@@ -273,6 +311,14 @@ struct DataView: View {
         barometerManager.isMonitoring
     }
 
+    private var financeKitEnabled: Bool {
+        financeKitManager.isMonitoring
+    }
+
+    private var eventKitEnabled: Bool {
+        eventKitManager.isMonitoring
+    }
+
     // MARK: - Permission States
 
     private var healthKitPermissionState: PermissionState {
@@ -314,9 +360,24 @@ struct DataView: View {
         contactsManager.isAuthorized ? .granted : .undetermined
     }
 
+    private var financeKitPermissionState: PermissionState {
+        if financeKitManager.isAuthorized {
+            return .granted
+        }
+        return financeKitManager.hasRequestedFinanceKitAuthorization ? .denied : .undetermined
+    }
+
+    private var eventKitPermissionState: PermissionState {
+        if eventKitManager.hasAnyPermission {
+            return .granted
+        }
+        // EventKit doesn't track "has requested" so use undetermined
+        return .undetermined
+    }
+
     /// True if any additional sensor is enabled but location (the core sensor) is not
     private var hasAdditionalSensorsWithoutLocation: Bool {
-        let anyAdditionalEnabled = audioEnabled || healthKitEnabled || contactsEnabled || batteryEnabled || barometerEnabled
+        let anyAdditionalEnabled = audioEnabled || healthKitEnabled || contactsEnabled || batteryEnabled || barometerEnabled || financeKitEnabled || eventKitEnabled
         return anyAdditionalEnabled && !locationEnabled
     }
 
@@ -408,6 +469,47 @@ struct DataView: View {
             }
         } else {
             contactsManager.stopSyncing()
+        }
+    }
+
+    private func toggleFinanceKit(_ enabled: Bool) async {
+        if enabled {
+            if !financeKitManager.isAuthorized {
+                let granted = await financeKitManager.requestAuthorization()
+                if granted {
+                    financeKitManager.startMonitoring()
+                } else {
+                    showPermissionDenied(
+                        type: "FinanceKit",
+                        message: "Financial data collection requires FinanceKit access. Please enable it in Settings to track Apple Card and Apple Cash transactions."
+                    )
+                }
+            } else {
+                financeKitManager.startMonitoring()
+            }
+        } else {
+            financeKitManager.stopMonitoring()
+        }
+    }
+
+    private func toggleEventKit(_ enabled: Bool) async {
+        if enabled {
+            if !eventKitManager.hasAnyPermission {
+                let calendarGranted = await eventKitManager.requestCalendarAuthorization()
+                let remindersGranted = await eventKitManager.requestRemindersAuthorization()
+                if calendarGranted || remindersGranted {
+                    eventKitManager.startMonitoring()
+                } else {
+                    showPermissionDenied(
+                        type: "EventKit",
+                        message: "Calendar and Reminders access is needed to sync your events. Please enable it in Settings."
+                    )
+                }
+            } else {
+                eventKitManager.startMonitoring()
+            }
+        } else {
+            eventKitManager.stopMonitoring()
         }
     }
 

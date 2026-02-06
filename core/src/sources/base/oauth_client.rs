@@ -26,7 +26,6 @@ use reqwest::{header::HeaderMap, Client, RequestBuilder, Response, StatusCode};
 use serde::{de::DeserializeOwned, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use uuid::Uuid;
 
 use super::error_handler::{DefaultErrorHandler, ErrorClass, ErrorHandler};
 use super::oauth::TokenManager;
@@ -89,7 +88,7 @@ impl RetryConfig {
 
 /// Universal OAuth HTTP client with automatic token management and retry logic
 pub struct OAuthHttpClient {
-    source_id: Uuid,
+    source_id: String,
     token_manager: Arc<TokenManager>,
     base_url: String,
     client: Client,
@@ -102,9 +101,9 @@ impl OAuthHttpClient {
     /// Create a new OAuth HTTP client
     ///
     /// # Arguments
-    /// * `source_id` - UUID of the source for token lookups
+    /// * `source_id` - ID of the source for token lookups
     /// * `token_manager` - Shared token manager for OAuth token operations
-    pub fn new(source_id: Uuid, token_manager: Arc<TokenManager>) -> Self {
+    pub fn new(source_id: String, token_manager: Arc<TokenManager>) -> Self {
         // Configure HTTP client with timeouts to prevent infinite hangs
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(10)) // TCP connection timeout
@@ -212,7 +211,7 @@ impl OAuthHttpClient {
 
         for attempt in 0..self.config.max_retries {
             // Get a valid token (TokenManager handles caching and refresh)
-            let token = self.token_manager.get_valid_token(self.source_id).await?;
+            let token = self.token_manager.get_valid_token(self.source_id.clone()).await?;
 
             // Clone the request builder for this attempt
             let mut request = request_builder
@@ -355,7 +354,7 @@ mod tests {
     async fn test_backoff_calculation() {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
-        let client = OAuthHttpClient::new(Uuid::new_v4(), token_manager);
+        let client = OAuthHttpClient::new("test-source".to_string(), token_manager);
 
         assert_eq!(client.calculate_backoff(0), Duration::from_secs(1));
         assert_eq!(client.calculate_backoff(1), Duration::from_secs(2));
@@ -370,7 +369,7 @@ mod tests {
     async fn test_build_url() {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let token_manager = Arc::new(TokenManager::new_insecure(pool));
-        let client = OAuthHttpClient::new(Uuid::new_v4(), token_manager)
+        let client = OAuthHttpClient::new("test-source".to_string(), token_manager)
             .with_base_url("https://api.example.com/v1");
 
         assert_eq!(

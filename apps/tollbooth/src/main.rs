@@ -18,7 +18,9 @@ mod models;
 mod providers;
 mod proxy;
 mod routes;
+mod subscription;
 mod tier;
+pub mod version;
 
 use anyhow::Result;
 use axum::{routing::get, Router};
@@ -30,13 +32,17 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::budget::BudgetManager;
 use crate::config::Config;
+use crate::subscription::SubscriptionManager;
 use crate::tier::TierManager;
+use crate::version::VersionCache;
 
 /// Shared application state
 pub struct AppState {
     pub config: Arc<Config>,
     pub budget: BudgetManager,
     pub tier: TierManager,
+    pub subscription: SubscriptionManager,
+    pub version_cache: VersionCache,
     pub http_client: reqwest::Client,
 }
 
@@ -78,23 +84,11 @@ async fn main() -> Result<()> {
         mode
     );
 
-    // Log configured providers for debugging
+    // Log AI Gateway configuration
     tracing::info!(
-        "LLM providers configured: OpenAI={}, Anthropic={}, Cerebras={}, VertexAI={}, xAI={}",
-        config.openai_api_key.is_some(),
-        config.anthropic_api_key.is_some(),
-        config.cerebras_api_key.is_some(),
-        config.google_cloud_project.is_some(),
-        config.xai_api_key.is_some()
+        "Vercel AI Gateway: url={}",
+        config.ai_gateway_url
     );
-
-    if config.google_cloud_project.is_some() {
-        tracing::info!(
-            "Vertex AI: project={}, region={}",
-            config.google_cloud_project.as_deref().unwrap_or("(not set)"),
-            config.google_cloud_region
-        );
-    }
 
     // Log external services configuration
     tracing::info!(
@@ -104,23 +98,32 @@ async fn main() -> Result<()> {
         config.has_plaid()
     );
 
-    // Verify at least one provider is configured
-    if !config.has_llm_provider() {
-        tracing::warn!("No LLM provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_CLOUD_PROJECT, CEREBRAS_API_KEY, or XAI_API_KEY.");
-    }
-
     // Initialize tier manager
     let tier = TierManager::new();
 
+    // Initialize subscription manager
+    let subscription = SubscriptionManager::new();
+
+    // Initialize version cache (shared between BudgetManager and route handlers)
+    let version_cache = VersionCache::new();
+
     // Initialize budget manager (hydrates from Atlas if configured)
-    // Also populates tier manager with user tiers
-    let budget = BudgetManager::new(&config, &tier).await?;
-    let budget_clone = budget.clone();
+    // Also populates tier manager with user tiers and subscription manager with subscription status
+    let budget = BudgetManager::new(&config, &tier, &subscription, version_cache.clone()).await?;
+    let budget_reporter = budget.clone();
     let report_interval = config.atlas_report_interval_secs;
 
     // Start usage reporter (only reports if Atlas is configured)
     tokio::spawn(async move {
-        budget_clone.run_reporter(report_interval).await;
+        budget_reporter.run_reporter(report_interval).await;
+    });
+
+    let budget_rehydrator = budget.clone();
+    let rehydrate_interval = config.atlas_rehydrate_interval_secs;
+
+    // Start periodic re-hydration (catches subscription changes, trial expirations, etc.)
+    tokio::spawn(async move {
+        budget_rehydrator.run_rehydrator(rehydrate_interval).await;
     });
 
     // Build HTTP client for embeddings and other direct API calls
@@ -133,6 +136,8 @@ async fn main() -> Result<()> {
         config,
         budget,
         tier,
+        subscription,
+        version_cache,
         http_client,
     });
 
@@ -149,6 +154,10 @@ async fn main() -> Result<()> {
         .nest("/v1", routes::plaid::router())
         // Connection limits (tier-based)
         .nest("/v1", routes::limits::router())
+        // Subscription status and billing portal
+        .nest("/v1", routes::subscription::router())
+        // Version checking and updates
+        .nest("/v1", routes::version::router())
         // Middleware
         .layer(TraceLayer::new_for_http())
         .layer(

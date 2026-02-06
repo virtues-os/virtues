@@ -9,7 +9,7 @@
 	import type { PlacePage as PlacePageType } from "$lib/wiki/types";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		page: PlacePageType;
@@ -157,7 +157,7 @@
 					<ul class="footer-list">
 						{#each page.associatedPeople as person}
 							<li>
-								<a href="/wiki/{person.pageSlug}" class="footer-link">
+								<a href="/wiki/{person.pageId}" class="footer-link">
 									<span class="link-text">{person.displayName}</span>
 								</a>
 							</li>
@@ -173,7 +173,7 @@
 					<ul class="footer-list">
 						{#each page.narrativeContext as context}
 							<li>
-								<a href="/wiki/{context.pageSlug}" class="footer-link">
+								<a href="/wiki/{context.pageId}" class="footer-link">
 									<span class="link-text">{context.displayName}</span>
 								</a>
 							</li>

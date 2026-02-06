@@ -1,52 +1,53 @@
 /**
- * Tab type definitions.
- * 
- * Uses a flat interface with optional properties for backwards compatibility.
- * Type guards are provided for type narrowing when stricter types are needed.
+ * Tab type definitions for namespace-based URL routing.
+ *
+ * URL structure:
+ * - Entity namespaces: /{namespace} (list) or /{namespace}/{namespace}_{id} (detail)
+ * - Storage namespaces: /drive, /lake (with subpaths)
+ * - System namespace: /virtues/{page}
  */
 
-// All supported tab types
+// All supported tab types - consolidated namespace-based types
 export type TabType =
-	| 'chat'
-	| 'history'
-	| 'session-context'
-	| 'pages'
-	| 'page-detail'
-	| 'wiki'
-	| 'wiki-list'
-	| 'data-sources'
-	| 'data-sources-add'
-	| 'data-entities'
-	| 'data-jobs'
-	| 'data-drive'
-	| 'usage'
-	| 'profile'
-	| 'developer-sql'
-	| 'developer-terminal'
-	| 'feedback'
+	// Entity namespaces (SQLite backend)
+	| 'chat' // Chat conversations: /, /chat, /chat/chat_{id}
+	| 'chat-history' // Chat history list: /chat-history
+	| 'page' // User documents: /page, /page/page_{id}
+	| 'wiki' // Wiki overview: /wiki
+	| 'person' // Wiki people: /person, /person/person_{id}
+	| 'place' // Wiki places: /place, /place/place_{id}
+	| 'org' // Wiki organizations: /org, /org/org_{id}
+	| 'day' // Wiki days: /day, /day/day_{date}
+	| 'year' // Wiki years: /year, /year/{year}
+	| 'source' // Data sources: /source, /source/source_{id}
+	// Storage namespaces
+	| 'drive' // Personal files: /drive, /drive/{path}
+	| 'trash' // Drive trash: /trash
+	// System namespace
+	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap|feedback}
+	// Easter eggs
 	| 'conway'
 	| 'dog-jump';
 
 /**
  * Tab interface - flat structure with optional type-specific properties.
- * This maintains backwards compatibility with existing views.
+ *
+ * Note: Entity IDs (e.g., 'chat_abc123') are derived from `route` using
+ * `routeToEntityId(tab.route)`. The route is the source of truth.
  */
 export interface Tab {
 	id: string;
 	type: TabType;
 	label: string;
-	route: string;
+	route: string; // URL-native: '/chat/chat_abc123', '/page/page_xyz'
 	icon?: string;
 	pinned?: boolean;
 
-	// Type-specific data (optional for all)
-	conversationId?: string; // For chat tabs
-	linkedConversationId?: string; // For session-context tabs (links to chat)
-	pageId?: string; // For page-detail tabs
-	slug?: string; // For wiki entity tabs
-	sourceId?: string; // For data source detail tabs
-	wikiCategory?: string; // For wiki-list tabs (people, places, etc.)
-	profileSection?: string; // For profile tabs (account, assistant)
+	// Storage path (for drive/lake namespaces)
+	storagePath?: string; // e.g., 'photos/2024/vacation.jpg'
+
+	// System page (for virtues namespace)
+	virtuesPage?: string; // e.g., 'account', 'usage', 'sql'
 
 	scrollPosition?: number;
 	createdAt: number;
@@ -57,78 +58,52 @@ export function isChatTab(tab: Tab): tab is Tab & { type: 'chat' } {
 	return tab.type === 'chat';
 }
 
-export function isSessionContextTab(tab: Tab): tab is Tab & { type: 'session-context' } {
-	return tab.type === 'session-context';
+export function isPageTab(tab: Tab): tab is Tab & { type: 'page' } {
+	return tab.type === 'page';
 }
 
-export function isPageDetailTab(tab: Tab): tab is Tab & { type: 'page-detail' } {
-	return tab.type === 'page-detail';
+export function isPersonTab(tab: Tab): tab is Tab & { type: 'person' } {
+	return tab.type === 'person';
 }
 
-export function isWikiTab(tab: Tab): tab is Tab & { type: 'wiki' } {
-	return tab.type === 'wiki';
+export function isPlaceTab(tab: Tab): tab is Tab & { type: 'place' } {
+	return tab.type === 'place';
 }
 
-export function isWikiListTab(tab: Tab): tab is Tab & { type: 'wiki-list' } {
-	return tab.type === 'wiki-list';
+export function isOrgTab(tab: Tab): tab is Tab & { type: 'org' } {
+	return tab.type === 'org';
 }
 
-export function isDataSourcesTab(tab: Tab): tab is Tab & { type: 'data-sources' } {
-	return tab.type === 'data-sources';
+export function isDayTab(tab: Tab): tab is Tab & { type: 'day' } {
+	return tab.type === 'day';
 }
 
-export function isProfileTab(tab: Tab): tab is Tab & { type: 'profile' } {
-	return tab.type === 'profile';
+export function isYearTab(tab: Tab): tab is Tab & { type: 'year' } {
+	return tab.type === 'year';
 }
 
-// Fallback view preference type
-export type FallbackView = 'empty' | 'chat' | 'conway' | 'dog-jump' | 'wiki-today';
-
-// Domain groups for hybrid navigation (same domain = navigate in place)
-export type TabDomain = 'chat' | 'pages' | 'wiki' | 'data' | 'settings' | 'developer';
-
-export function getTabDomain(type: TabType): TabDomain {
-	switch (type) {
-		case 'chat':
-		case 'history':
-		case 'session-context':
-			return 'chat';
-		case 'pages':
-		case 'page-detail':
-			return 'pages';
-		case 'wiki':
-		case 'wiki-list':
-			return 'wiki';
-		case 'data-sources':
-		case 'data-sources-add':
-		case 'data-entities':
-		case 'data-jobs':
-		case 'data-drive':
-		case 'usage':
-			return 'data';
-		case 'profile':
-		case 'feedback':
-			return 'settings';
-		case 'developer-sql':
-		case 'developer-terminal':
-			return 'developer';
-		default:
-			return 'chat';
-	}
+export function isSourceTab(tab: Tab): tab is Tab & { type: 'source' } {
+	return tab.type === 'source';
 }
 
-// Split screen state
+export function isDriveTab(tab: Tab): tab is Tab & { type: 'drive' } {
+	return tab.type === 'drive';
+}
+
+export function isTrashTab(tab: Tab): tab is Tab & { type: 'trash' } {
+	return tab.type === 'trash';
+}
+
+export function isVirtuesTab(tab: Tab): tab is Tab & { type: 'virtues' } {
+	return tab.type === 'virtues';
+}
+
+// Pane state - unified model where every tab lives in a pane
 export interface PaneState {
-	id: 'left' | 'right';
+	id: string; // 'left', 'right', or could be UUID for future N-pane
 	tabs: Tab[];
 	activeTabId: string | null;
-	width: number; // percentage (e.g., 50)
-}
-
-export interface SplitState {
-	enabled: boolean;
-	panes: [PaneState, PaneState] | null;
-	activePaneId: 'left' | 'right';
+	width: number; // percentage (e.g., 50 or 100)
 }
 
 // Route parsing result (used by parseRoute)
@@ -136,11 +111,17 @@ export interface ParsedRoute {
 	type: TabType;
 	label: string;
 	icon: string;
-	conversationId?: string;
-	linkedConversationId?: string;
-	pageId?: string;
-	slug?: string;
-	sourceId?: string;
-	wikiCategory?: string;
-	profileSection?: string;
+	entityId?: string;
+	storagePath?: string;
+	virtuesPage?: string;
+	/** If set, use this route instead of the original (e.g., /day → /day/day_2026-01-25) */
+	normalizedRoute?: string;
 }
+
+// Re-export URL utilities for backward compatibility
+// These are now defined in $lib/utils/urlUtils.ts
+export {
+	parseEntityId,
+	entityIdToRoute,
+	routeToEntityId
+} from '$lib/utils/urlUtils';

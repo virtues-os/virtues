@@ -1,12 +1,11 @@
 /**
- * Tab Registry - Declarative tab definitions with dynamic component dispatch.
- * 
- * Replaces the if-else chain in TabContent.svelte with a registry-based approach.
- * Each tab type has its own definition including:
- * - Route matching and parsing
- * - URL serialization/deserialization
- * - Metadata (icon, label)
- * - Component reference
+ * Tab Registry - Namespace-based tab definitions with URL routing.
+ *
+ * URL Patterns:
+ * - Entity namespaces: /{namespace} (list) or /{namespace}/{namespace}_{id} (detail)
+ * - Storage: /drive, /drive/{path}
+ * - System: /virtues/{page}
+ * - Easter eggs: /life, /jump
  */
 
 import type { Component } from 'svelte';
@@ -15,7 +14,6 @@ import type { TabType, ParsedRoute } from './types';
 // Import all view components
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
 import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
-import ContextView from '$lib/components/tabs/views/ContextView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
 import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
@@ -24,11 +22,16 @@ import DataSourceDetailView from '$lib/components/tabs/views/DataSourceDetailVie
 import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 import JobsView from '$lib/components/tabs/views/JobsView.svelte';
 import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
-import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
+import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
+import TrashView from '$lib/components/tabs/views/TrashView.svelte';
 import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
-import AddSourceView from '$lib/components/tabs/views/AddSourceView.svelte';
+import DeveloperSitemapView from '$lib/components/tabs/views/DeveloperSitemapView.svelte';
+import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svelte';
+// AddSourceView removed - source connection now handled via modals in DataSourcesView
+import BillingView from '$lib/components/tabs/views/BillingView.svelte';
+import ChangelogView from '$lib/components/tabs/views/ChangelogView.svelte';
 import FeedbackView from '$lib/components/tabs/views/FeedbackView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
@@ -48,332 +51,445 @@ export interface TabDefinition {
 	icon: string;
 	defaultLabel: string;
 
-	// Component reference (synchronous for simplicity)
+	// Component reference
 	// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
 	component: Component<any>;
 
-	// Optional: determines if a tab needs a detail variant
-	hasDetail?: boolean;
+	// Optional: detail component for entity namespaces
+	// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
+	detailComponent?: Component<any>;
 }
 
-// Complete tab registry
+// Complete tab registry with namespace-based URL patterns
 export const tabRegistry: Record<TabType, TabDefinition> = {
-	'chat': {
-		match: (path) => path === '/',
-		parse: (_path, params) => ({
-			type: 'chat',
-			label: params.get('conversationId') ? 'Chat' : 'New Chat',
-			icon: 'ri:chat-1-line',
-			conversationId: params.get('conversationId') || undefined,
-		}),
-		serialize: (id) => id ? `chat_${id}` : 'chat',
+	// ========================================================================
+	// CHAT NAMESPACE: /, /chat, /chat/chat_{id}
+	// ========================================================================
+	chat: {
+		match: (path) => path === '/' || path === '/chat' || /^\/chat\/chat_[^/]+$/.test(path),
+		parse: (path) => {
+			// Root or /chat = new chat
+			if (path === '/' || path === '/chat') {
+				return {
+					type: 'chat',
+					label: 'New Chat',
+					icon: 'ri:chat-1-line',
+					normalizedRoute: '/chat',
+				};
+			}
+			// Detail view
+			const match = path.match(/^\/chat\/(chat_[^/]+)$/);
+			return {
+				type: 'chat',
+				label: 'Chat',
+				icon: 'ri:chat-1-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `chat_${id}` : 'chat'),
 		deserialize: (serialized) => {
-			const id = serialized.startsWith('chat_') ? serialized.slice(5) : undefined;
-			return id ? `/?conversationId=${id}` : '/';
+			if (serialized.startsWith('chat_')) {
+				return `/chat/${serialized}`;
+			}
+			return '/chat';
 		},
 		icon: 'ri:chat-1-line',
-		defaultLabel: 'New Chat',
+		defaultLabel: 'Chats',
 		component: ChatView,
+		detailComponent: ChatView,
 	},
 
-	'history': {
-		match: (path) => path === '/history',
+	// ========================================================================
+	// CHAT HISTORY: /chat-history
+	// ========================================================================
+	'chat-history': {
+		match: (path) => path === '/chat-history',
 		parse: () => ({
-			type: 'history',
-			label: 'History',
-			icon: 'ri:history-line',
+			type: 'chat-history',
+			label: 'All Chats',
+			icon: 'ri:chat-history-line',
 		}),
-		serialize: () => 'history',
-		deserialize: () => '/history',
-		icon: 'ri:history-line',
-		defaultLabel: 'History',
+		serialize: () => 'chat-history',
+		deserialize: () => '/chat-history',
+		icon: 'ri:chat-history-line',
+		defaultLabel: 'All Chats',
 		component: HistoryView,
 	},
 
-	'session-context': {
-		match: (path) => /^\/context\/[^/]+$/.test(path),
+	// ========================================================================
+	// PAGE NAMESPACE: /page, /page/page_{id}
+	// ========================================================================
+	page: {
+		match: (path) => path === '/page' || /^\/page\/page_[^/]+$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/context\/([^/]+)$/);
+			// List view
+			if (path === '/page') {
+				return {
+					type: 'page',
+					label: 'Pages',
+					icon: 'ri:file-list-3-line',
+				};
+			}
+			// Detail view
+			const match = path.match(/^\/page\/(page_[^/]+)$/);
 			return {
-				type: 'session-context',
-				label: 'Context',
-				icon: 'ri:information-line',
-				linkedConversationId: match?.[1] || '',
+				type: 'page',
+				label: 'Page',
+				icon: 'ri:file-text-line',
+				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => id ? `session-context_${id}` : 'session-context',
+		serialize: (id) => (id ? `page_${id}` : 'page'),
 		deserialize: (serialized) => {
-			const id = serialized.startsWith('session-context_') ? serialized.slice(16) : 'unknown';
-			return `/context/${id}`;
+			if (serialized.startsWith('page_')) {
+				return `/page/${serialized}`;
+			}
+			return '/page';
 		},
-		icon: 'ri:information-line',
-		defaultLabel: 'Context',
-		component: ContextView,
-	},
-
-	'pages': {
-		match: (path) => path === '/pages',
-		parse: () => ({
-			type: 'pages',
-			label: 'Pages',
-			icon: 'ri:file-list-3-line',
-		}),
-		serialize: () => 'pages',
-		deserialize: () => '/pages',
 		icon: 'ri:file-list-3-line',
 		defaultLabel: 'Pages',
 		component: PagesView,
+		detailComponent: PageDetailView,
 	},
 
-	'page-detail': {
-		match: (path) => /^\/pages\/[^/]+$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/pages\/([^/]+)$/);
-			return {
-				type: 'page-detail',
-				label: 'Page',
-				icon: 'ri:file-text-line',
-				pageId: match?.[1] || '',
-			};
-		},
-		serialize: (id) => id ? `page-detail_${id}` : 'page-detail',
-		deserialize: (serialized) => {
-			const id = serialized.startsWith('page-detail_') ? serialized.slice(12) : '';
-			return id ? `/pages/${id}` : '/pages';
-		},
-		icon: 'ri:file-text-line',
-		defaultLabel: 'Page',
-		component: PageDetailView,
-	},
-
-	'wiki': {
-		match: (path) => path === '/wiki' || /^\/wiki\/[^/]+$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/wiki\/([^/]+)$/);
-			const slug = match?.[1];
-			// Don't match wiki list categories
-			if (slug && ['people', 'places', 'orgs', 'things'].includes(slug)) {
-				return { type: 'wiki', label: 'Wiki', icon: 'ri:book-2-line' };
-			}
-			return {
-				type: 'wiki',
-				label: 'Wiki',
-				icon: 'ri:book-2-line',
-				slug: slug || undefined,
-			};
-		},
-		serialize: (id) => id ? `wiki_${id}` : 'wiki',
-		deserialize: (serialized) => {
-			const id = serialized.startsWith('wiki_') ? serialized.slice(5) : undefined;
-			return id ? `/wiki/${id}` : '/wiki';
-		},
+	// ========================================================================
+	// WIKI OVERVIEW: /wiki
+	// ========================================================================
+	wiki: {
+		match: (path) => path === '/wiki',
+		parse: () => ({
+			type: 'wiki',
+			label: 'Wiki',
+			icon: 'ri:book-2-line',
+		}),
+		serialize: () => 'wiki',
+		deserialize: () => '/wiki',
 		icon: 'ri:book-2-line',
 		defaultLabel: 'Wiki',
-		// Component varies based on whether there's a slug
 		component: WikiView,
-		hasDetail: true,
 	},
 
-	'wiki-list': {
-		match: (path) => /^\/wiki\/(people|places|orgs|things)$/.test(path),
+	// ========================================================================
+	// PERSON NAMESPACE: /person, /person/{id}
+	// ========================================================================
+	person: {
+		match: (path) => path === '/person' || /^\/person\/[^/]+$/.test(path),
 		parse: (path) => {
-			const match = path.match(/^\/wiki\/(people|places|orgs|things)$/);
-			const category = match?.[1] || 'people';
-			const labels: Record<string, string> = {
-				people: 'People',
-				places: 'Places',
-				orgs: 'Orgs',
-				things: 'Things',
-			};
-			const icons: Record<string, string> = {
-				people: 'ri:user-line',
-				places: 'ri:map-pin-line',
-				orgs: 'ri:building-line',
-				things: 'ri:box-3-line',
-			};
-			return {
-				type: 'wiki-list',
-				label: labels[category] || 'Wiki',
-				icon: icons[category] || 'ri:list-unordered',
-				wikiCategory: category,
-			};
-		},
-		serialize: (id) => id ? `wiki-list_${id}` : 'wiki-list',
-		deserialize: (serialized) => {
-			const id = serialized.startsWith('wiki-list_') ? serialized.slice(10) : 'people';
-			return `/wiki/${id}`;
-		},
-		icon: 'ri:list-unordered',
-		defaultLabel: 'Wiki List',
-		component: WikiListView,
-	},
-
-	'data-sources': {
-		match: (path) => path === '/data/sources' || (/^\/data\/sources\/[^/]+$/.test(path) && path !== '/data/sources/add'),
-		parse: (path) => {
-			const match = path.match(/^\/data\/sources\/([^/]+)$/);
-			const sourceId = match?.[1];
-			if (sourceId === 'add') {
-				return { type: 'data-sources', label: 'Sources', icon: 'ri:database-2-line' };
+			if (path === '/person') {
+				return {
+					type: 'person',
+					label: 'People',
+					icon: 'ri:user-line',
+				};
 			}
+			const match = path.match(/^\/person\/([^/]+)$/);
 			return {
-				type: 'data-sources',
-				label: sourceId ? 'Source' : 'Sources',
-				icon: 'ri:database-2-line',
-				sourceId: sourceId || undefined,
+				type: 'person',
+				label: 'Person',
+				icon: 'ri:user-line',
+				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => id ? `data-sources_${id}` : 'data-sources',
+		serialize: (id) => id || 'person',
 		deserialize: (serialized) => {
-			const id = serialized.startsWith('data-sources_') ? serialized.slice(13) : undefined;
-			return id ? `/data/sources/${id}` : '/data/sources';
+			if (serialized && serialized !== 'person') {
+				return `/person/${serialized}`;
+			}
+			return '/person';
+		},
+		icon: 'ri:user-line',
+		defaultLabel: 'People',
+		component: WikiListView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// PLACE NAMESPACE: /place, /place/{id}
+	// ========================================================================
+	place: {
+		match: (path) => path === '/place' || /^\/place\/[^/]+$/.test(path),
+		parse: (path) => {
+			if (path === '/place') {
+				return {
+					type: 'place',
+					label: 'Places',
+					icon: 'ri:map-pin-line',
+				};
+			}
+			const match = path.match(/^\/place\/([^/]+)$/);
+			return {
+				type: 'place',
+				label: 'Place',
+				icon: 'ri:map-pin-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => id || 'place',
+		deserialize: (serialized) => {
+			if (serialized && serialized !== 'place') {
+				return `/place/${serialized}`;
+			}
+			return '/place';
+		},
+		icon: 'ri:map-pin-line',
+		defaultLabel: 'Places',
+		component: WikiListView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// ORG NAMESPACE: /org, /org/{id}
+	// ========================================================================
+	org: {
+		match: (path) => path === '/org' || /^\/org\/[^/]+$/.test(path),
+		parse: (path) => {
+			if (path === '/org') {
+				return {
+					type: 'org',
+					label: 'Organizations',
+					icon: 'ri:building-line',
+				};
+			}
+			const match = path.match(/^\/org\/([^/]+)$/);
+			return {
+				type: 'org',
+				label: 'Organization',
+				icon: 'ri:building-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => id || 'org',
+		deserialize: (serialized) => {
+			if (serialized && serialized !== 'org') {
+				return `/org/${serialized}`;
+			}
+			return '/org';
+		},
+		icon: 'ri:building-line',
+		defaultLabel: 'Organizations',
+		component: WikiListView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// DAY NAMESPACE: /day, /day/day_{date}
+	// ========================================================================
+	day: {
+		match: (path) => path === '/day' || /^\/day\/day_\d{4}-\d{2}-\d{2}$/.test(path),
+		parse: (path) => {
+			if (path === '/day') {
+				// Default to today - normalize route to include date
+				const today = new Date().toISOString().split('T')[0];
+				return {
+					type: 'day',
+					label: 'Today',
+					icon: 'ri:calendar-line',
+					entityId: `day_${today}`,
+					normalizedRoute: `/day/day_${today}`,
+				};
+			}
+			const match = path.match(/^\/day\/(day_\d{4}-\d{2}-\d{2})$/);
+			const dateStr = match?.[1]?.replace('day_', '') || '';
+			return {
+				type: 'day',
+				label: dateStr,
+				icon: 'ri:calendar-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `day_${id}` : 'day'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('day_')) {
+				return `/day/${serialized}`;
+			}
+			return '/day';
+		},
+		icon: 'ri:calendar-line',
+		defaultLabel: 'Today',
+		component: WikiDetailView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// YEAR NAMESPACE: /year, /year/year_{year}
+	// ========================================================================
+	year: {
+		match: (path) => path === '/year' || /^\/year\/year_\d{4}$/.test(path),
+		parse: (path) => {
+			if (path === '/year') {
+				// Default to current year - normalize route to include year
+				const currentYear = new Date().getFullYear();
+				return {
+					type: 'year',
+					label: String(currentYear),
+					icon: 'ri:calendar-line',
+					entityId: `year_${currentYear}`,
+					normalizedRoute: `/year/year_${currentYear}`,
+				};
+			}
+			const match = path.match(/^\/year\/(year_\d{4})$/);
+			const yearStr = match?.[1]?.replace('year_', '') || '';
+			return {
+				type: 'year',
+				label: yearStr,
+				icon: 'ri:calendar-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `year_${id}` : 'year'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('year_')) {
+				return `/year/${serialized}`;
+			}
+			return '/year';
+		},
+		icon: 'ri:calendar-line',
+		defaultLabel: 'Year',
+		component: WikiDetailView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// SOURCE NAMESPACE: /sources, /sources/source_{id}
+	// Note: /source redirects to /sources for backwards compatibility
+	// ========================================================================
+	source: {
+		match: (path) =>
+			path === '/sources' || path === '/source' || /^\/sources\/source_[^/]+$/.test(path),
+		parse: (path) => {
+			// List view (redirect /source to /sources)
+			if (path === '/sources' || path === '/source') {
+				return {
+					type: 'source',
+					label: 'Sources',
+					icon: 'ri:database-2-line',
+					normalizedRoute: '/sources',
+				};
+			}
+			// Detail view
+			const match = path.match(/^\/sources\/(source_[^/]+)$/);
+			return {
+				type: 'source',
+				label: 'Source',
+				icon: 'ri:database-2-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => {
+			if (id) return `source_${id}`;
+			return 'sources';
+		},
+		deserialize: (serialized) => {
+			if (serialized.startsWith('source_')) {
+				return `/sources/${serialized}`;
+			}
+			return '/sources';
 		},
 		icon: 'ri:database-2-line',
 		defaultLabel: 'Sources',
-		// Component varies based on whether there's a sourceId
 		component: DataSourcesView,
-		hasDetail: true,
+		detailComponent: DataSourceDetailView,
 	},
 
-	'data-sources-add': {
-		match: (path) => path === '/data/sources/add',
-		parse: () => ({
-			type: 'data-sources-add',
-			label: 'Add Source',
-			icon: 'ri:add-circle-line',
-		}),
-		serialize: () => 'data-sources-add',
-		deserialize: () => '/data/sources/add',
-		icon: 'ri:add-circle-line',
-		defaultLabel: 'Add Source',
-		component: AddSourceView,
-	},
-
-	'data-entities': {
-		match: (path) => path === '/data/entities',
-		parse: () => ({
-			type: 'data-entities',
-			label: 'Entities',
-			icon: 'ri:node-tree',
-		}),
-		serialize: () => 'data-entities',
-		deserialize: () => '/data/entities',
-		icon: 'ri:node-tree',
-		defaultLabel: 'Entities',
-		component: EntitiesView,
-	},
-
-	'data-jobs': {
-		match: (path) => path === '/data/jobs',
-		parse: () => ({
-			type: 'data-jobs',
-			label: 'Jobs',
-			icon: 'ri:refresh-line',
-		}),
-		serialize: () => 'data-jobs',
-		deserialize: () => '/data/jobs',
-		icon: 'ri:refresh-line',
-		defaultLabel: 'Jobs',
-		component: JobsView,
-	},
-
-	'data-drive': {
-		match: (path) => path === '/data/drive',
-		parse: () => ({
-			type: 'data-drive',
-			label: 'Drive',
-			icon: 'ri:folder-line',
-		}),
-		serialize: () => 'data-drive',
-		deserialize: () => '/data/drive',
-		icon: 'ri:folder-line',
+	// ========================================================================
+	// DRIVE NAMESPACE: /drive, /drive/{path}
+	// ========================================================================
+	drive: {
+		match: (path) => path === '/drive' || path.startsWith('/drive/'),
+		parse: (path) => {
+			if (path === '/drive') {
+				return {
+					type: 'drive',
+					label: 'Drive',
+					icon: 'ri:hard-drive-2-line',
+				};
+			}
+			const storagePath = path.replace('/drive/', '');
+			const fileName = storagePath.split('/').pop() || 'File';
+			return {
+				type: 'drive',
+				label: fileName,
+				icon: 'ri:file-line',
+				storagePath,
+			};
+		},
+		serialize: (id) => (id ? `drive_${encodeURIComponent(id)}` : 'drive'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('drive_')) {
+				const path = decodeURIComponent(serialized.slice(6));
+				return `/drive/${path}`;
+			}
+			return '/drive';
+		},
+		icon: 'ri:hard-drive-2-line',
 		defaultLabel: 'Drive',
 		component: DriveView,
 	},
 
-	'usage': {
-		match: (path) => path === '/usage',
+	// ========================================================================
+	// TRASH: /trash
+	// ========================================================================
+	trash: {
+		match: (path) => path === '/trash',
 		parse: () => ({
-			type: 'usage',
-			label: 'Usage',
-			icon: 'ri:bar-chart-line',
+			type: 'trash',
+			label: 'Trash',
+			icon: 'ri:delete-bin-line',
 		}),
-		serialize: () => 'usage',
-		deserialize: () => '/usage',
-		icon: 'ri:bar-chart-line',
-		defaultLabel: 'Usage',
-		component: UsageView,
+		serialize: () => 'trash',
+		deserialize: () => '/trash',
+		icon: 'ri:delete-bin-line',
+		defaultLabel: 'Trash',
+		component: TrashView,
 	},
 
-	'profile': {
-		match: (path) => path.startsWith('/profile'),
+	// ========================================================================
+	// VIRTUES NAMESPACE: /virtues/{page}
+	// System pages: account, assistant, usage, jobs, sql, terminal, sitemap, feedback
+	// ========================================================================
+	virtues: {
+		match: (path) => path.startsWith('/virtues/'),
 		parse: (path) => {
-			const sections: Record<string, { label: string; icon: string }> = {
+			const page = path.replace('/virtues/', '');
+
+			const pageConfig: Record<string, { label: string; icon: string }> = {
 				account: { label: 'Account', icon: 'ri:user-settings-line' },
 				assistant: { label: 'Assistant', icon: 'ri:robot-line' },
+				billing: { label: 'Billing', icon: 'ri:bank-card-line' },
+				changelog: { label: "What's New", icon: 'ri:megaphone-line' },
+				usage: { label: 'Usage', icon: 'ri:bar-chart-line' },
+				jobs: { label: 'Jobs', icon: 'ri:refresh-line' },
+				lake: { label: 'Lake', icon: 'ri:database-2-line' },
+				sql: { label: 'SQL', icon: 'ri:database-2-line' },
+				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
+				sitemap: { label: 'Sitemap', icon: 'ri:road-map-line' },
+				feedback: { label: 'Feedback', icon: 'ri:feedback-line' },
 			};
-			const section = path.split('/')[2] || 'account';
-			const info = sections[section] || sections.account;
+
+			const config = pageConfig[page] || { label: 'Virtues', icon: 'ri:compass-3-line' };
 			return {
-				type: 'profile',
-				label: info.label,
-				icon: info.icon,
-				profileSection: section,
+				type: 'virtues',
+				label: config.label,
+				icon: config.icon,
+				virtuesPage: page,
 			};
 		},
-		serialize: (id) => id ? `profile_${id}` : 'profile',
+		serialize: (id) => (id ? `virtues_${id}` : 'virtues'),
 		deserialize: (serialized) => {
-			const id = serialized.startsWith('profile_') ? serialized.slice(8) : 'account';
-			return `/profile/${id}`;
+			if (serialized.startsWith('virtues_')) {
+				return `/virtues/${serialized.slice(8)}`;
+			}
+			return '/virtues/account';
 		},
-		icon: 'ri:user-settings-line',
-		defaultLabel: 'Profile',
-		component: ProfileView,
+		icon: 'ri:compass-3-line',
+		defaultLabel: 'Virtues',
+		component: ProfileView, // Will dispatch to correct component based on virtuesPage
 	},
 
-	'developer-sql': {
-		match: (path) => path === '/developer/sql-viewer',
-		parse: () => ({
-			type: 'developer-sql',
-			label: 'SQL Viewer',
-			icon: 'ri:database-2-line',
-		}),
-		serialize: () => 'developer-sql',
-		deserialize: () => '/developer/sql-viewer',
-		icon: 'ri:database-2-line',
-		defaultLabel: 'SQL Viewer',
-		component: DeveloperSqlView,
-	},
-
-	'developer-terminal': {
-		match: (path) => path === '/developer/terminal',
-		parse: () => ({
-			type: 'developer-terminal',
-			label: 'Terminal',
-			icon: 'ri:terminal-box-line',
-		}),
-		serialize: () => 'developer-terminal',
-		deserialize: () => '/developer/terminal',
-		icon: 'ri:terminal-box-line',
-		defaultLabel: 'Terminal',
-		component: DeveloperTerminalView,
-	},
-
-	'feedback': {
-		match: (path) => path === '/feedback',
-		parse: () => ({
-			type: 'feedback',
-			label: 'Feedback',
-			icon: 'ri:feedback-line',
-		}),
-		serialize: () => 'feedback',
-		deserialize: () => '/feedback',
-		icon: 'ri:feedback-line',
-		defaultLabel: 'Feedback',
-		component: FeedbackView,
-	},
-
-	'conway': {
+	// ========================================================================
+	// EASTER EGGS
+	// ========================================================================
+	conway: {
 		match: (path) => path === '/life',
 		parse: () => ({
 			type: 'conway',
@@ -402,17 +518,51 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 };
 
-// Helper to get detail component for types that have one
+/**
+ * Get the appropriate component for a tab type and whether it's a detail view.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
-export function getDetailComponent(type: TabType): Component<any> | null {
-	if (type === 'wiki') return WikiDetailView;
-	if (type === 'data-sources') return DataSourceDetailView;
-	return null;
+export function getComponent(type: TabType, hasEntityId: boolean): Component<any> {
+	const def = tabRegistry[type];
+	if (hasEntityId && def.detailComponent) {
+		return def.detailComponent;
+	}
+	return def.component;
+}
+
+/**
+ * Get the component for virtues pages (system pages).
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Component props vary by page
+export function getVirtuesComponent(page: string): Component<any> {
+	const componentMap: Record<string, Component<any>> = {
+		account: ProfileView,
+		assistant: AssistantView,
+		billing: BillingView,
+		changelog: ChangelogView,
+		usage: UsageView,
+		jobs: JobsView,
+		lake: DeveloperLakeView,
+		sql: DeveloperSqlView,
+		terminal: DeveloperTerminalView,
+		sitemap: DeveloperSitemapView,
+		feedback: FeedbackView,
+	};
+	return componentMap[page] || ProfileView;
+}
+
+/**
+ * Get the component for source pages.
+ * Note: Add flow is now handled via modals in DataSourcesView.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: Component props vary
+export function getSourceComponent(hasEntityId: boolean): Component<any> {
+	if (hasEntityId) return DataSourceDetailView;
+	return DataSourcesView;
 }
 
 /**
  * Parse a route string into tab metadata using the registry.
- * This replaces the old parseRoute function in windowTabs.svelte.ts.
  */
 export function parseRoute(route: string): ParsedRoute {
 	const url = new URL(route, 'http://localhost');
@@ -422,25 +572,22 @@ export function parseRoute(route: string): ParsedRoute {
 	// Try to match against registry in priority order
 	// Note: Order matters for overlapping patterns
 	const orderedTypes: TabType[] = [
-		// Specific routes first
-		'data-sources-add',
-		'session-context',
-		'page-detail',
-		'wiki-list',
-		'developer-sql',
-		'developer-terminal',
-		// Then generic routes
-		'chat',
-		'history',
-		'pages',
-		'wiki',
-		'data-sources',
-		'data-entities',
-		'data-jobs',
-		'data-drive',
-		'usage',
-		'profile',
-		'feedback',
+		// Specific patterns first
+		'source', // Source list and detail views
+		'virtues', // Has /virtues/* pattern
+		'drive', // Has /drive/* pattern
+		'trash', // Drive trash
+		'chat-history', // Chat history list (before 'chat')
+		// Entity namespaces
+		'chat', // Also matches /
+		'page',
+		'wiki', // Wiki overview page
+		'person',
+		'place',
+		'org',
+		'day',
+		'year',
+		// Easter eggs last
 		'conway',
 		'dog-jump',
 	];
@@ -455,7 +602,30 @@ export function parseRoute(route: string): ParsedRoute {
 	// Fallback to chat
 	return {
 		type: 'chat',
-		label: route === '/' ? 'New Chat' : 'Chat',
+		label: 'New Chat',
 		icon: 'ri:chat-1-line',
 	};
+}
+
+/**
+ * Check if a route matches a namespace list view (no entity ID).
+ */
+export function isListView(route: string): boolean {
+	const parsed = parseRoute(route);
+	return !parsed.entityId && !parsed.storagePath && !parsed.virtuesPage;
+}
+
+/**
+ * Check if a route matches a namespace detail view (has entity ID).
+ */
+export function isDetailView(route: string): boolean {
+	const parsed = parseRoute(route);
+	return !!parsed.entityId;
+}
+
+// Legacy support: Get detail component for wiki types
+// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
+export function getDetailComponent(type: TabType): Component<any> | null {
+	const def = tabRegistry[type];
+	return def.detailComponent || null;
 }

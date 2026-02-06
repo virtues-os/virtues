@@ -9,11 +9,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
-    error::{Error, Result},
-    sources::{
-        base::validate_timestamp_reasonable,
-        push_stream::{IngestPayload, PushResult, PushStream},
-    },
+    error::Result,
+    sources::push_stream::{IngestPayload, PushResult, PushStream},
     storage::stream_writer::StreamWriter,
 };
 
@@ -40,22 +37,23 @@ impl IosFinanceKitStream {
 #[async_trait]
 impl PushStream for IosFinanceKitStream {
     async fn receive_push(&self, source_id: &str, payload: IngestPayload) -> Result<PushResult> {
-        self.validate_payload(&payload)?;
-
         let mut result = PushResult::new(payload.records.len());
 
         for record in &payload.records {
-            let timestamp = record
-                .get("date")
+            // Each record is a wrapper: { accounts: [...], transactions: [...] }
+            // Derive timestamp from the first transaction's date, or fall back to payload timestamp
+            let timestamp_dt = record
+                .get("transactions")
+                .and_then(|v| v.as_array())
+                .and_then(|txs| txs.first())
+                .and_then(|tx| tx.get("date"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| Error::Other("Missing date in record".into()))?;
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or(payload.timestamp);
 
-            let timestamp_dt = chrono::DateTime::parse_from_rfc3339(timestamp)
-                .map_err(|e| Error::Other(format!("Invalid date format: {e}")))?
-                .with_timezone(&Utc);
-            validate_timestamp_reasonable(timestamp_dt)?;
-
-            // Write to object storage via StreamWriter
+            // Write the full wrapper record to the lake — transforms know
+            // how to read the accounts and transactions arrays from it
             {
                 let mut writer = self.stream_writer.lock().await;
                 writer.write_record(source_id, "financekit", record.clone(), Some(timestamp_dt))?;

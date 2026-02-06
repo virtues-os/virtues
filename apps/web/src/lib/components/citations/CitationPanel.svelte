@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Citation } from "$lib/types/Citation";
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	let {
 		citation = null,
@@ -30,8 +30,7 @@
 		switch (type) {
 			case "ontology":
 				return "Personal Data";
-			case "axiology":
-				return "Values & Goals";
+
 			case "web_search":
 				return "Web Search";
 			case "narratives":
@@ -61,26 +60,12 @@
 	}
 
 	// Check if data is web search results
-	function isWebSearchData(
-		data: unknown,
-	): data is {
+	function isWebSearchData(data: unknown): data is {
 		results: Array<{ title: string; url: string; summary?: string }>;
 	} {
 		if (!data || typeof data !== "object") return false;
 		const d = data as Record<string, unknown>;
 		return Array.isArray(d.results) && d.results.length > 0;
-	}
-
-	// Check if data is axiology data
-	function isAxiologyData(data: unknown): boolean {
-		if (!data || typeof data !== "object") return false;
-		const d = data as Record<string, unknown>;
-		return (
-			"values" in d ||
-			"virtues" in d ||
-			"vices" in d ||
-			"aspirations" in d
-		);
 	}
 
 	// Get table headers from first row
@@ -166,7 +151,7 @@
 		role="presentation"
 	>
 		<!-- Panel -->
-		<aside
+		<div
 			bind:this={panelEl}
 			class="citation-panel"
 			role="dialog"
@@ -176,12 +161,12 @@
 			<!-- Header -->
 			<header class="panel-header">
 				<div class="header-content">
-					<iconify-icon
+					<Icon
 						icon={citation.icon}
 						class={citation.color}
 						width="24"
 						height="24"
-					></iconify-icon>
+					/>
 					<div class="header-text">
 						<h2 class="panel-title">{citation.label}</h2>
 						<span class="panel-subtitle"
@@ -195,8 +180,8 @@
 					onclick={onClose}
 					aria-label="Close panel"
 				>
-					<iconify-icon icon="ri:close-line" width="20" height="20"
-					></iconify-icon>
+					<Icon icon="ri:close-line" width="20" height="20"
+					/>
 				</button>
 			</header>
 
@@ -315,35 +300,6 @@
 					</div>
 				{/if}
 
-				<!-- Axiology data -->
-				{#if isAxiologyData(citation.data)}
-					{@const axiologyData = citation.data as Record<
-						string,
-						unknown
-					>}
-					<div class="section">
-						<h3 class="section-title">Values Data</h3>
-						{#each Object.entries(axiologyData) as [key, value]}
-							{#if Array.isArray(value) && value.length > 0 && !["success", "error"].includes(key)}
-								<div class="axiology-group">
-									<h4 class="axiology-title">
-										{key.replace(/_/g, " ")}
-									</h4>
-									<ul class="axiology-list">
-										{#each value as item}
-											<li>
-												{typeof item === "string"
-													? item
-													: JSON.stringify(item)}
-											</li>
-										{/each}
-									</ul>
-								</div>
-							{/if}
-						{/each}
-					</div>
-				{/if}
-
 				<!-- Raw query (for debugging) -->
 				{#if citation.args?.query}
 					<details class="section query-section">
@@ -354,7 +310,7 @@
 					</details>
 				{/if}
 			</div>
-		</aside>
+		</div>
 	</div>
 {/if}
 
@@ -593,30 +549,6 @@
 		color: var(--color-foreground-subtle);
 		margin: 8px 0 0 0;
 		text-align: center;
-	}
-
-	/* Axiology */
-	.axiology-group {
-		margin-bottom: 16px;
-	}
-
-	.axiology-title {
-		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		margin: 0 0 8px 0;
-		text-transform: capitalize;
-	}
-
-	.axiology-list {
-		margin: 0;
-		padding-left: 20px;
-	}
-
-	.axiology-list li {
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		margin-bottom: 4px;
 	}
 
 	/* Query section */

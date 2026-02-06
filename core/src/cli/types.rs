@@ -66,7 +66,14 @@ pub enum Commands {
         /// Source ID (UUID)
         source_id: String,
     },
+
+    /// Start server with ngrok HTTPS tunnel (for iOS/Mac development)
+    Ngrok,
+
+
 }
+
+
 
 #[derive(Subcommand)]
 pub enum CatalogCommands {

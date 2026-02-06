@@ -1,16 +1,12 @@
 <script lang="ts">
-	/**
-	 * Modal - Universal modal component
-	 * Reusable dialog with backdrop, escape-to-close, and body scroll lock
-	 */
+	import Icon from "$lib/components/Icon.svelte";
 	import type { Snippet } from "svelte";
 
 	interface Props {
-		open: boolean;
+		open?: boolean;
 		onClose: () => void;
 		title?: string;
-		subtitle?: string;
-		size?: "sm" | "md" | "lg";
+		width?: "sm" | "md" | "lg";
 		children: Snippet;
 		footer?: Snippet;
 	}
@@ -19,153 +15,229 @@
 		open = false,
 		onClose,
 		title,
-		subtitle,
-		size = "md",
+		width = "md",
 		children,
 		footer,
 	}: Props = $props();
 
-	// Size mappings
-	const sizeClasses = {
-		sm: "max-w-sm",
-		md: "max-w-md",
-		lg: "max-w-lg",
-	};
-
-	// Handle escape key
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape" && open) {
-			onClose();
-		}
+	// Portal action - moves element to body
+	function portal(node: HTMLElement) {
+		document.body.appendChild(node);
+		
+		return {
+			destroy() {
+				node.remove();
+			}
+		};
 	}
 
-	// Handle backdrop click
 	function handleBackdropClick(e: MouseEvent) {
 		if (e.target === e.currentTarget) {
 			onClose();
 		}
 	}
 
+	// Handle escape key globally when open
 	$effect(() => {
 		if (open) {
-			document.addEventListener("keydown", handleKeydown);
-			// Prevent body scroll when modal is open
-			document.body.style.overflow = "hidden";
-		} else {
-			document.body.style.overflow = "";
+			const handler = (e: KeyboardEvent) => {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					onClose();
+				}
+			};
+			window.addEventListener("keydown", handler);
+			return () => window.removeEventListener("keydown", handler);
 		}
-
-		return () => {
-			document.removeEventListener("keydown", handleKeydown);
-			document.body.style.overflow = "";
-		};
 	});
+
+	const widthClass = $derived({
+		sm: "max-w-sm",
+		md: "max-w-md",
+		lg: "max-w-lg",
+	}[width]);
 </script>
 
 {#if open}
-	<div
-		class="modal-backdrop"
-		onclick={handleBackdropClick}
-		role="presentation"
-	>
-		<div
-			class="modal {sizeClasses[size]}"
-			role="dialog"
-			aria-modal="true"
-			aria-labelledby={title ? "modal-title" : undefined}
-		>
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
+	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal>
+		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title}>
 			{#if title}
-				<header class="modal-header">
-					<h2 id="modal-title" class="modal-title">
-						{title}
-					</h2>
-					{#if subtitle}
-						<p class="modal-subtitle">{subtitle}</p>
-					{/if}
-				</header>
+				<div class="modal-header">
+					<h2 class="modal-title">{title}</h2>
+					<button class="close-btn" onclick={onClose} aria-label="Close">
+						<Icon icon="ri:close-line" width="18" />
+					</button>
+				</div>
 			{/if}
 
-			<div class="modal-content">
+			<div class="modal-body">
 				{@render children()}
 			</div>
 
 			{#if footer}
-				<footer class="modal-footer">
+				<div class="modal-footer">
 					{@render footer()}
-				</footer>
+				</div>
 			{/if}
 		</div>
 	</div>
 {/if}
 
 <style>
+	@reference "../../app.css";
+
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.5);
+		background: rgba(0, 0, 0, 0.4);
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: center;
-		z-index: 1000;
-		animation: fadeIn 150ms ease-out;
+		padding-top: 15vh;
+		z-index: 9999;
+		animation: backdrop-fade-in 150ms ease-out;
 	}
 
-	@keyframes fadeIn {
-		from {
-			opacity: 0;
-		}
-		to {
-			opacity: 1;
-		}
+	@keyframes backdrop-fade-in {
+		from { opacity: 0; }
+		to { opacity: 1; }
 	}
 
 	.modal {
+		width: 100%;
 		background: var(--surface);
 		border: 1px solid var(--border);
 		border-radius: 12px;
-		width: 100%;
-		padding: 32px;
-		margin: 24px;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-		animation: scaleIn 150ms ease-out;
+		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+		overflow: hidden;
+		animation: modal-slide-in 150ms ease-out;
 	}
 
-	@keyframes scaleIn {
+	.max-w-sm { max-width: 360px; }
+	.max-w-md { max-width: 480px; }
+	.max-w-lg { max-width: 600px; }
+
+	@keyframes modal-slide-in {
 		from {
 			opacity: 0;
-			transform: scale(0.96);
+			transform: translateY(-8px) scale(0.98);
 		}
 		to {
 			opacity: 1;
-			transform: scale(1);
+			transform: translateY(0) scale(1);
 		}
 	}
 
 	.modal-header {
-		margin-bottom: 16px;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 16px 20px;
+		border-bottom: 1px solid var(--border);
 	}
 
 	.modal-title {
-		font-family: var(--font-serif);
-		font-size: 22px;
-		font-weight: 400;
-		letter-spacing: -0.01em;
+		font-size: 16px;
+		font-weight: 500;
 		color: var(--foreground);
 		margin: 0;
 	}
 
-	.modal-subtitle {
-		font-family: var(--font-sans);
-		font-size: 14px;
+	.close-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 6px;
+		background: transparent;
 		color: var(--foreground-muted);
-		margin: 8px 0 0 0;
-		line-height: 1.5;
+		border: none;
+		cursor: pointer;
+		transition: all 150ms ease;
+	}
+
+	.close-btn:hover {
+		background: var(--surface-overlay);
+		color: var(--foreground);
+	}
+
+	.modal-body {
+		padding: 20px;
 	}
 
 	.modal-footer {
 		display: flex;
+		align-items: center;
 		justify-content: flex-end;
-		gap: 16px;
-		margin-top: 24px;
+		gap: 10px;
+		padding: 16px 20px;
+		border-top: 1px solid var(--border);
+		background: var(--surface-elevated);
+	}
+
+	/* Utility classes for modal content */
+	:global(.modal-input) {
+		width: 100%;
+		padding: 10px 12px;
+		font-size: 14px;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface);
+		color: var(--foreground);
+		outline: none;
+		transition: border-color 150ms ease;
+	}
+
+	:global(.modal-input:focus) {
+		border-color: var(--primary);
+	}
+
+	:global(.modal-input::placeholder) {
+		color: var(--foreground-subtle);
+	}
+
+	:global(.modal-label) {
+		display: block;
+		font-size: 13px;
+		font-weight: 500;
+		color: var(--foreground-muted);
+		margin-bottom: 6px;
+	}
+
+	:global(.modal-btn) {
+		padding: 8px 16px;
+		font-size: 13px;
+		font-weight: 500;
+		border-radius: 6px;
+		cursor: pointer;
+		transition: all 150ms ease;
+	}
+
+	:global(.modal-btn-primary) {
+		background: var(--primary);
+		color: white;
+		border: none;
+	}
+
+	:global(.modal-btn-primary:hover) {
+		opacity: 0.9;
+	}
+
+	:global(.modal-btn-primary:disabled) {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	:global(.modal-btn-secondary) {
+		background: transparent;
+		color: var(--foreground-muted);
+		border: 1px solid var(--border);
+	}
+
+	:global(.modal-btn-secondary:hover) {
+		background: var(--surface-overlay);
+		color: var(--foreground);
 	}
 </style>

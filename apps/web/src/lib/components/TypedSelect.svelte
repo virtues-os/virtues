@@ -1,7 +1,12 @@
 <script lang="ts" generics="T extends Record<string, any>">
+	/**
+	 * TypedSelect - Searchable select/combobox component
+	 *
+	 * Uses the floating UI system for smart positioning.
+	 */
 	import type { Snippet } from "svelte";
-	import { fly } from "svelte/transition";
-	import { cubicOut } from "svelte/easing";
+	import { fade } from "svelte/transition";
+	import { FloatingContent, useClickOutside } from "$lib/floating";
 
 	interface Props {
 		items: T[];
@@ -30,8 +35,20 @@
 	let inputValue = $state("");
 	let open = $state(false);
 	let highlightedIndex = $state(0);
-	let inputElement: HTMLInputElement;
+	let inputElement = $state<HTMLInputElement | null>(null);
 	let dropdownElement = $state<HTMLDivElement | null>(null);
+
+	// Use click-outside hook for dismiss (wrap callback to capture current values)
+	useClickOutside(
+		() => [inputElement, dropdownElement],
+		() => {
+			open = false;
+			if (value) {
+				inputValue = String(value[displayKey]);
+			}
+		},
+		() => open
+	);
 
 	// Filter items based on search input
 	let filteredItems = $derived(
@@ -107,7 +124,7 @@
 		}
 	}
 
-	function handleBlur(e: FocusEvent) {
+	function handleBlur() {
 		// Delay to allow click on dropdown item
 		setTimeout(() => {
 			if (
@@ -122,27 +139,6 @@
 			}
 		}, 200);
 	}
-
-	function handleClickOutside(e: MouseEvent) {
-		if (
-			!inputElement?.contains(e.target as Node) &&
-			!dropdownElement?.contains(e.target as Node)
-		) {
-			open = false;
-			if (value) {
-				inputValue = String(value[displayKey]);
-			}
-		}
-	}
-
-	$effect(() => {
-		if (open) {
-			document.addEventListener("mousedown", handleClickOutside);
-			return () => {
-				document.removeEventListener("mousedown", handleClickOutside);
-			};
-		}
-	});
 </script>
 
 <div class="space-y-2">
@@ -180,45 +176,59 @@
 			</svg>
 		</div>
 
-		{#if open && filteredItems.length > 0}
-			<div
-				bind:this={dropdownElement}
-				class="absolute z-50 w-full bg-surface border border-border shadow-lg rounded max-h-80 overflow-y-auto mt-2"
-				transition:fly={{ y: -8, duration: 200, easing: cubicOut }}
+		{#if open && inputElement}
+			<FloatingContent
+				anchor={inputElement}
+				options={{ placement: 'bottom-start', offset: 8, flip: true, shift: true, padding: 8 }}
+				class="typed-select-dropdown"
 			>
-				{#each filteredItems as item, i}
-					<button
-						type="button"
-						class="w-full px-4 py-3 text-left cursor-pointer hover:bg-surface-elevated transition-colors border-b border-border-subtle last:border-b-0"
-						class:bg-surface-elevated={i === highlightedIndex}
-						onmousedown={(e) => {
-							e.preventDefault();
-							selectItem(item);
-						}}
-						onmouseenter={() => {
-							highlightedIndex = i;
-						}}
-					>
-						{#if itemSnippet}
-							{@render itemSnippet(item)}
-						{:else}
-							<span class="text-foreground">
-								{item[displayKey]}
-							</span>
-						{/if}
-					</button>
-				{/each}
-			</div>
-		{:else if open && filteredItems.length === 0}
-			<div
-				bind:this={dropdownElement}
-				class="absolute z-50 w-full bg-surface border border-border shadow-lg rounded mt-2"
-				transition:fly={{ y: -8, duration: 200, easing: cubicOut }}
-			>
-				<div class="p-4 text-sm text-foreground-subtle text-center">
-					No results found
+				<div
+					bind:this={dropdownElement}
+					class="w-full bg-surface border border-border shadow-lg rounded max-h-80 overflow-y-auto"
+					transition:fade={{ duration: 100 }}
+				>
+					{#if filteredItems.length > 0}
+						{#each filteredItems as listItem, i}
+							<button
+								type="button"
+								class="w-full px-4 py-3 text-left cursor-pointer hover:bg-surface-elevated transition-colors border-b border-border-subtle last:border-b-0"
+								class:bg-surface-elevated={i === highlightedIndex}
+								onmousedown={(e) => {
+									e.preventDefault();
+									selectItem(listItem);
+								}}
+								onmouseenter={() => {
+									highlightedIndex = i;
+								}}
+							>
+								{#if itemSnippet}
+									{@render itemSnippet(listItem)}
+								{:else}
+									<span class="text-foreground">
+										{listItem[displayKey]}
+									</span>
+								{/if}
+							</button>
+						{/each}
+					{:else}
+						<div class="p-4 text-sm text-foreground-subtle text-center">
+							No results found
+						</div>
+					{/if}
 				</div>
-			</div>
+			</FloatingContent>
 		{/if}
 	</div>
 </div>
+
+<style>
+	/* FloatingContent wrapper styles */
+	:global(.typed-select-dropdown) {
+		--z-floating: 50;
+		padding: 0;
+		background: transparent;
+		border: none;
+		box-shadow: none;
+		width: 100%;
+	}
+</style>

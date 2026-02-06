@@ -1,6 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	/**
+	 * SidebarPopover
+	 *
+	 * A popover for sidebar navigation items that opens to the right.
+	 * Uses the floating UI hooks for consistent dismiss behavior.
+	 */
 	import type { Snippet } from 'svelte';
+	import { useClickOutside, useEscapeKey } from '$lib/floating';
 
 	interface Props {
 		title: string;
@@ -13,48 +19,17 @@
 
 	let popoverEl: HTMLElement | null = $state(null);
 
-	function handleClickOutside(e: MouseEvent) {
-		if (popoverEl && !popoverEl.contains(e.target as Node)) {
-			onClose();
-		}
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			onClose();
-		}
-	}
-
-	onMount(() => {
-		if (open) {
-			document.addEventListener('click', handleClickOutside, true);
-			document.addEventListener('keydown', handleKeydown);
-		}
-
-		return () => {
-			document.removeEventListener('click', handleClickOutside, true);
-			document.removeEventListener('keydown', handleKeydown);
-		};
-	});
-
-	$effect(() => {
-		if (open) {
-			document.addEventListener('click', handleClickOutside, true);
-			document.addEventListener('keydown', handleKeydown);
-		} else {
-			document.removeEventListener('click', handleClickOutside, true);
-			document.removeEventListener('keydown', handleKeydown);
-		}
-	});
+	// Use hooks for dismiss behavior (wrap callbacks to capture current prop values)
+	useClickOutside(
+		() => [popoverEl],
+		() => onClose(),
+		() => open
+	);
+	useEscapeKey(() => onClose(), () => open);
 </script>
 
 {#if open}
-	<div
-		class="popover"
-		bind:this={popoverEl}
-		role="menu"
-		aria-label={title}
-	>
+	<div class="popover" bind:this={popoverEl} role="menu" aria-label={title}>
 		<div class="popover-header">{title}</div>
 		<div class="popover-content">
 			{@render children()}
@@ -80,15 +55,16 @@
 		animation: popover-fade-in 150ms ease-out;
 	}
 
-	:global([data-theme="midnight-oil"]) .popover,
-	:global([data-theme="narnia-nights"]) .popover,
-	:global([data-theme="dumb-ox"]) .popover,
-	:global([data-theme="chiaroscuro"]) .popover,
-	:global([data-theme="stoa"]) .popover,
-	:global([data-theme="lyceum"]) .popover,
-	:global([data-theme="tabula-rasa"]) .popover,
-	:global([data-theme="hemlock"]) .popover,
-	:global([data-theme="shire"]) .popover {
+	:global([data-theme='baker-street']) .popover,
+	:global([data-theme='narnia']) .popover,
+	:global([data-theme='canterbury']) .popover,
+	:global([data-theme='borghese']) .popover,
+	:global([data-theme='gatsby']) .popover,
+	:global([data-theme='lyceum']) .popover,
+	:global([data-theme='asgard']) .popover,
+	:global([data-theme='agora']) .popover,
+	:global([data-theme='shire']) .popover,
+	:global([data-theme='lothlorien']) .popover {
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 	}
 
@@ -117,6 +93,6 @@
 		padding: 6px;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--sidebar-item-gap, 4px);
 	}
 </style>

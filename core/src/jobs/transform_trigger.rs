@@ -11,7 +11,6 @@ use crate::sources::base::MemoryDataSource;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Create and execute a transform job for a stream with in-memory records (hot path)
 ///
@@ -38,10 +37,10 @@ pub async fn create_transform_job_for_stream(
     db: &SqlitePool,
     executor: &JobExecutor,
     context: &Arc<TransformContext>,
-    source_id: Uuid,
+    source_id: String,
     stream_name: &str,
     records: Option<Vec<serde_json::Value>>,
-) -> Result<Uuid> {
+) -> Result<String> {
     // Normalize stream name using centralized registry function
     let table_name = registry::normalize_stream_name(stream_name);
 
@@ -62,99 +61,94 @@ pub async fn create_transform_job_for_stream(
             err
         })?;
 
-    // Extract domain from first target ontology table name (e.g., "health_heart_rate" -> "health")
-    let domain = stream
-        .target_ontologies
-        .first()
-        .map(|ont| ont.split('_').next().unwrap_or("unknown"))
-        .unwrap_or("unknown");
+    let target_ontologies = &stream.descriptor.target_ontologies;
+    let mut first_job_id: Option<String> = None;
 
-    // Create transform job metadata from registry
-    let metadata = json!({
-        "source_table": stream.table_name,
-        "target_table": stream.target_ontologies.first().unwrap_or(&""),
-        "domain": domain,
-        "source_provider": source_name,
-    });
+    // Create one transform job per target ontology table
+    for target_ontology in target_ontologies {
+        // Extract domain from target ontology table name (e.g., "health_heart_rate" -> "health")
+        let domain = target_ontology.split('_').next().unwrap_or("unknown");
 
-    // Create the transform job
-    let request = CreateJobRequest {
-        job_type: JobType::Transform,
-        status: JobStatus::Pending,
-        source_connection_id: Some(source_id),
-        stream_name: Some(stream_name.to_string()),
-        sync_mode: None,
-        transform_id: None,
-        transform_strategy: None,
-        parent_job_id: None,
-        transform_stage: None,
-        metadata,
-    };
+        // Create transform job metadata from registry
+        let metadata = json!({
+            "source_table": stream.descriptor.table_name,
+            "target_table": target_ontology,
+            "domain": domain,
+            "source_provider": source_name,
+        });
 
-    let job = crate::jobs::create_job(db, request).await?;
+        // Create the transform job
+        let request = CreateJobRequest {
+            job_type: JobType::Transform,
+            status: JobStatus::Pending,
+            source_connection_id: Some(source_id.clone()),
+            stream_name: Some(stream_name.to_string()),
+            sync_mode: None,
+            transform_id: None,
+            transform_strategy: None,
+            parent_job_id: None,
+            transform_stage: None,
+            metadata,
+        };
 
-    // If we have records, create a custom context with MemoryDataSource for direct transform
-    if let Some(records) = records {
-        tracing::info!(
-            job_id = %job.id,
-            source_id = %source_id,
-            stream_name,
-            record_count = records.len(),
-            source_table = stream.table_name,
-            target_table = stream.target_ontologies.first().unwrap_or(&""),
-            domain = domain,
-            "Created transform job with memory data source (HOT PATH - direct transform)"
-        );
+        let job = crate::jobs::create_job(db, request).await?;
 
-        // Create MemoryDataSource with records
-        let memory_source = MemoryDataSource::new(
-            records,
-            source_id,
-            stream_name.to_string(),
-            None, // min_timestamp - could be extracted if needed
-            None, // max_timestamp - could be extracted if needed
-            db.clone(),
-        );
+        if first_job_id.is_none() {
+            first_job_id = Some(job.id.clone());
+        }
 
-        // Create a new context with memory data source using with_data_source constructor
-        let transform_context_with_memory = Arc::new(TransformContext::with_data_source(
-            Arc::clone(&context.storage),
-            context.stream_writer.clone(),
-            Arc::new(memory_source),
-            context.api_keys.clone(),
-        ));
+        // If we have records, create a custom context with MemoryDataSource for direct transform
+        if let Some(ref records) = records {
+            tracing::info!(
+                job_id = %job.id,
+                source_id = %source_id,
+                stream_name,
+                record_count = records.len(),
+                source_table = stream.descriptor.table_name,
+                target_table = target_ontology,
+                domain = domain,
+                "Created transform job with memory data source (HOT PATH - direct transform)"
+            );
 
-        // Create a new executor with the memory-enabled context
-        let memory_executor =
-            JobExecutor::new(db.clone(), (*transform_context_with_memory).clone());
+            // Create MemoryDataSource with records
+            let memory_source = MemoryDataSource::new(
+                records.clone(),
+                source_id.clone(),
+                stream_name.to_string(),
+                None, // min_timestamp - could be extracted if needed
+                None, // max_timestamp - could be extracted if needed
+                db.clone(),
+            );
 
-        // Parse job.id to Uuid for executor
-        let job_uuid = Uuid::parse_str(&job.id)
-            .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
+            // Create a new context with memory data source using with_data_source constructor
+            let transform_context_with_memory = Arc::new(TransformContext::with_data_source(
+                Arc::clone(&context.storage),
+                context.stream_writer.clone(),
+                Arc::new(memory_source),
+                context.api_keys.clone(),
+            ));
 
-        // Execute with memory data source
-        memory_executor.execute_async(job_uuid);
-    } else {
-        tracing::info!(
-            job_id = %job.id,
-            source_id = %source_id,
-            stream_name,
-            source_table = stream.table_name,
-            target_table = stream.target_ontologies.first().unwrap_or(&""),
-            domain = domain,
-            "Created transform job with S3 data source (COLD PATH - traditional S3 read)"
-        );
+            // Create a new executor with the memory-enabled context
+            let memory_executor =
+                JobExecutor::new(db.clone(), (*transform_context_with_memory).clone());
 
-        // Parse job.id to Uuid for executor
-        let job_uuid = Uuid::parse_str(&job.id)
-            .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
+            // Execute with memory data source
+            memory_executor.execute_async(job.id.clone());
+        } else {
+            tracing::info!(
+                job_id = %job.id,
+                source_id = %source_id,
+                stream_name,
+                source_table = stream.descriptor.table_name,
+                target_table = target_ontology,
+                domain = domain,
+                "Created transform job with S3 data source (COLD PATH - traditional S3 read)"
+            );
 
-        // Execute with standard S3 reader (cold path)
-        executor.execute_async(job_uuid);
+            // Execute with standard S3 reader (cold path)
+            executor.execute_async(job.id.clone());
+        }
     }
 
-    // Parse job.id to Uuid for return value
-    let job_uuid = Uuid::parse_str(&job.id)
-        .map_err(|e| Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
-    Ok(job_uuid)
+    Ok(first_job_id.unwrap_or_default())
 }

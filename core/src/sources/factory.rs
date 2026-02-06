@@ -2,14 +2,18 @@
 //!
 //! This module provides a unified way to instantiate any stream based on
 //! source type and stream name, handling authentication and configuration loading.
+//!
+//! The factory now delegates to the unified registry for stream creation,
+//! eliminating the need for large match statements. Each stream registers
+//! its creator function alongside its metadata.
 
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use super::base::TokenManager;
 use crate::error::{Error, Result};
+use crate::registry::StreamFactoryContext;
 use crate::storage::{stream_writer::StreamWriter, Storage};
 
 use super::{auth::SourceAuth, stream_type::StreamType};
@@ -62,7 +66,7 @@ impl StreamFactory {
     /// wrapped in either Pull or Push variant.
     ///
     /// # Arguments
-    /// * `source_id` - UUID of the source
+    /// * `source_id` - Semantic ID of the source (e.g., "source_google-calendar")
     /// * `stream_name` - Name of the stream (e.g., "calendar", "gmail", "apps")
     ///
     /// # Returns
@@ -74,11 +78,19 @@ impl StreamFactory {
     /// - If the stream name is not supported for this source
     pub async fn create_stream_typed(
         &self,
-        source_id: Uuid,
+        source_id: &str,
         stream_name: &str,
     ) -> Result<StreamType> {
         // Load source info from database
         let source = self.load_source(source_id).await?;
+
+        // Validate against registry (ensures source and stream are enabled)
+        let _stream_desc = crate::registry::get_stream(&source.source, stream_name).ok_or_else(|| {
+            Error::Other(format!(
+                "Stream {}/{} not found or disabled in registry",
+                source.source, stream_name
+            ))
+        })?;
 
         // Create auth abstraction
         let auth = self.create_auth(source_id, &source.source).await?;
@@ -89,9 +101,9 @@ impl StreamFactory {
     }
 
     /// Load source information from the database
-    async fn load_source(&self, source_id: Uuid) -> Result<SourceInfo> {
+    async fn load_source(&self, source_id: &str) -> Result<SourceInfo> {
         let result = sqlx::query_as::<_, (String, String)>(
-            "SELECT source, name FROM data_source_connections WHERE id = $1 AND is_active = true",
+            "SELECT source, name FROM elt_source_connections WHERE id = $1 AND is_active = true",
         )
         .bind(source_id)
         .fetch_optional(&self.db)
@@ -107,12 +119,12 @@ impl StreamFactory {
     }
 
     /// Create authentication for a source
-    async fn create_auth(&self, source_id: Uuid, provider: &str) -> Result<SourceAuth> {
+    async fn create_auth(&self, source_id: &str, provider: &str) -> Result<SourceAuth> {
         match provider {
             "google" | "notion" | "plaid" => {
                 // OAuth2 sources - create TokenManager for token refresh
                 let token_manager = Arc::new(TokenManager::new(self.db.clone())?);
-                Ok(SourceAuth::oauth2(source_id, token_manager))
+                Ok(SourceAuth::oauth2(source_id.to_string(), token_manager))
             }
             "ios" | "mac" => {
                 // Device sources don't use traditional auth - they push data
@@ -120,157 +132,55 @@ impl StreamFactory {
                 let source = self.load_source(source_id).await?;
                 Ok(SourceAuth::device(source.name))
             }
-            "virtues" => {
-                // Internal source - no external authentication needed
-                // Uses device auth pattern with internal name
-                Ok(SourceAuth::device("virtues_internal".to_string()))
-            }
             _ => Err(Error::Other(format!("Unknown provider: {}", provider))),
         }
     }
 
     /// Create the stream implementation with StreamType enum
     ///
-    /// This is where we match on provider + stream name and instantiate
-    /// the correct struct wrapped in StreamType::Pull or StreamType::Push.
+    /// This method now delegates to the unified registry for stream creation.
+    /// Each stream registers its creator function alongside its metadata,
+    /// eliminating the need for large match statements.
     ///
     /// All streams now implement either PullStream (backend-initiated) or
     /// PushStream (client-initiated) traits for clear architectural boundaries.
     async fn create_stream_typed_impl(
         &self,
-        _source_id: Uuid,
+        source_id: &str,
         provider: &str,
         stream_name: &str,
-        _auth: SourceAuth,
+        auth: SourceAuth,
     ) -> Result<StreamType> {
-        match (provider, stream_name) {
-            // Pull streams (backend-initiated from external APIs)
-            ("google", "calendar") => {
-                use crate::sources::google::calendar::GoogleCalendarStream;
-                Ok(StreamType::Pull(Box::new(GoogleCalendarStream::new(
-                    _source_id,
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                    _auth,
-                ))))
-            }
-            ("google", "gmail") => {
-                use crate::sources::google::gmail::GoogleGmailStream;
-                Ok(StreamType::Pull(Box::new(GoogleGmailStream::new(
-                    _source_id,
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                    _auth,
-                ))))
-            }
-            // TODO: Re-enable incrementally as we publish
-            // ("notion", "pages") => {
-            //     use crate::sources::notion::NotionPagesStream;
-            //     Ok(StreamType::Pull(Box::new(NotionPagesStream::new(
-            //         _source_id,
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //         _auth,
-            //     ))))
-            // }
-            ("virtues", "app_export") => {
-                use crate::sources::virtues::AppChatExportStream;
-                Ok(StreamType::Pull(Box::new(AppChatExportStream::new(
-                    self.db.clone(),
-                    _source_id,
-                    self.stream_writer.clone(),
-                ))))
-            }
-            // TODO: Re-enable incrementally as we publish
-            // ("plaid", "transactions") => {
-            //     use crate::sources::plaid::transactions::PlaidTransactionsStream;
-            //     Ok(StreamType::Pull(Box::new(PlaidTransactionsStream::new(
-            //         _source_id,
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     )?)))
-            // }
-            // ("plaid", "accounts") => {
-            //     use crate::sources::plaid::accounts::PlaidAccountsStream;
-            //     Ok(StreamType::Pull(Box::new(PlaidAccountsStream::new(
-            //         _source_id,
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     )?)))
-            // }
+        // Look up the stream in the unified registry (including disabled for this internal call)
+        let stream_desc = crate::registry::registry()
+            .sources
+            .get(provider)
+            .and_then(|source| source.streams.iter().find(|s| s.descriptor.name == stream_name))
+            .ok_or_else(|| {
+                Error::Other(format!(
+                    "Stream {}/{} not found in registry",
+                    provider, stream_name
+                ))
+            })?;
 
-            // Push streams (client-initiated from devices)
-            // TODO: Re-enable incrementally as we publish
-            // ("mac", "apps") => {
-            //     use crate::sources::mac::MacAppsStream;
-            //     Ok(StreamType::Push(Box::new(MacAppsStream::new(
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     ))))
-            // }
-            // ("mac", "imessage") => {
-            //     use crate::sources::mac::MacIMessageStream;
-            //     Ok(StreamType::Push(Box::new(MacIMessageStream::new(
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     ))))
-            // }
-            // ("mac", "browser") => {
-            //     use crate::sources::mac::MacBrowserStream;
-            //     Ok(StreamType::Push(Box::new(MacBrowserStream::new(
-            //         self.db.clone(),
-            //         self.stream_writer.clone(),
-            //     ))))
-            // }
-            ("ios", "location") => {
-                use crate::sources::ios::IosLocationStream;
-                Ok(StreamType::Push(Box::new(IosLocationStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "healthkit") => {
-                use crate::sources::ios::IosHealthKitStream;
-                Ok(StreamType::Push(Box::new(IosHealthKitStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "microphone") => {
-                use crate::sources::ios::IosMicrophoneStream;
-                Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
-                    self.db.clone(),
-                    self.storage.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "contacts") => {
-                use crate::sources::ios::IosContactsStream;
-                Ok(StreamType::Push(Box::new(IosContactsStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "battery") => {
-                use crate::sources::ios::IosBatteryStream;
-                Ok(StreamType::Push(Box::new(IosBatteryStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-            ("ios", "barometer") => {
-                use crate::sources::ios::IosBarometerStream;
-                Ok(StreamType::Push(Box::new(IosBarometerStream::new(
-                    self.db.clone(),
-                    self.stream_writer.clone(),
-                ))))
-            }
-
-            _ => Err(Error::Other(format!(
-                "Unknown stream: {}/{}",
-                provider, stream_name
-            ))),
+        // Check if the stream has a creator registered
+        if let Some(creator) = stream_desc.stream_creator {
+            // Use the unified registry's stream creator
+            let context = StreamFactoryContext {
+                source_id: source_id.to_string(),
+                db: self.db.clone(),
+                storage: self.storage.clone(),
+                stream_writer: self.stream_writer.clone(),
+                auth,
+            };
+            return creator(&context);
         }
+
+        // Fallback: Stream doesn't have a creator registered yet
+        Err(Error::Other(format!(
+            "Stream {}/{} has no creator registered in the unified registry",
+            provider, stream_name
+        )))
     }
 }
 
@@ -321,7 +231,7 @@ mod tests {
 
         // Note: This will fail without a source in the database
         // That's expected - this tests the code path, not the database
-        let result = factory.create_auth(Uuid::new_v4(), "ios").await;
+        let result = factory.create_auth("source_ios-test", "ios").await;
 
         // Should return error because source doesn't exist
         assert!(result.is_err());
@@ -334,7 +244,9 @@ mod tests {
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool, storage, stream_writer);
 
-        let result = factory.create_auth(Uuid::new_v4(), "unknown_source").await;
+        let result = factory
+            .create_auth("source_unknown-test", "unknown_source")
+            .await;
         assert!(result.is_err());
 
         match result {
@@ -350,9 +262,9 @@ mod tests {
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool.clone(), storage, stream_writer.clone());
 
-        let source_id = Uuid::new_v4();
+        let source_id = "source_google-calendar";
         let tm = Arc::new(TokenManager::new_insecure(pool));
-        let auth = SourceAuth::oauth2(source_id, tm);
+        let auth = SourceAuth::oauth2(source_id.to_string(), tm);
 
         let result = factory
             .create_stream_typed_impl(source_id, "google", "calendar", auth)
@@ -373,9 +285,9 @@ mod tests {
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
         let factory = StreamFactory::new(pool.clone(), storage, stream_writer.clone());
 
-        let source_id = Uuid::new_v4();
+        let source_id = "source_google-test";
         let tm = Arc::new(TokenManager::new_insecure(pool));
-        let auth = SourceAuth::oauth2(source_id, tm);
+        let auth = SourceAuth::oauth2(source_id.to_string(), tm);
 
         let result = factory
             .create_stream_typed_impl(source_id, "google", "nonexistent", auth)
@@ -383,7 +295,11 @@ mod tests {
 
         assert!(result.is_err());
         match result {
-            Err(Error::Other(msg)) => assert!(msg.contains("Unknown stream")),
+            Err(Error::Other(msg)) => assert!(
+                msg.contains("not found in registry"),
+                "Expected 'not found in registry' error, got: {}",
+                msg
+            ),
             _ => panic!("Expected Error::Other"),
         }
     }

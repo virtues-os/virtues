@@ -1,12 +1,12 @@
 <script lang="ts">
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		pageTitle: string;
-		pageSlug: string;
+		pageId: string;
 	}
 
-	let { pageTitle, pageSlug }: Props = $props();
+	let { pageTitle, pageId }: Props = $props();
 
 	// Mock AI suggestions
 	const suggestions = [
@@ -49,8 +49,8 @@
 
 <div class="rail-ai">
 	<div class="ai-header">
-		<iconify-icon icon="ri:magic-line" width="14" height="14"
-		></iconify-icon>
+		<Icon icon="ri:magic-line" width="14" height="14"
+		/>
 		<span class="ai-title">AI Assistant</span>
 	</div>
 
@@ -58,18 +58,18 @@
 		<!-- Quick actions -->
 		<div class="ai-actions">
 			<button class="ai-action">
-				<iconify-icon icon="ri:quill-pen-line" width="16" height="16"
-				></iconify-icon>
+				<Icon icon="ri:quill-pen-line" width="16" height="16"
+				/>
 				<span>Enhance</span>
 			</button>
 			<button class="ai-action">
-				<iconify-icon icon="ri:search-line" width="16" height="16"
-				></iconify-icon>
+				<Icon icon="ri:search-line" width="16" height="16"
+				/>
 				<span>Find citations</span>
 			</button>
 			<button class="ai-action">
-				<iconify-icon icon="ri:translate-2" width="16" height="16"
-				></iconify-icon>
+				<Icon icon="ri:translate-2" width="16" height="16"
+				/>
 				<span>Improve clarity</span>
 			</button>
 		</div>
@@ -83,11 +83,11 @@
 				{#each suggestions as suggestion}
 					<li class="suggestion-item">
 						<div class="suggestion-icon">
-							<iconify-icon
+							<Icon
 								icon={getSuggestionIcon(suggestion.type)}
 								width="14"
 								height="14"
-							></iconify-icon>
+							/>
 						</div>
 						<div class="suggestion-content">
 							<span class="suggestion-title"
@@ -111,8 +111,8 @@
 				placeholder="Ask about this page..."
 			/>
 			<button class="ai-send" aria-label="Send message">
-				<iconify-icon icon="ri:send-plane-line" width="16" height="16"
-				></iconify-icon>
+				<Icon icon="ri:send-plane-line" width="16" height="16"
+				/>
 			</button>
 		</div>
 	</div>

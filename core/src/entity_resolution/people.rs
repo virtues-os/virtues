@@ -1,32 +1,55 @@
-//! People Resolution via Calendar Attendees
+//! People Resolution
 //!
-//! Resolves calendar attendees to canonical person entities.
+//! Resolves people from multiple sources to canonical wiki_people entities.
+//!
+//! ## Sources
+//!
+//! 1. **Calendar Attendees** - Event attendee emails → wiki_people
+//! 2. **Email Senders** - From email addresses → wiki_people
 //!
 //! ## Process
 //!
-//! 1. Fetch calendar events in time window
-//! 2. Extract attendee emails from TEXT[] column
-//! 3. Match against entities_person by email
+//! 1. Fetch records in time window (calendar events, emails)
+//! 2. Extract emails from records
+//! 3. Match against wiki_people by email
 //! 4. Create new person entities for unknowns
-//! 5. Update calendar metadata with resolved person IDs
+//! 5. Update source records with resolved person IDs
 
 use uuid::Uuid;
 
 use super::TimeWindow;
 use crate::database::Database;
 use crate::error::{Error, Result};
+use crate::ids;
 
-/// Resolve people from calendar attendees in time window
+/// Resolve people from all sources in time window
 ///
-/// Returns the number of people resolved.
+/// Returns the total number of people resolved.
 pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> {
     tracing::info!(
         start = %window.start,
         end = %window.end,
-        "Resolving people from calendar attendees"
+        "Resolving people from all sources"
     );
 
-    // 1. Fetch calendar events in window
+    let mut total_resolved = 0;
+
+    // 1. Resolve from calendar attendees
+    total_resolved += resolve_calendar_attendees(db, window).await?;
+
+    // 2. Resolve from email senders
+    total_resolved += resolve_email_senders(db, window).await?;
+
+    tracing::info!(
+        people_resolved = total_resolved,
+        "People resolution completed"
+    );
+
+    Ok(total_resolved)
+}
+
+/// Resolve people from calendar attendees in time window
+async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result<usize> {
     let calendar_events = fetch_calendar_events(db, window).await?;
 
     if calendar_events.is_empty() {
@@ -36,10 +59,9 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
 
     tracing::debug!(
         event_count = calendar_events.len(),
-        "Fetched calendar events"
+        "Fetched calendar events for people resolution"
     );
 
-    // 2. Process each event: resolve attendees and update calendar
     let mut total_people_resolved = 0;
     for event in calendar_events {
         match resolve_and_link_event_attendees(db, &event).await {
@@ -54,12 +76,237 @@ pub async fn resolve_people(db: &Database, window: TimeWindow) -> Result<usize> 
         }
     }
 
-    tracing::info!(
+    tracing::debug!(
         people_resolved = total_people_resolved,
-        "People resolution completed"
+        "Calendar attendee resolution completed"
     );
 
     Ok(total_people_resolved)
+}
+
+/// Resolve people from email senders in time window
+///
+/// Links from_email to from_person_id in data_social_email.
+async fn resolve_email_senders(db: &Database, window: TimeWindow) -> Result<usize> {
+    // Fetch emails without resolved from_person_id
+    let emails = fetch_unresolved_emails(db, window).await?;
+
+    if emails.is_empty() {
+        tracing::debug!("No emails to process for sender resolution");
+        return Ok(0);
+    }
+
+    tracing::debug!(
+        email_count = emails.len(),
+        "Fetched emails for sender resolution"
+    );
+
+    let mut total_resolved = 0;
+    for email_record in emails {
+        match resolve_and_link_email_sender(db, &email_record).await {
+            Ok(true) => total_resolved += 1,
+            Ok(false) => {}
+            Err(e) => {
+                tracing::warn!(
+                    email_id = %email_record.id,
+                    from_email = %email_record.from_email,
+                    error = %e,
+                    "Failed to resolve sender for email"
+                );
+            }
+        }
+    }
+
+    tracing::debug!(
+        people_resolved = total_resolved,
+        "Email sender resolution completed"
+    );
+
+    Ok(total_resolved)
+}
+
+/// Email record for sender resolution
+#[derive(Debug)]
+struct EmailRecord {
+    id: String,
+    from_email: String,
+    from_name: Option<String>,
+}
+
+/// Fetch emails without resolved from_person_id
+async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Vec<EmailRecord>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            id,
+            from_email,
+            from_name
+        FROM data_social_email
+        WHERE timestamp >= $1
+          AND timestamp < $2
+          AND from_person_id IS NULL
+          AND from_email IS NOT NULL
+          AND from_email != ''
+        ORDER BY timestamp ASC
+        LIMIT 1000
+        "#,
+        window.start,
+        window.end
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    let emails = rows
+        .into_iter()
+        .filter_map(|row| {
+            Some(EmailRecord {
+                id: row.id?,
+                from_email: row.from_email,
+                from_name: row.from_name,
+            })
+        })
+        .collect();
+
+    Ok(emails)
+}
+
+/// Resolve email sender and link to person entity
+///
+/// Returns true if a new person was created or linked.
+async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord) -> Result<bool> {
+    let email_lower = email_record.from_email.to_lowercase();
+
+    // Resolve or create person
+    let person_id = resolve_or_create_person_with_name(
+        db,
+        &email_lower,
+        email_record.from_name.as_deref(),
+    )
+    .await?;
+
+    // Update email with resolved person ID
+    sqlx::query!(
+        r#"
+        UPDATE data_social_email
+        SET from_person_id = $1,
+            updated_at = datetime('now')
+        WHERE id = $2
+        "#,
+        person_id,
+        email_record.id
+    )
+    .execute(db.pool())
+    .await?;
+
+    tracing::debug!(
+        email_id = %email_record.id,
+        from_email = %email_record.from_email,
+        person_id = %person_id,
+        "Linked email sender to person"
+    );
+
+    Ok(true)
+}
+
+/// Resolve email to person entity (or create if new), with optional display name
+///
+/// If the person already exists, updates the canonical name if a better name is provided.
+async fn resolve_or_create_person_with_name(
+    db: &Database,
+    email: &str,
+    display_name: Option<&str>,
+) -> Result<String> {
+    // Check if person exists with this email
+    let existing = sqlx::query!(
+        r#"
+        SELECT id, canonical_name
+        FROM wiki_people
+        WHERE EXISTS (
+            SELECT 1 FROM json_each(emails) WHERE value = $1
+        )
+        LIMIT 1
+        "#,
+        email
+    )
+    .fetch_optional(db.pool())
+    .await?;
+
+    if let Some(row) = existing {
+        let person_id = row
+            .id
+            .ok_or_else(|| Error::Database("Missing person ID".to_string()))?;
+
+        // Update canonical name if we have a better one (from email header vs extracted from email)
+        if let Some(name) = display_name {
+            let current_name = row.canonical_name;
+            // Only update if current name looks like it was extracted from email (no spaces, or matches email pattern)
+            let name_trimmed = name.trim();
+            if !name_trimmed.is_empty()
+                && !current_name.contains(' ')
+                && name_trimmed.contains(' ')
+            {
+                sqlx::query!(
+                    r#"
+                    UPDATE wiki_people
+                    SET canonical_name = $1,
+                        updated_at = datetime('now')
+                    WHERE id = $2
+                    "#,
+                    name_trimmed,
+                    person_id
+                )
+                .execute(db.pool())
+                .await?;
+
+                tracing::debug!(
+                    person_id = %person_id,
+                    old_name = %current_name,
+                    new_name = %name_trimmed,
+                    "Updated person canonical name from email header"
+                );
+            }
+        }
+
+        return Ok(person_id);
+    }
+
+    // Create new person entity
+    let canonical_name = display_name
+        .filter(|n| !n.trim().is_empty())
+        .map(|n| n.trim().to_string())
+        .unwrap_or_else(|| extract_name_from_email(email));
+
+    let emails_json =
+        serde_json::to_string(&vec![email.to_string()]).unwrap_or_else(|_| "[]".to_string());
+
+    let person_id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[email]);
+
+    sqlx::query!(
+        r#"
+        INSERT INTO wiki_people (
+            id,
+            canonical_name,
+            emails
+        ) VALUES ($1, $2, $3)
+        ON CONFLICT (id) DO NOTHING
+        RETURNING id
+        "#,
+        person_id,
+        canonical_name,
+        emails_json
+    )
+    .fetch_optional(db.pool())
+    .await?;
+
+    tracing::info!(
+        email = %email,
+        person_id = %person_id,
+        canonical_name = %canonical_name,
+        source = "email_sender",
+        "Created new person entity"
+    );
+
+    Ok(person_id)
 }
 
 /// Calendar event with attendees
@@ -77,7 +324,7 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
         SELECT
             id,
             attendee_identifiers
-        FROM data_praxis_calendar
+        FROM data_calendar
         WHERE start_time >= $1
           AND start_time < $2
           AND json_array_length(attendee_identifiers) > 0
@@ -117,7 +364,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
     }
 
     // Resolve each attendee email to person entity
-    let mut person_ids = Vec::new();
+    let mut person_ids: Vec<String> = Vec::new();
     let mut unique_people = std::collections::HashSet::new();
 
     for email in &event.attendee_identifiers {
@@ -125,8 +372,8 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
 
         match resolve_or_create_person(db, &email_lower).await {
             Ok(person_id) => {
+                unique_people.insert(person_id.clone());
                 person_ids.push(person_id);
-                unique_people.insert(person_id);
             }
             Err(e) => {
                 tracing::warn!(
@@ -146,13 +393,12 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
     // Update calendar event with resolved person IDs
     // SQLite doesn't support arrays - serialize to JSON
     let person_ids_json =
-        serde_json::to_string(&person_ids.iter().map(|u| u.to_string()).collect::<Vec<_>>())
-            .unwrap_or_else(|_| "[]".to_string());
+        serde_json::to_string(&person_ids).unwrap_or_else(|_| "[]".to_string());
     let event_id_str = event.id.to_string();
 
     sqlx::query!(
         r#"
-        UPDATE data_praxis_calendar
+        UPDATE data_calendar
         SET attendee_person_ids = $1,
             updated_at = datetime('now')
         WHERE id = $2
@@ -174,14 +420,14 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
 
 /// Resolve email to person entity (or create if new)
 ///
-/// Returns the person entity ID.
-async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
+/// Returns the person entity ID (format: person_{hash16}).
+async fn resolve_or_create_person(db: &Database, email: &str) -> Result<String> {
     // Check if person exists with this email
     // SQLite uses json_each() to search within JSON arrays instead of PostgreSQL's ANY()
     let existing = sqlx::query!(
         r#"
         SELECT id
-        FROM data_entities_person
+        FROM wiki_people
         WHERE EXISTS (
             SELECT 1 FROM json_each(emails) WHERE value = $1
         )
@@ -201,8 +447,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
             person_id = %id_str,
             "Found existing person entity"
         );
-        return Uuid::parse_str(&id_str)
-            .map_err(|e| Error::Database(format!("Invalid UUID: {}", e)));
+        return Ok(id_str);
     }
 
     // Create new person entity
@@ -212,10 +457,11 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
     let emails_json =
         serde_json::to_string(&vec![email.to_string()]).unwrap_or_else(|_| "[]".to_string());
 
-    let person_uuid = Uuid::new_v4().to_string();
+    // Generate ID with proper prefix (person_{hash16})
+    let person_id = ids::generate_id(ids::WIKI_PERSON_PREFIX, &[email]);
     let row = sqlx::query!(
         r#"
-        INSERT INTO data_entities_person (
+        INSERT INTO wiki_people (
             id,
             canonical_name,
             emails
@@ -224,7 +470,7 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
         )
         RETURNING id
         "#,
-        person_uuid,
+        person_id,
         canonical_name,
         emails_json
     )
@@ -234,17 +480,15 @@ async fn resolve_or_create_person(db: &Database, email: &str) -> Result<Uuid> {
     let person_id_str = row
         .id
         .ok_or_else(|| Error::Database("Missing returned ID".to_string()))?;
-    let person_id = Uuid::parse_str(&person_id_str)
-        .map_err(|e| Error::Database(format!("Invalid UUID: {}", e)))?;
 
     tracing::info!(
         email = %email,
-        person_id = %person_id,
+        person_id = %person_id_str,
         canonical_name = %canonical_name,
         "Created new person entity"
     );
 
-    Ok(person_id)
+    Ok(person_id_str)
 }
 
 /// Extract name from email (simple heuristic)

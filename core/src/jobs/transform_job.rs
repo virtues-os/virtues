@@ -6,12 +6,12 @@
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use crate::error::Result;
 use crate::jobs::models::Job;
 use crate::jobs::transform_context::TransformContext;
 use crate::jobs::transform_factory::TransformFactory;
+use crate::jobs::JobExecutor;
 
 /// Execute a transform job
 ///
@@ -20,11 +20,13 @@ use crate::jobs::transform_factory::TransformFactory;
 ///
 /// # Arguments
 /// * `db` - Database connection pool
+/// * `executor` - Job executor for running chained transform jobs
 /// * `context` - Transform context with storage and API keys
 /// * `job` - The job to execute
-#[tracing::instrument(skip(db, context, job), fields(job_id = %job.id, job_type = "transform"))]
+#[tracing::instrument(skip(db, executor, context, job), fields(job_id = %job.id, job_type = "transform"))]
 pub async fn execute_transform_job(
     db: &SqlitePool,
+    executor: &JobExecutor,
     context: &Arc<TransformContext>,
     job: &Job,
 ) -> Result<()> {
@@ -45,15 +47,10 @@ pub async fn execute_transform_job(
             crate::Error::InvalidInput("Transform job missing target_table in metadata".into())
         })?;
 
-    let source_id_str = job
+    let source_id = job
         .source_connection_id
         .as_ref()
         .ok_or_else(|| crate::Error::InvalidInput("Transform job missing source_id".into()))?;
-    let source_id = Uuid::parse_str(source_id_str)
-        .map_err(|e| crate::Error::InvalidInput(format!("Invalid source_id: {}", e)))?;
-
-    let job_id = Uuid::parse_str(&job.id)
-        .map_err(|e| crate::Error::InvalidInput(format!("Invalid job_id: {}", e)))?;
 
     tracing::info!(
         source_table,
@@ -69,7 +66,7 @@ pub async fn execute_transform_job(
     let db_wrapper = crate::database::Database::from_pool(db.clone());
 
     // Execute transformation
-    let result = transformer.transform(&db_wrapper, context, source_id).await;
+    let result = transformer.transform(&db_wrapper, context, source_id.clone()).await;
 
     match result {
         Ok(transform_result) => {
@@ -87,7 +84,7 @@ pub async fn execute_transform_job(
             // Update job with success
             sqlx::query(
                 r#"
-                UPDATE data_jobs
+                UPDATE elt_jobs
                 SET status = 'succeeded',
                     completed_at = datetime('now'),
                     records_processed = $1,
@@ -112,15 +109,15 @@ pub async fn execute_transform_job(
                 "Transform job completed successfully"
             );
 
-            // Create chained transform jobs if any were returned
+            // Create and execute chained transform jobs if any were returned
             for chained in &transform_result.chained_transforms {
                 let chained_job = crate::jobs::create_chained_transform_job(
                     db,
-                    job_id,
+                    &job.id,
                     &chained.source_table,
                     chained.target_tables.iter().map(|s| s.as_str()).collect(),
                     &chained.domain,
-                    chained.source_record_id,
+                    &chained.source_record_id,
                     &chained.transform_stage,
                 )
                 .await;
@@ -132,8 +129,10 @@ pub async fn execute_transform_job(
                             child_job_id = %child_job.id,
                             transform_stage = %chained.transform_stage,
                             source_table = %chained.source_table,
-                            "Created chained transform job"
+                            "Created and executing chained transform job"
                         );
+                        // Execute the chained job asynchronously
+                        executor.execute_async(child_job.id);
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -159,7 +158,7 @@ pub async fn execute_transform_job(
             // Update job with failure
             sqlx::query(
                 r#"
-                UPDATE data_jobs
+                UPDATE elt_jobs
                 SET status = 'failed',
                     completed_at = datetime('now'),
                     error_message = $1,

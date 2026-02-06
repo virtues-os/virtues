@@ -10,11 +10,13 @@ use super::descriptor::Ontology;
 
 // Import domain registrations
 use super::activity::registry::register_activity_ontologies;
+use super::calendar::registry::register_calendar_ontologies;
+use super::device::registry::register_device_ontologies;
+use super::environment::registry::register_environment_ontologies;
 use super::financial::registry::register_financial_ontologies;
 use super::health::registry::register_health_ontologies;
 use super::knowledge::registry::register_knowledge_ontologies;
 use super::location::registry::register_location_ontologies;
-use super::praxis::registry::register_praxis_ontologies;
 use super::social::registry::register_social_ontologies;
 use super::speech::registry::register_speech_ontologies;
 
@@ -119,11 +121,13 @@ fn init_registry() -> OntologyRegistry {
     register_health_ontologies(&mut registry);
     register_location_ontologies(&mut registry);
     register_social_ontologies(&mut registry);
-    register_praxis_ontologies(&mut registry);
+    register_calendar_ontologies(&mut registry);
     register_activity_ontologies(&mut registry);
     register_speech_ontologies(&mut registry);
     register_knowledge_ontologies(&mut registry);
     register_financial_ontologies(&mut registry);
+    register_device_ontologies(&mut registry);
+    register_environment_ontologies(&mut registry);
 
     registry
 }
@@ -199,10 +203,10 @@ mod tests {
     fn test_registry_stream_ontology_consistency() {
         // Validates that RegisteredStream.target_ontologies matches Ontology.source_streams
         // This catches drift between the two metadata definitions
-        use crate::registry::list_all_streams;
+        use crate::registry::list_all_streams_including_disabled;
 
         let ontology_registry = ontology_registry();
-        let all_streams = list_all_streams();
+        let all_streams = list_all_streams_including_disabled();
 
         let mut errors = Vec::new();
 
@@ -213,15 +217,15 @@ mod tests {
                 // Find the registered stream with this table_name
                 let matching_stream = all_streams
                     .iter()
-                    .find(|(_, stream)| stream.table_name == *source_stream);
+                    .find(|(_, stream)| stream.descriptor.table_name == *source_stream);
 
                 match matching_stream {
                     Some((_, stream)) => {
                         // Verify the stream lists this ontology as a target
-                        if !stream.target_ontologies.contains(&ontology.name) {
+                        if !stream.descriptor.target_ontologies.contains(&ontology.name) {
                             errors.push(format!(
                                 "Ontology '{}' claims source_stream '{}', but RegisteredStream '{}' doesn't list it in target_ontologies (has: {:?})",
-                                ontology.name, source_stream, stream.name, stream.target_ontologies
+                                ontology.name, source_stream, stream.descriptor.name, stream.descriptor.target_ontologies
                             ));
                         }
                     }
@@ -237,20 +241,20 @@ mod tests {
 
         // Check: Every RegisteredStream's target_ontologies should exist and list that stream
         for (source_name, stream) in &all_streams {
-            for target_ontology in &stream.target_ontologies {
+            for target_ontology in &stream.descriptor.target_ontologies {
                 match ontology_registry.get(target_ontology) {
                     Some(ontology) => {
-                        if !ontology.source_streams.contains(&stream.table_name) {
+                        if !ontology.source_streams.contains(&stream.descriptor.table_name) {
                             errors.push(format!(
                                 "RegisteredStream '{}/{}' (table: {}) claims target_ontology '{}', but ontology doesn't list it in source_streams (has: {:?})",
-                                source_name, stream.name, stream.table_name, target_ontology, ontology.source_streams
+                                source_name, stream.descriptor.name, stream.descriptor.table_name, target_ontology, ontology.source_streams
                             ));
                         }
                     }
                     None => {
                         errors.push(format!(
                             "RegisteredStream '{}/{}' claims target_ontology '{}' but no such ontology exists",
-                            source_name, stream.name, target_ontology
+                            source_name, stream.descriptor.name, target_ontology
                         ));
                     }
                 }

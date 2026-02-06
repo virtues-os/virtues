@@ -14,7 +14,7 @@
 //! - `jobs` - Async job tracking and management
 //! - `registry` - Catalog/registry queries
 //! - `ontologies` - Ontology table queries
-//! - `praxis` - Temporal pursuits management (tasks/initiatives/aspirations)
+
 //! - `rate_limit` - API usage tracking and rate limiting
 //! - `models` - LLM model configurations
 //! - `agents` - AI agent configurations
@@ -24,38 +24,52 @@
 pub mod agents;
 pub mod assistant_profile;
 pub mod auth;
-pub mod bookmarks;
 pub mod chat;
+pub mod chat_permissions;
+pub mod chat_usage;
+pub mod chats;
 pub mod code;
 pub mod compaction;
 pub mod device_pairing;
 pub mod drive;
 pub mod entities;
 pub mod exa;
+pub mod feedback;
+pub mod internal;
 pub mod jobs;
+pub mod lake;
+pub mod media;
 pub mod metrics;
 pub mod models;
+pub mod namespaces;
 pub mod oauth;
-pub mod onboarding;
+
 pub mod ontologies;
+pub mod pages;
+pub mod personas;
 pub mod places;
 pub mod plaid;
-pub mod praxis;
+pub mod spaces;
+
+pub mod developer;
 pub mod profile;
 pub mod rate_limit;
 pub mod registry;
 pub mod search;
 pub mod seed_testing;
-pub mod session_usage;
-pub mod sessions;
 pub mod sources;
 pub mod storage;
 pub mod streams;
+pub mod subscription;
+pub mod system_update;
+pub mod terminal;
 pub mod token_estimation;
 pub mod tools;
 pub mod types;
+pub mod unsplash;
 pub mod usage;
 pub mod validation;
+pub mod views;
 pub mod wiki;
 
 // Re-export commonly used types
@@ -88,17 +102,12 @@ pub use auth::{
     UpdateOwnerEmailRequest,
     UpdateOwnerEmailResponse,
 };
-pub use bookmarks::{
-    create_entity_bookmark, create_tab_bookmark, delete_bookmark, delete_bookmark_by_entity,
-    delete_bookmark_by_route, is_entity_bookmarked, is_route_bookmarked, list_bookmarks,
-    toggle_entity_bookmark, toggle_route_bookmark, Bookmark, BookmarkStatus,
-    CreateEntityBookmarkRequest, CreateTabBookmarkRequest, ToggleBookmarkResponse,
-};
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
 pub use device_pairing::{
-    check_pairing_status, complete_device_pairing, initiate_device_pairing, link_device_manually,
-    list_pending_pairings, update_last_seen, validate_device_token, verify_device, DeviceInfo,
-    DeviceVerified, PairingCompleted, PairingInitiated, PairingStatus, PendingPairing,
+    check_pairing_status, complete_device_pairing, complete_pairing_by_source_id,
+    initiate_device_pairing, link_device_manually, list_pending_pairings, update_last_seen,
+    validate_device_token, DeviceInfo, PairingCompleted, PairingInitiated, PairingStatus,
+    PendingPairing,
 };
 pub use drive::{
     check_quota as check_drive_quota,
@@ -107,11 +116,13 @@ pub use drive::{
     delete_file as delete_drive_file,
     download_file as download_drive_file,
     download_file_stream as download_drive_file_stream,
+    download_lake_object,
     empty_trash as empty_drive_trash,
     get_drive_usage,
     get_file_metadata as get_drive_file,
     // Functions
     init_drive_quota,
+    is_lake_object_id,
     list_files as list_drive_files,
     list_trash as list_drive_trash,
     move_file as move_drive_file,
@@ -119,6 +130,7 @@ pub use drive::{
     purge_old_trash as purge_old_drive_trash,
     // Quota constants
     quotas as drive_quotas,
+    reconcile_folder as reconcile_drive_folder,
     reconcile_usage as reconcile_drive_usage,
     restore_file as restore_drive_file,
     upload_file as upload_drive_file,
@@ -140,25 +152,74 @@ pub use entities::{
 pub use exa::{
     search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
+pub use feedback::{submit_feedback, FeedbackRequest};
 pub use jobs::{
     cancel_job, get_job_history, get_job_status, query_jobs, trigger_stream_sync,
     CreateJobResponse, QueryJobsRequest,
+};
+pub use media::{
+    get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
+    MediaFile, UploadMediaRequest,
 };
 pub use metrics::{
     get_activity_metrics, ActivityMetrics, JobTypeStats, MetricsSummary, PeriodStats, RecentError,
     StreamStats, TimeWindowMetrics,
 };
-pub use models::{get_model, list_models, ModelInfo};
+pub use models::{
+    get_model, list_models, list_recommended_models, ModelInfo, RecommendedModelsResponse,
+};
 pub use oauth::{
     create_source, handle_oauth_callback, initiate_oauth_flow, register_device,
     CreateSourceRequest, OAuthAuthorizeRequest, OAuthAuthorizeResponse, OAuthCallbackParams,
     RegisterDeviceRequest,
 };
-pub use onboarding::{
-    complete_onboarding, complete_step, get_onboarding_status, save_onboarding_aspirations,
-    save_onboarding_axiology, skip_step, ExtractedAxiologyItem, OnboardingAspiration,
-    OnboardingStatus, OnboardingStep, SaveAspirationsRequest, SaveAspirationsResponse,
-    SaveAxiologyRequest, SaveAxiologyResponse,
+pub use unsplash::{
+    search as unsplash_search, SearchRequest as UnsplashSearchRequest,
+    SearchResponse as UnsplashSearchResponse,
+};
+
+pub use chat_permissions::{
+    add_permission, clear_permissions, has_permission, list_permissions, remove_permission,
+    AddPermissionRequest, ChatEditPermission, PermissionListResponse, PermissionResponse,
+};
+pub use chats::{
+    append_message, create_chat, create_chat_from_request, delete_chat, generate_title, get_chat,
+    list_chats, update_chat_title, update_messages, Chat, ChatDetailResponse, ChatListItem,
+    ChatListResponse, ChatMessage, ConversationMeta, CreateChatRequest, CreateChatResponse,
+    DeleteChatResponse, GenerateTitleRequest, GenerateTitleResponse, IntentMetadata,
+    MessageResponse, TimeRange, TitleMessage, ToolCall, UpdateChatResponse, UpdateTitleRequest,
+};
+pub use internal::{
+    get_server_status, hydrate_profile, mark_server_ready, seed_dev_server_status, HydrateRequest,
+    HydrateResponse, ServerStatus,
+};
+pub use namespaces::{
+    entity_id_to_route, extract_namespace_from_entity_id, get_namespace, list_entity_namespaces,
+    list_namespaces, route_to_entity_id, Namespace, NamespaceListResponse,
+};
+pub use pages::{
+    create_page,
+    // Version history
+    create_version,
+    delete_page,
+    get_page,
+    get_version,
+    list_pages,
+    list_versions,
+    search_entities,
+    update_page,
+    CreatePageRequest,
+    // Version types
+    CreateVersionRequest,
+    EntitySearchResponse,
+    EntitySearchResult,
+    Page,
+    PageListResponse,
+    PageSummary,
+    PageVersionDetail,
+    PageVersionSummary,
+    PageVersionsListResponse,
+    UpdatePageRequest,
 };
 pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
@@ -169,12 +230,26 @@ pub use plaid::{
     CreateLinkTokenRequest, CreateLinkTokenResponse, ExchangeTokenRequest, ExchangeTokenResponse,
     PlaidAccount,
 };
-pub use praxis::{
-    create_aspiration, create_initiative, create_task, delete_aspiration, delete_initiative,
-    delete_task, get_aspiration, get_initiative, get_task, list_aspirations, list_initiatives,
-    list_tags, list_tasks, update_aspiration, update_initiative, update_task, Aspiration,
-    CreateAspirationRequest, CreateTaskRequest, Initiative, Task, UpdateAspirationRequest,
-    UpdateTaskRequest,
+pub use spaces::{
+    create_space, delete_space, get_space, list_spaces, save_tab_state, update_space,
+    CreateSpaceRequest, SaveTabStateRequest, Space, SpaceListResponse, SpaceSummary,
+    UpdateSpaceRequest,
+};
+pub use views::{
+    add_item_to_view, create_view, delete_view, get_view, list_views, remove_item_from_view,
+    resolve_view, update_view, CreateViewRequest, QueryConfig, UpdateViewRequest, View, ViewEntity,
+    ViewListResponse, ViewResolutionResponse, ViewSummary,
+};
+
+pub use chat_usage::{
+    calculate_cost as calculate_token_cost, check_compaction_needed, get_chat_usage,
+    record_chat_usage, ChatUsageInfo, CompactionStatus, UsageData,
+};
+pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
+pub use personas::{
+    create_persona, get_persona, get_persona_content, hide_persona, list_all_personas,
+    list_personas, reset_personas, unhide_persona, update_persona, CreatePersonaRequest, Persona,
+    PersonaListResponse, PersonasData, UpdatePersonaRequest,
 };
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
 pub use rate_limit::{
@@ -192,19 +267,19 @@ pub use sources::{
 };
 pub use storage::{get_object_content, list_recent_objects, ObjectContent, StreamObjectSummary};
 pub use streams::{
-    disable_stream, enable_stream, get_stream_info, list_source_streams, update_stream_config,
-    update_stream_schedule, EnableStreamRequest, UpdateStreamConfigRequest,
+    bulk_update_streams, disable_stream, enable_stream, get_stream_info, list_source_streams,
+    update_stream_config, update_stream_schedule, BulkUpdateStreamsRequest,
+    BulkUpdateStreamsResponse, EnableStreamRequest, StreamUpdate, UpdateStreamConfigRequest,
     UpdateStreamScheduleRequest,
 };
-pub use tools::{get_tool, list_tools, update_tool, ListToolsQuery, Tool, UpdateToolRequest};
-pub use session_usage::{
-    calculate_cost as calculate_token_cost, check_compaction_needed, get_session_usage,
-    record_session_usage, CompactionStatus, SessionUsage, UsageData,
+pub use system_update::{
+    run_version_checker, trigger_update as trigger_system_update, UpdateState, UpdateStatus,
 };
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
     ContextStatus,
 };
+pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
 pub use usage::{
     check_and_record_usage, check_limit, get_all_usage, init_limits_from_tier,
     record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
@@ -218,29 +293,23 @@ pub use wiki::{
     delete_temporal_event,
     // Act operations
     get_act,
-    get_act_by_slug,
     // Telos operations
     get_active_telos,
     // Chapter operations
     get_chapter,
-    get_chapter_by_slug,
     get_citations,
     get_day_events,
     get_day_sources,
+    // Day streams (dynamic ontology queries)
+    get_day_streams,
     get_events_by_date,
     // Day operations
     get_or_create_day,
     // Organization operations
     get_organization,
-    get_organization_by_slug,
     // Person operations
     get_person,
-    get_person_by_slug,
-    get_place_by_slug,
-    get_telos_by_slug,
-    // Thing operations
-    get_thing,
-    get_thing_by_slug,
+    get_telos,
     // Place operations (wiki-specific)
     get_wiki_place,
     list_acts,
@@ -248,15 +317,13 @@ pub use wiki::{
     list_days,
     list_organizations,
     list_people,
-    list_things,
     list_wiki_places,
-    resolve_slug,
+    resolve_id,
     update_citation,
     update_day,
     update_organization,
     update_person,
     update_temporal_event,
-    update_thing,
     update_wiki_place,
     // Citation types and operations
     Citation,
@@ -264,13 +331,11 @@ pub use wiki::{
     CreateTemporalEventRequest,
     // Day sources (ontology records for a day)
     DaySource,
-    // Day streams (dynamic ontology queries)
-    get_day_streams,
     DayStream,
     DayStreamsResponse,
+    // ID resolution
+    IdResolution,
     StreamRecord,
-    // Slug resolution
-    SlugResolution,
     // Temporal event types and operations
     TemporalEvent,
     UpdateCitationRequest,
@@ -280,7 +345,6 @@ pub use wiki::{
     // Update requests
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    UpdateWikiThingRequest,
     WikiAct,
     WikiChapter,
     WikiDay,
@@ -293,6 +357,4 @@ pub use wiki::{
     WikiPlaceListItem,
     // Narrative types
     WikiTelos,
-    WikiThing,
-    WikiThingListItem,
 };

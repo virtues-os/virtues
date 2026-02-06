@@ -1,5 +1,5 @@
 <script lang="ts">
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
 	import type { Snippet } from "svelte";
 
 	interface Props {
@@ -45,12 +45,12 @@
 				>
 			{/if}
 		</h4>
-		<iconify-icon
+		<Icon
 			icon={isOpen ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
 			width="16"
 			height="16"
 			class="text-foreground-subtle opacity-50 transition-opacity duration-150 group-hover:opacity-100"
-		></iconify-icon>
+		/>
 	</button>
 
 	<div

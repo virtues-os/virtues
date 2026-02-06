@@ -27,7 +27,7 @@ pub fn assistant_profile_defaults() -> AssistantProfileDefaults {
     AssistantProfileDefaults {
         assistant_name: None,
         default_agent_id: "agent".to_string(),
-        default_model_id: "anthropic/claude-sonnet-4-20250514".to_string(),
+        default_model_id: "cerebras/gpt-oss-120b".to_string(),
         enabled_tools: default_enabled_tools(),
         ui_preferences: serde_json::json!({
             "contextIndicator": {

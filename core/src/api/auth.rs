@@ -19,8 +19,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use uuid::Uuid;
-
+use crate::ids;
 use crate::middleware::auth::{
     cleanup_expired_sessions, cleanup_expired_tokens, create_session, delete_session,
     validate_session, AuthUser, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_SECURE,
@@ -153,7 +152,7 @@ fn check_rate_limit(ip: &str) -> Result<(), (StatusCode, Json<AuthErrorResponse>
 pub async fn seed_owner_email(pool: &SqlitePool) -> crate::Result<()> {
     // Check if owner_email is already set in DB
     let existing: Option<String> = sqlx::query_scalar(
-        "SELECT owner_email FROM data_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
+        "SELECT owner_email FROM app_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
     )
     .fetch_optional(pool)
     .await?
@@ -169,7 +168,7 @@ pub async fn seed_owner_email(pool: &SqlitePool) -> crate::Result<()> {
         let email = owner_email.trim().to_lowercase();
         if !email.is_empty() && is_valid_email(&email) {
             sqlx::query(
-                "UPDATE data_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
+                "UPDATE app_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
             )
             .bind(&email)
             .execute(pool)
@@ -192,7 +191,7 @@ async fn get_owner_email(pool: &SqlitePool) -> Option<String> {
     // The singleton row always exists, so we can use fetch_one
     // owner_email column may be NULL, so we get Option<String>
     sqlx::query_scalar::<_, Option<String>>(
-        "SELECT owner_email FROM data_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
+        "SELECT owner_email FROM app_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
     )
     .fetch_one(pool)
     .await
@@ -203,7 +202,7 @@ async fn get_owner_email(pool: &SqlitePool) -> Option<String> {
 /// Set owner email in database (used by webhook and first-login flow)
 async fn set_owner_email(pool: &SqlitePool, email: &str) -> crate::Result<()> {
     sqlx::query(
-        "UPDATE data_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
+        "UPDATE app_user_profile SET owner_email = $1 WHERE id = '00000000-0000-0000-0000-000000000001'"
     )
     .bind(email)
     .execute(pool)
@@ -576,15 +575,12 @@ async fn get_or_create_user(pool: &SqlitePool, email: &str) -> crate::Result<Aut
     if let Some(user) = existing {
         let user_id = user
             .id
-            .as_ref()
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| Error::Database("Invalid user ID".to_string()))?;
+            .ok_or_else(|| Error::Database("Missing user ID".to_string()))?;
 
         // Update email_verified timestamp
-        let id_str = user_id.to_string();
         sqlx::query!(
             "UPDATE app_auth_user SET email_verified = datetime('now') WHERE id = $1",
-            id_str
+            user_id
         )
         .execute(pool)
         .await?;
@@ -596,9 +592,8 @@ async fn get_or_create_user(pool: &SqlitePool, email: &str) -> crate::Result<Aut
         });
     }
 
-    // Create new user - generate UUID in application
-    let user_id = Uuid::new_v4();
-    let user_id_str = user_id.to_string();
+    // Create new user - generate ID with proper prefix (user_{hash16})
+    let user_id_str = ids::generate_id(ids::USER_PREFIX, &[email]);
 
     sqlx::query!(
         r#"
@@ -612,7 +607,7 @@ async fn get_or_create_user(pool: &SqlitePool, email: &str) -> crate::Result<Aut
     .await?;
 
     Ok(AuthUser {
-        id: user_id,
+        id: user_id_str,
         email: email.to_string(),
         email_verified: Some(Utc::now()),
     })

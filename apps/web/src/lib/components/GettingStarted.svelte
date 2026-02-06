@@ -1,22 +1,22 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import Icon from "$lib/components/Icon.svelte";
+	import { onMount } from "svelte";
 	import {
 		GETTING_STARTED_STEPS,
-		type GettingStartedStep
-	} from '$lib/config/getting-started';
-	import { createSession, listSources } from '$lib/api/client';
-	import { windowTabs } from '$lib/stores/windowTabs.svelte';
+		type GettingStartedStep,
+	} from "$lib/config/getting-started";
+	import { createChat, listSources } from "$lib/api/client";
+	import { spaceStore } from "$lib/stores/space.svelte";
 
 	interface Props {
-		onCreateSession?: (sessionId: string) => void;
+		onCreateChat?: (chatId: string) => void;
 		onFocusInput?: (placeholder?: string) => void;
 	}
 
-	let { onCreateSession, onFocusInput }: Props = $props();
+	let { onCreateChat, onFocusInput }: Props = $props();
 
 	// State
-	let expanded = $state(true);
-	let loading = $state(true);
+	let expanded = $state(false);
 	let completedSteps = $state<string[]>([]);
 	let skippedSteps = $state<string[]>([]);
 
@@ -25,14 +25,16 @@
 	let devicePaired = $state(false);
 	let hasChatSessions = $state(false);
 
-	onMount(async () => {
-		await Promise.all([loadGettingStartedState(), loadAutoCompleteData()]);
-		loading = false;
+	onMount(() => {
+		// Fire-and-forget: data loads in the background and reactively updates the UI.
+		// We render immediately with default values (0 steps done) to avoid CLS.
+		loadGettingStartedState();
+		loadAutoCompleteData();
 	});
 
 	async function loadGettingStartedState() {
 		try {
-			const res = await fetch('/api/assistant-profile');
+			const res = await fetch("/api/assistant-profile");
 			if (res.ok) {
 				const profile = await res.json();
 				const gs = profile.ui_preferences?.gettingStarted;
@@ -42,7 +44,7 @@
 				}
 			}
 		} catch (error) {
-			console.error('Failed to load getting started state:', error);
+			console.error("Failed to load getting started state:", error);
 		}
 	}
 
@@ -51,20 +53,21 @@
 			// Check sources
 			const sources = await listSources();
 			sourcesConnected = sources.some(
-				(s: any) => s.auth_type !== 'device' && s.auth_type !== 'none'
+				(s: any) => s.auth_type !== "device" && s.auth_type !== "none",
 			);
 			devicePaired = sources.some(
-				(s: any) => s.auth_type === 'device' && s.pairing_status === 'active'
+				(s: any) =>
+					s.auth_type === "device" && s.pairing_status === "active",
 			);
 
-			// Check sessions
-			const sessionsRes = await fetch('/api/sessions');
-			if (sessionsRes.ok) {
-				const sessions = await sessionsRes.json();
-				hasChatSessions = (sessions.conversations?.length ?? 0) > 0;
+			// Check chats
+			const chatsRes = await fetch("/api/chats");
+			if (chatsRes.ok) {
+				const chats = await chatsRes.json();
+				hasChatSessions = (chats.conversations?.length ?? 0) > 0;
 			}
 		} catch (error) {
-			console.error('Failed to load auto-complete data:', error);
+			console.error("Failed to load auto-complete data:", error);
 		}
 	}
 
@@ -75,11 +78,11 @@
 		// Check auto-complete
 		if (step.autoComplete) {
 			switch (step.autoComplete.type) {
-				case 'hasSourcesConnected':
+				case "hasSourcesConnected":
 					return sourcesConnected;
-				case 'hasDevicePaired':
+				case "hasDevicePaired":
 					return devicePaired;
-				case 'hasChatSessions':
+				case "hasChatSessions":
 					return hasChatSessions;
 			}
 		}
@@ -99,28 +102,38 @@
 		if (isStepDone(step)) return;
 
 		switch (step.action.type) {
-			case 'createSession': {
+			case "createChat": {
 				try {
-					const response = await createSession(step.action.title, [
+					const response = await createChat(step.action.title, [
 						{
-							role: 'assistant',
+							role: "assistant",
 							content: step.action.content,
-							timestamp: new Date().toISOString()
-						}
+							timestamp: new Date().toISOString(),
+						},
 					]);
 					await markStepComplete(step.id);
-					onCreateSession?.(response.id);
+					onCreateChat?.(response.id);
 				} catch (error) {
-					console.error('Failed to create intro session:', error);
+					console.error("Failed to create intro chat:", error);
 				}
 				break;
 			}
-			case 'navigate':
+			case "navigate":
 				// Open in tab system instead of simple navigation
-				windowTabs.openTabFromRoute(step.action.href, { label: step.title });
+				spaceStore.openTabFromRoute(step.action.href, {
+					label: step.title,
+				});
+				// Mark complete if autoComplete is 'none' (clicking is enough)
+				if (step.autoComplete?.type === "none") {
+					await markStepComplete(step.id);
+				}
 				break;
-			case 'focusInput':
+			case "focusInput":
 				onFocusInput?.(step.action.placeholder);
+				await markStepComplete(step.id);
+				break;
+			case "openExternal":
+				window.open(step.action.url, "_blank");
 				await markStepComplete(step.id);
 				break;
 		}
@@ -144,7 +157,7 @@
 	async function saveState() {
 		try {
 			// First get current preferences
-			const res = await fetch('/api/assistant-profile');
+			const res = await fetch("/api/assistant-profile");
 			if (!res.ok) return;
 
 			const profile = await res.json();
@@ -156,23 +169,23 @@
 				gettingStarted: {
 					...existingPrefs.gettingStarted,
 					completedSteps,
-					skippedSteps
-				}
+					skippedSteps,
+				},
 			};
 
-			await fetch('/api/assistant-profile', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ ui_preferences: updatedPrefs })
+			await fetch("/api/assistant-profile", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ ui_preferences: updatedPrefs }),
 			});
 		} catch (error) {
-			console.error('Failed to save getting started state:', error);
+			console.error("Failed to save getting started state:", error);
 		}
 	}
 
 	// Calculate progress - count both completed and skipped
 	const doneCount = $derived(
-		GETTING_STARTED_STEPS.filter((step) => isStepDone(step)).length
+		GETTING_STARTED_STEPS.filter((step) => isStepDone(step)).length,
 	);
 	const totalSteps = GETTING_STARTED_STEPS.length;
 
@@ -180,16 +193,7 @@
 	const allDone = $derived(doneCount === totalSteps);
 </script>
 
-{#if loading}
-	<div class="getting-started-skeleton">
-		<div class="skeleton-header"></div>
-		<div class="skeleton-steps">
-			{#each Array(6) as _, i}
-				<div class="skeleton-step" style="animation-delay: {i * 0.08}s"></div>
-			{/each}
-		</div>
-	</div>
-{:else if !allDone}
+{#if !allDone}
 	<div class="getting-started">
 		<button
 			class="accordion-header"
@@ -211,6 +215,9 @@
 			<span class="header-content">
 				<span class="header-title">Getting started</span>
 				<span class="header-progress">{doneCount}/{totalSteps}</span>
+				{#if doneCount > 0}
+					<span class="header-hint">· finish to hide</span>
+				{/if}
 			</span>
 		</button>
 
@@ -221,40 +228,62 @@
 						{@const isComplete = isStepComplete(step)}
 						{@const isSkipped = isStepSkipped(step)}
 						{@const isDone = isComplete || isSkipped}
-						<div class="step-row" class:done={isDone}>
+						{@const previousStep =
+							index > 0 ? GETTING_STARTED_STEPS[index - 1] : null}
+						{@const isLocked = previousStep
+							? !isStepDone(previousStep)
+							: false}
+
+						<div
+							class="step-row"
+							class:done={isDone}
+							class:locked={isLocked}
+						>
 							<button
 								class="step-item"
 								class:completed={isComplete}
 								class:skipped={isSkipped}
+								class:locked={isLocked}
 								onclick={() => handleStepClick(step)}
-								disabled={isDone}
+								disabled={isDone || isLocked}
 							>
 								<div class="step-indicator">
 									{#if isComplete}
-										<iconify-icon icon="ri:check-line" width="14"></iconify-icon>
+										<Icon
+											icon="ri:check-line"
+											width="14"
+										/>
+									{:else if isLocked}
+										<Icon
+											icon="ri:lock-line"
+											width="12"
+										/>
 									{:else if isSkipped}
-										<iconify-icon icon="ri:subtract-line" width="14"></iconify-icon>
+										<Icon
+											icon="ri:subtract-line"
+											width="14"
+										/>
 									{:else}
-										<span class="step-number">{index + 1}</span>
+										<span class="step-number"
+											>{index + 1}</span
+										>
 									{/if}
 								</div>
 								<div class="step-content">
 									<div class="step-title">{step.title}</div>
-									<div class="step-description">{step.description}</div>
+									<div class="step-description">
+										{step.description}
+									</div>
 								</div>
-								<div class="step-icon">
-									<iconify-icon icon={step.icon} width="18"></iconify-icon>
-								</div>
+								{#if !isLocked}
+									<div class="step-icon">
+										<Icon
+											icon={step.icon}
+											width="18"
+										/>
+									</div>
+								{/if}
 							</button>
-							{#if !isDone}
-								<button
-									class="skip-button"
-									onclick={(e) => handleSkipStep(e, step.id)}
-									title="Skip this step"
-								>
-									Skip
-								</button>
-							{/if}
 						</div>
 					{/each}
 				</div>
@@ -338,8 +367,13 @@
 	}
 
 	.header-progress::before {
-		content: '·';
+		content: "·";
 		margin-right: 8px;
+	}
+
+	.header-hint {
+		color: var(--color-foreground-subtle);
+		opacity: 0.7;
 	}
 
 	/* Accordion content with smooth grid animation */
@@ -412,11 +446,13 @@
 	}
 
 	.step-item.completed,
-	.step-item.skipped {
+	.step-item.skipped,
+	.step-item.locked {
 		cursor: default;
 	}
 
-	.step-item.skipped .step-indicator {
+	.step-item.skipped .step-indicator,
+	.step-item.locked .step-indicator {
 		color: var(--color-foreground-muted);
 		opacity: 0.5;
 	}
@@ -450,6 +486,11 @@
 		color: white;
 	}
 
+	.step-item.locked .step-indicator {
+		border-color: var(--color-border-subtle);
+		background: var(--color-surface-subtle);
+	}
+
 	.step-number {
 		font-size: 0.625rem;
 		font-weight: 500;
@@ -466,6 +507,10 @@
 		font-weight: 400;
 		color: var(--color-foreground);
 		line-height: 1.3;
+	}
+
+	.step-item.locked .step-title {
+		color: var(--color-foreground-muted);
 	}
 
 	.step-item.completed .step-title {
@@ -495,72 +540,9 @@
 		opacity: 0.2;
 	}
 
-	/* Skip button - minimal text link style */
-	.skip-button {
-		flex-shrink: 0;
-		padding: 0.25rem 0.375rem;
-		background: transparent;
-		border: none;
-		font-size: 0.6875rem;
-		font-weight: 400;
-		color: var(--color-foreground-muted);
-		opacity: 0.5;
-		cursor: pointer;
-		transition: all 150ms var(--ease-premium);
-	}
-
-	.skip-button:hover {
-		opacity: 0.8;
-	}
-
-	.skip-button:active {
-		opacity: 1;
-	}
-
-	/* Loading skeleton - minimal */
-	.getting-started-skeleton {
-		width: 100%;
-		max-width: 48rem;
-		margin-top: 1rem;
-		padding: 0.5rem 0;
-	}
-
-	.skeleton-header {
-		height: 24px;
-		width: 120px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		border-radius: 0.25rem;
-		animation: pulse 1.5s ease-in-out infinite;
-	}
-
-	.skeleton-steps {
-		display: flex;
-		flex-direction: column;
-		gap: 0.125rem;
-		padding-top: 0.25rem;
-	}
-
-	.skeleton-step {
-		height: 32px;
-		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
-		border-radius: 0.375rem;
-		animation: pulse 1.5s ease-in-out infinite;
-	}
-
-	@keyframes pulse {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.5;
-		}
-	}
-
 	/* Focus states for accessibility */
 	.accordion-header:focus-visible,
-	.step-item:focus-visible,
-	.skip-button:focus-visible {
+	.step-item:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
@@ -572,15 +554,8 @@
 		.chevron,
 		.accordion-content,
 		.accordion-inner,
-		.step-indicator,
-		.skip-button {
+		.step-indicator {
 			transition: none;
-		}
-
-		.skeleton-header,
-		.skeleton-step {
-			animation: none;
-			background: var(--color-surface-elevated);
 		}
 	}
 </style>

@@ -267,21 +267,25 @@
 				CODE_SIGN_ENTITLEMENTS = Virtues/Virtues.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4YV9K677RY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Virtues/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Virtues;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
-				INFOPLIST_KEY_NSContactsUsageDescription = "Virtues syncs your contacts to help identify people in your life story and connect conversations to relationships.";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Virtues reads your health data (heart rate, steps, sleep, activity) to provide comprehensive wellness insights. Your health data is stored securely and never shared without your explicit consent.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Virtues reads your calendar events to understand your schedule and provide context for your daily activity patterns.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Virtues uses your contacts to identify people mentioned in your conversations and provide personalized insights.";
+				INFOPLIST_KEY_NSFinancialDataUsageDescription = "Virtues reads your financial data conected to your apple account in order to fuel your personal data ELT.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Virtues reads your health data (heart rate, steps, sleep, activity) to provide daily wellness insights. Your data is stored securely and never shared without consent.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Virtues may write health data from connected devices.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Virtues needs to connect to your local server for data sync";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Virtues continuously tracks your location to provide personalized health insights based on where you spend your time. This data is collected in the background to ensure accurate daily patterns.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Virtues tracks your location continuously to provide detailed activity context.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Virtues tracks your location to provide personalized health insights based on where you spend your time.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues continuously records audio to capture and transcribe your conversations. Recording pauses during silent periods to save battery. All recordings are processed securely and you have full control over when recording is active.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Virtues connects to your local Virtues server for data sync.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Virtues continuously tracks your location to enable background data collection and provide context for your day.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Virtues tracks your location continuously to keep background recording and data collection running.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Virtues tracks your location to provide context for your day and enable background data collection.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues records ambient audio passively for long periods in the background to capture your daily environment. You can disable recording at any time.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Virtues uses motion sensors to track barometric pressure and altitude changes for activity context.";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Virtues reads your reminders to help track your tasks and provide context for daily wellness insights.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -293,7 +297,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.virtues.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -311,21 +315,25 @@
 				CODE_SIGN_ENTITLEMENTS = Virtues/Virtues.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				DEVELOPMENT_TEAM = 4YV9K677RY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Virtues/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Virtues;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.healthcare-fitness";
-				INFOPLIST_KEY_NSContactsUsageDescription = "Virtues syncs your contacts to help identify people in your life story and connect conversations to relationships.";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "Virtues reads your health data (heart rate, steps, sleep, activity) to provide comprehensive wellness insights. Your health data is stored securely and never shared without your explicit consent.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Virtues reads your calendar events to understand your schedule and provide context for your daily activity patterns.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Virtues uses your contacts to identify people mentioned in your conversations and provide personalized insights.";
+				INFOPLIST_KEY_NSFinancialDataUsageDescription = "Virtues reads your financial data conected to your apple account in order to fuel your personal data ELT.";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "Virtues reads your health data (heart rate, steps, sleep, activity) to provide daily wellness insights. Your data is stored securely and never shared without consent.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "Virtues may write health data from connected devices.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Virtues needs to connect to your local server for data sync";
-				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Virtues continuously tracks your location to provide personalized health insights based on where you spend your time. This data is collected in the background to ensure accurate daily patterns.";
-				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Virtues tracks your location continuously to provide detailed activity context.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Virtues tracks your location to provide personalized health insights based on where you spend your time.";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues continuously records audio to capture and transcribe your conversations. Recording pauses during silent periods to save battery. All recordings are processed securely and you have full control over when recording is active.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Virtues connects to your local Virtues server for data sync.";
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Virtues continuously tracks your location to enable background data collection and provide context for your day.";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Virtues tracks your location continuously to keep background recording and data collection running.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Virtues tracks your location to provide context for your day and enable background data collection.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Virtues records ambient audio passively for long periods in the background to capture your daily environment. You can disable recording at any time.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Virtues uses motion sensors to track barometric pressure and altitude changes for activity context.";
+				INFOPLIST_KEY_NSRemindersUsageDescription = "Virtues reads your reminders to help track your tasks and provide context for daily wellness insights.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -337,7 +345,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.virtues.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

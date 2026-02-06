@@ -21,22 +21,14 @@
 			</dict>
 		</dict>
 	</dict>
-	<key>NSContactsUsageDescription</key>
-	<string>Virtues uses your contacts to identify people mentioned in your conversations and provide personalized insights.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Virtues syncs your calendar events to build a timeline of your schedule and activities.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Virtues uses the camera to scan QR codes for quick device pairing with your server.</string>
 	<key>NSFinanceUsageDescription</key>
 	<string>Virtues uses FinanceKit to securely sync your Apple Card and Apple Cash transactions for local analysis.</string>
-	<key>NSHealthShareUsageDescription</key>
-	<string>Virtues reads your health data (heart rate, steps, sleep, activity) to provide daily wellness insights. Your data is stored securely and never shared without consent.</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Virtues connects to your local Virtues server for data sync.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Virtues continuously tracks your location to enable background data collection and provide context for your day.</string>
-	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Virtues tracks your location continuously to keep background recording and data collection running.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Virtues tracks your location to provide context for your day and enable background data collection.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Virtues records ambient audio passively for long periods in the background to capture your daily environment. You can disable recording at any time.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Virtues syncs your reminders to track tasks and to-dos alongside your other data.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
@@ -44,7 +36,5 @@
 		<string>processing</string>
 		<string>audio</string>
 	</array>
-	<key>NSMotionUsageDescription</key>
-	<string>Virtues uses motion sensors to track barometric pressure and altitude changes for activity context.</string>
 </dict>
 </plist>

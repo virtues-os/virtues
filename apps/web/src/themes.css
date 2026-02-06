@@ -5,7 +5,26 @@
    These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
    and as CSS variables (e.g., var(--color-primary))
 
-   Themes: warm (default), light, dark, night, ember
+   Themes (literary places):
+   Light:
+   - Pemberley (default) - Austen elegance, pristine
+   - Caladan - Atreides ocean world
+   - Rivendell - Elven refuge, warm light
+   - Oxford - Academic, studious
+   - Hogwarts - Warm parchment, candlelit
+   - Tatooine - Twin suns, desert warmth
+
+   Dark:
+   - Lothlorien - Golden wood twilight
+   - Baker Street - Victorian gaslight
+   - Narnia - Magical lamppost glow
+   - Canterbury - Pilgrim earth tones
+   - Borghese - Dramatic light and shadow
+   - Gatsby - Jazz age vivid glamour
+   - The Lyceum - Aristotle's school, cool blues
+   - Asgard - Norse realm, cold majesty
+   - Agora - Greek marketplace purple
+   - The Shire - Cozy hobbit pastels
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.
@@ -18,6 +37,11 @@
 	--color-surface: var(--surface);
 	--color-surface-elevated: var(--surface-elevated);
 	--color-surface-overlay: var(--surface-overlay);
+	
+	/* Background Treatment (gradient/texture support) */
+	--color-background-image: var(--background-image);
+	--color-surface-elevated-image: var(--surface-elevated-image);
+	--color-surface-elevated-size: var(--surface-elevated-size);
 
 	/* Content Colors */
 	--color-foreground: var(--foreground);
@@ -34,9 +58,6 @@
 	--color-secondary: var(--secondary);
 	--color-secondary-hover: var(--secondary-hover);
 	--color-secondary-active: var(--secondary-active);
-
-	--color-accent: var(--accent);
-	--color-accent-hover: var(--accent-hover);
 
 	/* Status Colors */
 	--color-success: var(--success);
@@ -58,6 +79,12 @@
 	--color-highlight: var(--highlight);
 	--color-highlight-foreground: var(--highlight-foreground);
 
+	/* Diff Colors */
+	--color-diff-add: var(--diff-add);
+	--color-diff-add-bg: var(--diff-add-bg);
+	--color-diff-remove: var(--diff-remove);
+	--color-diff-remove-bg: var(--diff-remove-bg);
+
 	/* Background Inverse - For intentionally dark backgrounds */
 	--color-background-inverse: var(--background-inverse);
 
@@ -72,19 +99,35 @@
 	--duration-slow: 300ms;
 	--ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
+	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 }
 
 /* ===================================
-   LIGHT THEME (DEFAULT)
-   Pure white with neutral grays
+   PEMBERLEY (DEFAULT)
+   Austen elegance, pristine white
    Applied to :root so it's the default
    =================================== */
 :root {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
 	/* Surface Colors - Pure whites */
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
 
 	/* Content Colors - Neutral grays */
 	--foreground: #171717;
@@ -102,8 +145,101 @@
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	--accent: #2883DE;
-	--accent-hover: #4a9ae5;
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+
+	/* Sidebar Component Tokens */
+	--sidebar-interactive-padding: 6px 10px;
+	--sidebar-interactive-radius: 8px;
+	--sidebar-interactive-gap: 10px;
+	--sidebar-interactive-font-size: 13px;
+	--sidebar-interactive-icon-size: 16px;
+	--sidebar-interactive-icon-size-small: 14px;
+	--sidebar-interactive-height: 28px;
+	--sidebar-interactive-color: var(--color-foreground);
+	--sidebar-padding-left-base: 10px;
+	--sidebar-indent-width: 12px;
+	--sidebar-transition-duration: 150ms;
+	--sidebar-transition-easing: var(--ease-premium);
+	--sidebar-hover-bg: color-mix(in srgb, var(--color-foreground) 7%, transparent);
+	--sidebar-active-bg: color-mix(in srgb, var(--color-foreground) 9%, transparent);
+	--sidebar-item-gap: 4px;
+}
+
+/* ===================================
+   CALADAN
+   Atreides ocean world, subtle texture
+   =================================== */
+[data-theme="caladan"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Film grain + subtle navy gradient */
+	--background-image: none;
+	--surface-elevated-image: 
+		url('/textures/noise.svg'),
+		linear-gradient(
+			180deg,
+			#FFFFFF 0%,
+			#FCFCFC 55%,
+			#EFF3F8 80%,
+			#E6ECF4 100%
+		);
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
 
 	/* Status Colors */
 	--success: #16a34a;
@@ -121,24 +257,274 @@
 	--border-strong: #d4d4d4;
 	--border-focus: #2883DE;
 
-	/* Selection/Highlight - Light amber (amber-100 at 75% opacity) */
-	--highlight: rgba(254, 243, 199, 0.50);
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
 	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
 
 	/* Background Inverse */
 	--background-inverse: #0a0a0a;
 }
 
 /* ===================================
-   WARM THEME
-   Paper/cream aesthetic with navy text
+   RIVENDELL
+   Elven refuge, warm ethereal light
    =================================== */
-[data-theme="warm"] {
+[data-theme="rivendell"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Blue to peach gradient */
+	--background-image: none;
+	--surface-elevated-image: 
+		url('/textures/noise.svg'),
+		linear-gradient(
+			180deg,
+			#E8F4F8 0%,
+			#F5F5F5 35%,
+			#FAF5F3 65%,
+			#F5E6E0 100%
+		);
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Warm accent */
+	--primary: #D97757;
+	--primary-hover: #E08B70;
+	--primary-active: #C46545;
+	--primary-subtle: #FEF3F0;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #D97757;
+
+	/* Selection/Highlight - Soft peach */
+	--highlight: rgba(249, 215, 200, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   OXFORD
+   Academic, studious, dotted paper
+   =================================== */
+[data-theme="oxford"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #FAFAFA;
+	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Dotted paper pattern via CSS gradient */
+	--background-image: none;
+	--surface-elevated-image: radial-gradient(#d4d4d4 1px, transparent 1px);
+	--surface-elevated-size: 20px 20px;
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	--primary: #2883DE;
+	--primary-hover: #4a9ae5;
+	--primary-active: #1d6bb8;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors */
+	--success: #16a34a;
+	--success-subtle: #dcfce7;
+	--warning: #ea580c;
+	--warning-subtle: #ffedd5;
+	--error: #dc2626;
+	--error-subtle: #fee2e2;
+	--info: #0284c7;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2883DE;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   LOTHLORIEN
+   Golden wood twilight, ethereal glow
+   =================================== */
+[data-theme="lothlorien"] {
+	/* Code Syntax Highlighting - Dark mode (Catppuccin Mocha) */
+	--shiki-theme: catppuccin-mocha;
+	--code-bg: #1e1e2e;
+	--code-fg: #cdd6f4;
+	--code-comment: #6c7086;
+	--code-keyword: #f38ba8;
+	--code-string: #a6e3a1;
+	--code-function: #cba6f7;
+	--code-constant: #89b4fa;
+
+	/* Surface Colors - Deep blue-purple */
+	--background: #1a1a2e;
+	--surface: #1f1f35;
+	--surface-elevated: #25253d;
+	--surface-overlay: #2a2a45;
+	
+	/* Background Treatment - Dark blue to warm gradient */
+	--background-image: none;
+	--surface-elevated-image: 
+		url('/textures/noise-dark.svg'),
+		linear-gradient(
+			180deg,
+			#1E2A4A 0%,
+			#25253d 35%,
+			#352D3D 65%,
+			#3D2D35 100%
+		);
+
+	/* Content Colors - Light for dark bg */
+	--foreground: #e8e8f0;
+	--foreground-muted: #a0a0b8;
+	--foreground-subtle: #707088;
+	--foreground-disabled: #505068;
+
+	/* Interactive Colors - Warm peach accent */
+	--primary: #E8A87C;
+	--primary-hover: #F0BC96;
+	--primary-active: #D89668;
+	--primary-subtle: rgba(232, 168, 124, 0.15);
+
+	--secondary: #e8e8f0;
+	--secondary-hover: #f0f0f8;
+	--secondary-active: #d0d0e0;
+
+	/* Status Colors - Adjusted for dark */
+	--success: #4ade80;
+	--success-subtle: rgba(74, 222, 128, 0.15);
+	--warning: #fb923c;
+	--warning-subtle: rgba(251, 146, 60, 0.15);
+	--error: #f87171;
+	--error-subtle: rgba(248, 113, 113, 0.15);
+	--info: #60a5fa;
+	--info-subtle: rgba(96, 165, 250, 0.15);
+
+	/* Border Colors - Subtle for dark */
+	--border: #3a3a52;
+	--border-subtle: #2d2d42;
+	--border-strong: #4a4a65;
+	--border-focus: #E8A87C;
+
+	/* Selection/Highlight - Warm glow */
+	--highlight: rgba(232, 168, 124, 0.25);
+	--highlight-foreground: #e8e8f0;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: rgba(74, 222, 128, 0.15);
+	--diff-remove: #f87171;
+	--diff-remove-bg: rgba(248, 113, 113, 0.15);
+
+	/* Background Inverse */
+	--background-inverse: #f0f0f8;
+}
+
+/* ===================================
+   HOGWARTS
+   Warm parchment, candlelit magic
+   =================================== */
+[data-theme="hogwarts"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+	--code-bg: #f6f8fa;
+	--code-fg: #24292f;
+	--code-comment: #6e7781;
+	--code-keyword: #cf222e;
+	--code-string: #0a3069;
+	--code-function: #8250df;
+	--code-constant: #0550ae;
+
 	/* Surface Colors - Paper/cream tones */
 	--background: #F7F7F4;
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
 	--surface-overlay: #FFFFFF;
+	
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
 
 	/* Content Colors - Warm brown text */
 	--foreground: #26251E;
@@ -156,9 +542,6 @@
 	--secondary-hover: #3D3B33;
 	--secondary-active: #1A1914;
 
-	--accent: #EB5601;
-	--accent-hover: #FF6B1A;
-
 	/* Status Colors */
 	--success: #16a34a;
 	--success-subtle: #dcfce7;
@@ -169,14 +552,20 @@
 	--info: #0284c7;
 	--info-subtle: #e0f2fe;
 
+	/* Diff Colors */
+	--diff-add: #16a34a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #dc2626;
+	--diff-remove-bg: #fee2e2;
+
 	/* Border Colors - Fixed: border-subtle should be lighter than border */
 	--border: #e7e5e4;
 	--border-subtle: #f0eeeb;
 	--border-strong: #a8a29e;
 	--border-focus: #EB5601;
 
-	/* Selection/Highlight - Warm amber (amber-50) */
-	--highlight: #fffbeb;
+	/* Selection/Highlight - Warm peach/orange tint */
+	--highlight: #FEE4CC;
 	--highlight-foreground: #26251E;
 
 	/* Background Inverse */
@@ -184,15 +573,34 @@
 }
 
 /* ===================================
-   DARK THEME
-   True dark mode with near-black background
+   BAKER STREET
+   Victorian gaslight, detective noir
    =================================== */
-[data-theme="dark"] {
+[data-theme="baker-street"] {
+	/* Code Syntax Highlighting (GitHub Dark) */
+	--shiki-theme: github-dark;
+	--code-bg: #161b22;
+	--code-fg: #e6edf3;
+	--code-comment: #8b949e;
+	--code-keyword: #ff7b72;
+	--code-string: #a5d6ff;
+	--code-function: #d2a8ff;
+	--code-constant: #79c0ff;
+
 	/* Surface Colors */
 	--background: #0a0a0a;
 	--surface: #171717;
 	--surface-elevated: #262626;
 	--surface-overlay: #2a2a2a;
+	
+	/* Background Treatment - Subtle dark gradient with hint of warmth */
+	--background-image: none;
+	--surface-elevated-image: linear-gradient(
+		160deg,
+		#262626 0%,
+		#1f1f1f 40%,
+		#262626 100%
+	);
 
 	/* Content Colors */
 	--foreground: #fafafa;
@@ -210,9 +618,6 @@
 	--secondary-hover: #fafafa;
 	--secondary-active: #d4d4d4;
 
-	--accent: #f472b6;
-	--accent-hover: #f9a8d4;
-
 	/* Status Colors */
 	--success: #4ade80;
 	--success-subtle: #14532d;
@@ -222,6 +627,12 @@
 	--error-subtle: #450a0a;
 	--info: #38bdf8;
 	--info-subtle: #082f49;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: #14532d;
+	--diff-remove: #f87171;
+	--diff-remove-bg: #450a0a;
 
 	/* Border Colors */
 	--border: #404040;
@@ -238,10 +649,20 @@
 }
 
 /* ===================================
-   NIGHT THEME
-   Dark charcoal with warm orange accent
+   NARNIA
+   Magical lamppost glow, warm enchantment
    =================================== */
-[data-theme="night"] {
+[data-theme="narnia"] {
+	/* Code Syntax Highlighting (Tokyo Night) */
+	--shiki-theme: tokyo-night;
+	--code-bg: #1a1b26;
+	--code-fg: #a9b1d6;
+	--code-comment: #565f89;
+	--code-keyword: #bb9af7;
+	--code-string: #9ece6a;
+	--code-function: #7aa2f7;
+	--code-constant: #ff9e64;
+
 	/* Surface Colors */
 	--background: #0C0E13;
 	--surface: #161820;
@@ -264,9 +685,6 @@
 	--secondary-hover: #FFFFFF;
 	--secondary-active: #F3F2E9;
 
-	--accent: #FF9D52;
-	--accent-hover: #ffb070;
-
 	/* Status Colors */
 	--success: #22c55e;
 	--success-subtle: #14532d;
@@ -276,6 +694,12 @@
 	--error-subtle: #450a0a;
 	--info: #38bdf8;
 	--info-subtle: #082f49;
+
+	/* Diff Colors */
+	--diff-add: #22c55e;
+	--diff-add-bg: #14532d;
+	--diff-remove: #ef4444;
+	--diff-remove-bg: #450a0a;
 
 	/* Border Colors */
 	--border: #2a2c34;
@@ -292,10 +716,20 @@
 }
 
 /* ===================================
-   EMBER THEME
-   Dark, warm brown palette (Cursor-inspired)
+   CANTERBURY
+   Pilgrim earth tones, warm wisdom
    =================================== */
-[data-theme="ember"] {
+[data-theme="canterbury"] {
+	/* Code Syntax Highlighting (Vitesse Dark) */
+	--shiki-theme: vitesse-dark;
+	--code-bg: #121212;
+	--code-fg: #dbd7ca;
+	--code-comment: #758575;
+	--code-keyword: #cb7676;
+	--code-string: #c98a7d;
+	--code-function: #80a665;
+	--code-constant: #e6cc77;
+
 	/* Surface Colors */
 	--background: #14120B;
 	--surface: #1B1913;
@@ -318,9 +752,6 @@
 	--secondary-hover: #F7F5F2;
 	--secondary-active: #DCD8D2;
 
-	--accent: #E4B873;
-	--accent-hover: #F2C98D;
-
 	/* Status Colors */
 	--success: #4ade80;
 	--success-subtle: #1A2A1B;
@@ -330,6 +761,12 @@
 	--error-subtle: #2C1818;
 	--info: #38bdf8;
 	--info-subtle: #0B1F2A;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: #1A2A1B;
+	--diff-remove: #ef4444;
+	--diff-remove-bg: #2C1818;
 
 	/* Border Colors */
 	--border: #2A2418;
@@ -346,10 +783,20 @@
 }
 
 /* ===================================
-   CONTRAST THEME
-   Pure black and white only
+   BORGHESE
+   Dramatic gallery, stark light and shadow
    =================================== */
-[data-theme="contrast"] {
+[data-theme="borghese"] {
+	/* Code Syntax Highlighting (GitHub Dark High Contrast) */
+	--shiki-theme: github-dark-high-contrast;
+	--code-bg: #0a0c10;
+	--code-fg: #f0f3f6;
+	--code-comment: #9198a1;
+	--code-keyword: #ff9492;
+	--code-string: #addcff;
+	--code-function: #dcbdfb;
+	--code-constant: #91cbff;
+
 	/* Surface Colors - Pure black */
 	--background: #000000;
 	--surface: #000000;
@@ -372,9 +819,6 @@
 	--secondary-hover: #CCCCCC;
 	--secondary-active: #E5E5E5;
 
-	--accent: #FFFFFF;
-	--accent-hover: #CCCCCC;
-
 	/* Status Colors - Grayscale */
 	--success: #FFFFFF;
 	--success-subtle: #1a1a1a;
@@ -384,6 +828,12 @@
 	--error-subtle: #1a1a1a;
 	--info: #CCCCCC;
 	--info-subtle: #1a1a1a;
+
+	/* Diff Colors - Grayscale */
+	--diff-add: #FFFFFF;
+	--diff-add-bg: #1a1a1a;
+	--diff-remove: #CCCCCC;
+	--diff-remove-bg: #1a1a1a;
 
 	/* Border Colors - White on black */
 	--border: #333333;
@@ -400,10 +850,20 @@
 }
 
 /* ===================================
-   MONOKAI THEME
-   Classic Sublime Text palette
+   GATSBY
+   Jazz age vivid glamour
    =================================== */
-[data-theme="monokai"] {
+[data-theme="gatsby"] {
+	/* Code Syntax Highlighting (Monokai) */
+	--shiki-theme: monokai;
+	--code-bg: #272822;
+	--code-fg: #f8f8f2;
+	--code-comment: #75715e;
+	--code-keyword: #f92672;
+	--code-string: #e6db74;
+	--code-function: #a6e22e;
+	--code-constant: #ae81ff;
+
 	/* Surface Colors - Dark olive-gray */
 	--background: #272822;
 	--surface: #2d2a2e;
@@ -426,9 +886,6 @@
 	--secondary-hover: #FFFFFF;
 	--secondary-active: #E8E8E2;
 
-	--accent: #A6E22E;
-	--accent-hover: #B8E85A;
-
 	/* Status Colors */
 	--success: #A6E22E;
 	--success-subtle: #2A3D0E;
@@ -438,6 +895,12 @@
 	--error-subtle: #3D1528;
 	--info: #66D9EF;
 	--info-subtle: #1A363D;
+
+	/* Diff Colors - Monokai green/pink */
+	--diff-add: #A6E22E;
+	--diff-add-bg: #2A3D0E;
+	--diff-remove: #F92672;
+	--diff-remove-bg: #3D1528;
 
 	/* Border Colors */
 	--border: #49483E;
@@ -454,10 +917,20 @@
 }
 
 /* ===================================
-   ATOM THEME
-   Atom One Dark inspired palette
+   THE LYCEUM
+   Aristotle's school, contemplative blues
    =================================== */
-[data-theme="atom"] {
+[data-theme="lyceum"] {
+	/* Code Syntax Highlighting (One Dark) */
+	--shiki-theme: one-dark-pro;
+	--code-bg: #282c34;
+	--code-fg: #abb2bf;
+	--code-comment: #5c6370;
+	--code-keyword: #c678dd;
+	--code-string: #98c379;
+	--code-function: #61afef;
+	--code-constant: #d19a66;
+
 	/* Surface Colors - Distinctive gray-blue */
 	--background: #292d34;
 	--surface: #2f333d;
@@ -480,9 +953,6 @@
 	--secondary-hover: #c8cdd5;
 	--secondary-active: #9199a6;
 
-	--accent: #c678dd;
-	--accent-hover: #d490e6;
-
 	/* Status Colors - Atom palette */
 	--success: #90b061;
 	--success-subtle: #242d1a;
@@ -492,6 +962,12 @@
 	--error-subtle: #30191a;
 	--info: #56b6c2;
 	--info-subtle: #172d30;
+
+	/* Diff Colors - Atom green/red */
+	--diff-add: #90b061;
+	--diff-add-bg: #242d1a;
+	--diff-remove: #c16266;
+	--diff-remove-bg: #30191a;
 
 	/* Border Colors */
 	--border: #3e4451;
@@ -505,6 +981,274 @@
 
 	/* Background Inverse */
 	--background-inverse: #292d34;
+}
+
+/* ===================================
+   ASGARD
+   Norse realm, cold nordic majesty
+   =================================== */
+[data-theme="asgard"] {
+	/* Code Syntax Highlighting (Vitesse Dark) */
+	--shiki-theme: vitesse-dark;
+	--code-bg: #1e1e1e;
+	--code-fg: #dbd7ca;
+	--code-comment: #758575;
+	--code-keyword: #cb7676;
+	--code-string: #c98a7d;
+	--code-function: #80a665;
+	--code-constant: #e6cc77;
+
+	/* Surface Colors */
+	--background: #141414;
+	--surface: #181818;
+	--surface-elevated: #1e1e1e;
+	--surface-overlay: #242424;
+
+	/* Content Colors */
+	--foreground: #D4D4D4;
+	--foreground-muted: #898989;
+	--foreground-subtle: #6b6b6b;
+	--foreground-disabled: #525252;
+
+	/* Interactive Colors - Nordic blue */
+	--primary: #88C0D0;
+	--primary-hover: #9dd0de;
+	--primary-active: #6fa8b8;
+	--primary-subtle: #1a2a2d;
+
+	--secondary: #D4D4D4;
+	--secondary-hover: #e5e5e5;
+	--secondary-active: #c4c4c4;
+
+	/* Status Colors */
+	--success: #3FA266;
+	--success-subtle: #1a251e;
+	--warning: #F1B367;
+	--warning-subtle: #2d2415;
+	--error: #E34671;
+	--error-subtle: #2d1a1f;
+	--info: #88C0D0;
+	--info-subtle: #1a2a2d;
+
+	/* Diff-specific colors (available as CSS vars) */
+	--diff-add: #306A47;
+	--diff-add-bg: #1a251e;
+	--diff-remove: #A14958;
+	--diff-remove-bg: #2d1a1f;
+
+	/* Border Colors */
+	--border: #2a2a2a;
+	--border-subtle: #1e1e1e;
+	--border-strong: #3a3a3a;
+	--border-focus: #88C0D0;
+
+	/* Selection/Highlight - Blue tinted */
+	--highlight: #1e2d30;
+	--highlight-foreground: #D4D4D4;
+
+	/* Background Inverse */
+	--background-inverse: #141414;
+}
+
+/* ===================================
+   TATOOINE
+   Twin suns, desert warmth
+   =================================== */
+[data-theme="tatooine"] {
+	/* Code Syntax Highlighting (Solarized Light) */
+	--shiki-theme: solarized-light;
+	--code-bg: #fdf6e3;
+	--code-fg: #5d665e;
+	--code-comment: #8f918a;
+	--code-keyword: #859900;
+	--code-string: #2aa198;
+	--code-function: #268bd2;
+	--code-constant: #cb4b16;
+
+	/* Surface Colors - Warm parchment */
+	--background: #fdf6e3;
+	--surface: #fdf6e3;
+	--surface-elevated: #eee8d5;
+	--surface-overlay: #ffffff;
+
+	/* Content Colors - Warm text hierarchy */
+	--foreground: #2d3632;
+	--foreground-muted: #5d665e;
+	--foreground-subtle: #8f918a;
+	--foreground-disabled: #b5b6ae;
+
+	/* Interactive Colors - Solarized blue */
+	--primary: #268bd2;
+	--primary-hover: #4a9fd9;
+	--primary-active: #1e7abb;
+	--primary-subtle: #f2d9be;
+
+	--secondary: #2d3632;
+	--secondary-hover: #3d4a42;
+	--secondary-active: #1e2622;
+
+	/* Status Colors */
+	--success: #859900;
+	--success-subtle: #f0f4e0;
+	--warning: #cb4b16;
+	--warning-subtle: #fbeee6;
+	--error: #dc322f;
+	--error-subtle: #fce8e8;
+	--info: #268bd2;
+	--info-subtle: #f2d9be;
+
+	/* Diff Colors */
+	--diff-add: #859900;
+	--diff-add-bg: #f0f4e0;
+	--diff-remove: #dc322f;
+	--diff-remove-bg: #fce8e8;
+
+	/* Border Colors */
+	--border: #e6dfcc;
+	--border-subtle: #f0eadb;
+	--border-strong: #8f918a;
+	--border-focus: #268bd2;
+
+	/* Selection/Highlight */
+	--highlight: #e8e4d0;
+	--highlight-foreground: #2d3632;
+
+	/* Background Inverse */
+	--background-inverse: #002b36;
+}
+
+/* ===================================
+   AGORA
+   Greek marketplace, purple mystery
+   =================================== */
+[data-theme="agora"] {
+	/* Code Syntax Highlighting (Dracula) */
+	--shiki-theme: dracula;
+	--code-bg: #282a36;
+	--code-fg: #f8f8f2;
+	--code-comment: #6272a4;
+	--code-keyword: #ff79c6;
+	--code-string: #f1fa8c;
+	--code-function: #50fa7b;
+	--code-constant: #bd93f9;
+
+	/* Surface Colors - Deep purple-black */
+	--background: #282a36;
+	--surface: #2d303e;
+	--surface-elevated: #343746;
+	--surface-overlay: #3c3f52;
+
+	/* Content Colors */
+	--foreground: #f8f8f2;
+	--foreground-muted: #d0d0d0;
+	--foreground-subtle: #6272a4;
+	--foreground-disabled: #4d5470;
+
+	/* Interactive Colors - Dracula pink */
+	--primary: #ff79c6;
+	--primary-hover: #ff92d0;
+	--primary-active: #e066ad;
+	--primary-subtle: #3d2a38;
+
+	--secondary: #f8f8f2;
+	--secondary-hover: #ffffff;
+	--secondary-active: #e8e8e2;
+
+	/* Status Colors - Dracula palette */
+	--success: #50fa7b;
+	--success-subtle: #1e3d28;
+	--warning: #f1fa8c;
+	--warning-subtle: #3d3d20;
+	--error: #ff5555;
+	--error-subtle: #3d1e1e;
+	--info: #8be9fd;
+	--info-subtle: #1e3d3d;
+
+	/* Diff Colors */
+	--diff-add: #50fa7b;
+	--diff-add-bg: #1e3d28;
+	--diff-remove: #ff5555;
+	--diff-remove-bg: #3d1e1e;
+
+	/* Border Colors */
+	--border: #44475a;
+	--border-subtle: #343746;
+	--border-strong: #6272a4;
+	--border-focus: #ff79c6;
+
+	/* Selection/Highlight - Purple tinted */
+	--highlight: #44475a;
+	--highlight-foreground: #f8f8f2;
+
+	/* Background Inverse */
+	--background-inverse: #282a36;
+}
+
+/* ===================================
+   THE SHIRE
+   Tolkien's cozy home, soft warm pastels
+   =================================== */
+[data-theme="shire"] {
+	/* Code Syntax Highlighting (Rose Pine Moon) */
+	--shiki-theme: rose-pine-moon;
+	--code-bg: #232136;
+	--code-fg: #e0def4;
+	--code-comment: #6e6a86;
+	--code-keyword: #c4a7e7;
+	--code-string: #f6c177;
+	--code-function: #9ccfd8;
+	--code-constant: #ea9a97;
+
+	/* Surface Colors - Soft purple-gray */
+	--background: #232136;
+	--surface: #2a273f;
+	--surface-elevated: #312e47;
+	--surface-overlay: #393552;
+
+	/* Content Colors */
+	--foreground: #e0def4;
+	--foreground-muted: #c5c3d6;
+	--foreground-subtle: #908caa;
+	--foreground-disabled: #6e6a86;
+
+	/* Interactive Colors - Rose */
+	--primary: #ea9a97;
+	--primary-hover: #edb0ad;
+	--primary-active: #d88885;
+	--primary-subtle: #3d2d2d;
+
+	--secondary: #e0def4;
+	--secondary-hover: #f0eef8;
+	--secondary-active: #d0cee4;
+
+	/* Status Colors - Rose Pine palette */
+	--success: #9ccfd8;
+	--success-subtle: #1e2d2f;
+	--warning: #f6c177;
+	--warning-subtle: #3d2d1e;
+	--error: #eb6f92;
+	--error-subtle: #3d1e28;
+	--info: #c4a7e7;
+	--info-subtle: #2d1e3d;
+
+	/* Diff Colors */
+	--diff-add: #9ccfd8;
+	--diff-add-bg: #1e2d2f;
+	--diff-remove: #eb6f92;
+	--diff-remove-bg: #3d1e28;
+
+	/* Border Colors */
+	--border: #393552;
+	--border-subtle: #312e47;
+	--border-strong: #524d6a;
+	--border-focus: #ea9a97;
+
+	/* Selection/Highlight - Rose tinted */
+	--highlight: #3d3252;
+	--highlight-foreground: #e0def4;
+
+	/* Background Inverse */
+	--background-inverse: #232136;
 }
 
 /* ===================================

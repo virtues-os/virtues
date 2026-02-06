@@ -1,6 +1,6 @@
 //! SSE Streaming Support for Chat Completions
 //!
-//! Handles streaming passthrough to providers with budget enforcement.
+//! Handles streaming passthrough to Vercel AI Gateway with budget enforcement.
 //! Usage is extracted from final SSE chunk for billing.
 //!
 //! PRIVACY GUARANTEE:
@@ -16,7 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::{
     budget::BudgetManager,
     config::Config,
-    providers::{calculate_cost, get_provider_config, get_vertex_ai_token},
+    providers::{calculate_cost, get_provider_config},
     proxy::ProxyError,
 };
 
@@ -56,6 +56,12 @@ pub struct StreamingRequest {
     pub max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    /// Tool definitions for function calling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<serde_json::Value>>,
+    /// Tool choice: "auto", "none", "required", or specific tool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 /// Create SSE streaming response with budget tracking
@@ -66,55 +72,32 @@ pub async fn create_streaming_response(
     user_id: &str,
     request: StreamingRequest,
 ) -> Result<Response, ProxyError> {
-    let provider = get_provider_config(&request.model, config).ok_or_else(|| {
-        ProxyError::UpstreamError {
-            status: 503,
-            message: format!("No provider configured for model: {}", request.model),
+    let provider = get_provider_config(&request.model, config);
+
+    // Build OpenAI-compatible request body with stream_options for usage tracking
+    let mut body = serde_json::json!({
+        "model": provider.model_name,
+        "messages": request.messages,
+        "max_tokens": request.max_tokens.unwrap_or(4096),
+        "temperature": request.temperature.unwrap_or(0.7),
+        "stream": true,
+        "stream_options": { "include_usage": true }
+    });
+
+    // Only include tools if present and non-empty (providers reject null/empty arrays)
+    if let Some(ref tools) = request.tools {
+        if !tools.is_empty() {
+            body["tools"] = serde_json::json!(tools);
+            if let Some(ref choice) = request.tool_choice {
+                body["tool_choice"] = choice.clone();
+            }
         }
-    })?;
-
-    // Build request body with stream_options for usage tracking
-    let body = if provider.is_anthropic {
-        // Anthropic uses different format
-        serde_json::json!({
-            "model": provider.model_name,
-            "messages": request.messages,
-            "max_tokens": request.max_tokens.unwrap_or(4096),
-            "stream": true
-        })
-    } else {
-        // OpenAI-compatible format (OpenAI, Cerebras, etc.)
-        serde_json::json!({
-            "model": provider.model_name,
-            "messages": request.messages,
-            "max_tokens": request.max_tokens.unwrap_or(4096),
-            "temperature": request.temperature.unwrap_or(0.7),
-            "stream": true,
-            "stream_options": { "include_usage": true }
-        })
-    };
-
-    let mut req_builder = client
-        .post(&provider.endpoint)
-        .header("Content-Type", "application/json");
-
-    if provider.is_anthropic {
-        req_builder = req_builder
-            .header("x-api-key", provider.api_key.as_ref().unwrap())
-            .header("anthropic-version", "2023-06-01");
-    } else if provider.is_vertex_ai {
-        // Vertex AI uses OAuth2 access tokens
-        let access_token = get_vertex_ai_token().await?;
-        req_builder = req_builder.header("Authorization", format!("Bearer {}", access_token));
-    } else {
-        // OpenAI, Cerebras, xAI - all use API keys
-        req_builder = req_builder.header(
-            "Authorization",
-            format!("Bearer {}", provider.api_key.as_ref().unwrap()),
-        );
     }
 
-    let response = req_builder
+    let response = client
+        .post(&provider.endpoint)
+        .header("Authorization", format!("Bearer {}", provider.api_key))
+        .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await
@@ -126,13 +109,12 @@ pub async fn create_streaming_response(
         let status = response.status();
         let error_text = response.text().await.unwrap_or_default();
 
-        // Log detailed error info for debugging
         tracing::warn!(
             status = status.as_u16(),
             model = %request.model,
             endpoint = %provider.endpoint,
             error_preview = %error_text.chars().take(500).collect::<String>(),
-            "LLM provider returned error - check API key configuration"
+            "AI Gateway returned error - check API key configuration"
         );
 
         return Err(ProxyError::UpstreamError {
@@ -145,7 +127,6 @@ pub async fn create_streaming_response(
     let user_id = user_id.to_string();
     let budget = budget.clone();
     let bytes_stream = response.bytes_stream();
-    let is_anthropic = provider.is_anthropic;
 
     // Create channel for SSE events
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<SseEvent, Infallible>>(100);
@@ -154,8 +135,6 @@ pub async fn create_streaming_response(
     tokio::spawn(async move {
         let mut buffer = String::new();
         let mut final_usage: Option<StreamUsage> = None;
-        let mut anthropic_input_tokens: u32 = 0;
-        let mut anthropic_output_tokens: u32 = 0;
 
         tokio::pin!(bytes_stream);
 
@@ -187,11 +166,7 @@ pub async fn create_streaming_response(
                         let _ = tx.send(Ok(SseEvent::default().data("[DONE]"))).await;
 
                         // Deduct budget with collected usage
-                        let (prompt_tokens, completion_tokens) = if is_anthropic {
-                            // Anthropic: use collected tokens from message_start and message_delta events
-                            (anthropic_input_tokens, anthropic_output_tokens)
-                        } else {
-                            // OpenAI-compatible: use final usage from stream
+                        let (prompt_tokens, completion_tokens) = {
                             let usage = final_usage.take().unwrap_or(StreamUsage {
                                 prompt_tokens: 0,
                                 completion_tokens: 0,
@@ -216,43 +191,14 @@ pub async fn create_streaming_response(
                     }
 
                     // Parse chunk and extract usage if present
-                    if is_anthropic {
-                        // Anthropic format: extract usage from message_start and message_delta events
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                            // message_start contains input tokens
-                            if let Some(message) = json.get("message") {
-                                if let Some(usage) = message.get("usage") {
-                                    if let Some(input) =
-                                        usage.get("input_tokens").and_then(|v| v.as_u64())
-                                    {
-                                        anthropic_input_tokens = input as u32;
-                                    }
-                                }
-                            }
-                            // message_delta contains output tokens
-                            if let Some(usage) = json.get("usage") {
-                                if let Some(output) =
-                                    usage.get("output_tokens").and_then(|v| v.as_u64())
-                                {
-                                    anthropic_output_tokens = output as u32;
-                                }
-                            }
-                        }
-                    } else {
-                        // OpenAI format: extract usage from final chunk
-                        if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
-                            if let Some(usage) = chunk.usage {
-                                final_usage = Some(usage);
-                            }
+                    if let Ok(chunk) = serde_json::from_str::<StreamChunk>(data) {
+                        if let Some(usage) = chunk.usage {
+                            final_usage = Some(usage);
                         }
                     }
 
                     // Forward the data to client
                     let _ = tx.send(Ok(SseEvent::default().data(data))).await;
-                } else if line.starts_with("event: ") {
-                    // Forward event type for Anthropic
-                    let event_type = &line[7..];
-                    let _ = tx.send(Ok(SseEvent::default().event(event_type))).await;
                 }
             }
         }

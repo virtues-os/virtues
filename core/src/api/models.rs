@@ -69,3 +69,68 @@ pub async fn get_model(model_id: &str) -> Result<ModelInfo> {
 
     Ok(model)
 }
+
+/// Recommended models response with slot mappings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecommendedModelsResponse {
+    pub data: Vec<ModelInfoWithSlot>,
+    pub slots: SlotDefaults,
+}
+
+/// Model info with slot assignment
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelInfoWithSlot {
+    #[serde(flatten)]
+    pub model: ModelInfo,
+    pub slot: String,
+    pub input_cost_per_1k: Option<f64>,
+    pub output_cost_per_1k: Option<f64>,
+}
+
+/// Default model IDs for each slot
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlotDefaults {
+    pub chat: String,
+    pub lite: String,
+    pub reasoning: String,
+    pub coding: String,
+}
+
+/// List recommended models with slot assignments
+pub async fn list_recommended_models() -> Result<RecommendedModelsResponse> {
+    use virtues_registry::models::{default_model_for_slot, ModelSlot};
+
+    let models: Vec<ModelInfoWithSlot> = virtues_registry::models::default_models()
+        .into_iter()
+        .map(|m| {
+            // Determine which slot this model belongs to
+            let slot = if m.model_id == default_model_for_slot(ModelSlot::Chat) {
+                "chat"
+            } else if m.model_id == default_model_for_slot(ModelSlot::Lite) {
+                "lite"
+            } else if m.model_id == default_model_for_slot(ModelSlot::Reasoning) {
+                "reasoning"
+            } else if m.model_id == default_model_for_slot(ModelSlot::Coding) {
+                "coding"
+            } else {
+                "other"
+            };
+
+            ModelInfoWithSlot {
+                input_cost_per_1k: m.input_cost_per_1k,
+                output_cost_per_1k: m.output_cost_per_1k,
+                model: ModelInfo::from(m),
+                slot: slot.to_string(),
+            }
+        })
+        .collect();
+
+    let slots = SlotDefaults {
+        chat: default_model_for_slot(ModelSlot::Chat).to_string(),
+        lite: default_model_for_slot(ModelSlot::Lite).to_string(),
+        reasoning: default_model_for_slot(ModelSlot::Reasoning).to_string(),
+        coding: default_model_for_slot(ModelSlot::Coding).to_string(),
+    };
+
+    Ok(RecommendedModelsResponse { data: models, slots })
+}

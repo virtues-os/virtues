@@ -14,8 +14,7 @@ pub async fn handle_stream_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         StreamCommands::List { source_id } => {
-            let source_id = source_id.parse()?;
-            let streams = crate::list_source_streams(virtues.database.pool(), source_id).await?;
+            let streams = crate::list_source_streams(virtues.database.pool(), source_id.clone()).await?;
 
             if streams.is_empty() {
                 println!("No streams found for this source");
@@ -38,6 +37,7 @@ pub async fn handle_stream_command(
                 let schedule = stream.cron_schedule.unwrap_or_else(|| "manual".to_string());
                 let last_sync = stream
                     .last_sync_at
+                    .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
                     .unwrap_or_else(|| "never".to_string());
 
                 println!(
@@ -51,9 +51,8 @@ pub async fn handle_stream_command(
             source_id,
             stream_name,
         } => {
-            let source_id = source_id.parse()?;
             let stream =
-                crate::get_stream_info(virtues.database.pool(), source_id, &stream_name).await?;
+                crate::get_stream_info(virtues.database.pool(), source_id.clone(), &stream_name).await?;
 
             println!("Stream: {} / {}", source_id, stream.stream_name);
             println!("  Table: {}", stream.table_name);
@@ -93,16 +92,14 @@ pub async fn handle_stream_command(
             source_id,
             stream_name,
         } => {
-            let source_id_uuid = source_id.parse()?;
-
-            println!("Enabling stream: {} / {}", source_id_uuid, stream_name);
+            println!("Enabling stream: {} / {}", source_id, stream_name);
 
             // Enable with default config (None = use defaults)
             crate::enable_stream(
                 virtues.database.pool(),
                 &*virtues.storage,
                 stream_writer.clone(),
-                source_id_uuid,
+                source_id,
                 &stream_name,
                 None,
             )
@@ -115,8 +112,6 @@ pub async fn handle_stream_command(
             source_id,
             stream_name,
         } => {
-            let source_id = source_id.parse()?;
-
             println!("Disabling stream: {} / {}", source_id, stream_name);
 
             crate::disable_stream(virtues.database.pool(), source_id, &stream_name).await?;
@@ -129,8 +124,6 @@ pub async fn handle_stream_command(
             stream_name,
             cron,
         } => {
-            let source_id = source_id.parse()?;
-
             if let Some(cron_schedule) = cron {
                 println!(
                     "Setting schedule for {} / {}: {}",
@@ -138,9 +131,9 @@ pub async fn handle_stream_command(
                 );
                 crate::update_stream_schedule(
                     virtues.database.pool(),
-                    source_id,
+                    source_id.clone(),
                     &stream_name,
-                    Some(cron_schedule),
+                    Some(cron_schedule.clone()),
                 )
                 .await?;
                 println!("✅ Schedule updated successfully");
@@ -148,7 +141,7 @@ pub async fn handle_stream_command(
                 println!("Clearing schedule for {} / {}", source_id, stream_name);
                 crate::update_stream_schedule(
                     virtues.database.pool(),
-                    source_id,
+                    source_id.clone(),
                     &stream_name,
                     None,
                 )
@@ -161,11 +154,10 @@ pub async fn handle_stream_command(
             source_id,
             stream_name,
         } => {
-            let source_id_uuid = source_id.parse()?;
-
+            let source_id_copy = source_id.clone();
             println!(
                 "Creating sync job for: {} / {}...",
-                source_id_uuid, stream_name
+                source_id_copy, stream_name
             );
 
             // Use full refresh mode for all syncs
@@ -176,7 +168,7 @@ pub async fn handle_stream_command(
                 virtues.database.pool(),
                 &*virtues.storage,
                 stream_writer.clone(),
-                source_id_uuid,
+                source_id,
                 &stream_name,
                 Some(sync_mode),
             )
@@ -194,11 +186,9 @@ pub async fn handle_stream_command(
             stream_name,
             limit,
         } => {
-            let source_id = source_id.parse()?;
-
             let jobs = crate::api::jobs::get_job_history(
                 virtues.database.pool(),
-                source_id,
+                source_id.clone(),
                 &stream_name,
                 limit,
             )
@@ -223,16 +213,10 @@ pub async fn handle_stream_command(
 
             for job in jobs {
                 let records = job.records_processed;
-                let duration = if let Some(completed_str) = &job.completed_at {
-                    // Parse both timestamps and calculate duration
-                    let completed = chrono::DateTime::parse_from_rfc3339(completed_str).ok();
-                    let started = chrono::DateTime::parse_from_rfc3339(&job.started_at).ok();
-                    if let (Some(c), Some(s)) = (completed, started) {
-                        let duration_ms = (c - s).num_milliseconds();
-                        format!("{}ms", duration_ms)
-                    } else {
-                        "-".to_string()
-                    }
+                let duration = if let Some(completed) = &job.completed_at {
+                    // Calculate duration using Timestamp's Deref to DateTime<Utc>
+                    let duration_ms = (**completed - *job.started_at).num_milliseconds();
+                    format!("{}ms", duration_ms)
                 } else {
                     "-".to_string()
                 };
@@ -248,9 +232,7 @@ pub async fn handle_stream_command(
                     .unwrap_or_else(|| "-".to_string());
 
                 // Format the started_at timestamp for display
-                let started_display = chrono::DateTime::parse_from_rfc3339(&job.started_at)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    .unwrap_or_else(|_| job.started_at.clone());
+                let started_display = job.started_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
                 println!(
                     "{} {:<10} {:<10} {:<10} {}",

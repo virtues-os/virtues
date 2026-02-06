@@ -1,7 +1,9 @@
 <script lang="ts">
+	import Icon from "$lib/components/Icon.svelte";
 	import { fade } from "svelte/transition";
 	import type { ModelOption } from "$lib/config/models";
 	import { getModels, getDefaultModel, isLoading, getError } from "$lib/stores/models.svelte";
+	import { getProviderIcon } from "$lib/config/providerIcons";
 	import UniversalSelect from "./UniversalSelect.svelte";
 
 	interface Props {
@@ -22,12 +24,9 @@
 	const error = $derived(getError());
 	const defaultModel = $derived(getDefaultModel());
 
-	// Capture initial value (intentionally captures initial value only)
-	// svelte-ignore state_referenced_locally
-	const initialValue = value;
-	
 	// Local state for UniversalSelect binding
-	let localValue = $state<ModelOption | undefined>(initialValue);
+	// svelte-ignore state_referenced_locally
+	let localValue = $state<ModelOption | undefined>(value);
 
 	// Sync local value with prop value
 	$effect(() => {
@@ -49,40 +48,11 @@
 		onSelect?.(model);
 	}
 
-	// Helper function to get icon for provider
-	function getProviderIcon(provider: string): string {
-		switch (provider.toLowerCase()) {
-			case 'anthropic':
-				return 'ri:claude-fill';
-			case 'openai':
-				return 'simple-icons:openai';
-			case 'google':
-				return 'simple-icons:google';
-			case 'xai':
-				return 'ri:twitter-x-fill';
-			case 'moonshot ai':
-				return 'ri:moon-fill';
-			default:
-				return 'ri:robot-fill';
+	function getProviderDisplayName(model: ModelOption): string {
+		if (model.id.toLowerCase().includes('cerebras') || model.provider.toLowerCase() === 'cerebras') {
+			return 'Cerebras';
 		}
-	}
-
-	// Helper function to get icon color for provider
-	function getProviderIconColor(provider: string): string {
-		switch (provider.toLowerCase()) {
-			case 'anthropic':
-				return 'text-orange-600';
-			case 'openai':
-				return 'text-green-600';
-			case 'google':
-				return 'text-blue-600';
-			case 'xai':
-				return 'text-foreground';
-			case 'moonshot ai':
-				return 'text-purple-600';
-			default:
-				return 'text-foreground-muted';
-		}
+		return model.provider;
 	}
 
 	function getModelKey(model: ModelOption) {
@@ -90,82 +60,57 @@
 	}
 </script>
 
-{#if loading}
-	<!-- Loading state -->
-	<div class="flex items-center gap-2 px-3 py-1.5 text-foreground-subtle">
-		<iconify-icon icon="ri:loader-4-line" class="animate-spin" width="16"></iconify-icon>
-		<span class="text-sm">Loading models...</span>
+{#if loading && !localValue}
+	<div
+		class="flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted animate-pulse"
+		title="Loading models..."
+	>
+		<Icon icon="ri:robot-fill" width="16" />
 	</div>
-{:else if error}
+{:else if error && !localValue}
 	<!-- Error state -->
-	<div class="flex items-center gap-2 px-3 py-1.5 text-error">
-		<iconify-icon icon="ri:error-warning-line" width="16"></iconify-icon>
-		<span class="text-sm">Error loading models</span>
+	<div class="flex h-7 w-7 items-center justify-center text-error" title="Error loading models">
+		<Icon icon="ri:error-warning-line" width="16" />
 	</div>
-{:else if models.length > 0}
-	<!-- Model picker when loaded -->
+{:else}
+	<!-- Model picker when loaded or has value -->
 	<UniversalSelect
 		bind:value={localValue}
 		items={models}
-		disabled={disabled || loading}
-		width="w-64"
+		disabled={disabled || (loading && models.length === 0)}
+		width="min-w-[200px]"
 		getKey={getModelKey}
 		onSelect={handleSelect}
 	>
-		{#snippet trigger(model: ModelOption, isDisabled: boolean, open: boolean)}
+		{#snippet trigger(model: ModelOption | undefined, isDisabled: boolean, open: boolean)}
 			<div
-				class="flex items-center gap-2"
-				class:px-3={!isDisabled}
-				class:py-1.5={!isDisabled}
-				class:w-8={isDisabled}
-				class:h-8={isDisabled}
-				class:justify-center={isDisabled}
-				aria-label="Select model"
+				class="flex h-7 w-7 items-center justify-center rounded-md text-foreground-muted hover:bg-surface-elevated hover:text-foreground transition-all duration-150 cursor-pointer"
+				class:bg-surface-elevated={open}
+				class:text-foreground={open}
+				title="Select model: {model?.displayName || 'Select Model'}"
 			>
-				{#if isDisabled}
-					<iconify-icon
-						icon={getProviderIcon(model.provider)}
-						class="text-foreground-muted"
-						width="16"
-						in:fade={{ duration: 200 }}
-					></iconify-icon>
-				{:else}
-					<span class="text-foreground-muted">{model.displayName}</span>
-					<iconify-icon
-						icon="ri:arrow-down-s-line"
-						class="text-foreground-subtle transition-transform duration-200"
-						class:rotate-180={open}
-						width="16"
-					></iconify-icon>
-				{/if}
+				<Icon icon={model ? getProviderIcon(model.provider) : 'ri:robot-fill'} width="16" />
 			</div>
 		{/snippet}
 
-	{#snippet item(model: ModelOption, isSelected: boolean)}
-		<div class="px-4 py-2.5">
-			<div class="flex items-center justify-between gap-2">
-				<div class="flex items-center gap-2">
-					<iconify-icon
-						icon={getProviderIcon(model.provider)}
-						class={getProviderIconColor(model.provider)}
-						width="16"
-					></iconify-icon>
-					<span class="text-sm text-foreground">
+		{#snippet item(model: ModelOption, isSelected: boolean)}
+			<div class="px-3 py-2 flex items-center justify-between gap-3 group">
+				<div class="flex flex-col">
+					<span class="text-xs font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
 						{model.displayName}
-						{#if defaultModel && model.id === defaultModel.id}
-							<span class="text-xs text-foreground-subtle ml-1">(recommended)</span>
-						{/if}
+					</span>
+					<span class="text-[9px] text-foreground-muted uppercase tracking-wider">
+						{getProviderDisplayName(model)}
 					</span>
 				</div>
 				{#if isSelected}
-					<iconify-icon
+					<Icon
 						icon="ri:check-line"
-						class="text-primary flex-shrink-0"
-						width="16"
-					></iconify-icon>
+						class="text-primary shrink-0"
+						width="14"
+					/>
 				{/if}
 			</div>
-		</div>
-	{/snippet}
+		{/snippet}
 	</UniversalSelect>
 {/if}

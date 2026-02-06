@@ -22,6 +22,7 @@ use axum::{
 #[derive(Debug)]
 pub enum ProxyError {
     InsufficientBudget { balance: f64 },
+    SubscriptionExpired { status: String },
     UpstreamError { status: u16, message: String },
     NetworkError { message: String },
 }
@@ -36,6 +37,17 @@ impl IntoResponse for ProxyError {
                         "message": format!("Insufficient budget. Current balance: ${:.2}", balance),
                         "type": "insufficient_quota",
                         "code": "insufficient_budget"
+                    }
+                }),
+            ),
+            ProxyError::SubscriptionExpired { status } => (
+                StatusCode::PAYMENT_REQUIRED,
+                serde_json::json!({
+                    "error": {
+                        "message": "Subscription expired",
+                        "type": "subscription_expired",
+                        "code": "subscription_expired",
+                        "status": status
                     }
                 }),
             ),

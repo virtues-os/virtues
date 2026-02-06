@@ -1,39 +1,26 @@
 //! Drive API - User file storage and quota management
 //!
 //! Personal cloud storage for user-uploaded files (like Google Drive).
-//! Part of the unified storage structure at `/home/user/data/`:
 //!
-//! ```text
-//! /home/user/data/
-//! ├── drive/    # User files (this module)
-//! └── lake/     # ELT archives (elt_stream_objects)
-//! ```
-//!
-//! The "lake" folder appears as a virtual read-only folder within the Drive UI,
-//! allowing users to browse their archived data alongside their uploaded files.
-//!
-//! Environment variables:
-//! - `DRIVE_PATH`: Override drive storage location (default: `/home/user/data/drive`)
-//! - `DATA_LAKE_PATH`: Override lake storage location (default: `/home/user/data/lake`)
+//! Storage is abstracted via the `Storage` trait - supports both local filesystem
+//! (for development) and S3-compatible storage (for production).
 //!
 //! Storage tiers:
-//! - Free:     100 GB
 //! - Standard: 500 GB
 //! - Pro:      4 TB
 
+use crate::error::{Error, Result};
+use crate::ids;
+use crate::storage::Storage;
+use crate::types::Timestamp;
 use axum::body::Bytes;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::path::{Component, PathBuf};
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
-use tokio_util::io::ReaderStream;
-use uuid::Uuid;
-
-use crate::error::{Error, Result};
-use crate::types::Timestamp;
+use std::sync::Arc;
 
 // =============================================================================
 // Constants
@@ -41,16 +28,14 @@ use crate::types::Timestamp;
 
 /// Storage quota limits by tier (in bytes)
 pub mod quotas {
-    /// 100 GB for free tier
-    pub const FREE_BYTES: i64 = 100 * 1024 * 1024 * 1024;
-    /// 500 GB for standard tier ($19/mo)
+    /// 500 GB for standard tier
     pub const STANDARD_BYTES: i64 = 500 * 1024 * 1024 * 1024;
-    /// 4 TB for pro tier ($79/mo)
+    /// 4 TB for pro tier
     pub const PRO_BYTES: i64 = 4 * 1024 * 1024 * 1024 * 1024;
 }
 
-/// Default drive path inside container
-const DEFAULT_DRIVE_PATH: &str = "/home/user/data/drive";
+/// Default drive path for local file storage (development only)
+const DEFAULT_DRIVE_PATH: &str = "./data/drive";
 
 /// Singleton ID for drive_usage table
 const USAGE_SINGLETON_ID: &str = "00000000-0000-0000-0000-000000000001";
@@ -64,6 +49,12 @@ const LAKE_STREAM_PREFIX: &str = "virtual:lake:stream:";
 /// Prefix for virtual lake object IDs
 const LAKE_OBJECT_PREFIX: &str = "virtual:lake:object:";
 
+/// System folder for page-embedded media (content-addressed)
+pub const MEDIA_FOLDER: &str = ".media";
+
+/// System folder for ELT archives (future migration target)
+pub const LAKE_FOLDER: &str = ".lake";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -72,7 +63,6 @@ const LAKE_OBJECT_PREFIX: &str = "virtual:lake:object:";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DriveTier {
-    Free,
     Standard,
     Pro,
 }
@@ -82,15 +72,13 @@ impl DriveTier {
     pub fn from_env() -> Self {
         match std::env::var("TIER").as_deref() {
             Ok("pro") | Ok("Pro") | Ok("PRO") => DriveTier::Pro,
-            Ok("standard") | Ok("Standard") | Ok("STANDARD") => DriveTier::Standard,
-            _ => DriveTier::Free,
+            _ => DriveTier::Standard,
         }
     }
 
     /// Get quota in bytes for this tier
     pub fn quota_bytes(&self) -> i64 {
         match self {
-            DriveTier::Free => quotas::FREE_BYTES,
             DriveTier::Standard => quotas::STANDARD_BYTES,
             DriveTier::Pro => quotas::PRO_BYTES,
         }
@@ -98,7 +86,6 @@ impl DriveTier {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            DriveTier::Free => "free",
             DriveTier::Standard => "standard",
             DriveTier::Pro => "pro",
         }
@@ -106,22 +93,46 @@ impl DriveTier {
 }
 
 /// Drive configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DriveConfig {
-    /// Base path for drive storage (default: /home/user/drive)
-    pub base_path: PathBuf,
+    /// Storage backend (S3 or local filesystem)
+    pub storage: Arc<Storage>,
     /// Current tier for quota calculation
     pub tier: DriveTier,
 }
 
+impl std::fmt::Debug for DriveConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DriveConfig")
+            .field("storage", &"Storage")
+            .field("tier", &self.tier)
+            .finish()
+    }
+}
+
 impl DriveConfig {
-    /// Load configuration from environment
-    pub fn from_env() -> Self {
-        let base_path = std::env::var("DRIVE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(DEFAULT_DRIVE_PATH));
+    /// Create configuration with the given storage backend
+    pub fn new(storage: Arc<Storage>) -> Self {
         let tier = DriveTier::from_env();
-        Self { base_path, tier }
+        Self { storage, tier }
+    }
+
+    /// Create configuration with storage and explicit tier
+    pub fn with_tier(storage: Arc<Storage>, tier: DriveTier) -> Self {
+        Self { storage, tier }
+    }
+
+    /// Create configuration for local development (file storage)
+    ///
+    /// Uses DRIVE_PATH env var or defaults to ./data/drive
+    pub fn local_dev() -> Result<Self> {
+        let path = std::env::var("DRIVE_PATH").unwrap_or_else(|_| DEFAULT_DRIVE_PATH.to_string());
+        let storage = Storage::file(path)?;
+        let tier = DriveTier::from_env();
+        Ok(Self {
+            storage: Arc::new(storage),
+            tier,
+        })
     }
 }
 
@@ -158,7 +169,7 @@ pub struct DriveUsage {
     pub folder_count: i64,
     /// Usage percentage (total_bytes / quota_bytes * 100)
     pub usage_percent: f64,
-    /// Tier name (free, standard, pro)
+    /// Tier name (standard, pro)
     pub tier: String,
 }
 
@@ -207,7 +218,23 @@ pub struct QuotaWarnings {
 /// - Contains no null bytes
 /// - Uses forward slashes only
 /// - Is relative (no absolute paths)
+/// - Does not start with `.` (hidden files not allowed for user paths)
+///
+/// For internal system paths (like `.media/`), use `validate_system_path` instead.
 pub fn validate_drive_path(path: &str) -> Result<PathBuf> {
+    validate_path_internal(path, false)
+}
+
+/// Validate a system path (allows hidden folders like `.media/`)
+///
+/// Same validation as `validate_drive_path` but permits paths starting with `.`
+/// Used internally for system folder operations.
+pub fn validate_system_path(path: &str) -> Result<PathBuf> {
+    validate_path_internal(path, true)
+}
+
+/// Internal path validation with configurable hidden file handling
+fn validate_path_internal(path: &str, allow_hidden: bool) -> Result<PathBuf> {
     // Empty path is valid (root)
     if path.is_empty() {
         return Ok(PathBuf::new());
@@ -239,8 +266,8 @@ pub fn validate_drive_path(path: &str) -> Result<PathBuf> {
                 if s_str.contains("..") {
                     return Err(Error::InvalidInput("Path traversal not allowed".into()));
                 }
-                // Reject hidden files/folders (starting with .)
-                if s_str.starts_with('.') && s_str != "." {
+                // Reject hidden files/folders (starting with .) unless allowed
+                if !allow_hidden && s_str.starts_with('.') && s_str != "." {
                     return Err(Error::InvalidInput("Hidden files not allowed".into()));
                 }
             }
@@ -249,6 +276,28 @@ pub fn validate_drive_path(path: &str) -> Result<PathBuf> {
     }
 
     Ok(path_buf)
+}
+
+// =============================================================================
+// System Folder Detection
+// =============================================================================
+
+/// Check if a path is a system folder (starts with `.`)
+/// System folders are hidden from normal drive listings but accessible internally.
+pub fn is_system_path(path: &str) -> bool {
+    // Check if path starts with a dot (e.g., ".media", ".lake")
+    // or if any component starts with a dot (e.g., "foo/.media/bar")
+    path.starts_with('.') || path.contains("/.")
+}
+
+/// Check if a path is protected from user deletion/modification
+/// Protected paths include system folders like .media and .lake
+pub fn is_protected_path(path: &str) -> bool {
+    let normalized = path.trim_start_matches('/');
+    normalized == MEDIA_FOLDER
+        || normalized.starts_with(&format!("{}/", MEDIA_FOLDER))
+        || normalized == LAKE_FOLDER
+        || normalized.starts_with(&format!("{}/", LAKE_FOLDER))
 }
 
 /// Validate filename (no path separators, no special chars)
@@ -492,33 +541,166 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
 // File Operations
 // =============================================================================
 
-/// List files in a directory (empty path = root)
+/// Reconcile a folder's database records with the actual storage.
 ///
-/// At root level, injects a virtual "lake" folder for browsing ELT archives.
-/// Paths starting with "lake/" are handled specially to browse elt_stream_objects.
-pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>> {
-    // Handle lake virtual folder paths
-    if path == "lake" {
-        return list_lake_streams(pool).await;
-    }
-    if let Some(stream_name) = path.strip_prefix("lake/") {
-        if !stream_name.is_empty() {
-            return list_lake_stream_objects(pool, stream_name).await;
-        }
-    }
-
-    // Validate path for regular drive paths
+/// Note: With S3 storage, the database is the source of truth for folder structure.
+/// This function is primarily useful for local development where files may be
+/// added/removed outside the API.
+///
+/// For S3, this function only checks for ghost DB records (files in DB but missing from storage).
+/// Auto-registration of untracked files is not supported for S3.
+///
+/// Called before listing files to keep DB in sync with reality.
+pub async fn reconcile_folder(pool: &SqlitePool, config: &DriveConfig, path: &str) -> Result<()> {
     let validated_path = validate_drive_path(path)?;
     let path_str = validated_path.to_string_lossy().to_string();
 
-    let mut files = if path_str.is_empty() {
-        // Root level - files with no parent (exclude deleted)
+    // List storage contents at this path prefix
+    let storage_prefix = if path_str.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", path_str)
+    };
+
+    // Get list of files from storage
+    let storage_files = config
+        .storage
+        .list(&storage_prefix)
+        .await
+        .unwrap_or_default();
+
+    // Extract just the filenames from storage keys (files directly in this folder)
+    let storage_filenames: HashSet<String> = storage_files
+        .iter()
+        .filter_map(|key| {
+            // Strip the prefix and get just the filename (no subdirectories)
+            let relative = if storage_prefix.is_empty() {
+                key.as_str()
+            } else {
+                key.strip_prefix(&storage_prefix).unwrap_or(key)
+            };
+            // Only include direct children (no slashes)
+            if !relative.contains('/') && !relative.is_empty() {
+                Some(relative.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Query ALL DB records for this folder (including soft-deleted)
+    // to avoid re-registering trashed files
+    let db_records: Vec<DriveFile> = if path_str.is_empty() {
         sqlx::query_as::<_, DriveFile>(
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
                    is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
             FROM drive_files
-            WHERE parent_id IS NULL AND deleted_at IS NULL
+            WHERE parent_id IS NULL
+            "#,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to query folder records: {e}")))?
+    } else {
+        // Look up parent folder ID
+        let parent_id = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+        )
+        .bind(&path_str)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to find folder: {e}")))?;
+
+        match parent_id {
+            Some(pid) => sqlx::query_as::<_, DriveFile>(
+                r#"
+                    SELECT id, path, filename, mime_type, size_bytes,
+                           is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+                    FROM drive_files
+                    WHERE parent_id = $1
+                    "#,
+            )
+            .bind(pid)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to query folder records: {e}")))?,
+            // Folder doesn't exist in DB yet — nothing to reconcile
+            None => Vec::new(),
+        }
+    };
+
+    let db_filenames: HashSet<String> = db_records.iter().map(|f| f.filename.clone()).collect();
+
+    // Note: Auto-registration of untracked files from storage is not supported.
+    // With S3, the database is the source of truth.
+    // Files should only be added through the API, not by direct S3 upload.
+
+    // Log if there are untracked files in storage (for debugging)
+    let untracked: Vec<&String> = storage_filenames
+        .iter()
+        .filter(|name| !db_filenames.contains(*name))
+        .collect();
+    if !untracked.is_empty() {
+        tracing::debug!(
+            "Found {} untracked files in storage at '{}': {:?}",
+            untracked.len(),
+            path_str,
+            untracked.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+
+    // --- Remove ghost DB records (in DB but not in storage) ---
+    // Only remove non-deleted file records (not folders, since S3 doesn't track folders)
+    for file in &db_records {
+        // Skip deleted files (they're in trash, expected to be missing from storage)
+        if file.deleted_at.is_some() {
+            continue;
+        }
+        // Skip folders (they only exist in DB, not in storage)
+        if file.is_folder {
+            continue;
+        }
+        // Check if file exists in storage
+        if !storage_filenames.contains(&file.filename) {
+            sqlx::query("DELETE FROM drive_files WHERE id = $1")
+                .bind(&file.id)
+                .execute(pool)
+                .await
+                .map_err(|e| {
+                    Error::Database(format!("Failed to remove ghost record {}: {e}", file.path))
+                })?;
+
+            update_usage_remove(pool, file.size_bytes, false).await?;
+            tracing::info!(
+                "Removed ghost DB record (missing from storage): {}",
+                file.path
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// List files in a directory (empty path = root)
+///
+/// Filters out system folders (paths starting with `.`) from results.
+/// Use `list_files_internal` for system operations that need to see hidden folders.
+pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>> {
+    // Validate path for regular drive paths
+    let validated_path = validate_drive_path(path)?;
+    let path_str = validated_path.to_string_lossy().to_string();
+
+    let files = if path_str.is_empty() {
+        // Root level - files with no parent (exclude deleted and system folders)
+        sqlx::query_as::<_, DriveFile>(
+            r#"
+            SELECT id, path, filename, mime_type, size_bytes,
+                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+            FROM drive_files
+            WHERE parent_id IS NULL
+              AND deleted_at IS NULL
+              AND filename NOT LIKE '.%'
             ORDER BY is_folder DESC, filename ASC
             "#,
         )
@@ -541,7 +723,9 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
                     SELECT id, path, filename, mime_type, size_bytes,
                            is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
                     FROM drive_files
-                    WHERE parent_id = $1 AND deleted_at IS NULL
+                    WHERE parent_id = $1
+                      AND deleted_at IS NULL
+                      AND filename NOT LIKE '.%'
                     ORDER BY is_folder DESC, filename ASC
                     "#,
             )
@@ -554,121 +738,6 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
             }
         }
     };
-
-    // At root level, inject the virtual lake folder
-    if path_str.is_empty() {
-        // Get total lake size for display
-        let lake_size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-
-        let now = Timestamp::now();
-        let lake_folder = DriveFile {
-            id: LAKE_VIRTUAL_ID.to_string(),
-            path: "lake".to_string(),
-            filename: "lake".to_string(),
-            mime_type: None,
-            size_bytes: lake_size,
-            is_folder: true,
-            parent_id: None,
-            sha256_hash: None,
-            deleted_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-        // Insert lake folder at the beginning (folders first)
-        files.insert(0, lake_folder);
-    }
-
-    Ok(files)
-}
-
-/// List stream names as virtual folders within the lake
-async fn list_lake_streams(pool: &SqlitePool) -> Result<Vec<DriveFile>> {
-    // Get distinct stream names with their total sizes and object counts
-    let streams = sqlx::query_as::<_, (String, i64, Timestamp)>(
-        r#"
-        SELECT 
-            stream_name,
-            SUM(size_bytes) as total_size,
-            MAX(created_at) as latest_created
-        FROM elt_stream_objects
-        GROUP BY stream_name
-        ORDER BY stream_name ASC
-        "#,
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list lake streams: {e}")))?;
-
-    let folders: Vec<DriveFile> = streams
-        .into_iter()
-        .map(|(stream_name, total_size, latest_created)| DriveFile {
-            id: format!("{}{}", LAKE_STREAM_PREFIX, stream_name),
-            path: format!("lake/{}", stream_name),
-            filename: stream_name,
-            mime_type: None,
-            size_bytes: total_size,
-            is_folder: true,
-            parent_id: Some(LAKE_VIRTUAL_ID.to_string()),
-            sha256_hash: None,
-            deleted_at: None,
-            created_at: latest_created,
-            updated_at: latest_created,
-        })
-        .collect();
-
-    Ok(folders)
-}
-
-/// List stream objects as virtual files within a lake stream folder
-async fn list_lake_stream_objects(pool: &SqlitePool, stream_name: &str) -> Result<Vec<DriveFile>> {
-    let objects = sqlx::query_as::<_, (String, String, i64, Timestamp, Timestamp)>(
-        r#"
-        SELECT 
-            id,
-            storage_key,
-            size_bytes,
-            created_at,
-            updated_at
-        FROM elt_stream_objects
-        WHERE stream_name = $1
-        ORDER BY created_at DESC
-        "#,
-    )
-    .bind(stream_name)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list lake stream objects: {e}")))?;
-
-    let files: Vec<DriveFile> = objects
-        .into_iter()
-        .map(|(id, storage_key, size_bytes, created_at, updated_at)| {
-            // Extract filename from storage_key (e.g., "streams/gmail/.../records_123.jsonl" -> "records_123.jsonl")
-            let filename = storage_key
-                .rsplit('/')
-                .next()
-                .unwrap_or(&storage_key)
-                .to_string();
-
-            DriveFile {
-                id: format!("{}{}", LAKE_OBJECT_PREFIX, id),
-                path: format!("lake/{}/{}", stream_name, filename),
-                filename,
-                mime_type: Some("application/x-jsonlines".to_string()),
-                size_bytes,
-                is_folder: false,
-                parent_id: Some(format!("{}{}", LAKE_STREAM_PREFIX, stream_name)),
-                sha256_hash: None,
-                deleted_at: None,
-                created_at,
-                updated_at,
-            }
-        })
-        .collect();
 
     Ok(files)
 }
@@ -694,12 +763,11 @@ pub fn is_lake_folder_id(file_id: &str) -> bool {
 pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<DriveFile> {
     // Handle virtual lake folder IDs
     if file_id == LAKE_VIRTUAL_ID {
-        let lake_size: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        let lake_size: i64 =
+            sqlx::query_scalar("SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0);
 
         let now = Timestamp::now();
         return Ok(DriveFile {
@@ -829,7 +897,7 @@ pub async fn upload_file(
         ));
     }
 
-    // Build full path
+    // Build storage key (relative path)
     let mut file_path = if validated_path.as_os_str().is_empty() {
         PathBuf::from(&request.filename)
     } else {
@@ -857,29 +925,17 @@ pub async fn upload_file(
             .unwrap_or(request.filename.clone());
     }
 
-    // Create parent directories on filesystem
-    let full_path = config.base_path.join(&file_path);
-    if let Some(parent) = full_path.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|e| Error::Storage(format!("Failed to create directories: {e}")))?;
-    }
-
     // Calculate SHA-256 hash
     let mut hasher = Sha256::new();
     hasher.update(&data);
     let hash = format!("{:x}", hasher.finalize());
 
-    // Write file to disk
-    let mut file = fs::File::create(&full_path)
+    // Upload to storage (handles both S3 and local filesystem)
+    config
+        .storage
+        .upload(&file_path_str, data.to_vec())
         .await
-        .map_err(|e| Error::Storage(format!("Failed to create file: {e}")))?;
-    file.write_all(&data)
-        .await
-        .map_err(|e| Error::Storage(format!("Failed to write file: {e}")))?;
-    file.sync_all()
-        .await
-        .map_err(|e| Error::Storage(format!("Failed to sync file: {e}")))?;
+        .map_err(|e| Error::Storage(format!("Failed to upload file: {e}")))?;
 
     // Get or create parent folder record
     let parent_id = if validated_path.as_os_str().is_empty() {
@@ -897,7 +953,7 @@ pub async fn upload_file(
     });
 
     // Insert database record
-    let file_id = Uuid::new_v4().to_string();
+    let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
     sqlx::query(
         r#"
         INSERT INTO drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
@@ -920,6 +976,197 @@ pub async fn upload_file(
 
     // Return the created file
     get_file_metadata(pool, &file_id).await
+}
+
+/// Upload a file to a system path (like `.media/`)
+///
+/// Similar to `upload_file` but allows hidden folder paths.
+/// Used internally for media storage.
+pub async fn upload_system_file(
+    pool: &SqlitePool,
+    config: &DriveConfig,
+    path: &str,
+    filename: &str,
+    mime_type: Option<String>,
+    data: &[u8],
+) -> Result<DriveFile> {
+    // Validate path (allows hidden folders)
+    let validated_path = validate_system_path(path)?;
+
+    let size_bytes = data.len() as i64;
+
+    // Check quota
+    if !check_quota(pool, size_bytes).await? {
+        return Err(Error::InvalidInput(
+            "Storage quota exceeded. Delete files or upgrade to continue.".into(),
+        ));
+    }
+
+    // Build storage key (relative path)
+    let file_path = if validated_path.as_os_str().is_empty() {
+        PathBuf::from(filename)
+    } else {
+        validated_path.join(filename)
+    };
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    // Check if file already exists (for dedup - just return existing)
+    let existing = sqlx::query_as::<_, DriveFile>(
+        r#"
+        SELECT id, path, filename, mime_type, size_bytes,
+               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+        FROM drive_files
+        WHERE path = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(&file_path_str)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to check existing file: {e}")))?;
+
+    if let Some(existing_file) = existing {
+        // File already exists (content-addressed dedup)
+        return Ok(existing_file);
+    }
+
+    // Calculate SHA-256 hash
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let hash = format!("{:x}", hasher.finalize());
+
+    // Upload to storage (handles both S3 and local filesystem)
+    config
+        .storage
+        .upload(&file_path_str, data.to_vec())
+        .await
+        .map_err(|e| Error::Storage(format!("Failed to upload file: {e}")))?;
+
+    // Get or create parent folder record (using system path)
+    let parent_id = if validated_path.as_os_str().is_empty() {
+        None
+    } else {
+        let parent_path = validated_path.to_string_lossy().to_string();
+        get_or_create_system_folder_record(pool, &parent_path).await?
+    };
+
+    // Determine MIME type
+    let mime_type = mime_type.or_else(|| {
+        mime_guess::from_path(filename)
+            .first()
+            .map(|m| m.to_string())
+    });
+
+    // Insert database record
+    let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
+    sqlx::query(
+        r#"
+        INSERT INTO drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+        "#,
+    )
+    .bind(&file_id)
+    .bind(&file_path_str)
+    .bind(filename)
+    .bind(&mime_type)
+    .bind(size_bytes)
+    .bind(&parent_id)
+    .bind(&hash)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to insert file record: {e}")))?;
+
+    // Update usage
+    update_usage_add(pool, size_bytes, false).await?;
+
+    // Return the created file
+    get_file_metadata(pool, &file_id).await
+}
+
+/// Get or create a system folder record (allows hidden folders like `.media`)
+async fn get_or_create_system_folder_record(
+    pool: &SqlitePool,
+    path: &str,
+) -> Result<Option<String>> {
+    if path.is_empty() {
+        return Ok(None);
+    }
+
+    // Check if folder exists
+    let existing = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+    )
+    .bind(path)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to check folder: {e}")))?;
+
+    if let Some(id) = existing {
+        return Ok(Some(id));
+    }
+
+    // Create folder record (and parents recursively)
+    let path_buf = PathBuf::from(path);
+    let parent_path = path_buf.parent().map(|p| p.to_string_lossy().to_string());
+    let filename = path_buf
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let parent_id = if let Some(pp) = parent_path {
+        if pp.is_empty() {
+            None
+        } else {
+            Box::pin(get_or_create_system_folder_record(pool, &pp)).await?
+        }
+    } else {
+        None
+    };
+
+    let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[path]);
+    sqlx::query(
+        r#"
+        INSERT INTO drive_files (id, path, filename, size_bytes, parent_id, is_folder)
+        VALUES ($1, $2, $3, 0, $4, 1)
+        ON CONFLICT (path) DO NOTHING
+        "#,
+    )
+    .bind(&folder_id)
+    .bind(path)
+    .bind(&filename)
+    .bind(&parent_id)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to create folder record: {e}")))?;
+
+    // Return the ID (may be different if another process created it)
+    let id = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+    )
+    .bind(path)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get folder: {e}")))?;
+
+    Ok(id)
+}
+
+/// Find a file by path (including system paths)
+pub async fn get_file_by_path(pool: &SqlitePool, path: &str) -> Result<DriveFile> {
+    let file = sqlx::query_as::<_, DriveFile>(
+        r#"
+        SELECT id, path, filename, mime_type, size_bytes,
+               is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+        FROM drive_files
+        WHERE path = $1 AND deleted_at IS NULL
+        "#,
+    )
+    .bind(path)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get file: {e}")))?
+    .ok_or_else(|| Error::NotFound(format!("File not found: {path}")))?;
+
+    Ok(file)
 }
 
 /// Download a file (loads into memory - use download_file_stream for large files)
@@ -953,10 +1200,12 @@ pub async fn download_file(
         return Err(Error::NotFound("File is in trash".into()));
     }
 
-    let full_path = config.base_path.join(&file.path);
-    let data = fs::read(&full_path)
+    // Download from storage (handles both S3 and local filesystem)
+    let data = config
+        .storage
+        .download(&file.path)
         .await
-        .map_err(|e| Error::Storage(format!("Failed to read file: {e}")))?;
+        .map_err(|e| Error::Storage(format!("Failed to download file: {e}")))?;
 
     Ok((file, data))
 }
@@ -1006,17 +1255,23 @@ pub async fn download_lake_object(
     Ok((file, data))
 }
 
-/// Download a file as a stream (memory-efficient for large files)
+/// Download a file as a stream (for HTTP streaming responses)
 ///
-/// Returns the file metadata and a stream of bytes. Use this for files
-/// larger than ~10MB to avoid loading the entire file into memory.
+/// Returns the file metadata and a stream of bytes.
+///
+/// Note: When using S3 storage, the file is downloaded fully before streaming.
+/// For truly memory-efficient large file downloads with S3, consider implementing
+/// streaming at the S3 level in future.
 ///
 /// For lake objects, use `download_lake_object` instead (streaming not yet supported).
 pub async fn download_file_stream(
     pool: &SqlitePool,
     config: &DriveConfig,
     file_id: &str,
-) -> Result<(DriveFile, impl Stream<Item = std::result::Result<Bytes, std::io::Error>>)> {
+) -> Result<(
+    DriveFile,
+    impl Stream<Item = std::result::Result<Bytes, std::io::Error>>,
+)> {
     // Check if this is a lake object
     if is_lake_object_id(file_id) {
         return Err(Error::InvalidInput(
@@ -1040,13 +1295,15 @@ pub async fn download_file_stream(
         return Err(Error::NotFound("File is in trash".into()));
     }
 
-    let full_path = config.base_path.join(&file.path);
-    let tokio_file = tokio::fs::File::open(&full_path)
+    // Download from storage (handles both S3 and local filesystem)
+    let data = config
+        .storage
+        .download(&file.path)
         .await
-        .map_err(|e| Error::Storage(format!("Failed to open file: {e}")))?;
+        .map_err(|e| Error::Storage(format!("Failed to download file: {e}")))?;
 
-    // ReaderStream reads in 4KB chunks by default
-    let stream = ReaderStream::new(tokio_file);
+    // Stream the data in chunks for HTTP response compatibility
+    let stream = futures::stream::once(async move { Ok(Bytes::from(data)) });
 
     Ok((file, stream))
 }
@@ -1055,17 +1312,26 @@ pub async fn download_file_stream(
 ///
 /// Files remain on disk but are marked as deleted. They will be permanently
 /// removed after 30 days by the trash purge job.
+///
+/// System folders (`.media`, `.lake`) are protected and cannot be deleted.
 pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str) -> Result<()> {
     let file = get_file_metadata(pool, file_id).await?;
+
+    // Protect system folders from deletion
+    if is_protected_path(&file.path) {
+        return Err(Error::InvalidInput(
+            "Cannot delete system folder or its contents".into(),
+        ));
+    }
 
     // Check if already deleted
     if file.deleted_at.is_some() {
         return Err(Error::InvalidInput("File is already in trash".into()));
     }
 
-    if file.is_folder {
+    let (trash_bytes, trash_count) = if file.is_folder {
         // Recursively soft-delete folder contents
-        let _total_bytes = soft_delete_folder_recursive(pool, &file.id).await?;
+        soft_delete_folder_recursive(pool, &file.id).await?
     } else {
         // Soft delete single file (mark as deleted, keep on disk)
         sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
@@ -1073,19 +1339,21 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
             .execute(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to soft delete file: {e}")))?;
-    }
+        (file.size_bytes, 1i64)
+    };
 
-    // Update trash tracking
+    // Update trash tracking with actual bytes and count
     sqlx::query(
         r#"
         UPDATE drive_usage
         SET trash_bytes = trash_bytes + $1,
-            trash_count = trash_count + 1,
+            trash_count = trash_count + $2,
             updated_at = datetime('now')
-        WHERE id = $2
+        WHERE id = $3
         "#,
     )
-    .bind(file.size_bytes)
+    .bind(trash_bytes)
+    .bind(trash_count)
     .bind(USAGE_SINGLETON_ID)
     .execute(pool)
     .await
@@ -1094,8 +1362,9 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
     Ok(())
 }
 
-/// Recursively soft-delete a folder and its contents
-async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Result<i64> {
+/// Recursively soft-delete a folder and its contents.
+/// Returns (total_bytes, total_count) of all affected items.
+async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Result<(i64, i64)> {
     // Get all non-deleted children
     let children = sqlx::query_as::<_, DriveFile>(
         r#"
@@ -1111,11 +1380,14 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
     .map_err(|e| Error::Database(format!("Failed to list folder contents: {e}")))?;
 
     let mut total_bytes = 0i64;
+    let mut total_count = 0i64;
 
     // Recursively soft-delete children
     for child in children {
         if child.is_folder {
-            total_bytes += Box::pin(soft_delete_folder_recursive(pool, &child.id)).await?;
+            let (bytes, count) = Box::pin(soft_delete_folder_recursive(pool, &child.id)).await?;
+            total_bytes += bytes;
+            total_count += count;
         } else {
             // Soft delete the file
             sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
@@ -1124,6 +1396,7 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
                 .await
                 .ok();
             total_bytes += child.size_bytes;
+            total_count += 1;
         }
     }
 
@@ -1134,10 +1407,12 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
         .await
         .map_err(|e| Error::Database(format!("Failed to soft delete folder: {e}")))?;
 
-    Ok(total_bytes)
+    total_count += 1; // count the folder itself
+
+    Ok((total_bytes, total_count))
 }
 
-/// Recursively permanently delete a folder and its contents from disk and DB
+/// Recursively permanently delete a folder and its contents from storage and DB
 async fn hard_delete_folder_recursive(
     pool: &SqlitePool,
     config: &DriveConfig,
@@ -1162,10 +1437,9 @@ async fn hard_delete_folder_recursive(
         if child.is_folder {
             Box::pin(hard_delete_folder_recursive(pool, config, &child)).await?;
         } else {
-            let full_path = config.base_path.join(&child.path);
-            if full_path.exists() {
-                fs::remove_file(&full_path).await.ok();
-            }
+            // Delete from storage (handles both S3 and local filesystem)
+            config.storage.delete(&child.path).await.ok();
+
             sqlx::query("DELETE FROM drive_files WHERE id = $1")
                 .bind(&child.id)
                 .execute(pool)
@@ -1177,12 +1451,8 @@ async fn hard_delete_folder_recursive(
         }
     }
 
-    // Delete the folder itself
-    let full_path = config.base_path.join(&folder.path);
-    if full_path.exists() {
-        fs::remove_dir(&full_path).await.ok();
-    }
-
+    // Delete folder record from database
+    // Note: S3 has no real directories, so we only delete the DB record
     sqlx::query("DELETE FROM drive_files WHERE id = $1")
         .bind(&folder.id)
         .execute(pool)
@@ -1315,13 +1585,9 @@ pub async fn purge_file(pool: &SqlitePool, config: &DriveConfig, file_id: &str) 
         // Recursively hard-delete folder contents
         hard_delete_folder_recursive(pool, config, &file).await?;
     } else {
-        // Delete from filesystem
-        let full_path = config.base_path.join(&file.path);
-        if full_path.exists() {
-            fs::remove_file(&full_path)
-                .await
-                .map_err(|e| Error::Storage(format!("Failed to delete file: {e}")))?;
-        }
+        // Delete from storage (handles both S3 and local filesystem)
+        // Ignore errors if file doesn't exist (may have been deleted externally)
+        config.storage.delete(&file.path).await.ok();
 
         // Delete from database
         sqlx::query("DELETE FROM drive_files WHERE id = $1")
@@ -1363,7 +1629,9 @@ pub async fn empty_trash(pool: &SqlitePool, config: &DriveConfig) -> Result<u64>
     for file in &trash_files {
         // Only delete top-level items (children will be deleted recursively)
         if file.parent_id.is_none()
-            || !trash_files.iter().any(|f| Some(&f.id) == file.parent_id.as_ref())
+            || !trash_files
+                .iter()
+                .any(|f| Some(&f.id) == file.parent_id.as_ref())
         {
             if let Err(e) = purge_file(pool, config, &file.id).await {
                 tracing::warn!("Failed to purge file {} from trash: {}", file.id, e);
@@ -1408,7 +1676,10 @@ pub async fn purge_old_trash(pool: &SqlitePool, config: &DriveConfig) -> Result<
     }
 
     if purged_count > 0 {
-        tracing::info!("Purged {} files from trash (older than 30 days)", purged_count);
+        tracing::info!(
+            "Purged {} files from trash (older than 30 days)",
+            purged_count
+        );
     }
 
     Ok(purged_count)
@@ -1421,7 +1692,9 @@ async fn get_unique_path(pool: &SqlitePool, original_path: &str) -> Result<Strin
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
-    let extension = path_buf.extension().map(|s| s.to_string_lossy().to_string());
+    let extension = path_buf
+        .extension()
+        .map(|s| s.to_string_lossy().to_string());
     let parent = path_buf
         .parent()
         .map(|p| p.to_string_lossy().to_string())
@@ -1457,9 +1730,12 @@ async fn get_unique_path(pool: &SqlitePool, original_path: &str) -> Result<Strin
 }
 
 /// Create a folder
+///
+/// Note: For S3 storage, folders exist only in the database (S3 has no real directories).
+/// Files are stored with their full path as the key (e.g., "documents/2024/report.pdf").
 pub async fn create_folder(
     pool: &SqlitePool,
-    config: &DriveConfig,
+    _config: &DriveConfig,
     request: CreateFolderRequest,
 ) -> Result<DriveFile> {
     // Validate path and name
@@ -1488,11 +1764,9 @@ pub async fn create_folder(
         )));
     }
 
-    // Create directory on filesystem
-    let full_path = config.base_path.join(&folder_path);
-    fs::create_dir_all(&full_path)
-        .await
-        .map_err(|e| Error::Storage(format!("Failed to create folder: {e}")))?;
+    // Note: No storage operation needed - folders exist only in database.
+    // S3 has no real directories; files use their full path as the key.
+    // Local file storage creates directories automatically when uploading files.
 
     // Get or create parent folder record
     let parent_id = if validated_path.as_os_str().is_empty() {
@@ -1503,7 +1777,7 @@ pub async fn create_folder(
     };
 
     // Insert database record
-    let folder_id = Uuid::new_v4().to_string();
+    let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&folder_path_str]);
     sqlx::query(
         r#"
         INSERT INTO drive_files (id, path, filename, size_bytes, parent_id, is_folder)
@@ -1525,6 +1799,11 @@ pub async fn create_folder(
 }
 
 /// Move or rename a file/folder
+///
+/// System folders (`.media`, `.lake`) are protected and cannot be moved.
+///
+/// For S3 storage, moving a file requires downloading and re-uploading to the new key.
+/// Moving folders also requires moving all descendant files in storage.
 pub async fn move_file(
     pool: &SqlitePool,
     config: &DriveConfig,
@@ -1532,6 +1811,20 @@ pub async fn move_file(
     new_path: &str,
 ) -> Result<DriveFile> {
     let file = get_file_metadata(pool, file_id).await?;
+
+    // Protect system folders from being moved
+    if is_protected_path(&file.path) {
+        return Err(Error::InvalidInput(
+            "Cannot move system folder or its contents".into(),
+        ));
+    }
+
+    // Prevent moving into system folders
+    if is_protected_path(new_path) {
+        return Err(Error::InvalidInput(
+            "Cannot move files into system folders".into(),
+        ));
+    }
 
     // Validate new path
     let validated_new_path = validate_drive_path(new_path)?;
@@ -1551,19 +1844,25 @@ pub async fn move_file(
         )));
     }
 
-    // Move on filesystem
-    let old_full_path = config.base_path.join(&file.path);
-    let new_full_path = config.base_path.join(&validated_new_path);
-
-    if let Some(parent) = new_full_path.parent() {
-        fs::create_dir_all(parent)
+    // Move file in storage (copy + delete pattern for S3 compatibility)
+    if !file.is_folder {
+        // Download from old path
+        let data = config
+            .storage
+            .download(&file.path)
             .await
-            .map_err(|e| Error::Storage(format!("Failed to create directories: {e}")))?;
-    }
+            .map_err(|e| Error::Storage(format!("Failed to read file for move: {e}")))?;
 
-    fs::rename(&old_full_path, &new_full_path)
-        .await
-        .map_err(|e| Error::Storage(format!("Failed to move file: {e}")))?;
+        // Upload to new path
+        config
+            .storage
+            .upload(&new_path_str, data)
+            .await
+            .map_err(|e| Error::Storage(format!("Failed to write file to new location: {e}")))?;
+
+        // Delete from old path
+        config.storage.delete(&file.path).await.ok();
+    }
 
     // Extract new filename
     let new_filename = validated_new_path
@@ -1583,7 +1882,7 @@ pub async fn move_file(
         None
     };
 
-    // Update database
+    // Update database record for the file/folder itself
     sqlx::query(
         r#"
         UPDATE drive_files
@@ -1598,6 +1897,56 @@ pub async fn move_file(
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update file record: {e}")))?;
+
+    // For folders: update all descendant paths and move files in storage
+    if file.is_folder {
+        let old_prefix = &file.path;
+
+        // Get all descendant files (not folders) to move in storage
+        let descendants = sqlx::query_as::<_, DriveFile>(
+            r#"
+            SELECT id, path, filename, mime_type, size_bytes,
+                   is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
+            FROM drive_files
+            WHERE path LIKE $1 AND is_folder = 0 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(format!("{}/%", old_prefix))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to list folder contents: {e}")))?;
+
+        // Move each file in storage
+        for descendant in &descendants {
+            let old_file_path = &descendant.path;
+            let new_file_path = old_file_path.replacen(old_prefix, &new_path_str, 1);
+
+            // Download, upload, delete pattern
+            if let Ok(data) = config.storage.download(old_file_path).await {
+                if config.storage.upload(&new_file_path, data).await.is_ok() {
+                    config.storage.delete(old_file_path).await.ok();
+                }
+            }
+        }
+
+        // Update all descendant paths in database
+        let old_prefix_len = file.path.chars().count() as i64 + 1; // +1 because SQLite substr is 1-based
+        let like_pattern = format!("{}/%", file.path);
+        sqlx::query(
+            r#"
+            UPDATE drive_files
+            SET path = $1 || substr(path, $2),
+                updated_at = datetime('now')
+            WHERE path LIKE $3
+            "#,
+        )
+        .bind(&new_path_str)
+        .bind(old_prefix_len)
+        .bind(&like_pattern)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update descendant paths: {e}")))?;
+    }
 
     get_file_metadata(pool, file_id).await
 }
@@ -1643,7 +1992,7 @@ async fn get_or_create_folder_record(pool: &SqlitePool, path: &str) -> Result<Op
         None
     };
 
-    let folder_id = Uuid::new_v4().to_string();
+    let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[path]);
     sqlx::query(
         r#"
         INSERT INTO drive_files (id, path, filename, size_bytes, parent_id, is_folder)
@@ -1770,8 +2119,47 @@ mod tests {
 
     #[test]
     fn test_tier_quota() {
-        assert_eq!(DriveTier::Free.quota_bytes(), 100 * 1024 * 1024 * 1024);
         assert_eq!(DriveTier::Standard.quota_bytes(), 500 * 1024 * 1024 * 1024);
         assert_eq!(DriveTier::Pro.quota_bytes(), 4 * 1024 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_is_system_path() {
+        // System paths (start with .)
+        assert!(is_system_path(".media"));
+        assert!(is_system_path(".media/ab/file.png"));
+        assert!(is_system_path(".lake"));
+        assert!(is_system_path(".lake/provider/stream"));
+
+        // Non-system paths
+        assert!(!is_system_path("documents"));
+        assert!(!is_system_path("photos/vacation"));
+        assert!(!is_system_path("my.file.txt")); // dot in filename is fine
+    }
+
+    #[test]
+    fn test_is_protected_path() {
+        // Protected paths
+        assert!(is_protected_path(".media"));
+        assert!(is_protected_path(".media/ab/file.png"));
+        assert!(is_protected_path(".lake"));
+        assert!(is_protected_path(".lake/provider/stream"));
+
+        // Non-protected paths
+        assert!(!is_protected_path("documents"));
+        assert!(!is_protected_path("photos/vacation"));
+        assert!(!is_protected_path(".other")); // other hidden folders are not protected
+    }
+
+    #[test]
+    fn test_validate_system_path() {
+        // System paths should be allowed
+        assert!(validate_system_path(".media").is_ok());
+        assert!(validate_system_path(".media/ab/file.png").is_ok());
+        assert!(validate_system_path(".lake/stream").is_ok());
+
+        // But traversal should still be blocked
+        assert!(validate_system_path(".media/../etc/passwd").is_err());
+        assert!(validate_system_path("..").is_err());
     }
 }

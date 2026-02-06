@@ -18,28 +18,25 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			throw redirect(303, '/login');
 		}
 
-		// Skip onboarding redirect for OAuth callback (it handles its own redirect)
+		// Skip profile check for OAuth callback (it handles its own redirect)
 		if (url.pathname.startsWith('/oauth/')) {
 			return { session: sessionData };
 		}
 
-		// Check onboarding status via Rust profile API
+		// Fetch profile for user preferences and server status
 		const profileResponse = await fetch('/api/profile');
 
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();
 
-			// Redirect to onboarding if status is not 'complete'
-			if (profile.onboarding_status !== 'complete') {
-				// Allow access to onboarding pages
-				if (!url.pathname.startsWith('/onboarding')) {
-					throw redirect(303, '/onboarding/welcome');
-				}
-			}
+			// Note: Onboarding wizard redirect removed.
+			// Users now see "Getting Started" in chat and "ServerProvisioning" overlay
+			// if server_status is not 'ready'.
 
 			return {
 				session: sessionData,
 				preferredName: profile.preferred_name || null,
+				serverStatus: profile.server_status || 'ready',
 				sessionExpires: sessionData.expires || null
 			};
 		}
@@ -47,6 +44,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		return {
 			session: sessionData,
 			preferredName: null,
+			serverStatus: 'ready', // Assume ready if profile fetch fails
 			sessionExpires: sessionData.expires || null
 		};
 	} catch (error) {

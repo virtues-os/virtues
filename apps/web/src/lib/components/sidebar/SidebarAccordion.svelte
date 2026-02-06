@@ -105,7 +105,7 @@
 	.accordion-header {
 		@apply flex w-full cursor-pointer items-center gap-2 rounded-lg;
 		@apply px-2.5 py-1.5;
-		margin-bottom: 2px;
+		margin-bottom: var(--sidebar-item-gap, 4px);
 		/* Staggered load animation (initial mount) */
 		animation: fadeSlideIn 200ms var(--ease-premium) backwards;
 		/* Staggered expand transition - uses --stagger-delay CSS var */
@@ -152,15 +152,16 @@
 		background: rgba(0, 0, 0, 0.04);
 	}
 
-	:global([data-theme="midnight-oil"]) .badge,
-	:global([data-theme="narnia-nights"]) .badge,
-	:global([data-theme="dumb-ox"]) .badge,
-	:global([data-theme="chiaroscuro"]) .badge,
-	:global([data-theme="stoa"]) .badge,
+	:global([data-theme="baker-street"]) .badge,
+	:global([data-theme="narnia"]) .badge,
+	:global([data-theme="canterbury"]) .badge,
+	:global([data-theme="borghese"]) .badge,
+	:global([data-theme="gatsby"]) .badge,
 	:global([data-theme="lyceum"]) .badge,
-	:global([data-theme="tabula-rasa"]) .badge,
-	:global([data-theme="hemlock"]) .badge,
-	:global([data-theme="shire"]) .badge {
+	:global([data-theme="asgard"]) .badge,
+	:global([data-theme="agora"]) .badge,
+	:global([data-theme="shire"]) .badge,
+	:global([data-theme="lothlorien"]) .badge {
 		color: rgba(255, 255, 255, 0.4);
 		background: rgba(255, 255, 255, 0.06);
 	}
@@ -179,7 +180,7 @@
 		overflow: hidden;
 		min-height: 0;
 		@apply flex flex-col;
-		gap: 2px; /* Subtle gap between items */
+		gap: var(--sidebar-item-gap, 4px);
 		padding-top: 6px; /* More space after header */
 		padding-left: 0; /* No indent - cleaner look */
 		/* Enhanced slide animation with fade and horizontal movement */

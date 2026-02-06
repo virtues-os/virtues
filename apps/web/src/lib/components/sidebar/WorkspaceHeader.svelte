@@ -1,5 +1,7 @@
 <script lang="ts">
-	import "iconify-icon";
+	import Icon from "$lib/components/Icon.svelte";
+	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	interface WorkspaceInfo {
 		name: string;
@@ -11,15 +13,24 @@
 	interface Props {
 		collapsed?: boolean;
 		onNewChat: () => void;
+		onNewPage: () => void;
+		onCreateFolder?: () => void;
+		onCreateSmartFolder?: () => void;
 		onGoHome: () => void;
 		onToggleCollapse: () => void;
 		onSearch?: () => void;
+		onWorkspaceClick?: (e: MouseEvent) => void;
 		logoAnimationDelay?: number;
 		actionsAnimationDelay?: number;
 		/** Scroll progress for title animation: -1 to 1, where 0 = current, negative = going left, positive = going right */
 		scrollProgress?: number;
 		/** Workspace info for transition: [previous, current, next] */
 		transitionWorkspaces?: [WorkspaceInfo | null, WorkspaceInfo, WorkspaceInfo | null];
+		/** Inline rename state */
+		isRenaming?: boolean;
+		renameValue?: string;
+		onRenameDone?: (newName: string) => void;
+		onRenameCancel?: () => void;
 	}
 
 	const defaultWorkspace: WorkspaceInfo = { name: "Virtues", icon: null, accentColor: null, isSystem: true };
@@ -27,14 +38,112 @@
 	let {
 		collapsed = false,
 		onNewChat,
+		onNewPage,
+		onCreateFolder,
+		onCreateSmartFolder,
 		onGoHome,
 		onToggleCollapse,
 		onSearch,
+		onWorkspaceClick,
 		logoAnimationDelay = 0,
 		actionsAnimationDelay = 30,
 		scrollProgress = 0,
 		transitionWorkspaces = [null, defaultWorkspace, null],
+		isRenaming = false,
+		renameValue = "",
+		onRenameDone,
+		onRenameCancel,
 	}: Props = $props();
+
+	let renameInput = $state("");
+	let renameInputEl: HTMLInputElement | null = $state(null);
+
+	// Sync rename value when entering rename mode
+	$effect(() => {
+		if (isRenaming) {
+			renameInput = renameValue;
+			// Focus the input after render
+			setTimeout(() => renameInputEl?.focus(), 0);
+		}
+	});
+
+	function handleRenameKeydown(e: KeyboardEvent) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			if (renameInput.trim()) {
+				onRenameDone?.(renameInput.trim());
+			} else {
+				onRenameCancel?.();
+			}
+		}
+		if (e.key === "Escape") {
+			e.preventDefault();
+			onRenameCancel?.();
+		}
+	}
+
+	function handleRenameBlur() {
+		if (renameInput.trim() && renameInput.trim() !== renameValue) {
+			onRenameDone?.(renameInput.trim());
+		} else {
+			onRenameCancel?.();
+		}
+	}
+
+	function handleContextMenu(e: MouseEvent) {
+		e.preventDefault();
+		onWorkspaceClick?.(e);
+	}
+
+	// Check if an icon value is an emoji (not an icon name like "ri:...")
+	function isEmoji(val: string | null): boolean {
+		if (!val) return false;
+		return !val.includes(":");
+	}
+
+	function handleCreateClick(e: MouseEvent) {
+		const isSystemWorkspace = currentWs.isSystem;
+
+		const items: ContextMenuItem[] = [
+			{
+				id: "new-chat",
+				label: "New Chat",
+				icon: "ri:chat-1-line",
+				shortcut: "⌘N",
+				action: onNewChat,
+			},
+			{
+				id: "new-page",
+				label: "New Page",
+				icon: "ri:file-text-line",
+				shortcut: "⌘⇧N",
+				action: onNewPage,
+			},
+		];
+
+		// Add folder options (disabled on system workspace)
+		if (onCreateFolder) {
+			items.push({
+				id: "new-folder",
+				label: "New Folder",
+				icon: "ri:folder-add-line",
+				action: onCreateFolder,
+				disabled: isSystemWorkspace,
+				dividerBefore: true,
+			});
+		}
+		if (onCreateSmartFolder) {
+			items.push({
+				id: "new-smart-folder",
+				label: "New Smart Folder",
+				icon: "ri:filter-line",
+				action: onCreateSmartFolder,
+				disabled: isSystemWorkspace,
+			});
+		}
+
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
+	}
 
 	// Current workspace info from props
 	const currentWs = $derived(transitionWorkspaces[1]);
@@ -56,6 +165,14 @@
 	const incomingOpacity = $derived(Math.abs(scrollProgress));
 	const incomingWs = $derived(scrollProgress > 0 ? nextWs : prevWs);
 
+	// CSS style for accent color (workspace name tint)
+	const currentAccentStyle = $derived(
+		currentWs.accentColor ? `--ws-accent: ${currentWs.accentColor}` : ""
+	);
+	const incomingAccentStyle = $derived(
+		incomingWs?.accentColor ? `--ws-accent: ${incomingWs.accentColor}` : ""
+	);
+
 	// Static dot positions for triangle logo (used in system workspace)
 	const dotPositions = [
 		{ left: "34%", top: "0%" },
@@ -70,12 +187,18 @@
 		class="workspace-row animate-row"
 		style="animation-delay: {logoAnimationDelay}ms; --stagger-delay: {logoAnimationDelay}ms"
 	>
-		<button class="logo-area" onclick={onGoHome} title="Home">
+		<button
+			class="logo-area"
+			onclick={(e) => onWorkspaceClick ? onWorkspaceClick(e) : onGoHome()}
+			oncontextmenu={handleContextMenu}
+			title="Workspace menu"
+		>
 			<div class="logo-transition-wrapper">
 				<!-- Current workspace (icon + name) -->
-				<div 
+				<div
 					class="workspace-identity"
-					style="transform: translateY({offset}px); opacity: {currentOpacity};"
+					class:has-accent={currentWs.accentColor}
+					style="transform: translateY({offset}px); opacity: {currentOpacity}; {currentAccentStyle}"
 				>
 					{#if currentWs.isSystem}
 						<div class="logo">
@@ -87,25 +210,42 @@
 						</div>
 					{:else}
 						<div class="workspace-icon">
-							{#if currentWs.icon}
-								<iconify-icon icon={currentWs.icon} width="18"></iconify-icon>
+							{#if currentWs.icon && isEmoji(currentWs.icon)}
+								<span class="icon-emoji">{currentWs.icon}</span>
+							{:else if currentWs.icon}
+								<Icon icon={currentWs.icon} width="18" />
 							{:else if currentWs.accentColor}
 								<div class="color-dot" style="background: {currentWs.accentColor}"></div>
 							{:else}
-								<iconify-icon icon="ri:folder-line" width="18"></iconify-icon>
+								<Icon icon="ri:folder-line" width="18" />
 							{/if}
 						</div>
 					{/if}
 					{#if !collapsed}
-						<span class="workspace-name">{currentWs.name}</span>
+						{#if isRenaming}
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								bind:this={renameInputEl}
+								bind:value={renameInput}
+								onkeydown={handleRenameKeydown}
+								onblur={handleRenameBlur}
+								onclick={(e) => e.stopPropagation()}
+								class="rename-input"
+								type="text"
+								autofocus
+							/>
+						{:else}
+							<span class="workspace-name">{currentWs.name}</span>
+						{/if}
 					{/if}
 				</div>
 
 				<!-- Incoming workspace (shown during swipe) -->
 				{#if incomingWs && Math.abs(scrollProgress) > 0.01}
-					<div 
+					<div
 						class="workspace-identity incoming"
-						style="transform: translateY({incomingOffset}px); opacity: {incomingOpacity};"
+						class:has-accent={incomingWs.accentColor}
+						style="transform: translateY({incomingOffset}px); opacity: {incomingOpacity}; {incomingAccentStyle}"
 					>
 						{#if incomingWs.isSystem}
 							<div class="logo">
@@ -117,12 +257,14 @@
 							</div>
 						{:else}
 							<div class="workspace-icon">
-								{#if incomingWs.icon}
-									<iconify-icon icon={incomingWs.icon} width="18"></iconify-icon>
+								{#if incomingWs.icon && isEmoji(incomingWs.icon)}
+									<span class="icon-emoji">{incomingWs.icon}</span>
+								{:else if incomingWs.icon}
+									<Icon icon={incomingWs.icon} width="18" />
 								{:else if incomingWs.accentColor}
 									<div class="color-dot" style="background: {incomingWs.accentColor}"></div>
 								{:else}
-									<iconify-icon icon="ri:folder-line" width="18"></iconify-icon>
+									<Icon icon="ri:folder-line" width="18" />
 								{/if}
 							</div>
 						{/if}
@@ -138,9 +280,9 @@
 			<button
 				class="collapse-btn"
 				onclick={onToggleCollapse}
-				title="Collapse sidebar (Cmd+[)"
+				title="Collapse sidebar (Cmd+S)"
 			>
-				<iconify-icon icon="ri:arrow-left-s-line" width="18"></iconify-icon>
+				<Icon icon="ri:arrow-left-double-line" width="16" />
 			</button>
 		{/if}
 	</div>
@@ -160,15 +302,16 @@
 				<kbd class="action-kbd">⌘K</kbd>
 			</button>
 			<button
-				class="action-btn"
-				onclick={onNewChat}
-				title="New Chat (Cmd+N)"
+				class="action-btn create-btn"
+				onclick={handleCreateClick}
+				title="Create new..."
 			>
-				<span class="action-label">New Chat</span>
-				<kbd class="action-kbd">⌘N</kbd>
+				<span class="action-label">Create</span>
+				<Icon icon="ri:add-line" width="14" />
 			</button>
 		</div>
 	{/if}
+
 </div>
 
 <style>
@@ -191,7 +334,7 @@
 
 	.header-container {
 		@apply flex flex-col;
-		padding: 14px 8px 16px 8px;
+		padding: 14px 0 16px 8px;
 		gap: 14px;
 	}
 
@@ -293,6 +436,11 @@
 		border-radius: 50%;
 	}
 
+	.icon-emoji {
+		font-size: 16px;
+		line-height: 1;
+	}
+
 	.workspace-name {
 		font-family: "Charter", "Georgia", "Times New Roman", serif;
 		color: var(--foreground);
@@ -300,7 +448,32 @@
 		font-weight: 400;
 		letter-spacing: 0.02em;
 		white-space: nowrap;
-		transition: color 200ms var(--ease-premium);
+	}
+
+	.rename-input {
+		font-family: "Charter", "Georgia", "Times New Roman", serif;
+		color: var(--foreground);
+		font-size: 17px;
+		font-weight: 400;
+		letter-spacing: 0.02em;
+		white-space: nowrap;
+		background: var(--color-surface);
+		border: 1px solid var(--color-primary);
+		border-radius: 4px;
+		padding: 0 4px;
+		outline: none;
+		width: 140px;
+	}
+
+	/* Apply accent color to workspace name and icon when set */
+	.workspace-identity.has-accent .workspace-name,
+	.workspace-identity.has-accent .workspace-icon {
+		color: var(--ws-accent);
+	}
+
+	.logo-area:hover .workspace-identity.has-accent .workspace-name,
+	.logo-area:hover .workspace-identity.has-accent .workspace-icon {
+		filter: brightness(1.15);
 	}
 
 	.collapse-btn {

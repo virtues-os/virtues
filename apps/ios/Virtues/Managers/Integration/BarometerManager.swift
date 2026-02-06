@@ -28,6 +28,7 @@ class BarometerManager: ObservableObject {
     private let altimeter = CMAltimeter()
     private var collectionTimer: ReliableTimer?
     private var pendingMetrics: [BarometerMetric] = []
+    private var lastRecordedDate: Date?
     private let lastSyncKey = "com.virtues.barometer.lastSync"
 
     /// Check if barometer is available on this device
@@ -77,9 +78,15 @@ class BarometerManager: ObservableObject {
                 self.currentPressure = data.pressure.doubleValue  // kPa
                 self.relativeAltitude = data.relativeAltitude.doubleValue  // meters
 
-                // Create metric for this reading
+                // Downsample: record at most one reading per minute
+                let now = Date()
+                if let last = self.lastRecordedDate, now.timeIntervalSince(last) < 60 {
+                    return
+                }
+                self.lastRecordedDate = now
+
                 let metric = BarometerMetric(
-                    timestamp: Date(),
+                    timestamp: now,
                     pressureKPa: data.pressure.doubleValue,
                     relativeAltitudeMeters: data.relativeAltitude.doubleValue
                 )

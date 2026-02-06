@@ -37,12 +37,12 @@ impl OntologyTransform for PlaidInvestmentTransform {
         &self,
         db: &Database,
         context: &TransformContext,
-        source_id: Uuid,
+        source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
         let mut records_failed = 0;
-        let mut last_processed_id: Option<Uuid> = None;
+        let mut last_processed_id: Option<String> = None;
 
         let transform_start = std::time::Instant::now();
 
@@ -57,7 +57,7 @@ impl OntologyTransform for PlaidInvestmentTransform {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
         let batches = data_source
-            .read_with_checkpoint(source_id, "investments", checkpoint_key)
+            .read_with_checkpoint(&source_id, "investments", checkpoint_key)
             .await?;
 
         tracing::info!(
@@ -146,10 +146,26 @@ impl OntologyTransform for PlaidInvestmentTransform {
                     .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
                     .unwrap_or_else(|| Utc::now().date_naive());
 
+                // Get source_connection_id for deterministic ID generation
+                let source_connection_id = record
+                    .get("source_connection_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                // Generate deterministic IDs for idempotency
+                let id = crate::ids::generate_id("asset", &[&source_connection_id, security_id, &account_id]);
+                // Generate account_id that matches the account transform's ID
+                let internal_account_id = crate::ids::generate_id("account", &[&source_connection_id, &account_id]);
+
                 // Build metadata
                 let metadata = serde_json::json!({
                     "plaid_security_id": security_id,
                     "plaid_account_id": account_id,
+                    "cusip": cusip,
+                    "isin": isin,
+                    "close_price": close_price,
+                    "as_of_date": as_of_date.to_string(),
                     "vested_quantity": record.get("vested_quantity"),
                     "vested_value": record.get("vested_value"),
                     "institution_price": record.get("institution_price"),
@@ -163,25 +179,22 @@ impl OntologyTransform for PlaidInvestmentTransform {
                 let timestamp = Utc::now();
 
                 pending_records.push(AssetRecord {
-                    account_id_external: format!("plaid:{}", account_id),
-                    security_id_external: format!("plaid:{}", security_id),
-                    ticker_symbol,
-                    cusip,
-                    isin,
-                    security_name,
-                    security_type,
+                    id,
+                    account_id: internal_account_id,
+                    asset_type: security_type.unwrap_or_else(|| "security".to_string()),
+                    symbol: ticker_symbol,
+                    name: security_name,
                     quantity,
                     cost_basis,
-                    institution_value,
-                    close_price,
+                    current_value: institution_value,
                     currency_code,
-                    as_of_date,
                     timestamp,
                     stream_id,
+                    source_connection_id,
                     metadata,
                 });
 
-                last_processed_id = Some(stream_id);
+                last_processed_id = Some(stream_id.to_string());
 
                 // Execute batch insert when we reach batch size
                 if pending_records.len() >= BATCH_SIZE {
@@ -203,7 +216,7 @@ impl OntologyTransform for PlaidInvestmentTransform {
             // Update checkpoint after processing batch
             if let Some(max_ts) = batch.max_timestamp {
                 data_source
-                    .update_checkpoint(source_id, "investments", checkpoint_key, max_ts)
+                    .update_checkpoint(&source_id, "investments", checkpoint_key, max_ts)
                     .await?;
             }
         }
@@ -246,21 +259,18 @@ impl OntologyTransform for PlaidInvestmentTransform {
 
 /// Internal struct to hold asset data for batch insert
 struct AssetRecord {
-    account_id_external: String,
-    security_id_external: String,
-    ticker_symbol: Option<String>,
-    cusip: Option<String>,
-    isin: Option<String>,
-    security_name: String,
-    security_type: Option<String>,
+    id: String,                    // deterministic ID
+    account_id: String,            // internal account ID (generated)
+    asset_type: String,            // security_type or "security"
+    symbol: Option<String>,        // ticker_symbol
+    name: String,                  // security_name
     quantity: f64,
     cost_basis: Option<f64>,
-    institution_value: Option<f64>,
-    close_price: Option<f64>,
+    current_value: Option<f64>,    // institution_value
     currency_code: String,
-    as_of_date: NaiveDate,
     timestamp: DateTime<Utc>,
     stream_id: Uuid,
+    source_connection_id: String,
     metadata: serde_json::Value,
 }
 
@@ -274,48 +284,46 @@ async fn execute_asset_batch_insert(db: &Database, records: &[AssetRecord]) -> R
     let query_str = Database::build_batch_insert_query(
         "data_financial_asset",
         &[
-            "account_id_external",
-            "security_id_external",
-            "ticker_symbol",
-            "cusip",
-            "isin",
-            "security_name",
-            "security_type",
+            "id",
+            "account_id",
+            "asset_type",
+            "symbol",
+            "name",
             "quantity",
             "cost_basis",
-            "institution_value",
-            "close_price",
-            "currency_code",
-            "as_of_date",
+            "current_value",
+            "currency",
             "timestamp",
             "source_stream_id",
+            "source_connection_id",
             "metadata",
             "source_table",
             "source_provider",
         ],
-        "security_id_external",
+        "id",
         records.len(),
     );
 
     let mut query = sqlx::query(&query_str);
 
     for record in records {
+        // Convert to cents
+        let cost_basis_cents = record.cost_basis.map(|b| (b * 100.0) as i64);
+        let current_value_cents = record.current_value.map(|v| (v * 100.0) as i64);
+
         query = query
-            .bind(&record.account_id_external)
-            .bind(&record.security_id_external)
-            .bind(&record.ticker_symbol)
-            .bind(&record.cusip)
-            .bind(&record.isin)
-            .bind(&record.security_name)
-            .bind(&record.security_type)
+            .bind(&record.id)
+            .bind(&record.account_id)
+            .bind(&record.asset_type)
+            .bind(&record.symbol)
+            .bind(&record.name)
             .bind(record.quantity)
-            .bind(record.cost_basis)
-            .bind(record.institution_value)
-            .bind(record.close_price)
+            .bind(cost_basis_cents)
+            .bind(current_value_cents)
             .bind(&record.currency_code)
-            .bind(record.as_of_date)
             .bind(record.timestamp)
             .bind(record.stream_id)
+            .bind(&record.source_connection_id)
             .bind(&record.metadata)
             .bind("stream_plaid_investments")
             .bind("plaid");
