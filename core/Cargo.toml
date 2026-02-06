@@ -160,7 +160,7 @@ similar = "2.7.0"
 pulldown-cmark = { version = "0.10", default-features = false, features = ["simd"] }
 
 # S3 Storage
-aws-sdk-s3 = "1.65"
+aws-sdk-s3 = { version = "1.65", features = ["behavior-version-latest"] }
 aws-config = { version = "1.5", features = ["behavior-version-latest"] }
 bytes = "1.7"
 

@@ -70,6 +70,7 @@ impl S3Storage {
         );
 
         let s3_config = Config::builder()
+            .behavior_version_latest()
             .endpoint_url(&config.endpoint)
             .credentials_provider(credentials)
             .region(Region::new(config.region))
