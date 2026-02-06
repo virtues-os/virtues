@@ -3,28 +3,38 @@
 	 * Update Overlay
 	 *
 	 * Full-screen overlay shown during a system update (container restart).
-	 * Polls /health every 2-3 seconds until the server responds, then refreshes.
+	 * Polls /health and verifies the commit hash has changed before refreshing.
+	 *
+	 * Status flow:
+	 *   "updating"     → POST sent, starting to poll
+	 *   "waiting"      → Server responding but still on old version (rolling deploy)
+	 *   "reconnecting" → Server stopped responding (container restarting)
+	 *   "error"        → Timeout exceeded
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
 
-	let status = $state<"updating" | "reconnecting" | "error">("updating");
+	/** The commit hash of the server before the update was triggered */
+	const { previousCommit }: { previousCommit: string } = $props();
+
+	let status = $state<"updating" | "waiting" | "reconnecting" | "error">(
+		"updating",
+	);
 	let pollCount = $state(0);
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 	const MAX_POLLS = 90; // ~3 minutes at 2s intervals
 	const POLL_INTERVAL_MS = 2000;
-	// Wait a few seconds before starting to poll (let the old container shut down)
-	const INITIAL_DELAY_MS = 5000;
 
 	onMount(() => {
-		setTimeout(() => {
-			status = "reconnecting";
-			pollInterval = setInterval(async () => {
-				try {
-					const res = await fetch("/health");
-					if (res.ok) {
-						// Server is back — refresh the page to load the new version
+		pollInterval = setInterval(async () => {
+			try {
+				const res = await fetch("/health");
+				if (res.ok) {
+					const data = await res.json();
+
+					// Verify the commit has actually changed before reloading
+					if (data.commit && data.commit !== previousCommit) {
 						if (pollInterval) {
 							clearInterval(pollInterval);
 							pollInterval = null;
@@ -32,20 +42,27 @@
 						window.location.reload();
 						return;
 					}
-				} catch {
-					// Expected — server is restarting
-				}
 
-				pollCount++;
-				if (pollCount >= MAX_POLLS) {
-					status = "error";
-					if (pollInterval) {
-						clearInterval(pollInterval);
-						pollInterval = null;
-					}
+					// Server is up but still on old version (rolling deploy in progress)
+					status = "waiting";
+				} else {
+					// Server returned non-200 — likely mid-restart
+					status = "reconnecting";
 				}
-			}, POLL_INTERVAL_MS);
-		}, INITIAL_DELAY_MS);
+			} catch {
+				// Network error — server is down, expected during restart
+				status = "reconnecting";
+			}
+
+			pollCount++;
+			if (pollCount >= MAX_POLLS) {
+				status = "error";
+				if (pollInterval) {
+					clearInterval(pollInterval);
+					pollInterval = null;
+				}
+			}
+		}, POLL_INTERVAL_MS);
 	});
 
 	onDestroy(() => {
@@ -58,6 +75,8 @@
 		switch (status) {
 			case "updating":
 				return "Updating Virtues...";
+			case "waiting":
+				return "Waiting for new version...";
 			case "reconnecting":
 				return "Reconnecting...";
 			case "error":
@@ -71,6 +90,8 @@
 		switch (status) {
 			case "updating":
 				return "Preparing the new version. This usually takes about 30 seconds.";
+			case "waiting":
+				return "The server is deploying the update. This usually takes about 30 seconds.";
 			case "reconnecting":
 				return "Waiting for the new version to come online...";
 			case "error":
