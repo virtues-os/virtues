@@ -7,6 +7,7 @@
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
 	import UpdateOverlay from "$lib/components/UpdateOverlay.svelte";
+	import UpdateBanner from "$lib/components/UpdateBanner.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import { versionStore } from "$lib/stores/version.svelte";
@@ -128,23 +129,20 @@
 		}
 	});
 
-	// Show toast when frontend code is out of sync with backend (needs page refresh)
+	// Brief toast when frontend code drift is first detected (banner handles persistence)
 	let updateToastShown = false;
 	$effect(() => {
 		if (versionStore.updateAvailable && !updateToastShown) {
 			updateToastShown = true;
 			toast.info("New version available", {
-				description: "Click refresh to get the latest updates.",
-				duration: Infinity,
-				action: {
-					label: "Refresh",
-					onClick: () => location.reload(),
-				},
+				description:
+					"A refresh banner will stay visible until updated.",
+				duration: 8000,
 			});
 		}
 	});
 
-	// Show toast when a system-level update is available (new image from Atlas)
+	// Brief toast when system update is first detected (banner handles persistence)
 	let systemUpdateToastShown = false;
 	$effect(() => {
 		if (
@@ -155,18 +153,7 @@
 			systemUpdateToastShown = true;
 			toast.info("System update available", {
 				description: "A new version of Virtues is ready to install.",
-				duration: Infinity,
-				action: {
-					label: "Update",
-					onClick: () => {
-						versionStore.triggerUpdate().catch((e) => {
-							toast.error("Update failed", {
-								description:
-									e.message || "Please try again later.",
-							});
-						});
-					},
-				},
+				duration: 8000,
 			});
 		}
 	});
@@ -265,6 +252,9 @@
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 bg-surface text-foreground m-3 rounded-lg border border-border overflow-hidden"
 	>
+		<!-- Persistent update banner (state-driven, not dismissable) -->
+		<UpdateBanner />
+
 		{#if initialized}
 			<!-- SplitContainer handles both split and mono modes -->
 			<SplitContainer />
@@ -279,7 +269,7 @@
 
 <!-- Update Overlay (shown during system update / container restart) -->
 {#if versionStore.updating}
-	<UpdateOverlay />
+	<UpdateOverlay previousCommit={versionStore.serverCommit ?? ""} />
 {/if}
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->

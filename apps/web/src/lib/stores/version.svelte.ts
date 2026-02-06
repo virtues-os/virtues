@@ -5,11 +5,11 @@
  *
  * 1. Frontend drift: Polls /health to detect when the backend has been updated
  *    to a newer version than what was baked into this frontend at build time.
- *    When detected, shows a toast prompting the user to refresh.
+ *    When detected, shows a persistent banner prompting the user to refresh.
  *
  * 2. System update: Polls /api/system/update-available to detect when Atlas
  *    has a newer image available than what's currently running. When detected,
- *    shows a persistent toast with "Update" button that triggers a rolling deploy.
+ *    shows a persistent banner with "Update" action that triggers a rolling deploy.
  *
  * Skips polling in dev mode (GIT_COMMIT not injected).
  * Pauses polling when the browser tab is hidden.
@@ -42,23 +42,13 @@ class VersionStore {
 		if (this.intervalId) return;
 		if (BUILD_COMMIT === 'dev') return; // No version tracking in dev
 
-		// Frontend drift check (every 60s)
-		this.checkFrontendDrift();
-		this.intervalId = setInterval(() => this.checkFrontendDrift(), POLL_INTERVAL);
-
-		// System update check (every 5 min)
-		this.checkSystemUpdate();
-		this.systemIntervalId = setInterval(() => this.checkSystemUpdate(), SYSTEM_UPDATE_POLL_INTERVAL);
+		this.resume();
 
 		this.visibilityHandler = () => {
 			if (document.hidden) {
 				this.pause();
 			} else {
-				this.pause();
-				this.checkFrontendDrift();
-				this.intervalId = setInterval(() => this.checkFrontendDrift(), POLL_INTERVAL);
-				this.checkSystemUpdate();
-				this.systemIntervalId = setInterval(() => this.checkSystemUpdate(), SYSTEM_UPDATE_POLL_INTERVAL);
+				this.resume();
 			}
 		};
 		document.addEventListener('visibilitychange', this.visibilityHandler);
@@ -89,6 +79,24 @@ class VersionStore {
 		}
 	}
 
+	/** Resume polling, respecting current state (only restarts what's still needed) */
+	private resume() {
+		this.pause(); // Clear any stale intervals first
+
+		// Only restart drift polling if we haven't detected an update yet
+		if (!this.updateAvailable) {
+			this.checkFrontendDrift();
+			this.intervalId = setInterval(() => this.checkFrontendDrift(), POLL_INTERVAL);
+		}
+
+		// Only restart system polling if no update detected and not mid-update
+		if (!this.systemUpdateAvailable && !this.updating) {
+			this.checkSystemUpdate();
+			this.systemIntervalId = setInterval(() => this.checkSystemUpdate(), SYSTEM_UPDATE_POLL_INTERVAL);
+		}
+	}
+
+	/** Pause all polling (clears intervals, does not affect state) */
 	private pause() {
 		if (this.intervalId) {
 			clearInterval(this.intervalId);
