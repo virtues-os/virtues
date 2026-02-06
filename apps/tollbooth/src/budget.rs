@@ -17,7 +17,9 @@ use std::sync::Arc;
 use tokio::time::{interval, Duration};
 
 use crate::config::Config;
+use crate::subscription::SubscriptionManager;
 use crate::tier::TierManager;
+use crate::version::{VersionCache, VersionInfo};
 
 /// Thread-safe budget entry with atomic balance
 pub struct BudgetEntry {
@@ -42,6 +44,10 @@ pub struct AtlasBudget {
     pub user_id: String,
     pub balance_usd: f64,
     pub tier: Option<String>,
+    /// Subscription status: "active", "trialing", "past_due", "canceled", "unpaid"
+    pub subscription_status: Option<String>,
+    /// Trial expiry as ISO-8601 string (e.g. "2026-03-07T00:00:00Z")
+    pub trial_expires_at: Option<String>,
 }
 
 /// Usage report to send to Atlas
@@ -50,6 +56,18 @@ struct UsageReport {
     user_id: String,
     tokens_used: u64,
     cost_usd: f64,
+}
+
+/// Response from Atlas usage reporting endpoint
+/// May include latest_version info for pull-based updates
+#[derive(Debug, Deserialize)]
+struct UsageReportResponse {
+    /// Number of usage records Atlas successfully recorded
+    recorded: u64,
+    /// Total number of usage records in the request
+    total: u64,
+    /// Latest available version info (piggybacked on usage response)
+    latest_version: Option<VersionInfo>,
 }
 
 /// Budget manager with in-memory cache and optional Atlas sync
@@ -67,12 +85,23 @@ pub struct BudgetManager {
     atlas_secret: Option<String>,
     /// Reference to tier manager for populating tiers during hydration
     tier_manager: TierManager,
+    /// Reference to subscription manager for populating subscriptions during hydration
+    subscription_manager: SubscriptionManager,
+    /// Subdomain identifying this tenant (for Atlas API calls)
+    subdomain: Option<String>,
+    /// Shared version cache (updated from Atlas usage report responses)
+    version_cache: VersionCache,
 }
 
 impl BudgetManager {
     /// Create a new budget manager
-    /// If Atlas is configured, hydrates budgets and tiers from Atlas on startup
-    pub async fn new(config: &Config, tier_manager: &TierManager) -> anyhow::Result<Self> {
+    /// If Atlas is configured, hydrates budgets, tiers, and subscriptions from Atlas on startup
+    pub async fn new(
+        config: &Config,
+        tier_manager: &TierManager,
+        subscription_manager: &SubscriptionManager,
+        version_cache: VersionCache,
+    ) -> anyhow::Result<Self> {
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()?;
@@ -84,6 +113,9 @@ impl BudgetManager {
             atlas_url: config.atlas_url.clone(),
             atlas_secret: config.atlas_secret.clone(),
             tier_manager: tier_manager.clone(),
+            subscription_manager: subscription_manager.clone(),
+            subdomain: config.subdomain.clone(),
+            version_cache,
         };
 
         // Hydrate from Atlas if configured
@@ -118,9 +150,15 @@ impl BudgetManager {
             anyhow::anyhow!("Atlas secret not configured")
         })?;
 
+        // Build the hydration URL — include subdomain if configured
+        let hydration_url = match &self.subdomain {
+            Some(sub) => format!("{}/api/internal/budgets?subdomain={}", url, sub),
+            None => format!("{}/api/internal/budgets", url),
+        };
+
         let response = self
             .http_client
-            .get(format!("{}/internal/active-budgets", url))
+            .get(&hydration_url)
             .header("X-Atlas-Secret", secret)
             .send()
             .await?;
@@ -143,6 +181,22 @@ impl BudgetManager {
             // Store tier (if provided)
             if let Some(tier) = &budget.tier {
                 self.tier_manager.set_tier(&budget.user_id, tier);
+            }
+            // Store subscription status (if provided)
+            if let Some(status) = &budget.subscription_status {
+                // Parse ISO-8601 trial_expires_at to unix timestamp
+                let trial_ts = budget
+                    .trial_expires_at
+                    .as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or(0);
+
+                self.subscription_manager.set(
+                    &budget.user_id,
+                    status,
+                    trial_ts,
+                );
             }
         }
 
@@ -222,6 +276,37 @@ impl BudgetManager {
         tracing::debug!("Set budget for {}: ${:.4}", user_id, balance_usd);
     }
 
+    /// Run periodic re-hydration from Atlas (call this in a background task)
+    /// Re-syncs budgets, tiers, and subscription statuses to catch changes
+    /// that happen while Tollbooth is running: trial expirations, cancellations,
+    /// plan upgrades, balance top-ups, etc.
+    pub async fn run_rehydrator(&self, interval_secs: u64) {
+        if self.atlas_url.is_none() {
+            tracing::debug!("Atlas not configured, re-hydration disabled");
+            return;
+        }
+
+        tracing::info!(
+            "Budget re-hydration started (interval: {}s)",
+            interval_secs
+        );
+
+        let mut tick = interval(Duration::from_secs(interval_secs));
+
+        loop {
+            tick.tick().await;
+
+            match self.hydrate_from_atlas().await {
+                Ok(count) => {
+                    tracing::info!("Re-hydrated {} user budgets/tiers/subscriptions from Atlas", count);
+                }
+                Err(e) => {
+                    tracing::warn!("Re-hydration from Atlas failed (will retry): {}", e);
+                }
+            }
+        }
+    }
+
     /// Run the usage reporter (call this in a background task)
     /// Reports accumulated usage to Atlas periodically
     pub async fn run_reporter(&self, interval_secs: u64) {
@@ -277,7 +362,7 @@ impl BudgetManager {
 
         let response = self
             .http_client
-            .post(format!("{}/internal/usage-report", url))
+            .post(format!("{}/api/internal/usage", url))
             .header("X-Atlas-Secret", secret)
             .json(&reports)
             .send()
@@ -295,7 +380,34 @@ impl BudgetManager {
             anyhow::bail!("Atlas API error ({}): {}", status, body);
         }
 
-        tracing::info!("Reported {} usage records to Atlas", reports.len());
+        // Parse response — may contain latest_version info for pull-based updates
+        let body = response.text().await.unwrap_or_default();
+        if !body.is_empty() {
+            match serde_json::from_str::<UsageReportResponse>(&body) {
+                Ok(resp) => {
+                    tracing::info!(
+                        "Reported {} usage records to Atlas (recorded: {}/{})",
+                        reports.len(),
+                        resp.recorded,
+                        resp.total
+                    );
+                    if let Some(version_info) = resp.latest_version {
+                        tracing::debug!(
+                            "Atlas reports latest version: {}",
+                            version_info.version
+                        );
+                        self.version_cache.set(version_info).await;
+                    }
+                }
+                Err(e) => {
+                    // Non-fatal: log what we can and continue
+                    tracing::info!("Reported {} usage records to Atlas", reports.len());
+                    tracing::trace!("Could not parse usage response: {}", e);
+                }
+            }
+        } else {
+            tracing::info!("Reported {} usage records to Atlas", reports.len());
+        }
         Ok(())
     }
 }
