@@ -92,13 +92,10 @@ job "virtues-tenant-${var.subdomain}" {
       unlimited      = false
     }
 
-    # Network configuration - CNI bridge mode
+    # Network configuration - host networking
+    # The app reads NOMAD_PORT_http to bind to the dynamically allocated port.
     network {
-      mode = "bridge"
-
-      port "http" {
-        to = 8000
-      }
+      port "http" {}
     }
 
     # Host volume for SQLite database only
