@@ -1,38 +1,31 @@
 <script lang="ts">
 	/**
-	 * VersionHistoryPanel - Modal for page version history
-	 * 
-	 * Allows users to:
-	 * - Save a new version snapshot
-	 * - View version history
-	 * - Restore to a previous version
+	 * VersionHistoryPanel - Popover content for page version history
+	 *
+	 * Allows users to save snapshots and restore to previous versions.
+	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
-	import Modal from '$lib/components/Modal.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { listVersions, saveVersion, restoreVersion, type PageVersion } from '$lib/yjs/versions';
 	import type { YjsDocument } from '$lib/yjs';
+	import { onMount } from 'svelte';
 
 	interface Props {
-		open: boolean;
-		onClose: () => void;
+		close: () => void;
 		pageId: string;
 		yjsDoc?: YjsDocument;
 	}
 
-	let { open, onClose, pageId, yjsDoc }: Props = $props();
+	let { close, pageId, yjsDoc }: Props = $props();
 
 	let versions = $state<PageVersion[]>([]);
-	let loading = $state(false);
+	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let saving = $state(false);
-	let restoring = $state(false);
-	let description = $state('');
+	let restoringId = $state<string | null>(null);
 
-	// Load versions when modal opens
-	$effect(() => {
-		if (open && pageId) {
-			loadVersions();
-		}
+	onMount(() => {
+		loadVersions();
 	});
 
 	async function loadVersions() {
@@ -41,60 +34,48 @@
 		try {
 			versions = await listVersions(pageId);
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load versions';
+			error = e instanceof Error ? e.message : 'Failed to load';
 			versions = [];
 		} finally {
 			loading = false;
 		}
 	}
 
-	async function handleSaveVersion() {
-		if (!yjsDoc) {
-			error = 'No document available';
-			return;
-		}
-
+	async function handleSave() {
+		if (!yjsDoc) return;
 		saving = true;
 		error = null;
 		try {
-			const result = await saveVersion(yjsDoc.ydoc, pageId, description || undefined);
+			const result = await saveVersion(yjsDoc.ydoc, pageId);
 			if (result) {
-				// Refresh the list
 				await loadVersions();
-				description = '';
 			} else {
-				error = 'Failed to save version';
+				error = 'Failed to save';
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to save version';
+			error = e instanceof Error ? e.message : 'Failed to save';
 		} finally {
 			saving = false;
 		}
 	}
 
 	async function handleRestore(versionId: string) {
-		if (!yjsDoc) {
-			error = 'No document available';
-			return;
-		}
+		if (!yjsDoc) return;
+		if (!confirm('Restore this version? Current content will be replaced.')) return;
 
-		if (!confirm('Restore this version? Your current content will be replaced.')) {
-			return;
-		}
-
-		restoring = true;
+		restoringId = versionId;
 		error = null;
 		try {
 			const success = await restoreVersion(yjsDoc, versionId);
 			if (success) {
-				onClose();
+				close();
 			} else {
-				error = 'Failed to restore version';
+				error = 'Failed to restore';
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to restore version';
+			error = e instanceof Error ? e.message : 'Failed to restore';
 		} finally {
-			restoring = false;
+			restoringId = null;
 		}
 	}
 
@@ -119,272 +100,180 @@
 	}
 </script>
 
-<Modal {open} {onClose} title="Version History" width="md">
-	{#snippet children()}
-		<!-- Save new version section -->
-		<div class="save-section">
-			<div class="save-header">
-				<Icon icon="ri:save-line" width="16"/>
-				<span>Save Current Version</span>
-			</div>
-			<div class="save-form">
-				<input
-					type="text"
-					class="modal-input"
-					placeholder="Version description (optional)"
-					bind:value={description}
-					disabled={saving}
-				/>
-				<button
-					class="modal-btn modal-btn-primary"
-					onclick={handleSaveVersion}
-					disabled={saving || !yjsDoc}
-				>
-					{#if saving}
-						<Icon icon="ri:loader-4-line" width="14" class="spin"/>
-						Saving...
-					{:else}
-						Save Snapshot
-					{/if}
-				</button>
-			</div>
-		</div>
-
-		{#if error}
-			<div class="error-message">
-				<Icon icon="ri:error-warning-line" width="14"/>
-				{error}
-			</div>
-		{/if}
-
-		<!-- Version list -->
-		<div class="versions-section">
-			<div class="versions-header">
-				<Icon icon="ri:history-line" width="16"/>
-				<span>Previous Versions</span>
-				{#if versions.length > 0}
-					<span class="count">({versions.length})</span>
-				{/if}
-			</div>
-
-			{#if loading}
-				<div class="loading">
-					<Icon icon="ri:loader-4-line" width="16" class="spin"/>
-					Loading versions...
-				</div>
-			{:else if versions.length === 0}
-				<div class="empty">
-					<Icon icon="ri:archive-line" width="24"/>
-					<p>No versions saved yet</p>
-					<p class="hint">Save a snapshot to create your first version</p>
-				</div>
+<div class="version-panel">
+	<div class="panel-header">
+		<span>Versions</span>
+		<button
+			class="save-btn"
+			onclick={handleSave}
+			disabled={saving || !yjsDoc}
+		>
+			{#if saving}
+				<Icon icon="ri:loader-4-line" width="12" class="spin"/>
 			{:else}
-				<div class="versions-list">
-					{#each versions as version}
-						<div class="version-item">
-							<div class="version-info">
-								<div class="version-number">v{version.version_number}</div>
-								<div class="version-meta">
-									<span class="version-date">{formatDate(version.created_at)}</span>
-									{#if version.description}
-										<span class="version-desc">{version.description}</span>
-									{/if}
-								</div>
-								{#if version.content_preview}
-									<div class="version-preview">{version.content_preview}</div>
-								{/if}
-							</div>
-							<button
-								class="restore-btn"
-								onclick={() => handleRestore(version.id)}
-								disabled={restoring}
-								title="Restore this version"
-							>
-								{#if restoring}
-									<Icon icon="ri:loader-4-line" width="14" class="spin"/>
-								{:else}
-									<Icon icon="ri:refresh-line" width="14"/>
-								{/if}
-								Restore
-							</button>
-						</div>
-					{/each}
-				</div>
+				<Icon icon="ri:add-line" width="12"/>
 			{/if}
-		</div>
-	{/snippet}
-</Modal>
+			Save
+		</button>
+	</div>
+
+	{#if error}
+		<div class="error">{error}</div>
+	{/if}
+
+	<div class="versions-list">
+		{#if loading}
+			<div class="empty">
+				<Icon icon="ri:loader-4-line" width="14" class="spin"/>
+			</div>
+		{:else if versions.length === 0}
+			<div class="empty">
+				<span>No versions yet</span>
+			</div>
+		{:else}
+			{#each versions as version}
+				<div class="version-row">
+					<div class="version-info">
+						<span class="version-num">v{version.version_number}</span>
+						<span class="version-date">{formatDate(version.created_at)}</span>
+						{#if version.created_by === 'ai'}
+							<span class="badge-ai">AI</span>
+						{/if}
+					</div>
+					<button
+						class="restore-btn"
+						onclick={() => handleRestore(version.id)}
+						disabled={restoringId !== null}
+					>
+						{#if restoringId === version.id}
+							<Icon icon="ri:loader-4-line" width="11" class="spin"/>
+						{:else}
+							Restore
+						{/if}
+					</button>
+				</div>
+			{/each}
+		{/if}
+	</div>
+</div>
 
 <style>
-	.save-section {
-		padding-bottom: 16px;
-		border-bottom: 1px solid var(--color-border);
-		margin-bottom: 16px;
+	.version-panel {
+		width: 260px;
+		max-height: 320px;
+		display: flex;
+		flex-direction: column;
 	}
 
-	.save-header {
+	.panel-header {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--color-foreground);
-		margin-bottom: 12px;
-	}
-
-	.save-form {
-		display: flex;
-		gap: 10px;
-	}
-
-	.save-form input {
-		flex: 1;
-	}
-
-	.error-message {
-		display: flex;
-		align-items: center;
-		gap: 8px;
+		justify-content: space-between;
 		padding: 10px 12px;
-		background: var(--color-error-subtle);
-		color: var(--color-error);
-		border-radius: 6px;
-		font-size: 13px;
-		margin-bottom: 16px;
-	}
-
-	.versions-section {
-		min-height: 200px;
-	}
-
-	.versions-header {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 13px;
+		font-size: 12px;
 		font-weight: 500;
 		color: var(--color-foreground);
-		margin-bottom: 12px;
+		border-bottom: 1px solid var(--color-border);
 	}
 
-	.versions-header .count {
-		color: var(--color-foreground-muted);
-		font-weight: 400;
-	}
-
-	.loading {
+	.save-btn {
 		display: flex;
 		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		padding: 40px;
-		color: var(--color-foreground-muted);
-		font-size: 13px;
+		gap: 4px;
+		padding: 4px 8px;
+		font-size: 11px;
+		font-weight: 500;
+		color: var(--color-primary);
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		cursor: pointer;
+		transition: all 100ms;
+	}
+
+	.save-btn:hover {
+		background: var(--color-surface-elevated);
+	}
+
+	.save-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.error {
+		padding: 8px 12px;
+		font-size: 11px;
+		color: var(--color-error);
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
+	}
+
+	.versions-list {
+		flex: 1;
+		overflow-y: auto;
+		max-height: 260px;
 	}
 
 	.empty {
 		display: flex;
-		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: 40px 20px;
-		color: var(--color-foreground-muted);
-		text-align: center;
-	}
-
-	.empty p {
-		margin: 8px 0 0;
-		font-size: 14px;
-	}
-
-	.empty .hint {
+		padding: 24px;
 		font-size: 12px;
-		opacity: 0.8;
+		color: var(--color-foreground-muted);
 	}
 
-	.versions-list {
+	.version-row {
 		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		max-height: 300px;
-		overflow-y: auto;
-	}
-
-	.version-item {
-		display: flex;
-		align-items: flex-start;
+		align-items: center;
 		justify-content: space-between;
-		gap: 12px;
-		padding: 12px;
-		background: var(--color-surface-elevated);
-		border-radius: 8px;
-		transition: background 150ms ease;
+		padding: 8px 12px;
+		transition: background 100ms;
 	}
 
-	.version-item:hover {
-		background: var(--color-surface-overlay);
+	.version-row:hover {
+		background: var(--color-surface-elevated);
 	}
 
 	.version-info {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.version-number {
-		font-size: 12px;
-		font-weight: 600;
-		color: var(--color-primary);
-		margin-bottom: 4px;
-	}
-
-	.version-meta {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 12px;
-		color: var(--color-foreground-muted);
-	}
-
-	.version-date {
-		white-space: nowrap;
-	}
-
-	.version-desc {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.version-preview {
-		margin-top: 6px;
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		max-width: 300px;
-	}
-
-	.restore-btn {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 6px 10px;
 		font-size: 12px;
+	}
+
+	.version-num {
+		font-weight: 600;
+		color: var(--color-foreground);
+	}
+
+	.version-date {
+		color: var(--color-foreground-muted);
+	}
+
+	.badge-ai {
+		padding: 1px 4px;
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+		border-radius: 3px;
+	}
+
+	.restore-btn {
+		padding: 3px 8px;
+		font-size: 11px;
 		font-weight: 500;
 		color: var(--color-foreground-muted);
 		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border: 1px solid transparent;
+		border-radius: 4px;
 		cursor: pointer;
-		transition: all 150ms ease;
-		white-space: nowrap;
+		transition: all 100ms;
 	}
 
 	.restore-btn:hover {
 		color: var(--color-foreground);
-		background: var(--color-surface);
-		border-color: var(--color-foreground-muted);
+		border-color: var(--color-border);
 	}
 
 	.restore-btn:disabled {

@@ -126,9 +126,7 @@ class AudioManager: NSObject, ObservableObject {
         #endif
 
         // Check if we should be recording but aren't
-        let shouldBeRecording = configProvider.isStreamEnabled("microphone") && hasPermission
-
-        if shouldBeRecording && !isRecording {
+        if hasPermission && !isRecording {
             #if DEBUG
             print("   Recording was interrupted, attempting to resume...")
             #endif
@@ -185,11 +183,8 @@ class AudioManager: NSObject, ObservableObject {
                     do {
                         try self.audioSession.setActive(true)
 
-                        // Check if we should be recording (stream enabled and has permission)
-                        let shouldBeRecording = self.configProvider.isStreamEnabled("microphone") && self.hasPermission
-
                         // If we should be recording but aren't, restart
-                        if shouldBeRecording && !self.isRecording {
+                        if self.hasPermission && !self.isRecording {
                             self.startRecording()
                         }
                     } catch {
@@ -242,8 +237,8 @@ class AudioManager: NSObject, ObservableObject {
             print("Other audio stopped - resuming recording")
             #endif
 
-            // Only auto-resume if we paused for other audio and stream is enabled
-            if pausedForOtherAudio && configProvider.isStreamEnabled("microphone") && hasPermission {
+            // Only auto-resume if we paused for other audio and have permission
+            if pausedForOtherAudio && hasPermission {
                 pausedForOtherAudio = false
                 startRecording()
             }
@@ -421,6 +416,17 @@ extension AudioManager {
         let avgDb = accumulatedDbSamples.isEmpty ? currentDbLevel : accumulatedDbSamples.reduce(0, +) / Float(accumulatedDbSamples.count)
         accumulatedDbSamples.removeAll()
 
+        // Skip saving if essentially silence (conservative threshold to capture soft speech)
+        let silenceThresholdDb: Float = -50.0
+        if avgDb < silenceThresholdDb {
+            #if DEBUG
+            print("🔇 Chunk below threshold (\(avgDb) dB), discarding to save battery")
+            #endif
+            try? FileManager.default.removeItem(at: recorderUrl)
+            if isRecording { startRecordingChunk() }
+            return
+        }
+
         let duration = endTime.timeIntervalSince(startTime)
         #if DEBUG
         print("📊 Finishing chunk: wasRecording=\(wasRecording), duration=\(duration)s, avgDb=\(avgDb)")
@@ -588,18 +594,13 @@ extension AudioManager: HealthCheckable {
     }
 
     func performHealthCheck() -> HealthStatus {
-        // Check if stream is enabled
-        guard configProvider.isStreamEnabled("microphone") else {
+        // Check permission
+        guard hasPermission else {
             return .disabled
         }
 
-        // Check permission
-        guard hasPermission else {
-            return .unhealthy(reason: "Microphone permission not granted")
-        }
-
         // Check recording state
-        let shouldBeRecording = configProvider.isStreamEnabled("microphone") && hasPermission
+        let shouldBeRecording = hasPermission
         let actuallyRecording = audioRecorder?.isRecording ?? false
 
         if shouldBeRecording && !actuallyRecording {

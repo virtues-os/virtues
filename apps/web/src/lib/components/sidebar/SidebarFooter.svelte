@@ -32,7 +32,31 @@
 	function handleProfilesClick(e: MouseEvent) {
 		e.preventDefault();
 		spaceStore.openTabFromRoute("/virtues/account", {
-			label: "Profiles",
+			label: "Profile",
+			preferEmptyPane: true,
+		});
+	}
+
+	function handleAssistantClick(e: MouseEvent) {
+		e.preventDefault();
+		spaceStore.openTabFromRoute("/virtues/assistant", {
+			label: "Assistant",
+			preferEmptyPane: true,
+		});
+	}
+
+	function handleBillingClick(e: MouseEvent) {
+		e.preventDefault();
+		spaceStore.openTabFromRoute("/virtues/billing", {
+			label: "Billing",
+			preferEmptyPane: true,
+		});
+	}
+
+	function handleChangelogClick(e: MouseEvent) {
+		e.preventDefault();
+		spaceStore.openTabFromRoute("/virtues/changelog", {
+			label: "What's New",
 			preferEmptyPane: true,
 		});
 	}
@@ -116,10 +140,37 @@
 				<button
 					onclick={handleProfilesClick}
 					class="sidebar-interactive"
-					class:active={isProfilesActive}
+					class:active={page.url.pathname.startsWith("/virtues/account")}
 				>
 					<Icon icon="ri:user-3-line" width="16" class="sidebar-icon" />
-					<span class="sidebar-label">Profiles</span>
+					<span class="sidebar-label">Profile</span>
+				</button>
+
+				<button
+					onclick={handleAssistantClick}
+					class="sidebar-interactive"
+					class:active={page.url.pathname.startsWith("/virtues/assistant")}
+				>
+					<Icon icon="ri:robot-line" width="16" class="sidebar-icon" />
+					<span class="sidebar-label">Assistant</span>
+				</button>
+
+				<button
+					onclick={handleBillingClick}
+					class="sidebar-interactive"
+					class:active={page.url.pathname.startsWith("/virtues/billing")}
+				>
+					<Icon icon="ri:bank-card-line" width="16" class="sidebar-icon" />
+					<span class="sidebar-label">Billing</span>
+				</button>
+
+				<button
+					onclick={handleChangelogClick}
+					class="sidebar-interactive"
+					class:active={page.url.pathname.startsWith("/virtues/changelog")}
+				>
+					<Icon icon="ri:megaphone-line" width="16" class="sidebar-icon" />
+					<span class="sidebar-label">What's New</span>
 				</button>
 
 				<button

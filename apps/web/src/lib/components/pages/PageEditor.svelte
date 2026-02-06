@@ -1,27 +1,88 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from "svelte";
+	import { onMount, onDestroy } from "svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import EntityPicker, {
+		type EntityResult,
+	} from "$lib/components/EntityPicker.svelte";
+	import SlashMenu from "$lib/components/SlashMenu.svelte";
+	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
+	import LinkPopover from "$lib/components/LinkPopover.svelte";
+	import TableToolbar from "$lib/components/TableToolbar.svelte";
+
+	// ProseMirror imports
+	import { EditorState, type Transaction } from "prosemirror-state";
+	import { EditorView } from "prosemirror-view";
+	import { keymap } from "prosemirror-keymap";
 	import {
-		EditorView,
-		keymap,
-		placeholder,
-		drawSelection,
-	} from "@codemirror/view";
-	import { EditorState, Compartment } from "@codemirror/state";
-	import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+		baseKeymap,
+		chainCommands,
+		createParagraphNear,
+		liftEmptyBlock,
+		splitBlock,
+		toggleMark,
+	} from "prosemirror-commands";
+	import { history, undo, redo } from "prosemirror-history";
+	import { tableEditing, goToNextCell } from "prosemirror-tables";
+	import { dropCursor } from "prosemirror-dropcursor";
+	import { gapCursor } from "prosemirror-gapcursor";
 	import {
-		defaultKeymap,
-		history,
-		historyKeymap,
-	} from "@codemirror/commands";
-	import { languages } from "@codemirror/language-data";
+		splitListItem,
+		liftListItem,
+		sinkListItem,
+	} from "prosemirror-schema-list";
+
+	// Our custom ProseMirror setup
+	import { schema } from "$lib/prosemirror/schema";
 	import {
-		pageEditorTheme,
-		pageSyntaxHighlighting,
-		livePreviewExtension,
-	} from "./page-theme";
-	import { criticMarkupExtension, type YjsDocument } from "$lib/yjs";
+		parseMarkdown,
+		serializeMarkdown,
+	} from "$lib/prosemirror/markdown";
+	import { createNodeViews } from "$lib/prosemirror/node-views";
+	import {
+		aiHighlightPlugin,
+		addAIHighlight,
+		removeAIHighlight,
+		getAIHighlights,
+		createEntityPickerPlugin,
+		insertEntity,
+		closeEntityPicker,
+		isEntityPickerActive,
+		getCursorCoords,
+		createDragHandlePlugin,
+		setDragHandlesEnabled,
+		createSlashMenuPlugin,
+		getSlashCommands,
+		filterSlashCommands,
+		executeSlashCommand,
+		closeSlashMenu,
+		getSlashMenuCoords,
+		isSlashMenuActive,
+		createPlaceholderPlugin,
+		createFormattingInputRules,
+		createSelectionToolbarPlugin,
+		getActiveMarks,
+		createTableToolbarPlugin,
+		executeTableCommand,
+		createMediaPastePlugin,
+		type EntitySelection,
+		type SlashCommand,
+		type SelectionToolbarPosition,
+		type TableToolbarPosition,
+		type TableCommand,
+	} from "$lib/prosemirror/plugins";
+	import { uploadMedia } from "$lib/api/client";
+	import type {
+		AIEditHighlightEvent,
+		AIEditAcceptEvent,
+		AIEditRejectEvent,
+	} from "$lib/events/aiEdit";
+
+	// Yjs integration
+	import type { YjsDocument } from "$lib/yjs";
+
+	// Import ProseMirror theme
+	import "$lib/prosemirror/theme.css";
 
 	interface Props {
 		content: string;
@@ -35,63 +96,61 @@
 		isConnected?: boolean;
 		/** Whether synced with the server (for status display) */
 		isSynced?: boolean;
+		/** Whether drag handles are enabled */
+		showDragHandles?: boolean;
+		/** Page ID for filtering AI edit events */
+		pageId?: string;
 	}
 
-	let { content = $bindable(), onSave, placeholder: placeholderText, yjsDoc, disabled = false, isConnected = true, isSynced = true }: Props = $props();
+	let {
+		content = $bindable(),
+		onSave,
+		placeholder: placeholderText,
+		yjsDoc,
+		disabled = false,
+		isConnected = true,
+		isSynced = true,
+		showDragHandles = true,
+		pageId,
+	}: Props = $props();
 
 	let editorContainer: HTMLDivElement;
 	let view: EditorView | null = null;
 	let isExternalUpdate = false;
-	
-	// Compartment for dynamically updating editable state
-	const editableCompartment = new Compartment();
 
-	// Link picker state (for @ mentions - links to pages, people, places, files, etc.)
-	let showLinkPicker = $state(false);
-	let linkPickerQuery = $state("");
-	let linkPickerResults = $state<Array<{ id: string; name: string; entity_type: string; icon: string; url: string; mime_type?: string }>>([]);
-	let linkPickerSelectedIndex = $state(0);
-	let linkPickerPos = $state({ x: 0, y: 0 });
-	let atSignPosition = $state<number | null>(null);
-	let searchInputEl: HTMLInputElement | null = $state(null);
-	// Portal action to move element to document.body
-	function portal(node: HTMLElement) {
-		document.body.appendChild(node);
-		return {
-			destroy() {
-				node.remove();
-			}
-		};
-	}
+	// Entity picker state
+	let showEntityPicker = $state(false);
+	let entityPickerPos = $state({ x: 0, y: 0 });
+	let entityQuery = $state("");
 
-	// Fetch results when query changes
-	$effect(() => {
-		if (showLinkPicker) {
-			fetchLinkResults(linkPickerQuery);
-		}
-	});
+	// Slash menu state
+	let showSlashMenu = $state(false);
+	let slashMenuPos = $state({ x: 0, y: 0 });
+	let slashQuery = $state("");
 
-	async function fetchLinkResults(query: string) {
-		try {
-			const response = await fetch(`/api/pages/search/entities?q=${encodeURIComponent(query)}`);
-			if (response.ok) {
-				const data = await response.json();
-				linkPickerResults = data.results || [];
-				linkPickerSelectedIndex = 0;
-			}
-		} catch (e) {
-			console.error("Link picker fetch error:", e);
-		}
-	}
+	// Selection toolbar state
+	let showSelectionToolbar = $state(false);
+	let selectionToolbarPos = $state<SelectionToolbarPosition>({ x: 0, y: 0 });
 
-	function openLinkPicker(pos: { x: number; y: number }, cursorPos: number) {
-		// Clamp position to viewport bounds
+	// Link popover state
+	let showLinkPopover = $state(false);
+	let linkPopoverPos = $state<SelectionToolbarPosition>({ x: 0, y: 0 });
+	let existingLinkUrl = $state<string | undefined>(undefined);
+
+	// Table toolbar state
+	let showTableToolbar = $state(false);
+	let tableToolbarPos = $state<TableToolbarPosition>({ x: 0, y: 0 });
+
+	function openEntityPicker(
+		coords: { left: number; top: number; bottom: number },
+		query: string,
+	) {
 		const pickerWidth = 300;
 		const pickerHeight = 340;
 		const padding = 8;
 
-		let x = pos.x;
-		let y = pos.y;
+		let x = coords.left;
+		let y = coords.bottom + 6;
 
 		// Keep within horizontal bounds
 		if (x + pickerWidth > window.innerWidth - padding) {
@@ -101,307 +160,741 @@
 			x = padding;
 		}
 
-		// Keep within vertical bounds - if it would go below, show above the cursor
+		// Keep within vertical bounds
 		if (y + pickerHeight > window.innerHeight - padding) {
-			// Position above the @ sign instead
-			y = pos.y - pickerHeight - 24; // 24 accounts for line height
+			y = coords.top - pickerHeight - 6;
 		}
 
-		console.log("[link-picker] final position:", { x, y });
-		linkPickerPos = { x, y };
-		atSignPosition = cursorPos;
-		linkPickerQuery = "";
-		linkPickerResults = [];
-		linkPickerSelectedIndex = 0;
-		showLinkPicker = true;
-		// Focus the search input after render
-		setTimeout(() => searchInputEl?.focus(), 0);
+		entityPickerPos = { x, y };
+		entityQuery = query;
+		showEntityPicker = true;
+		// Close selection toolbar when entity picker opens
+		showSelectionToolbar = false;
 	}
 
-	function closeLinkPicker() {
-		showLinkPicker = false;
-		atSignPosition = null;
+	function closeEntityPickerUI() {
+		showEntityPicker = false;
+		entityQuery = "";
 		view?.focus();
 	}
 
-	// Check if a file is a media type (image, audio, video) based on extension or mime type
-	function isMediaFile(name: string, mimeType?: string): { isMedia: boolean; type: 'image' | 'audio' | 'video' | null } {
-		const ext = name.split('.').pop()?.toLowerCase() || '';
+	function openSlashMenu(
+		coords: { left: number; top: number; bottom: number },
+		query: string,
+	) {
+		const menuWidth = 280;
+		const menuHeight = 400;
+		const padding = 8;
 
-		// Check by extension first
-		const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
-		const audioExts = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac', 'wma'];
-		const videoExts = ['mp4', 'mov', 'webm', 'avi', 'mkv', 'm4v', 'wmv'];
+		let x = coords.left;
+		let y = coords.bottom + 6;
 
-		if (imageExts.includes(ext)) return { isMedia: true, type: 'image' };
-		if (audioExts.includes(ext)) return { isMedia: true, type: 'audio' };
-		if (videoExts.includes(ext)) return { isMedia: true, type: 'video' };
+		// Keep within horizontal bounds
+		if (x + menuWidth > window.innerWidth - padding) {
+			x = window.innerWidth - menuWidth - padding;
+		}
+		if (x < padding) {
+			x = padding;
+		}
 
-		// Fallback to mime type
+		// Keep within vertical bounds
+		if (y + menuHeight > window.innerHeight - padding) {
+			y = coords.top - menuHeight - 6;
+		}
+
+		slashMenuPos = { x, y };
+		slashQuery = query;
+		showSlashMenu = true;
+		// Close selection toolbar when slash menu opens
+		showSelectionToolbar = false;
+	}
+
+	function closeSlashMenuUI() {
+		showSlashMenu = false;
+		slashQuery = "";
+		view?.focus();
+	}
+
+	function handleSlashSelect(command: SlashCommand) {
+		if (!view) return;
+		executeSlashCommand(view, command);
+		closeSlashMenuUI();
+	}
+
+	// Selection toolbar functions
+	function openSelectionToolbar(position: SelectionToolbarPosition) {
+		// Don't show if other floating UI is open
+		if (showEntityPicker || showSlashMenu) return;
+		selectionToolbarPos = position;
+		showSelectionToolbar = true;
+	}
+
+	function closeSelectionToolbar() {
+		showSelectionToolbar = false;
+	}
+
+	function handleFormat(
+		mark: "strong" | "em" | "underline" | "code" | "strikethrough" | "link",
+	) {
+		if (!view) return;
+
+		// Link shows popover for URL input
+		if (mark === "link") {
+			// Check if selection already has a link to get URL for editing
+			const { from, to } = view.state.selection;
+			let currentUrl: string | undefined;
+			view.state.doc.nodesBetween(from, to, (node) => {
+				const linkMark = node.marks.find(
+					(m) => m.type === schema.marks.link,
+				);
+				if (linkMark) {
+					currentUrl = linkMark.attrs.href;
+					return false; // Stop iteration
+				}
+			});
+
+			existingLinkUrl = currentUrl;
+			linkPopoverPos = { ...selectionToolbarPos };
+			showSelectionToolbar = false; // Hide toolbar when showing link popover
+			showLinkPopover = true;
+			return;
+		}
+
+		toggleMark(schema.marks[mark])(view.state, view.dispatch);
+		view.focus();
+	}
+
+	function handleLinkSubmit(url: string) {
+		if (!view) return;
+
+		const { from, to, empty } = view.state.selection;
+		if (empty) return;
+
+		// Remove any existing link marks first, then add the new one
+		const tr = view.state.tr;
+		tr.removeMark(from, to, schema.marks.link);
+		tr.addMark(from, to, schema.marks.link.create({ href: url }));
+		view.dispatch(tr);
+		view.focus();
+		showLinkPopover = false;
+		existingLinkUrl = undefined;
+	}
+
+	function handleLinkRemove() {
+		if (!view) return;
+
+		const { from, to } = view.state.selection;
+		const tr = view.state.tr;
+		tr.removeMark(from, to, schema.marks.link);
+		view.dispatch(tr);
+		view.focus();
+		showLinkPopover = false;
+		existingLinkUrl = undefined;
+	}
+
+	function closeLinkPopover() {
+		showLinkPopover = false;
+		existingLinkUrl = undefined;
+		view?.focus();
+	}
+
+	// Table toolbar functions
+	function openTableToolbar(position: TableToolbarPosition) {
+		// Don't show if other floating UI is open
+		if (showEntityPicker || showSlashMenu || showLinkPopover) return;
+		tableToolbarPos = position;
+		showTableToolbar = true;
+	}
+
+	function closeTableToolbar() {
+		showTableToolbar = false;
+	}
+
+	function handleTableCommand(command: TableCommand) {
+		if (!view) return;
+		executeTableCommand(view, command);
+		view.focus();
+	}
+
+	// Active marks computed when toolbar shows (updated via selectionToolbarPos changes)
+	const activeMarks = $derived.by(() => {
+		// This re-runs when selectionToolbarPos changes (which happens on selection change)
+		void selectionToolbarPos;
+		if (!view)
+			return {
+				strong: false,
+				em: false,
+				underline: false,
+				code: false,
+				strikethrough: false,
+				link: false,
+			};
+		return getActiveMarks(view.state);
+	});
+
+	// Get filtered slash commands
+	const filteredSlashCommands = $derived(
+		filterSlashCommands(getSlashCommands(), slashQuery),
+	);
+
+	function isMediaFile(
+		name: string,
+		mimeType?: string,
+	): { isMedia: boolean; type: "image" | "audio" | "video" | null } {
+		const ext = name.split(".").pop()?.toLowerCase() || "";
+
+		const imageExts = [
+			"jpg",
+			"jpeg",
+			"png",
+			"gif",
+			"webp",
+			"svg",
+			"bmp",
+			"ico",
+		];
+		const audioExts = ["mp3", "wav", "m4a", "ogg", "flac", "aac", "wma"];
+		const videoExts = ["mp4", "mov", "webm", "avi", "mkv", "m4v", "wmv"];
+
+		if (imageExts.includes(ext)) return { isMedia: true, type: "image" };
+		if (audioExts.includes(ext)) return { isMedia: true, type: "audio" };
+		if (videoExts.includes(ext)) return { isMedia: true, type: "video" };
+
 		if (mimeType) {
-			if (mimeType.startsWith('image/')) return { isMedia: true, type: 'image' };
-			if (mimeType.startsWith('audio/')) return { isMedia: true, type: 'audio' };
-			if (mimeType.startsWith('video/')) return { isMedia: true, type: 'video' };
+			if (mimeType.startsWith("image/"))
+				return { isMedia: true, type: "image" };
+			if (mimeType.startsWith("audio/"))
+				return { isMedia: true, type: "audio" };
+			if (mimeType.startsWith("video/"))
+				return { isMedia: true, type: "video" };
 		}
 
 		return { isMedia: false, type: null };
 	}
 
-	function selectLink(item: { id: string; name: string; url: string; entity_type: string; mime_type?: string }) {
-		if (view && atSignPosition !== null) {
-			let linkText: string;
+	function handleEntitySelect(entity: EntityResult) {
+		if (!view) return;
 
-			// For files, check if it's a media type and use image syntax
-			if (item.entity_type === 'file') {
-				const { isMedia } = isMediaFile(item.name, item.mime_type);
-				if (isMedia) {
-					// Use image syntax for media files (extension in name determines rendering)
-					linkText = `![${item.name}](${item.url})`;
-				} else {
-					// Regular link for non-media files
-					linkText = `[${item.name}](${item.url})`;
-				}
-			} else {
-				// Regular link for entities (person, place, page, etc.)
-				linkText = `[${item.name}](${item.url})`;
-			}
+		const selection: EntitySelection = {
+			href: entity.url,
+			label: entity.name,
+		};
 
-			// Replace the @ with the link
-			view.dispatch({
-				changes: {
-					from: atSignPosition,
-					to: atSignPosition + 1, // Remove the @
-					insert: linkText,
-				},
-			});
-		}
-		closeLinkPicker();
+		insertEntity(view, selection);
+		closeEntityPickerUI();
 	}
-
-	function handlePickerKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape") {
-			e.preventDefault();
-			closeLinkPicker();
-		} else if (e.key === "ArrowDown") {
-			e.preventDefault();
-			linkPickerSelectedIndex = Math.min(linkPickerSelectedIndex + 1, linkPickerResults.length - 1);
-		} else if (e.key === "ArrowUp") {
-			e.preventDefault();
-			linkPickerSelectedIndex = Math.max(linkPickerSelectedIndex - 1, 0);
-		} else if (e.key === "Enter" || e.key === "Tab") {
-			e.preventDefault();
-			if (linkPickerResults[linkPickerSelectedIndex]) {
-				selectLink(linkPickerResults[linkPickerSelectedIndex]);
-			}
-		}
-	}
-
-	function getLinkIcon(type: string): string {
-		switch (type) {
-			case "person": return "ri:user-line";
-			case "place": return "ri:map-pin-line";
-			case "file": return "ri:file-line";
-			case "page": return "ri:file-text-line";
-			default: return "ri:links-line";
-		}
-	}
-
-onMount(() => {
-		// Build extensions based on whether Yjs is enabled
-		const baseExtensions = [
-			// Core editing (use Yjs extensions if available, otherwise CodeMirror history)
-			...(yjsDoc 
-				? yjsDoc.extensions 
-				: [history(), keymap.of([...defaultKeymap, ...historyKeymap])]
-			),
-			drawSelection(),
-
-			// Markdown language support with code highlighting
-			markdown({
-				base: markdownLanguage,
-				codeLanguages: languages,
-			}),
-
-			// Custom theme and styling
-			pageEditorTheme,
-			pageSyntaxHighlighting,
-
-			// Live preview (Obsidian-style)
-			livePreviewExtension,
-
-			// CriticMarkup for AI-proposed edits (inline accept/reject)
-			...criticMarkupExtension({
-				onAccept: (type, content) => {
-					console.log('[CriticMarkup] Accepted:', type, content.slice(0, 50));
-				},
-				onReject: (type, content) => {
-					console.log('[CriticMarkup] Rejected:', type, content.slice(0, 50));
-				}
-			}),
-
-			// Misc
-			placeholder(placeholderText ?? "Start writing... Use @ to link pages, people, places, and files."),
-			EditorView.lineWrapping,
-			// Disable editing when disabled prop is true (e.g., waiting for Yjs sync)
-			// Use compartment so we can update it dynamically when disabled changes
-			editableCompartment.of(EditorView.editable.of(!disabled)),
-
-			// Detect @ for entity picker + content sync
-			EditorView.updateListener.of((update) => {
-				if (update.docChanged && !isExternalUpdate) {
-					content = update.state.doc.toString();
-					// Only call onSave if not using Yjs (Yjs handles persistence via WebSocket)
-					if (!yjsDoc) {
-						onSave?.(content);
-					}
-
-					// Check if @ was just typed
-					update.changes.iterChanges((_fromA, _toA, fromB, _toB, inserted) => {
-						const insertedText = inserted.toString();
-						if (insertedText === "@") {
-							// Get cursor position for popover placement
-							const cursorPos = update.state.selection.main.head;
-							const coords = view?.coordsAtPos(cursorPos);
-							
-							if (coords) {
-								openLinkPicker(
-									{ x: coords.left, y: coords.bottom + 6 },
-									fromB
-								);
-							}
-						}
-					});
-				}
-			}),
-		];
-
-		// For Yjs mode, content comes from ytext (synced via WebSocket)
-		// For non-Yjs mode, use the content prop
-		const initialDoc = yjsDoc ? yjsDoc.ytext.toString() : content;
-
-		view = new EditorView({
-			state: EditorState.create({
-				doc: initialDoc,
-				extensions: baseExtensions,
-			}),
-			parent: editorContainer,
-		});
-
-		// Listen for custom navigation events from widgets
-		editorContainer.addEventListener(
-			"page-navigate",
-			handleNavigation as EventListener,
-		);
-	});
 
 	// Handle navigation from entity links
-	function handleNavigation(e: CustomEvent<{ href: string; entityId?: string }>) {
+	function handleNavigation(
+		e: CustomEvent<{ href: string; entityId?: string }>,
+	) {
 		e.preventDefault();
 		e.stopPropagation();
-		
-		// Open in split pane if available
+
 		spaceStore.openTabFromRoute(e.detail.href, {
 			forceNew: true,
 			preferEmptyPane: true,
 		});
 	}
 
-	// Sync external content changes to editor (only when not using Yjs)
-	// Yjs handles sync automatically via the y-codemirror extension
-	$effect(() => {
-		if (!yjsDoc && view && content !== view.state.doc.toString()) {
-			isExternalUpdate = true;
-			view.dispatch({
-				changes: {
-					from: 0,
-					to: view.state.doc.length,
-					insert: content,
+	// =============================================================================
+	// SLASH COMMAND MEDIA HANDLERS
+	// =============================================================================
+
+	/**
+	 * Creates a hidden file input and triggers file selection
+	 */
+	function createFileInput(accept: string, onFile: (file: File) => void) {
+		const input = document.createElement("input");
+		input.type = "file";
+		input.accept = accept;
+		input.style.display = "none";
+		input.onchange = () => {
+			const file = input.files?.[0];
+			if (file) {
+				onFile(file);
+			}
+			input.remove();
+		};
+		document.body.appendChild(input);
+		input.click();
+	}
+
+	/**
+	 * Upload file and insert media node at cursor position
+	 */
+	async function uploadAndInsertMedia(
+		file: File,
+		type: "image" | "video" | "audio",
+	) {
+		if (!view) return;
+
+		try {
+			const result = await uploadMedia(file);
+
+			// Create the appropriate node based on type
+			let node: ReturnType<typeof schema.nodes.image.create> | undefined;
+			if (type === "image") {
+				node = schema.nodes.image.create({
+					src: result.url,
+					alt: result.filename,
+				});
+			} else if (type === "video") {
+				node = schema.nodes.video_player.create({
+					src: result.url,
+					name: result.filename,
+				});
+			} else if (type === "audio") {
+				node = schema.nodes.audio_player.create({
+					src: result.url,
+					name: result.filename,
+				});
+			}
+
+			if (node) {
+				const tr = view.state.tr.replaceSelectionWith(node);
+				view.dispatch(tr);
+				view.focus();
+			}
+		} catch (error) {
+			console.error(`Failed to upload ${type}:`, error);
+		}
+	}
+
+	function handleSlashCommandImage(e: Event) {
+		e.preventDefault();
+		createFileInput("image/*", (file) =>
+			uploadAndInsertMedia(file, "image"),
+		);
+	}
+
+	function handleSlashCommandVideo(e: Event) {
+		e.preventDefault();
+		createFileInput("video/*", (file) =>
+			uploadAndInsertMedia(file, "video"),
+		);
+	}
+
+	function handleSlashCommandAudio(e: Event) {
+		e.preventDefault();
+		createFileInput("audio/*", (file) =>
+			uploadAndInsertMedia(file, "audio"),
+		);
+	}
+
+	// =============================================================================
+	// AI EDIT EVENT HANDLERS
+	// =============================================================================
+
+	function handleAIEditHighlight(e: Event) {
+		const event = e as CustomEvent<AIEditHighlightEvent>;
+		if (!view || !pageId || event.detail.pageId !== pageId) return;
+
+		const { editId, text } = event.detail;
+		const currentView = view; // Capture for closure
+
+		// Find the text in the document
+		const doc = currentView.state.doc;
+		let found = false;
+		doc.descendants((node, pos) => {
+			if (found || !node.isText) return;
+			const nodeText = node.text ?? "";
+			const idx = nodeText.indexOf(text);
+			if (idx !== -1) {
+				const from = pos + idx;
+				const to = from + text.length;
+				addAIHighlight(
+					editId,
+					from,
+					to,
+				)(currentView.state, currentView.dispatch);
+				found = true;
+				return false; // Stop iteration
+			}
+		});
+	}
+
+	function handleAIEditAccept(e: Event) {
+		const event = e as CustomEvent<AIEditAcceptEvent>;
+		if (!view || !pageId || event.detail.pageId !== pageId) return;
+		removeAIHighlight(event.detail.editId)(view.state, view.dispatch);
+	}
+
+	function handleAIEditReject(e: Event) {
+		const event = e as CustomEvent<AIEditRejectEvent>;
+		if (!view || !pageId || event.detail.pageId !== pageId) return;
+		// Remove the highlight - content revert was already done via API
+		removeAIHighlight(event.detail.editId)(view.state, view.dispatch);
+	}
+
+	onMount(() => {
+		// Build plugins
+		const plugins = [
+			// Yjs plugins if available, otherwise local history
+			...(yjsDoc?.plugins ?? [history()]),
+
+			// Input rules for markdown-style formatting (must come before keymaps)
+			createFormattingInputRules(),
+
+			// Keymaps
+			keymap({
+				"Mod-z": undo,
+				"Mod-y": redo,
+				"Mod-Shift-z": redo,
+				Tab: goToNextCell(1),
+				"Shift-Tab": goToNextCell(-1),
+			}),
+			// List keybindings - Enter must chain with default behavior
+			keymap({
+				"Shift-Enter": (state, dispatch) => {
+					if (dispatch)
+						dispatch(
+							state.tr
+								.replaceSelectionWith(
+									schema.nodes.hard_break.create(),
+								)
+								.scrollIntoView(),
+						);
+					return true;
 				},
+				Enter: chainCommands(
+					splitListItem(schema.nodes.list_item),
+					createParagraphNear,
+					liftEmptyBlock,
+					splitBlock,
+				),
+				Tab: sinkListItem(schema.nodes.list_item),
+				"Shift-Tab": liftListItem(schema.nodes.list_item),
+			}),
+			// Formatting keybindings
+			keymap({
+				"Mod-b": toggleMark(schema.marks.strong),
+				"Mod-i": toggleMark(schema.marks.em),
+				"Mod-u": toggleMark(schema.marks.underline),
+				"Mod-e": toggleMark(schema.marks.code),
+				"Mod-`": toggleMark(schema.marks.code),
+				"Mod-Shift-s": toggleMark(schema.marks.strikethrough),
+				"Mod-Shift-x": toggleMark(schema.marks.strikethrough),
+			}),
+			keymap(baseKeymap),
+
+			// Table editing
+			tableEditing(),
+
+			// Drop cursor and gap cursor
+			dropCursor(),
+			gapCursor(),
+
+			// AI edit highlight plugin
+			aiHighlightPlugin,
+
+			// Entity picker plugin
+			createEntityPickerPlugin({
+				onOpen: (_coords, query) => {
+					// Get coords from the view after state update (same pattern as slash menu)
+					// The coords from plugin state are placeholders (0,0,0) since state.apply() doesn't have view
+					setTimeout(() => {
+						if (view) {
+							const coords = getCursorCoords(view);
+							if (coords) {
+								openEntityPicker(coords, query);
+							}
+						}
+					}, 0);
+				},
+				onClose: () => {
+					closeEntityPickerUI();
+				},
+				onQueryChange: (query) => {
+					entityQuery = query;
+				},
+			}),
+
+			// Slash menu plugin
+			createSlashMenuPlugin({
+				onOpen: () => {
+					// Get coords from the view after state update
+					setTimeout(() => {
+						if (view) {
+							const coords = getSlashMenuCoords(view);
+							if (coords) {
+								openSlashMenu(coords, "");
+							}
+						}
+					}, 0);
+				},
+				onClose: () => {
+					closeSlashMenuUI();
+				},
+				onQueryChange: (query) => {
+					slashQuery = query;
+				},
+			}),
+
+			// Drag handle plugin
+			createDragHandlePlugin({ enabled: showDragHandles }),
+
+			// Selection toolbar plugin
+			createSelectionToolbarPlugin({
+				onShow: (position) => openSelectionToolbar(position),
+				onHide: () => closeSelectionToolbar(),
+				debounceMs: 50,
+			}),
+
+			// Table toolbar plugin
+			createTableToolbarPlugin({
+				onShow: (position) => openTableToolbar(position),
+				onHide: () => closeTableToolbar(),
+				debounceMs: 100,
+			}),
+
+			// Media paste/drop plugin
+			createMediaPastePlugin({
+				uploadFn: async (file, onProgress) => {
+					const result = await uploadMedia(file, onProgress);
+					return { url: result.url, filename: result.filename };
+				},
+			}),
+
+			// Placeholder plugin
+			createPlaceholderPlugin(),
+		];
+
+		// Parse initial content for non-Yjs mode
+		const initialDoc = yjsDoc
+			? null // y-prosemirror will provide the document from XmlFragment
+			: parseMarkdown(content);
+
+		// Create editor state
+		const state = EditorState.create({
+			doc: initialDoc || undefined,
+			schema,
+			plugins,
+		});
+
+		// Create editor view
+		view = new EditorView(editorContainer, {
+			state,
+			nodeViews: createNodeViews(),
+			editable: () => !disabled,
+			handleDOMEvents: {
+				click: (view, event) => {
+					const target = event.target as HTMLElement;
+					const entityLink = target.closest(".pm-entity-link");
+					if (entityLink) {
+						event.preventDefault();
+						const href = entityLink.getAttribute("href");
+						if (href) {
+							spaceStore.openTabFromRoute(href, {
+								forceNew: true,
+								preferEmptyPane: true,
+							});
+						}
+						return true; // Handled
+					}
+					return false; // Let ProseMirror handle it
+				},
+			},
+			dispatchTransaction: (tr: Transaction) => {
+				if (!view || !view.dom?.parentNode) return;
+
+				const newState = view.state.apply(tr);
+				view.updateState(newState);
+
+				// Serialize to markdown and update content on doc changes
+				if (tr.docChanged && !isExternalUpdate) {
+					const markdown = serializeMarkdown(newState.doc);
+					content = markdown;
+
+					// Only call onSave if not using Yjs
+					if (!yjsDoc) {
+						onSave?.(markdown);
+					}
+				}
+			},
+		});
+
+		// For Yjs mode: if XmlFragment is empty but we have content prop, initialize the doc
+		// This handles the case where a page has text content but no Yjs state yet
+		if (yjsDoc && view) {
+			let initialized = false;
+			const unsubscribe = yjsDoc.isSynced.subscribe((synced) => {
+				if (initialized) return; // Already handled
+				if (
+					synced &&
+					view &&
+					yjsDoc.yxmlFragment.length === 0 &&
+					content &&
+					content.trim()
+				) {
+					initialized = true;
+					// XmlFragment is empty but we have content - initialize through ProseMirror
+					// This will sync to Yjs via y-prosemirror
+					const parsedDoc = parseMarkdown(content);
+					if (parsedDoc) {
+						isExternalUpdate = true;
+						const tr = view.state.tr.replaceWith(
+							0,
+							view.state.doc.content.size,
+							parsedDoc.content,
+						);
+						view.dispatch(tr);
+						isExternalUpdate = false;
+					}
+					// Unsubscribe after initializing (use setTimeout to avoid sync call issue)
+					setTimeout(() => unsubscribe(), 0);
+				} else if (synced) {
+					// Already synced with content or empty - just unsubscribe
+					initialized = true;
+					setTimeout(() => unsubscribe(), 0);
+				}
 			});
-			isExternalUpdate = false;
+		}
+
+		// Listen for navigation events from node views
+		editorContainer.addEventListener(
+			"page-navigate",
+			handleNavigation as EventListener,
+		);
+
+		// Listen for AI edit events
+		window.addEventListener("ai-edit-highlight", handleAIEditHighlight);
+		window.addEventListener("ai-edit-accept", handleAIEditAccept);
+		window.addEventListener("ai-edit-reject", handleAIEditReject);
+
+		// Listen for slash command media events
+		editorContainer.addEventListener(
+			"slash-command-image",
+			handleSlashCommandImage,
+		);
+		editorContainer.addEventListener(
+			"slash-command-video",
+			handleSlashCommandVideo,
+		);
+		editorContainer.addEventListener(
+			"slash-command-audio",
+			handleSlashCommandAudio,
+		);
+	});
+
+	// Sync external content changes to editor (only when not using Yjs)
+	$effect(() => {
+		if (!yjsDoc && view) {
+			const currentMarkdown = serializeMarkdown(view.state.doc);
+			if (content !== currentMarkdown) {
+				isExternalUpdate = true;
+				const newDoc = parseMarkdown(content);
+				if (newDoc) {
+					const tr = view.state.tr.replaceWith(
+						0,
+						view.state.doc.content.size,
+						newDoc.content,
+					);
+					view.dispatch(tr);
+				}
+				isExternalUpdate = false;
+			}
 		}
 	});
 
-	// Update editable state when disabled prop changes
-	// This reconfigures the compartment so CodeMirror respects the new state
+	// Update editable state when disabled changes
 	$effect(() => {
-		if (view) {
-			view.dispatch({
-				effects: editableCompartment.reconfigure(EditorView.editable.of(!disabled))
-			});
+		if (view && disabled !== undefined) {
+			// Force a re-render to update editable state
+			view.setProps({ editable: () => !disabled });
+		}
+	});
+
+	// Update drag handle enabled state when showDragHandles changes
+	$effect(() => {
+		if (view && showDragHandles !== undefined) {
+			setDragHandlesEnabled(view, showDragHandles);
 		}
 	});
 
 	onDestroy(() => {
+		// Null out view first to prevent async y-prosemirror callbacks
+		// from dispatching transactions during teardown
+		const v = view;
+		view = null;
+
 		editorContainer?.removeEventListener(
 			"page-navigate",
 			handleNavigation as EventListener,
 		);
-		view?.destroy();
+		window.removeEventListener("ai-edit-highlight", handleAIEditHighlight);
+		window.removeEventListener("ai-edit-accept", handleAIEditAccept);
+		window.removeEventListener("ai-edit-reject", handleAIEditReject);
+		editorContainer?.removeEventListener(
+			"slash-command-image",
+			handleSlashCommandImage,
+		);
+		editorContainer?.removeEventListener(
+			"slash-command-video",
+			handleSlashCommandVideo,
+		);
+		editorContainer?.removeEventListener(
+			"slash-command-audio",
+			handleSlashCommandAudio,
+		);
+		v?.destroy();
 	});
 </script>
 
 <div class="page-editor-wrapper">
-	{#if disabled}
-		<div class="sync-status syncing">
-			<Icon icon="ri:loader-4-line" width="12" class="animate-spin" />
-			<span>Connecting...</span>
-		</div>
-	{:else if yjsDoc}
-		{#if !isConnected}
-			<div class="sync-status offline">
-				<Icon icon="ri:wifi-off-line" width="12" />
-				<span>Offline - changes will sync when reconnected</span>
-			</div>
-		{:else if !isSynced}
-			<div class="sync-status syncing">
-				<Icon icon="ri:loader-4-line" width="12" class="animate-spin" />
-				<span>Syncing...</span>
-			</div>
-		{/if}
-	{/if}
-	<div class="page-editor" class:disabled bind:this={editorContainer}></div>
+	<!-- Connection/sync status is shown in the page footer status bar -->
 
-	{#if showLinkPicker}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<div class="link-picker-backdrop" use:portal onclick={closeLinkPicker} onkeydown={(e) => e.key === 'Escape' && closeLinkPicker()} role="button" tabindex="-1"></div>
-		<div 
-			class="link-picker"
-			use:portal
-			style="left: {linkPickerPos.x}px; top: {linkPickerPos.y}px;"
-		>
-			<div class="link-picker-search">
-				<Icon icon="ri:search-line" width="16"/>
-				<input
-					bind:this={searchInputEl}
-					type="text"
-					placeholder="Search pages, people, places..."
-					bind:value={linkPickerQuery}
-					onkeydown={handlePickerKeydown}
-				/>
-			</div>
-			<div class="link-picker-results">
-				{#if linkPickerResults.length === 0}
-					<div class="link-picker-empty">
-						{linkPickerQuery ? "No results found" : "Type to search..."}
-					</div>
-				{:else}
-					{#each linkPickerResults as item, i}
-						<button
-							class="link-picker-item"
-							class:selected={i === linkPickerSelectedIndex}
-							onclick={() => selectLink(item)}
-							onmouseenter={() => linkPickerSelectedIndex = i}
-						>
-							<Icon icon={getLinkIcon(item.entity_type)} width="16"/>
-							<span class="link-name">{item.name}</span>
-							<span class="link-type">{item.entity_type}</span>
-						</button>
-					{/each}
-				{/if}
-			</div>
-		</div>
+	<div
+		class="page-editor ProseMirror"
+		class:disabled
+		bind:this={editorContainer}
+	></div>
+
+	{#if showEntityPicker}
+		<EntityPicker
+			mode="single"
+			position={entityPickerPos}
+			placeholder="Search pages, people, places..."
+			onSelect={handleEntitySelect}
+			onClose={closeEntityPickerUI}
+		/>
+	{/if}
+
+	{#if showSlashMenu}
+		<SlashMenu
+			query={slashQuery}
+			commands={filteredSlashCommands}
+			position={slashMenuPos}
+			onSelect={handleSlashSelect}
+			onClose={closeSlashMenuUI}
+		/>
+	{/if}
+
+	{#if showSelectionToolbar}
+		<SelectionToolbar
+			position={selectionToolbarPos}
+			{activeMarks}
+			onFormat={handleFormat}
+			onClose={closeSelectionToolbar}
+		/>
+	{/if}
+
+	{#if showLinkPopover}
+		<LinkPopover
+			position={linkPopoverPos}
+			initialUrl={existingLinkUrl}
+			onSubmit={handleLinkSubmit}
+			onRemove={existingLinkUrl ? handleLinkRemove : undefined}
+			onClose={closeLinkPopover}
+		/>
+	{/if}
+
+	{#if showTableToolbar}
+		<TableToolbar
+			position={tableToolbarPos}
+			onCommand={handleTableCommand}
+			onClose={closeTableToolbar}
+		/>
 	{/if}
 </div>
 
@@ -419,162 +912,12 @@ onMount(() => {
 		pointer-events: none;
 	}
 
-	/* Sync status indicator */
-	.sync-status {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 10px;
-		font-size: 12px;
-		border-radius: 4px;
-		margin-bottom: 8px;
-	}
-
-	.sync-status.offline {
-		background: var(--color-warning-subtle);
-		color: var(--color-warning);
-	}
-
-	.sync-status.syncing {
-		background: var(--color-primary-subtle);
-		color: var(--color-primary);
-	}
-
-	:global(.animate-spin) {
-		animation: spin 1s linear infinite;
-	}
-
 	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
-
-	/* Remove default outlines */
-	.page-editor :global(.cm-editor) {
-		outline: none;
-	}
-
-	.page-editor :global(.cm-focused) {
-		outline: none;
-	}
-
-	/* Ensure proper font inheritance */
-	.page-editor :global(.cm-editor),
-	.page-editor :global(.cm-scroller),
-	.page-editor :global(.cm-content),
-	.page-editor :global(.cm-line) {
-		font-family: var(
-			--font-sans,
-			ui-sans-serif,
-			system-ui,
-			-apple-system,
-			sans-serif
-		);
-	}
-
-	/* Heading lines get serif */
-	.page-editor :global(.cm-heading-line) {
-		font-family: var(--font-serif, Georgia, "Times New Roman", serif);
-	}
-
-	/* Link picker popover (@ mentions) - using :global for fixed positioning */
-	:global(.link-picker-backdrop) {
-		position: fixed;
-		inset: 0;
-		z-index: 999;
-	}
-
-	:global(.link-picker) {
-		position: fixed;
-		z-index: 1000;
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-		width: 300px;
-		max-height: 340px;
-		overflow: hidden;
-		display: flex;
-		flex-direction: column;
-	}
-
-	:global(.link-picker-search) {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 12px;
-		border-bottom: 1px solid var(--color-border);
-		background: var(--color-surface-elevated);
-	}
-
-	:global(.link-picker-search :global(svg)) {
-		color: var(--color-foreground-muted);
-	}
-
-	:global(.link-picker-search input) {
-		flex: 1;
-		border: none;
-		background: none;
-		font-size: 14px;
-		outline: none;
-		color: var(--color-foreground);
-	}
-
-	:global(.link-picker-search input::placeholder) {
-		color: var(--color-foreground-subtle);
-	}
-
-	:global(.link-picker-results) {
-		flex: 1;
-		overflow-y: auto;
-		padding: 4px;
-	}
-
-	:global(.link-picker-empty) {
-		padding: 20px;
-		text-align: center;
-		color: var(--color-foreground-muted);
-		font-size: 13px;
-	}
-
-	:global(.link-picker-item) {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		width: 100%;
-		padding: 10px 12px;
-		border: none;
-		background: none;
-		border-radius: 6px;
-		cursor: pointer;
-		text-align: left;
-		font-size: 14px;
-		color: var(--color-foreground);
-		transition: background-color 0.1s ease;
-	}
-
-	:global(.link-picker-item:hover),
-	:global(.link-picker-item.selected) {
-		background: var(--color-primary-subtle);
-	}
-
-	:global(.link-picker-item :global(svg)) {
-		color: var(--color-foreground-muted);
-	}
-
-	:global(.link-picker-item .link-name) {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	:global(.link-picker-item .link-type) {
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
-		text-transform: capitalize;
-		padding: 2px 6px;
-		background: var(--color-surface-elevated);
-		border-radius: 4px;
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 </style>

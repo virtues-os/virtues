@@ -1,31 +1,31 @@
 <script lang="ts">
-	import type { Tab } from '$lib/tabs/types';
-	import type { PageSummary } from '$lib/api/client';
-	import { spaceStore } from '$lib/stores/space.svelte';
-	import { pagesStore } from '$lib/stores/pages.svelte';
-	import { contextMenu } from '$lib/stores/contextMenu.svelte';
-	import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-	import { getWorkspaceMenuItems } from '$lib/utils/contextMenuItems';
-	import { Page } from '$lib';
-	import { onMount } from 'svelte';
+	import type { Tab } from "$lib/tabs/types";
+	import type { PageSummary } from "$lib/api/client";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
+	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { Page } from "$lib";
+	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// View mode types
-	type ViewMode = 'list' | 'table' | 'gallery';
-	type SortBy = 'updated' | 'created' | 'title';
-	type SortDir = 'asc' | 'desc';
+	type ViewMode = "list" | "table" | "gallery";
+	type SortBy = "updated" | "created" | "title";
+	type SortDir = "asc" | "desc";
 
 	// Persisted state keys
-	const VIEW_MODE_KEY = 'virtues-pages-view-mode';
-	const SORT_KEY = 'virtues-pages-sort';
+	const VIEW_MODE_KEY = "virtues-pages-view-mode";
+	const SORT_KEY = "virtues-pages-sort";
 
 	// Load persisted preferences
 	function loadPreferences() {
 		try {
 			const savedMode = localStorage.getItem(VIEW_MODE_KEY);
-			if (savedMode && ['list', 'table', 'gallery'].includes(savedMode)) {
+			if (savedMode && ["list", "table", "gallery"].includes(savedMode)) {
 				viewMode = savedMode as ViewMode;
 			}
 			const savedSort = localStorage.getItem(SORT_KEY);
@@ -39,15 +39,18 @@
 
 	function savePreferences() {
 		localStorage.setItem(VIEW_MODE_KEY, viewMode);
-		localStorage.setItem(SORT_KEY, JSON.stringify({ by: sortBy, dir: sortDir }));
+		localStorage.setItem(
+			SORT_KEY,
+			JSON.stringify({ by: sortBy, dir: sortDir }),
+		);
 	}
 
 	// State
-	let viewMode = $state<ViewMode>('list');
-	let sortBy = $state<SortBy>('updated');
-	let sortDir = $state<SortDir>('desc');
+	let viewMode = $state<ViewMode>("list");
+	let sortBy = $state<SortBy>("updated");
+	let sortDir = $state<SortDir>("desc");
 	let creating = $state(false);
-	let searchQuery = $state('');
+	let searchQuery = $state("");
 
 	// Use store state
 	const pages = $derived(pagesStore.pages);
@@ -61,23 +64,28 @@
 		// Filter by search
 		if (searchQuery.trim()) {
 			const q = searchQuery.toLowerCase();
-			result = result.filter(p =>
-				p.title.toLowerCase().includes(q) ||
-				p.tags?.toLowerCase().includes(q)
+			result = result.filter(
+				(p) =>
+					p.title.toLowerCase().includes(q) ||
+					p.tags?.toLowerCase().includes(q),
 			);
 		}
 
 		// Sort
 		result.sort((a, b) => {
 			let cmp = 0;
-			if (sortBy === 'updated') {
-				cmp = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-			} else if (sortBy === 'created') {
-				cmp = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-			} else if (sortBy === 'title') {
+			if (sortBy === "updated") {
+				cmp =
+					new Date(b.updated_at).getTime() -
+					new Date(a.updated_at).getTime();
+			} else if (sortBy === "created") {
+				cmp =
+					new Date(b.created_at).getTime() -
+					new Date(a.created_at).getTime();
+			} else if (sortBy === "title") {
 				cmp = a.title.localeCompare(b.title);
 			}
-			return sortDir === 'desc' ? cmp : -cmp;
+			return sortDir === "desc" ? cmp : -cmp;
 		});
 
 		return result;
@@ -90,7 +98,9 @@
 
 	// Save preferences when they change
 	$effect(() => {
-		viewMode; sortBy; sortDir;
+		viewMode;
+		sortBy;
+		sortDir;
 		savePreferences();
 	});
 
@@ -101,30 +111,33 @@
 		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
 		if (diffDays === 0) {
-			return date.toLocaleTimeString('en-US', {
-				hour: 'numeric',
-				minute: '2-digit'
+			return date.toLocaleTimeString("en-US", {
+				hour: "numeric",
+				minute: "2-digit",
 			});
 		} else if (diffDays === 1) {
-			return 'Yesterday';
+			return "Yesterday";
 		} else if (diffDays < 7) {
-			return date.toLocaleDateString('en-US', { weekday: 'long' });
+			return date.toLocaleDateString("en-US", { weekday: "long" });
 		} else {
-			return date.toLocaleDateString('en-US', {
-				month: 'short',
-				day: 'numeric',
-				year: now.getFullYear() !== date.getFullYear() ? 'numeric' : undefined
+			return date.toLocaleDateString("en-US", {
+				month: "short",
+				day: "numeric",
+				year:
+					now.getFullYear() !== date.getFullYear()
+						? "numeric"
+						: undefined,
 			});
 		}
 	}
 
 	function formatFullDate(dateStr: string): string {
-		return new Date(dateStr).toLocaleDateString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			year: 'numeric',
-			hour: 'numeric',
-			minute: '2-digit'
+		return new Date(dateStr).toLocaleDateString("en-US", {
+			month: "short",
+			day: "numeric",
+			year: "numeric",
+			hour: "numeric",
+			minute: "2-digit",
 		});
 	}
 
@@ -137,8 +150,8 @@
 		}
 	}
 
-	function getPageIcon(page: { icon: string | null; }): string {
-		return page.icon || 'ri:file-text-line';
+	function getPageIcon(page: { icon: string | null }): string {
+		return page.icon || "ri:file-text-line";
 	}
 
 	function handlePageClick(pageId: string, title: string, e: MouseEvent) {
@@ -147,7 +160,7 @@
 		spaceStore.openTabFromRoute(`/page/${pageId}`, {
 			forceNew,
 			label: title,
-			preferEmptyPane: true
+			preferEmptyPane: true,
 		});
 	}
 
@@ -187,10 +200,10 @@
 
 	function toggleSort(column: SortBy) {
 		if (sortBy === column) {
-			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+			sortDir = sortDir === "desc" ? "asc" : "desc";
 		} else {
 			sortBy = column;
-			sortDir = column === 'title' ? 'asc' : 'desc';
+			sortDir = column === "title" ? "asc" : "desc";
 		}
 	}
 
@@ -200,7 +213,7 @@
 
 		try {
 			// Use store method - handles API call, cache invalidation, sidebar refresh
-			const page = await pagesStore.createNewPage('Untitled');
+			const page = await pagesStore.createNewPage("Untitled");
 			pagesStore.addPage(page);
 			pagesStore.markAsRecent(page.id);
 
@@ -223,11 +236,15 @@
 			<div>
 				<h1 class="title">Pages</h1>
 				<p class="subtitle">
-					{pages.length} page{pages.length !== 1 ? 's' : ''}
+					{pages.length} page{pages.length !== 1 ? "s" : ""}
 				</p>
 			</div>
-			<button onclick={createNewPage} disabled={creating} class="new-page-btn">
-				<Icon icon="ri:add-line" width="18"/>
+			<button
+				onclick={createNewPage}
+				disabled={creating}
+				class="new-page-btn"
+			>
+				<Icon icon="ri:add-line" width="18" />
 				New Page
 			</button>
 		</div>
@@ -235,7 +252,7 @@
 		<!-- Toolbar: Search + View Mode -->
 		<div class="toolbar">
 			<div class="search-container">
-				<Icon icon="ri:search-line" class="search-icon" width="18"/>
+				<Icon icon="ri:search-line" class="search-icon" width="18" />
 				<input
 					type="text"
 					bind:value={searchQuery}
@@ -243,66 +260,75 @@
 					class="search-input"
 				/>
 				{#if searchQuery}
-					<button onclick={() => searchQuery = ''} class="search-clear">
-						<Icon icon="ri:close-line" width="18"/>
+					<button
+						onclick={() => (searchQuery = "")}
+						class="search-clear"
+					>
+						<Icon icon="ri:close-line" width="18" />
 					</button>
 				{/if}
 			</div>
 
 			<div class="view-toggles">
 				<button
-					onclick={() => viewMode = 'list'}
+					onclick={() => (viewMode = "list")}
 					class="view-toggle"
-					class:active={viewMode === 'list'}
+					class:active={viewMode === "list"}
 					title="List view"
 				>
-					<Icon icon="ri:list-check" width="18"/>
+					<Icon icon="ri:list-check" width="18" />
 				</button>
 				<button
-					onclick={() => viewMode = 'table'}
+					onclick={() => (viewMode = "table")}
 					class="view-toggle"
-					class:active={viewMode === 'table'}
+					class:active={viewMode === "table"}
 					title="Table view"
 				>
-					<Icon icon="ri:table-line" width="18"/>
+					<Icon icon="ri:table-line" width="18" />
 				</button>
 				<button
-					onclick={() => viewMode = 'gallery'}
+					onclick={() => (viewMode = "gallery")}
 					class="view-toggle"
-					class:active={viewMode === 'gallery'}
+					class:active={viewMode === "gallery"}
 					title="Gallery view"
 				>
-					<Icon icon="ri:layout-grid-line" width="18"/>
+					<Icon icon="ri:layout-grid-line" width="18" />
 				</button>
 			</div>
 		</div>
 
 		<!-- Content -->
 		{#if loading}
-			<div class="empty-state">Loading...</div>
+			<div class="flex items-center justify-center h-full">
+				<Icon icon="ri:loader-4-line" width="20" class="spin" />
+			</div>
 		{:else if error}
 			<div class="error-state">{error}</div>
 		{:else if pages.length === 0}
 			<div class="empty-state">
-				<Icon icon="ri:file-text-line" width="64" class="empty-icon"/>
 				<p>No pages yet</p>
-				<button onclick={createNewPage} disabled={creating} class="create-link">
+				<button
+					onclick={createNewPage}
+					disabled={creating}
+					class="create-link"
+				>
 					Create your first page
 				</button>
 			</div>
 		{:else if filteredPages().length === 0}
 			<div class="empty-state">
-				<Icon icon="ri:search-line" width="48" class="empty-icon"/>
+				<Icon icon="ri:search-line" width="48" class="empty-icon" />
 				<p>No pages matching "{searchQuery}"</p>
 			</div>
-		{:else if viewMode === 'list'}
+		{:else if viewMode === "list"}
 			<!-- List View -->
 			<ul class="list-view">
 				{#each filteredPages() as page (page.id)}
 					{@const tags = parseTags(page.tags)}
 					<li>
 						<button
-							onclick={(e) => handlePageClick(page.id, page.title, e)}
+							onclick={(e) =>
+								handlePageClick(page.id, page.title, e)}
 							oncontextmenu={(e) => handleContextMenu(e, page)}
 							class="list-item"
 						>
@@ -318,39 +344,67 @@
 										<span class="tag">{tag}</span>
 									{/each}
 									{#if tags.length > 3}
-										<span class="tag-more">+{tags.length - 3}</span>
+										<span class="tag-more"
+											>+{tags.length - 3}</span
+										>
 									{/if}
 								</div>
 							{/if}
-							<span class="item-date">{formatDate(page.updated_at)}</span>
+							<span class="item-date"
+								>{formatDate(page.updated_at)}</span
+							>
 						</button>
 					</li>
 				{/each}
 			</ul>
-		{:else if viewMode === 'table'}
+		{:else if viewMode === "table"}
 			<!-- Table View -->
 			<div class="table-container">
 				<table class="table-view">
 					<thead>
 						<tr>
 							<th class="th-icon"></th>
-							<th class="th-title sortable" onclick={() => toggleSort('title')}>
+							<th
+								class="th-title sortable"
+								onclick={() => toggleSort("title")}
+							>
 								Title
-								{#if sortBy === 'title'}
-									<Icon icon={sortDir === 'asc' ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="14"/>
+								{#if sortBy === "title"}
+									<Icon
+										icon={sortDir === "asc"
+											? "ri:arrow-up-s-line"
+											: "ri:arrow-down-s-line"}
+										width="14"
+									/>
 								{/if}
 							</th>
 							<th class="th-tags">Tags</th>
-							<th class="th-date sortable" onclick={() => toggleSort('updated')}>
+							<th
+								class="th-date sortable"
+								onclick={() => toggleSort("updated")}
+							>
 								Updated
-								{#if sortBy === 'updated'}
-									<Icon icon={sortDir === 'asc' ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="14"/>
+								{#if sortBy === "updated"}
+									<Icon
+										icon={sortDir === "asc"
+											? "ri:arrow-up-s-line"
+											: "ri:arrow-down-s-line"}
+										width="14"
+									/>
 								{/if}
 							</th>
-							<th class="th-date sortable" onclick={() => toggleSort('created')}>
+							<th
+								class="th-date sortable"
+								onclick={() => toggleSort("created")}
+							>
 								Created
-								{#if sortBy === 'created'}
-									<Icon icon={sortDir === 'asc' ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="14"/>
+								{#if sortBy === "created"}
+									<Icon
+										icon={sortDir === "asc"
+											? "ri:arrow-up-s-line"
+											: "ri:arrow-down-s-line"}
+										width="14"
+									/>
 								{/if}
 							</th>
 						</tr>
@@ -359,8 +413,10 @@
 						{#each filteredPages() as page (page.id)}
 							{@const tags = parseTags(page.tags)}
 							<tr
-								onclick={(e) => handlePageClick(page.id, page.title, e)}
-								oncontextmenu={(e) => handleContextMenu(e, page)}
+								onclick={(e) =>
+									handlePageClick(page.id, page.title, e)}
+								oncontextmenu={(e) =>
+									handleContextMenu(e, page)}
 								class="table-row"
 							>
 								<td class="td-icon">
@@ -378,19 +434,25 @@
 												<span class="tag">{tag}</span>
 											{/each}
 											{#if tags.length > 2}
-												<span class="tag-more">+{tags.length - 2}</span>
+												<span class="tag-more"
+													>+{tags.length - 2}</span
+												>
 											{/if}
 										</div>
 									{/if}
 								</td>
-								<td class="td-date">{formatDate(page.updated_at)}</td>
-								<td class="td-date">{formatDate(page.created_at)}</td>
+								<td class="td-date"
+									>{formatDate(page.updated_at)}</td
+								>
+								<td class="td-date"
+									>{formatDate(page.created_at)}</td
+								>
 							</tr>
 						{/each}
 					</tbody>
 				</table>
 			</div>
-		{:else if viewMode === 'gallery'}
+		{:else if viewMode === "gallery"}
 			<!-- Gallery View -->
 			<div class="gallery-view">
 				{#each filteredPages() as page (page.id)}
@@ -402,15 +464,25 @@
 					>
 						<div
 							class="card-cover"
-							style={page.cover_url ? `background-image: url(${page.cover_url})` : ''}
+							style={page.cover_url
+								? `background-image: url(${page.cover_url})`
+								: ""}
 						>
 							{#if !page.cover_url}
-								<Icon icon={getPageIcon(page)} width="32" class="cover-placeholder-icon"/>
+								<Icon
+									icon={getPageIcon(page)}
+									width="32"
+									class="cover-placeholder-icon"
+								/>
 							{/if}
 						</div>
 						<div class="card-content">
 							<div class="card-title-row">
-								<Icon icon={getPageIcon(page)} width="16" class="card-icon"/>
+								<Icon
+									icon={getPageIcon(page)}
+									width="16"
+									class="card-icon"
+								/>
 								<span class="card-title">{page.title}</span>
 							</div>
 							{#if tags.length > 0}
@@ -420,7 +492,9 @@
 									{/each}
 								</div>
 							{/if}
-							<div class="card-date">{formatDate(page.updated_at)}</div>
+							<div class="card-date">
+								{formatDate(page.updated_at)}
+							</div>
 						</div>
 					</button>
 				{/each}
@@ -518,7 +592,8 @@
 	.search-input:focus {
 		outline: none;
 		border-color: var(--color-primary);
-		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent);
+		box-shadow: 0 0 0 2px
+			color-mix(in srgb, var(--color-primary) 20%, transparent);
 	}
 
 	.search-clear {
@@ -604,7 +679,8 @@
 	}
 
 	/* Tags */
-	.item-tags, .card-tags {
+	.item-tags,
+	.card-tags {
 		display: flex;
 		gap: 0.25rem;
 		flex-wrap: wrap;
@@ -708,10 +784,18 @@
 		color: var(--color-foreground);
 	}
 
-	.th-icon { width: 40px; }
-	.th-title { min-width: 200px; }
-	.th-tags { min-width: 150px; }
-	.th-date { width: 120px; }
+	.th-icon {
+		width: 40px;
+	}
+	.th-title {
+		min-width: 200px;
+	}
+	.th-tags {
+		min-width: 150px;
+	}
+	.th-date {
+		width: 120px;
+	}
 
 	.table-row {
 		cursor: pointer;
@@ -778,7 +862,8 @@
 
 	.card-cover {
 		height: 120px;
-		background: linear-gradient(135deg,
+		background: linear-gradient(
+			135deg,
 			color-mix(in srgb, var(--color-foreground) 5%, transparent),
 			color-mix(in srgb, var(--color-foreground) 10%, transparent)
 		);

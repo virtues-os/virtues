@@ -25,11 +25,24 @@ export interface ContextMenuPosition {
 	y: number;
 }
 
+export interface ContextMenuAnchor {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}
+
+export type ContextMenuPlacement = 'top-start' | 'top-end' | 'bottom-start' | 'bottom-end' | 'left-start' | 'left-end' | 'right-start' | 'right-end';
+
 class ContextMenuStore {
 	// Core state
 	visible = $state(false);
 	position = $state<ContextMenuPosition>({ x: 0, y: 0 });
 	items = $state<ContextMenuItem[]>([]);
+
+	// Anchor-based positioning (for Floating UI)
+	anchor = $state<ContextMenuAnchor | null>(null);
+	placement = $state<ContextMenuPlacement>('bottom-start');
 
 	// Keyboard navigation state
 	focusedIndex = $state(-1);
@@ -40,10 +53,21 @@ class ContextMenuStore {
 
 	/**
 	 * Show the context menu at the given position with the provided items
+	 * @param pos - Fallback position (used if no anchor provided)
+	 * @param items - Menu items to display
+	 * @param options - Optional anchor and placement for Floating UI positioning
 	 */
-	show(pos: ContextMenuPosition, items: ContextMenuItem[]) {
-		// Adjust position to keep menu in viewport
-		const adjustedPos = this.adjustPosition(pos);
+	show(
+		pos: ContextMenuPosition,
+		items: ContextMenuItem[],
+		options?: { anchor?: ContextMenuAnchor; placement?: ContextMenuPlacement }
+	) {
+		// Store anchor for Floating UI positioning in the provider
+		this.anchor = options?.anchor ?? null;
+		this.placement = options?.placement ?? 'bottom-start';
+
+		// Use fallback position adjustment if no anchor provided
+		const adjustedPos = this.anchor ? pos : this.adjustPosition(pos);
 
 		this.position = adjustedPos;
 		this.items = items;
@@ -61,6 +85,7 @@ class ContextMenuStore {
 		this.focusedIndex = -1;
 		this.openSubmenuId = null;
 		this.loadingItemId = null;
+		this.anchor = null;
 	}
 
 	/**

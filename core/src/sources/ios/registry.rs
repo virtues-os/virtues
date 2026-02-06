@@ -16,11 +16,13 @@ use super::financekit::transform::FinanceKitTransactionTransform;
 use super::location::transform::IosLocationTransform;
 use super::battery::transform::IosBatteryTransform;
 use super::barometer::transform::IosBarometerTransform;
+use super::eventkit::transform::IosEventKitTransform;
+use super::contacts::transform::IosContactsTransform;
 
 // Import stream types for unified registration
 use super::{
-    IosBarometerStream, IosBatteryStream, IosContactsStream, IosFinanceKitStream,
-    IosHealthKitStream, IosLocationStream, IosMicrophoneStream,
+    IosBarometerStream, IosBatteryStream, IosContactsStream, IosEventKitStream,
+    IosFinanceKitStream, IosHealthKitStream, IosLocationStream, IosMicrophoneStream,
 };
 
 /// iOS source registration
@@ -77,10 +79,11 @@ impl SourceRegistry for IosSource {
                     })
                     .build(),
 
-                // Contacts stream with stream creator
+                // Contacts stream with wiki_people transform and stream creator
                 RegisteredStream::new("contacts")
                     .config_schema(serde_json::json!({}))
                     .config_example(serde_json::json!({}))
+                    .transform("wiki_people", |_ctx| Ok(Box::new(IosContactsTransform)))
                     .stream_creator(|ctx| {
                         Ok(StreamType::Push(Box::new(IosContactsStream::new(
                             ctx.db.clone(),
@@ -122,6 +125,19 @@ impl SourceRegistry for IosSource {
                     .transform("financial_transaction", |_ctx| Ok(Box::new(FinanceKitTransactionTransform)))
                     .stream_creator(|ctx| {
                         Ok(StreamType::Push(Box::new(IosFinanceKitStream::new(
+                            ctx.db.clone(),
+                            ctx.stream_writer.clone(),
+                        ))))
+                    })
+                    .build(),
+
+                // EventKit stream with calendar transform and stream creator
+                RegisteredStream::new("eventkit")
+                    .config_schema(serde_json::json!({}))
+                    .config_example(serde_json::json!({}))
+                    .transform("calendar", |_ctx| Ok(Box::new(IosEventKitTransform)))
+                    .stream_creator(|ctx| {
+                        Ok(StreamType::Push(Box::new(IosEventKitStream::new(
                             ctx.db.clone(),
                             ctx.stream_writer.clone(),
                         ))))
@@ -237,7 +253,7 @@ mod tests {
         let desc = IosSource::descriptor();
         assert_eq!(desc.descriptor.name, "ios");
         assert_eq!(desc.descriptor.auth_type, AuthType::Device);
-        assert_eq!(desc.streams.len(), 7);
+        assert_eq!(desc.streams.len(), 8); // healthkit, location, microphone, contacts, battery, barometer, financekit, eventkit
     }
 
     #[test]

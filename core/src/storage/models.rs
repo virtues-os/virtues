@@ -78,12 +78,22 @@ pub struct AssistantProfile {
     pub id: String,
     pub assistant_name: Option<String>,
     pub default_agent_id: Option<String>,
+    // Legacy model fields (kept for backward compatibility)
     pub default_model_id: Option<String>,
     pub background_model_id: Option<String>,
+    // New model slot system (4 purpose-based slots)
+    pub chat_model_id: Option<String>,
+    pub lite_model_id: Option<String>,
+    pub reasoning_model_id: Option<String>,
+    pub coding_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
     pub embedding_model_id: Option<String>,
     pub ollama_endpoint: Option<String>,
+    /// AI persona/tone: selected persona ID
+    pub persona: Option<String>,
+    /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }
+    pub personas: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

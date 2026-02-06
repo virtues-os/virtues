@@ -23,9 +23,7 @@ pub enum AuthType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceTier {
-    /// Free tier - available to all users
-    Free,
-    /// Standard tier - requires standard subscription
+    /// Standard tier - default for all users (30-day trial, then paid)
     Standard,
     /// Pro tier - requires pro subscription
     Pro,
@@ -34,10 +32,8 @@ pub enum SourceTier {
 /// Connection limits per tier for multi-instance sources
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConnectionLimits {
-    /// Max connections for free tier
-    pub free: u8,
-    /// Max connections for starter tier
-    pub starter: u8,
+    /// Max connections for standard tier
+    pub standard: u8,
     /// Max connections for pro tier
     pub pro: u8,
 }
@@ -45,8 +41,7 @@ pub struct ConnectionLimits {
 impl Default for ConnectionLimits {
     fn default() -> Self {
         Self {
-            free: 1,
-            starter: 5,
+            standard: 5,
             pro: 10,
         }
     }
@@ -54,17 +49,15 @@ impl Default for ConnectionLimits {
 
 impl ConnectionLimits {
     /// Create new connection limits
-    pub const fn new(free: u8, starter: u8, pro: u8) -> Self {
-        Self { free, starter, pro }
+    pub const fn new(standard: u8, pro: u8) -> Self {
+        Self { standard, pro }
     }
 
     /// Get limit for a given tier name
     pub fn for_tier(&self, tier: &str) -> u8 {
         match tier.to_lowercase().as_str() {
-            "free" => self.free,
-            "starter" => self.starter,
             "pro" => self.pro,
-            _ => self.free, // Default to free tier
+            _ => self.standard, // Default to standard tier
         }
     }
 }
@@ -132,9 +125,9 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
             }),
             icon: Some("ri:google-fill"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
             connection_policy: ConnectionPolicy::MultiInstance {
-                limits: ConnectionLimits::new(3, 10, 25),
+                limits: ConnectionLimits::new(16, 24),
             },
         },
         // Notion
@@ -150,9 +143,9 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
             }),
             icon: Some("simple-icons:notion"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
             connection_policy: ConnectionPolicy::MultiInstance {
-                limits: ConnectionLimits::new(2, 5, 20),
+                limits: ConnectionLimits::new(5, 20),
             },
         },
         // Plaid (Banking)
@@ -169,9 +162,9 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
             }),
             icon: Some("ri:bank-line"),
             enabled: true,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
             connection_policy: ConnectionPolicy::MultiInstance {
-                limits: ConnectionLimits::new(2, 5, 10),
+                limits: ConnectionLimits::new(4, 16),
             },
         },
         // iOS
@@ -183,8 +176,10 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
             oauth_config: None,
             icon: Some("ri:apple-fill"),
             enabled: true,
-            tier: SourceTier::Free,
-            connection_policy: ConnectionPolicy::Singleton,
+            tier: SourceTier::Standard,
+            connection_policy: ConnectionPolicy::MultiInstance {
+                limits: ConnectionLimits::new(1, 1),
+            },
         },
         // macOS
         SourceDescriptor {
@@ -196,7 +191,7 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
             oauth_config: None,
             icon: Some("ri:macbook-line"),
             enabled: false,
-            tier: SourceTier::Free,
+            tier: SourceTier::Standard,
             connection_policy: ConnectionPolicy::Singleton,
         },
     ]
@@ -272,21 +267,19 @@ mod tests {
     #[test]
     fn test_connection_limits() {
         // Plaid has tier-based limits
-        assert_eq!(get_connection_limit("plaid", "free"), Some(2));
-        assert_eq!(get_connection_limit("plaid", "starter"), Some(5));
-        assert_eq!(get_connection_limit("plaid", "pro"), Some(10));
+        assert_eq!(get_connection_limit("plaid", "standard"), Some(4));
+        assert_eq!(get_connection_limit("plaid", "pro"), Some(16));
 
         // Google has different limits
-        assert_eq!(get_connection_limit("google", "free"), Some(3));
-        assert_eq!(get_connection_limit("google", "starter"), Some(10));
-        assert_eq!(get_connection_limit("google", "pro"), Some(25));
+        assert_eq!(get_connection_limit("google", "standard"), Some(16));
+        assert_eq!(get_connection_limit("google", "pro"), Some(24));
 
-        // iOS is singleton (always 1)
-        assert_eq!(get_connection_limit("ios", "free"), Some(1));
+        // iOS allows 1 connection for all tiers
+        assert_eq!(get_connection_limit("ios", "standard"), Some(1));
         assert_eq!(get_connection_limit("ios", "pro"), Some(1));
 
         // Unknown source returns None
-        assert_eq!(get_connection_limit("unknown", "free"), None);
+        assert_eq!(get_connection_limit("unknown", "standard"), None);
     }
 
     #[test]
@@ -294,7 +287,7 @@ mod tests {
         assert!(is_multi_instance("plaid"));
         assert!(is_multi_instance("google"));
         assert!(is_multi_instance("notion"));
-        assert!(!is_multi_instance("ios"));
+        assert!(is_multi_instance("ios"));
         assert!(!is_multi_instance("mac"));
         assert!(!is_multi_instance("unknown"));
     }
@@ -302,8 +295,9 @@ mod tests {
     #[test]
     fn test_connection_limits_default_tier() {
         let limits = ConnectionLimits::default();
-        // Unknown tier defaults to free
-        assert_eq!(limits.for_tier("unknown"), limits.free);
-        assert_eq!(limits.for_tier("STARTER"), limits.starter); // Case insensitive
+        // Unknown tier defaults to standard
+        assert_eq!(limits.for_tier("unknown"), limits.standard);
+        assert_eq!(limits.for_tier("STANDARD"), limits.standard); // Case insensitive
+        assert_eq!(limits.for_tier("PRO"), limits.pro);
     }
 }

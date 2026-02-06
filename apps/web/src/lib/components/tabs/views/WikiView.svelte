@@ -8,11 +8,10 @@
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// Entity counts from API
-	let entityCounts = $state<{ people: number; places: number; orgs: number; things: number }>({
+	let entityCounts = $state<{ people: number; places: number; orgs: number }>({
 		people: 0,
 		places: 0,
-		orgs: 0,
-		things: 0
+		orgs: 0
 	});
 
 	// Activity data for heatmap (will come from API)
@@ -22,11 +21,10 @@
 	onMount(async () => {
 		// Load entity counts
 		try {
-			const [peopleRes, placesRes, orgsRes, thingsRes] = await Promise.all([
+			const [peopleRes, placesRes, orgsRes] = await Promise.all([
 				fetch('/api/wiki/people'),
 				fetch('/api/wiki/places'),
-				fetch('/api/wiki/organizations'),
-				fetch('/api/wiki/things')
+				fetch('/api/wiki/organizations')
 			]);
 
 			if (peopleRes.ok) {
@@ -40,10 +38,6 @@
 			if (orgsRes.ok) {
 				const orgs = await orgsRes.json();
 				entityCounts.orgs = Array.isArray(orgs) ? orgs.length : 0;
-			}
-			if (thingsRes.ok) {
-				const things = await thingsRes.json();
-				entityCounts.things = Array.isArray(things) ? things.length : 0;
 			}
 		} catch (e) {
 			console.error('Failed to load entity counts:', e);
@@ -105,8 +99,7 @@
 	const entities = [
 		{ key: 'people', label: 'People', route: '/person', icon: 'ri:user-line' },
 		{ key: 'places', label: 'Places', route: '/place', icon: 'ri:map-pin-line' },
-		{ key: 'orgs', label: 'Organizations', route: '/org', icon: 'ri:building-line' },
-		{ key: 'things', label: 'Things', route: '/thing', icon: 'ri:box-3-line' }
+		{ key: 'orgs', label: 'Organizations', route: '/org', icon: 'ri:building-line' }
 	] as const;
 </script>
 
@@ -145,7 +138,7 @@
 	<section class="section">
 		<h2>Entities</h2>
 		<p class="section-description">
-			The people, places, organizations, and things that appear in your data.
+			The people, places, and organizations that appear in your data.
 		</p>
 
 		<div class="entity-grid">

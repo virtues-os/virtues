@@ -139,20 +139,121 @@ pub async fn initiate_device_pairing(
     })
 }
 
-/// Complete device pairing with a valid pairing code
-///
-/// Validates the pairing code, updates the source with device information,
-/// generates a secure device token, and returns available streams.
+/// Complete device pairing with a valid pairing code (DEPRECATED)
 pub async fn complete_device_pairing(
     _db: &SqlitePool,
     _code: &str,
     _device_info: DeviceInfo,
 ) -> Result<PairingCompleted> {
-    // This flow is deprecated in favor of manual linking (link_device_manually)
-    // where the device ID is the token.
     Err(Error::Other(
-        "Pairing code flow is deprecated. Use /link endpoint.".to_string(),
+        "Pairing code flow is deprecated. Use /link or QR pairing endpoint.".to_string(),
     ))
+}
+
+/// Complete QR-based device pairing by source ID
+///
+/// Called by the iOS app after scanning a QR code that contains the source_id.
+/// Validates the session is pending and not expired, then links the device.
+pub async fn complete_pairing_by_source_id(
+    db: &SqlitePool,
+    source_id: &str,
+    device_id: &str,
+    device_info: DeviceInfo,
+) -> Result<PairingCompleted> {
+    if device_id.trim().is_empty() {
+        return Err(Error::InvalidInput("Device ID cannot be empty".to_string()));
+    }
+
+    // Fetch the pending source (source_type, pairing_status, created_at)
+    let source: (String, Option<String>, String) = sqlx::query_as(
+        r#"
+        SELECT source, pairing_status, created_at
+        FROM elt_source_connections
+        WHERE id = $1
+        "#,
+    )
+    .bind(source_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to fetch pairing session: {e}")))?
+    .ok_or_else(|| Error::Other("Pairing session not found".to_string()))?;
+
+    let (device_type, pairing_status, created_at) = source;
+
+    // Validate status
+    match pairing_status.as_deref() {
+        Some("active") => {
+            return Err(Error::InvalidInput(
+                "Pairing session already claimed by another device".to_string(),
+            ));
+        }
+        Some("revoked") => {
+            return Err(Error::InvalidInput(
+                "Pairing session was cancelled".to_string(),
+            ));
+        }
+        Some("pending") => {} // OK
+        _ => {
+            return Err(Error::Other("Invalid pairing session state".to_string()));
+        }
+    }
+
+    // Check expiration (10 minute window from creation)
+    if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&created_at) {
+        let elapsed = Utc::now() - created.with_timezone(&Utc);
+        if elapsed > chrono::Duration::minutes(10) {
+            return Err(Error::InvalidInput(
+                "Pairing session expired. Please generate a new QR code.".to_string(),
+            ));
+        }
+    }
+
+    // Encrypt device ID to use as token
+    let encryptor = TokenEncryptor::from_env()
+        .map_err(|e| Error::Other(format!("Failed to initialize encryption: {e}")))?;
+    let encrypted_token = encryptor
+        .encrypt(device_id)
+        .map_err(|e| Error::Other(format!("Failed to encrypt device token: {e}")))?;
+
+    // Serialize device info
+    let device_info_json = serde_json::to_string(&device_info)
+        .map_err(|e| Error::Other(format!("Failed to serialize device info: {e}")))?;
+
+    // Update source to active with device credentials
+    sqlx::query(
+        r#"
+        UPDATE elt_source_connections
+        SET device_id = $1,
+            device_token = $2,
+            device_info = $3,
+            pairing_status = 'active',
+            is_active = true,
+            last_seen_at = datetime('now'),
+            updated_at = datetime('now')
+        WHERE id = $4
+        "#,
+    )
+    .bind(device_id)
+    .bind(&encrypted_token)
+    .bind(&device_info_json)
+    .bind(source_id)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to complete pairing: {e}")))?;
+
+    // Get available streams for this device type
+    let available_streams = crate::registry::get_source(&device_type)
+        .map(|info| info.streams.clone())
+        .unwrap_or_default();
+
+    // Enable default streams
+    crate::api::streams::enable_default_streams(db, source_id.to_string(), &device_type).await?;
+
+    Ok(PairingCompleted {
+        source_id: source_id.to_string(),
+        device_token: device_id.to_string(),
+        available_streams,
+    })
 }
 
 /// Link a device manually using its device ID as the token
@@ -388,42 +489,6 @@ pub async fn update_last_seen(db: &SqlitePool, source_id: &str) -> Result<()> {
     .map_err(|e| Error::Database(format!("Failed to update last_seen: {e}")))?;
 
     Ok(())
-}
-
-/// Response when verifying a device token
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DeviceVerified {
-    pub source_id: String,
-    pub enabled_streams: Vec<crate::api::StreamConnection>,
-    pub configuration_complete: bool,
-}
-
-/// Verify a device token and return stream configuration status
-///
-/// This endpoint is called by devices that already have a device_token
-/// to check if streams have been configured in the web app.
-pub async fn verify_device(db: &SqlitePool, token: &str) -> Result<DeviceVerified> {
-    // Validate token and get source ID
-    let source_id = validate_device_token(db, token).await?;
-
-    // Update last seen
-    update_last_seen(db, &source_id).await?;
-
-    // Get all streams for this source
-    let all_streams = crate::api::list_source_streams(db, source_id.clone()).await?;
-
-    // Filter to only enabled streams
-    let enabled_streams: Vec<crate::api::StreamConnection> =
-        all_streams.into_iter().filter(|s| s.is_enabled).collect();
-
-    // Configuration is complete if at least one stream is enabled
-    let configuration_complete = !enabled_streams.is_empty();
-
-    Ok(DeviceVerified {
-        source_id,
-        enabled_streams,
-        configuration_complete,
-    })
 }
 
 /// Generate a 6-character alphanumeric pairing code

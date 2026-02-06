@@ -152,15 +152,16 @@
 		background: rgba(0, 0, 0, 0.04);
 	}
 
-	:global([data-theme="midnight-oil"]) .badge,
-	:global([data-theme="narnia-nights"]) .badge,
-	:global([data-theme="dumb-ox"]) .badge,
-	:global([data-theme="chiaroscuro"]) .badge,
-	:global([data-theme="stoa"]) .badge,
+	:global([data-theme="baker-street"]) .badge,
+	:global([data-theme="narnia"]) .badge,
+	:global([data-theme="canterbury"]) .badge,
+	:global([data-theme="borghese"]) .badge,
+	:global([data-theme="gatsby"]) .badge,
 	:global([data-theme="lyceum"]) .badge,
-	:global([data-theme="tabula-rasa"]) .badge,
-	:global([data-theme="hemlock"]) .badge,
-	:global([data-theme="shire"]) .badge {
+	:global([data-theme="asgard"]) .badge,
+	:global([data-theme="agora"]) .badge,
+	:global([data-theme="shire"]) .badge,
+	:global([data-theme="lothlorien"]) .badge {
 		color: rgba(255, 255, 255, 0.4);
 		background: rgba(255, 255, 255, 0.06);
 	}

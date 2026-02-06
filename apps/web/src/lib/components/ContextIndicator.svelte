@@ -80,7 +80,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 6px;
+		border-radius: 50%;
 		transition: background-color 0.15s ease;
 	}
 
@@ -89,8 +89,8 @@
 	}
 
 	.ring-svg {
-		width: 18px;
-		height: 18px;
+		width: 16px;
+		height: 16px;
 	}
 
 	.progress-ring {

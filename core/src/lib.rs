@@ -8,6 +8,7 @@ pub mod cli;
 pub mod client;
 pub mod database;
 pub mod entity_resolution;
+pub mod markdown;
 pub mod tools;
 pub mod error;
 pub mod geo;
@@ -51,6 +52,7 @@ pub use api::{
     // Device pairing
     check_pairing_status,
     complete_device_pairing,
+    complete_pairing_by_source_id,
     create_source,
     delete_source,
     disable_stream,

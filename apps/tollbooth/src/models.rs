@@ -69,23 +69,14 @@ impl ModelRegistry {
         Self { models, by_id }
     }
 
-    /// Get enabled models filtered by provider availability
+    /// Get enabled models - all are available via AI Gateway
     pub fn get_enabled_models(&self, config: &crate::config::Config) -> Vec<&ModelEntry> {
-        self.models
-            .iter()
-            .filter(|m| m.enabled)
-            .filter(|m| {
-                let provider = m.provider.to_lowercase();
-                match provider.as_str() {
-                    "google" => config.google_cloud_project.is_some(),
-                    "anthropic" => config.anthropic_api_key.is_some(),
-                    "openai" => config.openai_api_key.is_some(),
-                    "cerebras" => config.cerebras_api_key.is_some(),
-                    "xai" => config.xai_api_key.is_some(),
-                    _ => false, // Unknown provider, skip
-                }
-            })
-            .collect()
+        // With Vercel AI Gateway, all enabled models are available if the gateway is configured
+        if config.has_llm_provider() {
+            self.models.iter().filter(|m| m.enabled).collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// Get pricing for a model (input_cost_per_1k, output_cost_per_1k)

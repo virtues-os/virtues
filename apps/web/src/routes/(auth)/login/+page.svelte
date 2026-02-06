@@ -1,7 +1,10 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import LoginInput from "$lib/components/LoginInput.svelte";
+	import { authMatrixMessage } from "$lib/stores/authMatrix.svelte";
 	import { page } from "$app/stores";
 	import { Button } from "$lib";
+	import { onDestroy } from "svelte";
 
 	let email = $state("");
 	let isLoading = $state(false);
@@ -11,13 +14,36 @@
 	// Check for error from auth callback
 	const authError = $derived($page.url.searchParams.get("error"));
 
-	async function handleSubmit(e: SubmitEvent) {
-		e.preventDefault();
+	// Update matrix message when emailSent changes, auto-revert after 3s
+	let revertTimeout: ReturnType<typeof setTimeout> | null = null;
+
+	$effect(() => {
+		authMatrixMessage.set(emailSent ? "SENT" : undefined);
+
+		if (emailSent) {
+			revertTimeout = setTimeout(() => {
+				emailSent = false;
+			}, 5000);
+		}
+
+		return () => {
+			if (revertTimeout) clearTimeout(revertTimeout);
+		};
+	});
+
+	// Clear matrix message on unmount
+	onDestroy(() => {
+		authMatrixMessage.set(undefined);
+	});
+
+	async function submitLogin() {
+		console.log('[Auth Debug] Submitting email:', JSON.stringify(email));
+		if (!email.trim() || isLoading) return;
+
 		error = null;
 		isLoading = true;
 
 		try {
-			// Call Rust auth API
 			const response = await fetch("/auth/signin", {
 				method: "POST",
 				headers: {
@@ -40,99 +66,58 @@
 			isLoading = false;
 		}
 	}
+
+	function handleFormSubmit(e: SubmitEvent) {
+		e.preventDefault();
+		submitLogin();
+	}
 </script>
 
-<div class="w-full max-w-sm">
-	{#if emailSent}
-		<!-- Success state -->
-		<div class="text-center">
-			<div
-				class="w-16 h-16 mx-auto mb-6 rounded-full bg-success-subtle flex items-center justify-center"
-			>
-				<Icon
-					icon="ri:mail-check-line"
-					class="text-success text-3xl"
-				/>
-			</div>
-			<h1 class="font-serif text-3xl font-normal text-foreground mb-3">
-				Check your email
-			</h1>
-			<p class="text-foreground-muted text-sm mb-6">
-				We sent a magic link to <span
-					class="font-medium text-foreground">{email}</span
-				>. Click the link to sign in.
-			</p>
-			<Button
-				variant="ghost"
-				onclick={() => {
-					emailSent = false;
-					email = "";
-				}}
-			>
-				Use a different email
-			</Button>
+<div class="w-full">
+	{#if authError === "AccessDenied"}
+		<div
+			class="mb-4 p-3 rounded-lg bg-surface-alt border border-border text-foreground-muted text-sm"
+		>
+			This is a private instance.
 		</div>
-	{:else}
-		<!-- Login form -->
-		<h1 class="font-serif text-3xl font-normal text-foreground mb-2">
-			Welcome back
-		</h1>
-		<p class="text-foreground-muted text-sm mb-8">
-			Enter your email to receive a magic link
-		</p>
-
-		{#if authError === "AccessDenied"}
-			<div
-				class="mb-6 p-4 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
-			>
-				Access denied. This email is not authorized to sign in.
-			</div>
-		{:else if authError}
-			<div
-				class="mb-6 p-4 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
-			>
-				{authError === "Verification"
-					? "The magic link has expired. Please request a new one."
-					: "An error occurred. Please try again."}
-			</div>
-		{/if}
-
-		{#if error}
-			<div
-				class="mb-6 p-4 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
-			>
-				{error}
-			</div>
-		{/if}
-
-		<form onsubmit={handleSubmit} class="space-y-4">
-			<div>
-				<label for="email" class="sr-only">Email address</label>
-				<input
-					id="email"
-					type="email"
-					bind:value={email}
-					required
-					placeholder="you@example.com"
-					disabled={isLoading}
-					class="w-full px-4 py-3 rounded-lg bg-surface-alt border border-border text-foreground placeholder:text-foreground-muted focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent transition-colors disabled:opacity-50"
-				/>
-			</div>
-
-			<Button
-				type="submit"
-				variant="primary"
-				disabled={isLoading || !email}
-				class="w-full"
-			>
-				{#if isLoading}
-					<Icon icon="ri:loader-4-line" class="animate-spin"
-					/>
-					Sending...
-				{:else}
-					Continue with Email
-				{/if}
-			</Button>
-		</form>
+	{:else if authError}
+		<div
+			class="mb-4 p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
+		>
+			{authError === "Verification"
+				? "The magic link has expired. Please request a new one."
+				: "An error occurred. Please try again."}
+		</div>
 	{/if}
+
+	{#if error}
+		<div
+			class="mb-4 p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm"
+		>
+			{error}
+		</div>
+	{/if}
+
+	<form onsubmit={handleFormSubmit} class="space-y-3">
+		<LoginInput
+			bind:value={email}
+			placeholder="you@example.com"
+			disabled={isLoading}
+			onsubmit={submitLogin}
+		/>
+
+		<Button
+			type="submit"
+			variant="primary"
+			disabled={isLoading || !email}
+			class="w-full"
+		>
+			{#if isLoading}
+				<Icon icon="ri:loader-4-line" class="animate-spin" />
+				Sending...
+			{:else}
+				Send magic link
+			{/if}
+		</Button>
+	</form>
 </div>

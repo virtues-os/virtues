@@ -20,7 +20,7 @@ import {
 	type ViewUpdate,
 } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import { RangeSetBuilder } from "@codemirror/state";
+import { RangeSetBuilder, StateField, StateEffect, type EditorState } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
@@ -590,6 +590,120 @@ class HorizontalRuleWidget extends WidgetType {
 	}
 }
 
+/**
+ * Table widget: renders markdown tables as HTML tables
+ * Parses pipe-delimited table syntax and renders with styling matching chat markdown
+ */
+class TableWidget extends WidgetType {
+	constructor(
+		readonly tableText: string,
+		readonly from: number
+	) {
+		super();
+	}
+
+	toDOM(view: EditorView) {
+		const wrapper = document.createElement("div");
+		wrapper.className = "cm-table-wrapper";
+
+		// Click handler to enter edit mode
+		wrapper.addEventListener("mousedown", (e) => {
+			e.preventDefault();
+			// Position cursor at the start of the table to reveal raw markdown
+			view.dispatch({
+				selection: { anchor: this.from },
+			});
+			view.focus();
+		});
+
+		const table = document.createElement("table");
+		table.className = "cm-table";
+
+		const lines = this.tableText.split("\n").filter((line) => line.trim());
+		if (lines.length < 2) {
+			// Not a valid table (need header + separator at minimum)
+			wrapper.textContent = this.tableText;
+			return wrapper;
+		}
+
+		// Parse header row
+		const headerCells = this.parseRow(lines[0]);
+
+		// Check if second line is separator (contains only |, -, :, and spaces)
+		const isSeparator = /^[\s|:\-]+$/.test(lines[1]);
+		if (!isSeparator) {
+			wrapper.textContent = this.tableText;
+			return wrapper;
+		}
+
+		// Parse alignment from separator row
+		const alignments = this.parseAlignments(lines[1]);
+
+		// Create thead
+		const thead = document.createElement("thead");
+		const headerRow = document.createElement("tr");
+		headerCells.forEach((cell, i) => {
+			const th = document.createElement("th");
+			th.textContent = cell.trim();
+			if (alignments[i]) {
+				th.style.textAlign = alignments[i];
+			}
+			headerRow.appendChild(th);
+		});
+		thead.appendChild(headerRow);
+		table.appendChild(thead);
+
+		// Create tbody with remaining rows
+		if (lines.length > 2) {
+			const tbody = document.createElement("tbody");
+			for (let i = 2; i < lines.length; i++) {
+				const cells = this.parseRow(lines[i]);
+				const row = document.createElement("tr");
+				cells.forEach((cell, j) => {
+					const td = document.createElement("td");
+					td.textContent = cell.trim();
+					if (alignments[j]) {
+						td.style.textAlign = alignments[j];
+					}
+					row.appendChild(td);
+				});
+				tbody.appendChild(row);
+			}
+			table.appendChild(tbody);
+		}
+
+		wrapper.appendChild(table);
+		return wrapper;
+	}
+
+	parseRow(line: string): string[] {
+		// Remove leading/trailing pipes and split
+		const trimmed = line.replace(/^\|/, "").replace(/\|$/, "");
+		return trimmed.split("|");
+	}
+
+	parseAlignments(separator: string): string[] {
+		const cells = this.parseRow(separator);
+		return cells.map((cell) => {
+			const trimmed = cell.trim();
+			const leftColon = trimmed.startsWith(":");
+			const rightColon = trimmed.endsWith(":");
+			if (leftColon && rightColon) return "center";
+			if (rightColon) return "right";
+			if (leftColon) return "left";
+			return "";
+		});
+	}
+
+	eq(other: TableWidget) {
+		return other.tableText === this.tableText && other.from === this.from;
+	}
+
+	ignoreEvent() {
+		return false;
+	}
+}
+
 // =============================================================================
 // THEME STYLES
 // =============================================================================
@@ -954,6 +1068,51 @@ export const pageEditorTheme = EditorView.theme({
 	".cm-file-card-name": {
 		fontSize: "0.875rem",
 		fontWeight: "500",
+	},
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// TABLES
+	// ─────────────────────────────────────────────────────────────────────────
+	".cm-table-wrapper": {
+		display: "block",
+		margin: "0.5rem 0",
+		overflowX: "auto",
+	},
+	".cm-table": {
+		width: "100%",
+		fontSize: "0.875rem",
+		borderCollapse: "separate",
+		borderSpacing: "0",
+	},
+	".cm-table thead": {
+		backgroundColor: "var(--color-surface-elevated)",
+	},
+	".cm-table th": {
+		padding: "0.5rem 1rem",
+		textAlign: "left",
+		fontSize: "0.875rem",
+		fontWeight: "400",
+		fontFamily: "var(--font-serif, Georgia, serif)",
+		borderRight: "1px solid var(--color-border-subtle)",
+		borderBottom: "1px solid var(--color-border-subtle)",
+	},
+	".cm-table th:last-child": {
+		borderRight: "none",
+	},
+	".cm-table td": {
+		padding: "0.5rem 1rem",
+		fontSize: "0.875rem",
+		borderRight: "1px solid var(--color-border-subtle)",
+		borderBottom: "1px solid var(--color-border-subtle)",
+	},
+	".cm-table td:last-child": {
+		borderRight: "none",
+	},
+	".cm-table tr:last-child td": {
+		borderBottom: "none",
+	},
+	".cm-table tr:hover": {
+		backgroundColor: "var(--color-background)",
 	},
 });
 
@@ -1441,6 +1600,7 @@ function decorateLinks(
 	});
 }
 
+
 /**
  * Decorate images/media ![alt](url)
  * Detects media type by extension in the alt text (display name):
@@ -1516,6 +1676,8 @@ function buildDecorations(view: EditorView): DecorationSet {
 	decorateHorizontalRules(view, activeLines, decorations);
 	decorateLinks(view, activeLines, decorations);
 	decorateImages(view, activeLines, decorations);
+	// Note: Tables are handled by a separate StateField (tableDecorationField)
+	// because multi-line replacements cannot be done via ViewPlugin
 
 	// Sort decorations by position
 	decorations.sort((a, b) => {
@@ -1592,4 +1754,124 @@ export const livePreviewPlugin = ViewPlugin.fromClass(
 	}
 );
 
-export const livePreviewExtension = [livePreviewPlugin];
+// =============================================================================
+// TABLE DECORATION STATE FIELD
+// =============================================================================
+// Tables must use a StateField instead of ViewPlugin because they span
+// multiple lines, and CodeMirror doesn't allow ViewPlugin decorations
+// to replace content that crosses line boundaries.
+
+/**
+ * Effect to update focus state for table decorations
+ */
+const setTableFocus = StateEffect.define<boolean>();
+
+/**
+ * Get active lines for table decoration (similar to getActiveLines but for state)
+ */
+function getActiveLinesFromState(state: EditorState, hasFocus: boolean): Set<number> {
+	if (!hasFocus) {
+		return new Set<number>();
+	}
+
+	const lines = new Set<number>();
+	for (const range of state.selection.ranges) {
+		const startLine = state.doc.lineAt(range.from).number;
+		const endLine = state.doc.lineAt(range.to).number;
+		for (let i = startLine; i <= endLine; i++) {
+			lines.add(i);
+		}
+	}
+	return lines;
+}
+
+/**
+ * Build table decorations from state
+ */
+function buildTableDecorations(state: EditorState, hasFocus: boolean): DecorationSet {
+	const builder = new RangeSetBuilder<Decoration>();
+	const doc = state.doc;
+	const tree = syntaxTree(state);
+	const activeLines = getActiveLinesFromState(state, hasFocus);
+
+	const tables: { from: number; to: number; text: string }[] = [];
+
+	tree.iterate({
+		enter(node) {
+			if (node.name === "Table") {
+				const startLine = doc.lineAt(node.from);
+				const endLine = doc.lineAt(node.to);
+
+				// Check if any line in the table is active
+				let hasActiveLine = false;
+				for (let lineNum = startLine.number; lineNum <= endLine.number; lineNum++) {
+					if (activeLines.has(lineNum)) {
+						hasActiveLine = true;
+						break;
+					}
+				}
+
+				// Only add decoration if no lines are being edited
+				if (!hasActiveLine) {
+					const tableText = state.sliceDoc(node.from, node.to);
+					tables.push({ from: node.from, to: node.to, text: tableText });
+				}
+			}
+		},
+	});
+
+	// Sort by position and add to builder
+	tables.sort((a, b) => a.from - b.from);
+	for (const { from, to, text } of tables) {
+		builder.add(from, to, Decoration.replace({ widget: new TableWidget(text, from) }));
+	}
+
+	return builder.finish();
+}
+
+/**
+ * StateField for table decorations
+ * Required because multi-line replacements cannot be done via ViewPlugin
+ */
+export const tableDecorationField = StateField.define<{ decorations: DecorationSet; hasFocus: boolean }>({
+	create(state) {
+		// Initially assume no focus (decorations will show)
+		return { decorations: buildTableDecorations(state, false), hasFocus: false };
+	},
+	update(value, tr) {
+		// Check if focus changed via effect
+		let hasFocus = value.hasFocus;
+		for (const effect of tr.effects) {
+			if (effect.is(setTableFocus)) {
+				hasFocus = effect.value;
+			}
+		}
+
+		// Rebuild on doc change, selection change, or focus change
+		if (tr.docChanged || tr.selection || hasFocus !== value.hasFocus) {
+			return {
+				decorations: buildTableDecorations(tr.state, hasFocus),
+				hasFocus
+			};
+		}
+
+		// Map existing decorations through changes
+		return {
+			decorations: value.decorations.map(tr.changes),
+			hasFocus
+		};
+	},
+	provide(field) {
+		return EditorView.decorations.from(field, (value) => value.decorations);
+	},
+});
+
+/**
+ * Facet to dispatch focus effect when editor focus changes
+ * This is the CodeMirror-recommended way to handle focus changes with StateField
+ */
+const tableFocusEffect = EditorView.focusChangeEffect.of((_state, focusing) => {
+	return setTableFocus.of(focusing);
+});
+
+export const livePreviewExtension = [livePreviewPlugin, tableDecorationField, tableFocusEffect];

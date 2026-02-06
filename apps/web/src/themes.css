@@ -5,22 +5,26 @@
    These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
    and as CSS variables (e.g., var(--color-primary))
 
-   Themes (academic & literary):
+   Themes (literary places):
    Light:
-   - Ivory Tower (default) - Clean, academic white
-   - The Scriptorium - Warm paper, medieval study
-   - The Forum - Sunny Roman courtyard
+   - Pemberley (default) - Austen elegance, pristine
+   - Caladan - Atreides ocean world
+   - Rivendell - Elven refuge, warm light
+   - Oxford - Academic, studious
+   - Hogwarts - Warm parchment, candlelit
+   - Tatooine - Twin suns, desert warmth
 
    Dark:
-   - Midnight Oil - Late night studying
-   - Narnia Nights - Magical warm glow
-   - The Dumb Ox - Thomas Aquinas, warm earth
-   - Chiaroscuro - Stark light/dark contrast
-   - The Stoa - Stoic school, vivid colors
+   - Lothlorien - Golden wood twilight
+   - Baker Street - Victorian gaslight
+   - Narnia - Magical lamppost glow
+   - Canterbury - Pilgrim earth tones
+   - Borghese - Dramatic light and shadow
+   - Gatsby - Jazz age vivid glamour
    - The Lyceum - Aristotle's school, cool blues
-   - Tabula Rasa - Blank slate, muted nordic
-   - Hemlock - Socrates' fate, gothic purple
-   - The Shire - Tolkien, cozy pastels
+   - Asgard - Norse realm, cold majesty
+   - Agora - Greek marketplace purple
+   - The Shire - Cozy hobbit pastels
 
    IMPORTANT: @theme must be top-level, not nested.
    We define theme variables once, then override CSS variables per theme.
@@ -54,9 +58,6 @@
 	--color-secondary: var(--secondary);
 	--color-secondary-hover: var(--secondary-hover);
 	--color-secondary-active: var(--secondary-active);
-
-	--color-accent: var(--accent);
-	--color-accent-hover: var(--accent-hover);
 
 	/* Status Colors */
 	--color-success: var(--success);
@@ -102,8 +103,8 @@
 }
 
 /* ===================================
-   IVORY TOWER (DEFAULT)
-   Academic, pristine, clean white
+   PEMBERLEY (DEFAULT)
+   Austen elegance, pristine white
    Applied to :root so it's the default
    =================================== */
 :root {
@@ -143,9 +144,6 @@
 	--secondary: #171717;
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
-
-	--accent: #2883DE;
-	--accent-hover: #4a9ae5;
 
 	/* Status Colors */
 	--success: #16a34a;
@@ -195,10 +193,10 @@
 }
 
 /* ===================================
-   IVORY NOISE
-   Ivory Tower with subtle film grain texture
+   CALADAN
+   Atreides ocean world, subtle texture
    =================================== */
-[data-theme="ivory-noise"] {
+[data-theme="caladan"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 	--code-bg: #f6f8fa;
@@ -243,9 +241,6 @@
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	--accent: #2883DE;
-	--accent-hover: #4a9ae5;
-
 	/* Status Colors */
 	--success: #16a34a;
 	--success-subtle: #dcfce7;
@@ -277,10 +272,10 @@
 }
 
 /* ===================================
-   SUNRISE
-   Soft blue to warm peach gradient, Arc-inspired
+   RIVENDELL
+   Elven refuge, warm ethereal light
    =================================== */
-[data-theme="sunrise"] {
+[data-theme="rivendell"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 	--code-bg: #f6f8fa;
@@ -325,9 +320,6 @@
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	--accent: #D97757;
-	--accent-hover: #E08B70;
-
 	/* Status Colors */
 	--success: #16a34a;
 	--success-subtle: #dcfce7;
@@ -359,10 +351,10 @@
 }
 
 /* ===================================
-   NOTEBOOK
-   Clean dotted paper like a dotted notebook
+   OXFORD
+   Academic, studious, dotted paper
    =================================== */
-[data-theme="notebook"] {
+[data-theme="oxford"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 	--code-bg: #f6f8fa;
@@ -400,9 +392,6 @@
 	--secondary-hover: #262626;
 	--secondary-active: #0a0a0a;
 
-	--accent: #2883DE;
-	--accent-hover: #4a9ae5;
-
 	/* Status Colors */
 	--success: #16a34a;
 	--success-subtle: #dcfce7;
@@ -434,10 +423,10 @@
 }
 
 /* ===================================
-   DAWN
-   Dark blue to warm peach gradient, pre-sunrise
+   LOTHLORIEN
+   Golden wood twilight, ethereal glow
    =================================== */
-[data-theme="dawn"] {
+[data-theme="lothlorien"] {
 	/* Code Syntax Highlighting - Dark mode (Catppuccin Mocha) */
 	--shiki-theme: catppuccin-mocha;
 	--code-bg: #1e1e2e;
@@ -482,9 +471,6 @@
 	--secondary-hover: #f0f0f8;
 	--secondary-active: #d0d0e0;
 
-	--accent: #E8A87C;
-	--accent-hover: #F0BC96;
-
 	/* Status Colors - Adjusted for dark */
 	--success: #4ade80;
 	--success-subtle: rgba(74, 222, 128, 0.15);
@@ -516,10 +502,10 @@
 }
 
 /* ===================================
-   THE SCRIPTORIUM
-   Medieval writing room, warm paper, candlelight
+   HOGWARTS
+   Warm parchment, candlelit magic
    =================================== */
-[data-theme="scriptorium"] {
+[data-theme="hogwarts"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
 	--code-bg: #f6f8fa;
@@ -556,9 +542,6 @@
 	--secondary-hover: #3D3B33;
 	--secondary-active: #1A1914;
 
-	--accent: #EB5601;
-	--accent-hover: #FF6B1A;
-
 	/* Status Colors */
 	--success: #16a34a;
 	--success-subtle: #dcfce7;
@@ -590,10 +573,10 @@
 }
 
 /* ===================================
-   MIDNIGHT OIL
-   Late night studying, burning the midnight oil
+   BAKER STREET
+   Victorian gaslight, detective noir
    =================================== */
-[data-theme="midnight-oil"] {
+[data-theme="baker-street"] {
 	/* Code Syntax Highlighting (GitHub Dark) */
 	--shiki-theme: github-dark;
 	--code-bg: #161b22;
@@ -635,9 +618,6 @@
 	--secondary-hover: #fafafa;
 	--secondary-active: #d4d4d4;
 
-	--accent: #f472b6;
-	--accent-hover: #f9a8d4;
-
 	/* Status Colors */
 	--success: #4ade80;
 	--success-subtle: #14532d;
@@ -669,10 +649,10 @@
 }
 
 /* ===================================
-   NARNIA NIGHTS
+   NARNIA
    Magical lamppost glow, warm enchantment
    =================================== */
-[data-theme="narnia-nights"] {
+[data-theme="narnia"] {
 	/* Code Syntax Highlighting (Tokyo Night) */
 	--shiki-theme: tokyo-night;
 	--code-bg: #1a1b26;
@@ -705,9 +685,6 @@
 	--secondary-hover: #FFFFFF;
 	--secondary-active: #F3F2E9;
 
-	--accent: #FF9D52;
-	--accent-hover: #ffb070;
-
 	/* Status Colors */
 	--success: #22c55e;
 	--success-subtle: #14532d;
@@ -739,10 +716,10 @@
 }
 
 /* ===================================
-   THE DUMB OX
-   Thomas Aquinas' nickname, warm earthy wisdom
+   CANTERBURY
+   Pilgrim earth tones, warm wisdom
    =================================== */
-[data-theme="dumb-ox"] {
+[data-theme="canterbury"] {
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
 	--code-bg: #121212;
@@ -775,9 +752,6 @@
 	--secondary-hover: #F7F5F2;
 	--secondary-active: #DCD8D2;
 
-	--accent: #E4B873;
-	--accent-hover: #F2C98D;
-
 	/* Status Colors */
 	--success: #4ade80;
 	--success-subtle: #1A2A1B;
@@ -809,10 +783,10 @@
 }
 
 /* ===================================
-   CHIAROSCURO
-   Renaissance art technique, stark light and shadow
+   BORGHESE
+   Dramatic gallery, stark light and shadow
    =================================== */
-[data-theme="chiaroscuro"] {
+[data-theme="borghese"] {
 	/* Code Syntax Highlighting (GitHub Dark High Contrast) */
 	--shiki-theme: github-dark-high-contrast;
 	--code-bg: #0a0c10;
@@ -845,9 +819,6 @@
 	--secondary-hover: #CCCCCC;
 	--secondary-active: #E5E5E5;
 
-	--accent: #FFFFFF;
-	--accent-hover: #CCCCCC;
-
 	/* Status Colors - Grayscale */
 	--success: #FFFFFF;
 	--success-subtle: #1a1a1a;
@@ -879,10 +850,10 @@
 }
 
 /* ===================================
-   THE STOA
-   Stoic painted porch, vivid philosophy
+   GATSBY
+   Jazz age vivid glamour
    =================================== */
-[data-theme="stoa"] {
+[data-theme="gatsby"] {
 	/* Code Syntax Highlighting (Monokai) */
 	--shiki-theme: monokai;
 	--code-bg: #272822;
@@ -914,9 +885,6 @@
 	--secondary: #F8F8F2;
 	--secondary-hover: #FFFFFF;
 	--secondary-active: #E8E8E2;
-
-	--accent: #A6E22E;
-	--accent-hover: #B8E85A;
 
 	/* Status Colors */
 	--success: #A6E22E;
@@ -985,9 +953,6 @@
 	--secondary-hover: #c8cdd5;
 	--secondary-active: #9199a6;
 
-	--accent: #c678dd;
-	--accent-hover: #d490e6;
-
 	/* Status Colors - Atom palette */
 	--success: #90b061;
 	--success-subtle: #242d1a;
@@ -1019,10 +984,10 @@
 }
 
 /* ===================================
-   TABULA RASA
-   Blank slate, clean mind, muted nordic calm
+   ASGARD
+   Norse realm, cold nordic majesty
    =================================== */
-[data-theme="tabula-rasa"] {
+[data-theme="asgard"] {
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
 	--code-bg: #1e1e1e;
@@ -1055,9 +1020,6 @@
 	--secondary-hover: #e5e5e5;
 	--secondary-active: #c4c4c4;
 
-	--accent: #3FA266;
-	--accent-hover: #4fb87a;
-
 	/* Status Colors */
 	--success: #3FA266;
 	--success-subtle: #1a251e;
@@ -1089,15 +1051,15 @@
 }
 
 /* ===================================
-   THE FORUM
-   Sunny Roman courtyard, warm golden light
+   TATOOINE
+   Twin suns, desert warmth
    =================================== */
-[data-theme="forum"] {
+[data-theme="tatooine"] {
 	/* Code Syntax Highlighting (Solarized Light) */
 	--shiki-theme: solarized-light;
 	--code-bg: #fdf6e3;
-	--code-fg: #657b83;
-	--code-comment: #93a1a1;
+	--code-fg: #5d665e;
+	--code-comment: #8f918a;
 	--code-keyword: #859900;
 	--code-string: #2aa198;
 	--code-function: #268bd2;
@@ -1109,24 +1071,21 @@
 	--surface-elevated: #eee8d5;
 	--surface-overlay: #ffffff;
 
-	/* Content Colors */
-	--foreground: #073642;
-	--foreground-muted: #586e75;
-	--foreground-subtle: #93a1a1;
-	--foreground-disabled: #b8c5c5;
+	/* Content Colors - Warm text hierarchy */
+	--foreground: #2d3632;
+	--foreground-muted: #5d665e;
+	--foreground-subtle: #8f918a;
+	--foreground-disabled: #b5b6ae;
 
 	/* Interactive Colors - Solarized blue */
 	--primary: #268bd2;
 	--primary-hover: #4a9fd9;
 	--primary-active: #1e7abb;
-	--primary-subtle: #e8f4fb;
+	--primary-subtle: #f2d9be;
 
-	--secondary: #073642;
-	--secondary-hover: #0a4a5a;
-	--secondary-active: #052832;
-
-	--accent: #d33682;
-	--accent-hover: #dc5a9a;
+	--secondary: #2d3632;
+	--secondary-hover: #3d4a42;
+	--secondary-active: #1e2622;
 
 	/* Status Colors */
 	--success: #859900;
@@ -1136,7 +1095,7 @@
 	--error: #dc322f;
 	--error-subtle: #fce8e8;
 	--info: #268bd2;
-	--info-subtle: #e8f4fb;
+	--info-subtle: #f2d9be;
 
 	/* Diff Colors */
 	--diff-add: #859900;
@@ -1145,24 +1104,24 @@
 	--diff-remove-bg: #fce8e8;
 
 	/* Border Colors */
-	--border: #eee8d5;
-	--border-subtle: #f5f0e0;
-	--border-strong: #93a1a1;
+	--border: #e6dfcc;
+	--border-subtle: #f0eadb;
+	--border-strong: #8f918a;
 	--border-focus: #268bd2;
 
 	/* Selection/Highlight */
 	--highlight: #e8e4d0;
-	--highlight-foreground: #073642;
+	--highlight-foreground: #2d3632;
 
 	/* Background Inverse */
 	--background-inverse: #002b36;
 }
 
 /* ===================================
-   HEMLOCK
-   Socrates' fate, gothic purple mystery
+   AGORA
+   Greek marketplace, purple mystery
    =================================== */
-[data-theme="hemlock"] {
+[data-theme="agora"] {
 	/* Code Syntax Highlighting (Dracula) */
 	--shiki-theme: dracula;
 	--code-bg: #282a36;
@@ -1194,9 +1153,6 @@
 	--secondary: #f8f8f2;
 	--secondary-hover: #ffffff;
 	--secondary-active: #e8e8e2;
-
-	--accent: #bd93f9;
-	--accent-hover: #caa8fa;
 
 	/* Status Colors - Dracula palette */
 	--success: #50fa7b;
@@ -1264,9 +1220,6 @@
 	--secondary: #e0def4;
 	--secondary-hover: #f0eef8;
 	--secondary-active: #d0cee4;
-
-	--accent: #c4a7e7;
-	--accent-hover: #d0b8ec;
 
 	/* Status Colors - Rose Pine palette */
 	--success: #9ccfd8;

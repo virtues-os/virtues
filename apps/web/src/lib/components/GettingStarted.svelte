@@ -17,7 +17,6 @@
 
 	// State
 	let expanded = $state(false);
-	let loading = $state(true);
 	let completedSteps = $state<string[]>([]);
 	let skippedSteps = $state<string[]>([]);
 
@@ -26,9 +25,11 @@
 	let devicePaired = $state(false);
 	let hasChatSessions = $state(false);
 
-	onMount(async () => {
-		await Promise.all([loadGettingStartedState(), loadAutoCompleteData()]);
-		loading = false;
+	onMount(() => {
+		// Fire-and-forget: data loads in the background and reactively updates the UI.
+		// We render immediately with default values (0 steps done) to avoid CLS.
+		loadGettingStartedState();
+		loadAutoCompleteData();
 	});
 
 	async function loadGettingStartedState() {
@@ -122,6 +123,10 @@
 				spaceStore.openTabFromRoute(step.action.href, {
 					label: step.title,
 				});
+				// Mark complete if autoComplete is 'none' (clicking is enough)
+				if (step.autoComplete?.type === "none") {
+					await markStepComplete(step.id);
+				}
 				break;
 			case "focusInput":
 				onFocusInput?.(step.action.placeholder);
@@ -188,9 +193,7 @@
 	const allDone = $derived(doneCount === totalSteps);
 </script>
 
-{#if loading}
-	<!-- Don't show anything during loading - component starts collapsed anyway -->
-{:else if !allDone}
+{#if !allDone}
 	<div class="getting-started">
 		<button
 			class="accordion-header"
@@ -212,6 +215,9 @@
 			<span class="header-content">
 				<span class="header-title">Getting started</span>
 				<span class="header-progress">{doneCount}/{totalSteps}</span>
+				{#if doneCount > 0}
+					<span class="header-hint">· finish to hide</span>
+				{/if}
 			</span>
 		</button>
 
@@ -363,6 +369,11 @@
 	.header-progress::before {
 		content: "·";
 		margin-right: 8px;
+	}
+
+	.header-hint {
+		color: var(--color-foreground-subtle);
+		opacity: 0.7;
 	}
 
 	/* Accordion content with smooth grid animation */

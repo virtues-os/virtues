@@ -3,6 +3,7 @@
 	import { fade } from "svelte/transition";
 	import type { ModelOption } from "$lib/config/models";
 	import { getModels, getDefaultModel, isLoading, getError } from "$lib/stores/models.svelte";
+	import { getProviderIcon } from "$lib/config/providerIcons";
 	import UniversalSelect from "./UniversalSelect.svelte";
 
 	interface Props {
@@ -88,7 +89,7 @@
 				class:text-foreground={open}
 				title="Select model: {model?.displayName || 'Select Model'}"
 			>
-				<Icon icon="ri:robot-fill" width="16" />
+				<Icon icon={model ? getProviderIcon(model.provider) : 'ri:robot-fill'} width="16" />
 			</div>
 		{/snippet}
 

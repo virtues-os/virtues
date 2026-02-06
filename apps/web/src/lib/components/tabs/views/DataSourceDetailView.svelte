@@ -41,7 +41,12 @@
 		last_sync_at: string | null;
 		earliest_record_at: string | null;
 		latest_record_at: string | null;
-		sync_status: 'pending' | 'initial' | 'incremental' | 'backfilling' | 'failed';
+		sync_status:
+			| "pending"
+			| "initial"
+			| "incremental"
+			| "backfilling"
+			| "failed";
 	}
 
 	interface CatalogSource {
@@ -99,18 +104,25 @@
 			]);
 
 			if (!sourceRes.ok) {
-				throw new Error(`Failed to load source: ${sourceRes.statusText}`);
+				throw new Error(
+					`Failed to load source: ${sourceRes.statusText}`,
+				);
 			}
 			if (!streamsRes.ok) {
-				throw new Error(`Failed to load streams: ${streamsRes.statusText}`);
+				throw new Error(
+					`Failed to load streams: ${streamsRes.statusText}`,
+				);
 			}
 			if (!catalogRes.ok) {
-				throw new Error(`Failed to load catalog: ${catalogRes.statusText}`);
+				throw new Error(
+					`Failed to load catalog: ${catalogRes.statusText}`,
+				);
 			}
 
 			source = await sourceRes.json();
 			streams = await streamsRes.json();
-			catalog = await catalogRes.json();
+			const catalogData = await catalogRes.json();
+			catalog = catalogData.sources ?? catalogData;
 
 			// Update tab label with source name
 			if (source?.name) {
@@ -118,11 +130,14 @@
 			}
 
 			// Load Plaid accounts if this is a Plaid source
-			if (source?.source === 'plaid') {
+			if (source?.source === "plaid") {
 				await loadPlaidAccounts();
 			}
 		} catch (e) {
-			error = e instanceof Error ? e.message : "Failed to load source details";
+			error =
+				e instanceof Error
+					? e.message
+					: "Failed to load source details";
 			console.error("Failed to load source details:", e);
 		} finally {
 			loading = false;
@@ -191,7 +206,7 @@
 		try {
 			await deleteSource(source.id);
 			// Navigate back to sources list
-			spaceStore.openTabFromRoute("/source");
+			spaceStore.openTabFromRoute("/sources");
 		} catch (err) {
 			console.error("Failed to delete source:", err);
 			toast.error("Failed to delete source. Please try again.");
@@ -199,13 +214,16 @@
 		}
 	}
 
-	async function handleSyncStream(streamName: string, mode: 'incremental' | 'backfill' = 'incremental') {
+	async function handleSyncStream(
+		streamName: string,
+		mode: "incremental" | "backfill" = "incremental",
+	) {
 		if (syncingStreams.has(streamName) || !source) return;
 
 		try {
 			// Build sync request
 			const request: any = { sync_mode: mode };
-			if (mode === 'backfill') {
+			if (mode === "backfill") {
 				// Default backfill to last 1 year if not specified
 				const end = new Date();
 				const start = new Date();
@@ -335,12 +353,12 @@
 	}
 
 	function handleBackToSources() {
-		spaceStore.openTabFromRoute("/source");
+		spaceStore.openTabFromRoute("/sources");
 	}
 
 	async function loadPlaidAccounts() {
-		if (!source || source.source !== 'plaid') return;
-		
+		if (!source || source.source !== "plaid") return;
+
 		loadingAccounts = true;
 		try {
 			const res = await fetch(`/api/plaid/${source.id}/accounts`);
@@ -348,44 +366,49 @@
 				plaidAccounts = await res.json();
 			}
 		} catch (e) {
-			console.error('Failed to load Plaid accounts:', e);
+			console.error("Failed to load Plaid accounts:", e);
 		} finally {
 			loadingAccounts = false;
 		}
 	}
 
-	function formatCurrency(amount: number | null, currencyCode: string | null): string {
-		if (amount === null) return '—';
-		return new Intl.NumberFormat('en-US', {
-			style: 'currency',
-			currency: currencyCode || 'USD',
+	function formatCurrency(
+		amount: number | null,
+		currencyCode: string | null,
+	): string {
+		if (amount === null) return "—";
+		return new Intl.NumberFormat("en-US", {
+			style: "currency",
+			currency: currencyCode || "USD",
 		}).format(amount);
 	}
 
 	function getAccountTypeIcon(type: string): string {
 		switch (type.toLowerCase()) {
-			case 'depository':
-				return 'ri:bank-line';
-			case 'credit':
-				return 'ri:bank-card-line';
-			case 'investment':
-			case 'brokerage':
-				return 'ri:line-chart-line';
-			case 'loan':
-				return 'ri:money-dollar-circle-line';
+			case "depository":
+				return "ri:bank-line";
+			case "credit":
+				return "ri:bank-card-line";
+			case "investment":
+			case "brokerage":
+				return "ri:line-chart-line";
+			case "loan":
+				return "ri:money-dollar-circle-line";
 			default:
-				return 'ri:wallet-line';
+				return "ri:wallet-line";
 		}
 	}
 </script>
 
 {#if loading}
-	<Page>
-		<div class="text-center py-12 text-foreground-muted">Loading...</div>
-	</Page>
+	<div class="flex items-center justify-center h-full">
+		<Icon icon="ri:loader-4-line" width="20" class="spin" />
+	</div>
 {:else if error}
 	<Page>
-		<div class="p-4 bg-error-subtle border border-error rounded-lg text-error">
+		<div
+			class="p-4 bg-error-subtle border border-error rounded-lg text-error"
+		>
 			{error}
 		</div>
 	</Page>
@@ -402,7 +425,7 @@
 				onclick={handleBackToSources}
 				class="inline-flex items-center gap-2 text-foreground hover:underline"
 			>
-				<Icon icon="ri:arrow-left-line"/>
+				<Icon icon="ri:arrow-left-line" />
 				Back to Sources
 			</button>
 		</div>
@@ -466,8 +489,7 @@
 								onclick={handleDelete}
 								disabled={isDeleting}
 							>
-								<Icon icon="ri:delete-bin-line"
-								/>
+								<Icon icon="ri:delete-bin-line" />
 								<span>Delete</span>
 							</Button>
 						</div>
@@ -478,56 +500,86 @@
 			<!-- Key Attributes -->
 			<div class="mb-8 text-foreground-muted space-y-1">
 				<p>
-					Created {formatRelativeTime(source.created_at).toLowerCase()}
+					Created {formatRelativeTime(
+						source.created_at,
+					).toLowerCase()}
 				</p>
 				<p>
-					Last synced {formatRelativeTime(source.last_sync_at).toLowerCase()}
+					Last synced {formatRelativeTime(
+						source.last_sync_at,
+					).toLowerCase()}
 				</p>
 				<p>
-					{source.enabled_streams_count} of {source.total_streams_count} streams enabled
+					{source.enabled_streams_count} of {source.total_streams_count}
+					streams enabled
 				</p>
 			</div>
 
 			<!-- Plaid Accounts Section (only for Plaid sources) -->
-			{#if source.source === 'plaid'}
+			{#if source.source === "plaid"}
 				<div class="mb-8">
-					<h2 class="text-xl font-serif font-medium text-foreground mb-4">
+					<h2
+						class="text-xl font-serif font-medium text-foreground mb-4"
+					>
 						Connected Accounts
 						{#if plaidAccounts.length > 0}
-							<span class="text-foreground-subtle text-sm font-normal">
+							<span
+								class="text-foreground-subtle text-sm font-normal"
+							>
 								({plaidAccounts.length})
 							</span>
 						{/if}
 					</h2>
 
 					{#if loadingAccounts}
-						<div class="text-foreground-muted py-4">Loading accounts...</div>
+						<div class="text-foreground-muted py-4">
+							Loading accounts...
+						</div>
 					{:else if plaidAccounts.length === 0}
-						<div class="border border-border rounded-lg p-6 text-center bg-surface-elevated">
-							<p class="text-foreground-muted">No accounts found for this connection.</p>
+						<div
+							class="border border-border rounded-lg p-6 text-center bg-surface-elevated"
+						>
+							<p class="text-foreground-muted">
+								No accounts found for this connection.
+							</p>
 						</div>
 					{:else}
-						<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						<div
+							class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+						>
 							{#each plaidAccounts as account}
-								<div class="p-4 bg-surface border border-border rounded-lg">
+								<div
+									class="p-4 bg-surface border border-border rounded-lg"
+								>
 									<div class="flex items-start gap-3 mb-3">
 										<Icon
-											icon={getAccountTypeIcon(account.account_type)}
+											icon={getAccountTypeIcon(
+												account.account_type,
+											)}
 											class="text-xl text-foreground-subtle mt-0.5"
 										/>
 										<div class="flex-1 min-w-0">
-											<h4 class="font-medium text-foreground truncate">
+											<h4
+												class="font-medium text-foreground truncate"
+											>
 												{account.name}
 											</h4>
 											{#if account.official_name && account.official_name !== account.name}
-												<p class="text-xs text-foreground-subtle truncate">
+												<p
+													class="text-xs text-foreground-subtle truncate"
+												>
 													{account.official_name}
 												</p>
 											{/if}
-											<p class="text-xs text-foreground-muted capitalize">
-												{account.subtype || account.account_type}
+											<p
+												class="text-xs text-foreground-muted capitalize"
+											>
+												{account.subtype ||
+													account.account_type}
 												{#if account.mask}
-													<span class="text-foreground-subtle">
+													<span
+														class="text-foreground-subtle"
+													>
 														••{account.mask}
 													</span>
 												{/if}
@@ -536,18 +588,36 @@
 									</div>
 									<div class="space-y-1 text-sm">
 										{#if account.balance_current !== null}
-											<div class="flex items-center justify-between">
-												<span class="text-foreground-muted">Current</span>
-												<span class="font-medium text-foreground">
-													{formatCurrency(account.balance_current, account.iso_currency_code)}
+											<div
+												class="flex items-center justify-between"
+											>
+												<span
+													class="text-foreground-muted"
+													>Current</span
+												>
+												<span
+													class="font-medium text-foreground"
+												>
+													{formatCurrency(
+														account.balance_current,
+														account.iso_currency_code,
+													)}
 												</span>
 											</div>
 										{/if}
-										{#if account.balance_available !== null && account.account_type === 'depository'}
-											<div class="flex items-center justify-between">
-												<span class="text-foreground-muted">Available</span>
+										{#if account.balance_available !== null && account.account_type === "depository"}
+											<div
+												class="flex items-center justify-between"
+											>
+												<span
+													class="text-foreground-muted"
+													>Available</span
+												>
 												<span class="text-foreground">
-													{formatCurrency(account.balance_available, account.iso_currency_code)}
+													{formatCurrency(
+														account.balance_available,
+														account.iso_currency_code,
+													)}
 												</span>
 											</div>
 										{/if}
@@ -633,12 +703,20 @@
 									</td>
 									<td class="px-6 py-4">
 										<div class="flex flex-col">
-											<span class="text-sm text-foreground">
-												{formatRelativeTime(stream.last_sync_at)}
+											<span
+												class="text-sm text-foreground"
+											>
+												{formatRelativeTime(
+													stream.last_sync_at,
+												)}
 											</span>
 											{#if stream.earliest_record_at}
-												<span class="text-[10px] text-foreground-subtle uppercase tracking-tight">
-													From {new Date(stream.earliest_record_at).toLocaleDateString()}
+												<span
+													class="text-[10px] text-foreground-subtle uppercase tracking-tight"
+												>
+													From {new Date(
+														stream.earliest_record_at,
+													).toLocaleDateString()}
 												</span>
 											{/if}
 										</div>

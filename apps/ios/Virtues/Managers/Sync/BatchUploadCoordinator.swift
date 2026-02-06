@@ -17,7 +17,7 @@ class BatchUploadCoordinator: ObservableObject {
     @Published var lastUploadDate: Date?
     @Published var lastSuccessfulSyncDate: Date?
     @Published var uploadStats: (pending: Int, failed: Int, total: Int) = (0, 0, 0)
-    @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int) = (0, 0, 0, 0)
+    @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int, battery: Int, barometer: Int) = (0, 0, 0, 0, 0, 0, 0, 0)
 
     // MARK: - Dependencies
     private let configProvider: ConfigurationProvider
@@ -239,32 +239,52 @@ class BatchUploadCoordinator: ObservableObject {
         // Use type-erased processing based on stream type
         switch streamName {
         case "ios_healthkit":
-            let healthKitProcessor = processor as! HealthKitStreamProcessor
-            return await uploadWithProcessor(processor: healthKitProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? HealthKitStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         case "ios_location":
-            let locationProcessor = processor as! LocationStreamProcessor
-            return await uploadWithProcessor(processor: locationProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? LocationStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         case "ios_mic":
-            let audioProcessor = processor as! AudioStreamProcessor
-            return await uploadWithProcessor(processor: audioProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? AudioStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         case "ios_battery":
-            let batteryProcessor = processor as! BatteryStreamProcessor
-            return await uploadWithProcessor(processor: batteryProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? BatteryStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         case "ios_barometer":
-            let barometerProcessor = processor as! BarometerStreamProcessor
-            return await uploadWithProcessor(processor: barometerProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? BarometerStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         case "ios_contacts":
-            let contactsProcessor = processor as! ContactsStreamProcessor
-            return await uploadWithProcessor(processor: contactsProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? ContactsStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         case "ios_finance":
-            let financeProcessor = processor as! FinanceKitStreamProcessor
-            return await uploadWithProcessor(processor: financeProcessor, events: events, to: url)
+            guard let typedProcessor = processor as? FinanceKitStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
+
+        case "ios_eventkit":
+            guard let typedProcessor = processor as? EventKitStreamProcessor else {
+                return handleProcessorTypeMismatch(events: events, streamName: streamName)
+            }
+            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
         default:
             for event in events {
@@ -272,6 +292,15 @@ class BatchUploadCoordinator: ObservableObject {
             }
             return false
         }
+    }
+
+    /// Handle processor type mismatch - log error and mark events for retry
+    private func handleProcessorTypeMismatch(events: [UploadEvent], streamName: String) -> Bool {
+        print("❌ Processor type mismatch for stream: \(streamName)")
+        for event in events {
+            storageProvider.incrementRetry(id: event.id)
+        }
+        return false
     }
 
     /// Generic upload method that works with any stream processor
@@ -411,7 +440,12 @@ class BatchUploadCoordinator: ObservableObject {
     
     private func registerBackgroundTasks() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: backgroundTaskIdentifier, using: nil) { task in
-            self.handleBackgroundTask(task: task as! BGProcessingTask)
+            guard let processingTask = task as? BGProcessingTask else {
+                print("❌ Unexpected task type for sync task")
+                task.setTaskCompleted(success: false)
+                return
+            }
+            self.handleBackgroundTask(task: processingTask)
         }
     }
     

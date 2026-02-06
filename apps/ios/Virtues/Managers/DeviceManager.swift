@@ -22,8 +22,7 @@ class DeviceManager: ObservableObject {
     @Published var configurationState: DeviceConfigurationState = .notConfigured
     @Published var isVerifying: Bool = false
     @Published var lastError: String?
-    @Published var configuredStreamCount: Int = 0
-    
+    @Published var updateRequired: Bool = false
     private let userDefaults = UserDefaults.standard
     private let configKey = "com.virtues.deviceConfiguration"
     
@@ -214,6 +213,50 @@ class DeviceManager: ObservableObject {
         } else {
             return "Not connected"
         }
+    }
+
+    // MARK: - Minimum Version Gate
+
+    /// Check if this app version meets the server's minimum requirement.
+    /// Called on launch and periodically during sync cycles.
+    func checkMinimumVersion() async {
+        guard isConfigured, !configuration.apiEndpoint.isEmpty else { return }
+
+        do {
+            guard let url = URL(string: "\(configuration.apiEndpoint)/health") else { return }
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+
+            struct HealthResponse: Decodable {
+                let min_ios_version: String?
+            }
+
+            let health = try JSONDecoder().decode(HealthResponse.self, from: data)
+            guard let minVersion = health.min_ios_version else { return }
+
+            let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
+
+            let needsUpdate = compareVersions(current: currentVersion, minimum: minVersion)
+            await MainActor.run {
+                self.updateRequired = needsUpdate
+            }
+        } catch {
+            // Network error - don't block the user, will check again next cycle
+        }
+    }
+
+    /// Returns true if current version is older than minimum.
+    private func compareVersions(current: String, minimum: String) -> Bool {
+        let currentParts = current.split(separator: ".").compactMap { Int($0) }
+        let minimumParts = minimum.split(separator: ".").compactMap { Int($0) }
+
+        for i in 0..<max(currentParts.count, minimumParts.count) {
+            let c = i < currentParts.count ? currentParts[i] : 0
+            let m = i < minimumParts.count ? minimumParts[i] : 0
+            if c < m { return true }
+            if c > m { return false }
+        }
+        return false // Equal versions
     }
 
     // MARK: - Debug Helpers

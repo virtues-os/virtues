@@ -109,6 +109,16 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::Server { host, port } => {
+            // Run migrations and seed data
+            println!("📊 Running migrations...");
+            virtues.database.initialize().await?;
+            println!("✅ Migrations complete");
+
+            println!("🌱 Seeding defaults...");
+            crate::seeding::prod_seed::seed_production_data(&virtues.database).await?;
+            println!("✅ Seeding complete");
+            println!();
+
             println!("Starting Virtues server on {}:{}", host, port);
             println!("API available at http://{}:{}/api", host, port);
             println!("Health check: http://{}:{}/health", host, port);

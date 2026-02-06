@@ -135,6 +135,8 @@ pub enum FinishReason {
     AwaitingUser,
     /// An error occurred
     Error,
+    /// Request was cancelled by user
+    Cancelled,
 }
 
 /// Error codes for categorizing failures

@@ -113,7 +113,7 @@
 					<ul class="footer-list">
 						{#each page.keyContacts as person}
 							<li>
-								<a href="/wiki/{person.pageSlug}" class="footer-link">
+								<a href="/wiki/{person.pageId}" class="footer-link">
 									<span class="link-text">{person.displayName}</span>
 									{#if person.preview}
 										<span class="link-preview">{person.preview}</span>
@@ -132,7 +132,7 @@
 					<ul class="footer-list">
 						{#each page.locations as place}
 							<li>
-								<a href="/wiki/{place.pageSlug}" class="footer-link">
+								<a href="/wiki/{place.pageId}" class="footer-link">
 									<span class="link-text">{place.displayName}</span>
 								</a>
 							</li>
@@ -148,7 +148,7 @@
 					<ul class="footer-list">
 						{#each page.narrativeContext as context}
 							<li>
-								<a href="/wiki/{context.pageSlug}" class="footer-link">
+								<a href="/wiki/{context.pageId}" class="footer-link">
 									<span class="link-text">{context.displayName}</span>
 								</a>
 							</li>

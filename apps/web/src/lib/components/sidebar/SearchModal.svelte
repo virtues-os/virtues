@@ -30,6 +30,7 @@
 	let selectedIndex = $state(0);
 	let inputEl: HTMLInputElement | null = $state(null);
 	let modalEl: HTMLDivElement | null = $state(null);
+	let wasOpen = $state(false); // Track previous open state to detect transitions
 
 	// Theme selection state
 	let originalTheme = $state<Theme | null>(null);
@@ -111,7 +112,7 @@
 			id: "sources",
 			label: "Go to Sources",
 			icon: "ri:device-line",
-			action: () => spaceStore.openTabFromRoute("/source"),
+			action: () => spaceStore.openTabFromRoute("/sources"),
 		},
 		{
 			id: "change-theme",
@@ -254,10 +255,10 @@
 		}
 	}
 
-	// Focus input and load pages when modal opens
+	// Focus input and reset state only when modal first opens (not on re-renders)
 	$effect(() => {
-		if (open && inputEl) {
-			inputEl.focus();
+		if (open && !wasOpen) {
+			// Modal just opened - reset state
 			searchQuery = "";
 			selectedIndex = 0;
 			mode = "search";
@@ -266,6 +267,14 @@
 			if (pagesStore.pages.length === 0 && !pagesStore.pagesLoading) {
 				pagesStore.loadPages();
 			}
+		}
+		wasOpen = open;
+	});
+
+	// Focus input when modal is open and input is available
+	$effect(() => {
+		if (open && inputEl) {
+			inputEl.focus();
 		}
 	});
 
@@ -498,8 +507,8 @@
 		border-bottom: 1px solid var(--border);
 	}
 
-	.search-icon {
-		color: var(--foreground-muted);
+	:global(.search-icon) {
+		color: var(--foreground-muted) !important;
 		flex-shrink: 0;
 	}
 
@@ -569,8 +578,8 @@
 		background: var(--primary-subtle);
 	}
 
-	.result-icon {
-		color: var(--foreground-muted);
+	:global(.result-icon) {
+		color: var(--foreground-muted) !important;
 		flex-shrink: 0;
 	}
 

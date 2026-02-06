@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @import './themes.css';
 @import './lib/styles/sidebar.css';
+@import './lib/styles/entity-badge.css';
 
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";

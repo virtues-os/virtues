@@ -3,10 +3,10 @@
 
 	interface Props {
 		pageTitle: string;
-		pageSlug: string;
+		pageId: string;
 	}
 
-	let { pageTitle, pageSlug }: Props = $props();
+	let { pageTitle, pageId }: Props = $props();
 
 	// Mock AI suggestions
 	const suggestions = [

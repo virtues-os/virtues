@@ -19,6 +19,7 @@ use axum::{
     Json,
 };
 use chrono::Utc;
+use chrono_tz::Tz;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -27,14 +28,70 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::StreamExt;
 
-use crate::agent::{prompt::BASE_SYSTEM_PROMPT, AgentConfig, AgentEvent, AgentLoop};
+use crate::agent::{AgentConfig, AgentEvent, AgentLoop};
 use crate::api::chat_usage::{record_chat_usage, UsageData};
 use crate::api::chats::{append_message, ChatMessage, ToolCall};
 use crate::api::compaction::{build_context_for_llm, compact_chat, CompactionOptions};
 use crate::api::token_estimation::{estimate_tokens, ContextStatus};
 use crate::http_client::tollbooth_streaming_client;
 use crate::middleware::auth::AuthUser;
+use crate::server::yjs::YjsState;
 use crate::tools::ToolContext;
+use tokio_util::sync::CancellationToken;
+
+// ============================================================================
+// Cancellation State
+// ============================================================================
+
+/// Shared state for tracking active chat requests that can be cancelled
+#[derive(Clone, Default)]
+pub struct ChatCancellationState {
+    /// Map of chat_id -> cancellation token for active requests
+    tokens: Arc<std::sync::RwLock<std::collections::HashMap<String, CancellationToken>>>,
+}
+
+impl ChatCancellationState {
+    pub fn new() -> Self {
+        Self {
+            tokens: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Register a new chat request and get its cancellation token
+    pub fn register(&self, chat_id: &str) -> CancellationToken {
+        let token = CancellationToken::new();
+        // Recover from poisoned lock - the data is still valid
+        let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
+        guard.insert(chat_id.to_string(), token.clone());
+        token
+    }
+
+    /// Cancel an active chat request
+    pub fn cancel(&self, chat_id: &str) -> bool {
+        // Recover from poisoned lock - the data is still valid
+        let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(token) = guard.get(chat_id) {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Remove a chat request (called when stream completes)
+    pub fn remove(&self, chat_id: &str) {
+        // Recover from poisoned lock - the data is still valid
+        let mut guard = self.tokens.write().unwrap_or_else(|e| e.into_inner());
+        guard.remove(chat_id);
+    }
+
+    /// Check if a chat has an active request
+    pub fn is_active(&self, chat_id: &str) -> bool {
+        // Recover from poisoned lock - the data is still valid
+        let guard = self.tokens.read().unwrap_or_else(|e| e.into_inner());
+        guard.contains_key(chat_id)
+    }
+}
 
 // ============================================================================
 // Types
@@ -76,10 +133,24 @@ pub struct ChatRequest {
     /// User's timezone (IANA format, e.g., "America/Los_Angeles")
     #[serde(default)]
     pub timezone: Option<String>,
+    /// AI persona for system prompt customization (per-chat)
+    #[serde(default = "default_persona")]
+    pub persona: String,
+    /// Agent mode controlling tool availability (agent, chat, research)
+    #[serde(rename = "agentMode", default = "default_agent_mode")]
+    pub agent_mode: String,
 }
 
 fn default_agent() -> String {
     "auto".to_string()
+}
+
+fn default_persona() -> String {
+    "default".to_string()
+}
+
+fn default_agent_mode() -> String {
+    "agent".to_string()
 }
 
 /// UI Message format (AI SDK v6)
@@ -131,6 +202,18 @@ pub enum UIPart {
         state: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         output: Option<serde_json::Value>,
+    },
+    /// Checkpoint from conversation compaction
+    #[serde(rename = "checkpoint")]
+    Checkpoint {
+        /// Summary version number
+        version: i32,
+        /// Number of messages that were summarized
+        messages_summarized: i32,
+        /// The summary text (XML structured)
+        summary: String,
+        /// When the checkpoint was created
+        timestamp: String,
     },
     #[serde(other)]
     Unknown,
@@ -215,6 +298,55 @@ pub enum StreamEvent {
     ThoughtSignature {
         signature: String,
     },
+
+    // Checkpoint event emitted after auto-compaction
+    #[serde(rename = "checkpoint")]
+    Checkpoint {
+        /// Message ID for the checkpoint
+        id: String,
+        /// Summary version number
+        version: i32,
+        /// Number of messages that were summarized
+        #[serde(rename = "messagesSummarized")]
+        messages_summarized: i32,
+        /// The summary text (XML structured)
+        summary: String,
+        /// When the checkpoint was created
+        timestamp: String,
+    },
+}
+
+// ============================================================================
+// AI SDK v6 Data Event Types
+// ============================================================================
+
+/// AI SDK v6 data event wrapper for custom events
+/// Custom events must use "data-*" prefix to be properly handled by DefaultChatTransport
+#[derive(Debug, Serialize)]
+struct DataEvent<T: Serialize> {
+    #[serde(rename = "type")]
+    event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    data: T,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    transient: bool,
+}
+
+/// Checkpoint data payload for AI SDK v6 data event
+#[derive(Debug, Serialize)]
+struct CheckpointData {
+    version: i32,
+    #[serde(rename = "messagesSummarized")]
+    messages_summarized: i32,
+    summary: String,
+    timestamp: String,
+}
+
+/// Thought signature data payload for AI SDK v6 data event
+#[derive(Debug, Serialize)]
+struct ThoughtSignatureData {
+    signature: String,
 }
 
 /// Chat error response
@@ -231,16 +363,101 @@ pub struct ChatError {
 
 type SseEvent = axum::response::sse::Event;
 
+/// Fetch the latest checkpoint message from a chat and convert to StreamEvent
+async fn get_latest_checkpoint(pool: &SqlitePool, chat_id: &str) -> Option<StreamEvent> {
+    use sqlx::Row;
+
+    let row = sqlx::query(
+        r#"
+        SELECT id, parts, created_at
+        FROM chat_messages
+        WHERE chat_id = ? AND role = 'checkpoint'
+        ORDER BY sequence_num DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(chat_id)
+    .fetch_optional(pool)
+    .await
+    .ok()??;
+
+    let id: String = row.get("id");
+    let parts_json: Option<String> = row.get("parts");
+    let created_at: String = row.get("created_at");
+
+    // Parse parts JSON to extract checkpoint data
+    let parts: Vec<UIPart> = parts_json
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+
+    // Find checkpoint part
+    for part in parts {
+        if let UIPart::Checkpoint {
+            version,
+            messages_summarized,
+            summary,
+            timestamp,
+        } = part
+        {
+            return Some(StreamEvent::Checkpoint {
+                id,
+                version,
+                messages_summarized,
+                summary,
+                // Use checkpoint timestamp, falling back to created_at if empty
+                timestamp: if timestamp.is_empty() { created_at } else { timestamp },
+            });
+        }
+    }
+
+    None
+}
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 /// Safely serialize a stream event to JSON
+/// Custom events (checkpoint, thought-signature) are wrapped in AI SDK v6 data-* format
 fn serialize_event(event: &StreamEvent) -> String {
-    serde_json::to_string(event).unwrap_or_else(|e| {
-        tracing::error!("Failed to serialize stream event: {}", e);
-        r#"{"type":"error","errorText":"Internal serialization error"}"#.to_string()
-    })
+    match event {
+        // Wrap checkpoint events in AI SDK v6 data event format
+        StreamEvent::Checkpoint { id, version, messages_summarized, summary, timestamp } => {
+            let wrapper = DataEvent {
+                event_type: "data-checkpoint".to_string(),
+                id: Some(id.clone()),
+                data: CheckpointData {
+                    version: *version,
+                    messages_summarized: *messages_summarized,
+                    summary: summary.clone(),
+                    timestamp: timestamp.clone(),
+                },
+                transient: false, // Checkpoint should persist in message parts
+            };
+            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize checkpoint event: {}", e);
+                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+            })
+        }
+        // Wrap thought signature events in AI SDK v6 data event format
+        StreamEvent::ThoughtSignature { signature } => {
+            let wrapper = DataEvent {
+                event_type: "data-thought-signature".to_string(),
+                id: None,
+                data: ThoughtSignatureData { signature: signature.clone() },
+                transient: true, // Ephemeral - only needed during streaming session
+            };
+            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize thought-signature event: {}", e);
+                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+            })
+        }
+        // All other events use standard serde serialization
+        _ => serde_json::to_string(event).unwrap_or_else(|e| {
+            tracing::error!("Failed to serialize stream event: {}", e);
+            r#"{"type":"error","errorText":"Internal serialization error"}"#.to_string()
+        }),
+    }
 }
 
 /// Parse Tollbooth error response and return user-friendly StreamEvent
@@ -259,6 +476,9 @@ fn parse_tollbooth_error(status: u16, body: &str) -> StreamEvent {
             .unwrap_or(body);
 
         match (status, code) {
+            (402, "subscription_expired") => {
+                "subscription_expired".to_string()
+            }
             (402, "insufficient_budget") | (402, _) => {
                 "You've reached your usage limit. Please try again later or upgrade your plan."
                     .to_string()
@@ -304,24 +524,63 @@ fn parse_tollbooth_error(status: u16, body: &str) -> StreamEvent {
     StreamEvent::Error { error_text }
 }
 
-/// Build system prompt with dynamic active page context
+/// Maximum characters for page content in system prompt
+/// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
+const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
+
+/// Build system prompt with dynamic active page context and personalization
 ///
-/// Combines the static BASE_SYSTEM_PROMPT with any active context (e.g., bound page).
+/// Combines the personalized system prompt with any active context (e.g., bound page).
 /// Includes current date/time for temporal awareness in searches and responses.
-fn build_system_prompt(active_page: Option<&ActivePageContext>, timezone: Option<&str>) -> String {
-    let mut prompt = BASE_SYSTEM_PROMPT.to_string();
+/// Loads user name, assistant name, and persona from profiles.
+/// Only includes tool usage instructions when agent_mode has tools available.
+async fn build_system_prompt(
+    pool: &SqlitePool,
+    active_page: Option<&ActivePageContext>,
+    timezone: Option<&str>,
+    agent_mode: &str,
+    persona_id: &str,
+) -> String {
+    use crate::agent::prompt::build_personalized_prompt;
+    use crate::api::assistant_profile::get_assistant_name;
+    use crate::api::personas::get_persona_content;
+    use crate::api::profile::get_display_name;
+
+    // Load personalization from profiles (with fallbacks)
+    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Assistant".to_string());
+    let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
+
+    // Load persona content from database (or fallback to registry default)
+    let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
+
+    // Build personalized base prompt (tool instructions only if not chat mode)
+    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode);
 
     // Add current date/time for temporal awareness
     let now = Utc::now();
-    let date_str = now.format("%A, %B %d, %Y").to_string(); // e.g., "Thursday, January 29, 2026"
-    let time_str = now.format("%H:%M UTC").to_string(); // e.g., "15:30 UTC"
-    
-    if let Some(tz) = timezone {
-        prompt.push_str(&format!(
-            "\n\n<datetime>\nToday is {}. Current time: {}. User's timezone: {}.\n</datetime>",
-            date_str, time_str, tz
-        ));
+
+    if let Some(tz_str) = timezone {
+        // Try to parse the IANA timezone and convert
+        if let Ok(tz) = tz_str.parse::<Tz>() {
+            let local = now.with_timezone(&tz);
+            let date_str = local.format("%A, %B %d, %Y").to_string();
+            let time_str = local.format("%I:%M %p %Z").to_string(); // e.g., "7:20 PM EST"
+            prompt.push_str(&format!(
+                "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
+                date_str, time_str
+            ));
+        } else {
+            // Fallback to UTC if timezone parsing fails
+            let date_str = now.format("%A, %B %d, %Y").to_string();
+            let time_str = now.format("%H:%M UTC").to_string();
+            prompt.push_str(&format!(
+                "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
+                date_str, time_str
+            ));
+        }
     } else {
+        let date_str = now.format("%A, %B %d, %Y").to_string();
+        let time_str = now.format("%H:%M UTC").to_string();
         prompt.push_str(&format!(
             "\n\n<datetime>\nToday is {}. Current time: {}.\n</datetime>",
             date_str, time_str
@@ -335,9 +594,21 @@ fn build_system_prompt(active_page: Option<&ActivePageContext>, timezone: Option
             // Include the current content from Yjs if available
             // This is the source of truth - use this for edits, not the database content
             if let Some(content) = &ctx.content {
+                // Truncate large content to avoid consuming too much context
+                let (content_display, truncation_note) = if content.len() > MAX_PAGE_CONTENT_CHARS {
+                    let truncated = format!(
+                        "{}...\n\n[Content truncated - {} more characters]",
+                        &content[..MAX_PAGE_CONTENT_CHARS],
+                        content.len() - MAX_PAGE_CONTENT_CHARS
+                    );
+                    (truncated, " The content shown is truncated. Call get_page_content for the complete document before making edits.")
+                } else {
+                    (content.clone(), "")
+                };
+
                 prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to edit this page. The content above is from the user's editor - use it as the source of truth for propose_edit operations. For full rewrites, use propose_replace_all.\n</active_context>",
-                    title, page_id, content
+                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to edit this page. The content above is from the user's editor - use it as the source of truth for propose_edit operations. For full rewrites, use propose_replace_all.{}\n</active_context>",
+                    title, page_id, content_display, truncation_note
                 ));
             } else {
                 prompt.push_str(&format!(
@@ -393,6 +664,8 @@ impl TollboothConfig {
 /// Requires authentication. Routes through Tollbooth for budget enforcement.
 pub async fn chat_handler(
     State(pool): State<SqlitePool>,
+    State(yjs_state): State<YjsState>,
+    State(cancel_state): State<ChatCancellationState>,
     user: AuthUser,
     Json(request): Json<ChatRequest>,
 ) -> Response {
@@ -539,22 +812,9 @@ pub async fn chat_handler(
     )
     .await;
 
-    // Auto-compact if critical (>= 85% context usage)
-    if matches!(compaction_status, Ok(ContextStatus::Critical)) {
-        tracing::info!(
-            chat_id = %request.chat_id,
-            "Context critical, auto-compacting chat"
-        );
-        if let Err(e) =
-            compact_chat(&pool, request.chat_id.clone(), CompactionOptions::default()).await
-        {
-            tracing::warn!(
-                chat_id = %request.chat_id,
-                error = %e,
-                "Auto-compaction failed, continuing with full context"
-            );
-        }
-    }
+    // Pass compaction_needed flag to stream - compaction will run inside stream
+    // and emit a checkpoint event for real-time UI updates
+    let compaction_needed = matches!(compaction_status, Ok(ContextStatus::Critical));
 
     // Load chat from DB and build context with compaction summary
     let chat_row = match sqlx::query(
@@ -653,8 +913,8 @@ pub async fn chat_handler(
         })
         .collect();
 
-    // Build system prompt with active page context and timezone
-    let system_prompt = build_system_prompt(request.active_page.as_ref(), request.timezone.as_deref());
+    // Build system prompt with active page context, timezone, personalization, and agent mode
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona).await;
 
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
@@ -665,7 +925,16 @@ pub async fn chat_handler(
     );
 
     // Create the streaming response with agent loop for tool execution
-    let stream = create_agent_stream(pool, tollbooth_config, request, api_messages, msg_id);
+    let stream = create_agent_stream(
+        pool,
+        yjs_state,
+        cancel_state,
+        tollbooth_config,
+        request,
+        api_messages,
+        msg_id,
+        compaction_needed,
+    );
 
     // AI SDK v6 requires this header for UI Message Stream Protocol
     let mut response = Sse::new(stream)
@@ -701,8 +970,8 @@ fn _create_chat_stream_legacy(
         // Build provider options for reasoning if applicable
         let provider_options = _build_provider_options_legacy(&model);
 
-        // Get tool definitions for LLM
-        let tools = crate::tools::get_tool_definitions_for_llm();
+        // Get tool definitions based on agent mode
+        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
         // Prepare request body
         let mut body = serde_json::json!({
@@ -1064,25 +1333,68 @@ fn _create_chat_stream_legacy(
 /// Create the SSE stream using the AgentLoop for tool execution
 fn create_agent_stream(
     pool: SqlitePool,
+    yjs_state: YjsState,
+    cancel_state: ChatCancellationState,
     tollbooth_config: Arc<TollboothConfig>,
     request: ChatRequest,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
+    compaction_needed: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
     let model = request.model.clone();
     let chat_id = request.chat_id.clone();
     let agent_id = request.agent_id.clone();
 
     Box::pin(async_stream::stream! {
-        // Create AgentLoop
-        let agent = AgentLoop::new(
+        // Register cancellation token for this chat
+        let cancel_token = cancel_state.register(&chat_id);
+
+        // Run compaction BEFORE the agent loop if needed, and emit checkpoint event
+        if compaction_needed {
+            tracing::info!(
+                chat_id = %chat_id,
+                "Context critical, auto-compacting chat"
+            );
+            let compaction_options = CompactionOptions {
+                model_id: Some(model.clone()),
+                ..Default::default()
+            };
+            match compact_chat(&pool, chat_id.clone(), compaction_options).await {
+                Ok(_) => {
+                    // Fetch the checkpoint message that was just created
+                    if let Some(checkpoint_event) = get_latest_checkpoint(&pool, &chat_id).await {
+                        yield Ok(SseEvent::default().data(serialize_event(&checkpoint_event)));
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        chat_id = %chat_id,
+                        error = %e,
+                        "Auto-compaction failed, continuing with full context"
+                    );
+                }
+            }
+        }
+
+        // Determine max_steps based on agent mode
+        // - agent: 10 (full access, fewer but impactful calls)
+        // - research: 25 (read-only, needs more exploration)
+        // - chat: 10 (conversational, no tools but allows multi-turn)
+        let max_steps = match request.agent_mode.as_str() {
+            "research" => 25,
+            _ => 10, // "agent", "chat", or default
+        };
+
+        // Create AgentLoop with YjsState for real-time page editing
+        let agent = AgentLoop::new_with_yjs(
             pool.clone(),
             tollbooth_config.url.clone(),
             tollbooth_config.user_id.clone(),
             tollbooth_config.secret.clone(),
+            yjs_state,
         )
         .with_config(AgentConfig {
-            max_steps: 10,
+            max_steps,
             tool_timeout: std::time::Duration::from_secs(30),
             parallel_tools: true,
         });
@@ -1092,10 +1404,11 @@ fn create_agent_stream(
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
             space_id: request.space_id.clone(),
+            chat_id: Some(request.chat_id.clone()),
         };
 
-        // Get tool definitions
-        let tools = crate::tools::get_tool_definitions_for_llm();
+        // Get tool definitions based on agent mode
+        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
 
         // Send text-start event
         let start_event = StreamEvent::TextStart { id: msg_id.clone() };
@@ -1113,7 +1426,7 @@ fn create_agent_stream(
         // Tool call tracking for persistence
         let mut all_tool_calls: Vec<ToolCall> = Vec::new();
 
-        // Run the agent loop
+        // Run the agent loop with cancellation support
         let mut agent_stream = agent.run(
             model.clone(),
             api_messages.clone(),
@@ -1125,7 +1438,8 @@ fn create_agent_stream(
                     .filter_map(|m| m.get("thought_signature").and_then(|s| s.as_str()))
                     .next()
                     .map(|s| s.to_string())
-            })
+            }),
+            Some(cancel_token),
         );
 
         while let Some(event) = agent_stream.next().await {
@@ -1289,6 +1603,9 @@ fn create_agent_stream(
                 );
             }
         }
+
+        // Clean up cancellation token when stream ends
+        cancel_state.remove(&chat_id);
     })
 }
 
@@ -1338,6 +1655,46 @@ fn generate_id() -> String {
     let mut rng = rand::rng();
     let bytes: [u8; 8] = rng.random();
     hex::encode(bytes)
+}
+
+// ============================================================================
+// Cancel Handler
+// ============================================================================
+
+/// Request body for cancelling a chat
+#[derive(Debug, Deserialize)]
+pub struct CancelChatRequest {
+    #[serde(rename = "chatId")]
+    pub chat_id: String,
+}
+
+/// Response for cancel request
+#[derive(Debug, Serialize)]
+pub struct CancelChatResponse {
+    pub cancelled: bool,
+    pub message: String,
+}
+
+/// POST /api/chat/cancel - Cancel an in-progress chat request
+///
+/// Stops the agent loop for the specified chat, preserving any partial results.
+pub async fn cancel_chat_handler(
+    State(cancel_state): State<ChatCancellationState>,
+    _user: AuthUser,
+    Json(request): Json<CancelChatRequest>,
+) -> impl IntoResponse {
+    let cancelled = cancel_state.cancel(&request.chat_id);
+
+    let response = CancelChatResponse {
+        cancelled,
+        message: if cancelled {
+            "Chat request cancelled".to_string()
+        } else {
+            "No active request found for this chat".to_string()
+        },
+    };
+
+    (StatusCode::OK, Json(response))
 }
 
 #[cfg(test)]

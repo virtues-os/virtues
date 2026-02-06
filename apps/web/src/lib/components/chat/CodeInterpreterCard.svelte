@@ -5,8 +5,8 @@
 	 * Displays code_interpreter tool results with expandable code and output.
 	 * Matches EditDiffCard design pattern.
 	 */
-	import { slide } from 'svelte/transition';
-	import Icon from '$lib/components/Icon.svelte';
+	import { slide } from "svelte/transition";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface CodeOutput {
 		stdout?: string;
@@ -19,7 +19,7 @@
 
 	interface Props {
 		/** Status of the execution */
-		status: 'running' | 'success' | 'error';
+		status: "running" | "success" | "error";
 		/** The Python code that was executed */
 		code: string;
 		/** The execution output */
@@ -31,30 +31,32 @@
 	let expanded = $state(false);
 	let copySuccess = $state(false);
 
-	const statusConfig = $derived({
-		running: {
-			icon: 'ri:loader-4-line',
-			label: 'Running code',
-			spinning: true
-		},
-		success: {
-			icon: 'ri:check-line',
-			label: 'Code executed',
-			spinning: false
-		},
-		error: {
-			icon: 'ri:error-warning-line',
-			label: 'Execution failed',
-			spinning: false
-		}
-	}[status]);
+	const statusConfig = $derived(
+		{
+			running: {
+				icon: "ri:loader-4-line",
+				label: "Running code",
+				spinning: true,
+			},
+			success: {
+				icon: "ri:check-line",
+				label: "Code executed",
+				spinning: false,
+			},
+			error: {
+				icon: "ri:error-warning-line",
+				label: "Execution failed",
+				spinning: false,
+			},
+		}[status],
+	);
 
 	// Format duration for display (converts ms to readable format)
 	const durationText = $derived(() => {
 		const ms = output?.execution_time_ms;
-		if (!ms) return '';
+		if (!ms) return "";
 		const seconds = ms / 1000;
-		if (seconds < 1) return '< 1s';
+		if (seconds < 1) return "< 1s";
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
 		const mins = Math.floor(seconds / 60);
 		const secs = Math.round(seconds % 60);
@@ -63,12 +65,12 @@
 
 	// Combined output text for display
 	const outputText = $derived(() => {
-		if (!output) return '';
+		if (!output) return "";
 		if (output.error) return output.error;
 		const parts: string[] = [];
 		if (output.stdout) parts.push(output.stdout);
 		if (output.stderr) parts.push(output.stderr);
-		return parts.join('\n').trim();
+		return parts.join("\n").trim();
 	});
 
 	function toggleExpanded() {
@@ -79,7 +81,7 @@
 		e.stopPropagation();
 		const text = outputText();
 		if (!text) return;
-		
+
 		try {
 			await navigator.clipboard.writeText(text);
 			copySuccess = true;
@@ -87,12 +89,12 @@
 				copySuccess = false;
 			}, 2000);
 		} catch (err) {
-			console.error('Failed to copy:', err);
+			console.error("Failed to copy:", err);
 		}
 	}
 </script>
 
-<div class="code-card" class:expanded class:error={status === 'error'}>
+<div class="code-card" class:expanded class:error={status === "error"}>
 	<!-- Header -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -108,16 +110,24 @@
 		</div>
 		<div class="header-right">
 			{#if outputText()}
-				<button 
-					class="copy-btn" 
-					onclick={handleCopy} 
-					type="button" 
-					title={copySuccess ? 'Copied!' : 'Copy output'}
+				<button
+					class="copy-btn"
+					onclick={handleCopy}
+					type="button"
+					title={copySuccess ? "Copied!" : "Copy output"}
 				>
-					<Icon icon={copySuccess ? 'ri:check-line' : 'ri:file-copy-line'} width="16" />
+					<Icon
+						icon={copySuccess
+							? "ri:check-line"
+							: "ri:file-copy-line"}
+						width="16"
+					/>
 				</button>
 			{/if}
-			<Icon icon={expanded ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="18" />
+			<Icon
+				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
+				width="18"
+			/>
 		</div>
 	</div>
 
@@ -138,11 +148,19 @@
 			<!-- Output section -->
 			{#if outputText()}
 				<div class="section">
-					<div class="section-label" class:error={status === 'error' || output?.stderr}>
-						<Icon icon={status === 'error' ? 'ri:error-warning-line' : 'ri:terminal-line'} width="14" />
-						<span>{status === 'error' ? 'Error' : 'Output'}</span>
+					<div
+						class="section-label"
+						class:error={status === "error" || output?.stderr}
+					>
+						<Icon
+							icon={status === "error"
+								? "ri:error-warning-line"
+								: "ri:terminal-line"}
+							width="14"
+						/>
+						<span>{status === "error" ? "Error" : "Output"}</span>
 					</div>
-					<div class="output-view" class:error={status === 'error'}>
+					<div class="output-view" class:error={status === "error"}>
 						<pre class="output-text">{outputText()}</pre>
 					</div>
 				</div>
@@ -200,8 +218,12 @@
 	}
 
 	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.status-label {
@@ -209,7 +231,7 @@
 	}
 
 	.duration {
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		font-weight: 400;
 	}
 
@@ -217,7 +239,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 	}
 
 	.copy-btn {
@@ -227,7 +249,7 @@
 		padding: 0.25rem;
 		background: transparent;
 		border: none;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		cursor: pointer;
 		border-radius: 0.25rem;
 		transition: all 0.15s ease;
@@ -262,7 +284,7 @@
 		font-weight: 500;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		background: var(--color-surface-elevated);
 	}
 

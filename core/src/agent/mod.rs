@@ -46,8 +46,10 @@ use async_stream::stream;
 use futures::Stream;
 use serde_json::Value;
 use sqlx::SqlitePool;
+use tokio_util::sync::CancellationToken;
 
 use crate::tools::{ToolContext, ToolExecutor};
+use crate::server::yjs::YjsState;
 
 pub use executor::{ExecutorConfig, ToolExecutionError, ToolExecutionResult};
 pub use protocol::{AgentEvent, ErrorCode, FinishReason, StepReason};
@@ -67,7 +69,7 @@ pub struct AgentConfig {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            max_steps: 10,
+            max_steps: 20,
             tool_timeout: Duration::from_secs(30),
             parallel_tools: true,
         }
@@ -113,6 +115,32 @@ impl AgentLoop {
         }
     }
 
+    /// Create a new AgentLoop with YjsState for real-time page editing
+    pub fn new_with_yjs(
+        pool: SqlitePool,
+        tollbooth_url: String,
+        tollbooth_user_id: String,
+        tollbooth_secret: String,
+        yjs_state: YjsState,
+    ) -> Self {
+        let pool = Arc::new(pool);
+        Self {
+            tool_executor: ToolExecutor::new_with_yjs(
+                (*pool).clone(),
+                tollbooth_url.clone(),
+                tollbooth_secret.clone(),
+                yjs_state,
+            ),
+            llm_config: LlmConfig {
+                tollbooth_url,
+                tollbooth_user_id,
+                tollbooth_secret,
+            },
+            pool,
+            config: AgentConfig::default(),
+        }
+    }
+
     /// Create with custom configuration
     pub fn with_config(mut self, config: AgentConfig) -> Self {
         self.config = config;
@@ -122,6 +150,7 @@ impl AgentLoop {
     /// Run the agent loop
     ///
     /// Returns a stream of AgentEvents that can be forwarded to the client.
+    /// Pass a CancellationToken to allow stopping the loop early.
     pub fn run(
         &self,
         model: String,
@@ -129,6 +158,7 @@ impl AgentLoop {
         tools: Vec<Value>,
         context: ToolContext,
         initial_thought_signature: Option<String>,
+        cancel_token: Option<CancellationToken>,
     ) -> Pin<Box<dyn Stream<Item = AgentEvent> + Send + '_>> {
         let llm_config = self.llm_config.clone();
         let tool_executor = self.tool_executor.clone();
@@ -150,6 +180,15 @@ impl AgentLoop {
 
             loop {
                 step += 1;
+
+                // Check for cancellation at start of each step
+                if let Some(ref token) = cancel_token {
+                    if token.is_cancelled() {
+                        tracing::info!(step, "Agent loop cancelled by user");
+                        yield AgentEvent::done_with_reason(step.saturating_sub(1), protocol::FinishReason::Cancelled);
+                        break;
+                    }
+                }
 
                 // Check max steps
                 if step > config.max_steps {
@@ -257,6 +296,15 @@ impl AgentLoop {
                     break;
                 }
 
+                // Check for cancellation after tool execution
+                if let Some(ref token) = cancel_token {
+                    if token.is_cancelled() {
+                        tracing::info!(step, "Agent loop cancelled after tool execution");
+                        yield AgentEvent::done_with_reason(step, protocol::FinishReason::Cancelled);
+                        break;
+                    }
+                }
+
                 // Build messages for next iteration
                 // 1. Add assistant message with tool calls
                 messages.push(executor::build_assistant_tool_message(
@@ -271,6 +319,21 @@ impl AgentLoop {
                         &tool_result.tool_call_id,
                         &tool_result.to_llm_content(),
                     ));
+                }
+
+                // 3. Inject turn limit warning when running low on steps
+                let steps_remaining = config.max_steps.saturating_sub(step);
+                if steps_remaining <= 3 && steps_remaining > 0 {
+                    let warning = format!(
+                        "[System: {} tool call{} remaining. Complete your current task or summarize progress for the user.]",
+                        steps_remaining,
+                        if steps_remaining == 1 { "" } else { "s" }
+                    );
+                    messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": warning
+                    }));
+                    tracing::debug!(steps_remaining, "Injected turn limit warning");
                 }
 
                 // Continue loop for next LLM call
@@ -298,7 +361,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AgentConfig::default();
-        assert_eq!(config.max_steps, 10);
+        assert_eq!(config.max_steps, 20);
         assert_eq!(config.tool_timeout, Duration::from_secs(30));
         assert!(config.parallel_tools);
     }

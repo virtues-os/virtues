@@ -3,74 +3,102 @@
 	 * EditDiffCard
 	 *
 	 * Displays edit_page tool results with an expandable diff view.
-	 * Minimal design with left-border accent for diff lines.
+	 * Shows Accept/Reject buttons for pending edits.
 	 */
-	import { slide } from 'svelte/transition';
-	import Icon from '$lib/components/Icon.svelte';
+	import { slide } from "svelte/transition";
+	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		/** Status of the edit */
-		status: 'pending' | 'applied' | 'failed';
-		/** Text that was searched for (will be replaced) */
+		status: "pending" | "accepted" | "rejected" | "failed";
+		/** Edit ID for tracking */
+		editId?: string;
+		/** Page ID being edited */
+		pageId?: string;
+		/** Text that was searched for (original text) */
 		find: string;
-		/** Replacement text with CriticMarkup */
+		/** Replacement text (new text) */
 		replace: string;
 		/** Whether this is a full document replacement */
 		isFullReplace?: boolean;
 		/** Callback when user views the page */
 		onViewPage?: () => void;
+		/** Callback when user accepts the edit */
+		onAccept?: () => void;
+		/** Callback when user rejects the edit */
+		onReject?: () => void;
 	}
 
-	let { status, find, replace, isFullReplace = false, onViewPage }: Props = $props();
+	let {
+		status,
+		editId,
+		pageId,
+		find,
+		replace,
+		isFullReplace = false,
+		onViewPage,
+		onAccept,
+		onReject,
+	}: Props = $props();
 
 	let expanded = $state(false);
 
-	// Parse the replacement text to extract additions and deletions
+	// Build diff lines from find (deletion) and replace (addition)
 	const parsedDiff = $derived(() => {
-		const lines: { type: 'context' | 'addition' | 'deletion'; text: string }[] = [];
-		
+		const lines: {
+			type: "context" | "addition" | "deletion";
+			text: string;
+		}[] = [];
+
 		// If it's a full replace, just show the new content as additions
-		if (isFullReplace || find === '') {
-			const cleanReplace = replace
-				.replace(/\{\+\+([\s\S]*?)\+\+\}/g, '$1')
-				.replace(/\{--([\s\S]*?)--\}/g, '');
-			lines.push({ type: 'addition', text: cleanReplace });
+		if (isFullReplace || find === "") {
+			if (replace) {
+				lines.push({ type: "addition", text: replace });
+			}
 			return lines;
 		}
 
-		// Show find text as deletion
+		// Show find text as deletion (what was removed)
 		if (find) {
-			lines.push({ type: 'deletion', text: find });
+			lines.push({ type: "deletion", text: find });
 		}
-		
-		// Show replacement
-		if (replace) {
-			const cleanReplace = replace
-				.replace(/\{\+\+([\s\S]*?)\+\+\}/g, '$1')
-				.replace(/\{--([\s\S]*?)--\}/g, '');
-			
-			if (cleanReplace !== find) {
-				lines.push({ type: 'addition', text: cleanReplace });
-			}
+
+		// Show replace text as addition (what was added)
+		if (replace && replace !== find) {
+			lines.push({ type: "addition", text: replace });
 		}
-		
+
 		return lines;
 	});
 
-	const statusConfig = $derived({
-		pending: {
-			icon: 'ri:time-line',
-			label: 'Edit pending'
+	const statusConfig = $derived(
+		{
+			pending: {
+				icon: "ri:time-line",
+				label: "Edit pending",
+				color: "warning",
+			},
+			accepted: {
+				icon: "ri:check-line",
+				label: "Edit accepted",
+				color: "success",
+			},
+			rejected: {
+				icon: "ri:close-line",
+				label: "Edit rejected",
+				color: "error",
+			},
+			failed: {
+				icon: "ri:error-warning-line",
+				label: "Edit failed",
+				color: "error",
+			},
+		}[status] ?? {
+			icon: "ri:question-line",
+			label: "Unknown",
+			color: "muted",
 		},
-		applied: {
-			icon: 'ri:check-line',
-			label: 'Edit applied'
-		},
-		failed: {
-			icon: 'ri:error-warning-line',
-			label: 'Edit failed'
-		}
-	}[status]);
+	);
 
 	function toggleExpanded() {
 		expanded = !expanded;
@@ -79,6 +107,16 @@
 	function handleViewPage(e: Event) {
 		e.stopPropagation();
 		onViewPage?.();
+	}
+
+	function handleAccept(e: Event) {
+		e.stopPropagation();
+		onAccept?.();
+	}
+
+	function handleReject(e: Event) {
+		e.stopPropagation();
+		onReject?.();
 	}
 </script>
 
@@ -93,11 +131,19 @@
 		</div>
 		<div class="header-right">
 			{#if onViewPage}
-				<button class="view-btn" onclick={handleViewPage} type="button" title="View page">
+				<button
+					class="view-btn"
+					onclick={handleViewPage}
+					type="button"
+					title="Open page"
+				>
 					<Icon icon="ri:external-link-line" width="16" />
 				</button>
 			{/if}
-			<Icon icon={expanded ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="18" />
+			<Icon
+				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
+				width="18"
+			/>
 		</div>
 	</div>
 
@@ -108,12 +154,38 @@
 				{#each parsedDiff() as line}
 					<div class="diff-line {line.type}">
 						<span class="diff-marker">
-							{#if line.type === 'deletion'}-{:else if line.type === 'addition'}+{:else}&nbsp;{/if}
+							{#if line.type === "deletion"}-{:else if line.type === "addition"}+{:else}&nbsp;{/if}
 						</span>
 						<pre class="diff-text">{line.text}</pre>
 					</div>
 				{/each}
 			</div>
+
+			<!-- Accept/Reject buttons for pending edits -->
+			{#if status === "pending" && (onAccept || onReject)}
+				<div class="action-buttons">
+					{#if onAccept}
+						<button
+							class="action-btn accept"
+							onclick={handleAccept}
+							type="button"
+						>
+							<Icon icon="ri:check-line" width="14" />
+							Accept
+						</button>
+					{/if}
+					{#if onReject}
+						<button
+							class="action-btn reject"
+							onclick={handleReject}
+							type="button"
+						>
+							<Icon icon="ri:close-line" width="14" />
+							Reject
+						</button>
+					{/if}
+				</div>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -160,7 +232,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 	}
 
 	.view-btn {
@@ -170,7 +242,7 @@
 		padding: 0.25rem;
 		background: transparent;
 		border: none;
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 		cursor: pointer;
 		border-radius: 0.25rem;
 		transition: all 0.15s ease;
@@ -215,7 +287,7 @@
 	}
 
 	.diff-line.context {
-		color: var(--color-text-secondary);
+		color: var(--color-foreground-muted);
 	}
 
 	.diff-marker {
@@ -241,5 +313,49 @@
 		word-break: break-word;
 		font-family: inherit;
 		font-size: inherit;
+	}
+
+	/* Action buttons */
+	.action-buttons {
+		display: flex;
+		gap: 0.5rem;
+		padding: 0.75rem;
+		border-top: 1px solid var(--color-border);
+		background: var(--color-surface);
+	}
+
+	.action-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.375rem 0.75rem;
+		border-radius: 0.375rem;
+		font-size: 0.75rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s ease;
+		border: 1px solid transparent;
+	}
+
+	.action-btn.accept {
+		background: color-mix(in srgb, var(--color-success) 15%, transparent);
+		color: var(--color-success);
+		border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
+	}
+
+	.action-btn.accept:hover {
+		background: var(--color-success);
+		color: white;
+	}
+
+	.action-btn.reject {
+		background: color-mix(in srgb, var(--color-error) 15%, transparent);
+		color: var(--color-error);
+		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
+	}
+
+	.action-btn.reject:hover {
+		background: var(--color-error);
+		color: white;
 	}
 </style>

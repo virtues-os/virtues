@@ -1,23 +1,24 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { onMount, untrack } from 'svelte';
+	import { onMount, untrack } from "svelte";
 	import {
-		resolveSlug,
-		getPersonBySlug,
-		getPlaceBySlug,
-		getOrganizationBySlug,
+		getPersonById,
+		getPlaceById,
+		getOrganizationById,
 		getDayByDate,
-		getActBySlug,
-		getChapterBySlug,
-		getTelosBySlug,
-	} from '$lib/wiki/api';
+		getActById,
+		getChapterById,
+		getTelosById,
+	} from "$lib/wiki/api";
 	import {
 		apiToPersonPage,
 		apiToPlacePage,
 		apiToOrganizationPage,
 		apiToDayPage,
-	} from '$lib/wiki/converters';
-	import { getPageBySlug, getOrCreateDayPage, getOrCreateYearPage, MOCK_DAY_PAGE } from '$lib/wiki';
+		apiToActPage,
+		apiToChapterPage,
+		apiToTelosPage,
+	} from "$lib/wiki/converters";
 	import {
 		WikiPage,
 		DayPage,
@@ -25,26 +26,26 @@
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
-	} from '$lib/components/wiki';
+	} from "$lib/components/wiki";
 	import {
 		isDayPage,
 		isYearPage,
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
-	} from '$lib/wiki/types';
-	import type { WikiPage as WikiPageType } from '$lib/wiki/types';
+	} from "$lib/wiki/types";
+	import type { WikiPage as WikiPageType } from "$lib/wiki/types";
 
 	interface Props {
-		/** The wiki page slug to display */
-		slug?: string;
+		/** The entity ID to display (e.g., person_abc123, day_2026-01-25) */
+		entityId?: string;
 		/** Whether this content is currently active/visible */
 		active?: boolean;
 		/** Callback when the page title is loaded (for tab label updates) */
 		onLabelChange?: (label: string) => void;
 	}
 
-	let { slug = '', active = true, onLabelChange }: Props = $props();
+	let { entityId = "", active = true, onLabelChange }: Props = $props();
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -52,7 +53,7 @@
 
 	// Parse a date string (YYYY-MM-DD) as local date to avoid timezone issues
 	function parseDateString(dateStr: string): Date {
-		const [year, month, day] = dateStr.split('-').map(Number);
+		const [year, month, day] = dateStr.split("-").map(Number);
 		return new Date(year, month - 1, day);
 	}
 
@@ -61,10 +62,17 @@
 		onLabelChange?.(label);
 	}
 
+	// Extract the type and identifier from an entity ID
+	function parseId(id: string): { type: string; identifier: string } | null {
+		const match = id.match(/^([a-z]+)_(.+)$/);
+		if (!match) return null;
+		return { type: match[1], identifier: match[2] };
+	}
+
 	// Load wiki page data
 	async function loadPage() {
-		if (!slug) {
-			error = 'No slug provided';
+		if (!entityId) {
+			error = "No entity ID provided";
 			loading = false;
 			return;
 		}
@@ -73,200 +81,152 @@
 		error = null;
 
 		try {
-			// Check if it's a date (day page)
-			const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-			if (dateRegex.test(slug)) {
-				const day = await getDayByDate(slug);
-				if (day) {
-					const dayPage = apiToDayPage(day);
-					// Fall back to mock data for demo if API returned empty day
-					if (!dayPage.autobiography && slug === '2025-12-10') {
-						wikiPage = MOCK_DAY_PAGE;
-					} else {
-						wikiPage = dayPage;
-					}
-					// Update label with formatted date
-					const date = parseDateString(slug);
-					const formatted = date.toLocaleDateString('en-US', {
-						weekday: 'short',
-						month: 'short',
-						day: 'numeric',
-					});
-					updateLabel(formatted);
-					loading = false;
-					return;
-				}
-				// If day doesn't exist in API, try mock data
-				const mockDay = getOrCreateDayPage(slug);
-				if (mockDay) {
-					wikiPage = mockDay;
-					const date = parseDateString(slug);
-					const formatted = date.toLocaleDateString('en-US', {
-						weekday: 'short',
-						month: 'short',
-						day: 'numeric',
-					});
-					updateLabel(formatted);
-					loading = false;
-					return;
-				}
-			}
+			// Parse the entity ID to determine type
+			const parsed = parseId(entityId);
 
-			// Check if it's a year
-			const yearRegex = /^\d{4}$/;
-			if (yearRegex.test(slug)) {
-				const yearPage = getOrCreateYearPage(slug);
-				if (yearPage) {
-					wikiPage = yearPage;
-					updateLabel(slug);
-					loading = false;
-					return;
-				}
-			}
-
-			// Try to resolve the slug to find the entity type
-			const resolution = await resolveSlug(slug);
-
-			if (!resolution) {
-				// Fall back to mock data
-				const mockPage = getPageBySlug(slug);
-				if (mockPage) {
-					wikiPage = mockPage;
-					updateLabel(mockPage.title);
-					loading = false;
-					return;
-				}
-				error = `Page "${slug}" not found`;
+			if (!parsed) {
+				error = `Invalid entity ID format: "${entityId}"`;
 				loading = false;
 				return;
 			}
 
-			// Fetch the full entity based on type
-			switch (resolution.entity_type) {
-				case 'person': {
-					const person = await getPersonBySlug(slug);
+			const { type, identifier } = parsed;
+
+			// Handle each entity type
+			switch (type) {
+				case "day": {
+					// identifier is the date: 2026-01-25
+					const day = await getDayByDate(identifier);
+					if (day) {
+						wikiPage = apiToDayPage(day);
+						// Update label with formatted date
+						const date = parseDateString(identifier);
+						const formatted = date.toLocaleDateString("en-US", {
+							weekday: "short",
+							month: "short",
+							day: "numeric",
+						});
+						updateLabel(formatted);
+					} else {
+						error = `Day "${identifier}" not found`;
+					}
+					break;
+				}
+
+				case "year": {
+					// TODO: Implement year API
+					error = `Year pages not yet implemented`;
+					break;
+				}
+
+				case "person": {
+					const person = await getPersonById(entityId);
 					if (person) {
 						wikiPage = apiToPersonPage(person);
 						updateLabel(person.canonical_name);
+					} else {
+						error = `Person "${entityId}" not found`;
 					}
 					break;
 				}
-				case 'place': {
-					const place = await getPlaceBySlug(slug);
+
+				case "place": {
+					const place = await getPlaceById(entityId);
 					if (place) {
 						wikiPage = apiToPlacePage(place);
 						updateLabel(place.name);
+					} else {
+						error = `Place "${entityId}" not found`;
 					}
 					break;
 				}
-				case 'organization': {
-					const org = await getOrganizationBySlug(slug);
+
+				case "org": {
+					const org = await getOrganizationById(entityId);
 					if (org) {
 						wikiPage = apiToOrganizationPage(org);
 						updateLabel(org.canonical_name);
+					} else {
+						error = `Organization "${entityId}" not found`;
 					}
 					break;
 				}
-					case 'day': {
-					const day = await getDayByDate(slug);
-					if (day) {
-						wikiPage = apiToDayPage(day);
-						const date = parseDateString(slug);
-						const formatted = date.toLocaleDateString('en-US', {
-							weekday: 'short',
-							month: 'short',
-							day: 'numeric',
-						});
-						updateLabel(formatted);
-					}
-					break;
-				}
-				case 'act': {
-					const act = await getActBySlug(slug);
-					if (act) {
-						// For now, fall back to mock page for acts
-						const mockPage = getPageBySlug(slug);
-						if (mockPage) {
-							wikiPage = mockPage;
-							updateLabel(act.title);
-						}
-					}
-					break;
-				}
-				case 'chapter': {
-					const chapter = await getChapterBySlug(slug);
-					if (chapter) {
-						// For now, fall back to mock page for chapters
-						const mockPage = getPageBySlug(slug);
-						if (mockPage) {
-							wikiPage = mockPage;
-							updateLabel(chapter.title);
-						}
-					}
-					break;
-				}
-				case 'telos': {
-					const telos = await getTelosBySlug(slug);
-					if (telos) {
-						// For now, fall back to mock page for telos
-						const mockPage = getPageBySlug(slug);
-						if (mockPage) {
-							wikiPage = mockPage;
-							updateLabel(telos.title);
-						}
-					}
-					break;
-				}
-			}
 
-			if (!wikiPage) {
-				// Final fallback to mock data
-				const mockPage = getPageBySlug(slug);
-				if (mockPage) {
-					wikiPage = mockPage;
-					updateLabel(mockPage.title);
-				} else {
-					error = `Page "${slug}" not found`;
+				case "act": {
+					const act = await getActById(entityId);
+					if (act) {
+						wikiPage = apiToActPage(act);
+						updateLabel(act.title);
+					} else {
+						error = `Act "${entityId}" not found`;
+					}
+					break;
 				}
+
+				case "chapter": {
+					const chapter = await getChapterById(entityId);
+					if (chapter) {
+						wikiPage = apiToChapterPage(chapter);
+						updateLabel(chapter.title);
+					} else {
+						error = `Chapter "${entityId}" not found`;
+					}
+					break;
+				}
+
+				case "telos": {
+					const telos = await getTelosById(entityId);
+					if (telos) {
+						wikiPage = apiToTelosPage(telos);
+						updateLabel(telos.title);
+					} else {
+						error = `Telos "${entityId}" not found`;
+					}
+					break;
+				}
+
+				default:
+					error = `Unknown entity type: "${type}"`;
 			}
 		} catch (e) {
-			console.error('Failed to load wiki page:', e);
-			// Fall back to mock data on error
-			const mockPage = getPageBySlug(slug) ?? getOrCreateDayPage(slug) ?? getOrCreateYearPage(slug);
-			if (mockPage) {
-				wikiPage = mockPage;
-				updateLabel(mockPage.title);
-			} else {
-				error = e instanceof Error ? e.message : 'Failed to load page';
-			}
+			console.error("Failed to load wiki page:", e);
+			error = e instanceof Error ? e.message : "Failed to load page";
 		} finally {
 			loading = false;
 		}
 	}
 
-	// Track the last loaded slug to avoid reloading the same page
-	let lastLoadedSlug = $state<string | null>(null);
+	// Track the last loaded entityId to avoid reloading the same page
+	let lastLoadedId = $state<string | null>(null);
 
 	onMount(() => {
-		console.log('[WikiContent] onMount, slug:', slug, 'active:', active);
-		if (slug && slug !== lastLoadedSlug) {
-			lastLoadedSlug = slug;
+		console.log(
+			"[WikiContent] onMount, entityId:",
+			entityId,
+			"active:",
+			active,
+		);
+		if (entityId && entityId !== lastLoadedId) {
+			lastLoadedId = entityId;
 			loadPage();
 		}
 	});
 
-	// Reload only when slug actually changes to a new value
+	// Reload only when entityId actually changes to a new value
 	// Use untrack() to prevent infinite loops from state updates
 	$effect(() => {
-		const currentSlug = slug;
+		const currentId = entityId;
 		const isActive = active;
-		
-		// Only reload if slug changed to a different value
-		if (currentSlug && isActive) {
+
+		// Only reload if entityId changed to a different value
+		if (currentId && isActive) {
 			untrack(() => {
-				if (currentSlug !== lastLoadedSlug) {
-					console.log('[WikiContent] slug changed, reloading:', currentSlug);
-					lastLoadedSlug = currentSlug;
+				if (currentId !== lastLoadedId) {
+					console.log(
+						"[WikiContent] entityId changed, reloading:",
+						currentId,
+					);
+					lastLoadedId = currentId;
 					loadPage();
 				}
 			});
@@ -276,13 +236,12 @@
 
 <div class="wiki-content">
 	{#if loading}
-		<div class="loading">
-			<Icon icon="ri:loader-4-line" class="animate-spin"/>
-			<span>Loading...</span>
+		<div class="flex items-center justify-center h-full">
+			<Icon icon="ri:loader-4-line" width="20" class="spin" />
 		</div>
 	{:else if error}
 		<div class="error">
-			<Icon icon="ri:error-warning-line"/>
+			<Icon icon="ri:error-warning-line" />
 			<h1>Page not found</h1>
 			<p>{error}</p>
 		</div>
@@ -302,9 +261,9 @@
 		{/if}
 	{:else}
 		<div class="error">
-			<Icon icon="ri:file-unknow-line"/>
+			<Icon icon="ri:file-unknow-line" />
 			<h1>Page not found</h1>
-			<p>The page "{slug}" doesn't exist yet.</p>
+			<p>The page "{entityId}" doesn't exist yet.</p>
 		</div>
 	{/if}
 </div>
@@ -330,8 +289,12 @@
 	}
 
 	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.animate-spin {

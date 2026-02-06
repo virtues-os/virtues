@@ -1,25 +1,30 @@
 /**
- * Yjs Document Manager
+ * Yjs Document Manager for ProseMirror
  *
  * Creates and manages Yjs documents for real-time collaborative editing.
+ * Uses Y.XmlFragment with y-prosemirror for ProseMirror integration.
  * Handles WebSocket sync, IndexedDB persistence, and undo management.
  */
 
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
-import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
-import { keymap } from '@codemirror/view';
-import type { Extension } from '@codemirror/state';
+import { ySyncPlugin, yCursorPlugin, yUndoPlugin } from 'y-prosemirror';
+import type { Plugin } from 'prosemirror-state';
 import { writable, type Writable } from 'svelte/store';
 
 export interface YjsDocument {
 	ydoc: Y.Doc;
-	ytext: Y.Text;
+	yxmlFragment: Y.XmlFragment;
 	provider: WebsocketProvider;
 	persistence: IndexeddbPersistence;
 	undoManager: Y.UndoManager;
-	extensions: Extension[];
+
+	/**
+	 * ProseMirror plugins for Yjs collaboration.
+	 * Add these to your EditorState plugins array.
+	 */
+	plugins: Plugin[];
 
 	// Connection state stores
 	isLoading: Writable<boolean>;
@@ -36,9 +41,12 @@ export interface YjsDocument {
  * @param pageId - The page ID to sync
  * @param initialContent - Optional initial content (only used if server doc is empty)
  */
-export function createYjsDocument(pageId: string, initialContent?: string): YjsDocument {
+export function createYjsDocument(pageId: string, _initialContent?: string): YjsDocument {
+	// GC enabled (default) - versions use encodeStateAsUpdate which is self-contained
 	const ydoc = new Y.Doc();
-	const ytext = ydoc.getText('content');
+
+	// Use XmlFragment for ProseMirror (not Y.Text)
+	const yxmlFragment = ydoc.getXmlFragment('content');
 
 	// Connection state stores
 	const isLoading = writable(true);
@@ -54,7 +62,7 @@ export function createYjsDocument(pageId: string, initialContent?: string): YjsD
 	const provider = new WebsocketProvider(wsUrl, pageId, ydoc, {
 		connect: true,
 		// Reconnect automatically
-		maxBackoffTime: 10000
+		maxBackoffTime: 10000,
 	});
 
 	// IndexedDB persistence for offline support
@@ -92,24 +100,27 @@ export function createYjsDocument(pageId: string, initialContent?: string): YjsD
 		checkSyncComplete();
 	});
 
-	// Single UndoManager tracking all origins (user + ai)
-	// Simplified from dual UndoManager approach
-	const undoManager = new Y.UndoManager(ytext, {
+	// UndoManager for XmlFragment
+	const undoManager = new Y.UndoManager(yxmlFragment, {
 		trackedOrigins: new Set([null, 'user', 'ai']),
-		captureTimeout: 500
+		captureTimeout: 500,
 	});
 
-	// CodeMirror extensions for Yjs collaboration
-	const extensions: Extension[] = [yCollab(ytext, provider.awareness), keymap.of(yUndoManagerKeymap)];
+	// ProseMirror plugins for Yjs collaboration
+	const plugins: Plugin[] = [
+		ySyncPlugin(yxmlFragment),
+		yCursorPlugin(provider.awareness),
+		yUndoPlugin(),
+	];
 
 	// Create the document object
 	const doc: YjsDocument = {
 		ydoc,
-		ytext,
+		yxmlFragment,
 		provider,
 		persistence,
 		undoManager,
-		extensions,
+		plugins,
 		isLoading,
 		isSynced,
 		isConnected,
@@ -118,7 +129,7 @@ export function createYjsDocument(pageId: string, initialContent?: string): YjsD
 			provider.destroy();
 			persistence.destroy();
 			ydoc.destroy();
-		}
+		},
 	};
 
 	return doc;
@@ -128,8 +139,8 @@ export function createYjsDocument(pageId: string, initialContent?: string): YjsD
  * Markup instruction for CriticMarkup-based editing
  *
  * The AI sends content WITH CriticMarkup markers ({++additions++}, {--deletions--}),
- * and this function inserts it at the specified position. The CriticMarkup extension
- * in CodeMirror handles rendering the markers with accept/reject buttons.
+ * and this function inserts it at the specified position. The CriticMarkup plugin
+ * in ProseMirror handles rendering the markers with accept/reject buttons.
  */
 export interface MarkupInstruction {
 	/** Content with CriticMarkup markers to apply */
@@ -141,80 +152,115 @@ export interface MarkupInstruction {
 }
 
 /**
- * Apply CriticMarkup content to the document
+ * Apply CriticMarkup content to a ProseMirror editor
  *
  * This is the core editing function for CriticMarkup-based AI editing.
- * It inserts content (which may contain CriticMarkup markers) at the
- * specified position. The markers are rendered by the CriticMarkup
- * CodeMirror extension with accept/reject buttons.
+ * It parses markdown content (which may contain CriticMarkup markers)
+ * and inserts it at the specified position in the ProseMirror document.
  *
- * @param doc - The Yjs document
+ * @param view - The ProseMirror EditorView
  * @param instruction - The markup instruction with content, position, and optional anchor
+ * @param parser - The markdown parser function
+ * @param serializer - The markdown serializer function
  * @returns true if content was applied successfully
  */
-export function applyMarkup(doc: YjsDocument, instruction: MarkupInstruction): boolean {
-	const { ytext, ydoc } = doc;
-	const currentContent = ytext.toString();
+export function applyMarkup(
+	view: import('prosemirror-view').EditorView,
+	instruction: MarkupInstruction,
+	parser: (markdown: string) => import('prosemirror-model').Node,
+	serializer: (doc: import('prosemirror-model').Node) => string
+): boolean {
+	const { state, dispatch } = view;
+	const { doc } = state;
 
 	try {
-		ydoc.transact(() => {
-			switch (instruction.position) {
-				case 'replace_all':
-					// Replace entire document
-					if (ytext.length > 0) {
-						ytext.delete(0, ytext.length);
-					}
-					ytext.insert(0, instruction.content);
-					break;
+		// Parse the new content
+		const newDoc = parser(instruction.content);
+		if (!newDoc) return false;
 
-				case 'start':
-					// Insert at document start
-					ytext.insert(0, instruction.content);
-					break;
+		let tr = state.tr;
 
-				case 'end':
-					// Insert at document end
-					ytext.insert(ytext.length, instruction.content);
-					break;
-
-				case 'replace':
-					// Replace anchor text with content
-					if (instruction.anchor) {
-						const idx = currentContent.indexOf(instruction.anchor);
-						if (idx !== -1) {
-							ytext.delete(idx, instruction.anchor.length);
-							ytext.insert(idx, instruction.content);
-						} else {
-							console.warn(`applyMarkup: anchor not found for replace: "${instruction.anchor.slice(0, 50)}..."`);
-						}
-					}
-					break;
-
-				case 'before':
-					// Insert content before anchor
-					if (instruction.anchor) {
-						const idx = currentContent.indexOf(instruction.anchor);
-						if (idx !== -1) {
-							ytext.insert(idx, instruction.content);
-						} else {
-							console.warn(`applyMarkup: anchor not found for before: "${instruction.anchor.slice(0, 50)}..."`);
-						}
-					}
-					break;
-
-				case 'after':
-					// Insert content after anchor
-					if (instruction.anchor) {
-						const idx = currentContent.indexOf(instruction.anchor);
-						if (idx !== -1) {
-							ytext.insert(idx + instruction.anchor.length, instruction.content);
-						} else {
-							console.warn(`applyMarkup: anchor not found for after: "${instruction.anchor.slice(0, 50)}..."`);
-						}
-					}
-					break;
+		switch (instruction.position) {
+			case 'replace_all': {
+				// Replace entire document
+				tr = tr.replaceWith(0, doc.content.size, newDoc.content);
+				break;
 			}
-		}, 'ai'); // Tagged as AI edit for undo tracking
+
+			case 'start': {
+				// Insert at document start
+				tr = tr.insert(0, newDoc.content);
+				break;
+			}
+
+			case 'end': {
+				// Insert at document end
+				tr = tr.insert(doc.content.size, newDoc.content);
+				break;
+			}
+
+			case 'replace': {
+				// Replace anchor text with content
+				if (instruction.anchor) {
+					const currentContent = serializer(doc);
+					const idx = currentContent.indexOf(instruction.anchor);
+					if (idx !== -1) {
+						// Find positions in ProseMirror doc that correspond to the anchor
+						const range = findTextRange(doc, instruction.anchor);
+						if (range) {
+							tr = tr.replaceWith(range.from, range.to, newDoc.content);
+						} else {
+							console.warn(
+								`applyMarkup: anchor not found in doc for replace: "${instruction.anchor.slice(0, 50)}..."`
+							);
+							return false;
+						}
+					} else {
+						console.warn(
+							`applyMarkup: anchor not found for replace: "${instruction.anchor.slice(0, 50)}..."`
+						);
+						return false;
+					}
+				}
+				break;
+			}
+
+			case 'before': {
+				// Insert content before anchor
+				if (instruction.anchor) {
+					const range = findTextRange(doc, instruction.anchor);
+					if (range) {
+						tr = tr.insert(range.from, newDoc.content);
+					} else {
+						console.warn(
+							`applyMarkup: anchor not found for before: "${instruction.anchor.slice(0, 50)}..."`
+						);
+						return false;
+					}
+				}
+				break;
+			}
+
+			case 'after': {
+				// Insert content after anchor
+				if (instruction.anchor) {
+					const range = findTextRange(doc, instruction.anchor);
+					if (range) {
+						tr = tr.insert(range.to, newDoc.content);
+					} else {
+						console.warn(
+							`applyMarkup: anchor not found for after: "${instruction.anchor.slice(0, 50)}..."`
+						);
+						return false;
+					}
+				}
+				break;
+			}
+		}
+
+		// Apply the transaction with AI origin for undo tracking
+		tr.setMeta('origin', 'ai');
+		dispatch(tr);
 
 		return true;
 	} catch (err) {
@@ -223,3 +269,43 @@ export function applyMarkup(doc: YjsDocument, instruction: MarkupInstruction): b
 	}
 }
 
+/**
+ * Find the position range of text in a ProseMirror document
+ */
+function findTextRange(
+	doc: import('prosemirror-model').Node,
+	text: string
+): { from: number; to: number } | null {
+	let foundFrom: number | null = null;
+	let foundTo: number | null = null;
+	let currentText = '';
+	let startPos = 0;
+
+	doc.descendants((node, pos) => {
+		if (foundFrom !== null && foundTo !== null) return false; // Stop if found
+
+		if (node.isText) {
+			const nodeText = node.text || '';
+			currentText += nodeText;
+
+			// Check if the anchor text is in our accumulated text
+			const idx = currentText.indexOf(text);
+			if (idx !== -1) {
+				// Calculate actual positions
+				foundFrom = startPos + idx;
+				foundTo = foundFrom + text.length;
+				return false; // Stop traversal
+			}
+		} else if (node.isBlock && currentText.length > 0) {
+			// Reset for new block
+			currentText = '';
+			startPos = pos + 1;
+		}
+	});
+
+	if (foundFrom !== null && foundTo !== null) {
+		return { from: foundFrom, to: foundTo };
+	}
+
+	return null;
+}

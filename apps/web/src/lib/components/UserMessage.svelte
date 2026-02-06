@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { slide } from 'svelte/transition';
+	import CitedMarkdown from './CitedMarkdown.svelte';
 
 	let { text }: { text: string } = $props();
 
@@ -24,10 +25,10 @@
 <div class="user-message-container">
 	<div
 		bind:this={textContainer}
-		class="text-base whitespace-pre-wrap text-primary"
+		class="text-base text-primary user-message-content"
 		style="max-height: {maxHeight}; overflow: hidden;"
 	>
-		{text}
+		<CitedMarkdown content={text} />
 	</div>
 
 	{#if shouldTruncate}
@@ -40,3 +41,15 @@
 		</button>
 	{/if}
 </div>
+
+<style>
+	/* Preserve whitespace in user messages while allowing markdown */
+	.user-message-content :global(.markdown) {
+		white-space: pre-wrap;
+	}
+
+	/* Ensure paragraphs don't add extra spacing */
+	.user-message-content :global(p) {
+		margin: 0;
+	}
+</style>

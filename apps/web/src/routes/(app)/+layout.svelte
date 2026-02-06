@@ -6,8 +6,11 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
+	import UpdateOverlay from "$lib/components/UpdateOverlay.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
+	import { versionStore } from "$lib/stores/version.svelte";
+	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
@@ -31,7 +34,7 @@
 	// Global keyboard shortcut handler for workspace switching (⌘1-9)
 	function handleGlobalKeydown(e: KeyboardEvent) {
 		// ⌘1-9 for workspace switching
-		if (e.metaKey && e.key >= '1' && e.key <= '9') {
+		if (e.metaKey && e.key >= "1" && e.key <= "9") {
 			e.preventDefault();
 			const index = parseInt(e.key) - 1;
 			const spaces = spaceStore.spaces;
@@ -44,10 +47,10 @@
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
 		// Register global keyboard shortcuts
-		window.addEventListener('keydown', handleGlobalKeydown);
+		window.addEventListener("keydown", handleGlobalKeydown);
 		// Global dragover handler: Allow drops on document by preventing default
 		// This is a fallback to ensure drops are never blocked by missing handlers
-		document.addEventListener('dragover', (e) => {
+		document.addEventListener("dragover", (e) => {
 			e.preventDefault();
 			if (e.dataTransfer) {
 				e.dataTransfer.dropEffect = "move";
@@ -64,7 +67,7 @@
 		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
 		const urlPath = $page.url.pathname;
-		const rightParam = $page.url.searchParams.get('right');
+		const rightParam = $page.url.searchParams.get("right");
 		spaceStore.handleDeepLink(urlPath, rightParam);
 
 		// Enable URL sync for future navigation
@@ -72,6 +75,10 @@
 
 		// Mark as initialized
 		initialized = true;
+
+		// Start polling for version updates and subscription status
+		versionStore.start();
+		subscriptionStore.start();
 
 		// Set up session expiry warning
 		if (data?.sessionExpires) {
@@ -112,10 +119,121 @@
 			clearInterval(sessionExpiryTimer);
 		}
 		spaceStore.destroyUrlSync();
+		versionStore.stop();
+		subscriptionStore.stop();
 
 		// Clean up global keyboard shortcut listener
-		if (typeof window !== 'undefined') {
-			window.removeEventListener('keydown', handleGlobalKeydown);
+		if (typeof window !== "undefined") {
+			window.removeEventListener("keydown", handleGlobalKeydown);
+		}
+	});
+
+	// Show toast when frontend code is out of sync with backend (needs page refresh)
+	let updateToastShown = false;
+	$effect(() => {
+		if (versionStore.updateAvailable && !updateToastShown) {
+			updateToastShown = true;
+			toast.info("New version available", {
+				description: "Click refresh to get the latest updates.",
+				duration: Infinity,
+				action: {
+					label: "Refresh",
+					onClick: () => location.reload(),
+				},
+			});
+		}
+	});
+
+	// Show toast when a system-level update is available (new image from Atlas)
+	let systemUpdateToastShown = false;
+	$effect(() => {
+		if (
+			versionStore.systemUpdateAvailable &&
+			!systemUpdateToastShown &&
+			!versionStore.updating
+		) {
+			systemUpdateToastShown = true;
+			toast.info("System update available", {
+				description: "A new version of Virtues is ready to install.",
+				duration: Infinity,
+				action: {
+					label: "Update",
+					onClick: () => {
+						versionStore.triggerUpdate().catch((e) => {
+							toast.error("Update failed", {
+								description:
+									e.message || "Please try again later.",
+							});
+						});
+					},
+				},
+			});
+		}
+	});
+
+	// Trial countdown toasts (day 5, 2, 1, 0)
+	let trialToastShownForDay: number | null = null;
+	$effect(() => {
+		const days = subscriptionStore.daysRemaining;
+		if (days === null || subscriptionStore.status !== "trialing") return;
+		if (trialToastShownForDay === days) return;
+
+		const openBilling = () =>
+			spaceStore.openTabFromRoute("/virtues/billing", {
+				label: "Billing",
+				preferEmptyPane: true,
+			});
+
+		if (days <= 5 && days > 2) {
+			trialToastShownForDay = days;
+			toast.warning(`Trial ends in ${days} days`, {
+				description: "Add a payment method to keep your data.",
+				duration: Infinity,
+				action: { label: "Billing", onClick: openBilling },
+			});
+		} else if (days <= 2 && days > 0) {
+			trialToastShownForDay = days;
+			toast.error(`Trial ends in ${days} day${days === 1 ? "" : "s"}`, {
+				description: "Your instance will be suspended without payment.",
+				duration: Infinity,
+				action: { label: "Add Payment", onClick: openBilling },
+			});
+		} else if (days <= 0) {
+			trialToastShownForDay = days;
+			toast.error("Trial expired", {
+				description: "Add a payment method to restore access.",
+				duration: Infinity,
+				action: { label: "Add Payment", onClick: openBilling },
+			});
+		}
+	});
+
+	// Show toast when subscription is expired (from 402 or polling)
+	let expiredToastShown = false;
+	$effect(() => {
+		if (
+			!subscriptionStore.isActive &&
+			subscriptionStore.status === "expired" &&
+			!expiredToastShown
+		) {
+			expiredToastShown = true;
+			toast.error("Subscription required", {
+				description:
+					"Your trial has ended. Subscribe to continue using AI features.",
+				duration: Infinity,
+				action: {
+					label: "Subscribe",
+					onClick: () =>
+						spaceStore.openTabFromRoute("/virtues/billing", {
+							label: "Billing",
+							preferEmptyPane: true,
+						}),
+				},
+			});
+		}
+		// Reset if subscription becomes active again
+		if (subscriptionStore.isActive) {
+			expiredToastShown = false;
 		}
 	});
 </script>
@@ -129,7 +247,7 @@
 			border: 1px solid var(--border);
 			font-family: var(--font-sans);
 		`,
-		class: 'themed-toast',
+		class: "themed-toast",
 	}}
 />
 
@@ -147,14 +265,21 @@
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 bg-surface text-foreground m-3 rounded-lg border border-border overflow-hidden"
 	>
-		<!-- SplitContainer handles both split and mono modes -->
-		<SplitContainer />
+		{#if initialized}
+			<!-- SplitContainer handles both split and mono modes -->
+			<SplitContainer />
+		{/if}
 	</main>
 </div>
 
 <!-- Server Provisioning Overlay (shown while Tollbooth is hydrating) -->
 {#if data?.serverStatus && data.serverStatus !== "ready"}
 	<ServerProvisioning initialStatus={data.serverStatus} />
+{/if}
+
+<!-- Update Overlay (shown during system update / container restart) -->
+{#if versionStore.updating}
+	<UpdateOverlay />
 {/if}
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->

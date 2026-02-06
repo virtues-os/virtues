@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::{
+    api::chat::ChatCancellationState,
     database::Database,
     error::{Error, Result},
     sources::{push_stream::IngestPayload, stream_type::StreamType, StreamFactory},
@@ -66,9 +67,12 @@ pub struct IngestResponse {
 pub struct AppState {
     pub db: Arc<Database>,
     pub storage: Arc<Storage>,
+    pub drive_config: crate::api::DriveConfig,
     pub stream_writer: Arc<Mutex<StreamWriter>>,
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
+    pub chat_cancel_state: ChatCancellationState,
+    pub update_state: crate::api::UpdateState,
 }
 
 /// Enable extracting SqlitePool from AppState for auth middleware
@@ -82,6 +86,13 @@ impl axum::extract::FromRef<AppState> for sqlx::SqlitePool {
 impl axum::extract::FromRef<AppState> for super::yjs::YjsState {
     fn from_ref(state: &AppState) -> Self {
         state.yjs_state.clone()
+    }
+}
+
+/// Enable extracting ChatCancellationState from AppState for chat handlers
+impl axum::extract::FromRef<AppState> for ChatCancellationState {
+    fn from_ref(state: &AppState) -> Self {
+        state.chat_cancel_state.clone()
     }
 }
 
@@ -323,6 +334,34 @@ async fn trigger_transforms_for_batch(
                     record_count = records.len(),
                     "Records written to filesystem successfully"
                 );
+
+                // Update watermarks on elt_stream_connections for push streams
+                if let Err(e) = sqlx::query(
+                    r#"
+                    UPDATE elt_stream_connections
+                    SET earliest_record_at = COALESCE(earliest_record_at, $1),
+                        latest_record_at = $2,
+                        last_sync_at = datetime('now'),
+                        sync_status = 'incremental',
+                        updated_at = datetime('now')
+                    WHERE source_connection_id = $3 AND stream_name = $4
+                    "#,
+                )
+                .bind(min_timestamp)
+                .bind(max_timestamp)
+                .bind(source_id)
+                .bind(stream_name)
+                .execute(state.db.pool())
+                .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        source_id = %source_id,
+                        stream_name = %stream_name,
+                        "Failed to update stream connection watermarks"
+                    );
+                }
+
                 Some(key)
             }
             Err(e) => {
@@ -402,7 +441,8 @@ async fn write_stream_records(
         .sum();
 
     // Record metadata in elt_stream_objects
-    let stream_object_id = crate::ids::generate_id(crate::ids::STREAM_OBJECT_PREFIX, &[&storage_key]);
+    let stream_object_id =
+        crate::ids::generate_id(crate::ids::STREAM_OBJECT_PREFIX, &[&storage_key]);
     sqlx::query(
         "INSERT INTO elt_stream_objects
          (id, source_connection_id, stream_name, storage_key, record_count, size_bytes,

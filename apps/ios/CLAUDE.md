@@ -165,11 +165,11 @@ extension AudioManager: HealthCheckable {
     var healthCheckName: String { "AudioManager" }
 
     func performHealthCheck() -> HealthStatus {
-        guard configProvider.isStreamEnabled("mic") else {
+        guard hasPermission else {
             return .disabled
         }
 
-        if shouldBeRecording && !isRecording {
+        if !isRecording {
             startRecording() // Auto-recovery
             return .unhealthy(reason: "Recording stopped, restarting")
         }

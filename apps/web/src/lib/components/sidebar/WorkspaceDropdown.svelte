@@ -4,11 +4,14 @@
 	 *
 	 * Shows all spaces with checkmark for current, keyboard shortcuts,
 	 * and actions for new space / space settings.
+	 *
+	 * Uses the floating UI system for smart positioning and dismiss handling.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import { onMount, onDestroy } from "svelte";
+	import { FloatingContent, useClickOutside, useEscapeKey } from "$lib/floating";
+	import type { VirtualAnchor } from "$lib/floating";
 
 	interface Props {
 		open: boolean;
@@ -39,31 +42,21 @@
 
 	let menuRef = $state<HTMLElement | null>(null);
 
-	// Position the menu below the anchor, but keep it in viewport
-	const menuStyle = $derived.by(() => {
-		if (!open) return "";
-
-		// Start below the click point
-		let top = anchor.y + 8;
-		let left = anchor.x;
-
-		// Ensure menu doesn't go off-screen (we'll adjust after render if needed)
-		return `top: ${top}px; left: ${left}px;`;
+	// Convert anchor to virtual anchor for Floating UI
+	const virtualAnchor = $derived<VirtualAnchor>({
+		x: anchor.x,
+		y: anchor.y,
+		width: 0,
+		height: 0
 	});
 
-	function handleBackdropClick(e: MouseEvent) {
-		if (e.target === e.currentTarget) {
-			onClose();
-		}
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (!open) return;
-		if (e.key === "Escape") {
-			e.preventDefault();
-			onClose();
-		}
-	}
+	// Use hooks for dismiss behavior (wrap callbacks to capture current values)
+	useClickOutside(
+		() => [menuRef],
+		() => onClose(),
+		() => open && !showNewModal
+	);
+	useEscapeKey(() => onClose(), () => open && !showNewModal);
 
 	function handleSpaceClick(spaceId: string) {
 		spaceStore.switchSpace(spaceId, true);
@@ -142,29 +135,19 @@
 		if (!val) return false;
 		return !val.includes(":");
 	}
-
-	onMount(() => {
-		window.addEventListener("keydown", handleKeydown);
-	});
-
-	onDestroy(() => {
-		if (typeof window !== "undefined") {
-			window.removeEventListener("keydown", handleKeydown);
-		}
-	});
 </script>
 
 {#if open}
-	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-	<div class="dropdown-backdrop" onclick={handleBackdropClick}>
-		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<FloatingContent
+		anchor={virtualAnchor}
+		options={{ placement: 'bottom-start', offset: 8, flip: true, shift: true, padding: 8 }}
+		class="workspace-dropdown"
+	>
 		<div
 			bind:this={menuRef}
 			class="dropdown-menu"
-			style={menuStyle}
 			role="menu"
 			aria-label="Workspace menu"
-			onclick={(e) => e.stopPropagation()}
 		>
 			<!-- Spaces list -->
 			<div class="spaces-section">
@@ -273,7 +256,7 @@
 				</button>
 			</div>
 		</div>
-	</div>
+	</FloatingContent>
 {/if}
 
 <!-- New Workspace Modal -->
@@ -311,15 +294,16 @@
 <style>
 	@reference "../../../app.css";
 
-	.dropdown-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 10000;
+	/* FloatingContent wrapper styles */
+	:global(.workspace-dropdown) {
+		--z-floating: 10000;
+		padding: 0;
 		background: transparent;
+		border: none;
+		box-shadow: none;
 	}
 
 	.dropdown-menu {
-		position: fixed;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
@@ -329,18 +313,6 @@
 		max-width: 280px;
 		max-height: calc(100vh - 32px);
 		overflow-y: auto;
-		animation: menu-fade-in 100ms ease-out;
-	}
-
-	@keyframes menu-fade-in {
-		from {
-			opacity: 0;
-			transform: scale(0.95);
-		}
-		to {
-			opacity: 1;
-			transform: scale(1);
-		}
 	}
 
 	.spaces-section,

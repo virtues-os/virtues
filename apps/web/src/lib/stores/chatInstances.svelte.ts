@@ -8,6 +8,7 @@
 
 import { Chat } from '@ai-sdk/svelte';
 import { DefaultChatTransport, type ChatTransport } from 'ai';
+import { subscriptionStore } from '$lib/stores/subscription.svelte';
 
 interface ChatInstanceEntry {
     chat: Chat;
@@ -28,6 +29,8 @@ interface CreateChatConfig {
     getModel: () => string; // Getter to always get current model
     getSpaceId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
+    getPersona?: () => string; // Getter for selected persona (per-chat)
+    getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
 }
 
 class ChatInstanceStore {
@@ -40,7 +43,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getSpaceId, getActivePageContext } = config;
+        const { conversationId, getModel, getSpaceId, getActivePageContext, getPersona, getAgentMode } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -61,6 +64,8 @@ class ChatInstanceStore {
                 prepareSendMessagesRequest: ({ messages }) => {
                     const spaceId = getSpaceId();
                     const activePage = getActivePageContext?.();
+                    const persona = getPersona?.() || 'default';
+                    const agentMode = getAgentMode?.() || 'agent';
                     const entry = this.instances.get(conversationId);
                     const thoughtSignature = entry?.lastThoughtSignature;
 
@@ -70,6 +75,8 @@ class ChatInstanceStore {
                             model: getModel(),
                             agentId: 'auto',
                             messages,
+                            persona,
+                            agentMode,
                             // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
                             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                             // Only include spaceId if not null (null = system space, don't auto-add)
@@ -93,17 +100,47 @@ class ChatInstanceStore {
                     }
                 }
             },
-            onChunk: (chunk) => {
-                // Extract thought signature from custom event if available
-                if (chunk.type === 'thought-signature') {
+            onData: (dataPart) => {
+                // Handle thought signature events (transient - only for state tracking)
+                if (dataPart.type === 'data-thought-signature') {
                     const entry = this.instances.get(conversationId);
                     if (entry) {
-                        entry.lastThoughtSignature = chunk.signature;
+                        entry.lastThoughtSignature = (dataPart.data as { signature: string }).signature;
+                    }
+                }
+                // Handle checkpoint events from auto-compaction (non-transient - persists in messages)
+                else if (dataPart.type === 'data-checkpoint') {
+                    const entry = this.instances.get(conversationId);
+                    if (entry?.chat) {
+                        const data = dataPart.data as {
+                            version: number;
+                            messagesSummarized: number;
+                            summary: string;
+                            timestamp: string;
+                        };
+                        const checkpointMessage = {
+                            id: dataPart.id || `checkpoint_${Date.now()}`,
+                            role: 'checkpoint' as const,
+                            parts: [{
+                                type: 'checkpoint',
+                                version: data.version,
+                                messagesSummarized: data.messagesSummarized,
+                                summary: data.summary,
+                                timestamp: data.timestamp,
+                            }],
+                        };
+                        // Insert checkpoint message into chat for immediate display
+                        entry.chat.messages = [...entry.chat.messages, checkpointMessage];
                     }
                 }
             },
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
+
+                // Detect subscription_expired from Tollbooth 402 response
+                if (error.message?.includes('subscription_expired')) {
+                    subscriptionStore.check();
+                }
             }
         });
 

@@ -97,12 +97,28 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     yjs_state.start_save_processor();
     tracing::info!("Yjs WebSocket server initialized");
 
+    // Initialize chat cancellation state for stopping in-progress requests
+    let chat_cancel_state = crate::api::chat::ChatCancellationState::new();
+
+    // Create drive config with shared storage backend
+    let drive_config = crate::api::DriveConfig::new(client.storage.clone());
+
+    // Initialize update state and start background version checker
+    let update_state = crate::api::UpdateState::new();
+    let update_state_clone = update_state.clone();
+    tokio::spawn(async move {
+        crate::api::run_version_checker(update_state_clone).await;
+    });
+
     let state = AppState {
         db: client.database.clone(),
         storage: client.storage.clone(),
+        drive_config,
         stream_writer: stream_writer_arc.clone(),
         tool_executor,
         yjs_state: yjs_state.clone(),
+        chat_cancel_state,
+        update_state,
     };
 
     let app = Router::new()
@@ -142,6 +158,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(api::link_device_manual_handler),
         )
         .route(
+            "/api/devices/pairing/:source_id/complete",
+            post(api::complete_qr_pairing_handler),
+        )
+        .route(
             "/api/devices/pairing/:source_id",
             get(api::check_pairing_status_handler),
         )
@@ -149,7 +169,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/devices/pending-pairings",
             get(api::list_pending_pairings_handler),
         )
-        .route("/api/devices/verify", post(api::verify_device_handler))
         .route("/api/devices/health", get(api::device_health_check_handler))
         .route("/api/sources/:id", get(api::get_source_handler))
         .route("/api/sources/:id", delete(api::delete_source_handler))
@@ -255,14 +274,25 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // MCP tools management endpoints to be added separately
         // Models API
         .route("/api/models", get(api::list_models_handler))
+        .route(
+            "/api/models/recommended",
+            get(api::list_recommended_models_handler),
+        )
         .route("/api/models/:id", get(api::get_model_handler))
         // Agents API
         .route("/api/agents", get(api::list_agents_handler))
         .route("/api/agents/:id", get(api::get_agent_handler))
-
-
-
-
+        // Personas API
+        .route("/api/personas", get(api::list_personas_handler))
+        .route("/api/personas", post(api::create_persona_handler))
+        .route("/api/personas/:id", get(api::get_persona_handler))
+        .route("/api/personas/:id", put(api::update_persona_handler))
+        .route("/api/personas/:id", delete(api::hide_persona_handler))
+        .route(
+            "/api/personas/:id/unhide",
+            post(api::unhide_persona_handler),
+        )
+        .route("/api/personas/reset", post(api::reset_personas_handler))
         // Seed Testing API
         .route(
             "/api/seed/pipeline-status",
@@ -294,10 +324,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/plaid/:source_id",
             delete(api::remove_plaid_item_handler),
         )
-
         // Usage API
         .route("/api/usage", get(api::usage_handler))
         .route("/api/usage/check", get(api::usage_check_handler))
+        // Subscription & Billing API
+        .route("/api/subscription", get(api::get_subscription_handler))
+        .route(
+            "/api/billing/portal",
+            post(api::create_billing_portal_handler),
+        )
+        // System Update API (pull-based updates via Tollbooth → Atlas)
+        .route(
+            "/api/system/update-available",
+            get(api::get_update_available_handler),
+        )
+        .route("/api/system/update", post(api::trigger_update_handler))
         // Search API (Exa)
         .route("/api/search/web", post(api::exa_search_handler))
         // Unsplash API (cover image search)
@@ -347,21 +388,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/drive/files/:id/purge",
             delete(api::purge_drive_file_handler),
         )
+        // Media API (content-addressed storage for page-embedded media)
+        .route("/api/media/upload", post(api::upload_media_handler))
+        .route("/api/media/:id", get(api::get_media_handler))
         // Wiki API
-        .route(
-            "/api/wiki/resolve/:slug",
-            get(api::wiki_resolve_slug_handler),
-        )
+        .route("/api/wiki/resolve/:id", get(api::wiki_resolve_id_handler))
         // Wiki - Person
         .route("/api/wiki/people", get(api::wiki_list_people_handler))
         .route(
-            "/api/wiki/person/:slug",
+            "/api/wiki/person/:id",
             get(api::wiki_get_person_handler).put(api::wiki_update_person_handler),
         )
         // Wiki - Place
         .route("/api/wiki/places", get(api::wiki_list_places_handler))
         .route(
-            "/api/wiki/place/:slug",
+            "/api/wiki/place/:id",
             get(api::wiki_get_place_handler).put(api::wiki_update_place_handler),
         )
         // Wiki - Organization
@@ -370,7 +411,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::wiki_list_organizations_handler),
         )
         .route(
-            "/api/wiki/organization/:slug",
+            "/api/wiki/organization/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
         // Wiki - Telos
@@ -378,15 +419,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/telos/active",
             get(api::wiki_get_active_telos_handler),
         )
-        .route("/api/wiki/telos/:slug", get(api::wiki_get_telos_handler))
+        .route("/api/wiki/telos/:id", get(api::wiki_get_telos_handler))
         // Wiki - Act
         .route("/api/wiki/acts", get(api::wiki_list_acts_handler))
-        .route("/api/wiki/act/:slug", get(api::wiki_get_act_handler))
+        .route("/api/wiki/act/:id", get(api::wiki_get_act_handler))
         // Wiki - Chapter
-        .route(
-            "/api/wiki/chapter/:slug",
-            get(api::wiki_get_chapter_handler),
-        )
+        .route("/api/wiki/chapter/:id", get(api::wiki_get_chapter_handler))
         .route(
             "/api/wiki/act/:act_id/chapters",
             get(api::wiki_list_chapters_handler),
@@ -439,7 +477,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/lake/summary", get(api::get_lake_summary_handler))
         .route("/api/lake/streams", get(api::list_lake_streams_handler))
         // Pages API
-        .route("/api/pages", get(api::list_pages_handler).post(api::create_page_handler))
+        .route(
+            "/api/pages",
+            get(api::list_pages_handler).post(api::create_page_handler),
+        )
         .route(
             "/api/pages/search/entities",
             get(api::search_entities_handler),
@@ -453,15 +494,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Page Versions API
         .route(
             "/api/pages/:id/versions",
-            get(api::list_page_versions_handler)
-                .post(api::create_page_version_handler),
+            get(api::list_page_versions_handler).post(api::create_page_version_handler),
         )
         .route(
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
         )
         // Spaces API
-        .route("/api/spaces", get(api::list_spaces_handler).post(api::create_space_handler))
+        .route(
+            "/api/spaces",
+            get(api::list_spaces_handler).post(api::create_space_handler),
+        )
         .route(
             "/api/spaces/:id",
             get(api::get_space_handler)
@@ -471,8 +514,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/spaces/:id/tabs", put(api::save_space_tabs_handler))
         .route("/api/spaces/:id/views", get(api::list_space_views_handler))
         // Space Items API (root-level items at space level, not in any folder)
-        .route("/api/spaces/:id/items", get(api::list_space_items_handler).post(api::add_space_item_handler).delete(api::remove_space_item_handler))
-        .route("/api/spaces/:id/items/reorder", put(api::reorder_space_items_handler))
+        .route(
+            "/api/spaces/:id/items",
+            get(api::list_space_items_handler)
+                .post(api::add_space_item_handler)
+                .delete(api::remove_space_item_handler),
+        )
+        .route(
+            "/api/spaces/:id/items/reorder",
+            put(api::reorder_space_items_handler),
+        )
         // Namespaces API
         .route("/api/namespaces", get(api::list_namespaces_handler))
         .route("/api/namespaces/:name", get(api::get_namespace_handler))
@@ -485,31 +536,43 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_view_handler),
         )
         .route("/api/views/:id/resolve", post(api::resolve_view_handler))
-        .route("/api/views/:id/items", get(api::list_view_items_handler).post(api::add_view_item_handler).delete(api::remove_view_item_handler))
-        .route("/api/views/:id/items/reorder", put(api::reorder_view_items_handler))
+        .route(
+            "/api/views/:id/items",
+            get(api::list_view_items_handler)
+                .post(api::add_view_item_handler)
+                .delete(api::remove_view_item_handler),
+        )
+        .route(
+            "/api/views/:id/items/reorder",
+            put(api::reorder_view_items_handler),
+        )
         // Chats API
-        .route("/api/chats", get(api::list_chats_handler).post(api::create_chat_handler))
+        .route(
+            "/api/chats",
+            get(api::list_chats_handler).post(api::create_chat_handler),
+        )
         .route(
             "/api/chats/:id",
             get(api::get_chat_handler)
                 .patch(api::update_chat_handler)
                 .delete(api::delete_chat_handler),
         )
-        .route(
-            "/api/chats/title",
-            post(api::generate_chat_title_handler),
-        )
+        .route("/api/chats/title", post(api::generate_chat_title_handler))
         // Chat Usage & Compaction API
-        .route(
-            "/api/chats/:id/usage",
-            get(api::get_chat_usage_handler),
-        )
-        .route(
-            "/api/chats/:id/compact",
-            post(api::compact_chat_handler),
-        )
+        .route("/api/chats/:id/usage", get(api::get_chat_usage_handler))
+        .route("/api/chats/:id/compact", post(api::compact_chat_handler))
         // Chat API (streaming)
         .route("/api/chat", post(api::chat_handler))
+        .route("/api/chat/cancel", post(api::cancel_chat_handler))
+        // Chat Edit Permissions API
+        .route(
+            "/api/chats/:id/permissions",
+            get(api::list_chat_permissions_handler).post(api::add_chat_permission_handler),
+        )
+        .route(
+            "/api/chats/:id/permissions/:entity_id",
+            delete(api::remove_chat_permission_handler),
+        )
         // Auth API
         .route("/auth/signin", post(api::auth_signin_handler))
         .route("/auth/callback", get(api::auth_callback_handler))
@@ -522,12 +585,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Internal API (Tollbooth integration)
         .route("/internal/hydrate", post(api::hydrate_profile_handler))
-        .route("/internal/server-status", get(api::get_server_status_handler))
+        .route(
+            "/internal/server-status",
+            get(api::get_server_status_handler),
+        )
         .route("/internal/mark-ready", post(api::mark_server_ready_handler))
         // Feedback API
         .route("/api/feedback", post(crate::api::feedback::submit_feedback))
         // Terminal API (WebSocket)
-        .route("/ws/terminal", get(crate::api::terminal::terminal_ws_handler))
+        .route(
+            "/ws/terminal",
+            get(crate::api::terminal::terminal_ws_handler),
+        )
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
         .with_state(state.clone())
@@ -542,7 +611,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     // Add static file serving for SPA frontend
     // This serves the SvelteKit static build and falls back to 200.html for SPA routing
-    let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string());
+    let static_dir =
+        std::env::var("STATIC_DIR").unwrap_or_else(|_| "../../apps/web/build".to_string());
     let static_path = std::path::Path::new(&static_dir);
 
     let app = if static_path.exists() && static_path.is_dir() {
@@ -588,7 +658,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 /// Validate required environment variables at startup
 fn validate_environment() -> Result<()> {
     // Log storage path being used
-    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./core/data/lake".to_string());
+    let storage_path = env::var("STORAGE_PATH").unwrap_or_else(|_| "./data/lake".to_string());
     tracing::info!("Using storage path: {}", storage_path);
 
     tracing::debug!("Environment validation passed");
@@ -609,6 +679,9 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         axum::http::StatusCode::SERVICE_UNAVAILABLE
     };
 
+    let min_ios_version =
+        std::env::var("MIN_IOS_APP_VERSION").unwrap_or_else(|_| "1.0".to_string());
+
     (
         status_code,
         Json(serde_json::json!({
@@ -616,6 +689,7 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
             "version": env!("CARGO_PKG_VERSION"),
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
+            "min_ios_version": min_ios_version,
             "database": db_status,
             "pool": {
                 "size": state.db.pool().size(),
@@ -628,10 +702,10 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
 /// Server info endpoint for device pairing
 /// Returns the API endpoint URL for iOS device configuration
 async fn server_info() -> impl IntoResponse {
-    // Get the API URL from environment or construct from host
+    // Resolution: PUBLIC_API_URL (explicit override) → BACKEND_URL → localhost fallback
     let api_endpoint = std::env::var("PUBLIC_API_URL")
-        .or_else(|_| std::env::var("ELT_API_URL"))
-        .unwrap_or_else(|_| "http://localhost:8000/api".to_string());
+        .or_else(|_| std::env::var("BACKEND_URL"))
+        .unwrap_or_else(|_| "http://localhost:8000".to_string());
 
     Json(serde_json::json!({
         "apiEndpoint": api_endpoint

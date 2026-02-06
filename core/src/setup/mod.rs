@@ -122,7 +122,7 @@ async fn setup_storage() -> Result<String> {
 
     let path: String = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("Storage path for stream archives")
-        .default("./core/data/lake".to_string())
+        .default("./data/lake".to_string())
         .interact_text()
         .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
 

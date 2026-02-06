@@ -375,13 +375,19 @@ Use this tool when:
 
 ALWAYS call this before using edit_page so you know what text to find.
 
+IMPORTANT - Extracting page_id:
+When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
+extract the ID from the link: page_abc123 (everything after "entity:").
+You MUST pass this page_id parameter when the user references a specific page.
+
 Returns the page title, content, and content length."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
+            "required": ["page_id"],
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to read (usually provided in context, optional if page is already bound)"
+                    "description": "Page ID to read. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
                 }
             }
         }),
@@ -392,7 +398,7 @@ Returns the page title, content, and content length."#.to_string(),
     }
 }
 
-/// Edit Page tool - applies edits using simple find/replace with CriticMarkup
+/// Edit Page tool - applies edits using simple find/replace
 fn edit_page_tool() -> ToolConfig {
     ToolConfig {
         id: "edit_page".to_string(),
@@ -407,37 +413,28 @@ Use this tool when:
 
 IMPORTANT: Call get_page_content FIRST to see the current document!
 
+IMPORTANT - Extracting page_id:
+When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
+extract the ID from the link: page_abc123 (everything after "entity:").
+You MUST pass this page_id parameter when the user references a specific page.
+
 How it works:
-1. Provide 'find' - the exact text to locate in the document
-2. Provide 'replace' - the new text (with CriticMarkup markers for changes)
+1. Provide 'page_id' - extracted from the entity link
+2. Provide 'find' - the exact text to locate in the document
+3. Provide 'replace' - the new text you want instead
 
-CriticMarkup Syntax (use in 'replace' field):
-- Additions: {++new text++}
-- Deletions: {--removed text--}
-- Replacements: {--old--}{++new++}
-
-The user will see changes highlighted with Accept/Reject buttons.
+Changes are automatically highlighted for the user to accept/reject.
 
 Example - changing a word:
 {
+  "page_id": "page_abc123",
   "find": "The quick brown fox",
-  "replace": "The {--quick--}{++fast++} brown fox"
-}
-
-Example - deleting a sentence:
-{
-  "find": "This sentence should be removed.",
-  "replace": "{--This sentence should be removed.--}"
-}
-
-Example - adding after existing text:
-{
-  "find": "End of paragraph.",
-  "replace": "End of paragraph.{++\n\nNew paragraph added here.++}"
+  "replace": "The fast brown fox"
 }
 
 Example - full document rewrite (find empty string):
 {
+  "page_id": "page_abc123",
   "find": "",
   "replace": "Entirely new document content here"
 }
@@ -445,14 +442,14 @@ Example - full document rewrite (find empty string):
 Tips:
 - Use enough context in 'find' to uniquely identify the location
 - Keep 'find' as short as possible while still being unique
-- Put CriticMarkup markers only around the actual changes in 'replace'"#.to_string(),
+- For large changes, prefer fewer comprehensive edits over many small ones"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["find", "replace"],
+            "required": ["page_id", "find", "replace"],
             "properties": {
                 "page_id": {
                     "type": "string",
-                    "description": "Page ID to edit (usually provided in context, optional if page is already bound)"
+                    "description": "Page ID to edit. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
                 },
                 "find": {
                     "type": "string",
@@ -460,7 +457,7 @@ Tips:
                 },
                 "replace": {
                     "type": "string",
-                    "description": "Replacement text with CriticMarkup markers for changes"
+                    "description": "New text to replace the found text with"
                 }
             }
         }),

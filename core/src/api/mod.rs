@@ -25,29 +25,33 @@ pub mod agents;
 pub mod assistant_profile;
 pub mod auth;
 pub mod chat;
-pub mod chats;
+pub mod chat_permissions;
 pub mod chat_usage;
+pub mod chats;
 pub mod code;
 pub mod compaction;
 pub mod device_pairing;
 pub mod drive;
-pub mod lake;
 pub mod entities;
 pub mod exa;
+pub mod feedback;
 pub mod internal;
 pub mod jobs;
+pub mod lake;
+pub mod media;
 pub mod metrics;
-pub mod feedback;
 pub mod models;
 pub mod namespaces;
 pub mod oauth;
 
 pub mod ontologies;
 pub mod pages;
+pub mod personas;
 pub mod places;
 pub mod plaid;
 pub mod spaces;
 
+pub mod developer;
 pub mod profile;
 pub mod rate_limit;
 pub mod registry;
@@ -56,6 +60,9 @@ pub mod seed_testing;
 pub mod sources;
 pub mod storage;
 pub mod streams;
+pub mod subscription;
+pub mod system_update;
+pub mod terminal;
 pub mod token_estimation;
 pub mod tools;
 pub mod types;
@@ -64,8 +71,6 @@ pub mod usage;
 pub mod validation;
 pub mod views;
 pub mod wiki;
-pub mod developer;
-pub mod terminal;
 
 // Re-export commonly used types
 pub use streams::StreamConnection;
@@ -99,9 +104,10 @@ pub use auth::{
 };
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
 pub use device_pairing::{
-    check_pairing_status, complete_device_pairing, initiate_device_pairing, link_device_manually,
-    list_pending_pairings, update_last_seen, validate_device_token, verify_device, DeviceInfo,
-    DeviceVerified, PairingCompleted, PairingInitiated, PairingStatus, PendingPairing,
+    check_pairing_status, complete_device_pairing, complete_pairing_by_source_id,
+    initiate_device_pairing, link_device_manually, list_pending_pairings, update_last_seen,
+    validate_device_token, DeviceInfo, PairingCompleted, PairingInitiated, PairingStatus,
+    PendingPairing,
 };
 pub use drive::{
     check_quota as check_drive_quota,
@@ -147,28 +153,73 @@ pub use exa::{
     search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
 pub use feedback::{submit_feedback, FeedbackRequest};
-pub use unsplash::{
-    search as unsplash_search, SearchRequest as UnsplashSearchRequest,
-    SearchResponse as UnsplashSearchResponse,
-};
 pub use jobs::{
     cancel_job, get_job_history, get_job_status, query_jobs, trigger_stream_sync,
     CreateJobResponse, QueryJobsRequest,
+};
+pub use media::{
+    get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
+    MediaFile, UploadMediaRequest,
 };
 pub use metrics::{
     get_activity_metrics, ActivityMetrics, JobTypeStats, MetricsSummary, PeriodStats, RecentError,
     StreamStats, TimeWindowMetrics,
 };
-pub use models::{get_model, list_models, ModelInfo};
+pub use models::{
+    get_model, list_models, list_recommended_models, ModelInfo, RecommendedModelsResponse,
+};
 pub use oauth::{
     create_source, handle_oauth_callback, initiate_oauth_flow, register_device,
     CreateSourceRequest, OAuthAuthorizeRequest, OAuthAuthorizeResponse, OAuthCallbackParams,
     RegisterDeviceRequest,
 };
+pub use unsplash::{
+    search as unsplash_search, SearchRequest as UnsplashSearchRequest,
+    SearchResponse as UnsplashSearchResponse,
+};
 
+pub use chat_permissions::{
+    add_permission, clear_permissions, has_permission, list_permissions, remove_permission,
+    AddPermissionRequest, ChatEditPermission, PermissionListResponse, PermissionResponse,
+};
+pub use chats::{
+    append_message, create_chat, create_chat_from_request, delete_chat, generate_title, get_chat,
+    list_chats, update_chat_title, update_messages, Chat, ChatDetailResponse, ChatListItem,
+    ChatListResponse, ChatMessage, ConversationMeta, CreateChatRequest, CreateChatResponse,
+    DeleteChatResponse, GenerateTitleRequest, GenerateTitleResponse, IntentMetadata,
+    MessageResponse, TimeRange, TitleMessage, ToolCall, UpdateChatResponse, UpdateTitleRequest,
+};
 pub use internal::{
-    get_server_status, hydrate_profile, mark_server_ready, seed_dev_server_status,
-    HydrateRequest, HydrateResponse, ServerStatus,
+    get_server_status, hydrate_profile, mark_server_ready, seed_dev_server_status, HydrateRequest,
+    HydrateResponse, ServerStatus,
+};
+pub use namespaces::{
+    entity_id_to_route, extract_namespace_from_entity_id, get_namespace, list_entity_namespaces,
+    list_namespaces, route_to_entity_id, Namespace, NamespaceListResponse,
+};
+pub use pages::{
+    create_page,
+    // Version history
+    create_version,
+    delete_page,
+    get_page,
+    get_version,
+    list_pages,
+    list_versions,
+    search_entities,
+    update_page,
+    CreatePageRequest,
+    // Version types
+    CreateVersionRequest,
+    EntitySearchResponse,
+    EntitySearchResult,
+    Page,
+    PageListResponse,
+    PageSummary,
+    PageVersionDetail,
+    PageVersionSummary,
+    PageVersionsListResponse,
+    UpdatePageRequest,
 };
 pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
@@ -179,38 +230,27 @@ pub use plaid::{
     CreateLinkTokenRequest, CreateLinkTokenResponse, ExchangeTokenRequest, ExchangeTokenResponse,
     PlaidAccount,
 };
-pub use pages::{
-    create_page, delete_page, get_page, list_pages, search_entities, update_page,
-    // Version history
-    create_version, list_versions, get_version,
-    CreatePageRequest, EntitySearchResponse, EntitySearchResult, Page, PageListResponse,
-    PageSummary, UpdatePageRequest,
-    // Version types
-    CreateVersionRequest, PageVersionSummary, PageVersionDetail, PageVersionsListResponse,
-};
 pub use spaces::{
-    create_space, delete_space, get_space, list_spaces, save_tab_state,
-    update_space, CreateSpaceRequest, SaveTabStateRequest, UpdateSpaceRequest,
-    Space, SpaceListResponse, SpaceSummary,
-};
-pub use chats::{
-    append_message, create_chat, create_chat_from_request, delete_chat, generate_title,
-    get_chat, list_chats, update_chat_title, update_messages,
-    Chat, ChatDetailResponse, ChatListItem, ChatListResponse, ChatMessage,
-    ConversationMeta, CreateChatRequest, CreateChatResponse, DeleteChatResponse,
-    GenerateTitleRequest, GenerateTitleResponse, IntentMetadata, MessageResponse,
-    TimeRange, TitleMessage, ToolCall, UpdateChatResponse, UpdateTitleRequest,
-};
-pub use namespaces::{
-    get_namespace, list_entity_namespaces, list_namespaces, entity_id_to_route,
-    extract_namespace_from_entity_id, route_to_entity_id, Namespace, NamespaceListResponse,
+    create_space, delete_space, get_space, list_spaces, save_tab_state, update_space,
+    CreateSpaceRequest, SaveTabStateRequest, Space, SpaceListResponse, SpaceSummary,
+    UpdateSpaceRequest,
 };
 pub use views::{
     add_item_to_view, create_view, delete_view, get_view, list_views, remove_item_from_view,
-    resolve_view, update_view, CreateViewRequest, QueryConfig, UpdateViewRequest, View,
-    ViewEntity, ViewListResponse, ViewResolutionResponse, ViewSummary,
+    resolve_view, update_view, CreateViewRequest, QueryConfig, UpdateViewRequest, View, ViewEntity,
+    ViewListResponse, ViewResolutionResponse, ViewSummary,
 };
 
+pub use chat_usage::{
+    calculate_cost as calculate_token_cost, check_compaction_needed, get_chat_usage,
+    record_chat_usage, ChatUsageInfo, CompactionStatus, UsageData,
+};
+pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
+pub use personas::{
+    create_persona, get_persona, get_persona_content, hide_persona, list_all_personas,
+    list_personas, reset_personas, unhide_persona, update_persona, CreatePersonaRequest, Persona,
+    PersonaListResponse, PersonasData, UpdatePersonaRequest,
+};
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
 pub use rate_limit::{
     check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
@@ -232,16 +272,14 @@ pub use streams::{
     BulkUpdateStreamsResponse, EnableStreamRequest, StreamUpdate, UpdateStreamConfigRequest,
     UpdateStreamScheduleRequest,
 };
-pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
-pub use developer::{execute_sql, list_tables, ExecuteSqlRequest};
-pub use chat_usage::{
-    calculate_cost as calculate_token_cost, check_compaction_needed, get_chat_usage,
-    record_chat_usage, CompactionStatus, ChatUsageInfo, UsageData,
+pub use system_update::{
+    run_version_checker, trigger_update as trigger_system_update, UpdateState, UpdateStatus,
 };
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
     ContextStatus,
 };
+pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
 pub use usage::{
     check_and_record_usage, check_limit, get_all_usage, init_limits_from_tier,
     record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
@@ -255,26 +293,23 @@ pub use wiki::{
     delete_temporal_event,
     // Act operations
     get_act,
-    get_act_by_slug,
     // Telos operations
     get_active_telos,
     // Chapter operations
     get_chapter,
-    get_chapter_by_slug,
     get_citations,
     get_day_events,
     get_day_sources,
+    // Day streams (dynamic ontology queries)
+    get_day_streams,
     get_events_by_date,
     // Day operations
     get_or_create_day,
     // Organization operations
     get_organization,
-    get_organization_by_slug,
     // Person operations
     get_person,
-    get_person_by_slug,
-    get_place_by_slug,
-    get_telos_by_slug,
+    get_telos,
     // Place operations (wiki-specific)
     get_wiki_place,
     list_acts,
@@ -283,7 +318,7 @@ pub use wiki::{
     list_organizations,
     list_people,
     list_wiki_places,
-    resolve_slug,
+    resolve_id,
     update_citation,
     update_day,
     update_organization,
@@ -296,13 +331,11 @@ pub use wiki::{
     CreateTemporalEventRequest,
     // Day sources (ontology records for a day)
     DaySource,
-    // Day streams (dynamic ontology queries)
-    get_day_streams,
     DayStream,
     DayStreamsResponse,
+    // ID resolution
+    IdResolution,
     StreamRecord,
-    // Slug resolution
-    SlugResolution,
     // Temporal event types and operations
     TemporalEvent,
     UpdateCitationRequest,

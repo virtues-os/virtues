@@ -19,8 +19,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use uuid::Uuid;
-
+use crate::ids;
 use crate::middleware::auth::{
     cleanup_expired_sessions, cleanup_expired_tokens, create_session, delete_session,
     validate_session, AuthUser, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_SECURE,
@@ -576,29 +575,25 @@ async fn get_or_create_user(pool: &SqlitePool, email: &str) -> crate::Result<Aut
     if let Some(user) = existing {
         let user_id = user
             .id
-            .as_ref()
-            .and_then(|s| Uuid::parse_str(s).ok())
-            .ok_or_else(|| Error::Database("Invalid user ID".to_string()))?;
+            .ok_or_else(|| Error::Database("Missing user ID".to_string()))?;
 
         // Update email_verified timestamp
-        let id_str = user_id.to_string();
         sqlx::query!(
             "UPDATE app_auth_user SET email_verified = datetime('now') WHERE id = $1",
-            id_str
+            user_id
         )
         .execute(pool)
         .await?;
 
         return Ok(AuthUser {
-            id: user_id.to_string(),
+            id: user_id,
             email: user.email,
             email_verified: Some(Utc::now()),
         });
     }
 
-    // Create new user - generate UUID in application
-    let user_id = Uuid::new_v4();
-    let user_id_str = user_id.to_string();
+    // Create new user - generate ID with proper prefix (user_{hash16})
+    let user_id_str = ids::generate_id(ids::USER_PREFIX, &[email]);
 
     sqlx::query!(
         r#"

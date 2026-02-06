@@ -1,6 +1,7 @@
 //! Yjs WebSocket sync server using yrs crate
 //!
 //! Implements the y-websocket protocol for compatibility with the y-websocket client library.
+//! Uses Y.XmlFragment for ProseMirror compatibility (via y-prosemirror).
 //!
 //! Protocol:
 //! - Message type 0 (Sync):
@@ -28,9 +29,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::Instant;
-use yrs::{updates::decoder::Decode, updates::encoder::Encode, Doc, GetString, ReadTxn, StateVector, Text, Transact, Update, WriteTxn};
+use yrs::{updates::decoder::Decode, updates::encoder::Encode, Doc, GetString, ReadTxn, StateVector, Transact, Update, WriteTxn, Xml, XmlFragment};
 
 use crate::api::pages;
+use crate::markdown::{markdown_to_xml_fragment, xml_fragment_to_markdown};
 
 // y-websocket message types
 const MSG_SYNC: u8 = 0;
@@ -94,16 +96,10 @@ impl DocCache {
                 let mut txn = doc.transact_mut();
                 txn.apply_update(update);
             }
-        } else if !page.content.is_empty() {
-            // No Yjs state but has content - initialize from TEXT column
-            // This is the "lazy migration" path for existing pages
-            let text = {
-                let mut txn = doc.transact_mut();
-                txn.get_or_insert_text("content")
-            };
-            let mut txn = doc.transact_mut();
-            text.insert(&mut txn, 0, &page.content);
         }
+        // Note: For pages without Yjs state, we do NOT pre-populate the XmlFragment here.
+        // y-prosemirror requires the XML structure to be created by ProseMirror, not directly.
+        // The frontend will initialize content through ProseMirror's markdown parser.
 
         let (broadcast_tx, _) = broadcast::channel(256);
         let page_doc = Arc::new(RwLock::new(PageDoc {
@@ -326,16 +322,22 @@ fn extract_sync_payload(data: &[u8]) -> Option<&[u8]> {
     Some(payload)
 }
 
-/// Extract text content from Yjs state bytes
+/// Extract text content from Yjs state bytes (XmlFragment)
+/// Uses the built-in GetString trait which recursively extracts text
 fn extract_text_content(yjs_state: &[u8]) -> String {
     let doc = Doc::new();
     if let Ok(update) = Update::decode_v1(yjs_state) {
         let mut txn = doc.transact_mut();
         txn.apply_update(update);
     }
-    let mut txn = doc.transact_mut();
-    let text = txn.get_or_insert_text("content");
-    text.get_string(&txn)
+
+    let txn = doc.transact();
+    if let Some(fragment) = txn.get_xml_fragment("content") {
+        // GetString::get_string recursively extracts all text content
+        fragment.get_string(&txn)
+    } else {
+        String::new()
+    }
 }
 
 /// Save Yjs state and materialize content for search
@@ -397,6 +399,123 @@ impl YjsState {
         tokio::spawn(async move {
             save_queue.process_loop(pool).await;
         });
+    }
+
+    /// Apply a markdown text edit to a page through Yjs (XmlFragment)
+    ///
+    /// This method:
+    /// 1. Gets or creates the Yjs document for the page
+    /// 2. Parses the markdown content into ProseMirror-compatible XmlFragment structure
+    /// 3. Broadcasts the update to connected clients
+    /// 4. Queues the save for persistence
+    ///
+    /// For find/replace edits (non-empty `find`):
+    /// - Gets current content as markdown
+    /// - Performs the replacement in markdown space
+    /// - Parses the result back to XmlFragment
+    ///
+    /// For full document replacement (empty `find`):
+    /// - Clears the document and parses the new markdown content
+    ///
+    /// Returns the new markdown content after the edit, or an error message
+    pub async fn apply_text_edit(
+        &self,
+        page_id: &str,
+        find: &str,
+        replace: &str,
+    ) -> Result<String, String> {
+        // Get or create the document
+        let page_doc = self.doc_cache.get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {}", e))?;
+
+        let (new_markdown, update_bytes) = {
+            let mut doc = page_doc.write().await;
+
+            // Determine new content
+            let new_markdown = if find.is_empty() {
+                // Full document replacement
+                replace.to_string()
+            } else {
+                // Find/replace: get current markdown, perform replacement
+                let txn = doc.doc.transact();
+                let current_markdown = if let Some(frag) = txn.get_xml_fragment("content") {
+                    xml_fragment_to_markdown(&txn, frag)
+                } else {
+                    String::new()
+                };
+                drop(txn);
+
+                // Check that the find text exists
+                if !current_markdown.contains(find) {
+                    return Err(format!(
+                        "Text not found in page: '{}'",
+                        if find.len() > 50 {
+                            format!("{}...", &find[..50])
+                        } else {
+                            find.to_string()
+                        }
+                    ));
+                }
+
+                // Perform the replacement
+                current_markdown.replacen(find, replace, 1)
+            };
+
+            // Parse markdown into XmlFragment
+            {
+                let mut txn = doc.doc.transact_mut();
+                let fragment = txn.get_or_insert_xml_fragment("content");
+
+                // Remove all existing children
+                while fragment.len(&txn) > 0 {
+                    fragment.remove_range(&mut txn, 0, 1);
+                }
+
+                // Parse markdown into XmlFragment
+                if let Err(e) = markdown_to_xml_fragment(&mut txn, fragment, &new_markdown) {
+                    return Err(format!("Failed to parse markdown: {}", e));
+                }
+            }
+
+            doc.last_update = Instant::now();
+
+            // Encode update for broadcast and persistence
+            let txn = doc.doc.transact();
+            let update_bytes = txn.encode_state_as_update_v1(&StateVector::default());
+
+            // Broadcast to connected clients
+            let broadcast_msg = encode_sync_update(&update_bytes);
+            let _ = doc.broadcast_tx.send(broadcast_msg);
+
+            (new_markdown, update_bytes)
+        };
+
+        // Queue save for persistence
+        self.save_queue.queue_save(page_id.to_string(), update_bytes).await;
+
+        Ok(new_markdown)
+    }
+
+    /// Get the current content of a page from Yjs as markdown
+    ///
+    /// This reads from the Yjs document if it's loaded and converts XmlFragment to markdown.
+    /// Falls back to database content if document is not loaded.
+    pub async fn get_page_content(&self, page_id: &str) -> Result<String, String> {
+        // Get or create the document
+        let page_doc = self.doc_cache.get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| format!("Failed to get page document: {}", e))?;
+
+        let doc = page_doc.read().await;
+        let txn = doc.doc.transact();
+
+        if let Some(fragment) = txn.get_xml_fragment("content") {
+            // Convert XmlFragment to markdown for AI consumption
+            Ok(xml_fragment_to_markdown(&txn, fragment))
+        } else {
+            Ok(String::new())
+        }
     }
 }
 

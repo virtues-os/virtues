@@ -41,7 +41,7 @@ END;
 CREATE TABLE IF NOT EXISTS chat_messages (
     id TEXT PRIMARY KEY,
     chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'checkpoint')),
     content TEXT NOT NULL,
 
     -- Model/provider info (for assistant messages)
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS spaces (
     sort_order INTEGER DEFAULT 0,         -- Order in switcher (0 = leftmost)
 
     -- Theming
-    theme_id TEXT NOT NULL DEFAULT 'scriptorium',
+    theme_id TEXT NOT NULL DEFAULT 'tatooine',
     accent_color TEXT,
 
     -- Tab state
@@ -257,11 +257,11 @@ INSERT INTO namespaces (name, backend, backend_config, is_entity, is_system, ico
 
 -- System space: "Virtues"
 INSERT OR IGNORE INTO spaces (id, name, is_system, theme_id, sort_order)
-VALUES ('space_system', 'Virtues', TRUE, 'scriptorium', 0);
+VALUES ('space_system', 'Virtues', TRUE, 'pemberley', 0);
 
 -- Default user space: "Home"
 INSERT OR IGNORE INTO spaces (id, name, is_system, theme_id, sort_order)
-VALUES ('space_home', 'Home', FALSE, 'scriptorium', 1);
+VALUES ('space_home', 'Home', FALSE, 'pemberley', 1);
 
 -- System views (smart views show recent items, manual views have explicit items)
 INSERT INTO views (id, space_id, name, icon, sort_order, view_type, query_config, is_system) VALUES

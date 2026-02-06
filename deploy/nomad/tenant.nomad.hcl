@@ -27,11 +27,6 @@ variable "tag" {
 # Resource configurations per tier
 locals {
   tier_config = {
-    free = {
-      memory     = 256
-      memory_max = 768    # Allow swap up to 512MB
-      cpu        = 100    # ~10% of 1 core
-    }
     standard = {
       memory     = 2048
       memory_max = 2048   # No swap
@@ -104,16 +99,11 @@ job "virtues-tenant-${var.subdomain}" {
       }
     }
 
-    # Host volumes
+    # Host volume for SQLite database only
+    # Drive/Lake/Media files are stored in S3
     volume "tenant_data" {
       type      = "host"
       source    = "tenant_data"
-      read_only = false
-    }
-
-    volume "infinite_drive" {
-      type      = "host"
-      source    = "infinite_drive"
       read_only = false
     }
 
@@ -135,26 +125,24 @@ job "virtues-tenant-${var.subdomain}" {
         # gVisor-specific options are configured in /etc/containerd/runsc.toml
       }
 
-      # Mount volumes
+      # Mount volume for SQLite database
       volume_mount {
         volume      = "tenant_data"
         destination = "/data"
         read_only   = false
       }
 
-      volume_mount {
-        volume      = "infinite_drive"
-        destination = "/home/user/drive"
-        read_only   = false
-      }
-
       # Environment variables
       env {
-        DATABASE_URL = "sqlite:/data/virtues.db"
-        STATIC_DIR   = "/app/static"
-        RUST_LOG     = "warn,virtues=info"
-        TIER         = var.tier
-        SUBDOMAIN    = var.subdomain
+        DATABASE_URL  = "sqlite:/data/virtues.db"
+        STATIC_DIR    = "/app/static"
+        RUST_LOG      = "warn,virtues=info"
+        RUST_ENV      = "production"
+        TIER          = var.tier
+        SUBDOMAIN     = var.subdomain
+        TOLLBOOTH_URL = "http://${attr.unique.network.ip-address}:9000"
+        AUTH_URL      = "https://${var.subdomain}.virtues.com"
+        BACKEND_URL   = "https://${var.subdomain}.virtues.com"
       }
 
       # Secrets template (injected from environment or Vault)
@@ -162,13 +150,17 @@ job "virtues-tenant-${var.subdomain}" {
         data        = <<-EOF
           VIRTUES_ENCRYPTION_KEY={{ env "VIRTUES_ENCRYPTION_KEY" }}
           STREAM_ENCRYPTION_MASTER_KEY={{ env "STREAM_ENCRYPTION_MASTER_KEY" }}
+          TOLLBOOTH_INTERNAL_SECRET={{ env "TOLLBOOTH_INTERNAL_SECRET" }}
           S3_ENDPOINT={{ env "S3_ENDPOINT" }}
           S3_BUCKET={{ env "S3_BUCKET" }}
           S3_ACCESS_KEY={{ env "S3_ACCESS_KEY" }}
           S3_SECRET_KEY={{ env "S3_SECRET_KEY" }}
+          S3_PREFIX=users/${var.subdomain}
           GOOGLE_CLIENT_ID={{ env "GOOGLE_CLIENT_ID" }}
           GOOGLE_CLIENT_SECRET={{ env "GOOGLE_CLIENT_SECRET" }}
           EXA_API_KEY={{ env "EXA_API_KEY" }}
+          RESEND_API_KEY={{ env "RESEND_API_KEY" }}
+          OWNER_EMAIL={{ env "OWNER_EMAIL" }}
         EOF
         destination = "secrets/env"
         env         = true

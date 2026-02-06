@@ -82,14 +82,14 @@
 
 <div class="flex h-full w-full bg-surface">
     <!-- Sidebar: Table List -->
-    <div class="w-64 flex-none border-r border-border bg-surface-elevated">
+    <div class="w-52 flex-none border-r border-border bg-surface-elevated">
         <div class="flex h-[53px] items-center border-b border-border px-4">
             <h2 class="text-sm text-foreground-muted">Tables</h2>
         </div>
         <div class="h-[calc(100%-53px)] overflow-y-auto p-2">
             {#if loadingTables}
-                <div class="p-2 text-xs text-foreground-muted">
-                    Loading tables...
+                <div class="flex items-center justify-center p-4">
+                    <Icon icon="ri:loader-4-line" width="16" class="spin" />
                 </div>
             {:else if error && tables.length === 0}
                 <div class="p-2 text-xs text-destructive">{error}</div>
@@ -105,7 +105,9 @@
                             class="table-item"
                             class:active={selectedTable === table}
                         >
-                            <Icon icon="ri:table-line" class="text-xs"
+                            <Icon
+                                icon="ri:table-line"
+                                class="shrink-0 text-xs"
                             />
                             {table}
                         </button>
@@ -144,8 +146,7 @@
                 <span class="text-xs text-warning">Read-only</span>
                 <div class="info-wrapper">
                     <button class="info-btn" title="Why read-only?">
-                        <Icon icon="ri:information-line" class="text-sm"
-                        />
+                        <Icon icon="ri:information-line" class="text-sm" />
                     </button>
                     <div class="info-popover">
                         <div class="info-title">Database is Read-Only</div>
@@ -186,7 +187,7 @@
                             disabled={loading}
                             class="flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-foreground-muted hover:bg-surface-elevated hover:text-foreground disabled:opacity-50"
                         >
-                            <Icon icon="ri:play-fill"/>
+                            <Icon icon="ri:play-fill" />
                             {loading ? "Running..." : "Run"}
                         </button>
                     </div>
@@ -201,8 +202,7 @@
                     class="m-8 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-destructive"
                 >
                     <div class="flex items-center gap-2 font-medium">
-                        <Icon icon="ri:error-warning-line"
-                        />
+                        <Icon icon="ri:error-warning-line" />
                         Query Failed
                     </div>
                     <pre class="mt-2 whitespace-pre-wrap text-xs">{error}</pre>
@@ -262,8 +262,7 @@
                 <div
                     class="flex h-full flex-col items-center justify-center text-foreground-muted opacity-50"
                 >
-                    <Icon icon="ri:database-2-line" class="text-4xl"
-                    />
+                    <Icon icon="ri:database-2-line" class="text-4xl" />
                     <p class="mt-2 text-sm">Select a table to execute query</p>
                 </div>
             {/if}

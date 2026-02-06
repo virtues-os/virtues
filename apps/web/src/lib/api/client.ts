@@ -9,7 +9,7 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 const API_BASE = '/api';
 
-// Catalog
+// Catalog — returns { tier: string, sources: CatalogSource[] }
 export async function listCatalogSources() {
 	const res = await fetch(`${API_BASE}/catalog/sources`);
 	if (!res.ok) throw new Error(`Failed to list catalog sources: ${res.statusText}`);
@@ -576,7 +576,7 @@ export interface DriveUsage {
 	folder_count: number;
 	/** Usage percentage (total_bytes / quota_bytes * 100) */
 	usage_percent: number;
-	/** Tier name (free, standard, pro) */
+	/** Tier name (standard, pro) */
 	tier: string;
 }
 
@@ -793,6 +793,74 @@ export async function emptyDriveTrash(): Promise<{ deleted_count: number }> {
 	if (!res.ok) {
 		const error = await res.json().catch(() => ({ error: res.statusText }));
 		throw new Error(error.error || `Failed to empty trash: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+// =============================================================================
+// Media - Content-addressed storage for page-embedded media
+// =============================================================================
+
+export interface MediaFile {
+	id: string;
+	url: string;
+	filename: string;
+	mime_type: string | null;
+	size_bytes: number;
+	width: number | null;
+	height: number | null;
+	deduplicated: boolean;
+}
+
+/**
+ * Upload a media file (image, video, audio) for embedding in pages.
+ * Uses content-addressed storage - duplicate uploads return existing file.
+ */
+export async function uploadMedia(
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<MediaFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('filename', file.name);
+
+	// Use XMLHttpRequest for progress tracking
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', `${API_BASE}/media/upload`);
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && onProgress) {
+				onProgress(Math.round((e.loaded / e.total) * 100));
+			}
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve(JSON.parse(xhr.responseText));
+			} else {
+				try {
+					const error = JSON.parse(xhr.responseText);
+					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
+				} catch {
+					reject(new Error(`Upload failed: ${xhr.statusText}`));
+				}
+			}
+		};
+
+		xhr.onerror = () => reject(new Error('Network error during upload'));
+		xhr.send(formData);
+	});
+}
+
+/**
+ * Get media file metadata by ID
+ */
+export async function getMedia(fileId: string): Promise<MediaFile> {
+	const res = await fetch(`${API_BASE}/media/${fileId}`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to get media: ${res.statusText}`);
 	}
 	return res.json();
 }
@@ -1482,5 +1550,41 @@ export async function deletePage(id: string): Promise<void> {
 export async function searchEntities(query: string): Promise<EntitySearchResponse> {
 	const res = await fetch(`${API_BASE}/pages/search/entities?q=${encodeURIComponent(query)}`);
 	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
+	return res.json();
+}
+
+// =============================================================================
+// System Update API
+// =============================================================================
+
+export interface SystemUpdateStatus {
+	available: boolean;
+	current: string;
+	latest: string | null;
+	latest_image: string | null;
+}
+
+/**
+ * Check if a system update is available (pull-based updates via Tollbooth → Atlas)
+ */
+export async function checkSystemUpdate(): Promise<SystemUpdateStatus> {
+	const res = await fetch(`${API_BASE}/system/update-available`);
+	if (!res.ok) throw new Error(`Failed to check system update: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * Trigger a system update (Core → Tollbooth → Atlas → Nomad rolling deploy)
+ * This will restart the container — the user should see an update overlay.
+ */
+export async function triggerSystemUpdate(): Promise<{ status: string }> {
+	const res = await fetch(`${API_BASE}/system/update`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' }
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to trigger update: ${res.statusText}`);
+	}
 	return res.json();
 }

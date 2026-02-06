@@ -4,7 +4,7 @@
 //! the virtues-registry configuration.
 //!
 //! Two modes:
-//! - Standalone: Default tier (free) for all users
+//! - Standalone: Default tier (standard) for all users
 //! - Production: Hydrate tiers from Atlas alongside budgets
 
 use dashmap::DashMap;
@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Default tier for unknown users
-pub const DEFAULT_TIER: &str = "free";
+pub fn default_tier() -> &'static str {
+    "standard"
+}
 
 /// User tier entry
 #[derive(Debug, Clone)]
@@ -23,7 +25,7 @@ pub struct TierEntry {
 impl Default for TierEntry {
     fn default() -> Self {
         Self {
-            tier: DEFAULT_TIER.to_string(),
+            tier: default_tier().to_string(),
         }
     }
 }
@@ -59,7 +61,7 @@ impl TierManager {
     pub fn new() -> Self {
         Self {
             tiers: Arc::new(DashMap::new()),
-            default_tier: DEFAULT_TIER.to_string(),
+            default_tier: default_tier().to_string(),
         }
     }
 
@@ -144,7 +146,7 @@ mod tests {
     #[test]
     fn test_default_tier() {
         let manager = TierManager::new();
-        assert_eq!(manager.get_tier("unknown_user"), "free");
+        assert_eq!(manager.get_tier("unknown_user"), "standard");
     }
 
     #[test]
@@ -157,19 +159,19 @@ mod tests {
     #[test]
     fn test_connection_limit_check() {
         let manager = TierManager::new();
-        
-        // Free tier user with 1 Plaid connection
+
+        // Default (standard) tier user with 1 Plaid connection
         let result = manager.check_connection_limit("user1", "plaid", 1);
         assert!(result.is_some());
         let resp = result.unwrap();
-        assert_eq!(resp.tier, "free");
-        assert_eq!(resp.limit, 2); // Free tier gets 2 Plaid connections
+        assert_eq!(resp.tier, "standard");
+        assert_eq!(resp.limit, 4); // Standard tier gets 4 Plaid connections
         assert_eq!(resp.current, 1);
         assert!(resp.can_add);
-        assert_eq!(resp.remaining, 1);
+        assert_eq!(resp.remaining, 3);
 
-        // Free tier user at limit
-        let result = manager.check_connection_limit("user1", "plaid", 2);
+        // Standard tier user at limit
+        let result = manager.check_connection_limit("user1", "plaid", 4);
         let resp = result.unwrap();
         assert!(!resp.can_add);
         assert_eq!(resp.remaining, 0);
@@ -183,15 +185,15 @@ mod tests {
         let result = manager.check_connection_limit("pro_user", "plaid", 5);
         let resp = result.unwrap();
         assert_eq!(resp.tier, "pro");
-        assert_eq!(resp.limit, 10); // Pro tier gets 10 Plaid connections
+        assert_eq!(resp.limit, 16); // Pro tier gets 16 Plaid connections
         assert!(resp.can_add);
     }
 
     #[test]
-    fn test_singleton_source() {
+    fn test_standard_tier_ios_allowed() {
         let manager = TierManager::new();
-        
-        // iOS is singleton - limit is always 1
+
+        // Default (standard) tier user can add 1 iOS connection
         let result = manager.check_connection_limit("user1", "ios", 0);
         let resp = result.unwrap();
         assert_eq!(resp.limit, 1);

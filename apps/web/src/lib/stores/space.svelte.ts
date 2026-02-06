@@ -38,9 +38,7 @@ import {
 import {
 	type Tab,
 	type TabType,
-	type FallbackView,
 	type PaneState,
-	getTabDomain,
 	entityIdToRoute,
 	routeToEntityId
 } from '$lib/tabs/types';
@@ -48,7 +46,7 @@ import { parseRoute } from '$lib/tabs/registry';
 import { pushState, replaceState } from '$app/navigation';
 
 // Re-export types for convenience
-export type { Tab, TabType, FallbackView, PaneState };
+export type { Tab, TabType, PaneState };
 export { parseRoute };
 
 // ============================================================================
@@ -89,7 +87,7 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	thing: { type: 'thing', icon: 'ri:box-3-line', routePrefix: '/thing' },
 	day: { type: 'day', icon: 'ri:calendar-line', routePrefix: '/day' },
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
-	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/source' },
+	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
 	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' }
 };
 
@@ -192,12 +190,7 @@ class SpaceStore {
 	// ============================================================================
 	// Other State
 	// ============================================================================
-	fallbackPreference = $state<FallbackView>('empty');
 	swipeProgress = $state(0);
-
-	private _history = $state<string[]>([]);
-	private _historyIndex = $state<number>(-1);
-	private _isNavigatingHistory = false;
 
 	viewCache = $state<Map<string, ViewEntity[]>>(new Map());
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
@@ -741,12 +734,6 @@ class SpaceStore {
 	private restoreTabState(): void {
 		if (typeof window === 'undefined') return;
 
-		// Load fallback preference
-		const fallbackStored = localStorage.getItem('virtues-fallback-preference');
-		if (fallbackStored && ['empty', 'chat', 'conway', 'dog-jump', 'day-today'].includes(fallbackStored)) {
-			this.fallbackPreference = fallbackStored as FallbackView;
-		}
-
 		const storageKey = this.getTabStorageKey();
 
 		try {
@@ -793,21 +780,8 @@ class SpaceStore {
 	}
 
 	private openDefaultTab(): void {
-		// Dashboard is now the default - it shows when there are no tabs
-		// No need to open a default tab anymore since Dashboard renders inline
-		// But we can still respect legacy preferences for users who want a specific view
-		const pref = this.fallbackPreference;
-		if (pref === 'chat') {
-			this.openTab({ type: 'chat', label: 'New Chat', route: '/chat', icon: 'ri:chat-1-line' });
-		} else if (pref === 'conway') {
-			this.openTabFromRoute('/life');
-		} else if (pref === 'dog-jump') {
-			this.openTabFromRoute('/jump');
-		} else if (pref === 'day-today') {
-			const today = new Date().toISOString().split('T')[0];
-			this.openTabFromRoute(`/day/day_${today}`);
-		}
-		// 'empty' now means Dashboard - no tab needed, Dashboard renders inline
+		// Always open a new chat when there are no tabs
+		this.openTab({ type: 'chat', label: 'New Chat', route: '/chat', icon: 'ri:chat-1-line' });
 	}
 
 	// ============================================================================
@@ -831,8 +805,6 @@ class SpaceStore {
 		const tab: Tab = { ...input, id, createdAt: Date.now() };
 		const targetPaneId = paneId ?? this.activePaneId;
 
-		this.pushToHistory(id);
-
 		this.updatePane(targetPaneId, pane => ({
 			...pane,
 			tabs: [...pane.tabs, tab],
@@ -852,11 +824,10 @@ class SpaceStore {
 		paneId?: 'left' | 'right';
 	}): string {
 		const parsed = parseRoute(route);
-		const targetDomain = getTabDomain(parsed.type);
 		// Use normalized route if available (e.g., /day → /day/day_2026-01-25)
 		const effectiveRoute = parsed.normalizedRoute || route;
 
-		// Find existing tab if not forcing new
+		// Find existing tab if not forcing new — focus it (IDE model)
 		if (!options?.forceNew) {
 			let result: { tab: Tab; paneId: string } | undefined;
 
@@ -877,23 +848,6 @@ class SpaceStore {
 			if (result) {
 				this.setActiveTab(result.tab.id);
 				return result.tab.id;
-			}
-
-			// Hybrid navigation: same domain navigates in place
-			const currentTab = this.activeTab;
-			if (currentTab && !currentTab.pinned) {
-				const currentDomain = getTabDomain(currentTab.type);
-				if (currentDomain === targetDomain) {
-					this.updateTab(currentTab.id, {
-						type: parsed.type,
-						label: options?.label || parsed.label,
-						route: effectiveRoute,
-						icon: parsed.icon,
-						storagePath: parsed.storagePath,
-						virtuesPage: parsed.virtuesPage
-					});
-					return currentTab.id;
-				}
 			}
 		}
 
@@ -1037,8 +991,6 @@ class SpaceStore {
 	closeAllTabs(): void {
 		this.panes = [{ id: 'left', tabs: [], activeTabId: null, width: 100 }];
 		this.activePaneId = 'left';
-		this._history = [];
-		this._historyIndex = -1;
 		localStorage.removeItem(this.getTabStorageKey());
 	}
 
@@ -1059,8 +1011,6 @@ class SpaceStore {
 		const pane = this.findPaneForTab(tabId);
 		if (!pane) return;
 
-		this.pushToHistory(tabId);
-
 		this.updatePane(pane.id, p => ({
 			...p,
 			activeTabId: tabId
@@ -1075,8 +1025,6 @@ class SpaceStore {
 	setActiveTabInPane(tabId: string, paneId: 'left' | 'right'): void {
 		const pane = this.panes.find(p => p.id === paneId);
 		if (!pane?.tabs.some(t => t.id === tabId)) return;
-
-		this.pushToHistory(tabId);
 
 		this.updatePane(paneId, p => ({ ...p, activeTabId: tabId }));
 		this.activePaneId = paneId;
@@ -1199,53 +1147,6 @@ class SpaceStore {
 		return this.panes
 			.map(pane => pane.tabs.find(t => t.id === pane.activeTabId))
 			.filter((t): t is Tab => t !== undefined);
-	}
-
-	// ============================================================================
-	// Navigation History
-	// ============================================================================
-
-	private pushToHistory(tabId: string): void {
-		if (this._isNavigatingHistory) return;
-
-		if (this._historyIndex < this._history.length - 1) {
-			this._history = this._history.slice(0, this._historyIndex + 1);
-		}
-
-		if (this._history[this._history.length - 1] !== tabId) {
-			this._history = [...this._history, tabId];
-			this._historyIndex = this._history.length - 1;
-		}
-	}
-
-	canGoBack(): boolean {
-		return this._historyIndex > 0;
-	}
-
-	canGoForward(): boolean {
-		return this._historyIndex < this._history.length - 1;
-	}
-
-	goBack(): void {
-		if (!this.canGoBack()) return;
-
-		this._isNavigatingHistory = true;
-		this._historyIndex--;
-		const tabId = this._history[this._historyIndex];
-
-		this.setActiveTab(tabId);
-		this._isNavigatingHistory = false;
-	}
-
-	goForward(): void {
-		if (!this.canGoForward()) return;
-
-		this._isNavigatingHistory = true;
-		this._historyIndex++;
-		const tabId = this._history[this._historyIndex];
-
-		this.setActiveTab(tabId);
-		this._isNavigatingHistory = false;
 	}
 
 	// ============================================================================
@@ -1383,17 +1284,6 @@ class SpaceStore {
 			},
 			targetPaneId
 		);
-	}
-
-	// ============================================================================
-	// Preferences
-	// ============================================================================
-
-	setFallbackPreference(pref: FallbackView): void {
-		this.fallbackPreference = pref;
-		if (typeof window !== 'undefined') {
-			localStorage.setItem('virtues-fallback-preference', pref);
-		}
 	}
 
 	// ============================================================================

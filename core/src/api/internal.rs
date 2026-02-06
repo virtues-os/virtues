@@ -47,7 +47,7 @@ pub struct HydrateRequest {
     pub full_name: Option<String>,
     /// Preferred/display name
     pub preferred_name: Option<String>,
-    /// Subscription tier: "free", "standard", "pro"
+    /// Subscription tier: "standard", "pro"
     pub tier: Option<String>,
 }
 

@@ -1,157 +1,43 @@
-//! Provider Configuration and Routing
+//! Provider Configuration
 //!
-//! Unified provider handling for all LLM requests (streaming and non-streaming).
-//! Each provider has specific endpoint, authentication, and format requirements.
-//!
-//! Supported Providers:
-//! - OpenAI: Bearer token, OpenAI format
-//! - Anthropic: x-api-key header, Messages API format (requires transform)
-//! - Cerebras: Bearer token, OpenAI-compatible
-//! - Vertex AI (Google): OAuth2 Bearer, OpenAI-compatible
-//! - xAI (Grok): Bearer token, OpenAI-compatible
+//! Simplified provider handling - all requests go through Vercel AI Gateway.
+//! The gateway handles routing to providers (OpenAI, Anthropic, Google, etc.)
+//! based on the model name prefix (e.g., "anthropic/claude-sonnet-4.5").
 
-use gcp_auth::TokenProvider;
-use std::sync::Arc;
-use tokio::sync::OnceCell;
-
-use crate::{config::Config, proxy::ProxyError};
-
-/// Cached GCP token provider for Vertex AI
-static GCP_AUTH: OnceCell<Arc<dyn TokenProvider>> = OnceCell::const_new();
+use crate::config::Config;
 
 /// Provider configuration for making LLM requests
 #[derive(Debug, Clone)]
 pub struct ProviderConfig {
-    /// API endpoint URL
+    /// API endpoint URL (Vercel AI Gateway)
     pub endpoint: String,
-    /// API key (None for Vertex AI which uses OAuth2)
-    pub api_key: Option<String>,
-    /// Whether this is Anthropic (requires different request/response format)
-    pub is_anthropic: bool,
-    /// Whether this is Vertex AI (requires OAuth2 token)
-    pub is_vertex_ai: bool,
-    /// Model name to send to the provider (may differ from requested model)
+    /// API key for the gateway
+    pub api_key: String,
+    /// Model name to send (passed through as-is)
     pub model_name: String,
 }
 
-/// Get or initialize the GCP token provider
-async fn get_gcp_provider() -> Result<Arc<dyn TokenProvider>, ProxyError> {
-    GCP_AUTH
-        .get_or_try_init(|| async {
-            gcp_auth::provider()
-                .await
-                .map_err(|e| ProxyError::UpstreamError {
-                    status: 500,
-                    message: format!("Failed to initialize GCP auth: {}", e),
-                })
-        })
-        .await
-        .cloned()
+/// Get provider configuration - always routes to Vercel AI Gateway
+///
+/// Model names should be in provider/model format:
+/// - `anthropic/claude-sonnet-4.5`
+/// - `openai/gpt-4o`
+/// - `google/gemini-2.5-pro`
+/// - `xai/grok-3`
+pub fn get_provider_config(model: &str, config: &Config) -> ProviderConfig {
+    ProviderConfig {
+        endpoint: format!("{}/v1/chat/completions", config.ai_gateway_url),
+        api_key: config.ai_gateway_api_key.clone(),
+        model_name: model.to_string(),
+    }
 }
 
-/// Get Vertex AI OAuth2 access token
-///
-/// Tokens are cached and refreshed automatically by gcp_auth.
-/// Token lifetime is ~1 hour.
-pub async fn get_vertex_ai_token() -> Result<String, ProxyError> {
-    let provider = get_gcp_provider().await?;
-    let scopes = &["https://www.googleapis.com/auth/cloud-platform"];
-    let token = provider
-        .token(scopes)
-        .await
-        .map_err(|e| ProxyError::UpstreamError {
-            status: 500,
-            message: format!("Failed to get Vertex AI token: {}", e),
-        })?;
-    Ok(token.as_str().to_string())
-}
-
-/// Get provider configuration based on model name
-///
-/// Routes models to the appropriate provider based on prefix or name:
-/// - `anthropic/` or contains `claude` → Anthropic
-/// - `cerebras/` or contains `llama` → Cerebras
-/// - `google/` or contains `gemini` → Vertex AI
-/// - `xai/` or contains `grok` → xAI
-/// - Default → OpenAI
-pub fn get_provider_config(model: &str, config: &Config) -> Option<ProviderConfig> {
-    let model_lower = model.to_lowercase();
-
-    if model_lower.starts_with("anthropic/") || model_lower.contains("claude") {
-        // Anthropic Claude models
-        config.anthropic_api_key.as_ref().map(|key| ProviderConfig {
-            endpoint: "https://api.anthropic.com/v1/messages".to_string(),
-            api_key: Some(key.clone()),
-            is_anthropic: true,
-            is_vertex_ai: false,
-            model_name: model.trim_start_matches("anthropic/").to_string(),
-        })
-    } else if model_lower.starts_with("cerebras/") || model_lower.contains("llama") {
-        // Cerebras (Llama models)
-        config.cerebras_api_key.as_ref().map(|key| ProviderConfig {
-            endpoint: "https://api.cerebras.ai/v1/chat/completions".to_string(),
-            api_key: Some(key.clone()),
-            is_anthropic: false,
-            is_vertex_ai: false,
-            model_name: model.trim_start_matches("cerebras/").to_string(),
-        })
-    } else if model_lower.starts_with("google/") || model_lower.contains("gemini") {
-        // Vertex AI (Google Gemini models)
-        config.google_cloud_project.as_ref().map(|project| {
-            // Gemini 3 models require global region
-            let is_gemini_3 = model_lower.contains("gemini-3");
-            let region = if is_gemini_3 {
-                "global"
-            } else {
-                &config.google_cloud_region
-            };
-
-            // Vertex AI expects model in "google/model-name" format
-            let model_name = if model_lower.starts_with("google/") {
-                model.to_string()
-            } else {
-                format!("google/{}", model)
-            };
-
-            // Global endpoint has different URL format (no region prefix)
-            let endpoint = if is_gemini_3 {
-                format!(
-                    "https://aiplatform.googleapis.com/v1/projects/{}/locations/global/endpoints/openapi/chat/completions",
-                    project
-                )
-            } else {
-                format!(
-                    "https://{}-aiplatform.googleapis.com/v1/projects/{}/locations/{}/endpoints/openapi/chat/completions",
-                    region, project, region
-                )
-            };
-
-            ProviderConfig {
-                endpoint,
-                api_key: None, // Vertex AI uses OAuth2, not API keys
-                is_anthropic: false,
-                is_vertex_ai: true,
-                model_name,
-            }
-        })
-    } else if model_lower.starts_with("xai/") || model_lower.contains("grok") {
-        // xAI (Grok models)
-        config.xai_api_key.as_ref().map(|key| ProviderConfig {
-            endpoint: "https://api.x.ai/v1/chat/completions".to_string(),
-            api_key: Some(key.clone()),
-            is_anthropic: false,
-            is_vertex_ai: false,
-            model_name: model.trim_start_matches("xai/").to_string(),
-        })
-    } else {
-        // Default to OpenAI
-        config.openai_api_key.as_ref().map(|key| ProviderConfig {
-            endpoint: "https://api.openai.com/v1/chat/completions".to_string(),
-            api_key: Some(key.clone()),
-            is_anthropic: false,
-            is_vertex_ai: false,
-            model_name: model.trim_start_matches("openai/").to_string(),
-        })
+/// Get embeddings endpoint configuration
+pub fn get_embeddings_config(config: &Config) -> ProviderConfig {
+    ProviderConfig {
+        endpoint: format!("{}/v1/embeddings", config.ai_gateway_url),
+        api_key: config.ai_gateway_api_key.clone(),
+        model_name: String::new(),
     }
 }
 

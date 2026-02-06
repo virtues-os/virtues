@@ -122,11 +122,11 @@
 
 		// Build context menu items
 		const items: ContextMenuItem[] = [
-			// Pin/Unpin
+			// Compact/Expand
 			{
-				id: "pin",
-				label: tab.pinned ? "Unpin" : "Pin",
-				icon: tab.pinned ? "ri:unpin-line" : "ri:pushpin-line",
+				id: "compact",
+				label: tab.pinned ? "Expand" : "Compact",
+				icon: tab.pinned ? "ri:expand-left-right-line" : "ri:contract-left-right-line",
 				action: () => spaceStore.togglePin(tabId),
 			},
 			// Rename
@@ -271,32 +271,6 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
-	<!-- Only show nav buttons on left pane or when not in split mode -->
-	{#if !paneId || paneId === "left"}
-		<div class="nav-buttons">
-			<button
-				class="nav-button"
-				class:disabled={!spaceStore.canGoBack()}
-				onclick={() => spaceStore.goBack()}
-				aria-label="Go back"
-				title="Go back"
-				disabled={!spaceStore.canGoBack()}
-			>
-				<Icon icon="ri:arrow-left-s-line" />
-			</button>
-			<button
-				class="nav-button"
-				class:disabled={!spaceStore.canGoForward()}
-				onclick={() => spaceStore.goForward()}
-				aria-label="Go forward"
-				title="Go forward"
-				disabled={!spaceStore.canGoForward()}
-			>
-				<Icon icon="ri:arrow-right-s-line" />
-			</button>
-		</div>
-	{/if}
-
 	<div
 		class="tabs-scroll"
 		role="tablist"
@@ -401,46 +375,6 @@
 		flex-shrink: 0;
 		position: relative;
 		z-index: 110; /* Above global drag overlays */
-	}
-
-	.nav-buttons {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		margin-right: 4px;
-	}
-
-	.nav-button {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		border: none;
-		border-radius: 6px;
-		background: transparent;
-		color: var(--color-foreground-muted);
-		font-size: 16px;
-		cursor: pointer;
-		transition:
-			background-color 150ms ease,
-			color 150ms ease;
-	}
-
-	.nav-button:hover {
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground);
-	}
-
-	.nav-button:active:not(:disabled) {
-		background: var(--color-border);
-	}
-
-	.nav-button.disabled,
-	.nav-button:disabled {
-		opacity: 0.3;
-		cursor: default;
 	}
 
 	/* Active pane in split mode gets elevated background */
