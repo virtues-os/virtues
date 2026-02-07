@@ -72,7 +72,6 @@ pub struct AppState {
     pub tool_executor: Option<Arc<crate::tools::ToolExecutor>>,
     pub yjs_state: super::yjs::YjsState,
     pub chat_cancel_state: ChatCancellationState,
-    pub update_state: crate::api::UpdateState,
 }
 
 /// Enable extracting SqlitePool from AppState for auth middleware

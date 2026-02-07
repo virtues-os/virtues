@@ -42,9 +42,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to seed owner email: {}", e);
     }
 
-    // In dev mode, auto-mark server as ready (skips Tollbooth hydration wait)
-    if let Err(e) = crate::api::seed_dev_server_status(client.database.pool()).await {
-        tracing::warn!("Failed to seed dev server status: {}", e);
+    // Auto-detect server readiness (skips setup screen if previously hydrated)
+    if let Err(e) = crate::api::ensure_server_status(client.database.pool()).await {
+        tracing::warn!("Failed to ensure server status: {}", e);
     }
 
     // Initialize StreamWriter (simple in-memory buffer)
@@ -103,13 +103,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // Create drive config with shared storage backend
     let drive_config = crate::api::DriveConfig::new(client.storage.clone());
 
-    // Initialize update state and start background version checker
-    let update_state = crate::api::UpdateState::new();
-    let update_state_clone = update_state.clone();
-    tokio::spawn(async move {
-        crate::api::run_version_checker(update_state_clone).await;
-    });
-
     let state = AppState {
         db: client.database.clone(),
         storage: client.storage.clone(),
@@ -118,7 +111,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
-        update_state,
     };
 
     let app = Router::new()
@@ -333,12 +325,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/billing/portal",
             post(api::create_billing_portal_handler),
         )
-        // System Update API (pull-based updates via Tollbooth → Atlas)
-        .route(
-            "/api/system/update-available",
-            get(api::get_update_available_handler),
-        )
-        .route("/api/system/update", post(api::trigger_update_handler))
         // Search API (Exa)
         .route("/api/search/web", post(api::exa_search_handler))
         // Unsplash API (cover image search)
@@ -672,6 +658,16 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         Err(_) => "disconnected",
     };
 
+    // Read update_check_hour for Atlas health check sync
+    let update_check_hour = sqlx::query_scalar::<_, Option<i32>>(
+        "SELECT update_check_hour FROM app_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
+    )
+    .fetch_optional(state.db.pool())
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
     let is_healthy = db_status == "connected";
     let status_code = if is_healthy {
         axum::http::StatusCode::OK
@@ -690,6 +686,7 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
             "min_ios_version": min_ios_version,
+            "update_check_hour": update_check_hour,
             "database": db_status,
             "pool": {
                 "size": state.db.pool().size(),

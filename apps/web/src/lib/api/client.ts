@@ -472,6 +472,7 @@ export interface Profile {
 	occupation?: string | null;
 	employer?: string | null;
 	theme?: string | null;
+	update_check_hour?: number | null;
 	home_place_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
@@ -1553,38 +1554,3 @@ export async function searchEntities(query: string): Promise<EntitySearchRespons
 	return res.json();
 }
 
-// =============================================================================
-// System Update API
-// =============================================================================
-
-export interface SystemUpdateStatus {
-	available: boolean;
-	current: string;
-	latest: string | null;
-	latest_image: string | null;
-}
-
-/**
- * Check if a system update is available (pull-based updates via Tollbooth → Atlas)
- */
-export async function checkSystemUpdate(): Promise<SystemUpdateStatus> {
-	const res = await fetch(`${API_BASE}/system/update-available`);
-	if (!res.ok) throw new Error(`Failed to check system update: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Trigger a system update (Core → Tollbooth → Atlas → Nomad rolling deploy)
- * This will restart the container — the user should see an update overlay.
- */
-export async function triggerSystemUpdate(): Promise<{ status: string }> {
-	const res = await fetch(`${API_BASE}/system/update`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' }
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to trigger update: ${res.statusText}`);
-	}
-	return res.json();
-}

@@ -190,7 +190,7 @@ pub use chats::{
     MessageResponse, TimeRange, TitleMessage, ToolCall, UpdateChatResponse, UpdateTitleRequest,
 };
 pub use internal::{
-    get_server_status, hydrate_profile, mark_server_ready, seed_dev_server_status, HydrateRequest,
+    ensure_server_status, get_server_status, hydrate_profile, mark_server_ready, HydrateRequest,
     HydrateResponse, ServerStatus,
 };
 pub use namespaces::{
@@ -272,9 +272,7 @@ pub use streams::{
     BulkUpdateStreamsResponse, EnableStreamRequest, StreamUpdate, UpdateStreamConfigRequest,
     UpdateStreamScheduleRequest,
 };
-pub use system_update::{
-    run_version_checker, trigger_update as trigger_system_update, UpdateState, UpdateStatus,
-};
+pub use system_update::CURRENT_COMMIT;
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
     ContextStatus,

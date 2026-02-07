@@ -1513,39 +1513,6 @@ pub async fn create_billing_portal_handler(user: crate::middleware::auth::AuthUs
 // System Update API Handlers
 // =============================================================================
 
-/// GET /api/system/update-available - Check if a newer version is available
-///
-/// Returns cached update status from the background version checker.
-/// No Tollbooth call needed — the background task updates the state every 5 minutes.
-pub async fn get_update_available_handler(
-    State(state): State<AppState>,
-    _user: crate::middleware::auth::AuthUser,
-) -> Response {
-    let status = state.update_state.get().await;
-    (StatusCode::OK, Json(status)).into_response()
-}
-
-/// POST /api/system/update - Trigger a rolling update via Tollbooth → Atlas
-///
-/// The user clicks "Update" in the frontend, which calls this endpoint.
-/// This proxies through Tollbooth to Atlas, which orchestrates:
-/// 1. Backup SQLite to S3
-/// 2. Re-submit Nomad job with the new image tag
-/// 3. Nomad handles the rolling deploy (container restart)
-pub async fn trigger_update_handler(_user: crate::middleware::auth::AuthUser) -> Response {
-    match crate::api::trigger_system_update().await {
-        Ok(data) => (StatusCode::OK, Json(data)).into_response(),
-        Err(e) => {
-            tracing::error!("Failed to trigger update: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response()
-        }
-    }
-}
-
 // =============================================================================
 // Exa Search API Handlers
 // =============================================================================
