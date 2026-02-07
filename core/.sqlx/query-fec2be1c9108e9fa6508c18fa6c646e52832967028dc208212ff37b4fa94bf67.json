@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT server_status, owner_email\n        FROM app_user_profile \n        WHERE id = '00000000-0000-0000-0000-000000000001'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "server_status",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "owner_email",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "fec2be1c9108e9fa6508c18fa6c646e52832967028dc208212ff37b4fa94bf67"
+}
