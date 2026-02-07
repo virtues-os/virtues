@@ -6,11 +6,8 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
-	import UpdateOverlay from "$lib/components/UpdateOverlay.svelte";
-	import UpdateBanner from "$lib/components/UpdateBanner.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import { versionStore } from "$lib/stores/version.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
@@ -18,6 +15,9 @@
 	import { goto } from "$app/navigation";
 	import { page } from "$app/stores";
 	import type { Snippet } from "svelte";
+
+	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
+	const BUILD_COMMIT: string = __BUILD_COMMIT__;
 
 	// Get session expiry from page data
 	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
@@ -77,9 +77,23 @@
 		// Mark as initialized
 		initialized = true;
 
-		// Start polling for version updates and subscription status
-		versionStore.start();
+		// Start polling for subscription status
 		subscriptionStore.start();
+
+		// Post-update toast: show once per session if the server was updated
+		if (typeof sessionStorage !== "undefined") {
+			const lastSeenCommit = sessionStorage.getItem(
+				"virtues_last_commit",
+			);
+			if (
+				BUILD_COMMIT !== "dev" &&
+				lastSeenCommit &&
+				lastSeenCommit !== BUILD_COMMIT
+			) {
+				toast.info("Virtues has been updated", { duration: 5000 });
+			}
+			sessionStorage.setItem("virtues_last_commit", BUILD_COMMIT);
+		}
 
 		// Set up session expiry warning
 		if (data?.sessionExpires) {
@@ -120,41 +134,11 @@
 			clearInterval(sessionExpiryTimer);
 		}
 		spaceStore.destroyUrlSync();
-		versionStore.stop();
 		subscriptionStore.stop();
 
 		// Clean up global keyboard shortcut listener
 		if (typeof window !== "undefined") {
 			window.removeEventListener("keydown", handleGlobalKeydown);
-		}
-	});
-
-	// Brief toast when frontend code drift is first detected (banner handles persistence)
-	let updateToastShown = false;
-	$effect(() => {
-		if (versionStore.updateAvailable && !updateToastShown) {
-			updateToastShown = true;
-			toast.info("New version available", {
-				description:
-					"A refresh banner will stay visible until updated.",
-				duration: 8000,
-			});
-		}
-	});
-
-	// Brief toast when system update is first detected (banner handles persistence)
-	let systemUpdateToastShown = false;
-	$effect(() => {
-		if (
-			versionStore.systemUpdateAvailable &&
-			!systemUpdateToastShown &&
-			!versionStore.updating
-		) {
-			systemUpdateToastShown = true;
-			toast.info("System update available", {
-				description: "A new version of Virtues is ready to install.",
-				duration: 8000,
-			});
 		}
 	});
 
@@ -252,9 +236,6 @@
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 bg-surface text-foreground m-3 rounded-lg border border-border overflow-hidden"
 	>
-		<!-- Persistent update banner (state-driven, not dismissable) -->
-		<UpdateBanner />
-
 		{#if initialized}
 			<!-- SplitContainer handles both split and mono modes -->
 			<SplitContainer />
@@ -265,11 +246,6 @@
 <!-- Server Provisioning Overlay (shown while Tollbooth is hydrating) -->
 {#if data?.serverStatus && data.serverStatus !== "ready"}
 	<ServerProvisioning initialStatus={data.serverStatus} />
-{/if}
-
-<!-- Update Overlay (shown during system update / container restart) -->
-{#if versionStore.updating}
-	<UpdateOverlay previousCommit={versionStore.serverCommit ?? ""} />
 {/if}
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->

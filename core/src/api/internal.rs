@@ -160,24 +160,19 @@ pub async fn mark_server_ready(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-/// Seed server as ready in development mode
-/// 
-/// Called during server startup in non-production environments to skip
-/// the Tollbooth hydration wait.
-pub async fn seed_dev_server_status(pool: &SqlitePool) -> Result<()> {
-    let is_production = std::env::var("RUST_ENV")
-        .map(|v| v == "production")
-        .unwrap_or(false);
-    
-    if is_production {
-        tracing::debug!("Production mode - server_status controlled by Tollbooth");
-        return Ok(());
-    }
-
-    // In dev mode, auto-mark as ready
+/// Ensure server_status is correct on startup
+///
+/// If the profile already has an owner_email, the server was previously
+/// hydrated and should be marked ready immediately. This prevents the
+/// "Setting up your server" screen from appearing after container
+/// restarts or rolling updates where the /data volume persists.
+///
+/// If owner_email is null, this is a genuinely fresh provision and we
+/// leave server_status as 'provisioning' to wait for the Atlas hydrate call.
+pub async fn ensure_server_status(pool: &SqlitePool) -> Result<()> {
     let row = sqlx::query!(
         r#"
-        SELECT server_status
+        SELECT server_status, owner_email
         FROM app_user_profile 
         WHERE id = '00000000-0000-0000-0000-000000000001'
         "#
@@ -186,9 +181,13 @@ pub async fn seed_dev_server_status(pool: &SqlitePool) -> Result<()> {
     .await;
 
     match row {
-        Ok(r) if r.server_status == "provisioning" => {
+        Ok(r) if r.server_status == "provisioning" && r.owner_email.is_some() => {
+            // Previously hydrated server restarting — mark ready immediately
             mark_server_ready(pool).await?;
-            tracing::info!("Dev mode: auto-marked server as ready (skipping Tollbooth hydration)");
+            tracing::info!("Server previously hydrated, auto-marked as ready on startup");
+        }
+        Ok(r) if r.server_status == "provisioning" => {
+            tracing::info!("Fresh provision — waiting for Atlas hydration");
         }
         Ok(_) => {
             tracing::debug!("Server already in ready state");
