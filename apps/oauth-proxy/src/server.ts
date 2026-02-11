@@ -6,6 +6,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
+import { githubRouter } from './routes/github';
 import { googleRouter } from './routes/google';
 import notionRouter from './routes/notion';
 import { stravaRouter } from './routes/strava';
@@ -104,6 +105,7 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 // OAuth routes
+app.use('/github', githubRouter);
 app.use('/google', googleRouter);
 app.use('/notion', notionRouter);
 app.use('/strava', stravaRouter);

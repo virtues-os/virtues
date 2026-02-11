@@ -23,8 +23,7 @@ export function isValidReturnUrl(url: string): boolean {
     // Allow specific domains (add your domain patterns here)
     const allowedPatterns = [
       /^.*\.virtues\.com$/,
-      /^.*\.ngrok-free\.app$/, // Free ngrok domains
-      /^.*\.ngrok\.io$/,       // Paid ngrok domains
+      /^.*\.trycloudflare\.com$/,  // Cloudflare quick tunnel (dev)
       /^.*\.local$/,
       /^.*\.localhost$/,
     ];
