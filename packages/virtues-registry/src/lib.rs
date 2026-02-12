@@ -31,9 +31,9 @@ pub mod tools;
 
 // Re-export main types for convenience
 pub use agents::{default_agents, AgentConfig};
-pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults};
+pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
 pub use models::{default_models, ModelConfig};
-pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
+pub use ontologies::{registered_ontologies, ContextWeights, EmbeddingConfig, OntologyDescriptor};
 pub use sources::{
     get_connection_limit, get_source, is_multi_instance, registered_sources, AuthType,
     ConnectionLimits, ConnectionPolicy, OAuthConfig, SourceDescriptor, SourceTier,

@@ -69,12 +69,6 @@ struct UploadEvent: Identifiable {
         return true
     }
     
-    // Check if event should be cleaned up (3 days old)
-    var shouldCleanup: Bool {
-        let threeDaysAgo = Date().addingTimeInterval(-3 * 24 * 60 * 60)
-        return createdAt < threeDaysAgo && status == .completed
-    }
-    
     // Get data size in a readable format
     var dataSizeString: String {
         let bytes = dataBlob.count

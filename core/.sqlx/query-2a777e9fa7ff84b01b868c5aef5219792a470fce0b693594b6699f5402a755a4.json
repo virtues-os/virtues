@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE data_calendar_event\n        SET attendee_person_ids = $1,\n            updated_at = datetime('now')\n        WHERE id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "2a777e9fa7ff84b01b868c5aef5219792a470fce0b693594b6699f5402a755a4"
+}

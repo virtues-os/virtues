@@ -6,6 +6,7 @@
     let { tab, active }: { tab: Tab; active: boolean } = $props();
 
     let sql = $state("SELECT * FROM sources LIMIT 10;");
+    let columns: string[] = $state([]);
     let results: any[] | null = $state(null);
     let error: string | null = $state(null);
     let loading = $state(false);
@@ -44,6 +45,7 @@
         loading = true;
         error = null;
         results = null;
+        columns = [];
 
         try {
             const response = await fetch("/api/developer/sql", {
@@ -58,7 +60,8 @@
                 throw new Error(data.error || "Query failed");
             }
 
-            results = data;
+            columns = data.columns || [];
+            results = data.rows || [];
         } catch (e: any) {
             error = e.message;
         } finally {
@@ -208,18 +211,12 @@
                     <pre class="mt-2 whitespace-pre-wrap text-xs">{error}</pre>
                 </div>
             {:else if results}
-                {#if results.length === 0}
-                    <div
-                        class="flex h-full flex-col items-center justify-center text-foreground-muted"
-                    >
-                        <p>Query returned 0 records.</p>
-                    </div>
-                {:else}
+                {#if columns.length > 0}
                     <div class="inline-block min-w-full align-middle">
                         <table class="min-w-full divide-y divide-border">
                             <thead class="bg-surface sticky top-0 z-10">
                                 <tr>
-                                    {#each Object.keys(results[0]) as header}
+                                    {#each columns as header}
                                         <th
                                             scope="col"
                                             class="whitespace-nowrap border-b border-r border-border bg-surface px-4 py-3 text-left text-xs font-semibold text-foreground-muted last:border-r-0"
@@ -237,25 +234,37 @@
                                     {/each}
                                 </tr>
                             </thead>
-                            <tbody class="divide-y divide-border bg-surface">
-                                {#each results as row}
-                                    <tr class="hover:bg-surface-elevated">
-                                        {#each Object.keys(results[0]) as header}
-                                            <td
-                                                class="max-w-[200px] truncate whitespace-nowrap border-b border-r border-border px-4 py-2 font-mono text-xs text-foreground last:border-r-0"
-                                                title={row[header] === null
-                                                    ? "NULL"
-                                                    : String(row[header])}
-                                            >
-                                                {row[header] === null
-                                                    ? "NULL"
-                                                    : String(row[header])}
-                                            </td>
-                                        {/each}
-                                    </tr>
-                                {/each}
-                            </tbody>
+                            {#if results.length > 0}
+                                <tbody
+                                    class="divide-y divide-border bg-surface"
+                                >
+                                    {#each results as row}
+                                        <tr class="hover:bg-surface-elevated">
+                                            {#each columns as header}
+                                                <td
+                                                    class="max-w-[200px] truncate whitespace-nowrap border-b border-r border-border px-4 py-2 font-mono text-xs text-foreground last:border-r-0"
+                                                    title={row[header] ===
+                                                    null
+                                                        ? "NULL"
+                                                        : String(row[header])}
+                                                >
+                                                    {row[header] === null
+                                                        ? "NULL"
+                                                        : String(row[header])}
+                                                </td>
+                                            {/each}
+                                        </tr>
+                                    {/each}
+                                </tbody>
+                            {/if}
                         </table>
+                    </div>
+                {/if}
+                {#if results.length === 0}
+                    <div
+                        class="flex items-center justify-center p-8 text-foreground-muted"
+                    >
+                        <p>Query returned 0 records.</p>
                     </div>
                 {/if}
             {:else}

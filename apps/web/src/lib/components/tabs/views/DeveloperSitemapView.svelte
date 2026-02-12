@@ -41,8 +41,6 @@
                 { route: '/place/{id}', label: 'Place', icon: 'ri:map-pin-line', isPattern: true },
                 { route: '/org', label: 'Organizations', icon: 'ri:building-line' },
                 { route: '/org/{id}', label: 'Organization', icon: 'ri:building-line', isPattern: true },
-                { route: '/thing', label: 'Things', icon: 'ri:box-3-line' },
-                { route: '/thing/{id}', label: 'Thing', icon: 'ri:box-3-line', isPattern: true },
                 { route: '/day', label: 'Today', icon: 'ri:calendar-line' },
                 { route: '/day/{date}', label: 'Day', icon: 'ri:calendar-line', isPattern: true },
                 { route: '/year', label: 'This Year', icon: 'ri:calendar-2-line' },
@@ -58,6 +56,7 @@
                 { route: '/sources/{id}', label: 'Source', icon: 'ri:database-2-line', isPattern: true },
                 { route: '/drive', label: 'Drive', icon: 'ri:hard-drive-2-line' },
                 { route: '/drive/{path}', label: 'File', icon: 'ri:file-line', isPattern: true },
+                { route: '/trash', label: 'Trash', icon: 'ri:delete-bin-line' },
             ]
         },
         system: {
@@ -67,12 +66,16 @@
             routes: [
                 { route: '/virtues/account', label: 'Account', icon: 'ri:user-settings-line' },
                 { route: '/virtues/assistant', label: 'Assistant', icon: 'ri:robot-line' },
+                { route: '/virtues/billing', label: 'Billing', icon: 'ri:bank-card-line' },
+                { route: '/virtues/changelog', label: "What's New", icon: 'ri:megaphone-line' },
                 { route: '/virtues/usage', label: 'Usage', icon: 'ri:bar-chart-line' },
                 { route: '/virtues/jobs', label: 'Jobs', icon: 'ri:refresh-line' },
                 { route: '/virtues/feedback', label: 'Feedback', icon: 'ri:feedback-line' },
+                { route: '/virtues/lake', label: 'Lake', icon: 'ri:database-2-line' },
                 { route: '/virtues/sql', label: 'SQL Viewer', icon: 'ri:database-line' },
                 { route: '/virtues/terminal', label: 'Terminal', icon: 'ri:terminal-box-line' },
                 { route: '/virtues/sitemap', label: 'Sitemap', icon: 'ri:road-map-line' },
+                { route: '/virtues/system', label: 'System', icon: 'ri:computer-line' },
             ]
         },
         easter: {
@@ -443,6 +446,54 @@
             </div>
         {/if}
 
+        <!-- Definitions -->
+        <section class="doc-section">
+            <h2>Definitions</h2>
+            <p class="section-desc">Core terms used throughout the data model.</p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Term</th>
+                        <th>Definition</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>URL</strong></td>
+                        <td>The atom. Everything is a URL: <code>/chat/chat_abc</code>, <code>/drive/docs/report.pdf</code>, <code>https://arxiv.org</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Namespace</strong></td>
+                        <td>First path segment. Determines storage backend: <code>chat</code> &rarr; SQLite, <code>drive</code> &rarr; filesystem, <code>virtues</code> &rarr; app route</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Entity</strong></td>
+                        <td>A first-class object with an ID following <code>{`{namespace}_{hash}`}</code> pattern. Chats, pages, people, places, etc.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>View</strong></td>
+                        <td>A named collection of URLs. Row in <code>views</code> table. Three types: manual, smart, section</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Section</strong></td>
+                        <td>A view without an icon or detail page. Collapsible title header. Can contain child views and/or direct items</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Folder</strong></td>
+                        <td>UI term for a non-section view. Has icon, expandable, has a detail page at <code>/view/view_{`{id}`}</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Space</strong></td>
+                        <td>A workspace context. Contains views and root-level URLs. Has theme, accent color, vectorize toggle</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Item</strong></td>
+                        <td>A URL reference stored in <code>space_items</code>. Not an entity itself &mdash; a pointer to one</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+
         <!-- Namespace Concept -->
         <section class="doc-section">
             <h2>Namespace Concept</h2>
@@ -640,7 +691,7 @@ Rendered:
                 <tbody>
                     <tr>
                         <td><code>sqlite</code></td>
-                        <td>person, place, org, thing, day, year, page, session, source</td>
+                        <td>person, place, org, day, year, page, chat, source, view</td>
                         <td>Entity namespaces with full-text search</td>
                     </tr>
                     <tr>
@@ -789,7 +840,7 @@ Response: {`{`}
   {`}`}]
 {`}`}
 
-Searches: pages, people, places, things, files</pre>
+Searches: pages, people, places, orgs, files</pre>
             </div>
 
             <h3>Component</h3>

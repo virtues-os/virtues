@@ -4,7 +4,7 @@
 //! allowing validation of the full pipeline: Archive → Transform → Entity Resolution
 
 use crate::database::Database;
-use crate::ontologies::registry::list_ontologies;
+use virtues_registry::ontologies::registered_ontologies;
 use crate::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -56,9 +56,9 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
         r#"
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-            COUNT(*) FILTER (WHERE status = 'failed') as failed,
-            COALESCE(SUM(records_processed), 0)::bigint as records_archived
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_archived
         FROM elt_jobs
         WHERE job_type = 'archive'
         "#,
@@ -78,8 +78,8 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
         r#"
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'completed') as completed,
-            COALESCE(SUM(records_processed), 0)::bigint as records_processed
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_processed
         FROM elt_jobs
         WHERE job_type = 'transform'
         "#,
@@ -133,9 +133,9 @@ pub async fn get_data_quality_metrics(
     _end: DateTime<Utc>,
 ) -> Result<DataQualityMetrics> {
     // Total records across all ontologies (dynamically discovered from registry)
-    let count_parts: Vec<String> = list_ontologies()
+    let count_parts: Vec<String> = registered_ontologies()
         .iter()
-        .map(|o| format!("(SELECT COUNT(*) FROM data_{})", o.table_name))
+        .map(|o| format!("(SELECT COUNT(*) FROM {})", o.table_name))
         .collect();
 
     let total_records: i64 = if count_parts.is_empty() {

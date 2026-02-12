@@ -2,6 +2,13 @@
 //!
 //! Converts Yjs XmlFragment structures back to Markdown text.
 //! This is the inverse of the parser module.
+//!
+//! Handles:
+//! - Standard blocks: paragraphs, headings, code blocks, lists, tables, blockquotes
+//! - Custom nodes: entity_link, file_card, media (unified image/audio/video)
+//! - Marks: strong, em, code, strikethrough, underline (<u>), link
+//! - Checkbox list items via `checked` attribute on list_item
+//! - Backwards compatibility: old node names (image, audio_player, video_player, checkbox)
 
 use yrs::{Any, GetString, ReadTxn, Text, Value, Xml, XmlElementRef, XmlFragment, XmlFragmentRef, XmlNode, XmlTextRef};
 use yrs::types::Attrs;
@@ -112,6 +119,9 @@ impl Serializer {
                 self.in_code_block = true;
                 self.serialize_text_only(txn, element, output);
                 self.in_code_block = false;
+                // Trim trailing newlines to prevent roundtrip drift
+                let trimmed = output.trim_end_matches('\n').len();
+                output.truncate(trimmed);
                 output.push_str("\n```\n\n");
             }
 
@@ -181,6 +191,18 @@ impl Serializer {
                 output.push_str(&format!("[{}]({})", label, href));
             }
 
+            // Unified media node (new schema)
+            "media" => {
+                let src = element
+                    .get_attribute(txn, "src")
+                    .unwrap_or_default();
+                let alt = element
+                    .get_attribute(txn, "alt")
+                    .unwrap_or_default();
+                output.push_str(&format!("![{}]({})\n\n", alt, src));
+            }
+
+            // Backwards compat: old image node
             "image" => {
                 let src = element
                     .get_attribute(txn, "src")
@@ -191,6 +213,7 @@ impl Serializer {
                 output.push_str(&format!("![{}]({})\n\n", alt, src));
             }
 
+            // Backwards compat: old audio_player/video_player nodes
             "audio_player" | "video_player" => {
                 let src = element
                     .get_attribute(txn, "src")
@@ -201,6 +224,17 @@ impl Serializer {
                 output.push_str(&format!("![{}]({})\n\n", name, src));
             }
 
+            "file_card" => {
+                let href = element
+                    .get_attribute(txn, "href")
+                    .unwrap_or_default();
+                let name = element
+                    .get_attribute(txn, "name")
+                    .unwrap_or_default();
+                output.push_str(&format!("[{}]({})", name, href));
+            }
+
+            // Backwards compat: old checkbox node (now handled via list_item checked attr)
             "checkbox" => {
                 let checked = element
                     .get_attribute(txn, "checked")
@@ -233,7 +267,7 @@ impl Serializer {
                         self.serialize_text(txn, text, output);
                     }
                     XmlNode::Element(el) => {
-                        // Inline elements like hard_break, checkbox, entity_link
+                        // Inline elements like hard_break, entity_link, file_card, checkbox
                         self.serialize_element(txn, el, output, 0);
                     }
                     XmlNode::Fragment(frag) => {
@@ -257,7 +291,6 @@ impl Serializer {
 
         // Use diff() to iterate through formatted text chunks
         // Each chunk has text content and optional formatting attributes
-        // YChange::identity is passed as the compute_ychange function
         for diff in text.diff(txn, YChange::identity) {
             // Extract the text content from the diff
             let text_content = match &diff.insert {
@@ -317,22 +350,20 @@ impl Serializer {
     ) {
         let indent_str = "  ".repeat(indent);
 
-        // Check for checkbox at start
-        let mut has_checkbox = false;
-        let mut checkbox_checked = false;
+        // Check for checked attribute (new schema: checkbox as list_item attr)
+        let checked_attr = item.get_attribute(txn, "checked");
+        let has_checkbox = checked_attr.is_some();
+        let checkbox_checked = checked_attr
+            .as_deref()
+            .map(|v| v == "true")
+            .unwrap_or(false);
 
-        for i in 0..item.len(txn) {
-            if let Some(XmlNode::Element(el)) = item.get(txn, i) {
-                if el.tag().as_ref() == "checkbox" {
-                    has_checkbox = true;
-                    checkbox_checked = el
-                        .get_attribute(txn, "checked")
-                        .map(|v| v == "true")
-                        .unwrap_or(false);
-                    break;
-                }
-            }
-        }
+        // Backwards compat: check for old checkbox child element if no checked attr
+        let (has_legacy_checkbox, legacy_checkbox_checked) = if !has_checkbox {
+            self.find_legacy_checkbox(txn, item)
+        } else {
+            (false, false)
+        };
 
         // Output marker
         output.push_str(&indent_str);
@@ -340,9 +371,11 @@ impl Serializer {
 
         if has_checkbox {
             output.push_str(if checkbox_checked { "[x] " } else { "[ ] " });
+        } else if has_legacy_checkbox {
+            output.push_str(if legacy_checkbox_checked { "[x] " } else { "[ ] " });
         }
 
-        // Serialize children (skip the checkbox if present)
+        // Serialize children (skip legacy checkbox elements)
         let mut first = true;
         for i in 0..item.len(txn) {
             if let Some(child) = item.get(txn, i) {
@@ -350,7 +383,7 @@ impl Serializer {
                     XmlNode::Element(el) => {
                         let tag = el.tag().to_string();
 
-                        // Skip checkbox (already handled)
+                        // Skip legacy checkbox (already handled above)
                         if tag == "checkbox" {
                             continue;
                         }
@@ -378,6 +411,22 @@ impl Serializer {
                 first = false;
             }
         }
+    }
+
+    /// Check for a legacy checkbox child element (old schema: checkbox as inline node)
+    fn find_legacy_checkbox<T: ReadTxn>(&self, txn: &T, item: &XmlElementRef) -> (bool, bool) {
+        for i in 0..item.len(txn) {
+            if let Some(XmlNode::Element(el)) = item.get(txn, i) {
+                if el.tag().as_ref() == "checkbox" {
+                    let checked = el
+                        .get_attribute(txn, "checked")
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
+                    return (true, checked);
+                }
+            }
+        }
+        (false, false)
     }
 
     fn serialize_table<T: ReadTxn>(
@@ -523,6 +572,10 @@ fn wrap_with_attrs(text: &str, attrs: &Attrs) -> String {
     if has_attr("strikethrough") {
         result = format!("~~{}~~", result);
     }
+    // Underline uses HTML <u> tag for lossless roundtrip
+    if has_attr("underline") {
+        result = format!("<u>{}</u>", result);
+    }
     // Links should be outermost - wrap the formatted text with link syntax
     if has_attr("link") {
         if let Some(href) = get_string_attr("href") {
@@ -531,4 +584,26 @@ fn wrap_with_attrs(text: &str, attrs: &Attrs) -> String {
     }
 
     result
+}
+
+/// Convert a markdown string to plain text by extracting only text content.
+///
+/// Used to normalize AI-crafted markdown find/replace strings to plain text
+/// that matches ProseMirror's `doc.textContent` (which has no markdown syntax).
+pub fn markdown_to_plain_text(md: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    let parser = Parser::new_ext(md, Options::all());
+    let mut text = String::new();
+
+    for event in parser {
+        match event {
+            Event::Text(t) => text.push_str(&t),
+            Event::Code(t) => text.push_str(&t),
+            Event::SoftBreak | Event::HardBreak => text.push('\n'),
+            _ => {}
+        }
+    }
+
+    text
 }

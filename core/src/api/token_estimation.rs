@@ -193,7 +193,7 @@ mod tests {
             id: None,
             role: "user".to_string(),
             content: large_content,
-            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            timestamp: crate::types::Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
             model: None,
             provider: None,
             agent_id: None,

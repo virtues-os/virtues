@@ -5,7 +5,7 @@
 # Routes requests directly to providers (OpenAI, Anthropic, Cerebras).
 #
 # Architecture:
-#   Tenant Container (172.17.0.x) -> Tollbooth (9000) -> Provider API
+#   Tenant Container (host network) -> Tollbooth (9000) -> Provider API
 #
 # Usage:
 #   nomad job run -var="tag=abc123" tollbooth.nomad
@@ -41,11 +41,13 @@ job "tollbooth" {
     }
 
     task "tollbooth" {
-      driver = "containerd-driver"
+      driver = "docker"
 
       config {
-        image   = "${var.ghcr_repo}/tollbooth:${var.tag}"
-        runtime = "io.containerd.runsc.v1"  # gVisor for security
+        image        = "${var.ghcr_repo}/tollbooth:${var.tag}"
+        runtime      = "runsc"
+        network_mode = "host"
+        ports        = ["http"]
       }
 
       # Secrets injected from Nomad server environment via template
@@ -80,8 +82,9 @@ job "tollbooth" {
       }
 
       service {
-        name = "tollbooth"
-        port = "http"
+        name     = "tollbooth"
+        port     = "http"
+        provider = "nomad"
 
         check {
           name     = "health"

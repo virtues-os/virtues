@@ -30,6 +30,8 @@ pub mod chat_usage;
 pub mod chats;
 pub mod code;
 pub mod compaction;
+pub mod day_scoring;
+pub mod day_summary;
 pub mod device_pairing;
 pub mod drive;
 pub mod entities;
@@ -184,10 +186,10 @@ pub use chat_permissions::{
 };
 pub use chats::{
     append_message, create_chat, create_chat_from_request, delete_chat, generate_title, get_chat,
-    list_chats, update_chat_title, update_messages, Chat, ChatDetailResponse, ChatListItem,
+    list_chats, update_chat, update_messages, Chat, ChatDetailResponse, ChatListItem,
     ChatListResponse, ChatMessage, ConversationMeta, CreateChatRequest, CreateChatResponse,
     DeleteChatResponse, GenerateTitleRequest, GenerateTitleResponse, IntentMetadata,
-    MessageResponse, TimeRange, TitleMessage, ToolCall, UpdateChatResponse, UpdateTitleRequest,
+    MessageResponse, TimeRange, TitleMessage, ToolCall, UpdateChatRequest, UpdateChatResponse,
 };
 pub use internal::{
     ensure_server_status, get_server_status, hydrate_profile, mark_server_ready, HydrateRequest,
@@ -300,6 +302,8 @@ pub use wiki::{
     get_day_sources,
     // Day streams (dynamic ontology queries)
     get_day_streams,
+    // Timeline day (location chunks)
+    get_timeline_day,
     get_events_by_date,
     // Day operations
     get_or_create_day,

@@ -6,9 +6,14 @@
 	 * - Page @ mentions (single select, insert markdown link)
 	 * - Chat @ mentions (single select, add context reference)
 	 * - Edit allow list (multi select, add to permissions)
+	 * - Sidebar "Add..." (single select, add entity/URL to workspace)
+	 * - Page editor link button (single select, apply link mark)
+	 *
+	 * Supports both internal entity search and external URL detection.
+	 * When the search input looks like a URL, a synthetic "Link" result
+	 * appears at the top of results.
 	 *
 	 * Uses: GET /api/pages/search/entities?q={query}
-	 *
 	 * Uses the floating UI system for dismiss handling when positioned.
 	 */
 
@@ -26,6 +31,13 @@
 		icon: string;
 		url: string;
 		mime_type?: string;
+	}
+
+	interface FooterAction {
+		label: string;
+		icon: string;
+		action: () => void;
+		variant?: 'default' | 'destructive';
 	}
 
 	interface Props {
@@ -47,6 +59,10 @@
 		placeholder?: string;
 		/** Keep picker open after single select (for adding multiple items) */
 		keepOpen?: boolean;
+		/** Pre-fill the search input (e.g. for editing an existing link) */
+		initialQuery?: string;
+		/** Optional action button in the footer (e.g. "Remove Link") */
+		footerAction?: FooterAction;
 	}
 
 	let {
@@ -58,10 +74,21 @@
 		excludeIds = [],
 		position,
 		placeholder = 'Search entities...',
-		keepOpen = false
+		keepOpen = false,
+		initialQuery = '',
+		footerAction
 	}: Props = $props();
 
-	let query = $state('');
+	// URL detection helpers
+	function isUrlLike(text: string): boolean {
+		return /^https?:\/\//i.test(text) || /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z]{2,})/.test(text);
+	}
+
+	function normalizeUrl(text: string): string {
+		return /^https?:\/\//i.test(text) ? text : `https://${text}`;
+	}
+
+	let query = $state(initialQuery);
 	let results = $state<EntityResult[]>([]);
 	let selectedIndex = $state(0);
 	let selectedItems = $state<EntityResult[]>([]);
@@ -115,9 +142,31 @@
 		}
 	}
 
+	// Synthetic URL result when query looks like a URL
+	const urlResult = $derived.by((): EntityResult | null => {
+		const trimmed = query.trim();
+		if (!trimmed || !isUrlLike(trimmed)) return null;
+		return {
+			id: `url:${normalizeUrl(trimmed)}`,
+			name: trimmed,
+			entity_type: 'url',
+			icon: 'ri:link',
+			url: normalizeUrl(trimmed),
+		};
+	});
+
+	// Flat list for keyboard navigation (URL result prepended if present)
+	const flatResults = $derived.by(() => {
+		if (urlResult) return [urlResult, ...results];
+		return results;
+	});
+
 	// Group results by entity type for display
 	const groupedResults = $derived.by(() => {
 		const groups: Record<string, EntityResult[]> = {};
+		if (urlResult) {
+			groups['url'] = [urlResult];
+		}
 		for (const item of results) {
 			const type = item.entity_type;
 			if (!groups[type]) groups[type] = [];
@@ -125,9 +174,6 @@
 		}
 		return groups;
 	});
-
-	// Flat list for keyboard navigation
-	const flatResults = $derived(results);
 
 	onMount(() => {
 		inputEl?.focus();
@@ -185,10 +231,10 @@
 
 	function getTypeLabel(type: string): string {
 		const labels: Record<string, string> = {
+			url: 'Link',
 			page: 'Pages',
 			person: 'People',
 			place: 'Places',
-			thing: 'Things',
 			file: 'Files',
 			org: 'Organizations'
 		};
@@ -261,6 +307,17 @@
 			<span class="hint"><kbd>↑↓</kbd> navigate</span>
 			<span class="hint"><kbd>↵</kbd> select</span>
 			<span class="hint"><kbd>esc</kbd> close</span>
+			{#if footerAction}
+				<button
+					type="button"
+					class="footer-action-btn"
+					class:destructive={footerAction.variant === 'destructive'}
+					onclick={footerAction.action}
+				>
+					<Icon icon={footerAction.icon} width="14" />
+					{footerAction.label}
+				</button>
+			{/if}
 		{/if}
 	</div>
 {/snippet}
@@ -469,5 +526,33 @@
 
 	.confirm-btn:hover {
 		opacity: 0.9;
+	}
+
+	.footer-action-btn {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		margin-left: auto;
+		padding: 4px 8px;
+		font-size: 11px;
+		background: none;
+		border: none;
+		border-radius: 4px;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.footer-action-btn:hover {
+		background: var(--color-surface);
+		color: var(--color-foreground);
+	}
+
+	.footer-action-btn.destructive {
+		color: var(--color-error);
+	}
+
+	.footer-action-btn.destructive:hover {
+		background: color-mix(in srgb, var(--color-error) 10%, transparent);
 	}
 </style>

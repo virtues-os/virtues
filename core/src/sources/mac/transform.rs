@@ -694,10 +694,10 @@ async fn execute_browser_batch_insert(
 }
 
 // ============================================================================
-// MacIMessageTransform: stream_mac_imessage → social_message
+// MacIMessageTransform: stream_mac_imessage → communication_message
 // ============================================================================
 
-/// Transform macOS iMessage/SMS data to social_message ontology
+/// Transform macOS iMessage/SMS data to communication_message ontology
 pub struct MacIMessageTransform;
 
 #[async_trait]
@@ -707,11 +707,11 @@ impl OntologyTransform for MacIMessageTransform {
     }
 
     fn target_table(&self) -> &str {
-        "social_message"
+        "communication_message"
     }
 
     fn domain(&self) -> &str {
-        "social"
+        "communication"
     }
 
     #[tracing::instrument(skip(self, db, context), fields(source_table = %self.source_table(), target_table = %self.target_table()))]
@@ -730,11 +730,11 @@ impl OntologyTransform for MacIMessageTransform {
 
         tracing::info!(
             source_id = %source_id,
-            "Starting macOS iMessage to social_message transformation"
+            "Starting macOS iMessage to communication_message transformation"
         );
 
         // Read stream data from data source using checkpoint
-        let checkpoint_key = "mac_imessage_to_social_message";
+        let checkpoint_key = "mac_imessage_to_communication_message";
         let read_start = std::time::Instant::now();
         let data_source = context.get_data_source().ok_or_else(|| {
             crate::Error::Other("No data source available for transform".to_string())
@@ -983,7 +983,7 @@ impl OntologyTransform for MacIMessageTransform {
             batch_insert_total_ms,
             batch_insert_count,
             avg_batch_insert_ms = if batch_insert_count > 0 { batch_insert_total_ms / batch_insert_count as u128 } else { 0 },
-            "macOS iMessage to social_message transformation completed"
+            "macOS iMessage to communication_message transformation completed"
         );
 
         Ok(TransformResult {
@@ -1023,7 +1023,7 @@ async fn execute_imessage_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data_social_message",
+        "data_communication_message",
         &[
             "id",
             "message_id",
@@ -1135,7 +1135,7 @@ impl TransformRegistration for MacIMessageTransformRegistration {
         "stream_mac_imessage"
     }
     fn target_table(&self) -> &'static str {
-        "social_message"
+        "communication_message"
     }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(MacIMessageTransform))
@@ -1167,8 +1167,8 @@ mod tests {
     fn test_mac_imessage_transform_metadata() {
         let transform = MacIMessageTransform;
         assert_eq!(transform.source_table(), "stream_mac_imessage");
-        assert_eq!(transform.target_table(), "social_message");
-        assert_eq!(transform.domain(), "social");
+        assert_eq!(transform.target_table(), "communication_message");
+        assert_eq!(transform.domain(), "communication");
     }
 
     #[test]

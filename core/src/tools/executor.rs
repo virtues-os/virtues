@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use super::{PageEditorTool, SqlQueryTool, WebSearchTool};
+use super::{PageEditorTool, SemanticSearchTool, SqlQueryTool, WebSearchTool};
 use crate::server::yjs::YjsState;
 
 /// Context provided to tools during execution
@@ -88,10 +88,11 @@ pub enum ToolError {
 /// Tool executor - routes tool calls to implementations
 #[derive(Clone)]
 pub struct ToolExecutor {
-    pool: Arc<SqlitePool>,
+    _pool: Arc<SqlitePool>,
     tollbooth_url: String,
-    tollbooth_secret: String,
+    _tollbooth_secret: String,
     web_search: WebSearchTool,
+    semantic_search: SemanticSearchTool,
     sql_query: SqlQueryTool,
     page_editor: PageEditorTool,
 }
@@ -102,11 +103,12 @@ impl ToolExecutor {
         let pool = Arc::new(pool);
         Self {
             web_search: WebSearchTool::new(tollbooth_url.clone(), tollbooth_secret.clone()),
+            semantic_search: SemanticSearchTool::new(pool.clone()),
             sql_query: SqlQueryTool::new(pool.clone()),
             page_editor: PageEditorTool::new(pool.clone(), None),
-            pool,
+            _pool: pool,
             tollbooth_url,
-            tollbooth_secret,
+            _tollbooth_secret: tollbooth_secret,
         }
     }
 
@@ -120,11 +122,12 @@ impl ToolExecutor {
         let pool = Arc::new(pool);
         Self {
             web_search: WebSearchTool::new(tollbooth_url.clone(), tollbooth_secret.clone()),
+            semantic_search: SemanticSearchTool::new(pool.clone()),
             sql_query: SqlQueryTool::new(pool.clone()),
             page_editor: PageEditorTool::new(pool.clone(), Some(yjs_state)),
-            pool,
+            _pool: pool,
             tollbooth_url,
-            tollbooth_secret,
+            _tollbooth_secret: tollbooth_secret,
         }
     }
 
@@ -148,7 +151,13 @@ impl ToolExecutor {
         tracing::info!(tool = tool_name, "Executing tool");
 
         match tool_name {
+            "think" => {
+                // No-op: the thought is captured in the tool call arguments.
+                // Return minimal acknowledgment to avoid doubling token cost.
+                Ok(ToolResult::success(serde_json::json!({ "acknowledged": true })))
+            }
             "web_search" => self.web_search.execute(arguments).await,
+            "semantic_search" => self.semantic_search.execute(arguments).await,
             "sql_query" => self.sql_query.execute(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Page editing tools - all routed to PageEditorTool
@@ -205,7 +214,7 @@ impl ToolExecutor {
 
     /// Get the list of available tool names
     pub fn available_tools(&self) -> Vec<&'static str> {
-        vec!["web_search", "sql_query", "code_interpreter", "create_page", "get_page_content", "edit_page"]
+        vec!["think", "web_search", "semantic_search", "sql_query", "code_interpreter", "create_page", "get_page_content", "edit_page"]
     }
 
     /// Check if a tool is available

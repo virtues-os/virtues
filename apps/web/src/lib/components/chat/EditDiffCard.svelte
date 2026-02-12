@@ -2,17 +2,14 @@
 	/**
 	 * EditDiffCard
 	 *
-	 * Displays edit_page tool results with an expandable diff view.
-	 * Shows Accept/Reject buttons for pending edits.
+	 * Displays edit_page tool results with an expandable diff view (read-only).
 	 */
 	import { slide } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 
 	interface Props {
 		/** Status of the edit */
-		status: "pending" | "accepted" | "rejected" | "failed";
-		/** Edit ID for tracking */
-		editId?: string;
+		status: "applied" | "failed";
 		/** Page ID being edited */
 		pageId?: string;
 		/** Text that was searched for (original text) */
@@ -23,22 +20,15 @@
 		isFullReplace?: boolean;
 		/** Callback when user views the page */
 		onViewPage?: () => void;
-		/** Callback when user accepts the edit */
-		onAccept?: () => void;
-		/** Callback when user rejects the edit */
-		onReject?: () => void;
 	}
 
 	let {
 		status,
-		editId,
 		pageId,
 		find,
 		replace,
 		isFullReplace = false,
 		onViewPage,
-		onAccept,
-		onReject,
 	}: Props = $props();
 
 	let expanded = $state(false);
@@ -73,20 +63,10 @@
 
 	const statusConfig = $derived(
 		{
-			pending: {
-				icon: "ri:time-line",
-				label: "Edit pending",
-				color: "warning",
-			},
-			accepted: {
+			applied: {
 				icon: "ri:check-line",
-				label: "Edit accepted",
+				label: "Edit applied",
 				color: "success",
-			},
-			rejected: {
-				icon: "ri:close-line",
-				label: "Edit rejected",
-				color: "error",
 			},
 			failed: {
 				icon: "ri:error-warning-line",
@@ -107,16 +87,6 @@
 	function handleViewPage(e: Event) {
 		e.stopPropagation();
 		onViewPage?.();
-	}
-
-	function handleAccept(e: Event) {
-		e.stopPropagation();
-		onAccept?.();
-	}
-
-	function handleReject(e: Event) {
-		e.stopPropagation();
-		onReject?.();
 	}
 </script>
 
@@ -160,32 +130,6 @@
 					</div>
 				{/each}
 			</div>
-
-			<!-- Accept/Reject buttons for pending edits -->
-			{#if status === "pending" && (onAccept || onReject)}
-				<div class="action-buttons">
-					{#if onAccept}
-						<button
-							class="action-btn accept"
-							onclick={handleAccept}
-							type="button"
-						>
-							<Icon icon="ri:check-line" width="14" />
-							Accept
-						</button>
-					{/if}
-					{#if onReject}
-						<button
-							class="action-btn reject"
-							onclick={handleReject}
-							type="button"
-						>
-							<Icon icon="ri:close-line" width="14" />
-							Reject
-						</button>
-					{/if}
-				</div>
-			{/if}
 		</div>
 	{/if}
 </div>
@@ -313,49 +257,5 @@
 		word-break: break-word;
 		font-family: inherit;
 		font-size: inherit;
-	}
-
-	/* Action buttons */
-	.action-buttons {
-		display: flex;
-		gap: 0.5rem;
-		padding: 0.75rem;
-		border-top: 1px solid var(--color-border);
-		background: var(--color-surface);
-	}
-
-	.action-btn {
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0.375rem 0.75rem;
-		border-radius: 0.375rem;
-		font-size: 0.75rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.15s ease;
-		border: 1px solid transparent;
-	}
-
-	.action-btn.accept {
-		background: color-mix(in srgb, var(--color-success) 15%, transparent);
-		color: var(--color-success);
-		border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
-	}
-
-	.action-btn.accept:hover {
-		background: var(--color-success);
-		color: white;
-	}
-
-	.action-btn.reject {
-		background: color-mix(in srgb, var(--color-error) 15%, transparent);
-		color: var(--color-error);
-		border-color: color-mix(in srgb, var(--color-error) 30%, transparent);
-	}
-
-	.action-btn.reject:hover {
-		background: var(--color-error);
-		color: white;
 	}
 </style>

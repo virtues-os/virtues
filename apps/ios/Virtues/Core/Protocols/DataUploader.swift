@@ -18,6 +18,9 @@ protocol DataUploader {
 
     /// Get queue size as formatted string
     func getQueueSizeString() -> String
+
+    /// Trigger upload if enough time has elapsed since last attempt (5-min gate)
+    func uploadIfNeeded()
 }
 
 // MARK: - BatchUploadCoordinator Extension

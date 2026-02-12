@@ -6,8 +6,9 @@
 	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
 	 */
 	import Icon from '$lib/components/Icon.svelte';
-	import { listVersions, saveVersion, restoreVersion, type PageVersion } from '$lib/yjs/versions';
+	import { formatTimeAgo } from '$lib/utils/dateUtils';
 	import type { YjsDocument } from '$lib/yjs';
+	import { listVersions, restoreVersion, saveVersion, type PageVersion } from '$lib/yjs/versions';
 	import { onMount } from 'svelte';
 
 	interface Props {
@@ -66,6 +67,9 @@
 		restoringId = versionId;
 		error = null;
 		try {
+			// Snapshot current state before restoring so the user can undo the restore
+			await saveVersion(yjsDoc.ydoc, pageId, 'Auto-saved before restore', 'auto');
+
 			const success = await restoreVersion(yjsDoc, versionId);
 			if (success) {
 				close();
@@ -80,23 +84,7 @@
 	}
 
 	function formatDate(dateString: string): string {
-		const date = new Date(dateString);
-		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
-		const diffMins = Math.floor(diffMs / 60000);
-		const diffHours = Math.floor(diffMs / 3600000);
-		const diffDays = Math.floor(diffMs / 86400000);
-
-		if (diffMins < 1) return 'Just now';
-		if (diffMins < 60) return `${diffMins}m ago`;
-		if (diffHours < 24) return `${diffHours}h ago`;
-		if (diffDays < 7) return `${diffDays}d ago`;
-
-		return date.toLocaleDateString(undefined, {
-			month: 'short',
-			day: 'numeric',
-			year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-		});
+		return formatTimeAgo(dateString);
 	}
 </script>
 
@@ -138,6 +126,8 @@
 						<span class="version-date">{formatDate(version.created_at)}</span>
 						{#if version.created_by === 'ai'}
 							<span class="badge-ai">AI</span>
+						{:else if version.created_by === 'auto'}
+							<span class="badge-auto">Auto</span>
 						{/if}
 					</div>
 					<button
@@ -256,6 +246,15 @@
 		font-weight: 600;
 		color: var(--color-primary);
 		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+		border-radius: 3px;
+	}
+
+	.badge-auto {
+		padding: 1px 4px;
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
+		background: color-mix(in srgb, var(--color-foreground-muted) 12%, transparent);
 		border-radius: 3px;
 	}
 

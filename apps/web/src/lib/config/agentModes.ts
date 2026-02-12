@@ -28,16 +28,16 @@ export const AGENT_MODES: AgentMode[] = [
 	{
 		id: 'agent',
 		name: 'Agent',
-		description: 'Full tool access',
+		description: 'All tools',
 		icon: 'ri:infinity-line',
 		color: null, // No background for default
-		maxToolCalls: 10,
+		maxToolCalls: 20,
 		tools: { search: true, data: true, edit: true }
 	},
 	{
 		id: 'chat',
 		name: 'Chat',
-		description: 'No tools, just conversation',
+		description: 'No tools',
 		icon: 'ri:chat-3-line',
 		color: 'var(--color-success)',
 		maxToolCalls: 0,
@@ -46,10 +46,10 @@ export const AGENT_MODES: AgentMode[] = [
 	{
 		id: 'research',
 		name: 'Research',
-		description: 'Read-only tools',
+		description: 'Read-only',
 		icon: 'ri:search-eye-line',
 		color: 'var(--color-warning)',
-		maxToolCalls: 25,
+		maxToolCalls: 50,
 		tools: { search: true, data: true, edit: false }
 	}
 ];

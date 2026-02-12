@@ -1,11 +1,11 @@
-//! Gmail to social_email ontology transformation
+//! Gmail to communication_email ontology transformation
 //!
 //! Transforms raw Gmail messages from stream_google_gmail into the normalized
-//! social_email ontology table.
+//! communication_email ontology table.
 //!
 //! ## Multi-Account Support
 //!
-//! The social_email table uses UNIQUE (source_stream_id) for deduplication.
+//! The communication_email table uses UNIQUE (source_stream_id) for deduplication.
 //! This allows the same Gmail message to exist across multiple Gmail accounts
 //! (e.g., personal@gmail.com and work@gmail.com) since each account has its own
 //! unique source_stream_id. This is the correct behavior when an email is CC'd
@@ -23,7 +23,7 @@ use crate::sources::base::{OntologyTransform, TransformRegistration, TransformRe
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
 
-/// Transform Gmail messages to social_email ontology
+/// Transform Gmail messages to communication_email ontology
 pub struct GmailEmailTransform;
 
 #[async_trait]
@@ -33,11 +33,11 @@ impl OntologyTransform for GmailEmailTransform {
     }
 
     fn target_table(&self) -> &str {
-        "social_email"
+        "communication_email"
     }
 
     fn domain(&self) -> &str {
-        "social"
+        "communication"
     }
 
     #[tracing::instrument(skip(self, db, context), fields(source_table = %self.source_table(), target_table = %self.target_table()))]
@@ -56,11 +56,11 @@ impl OntologyTransform for GmailEmailTransform {
 
         tracing::info!(
             source_id = %source_id,
-            "Starting Gmail to social_email transformation"
+            "Starting Gmail to communication_email transformation"
         );
 
         // Read stream data using data source (memory for hot path)
-        let checkpoint_key = "gmail_to_social_email";
+        let checkpoint_key = "gmail_to_communication_email";
         let read_start = std::time::Instant::now();
         let data_source = context.get_data_source().ok_or_else(|| {
             crate::Error::Other("No data source available for transform".to_string())
@@ -144,7 +144,7 @@ impl OntologyTransform for GmailEmailTransform {
                     .get("body_plain")
                     .and_then(|v| v.as_str())
                     .map(String::from);
-                let body_html = record
+                let _body_html = record
                     .get("body_html")
                     .and_then(|v| v.as_str())
                     .map(String::from);
@@ -341,7 +341,7 @@ impl OntologyTransform for GmailEmailTransform {
             batch_insert_total_ms,
             batch_insert_count,
             avg_batch_insert_ms = if batch_insert_count > 0 { batch_insert_total_ms / batch_insert_count as u128 } else { 0 },
-            "Gmail to social_email transformation completed"
+            "Gmail to communication_email transformation completed"
         );
 
         Ok(TransformResult {
@@ -386,7 +386,7 @@ async fn execute_email_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data_social_email",
+        "data_communication_email",
         &[
             "id",
             "message_id",
@@ -484,7 +484,7 @@ impl TransformRegistration for GmailTransformRegistration {
         "stream_google_gmail"
     }
     fn target_table(&self) -> &'static str {
-        "social_email"
+        "communication_email"
     }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(GmailEmailTransform))
@@ -503,7 +503,7 @@ mod tests {
     fn test_transform_metadata() {
         let transform = GmailEmailTransform;
         assert_eq!(transform.source_table(), "stream_google_gmail");
-        assert_eq!(transform.target_table(), "social_email");
-        assert_eq!(transform.domain(), "social");
+        assert_eq!(transform.target_table(), "communication_email");
+        assert_eq!(transform.domain(), "communication");
     }
 }

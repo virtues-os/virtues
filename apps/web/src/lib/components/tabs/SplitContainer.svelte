@@ -23,6 +23,7 @@
 	const rightZoneId: ZoneId = { type: "split-overlay", paneId: "right" };
 
 	const MIN_WIDTH = 25; // minimum 25% (1/4) for each pane
+	const GUTTER_PX = 10; // gap between cards in split mode
 
 	// Derived state for split mode
 	const isSplitEnabled = $derived(spaceStore.isSplit);
@@ -135,6 +136,7 @@
 	class:split-enabled={isSplitEnabled}
 	style:--left-width="{leftWidth}%"
 	style:--right-width="{rightWidth}%"
+	style:--gutter-width="{isSplitEnabled ? GUTTER_PX : 0}px"
 >
 	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts -->
 	<div class="drag-overlays" class:visible={isDragging}>
@@ -175,7 +177,7 @@
 	<div
 		class="pane-shell left-pane"
 		class:active={!isSplitEnabled || spaceStore.activePaneId === "left"}
-		style:width="{leftWidth}%"
+		style:width={isSplitEnabled ? `calc(${leftWidth}% - ${GUTTER_PX / 2}px)` : '100%'}
 		onclick={() => handlePaneClick("left")}
 		onkeydown={(e) => e.key === "Enter" && handlePaneClick("left")}
 		role="region"
@@ -205,7 +207,7 @@
 		class="pane-shell right-pane"
 		class:active={isSplitEnabled && spaceStore.activePaneId === "right"}
 		class:collapsed={!isSplitEnabled}
-		style:width="{rightWidth}%"
+		style:width={isSplitEnabled ? `calc(${rightWidth}% - ${GUTTER_PX / 2}px)` : '0'}
 		onclick={() => handlePaneClick("right")}
 		onkeydown={(e) => e.key === "Enter" && handlePaneClick("right")}
 		role="region"
@@ -222,22 +224,27 @@
 	     When a tab moves between panes, only CSS classes change — the component
 	     instance is never destroyed. This preserves Yjs documents, WebSocket
 	     connections, chat streaming, undo history, and scroll position. -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#each allTabs as tab (tab.id)}
-		{@const paneId = spaceStore.findTabPane(tab.id) ?? 'left'}
-		{@const isActive = tab.id === (paneId === 'left' ? leftPaneActiveTabId : rightPaneActiveTabId)}
+		{@const paneId = spaceStore.findTabPane(tab.id) ?? "left"}
+		{@const isActive =
+			tab.id ===
+			(paneId === "left" ? leftPaneActiveTabId : rightPaneActiveTabId)}
 		<div
 			class="tab-slot"
-			class:in-left={paneId === 'left' || !isSplitEnabled}
-			class:in-right={paneId === 'right' && isSplitEnabled}
-			style:display={isActive ? 'flex' : 'none'}
+			class:in-left={paneId === "left" || !isSplitEnabled}
+			class:in-right={paneId === "right" && isSplitEnabled}
+			style:display={isActive ? "flex" : "none"}
+			onpointerdown={() => isSplitEnabled && handlePaneClick(paneId)}
 		>
 			<TabContent {tab} active={isActive} />
 		</div>
 	{/each}
 
 	<!-- Empty pane fallbacks: ephemeral ChatView when a pane has no tabs -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#if leftPaneTabs.length === 0}
-		<div class="tab-slot in-left" style:display="flex">
+		<div class="tab-slot in-left" style:display="flex" onpointerdown={() => isSplitEnabled && handlePaneClick("left")}>
 			<ChatView
 				tab={{
 					id: "new-chat-left",
@@ -250,8 +257,9 @@
 			/>
 		</div>
 	{/if}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#if isSplitEnabled && rightPaneTabs.length === 0}
-		<div class="tab-slot in-right" style:display="flex">
+		<div class="tab-slot in-right" style:display="flex" onpointerdown={() => handlePaneClick("right")}>
 			<ChatView
 				tab={{
 					id: "new-chat-right",
@@ -269,6 +277,7 @@
 <style>
 	.split-container {
 		--tab-bar-h: 41px; /* 6px padding + 28px tabs-scroll + 6px padding + 1px border */
+		--card-radius: 4px;
 		display: flex;
 		flex: 1;
 		min-height: 0;
@@ -287,17 +296,33 @@
 		flex-direction: column;
 		min-width: 0;
 		overflow: hidden;
-		background: var(--color-background);
-		transition: width 150ms ease;
+		transition:
+			width 150ms var(--ease-premium),
+			border-color 150ms var(--ease-premium);
 	}
 
 	.split-container.dragging .pane-shell {
 		transition: none;
 	}
 
-	/* Only show active indicator in split mode */
+	/* Inset panes so borders aren't clipped by container overflow:hidden */
+	.split-enabled {
+		padding: 1px;
+	}
+
+	/* Card styling in split mode */
+	.split-enabled .pane-shell {
+		background: var(--color-surface);
+		background-image: var(--background-image);
+		background-blend-mode: multiply;
+		border: 1px solid var(--color-border);
+		border-radius: var(--card-radius);
+		overflow: hidden;
+	}
+
+	/* Active pane: darker border */
 	.split-enabled .pane-shell.active {
-		box-shadow: inset 0 2px 0 0 var(--color-primary);
+		border-color: color-mix(in srgb, var(--color-foreground) 20%, var(--color-border));
 	}
 
 	/* Right pane collapsed styles */
@@ -315,7 +340,12 @@
 		bottom: 0;
 		flex-direction: column;
 		overflow: hidden;
-		transition: width 150ms ease;
+		transition: width 150ms var(--ease-premium);
+	}
+
+	/* In split mode, tab-bar-h is offset by container padding */
+	.split-enabled .tab-slot {
+		top: calc(var(--tab-bar-h, 41px) + 1px);
 	}
 
 	.split-container.dragging .tab-slot {
@@ -324,58 +354,68 @@
 
 	.tab-slot.in-left {
 		left: 0;
-		width: var(--left-width);
+		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2));
 	}
 
 	.tab-slot.in-right {
 		right: 0;
-		width: var(--right-width);
+		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2));
+	}
+
+	/* Card content inset: tab-slot is a sibling of pane-shell (not a child),
+	   so we must inset by the card border width + container padding to avoid
+	   content overlapping the border. Container padding = 1px, border = 1px. */
+	.split-enabled .tab-slot.in-left {
+		left: 2px; /* 1px container padding + 1px border */
+		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2) - 4px);
+		bottom: 2px;
+		border-radius: 0 0 var(--card-radius) var(--card-radius);
+		overflow: hidden;
+	}
+
+	.split-enabled .tab-slot.in-right {
+		right: 2px;
+		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2) - 4px);
+		bottom: 2px;
+		border-radius: 0 0 var(--card-radius) var(--card-radius);
+		overflow: hidden;
 	}
 
 	.resize-handle {
 		width: 0;
 		cursor: col-resize;
-		background: var(--color-border);
+		background: transparent;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
 		transition:
-			width 200ms ease,
-			opacity 200ms ease,
-			background-color 150ms ease;
+			width 200ms var(--ease-premium),
+			opacity 200ms var(--ease-premium),
+			background-color 150ms var(--ease-premium);
 		position: relative;
 		opacity: 0;
 		pointer-events: none;
 	}
 
-	/* Only show resize handle in split mode */
+	/* Gutter: full gap width between cards */
 	.resize-handle.visible {
-		width: 1px;
+		width: var(--gutter-width, 10px);
 		opacity: 1;
 		pointer-events: auto;
 	}
 
-	.resize-handle.visible::before {
-		content: "";
-		position: absolute;
-		inset: 0;
-		width: 11px;
-		left: -5px;
-		cursor: col-resize;
-	}
-
+	/* Hover: subtle fill hint in gutter */
 	.resize-handle.visible:hover,
 	.resize-handle.dragging {
-		width: 5px;
-		background: var(--color-border);
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 	}
 
 	.handle-grip {
-		width: 2px;
+		width: 3px;
 		height: 32px;
 		background: var(--color-foreground-muted);
-		border-radius: 1px;
+		border-radius: 2px;
 		opacity: 0;
 		transition: opacity 150ms ease;
 	}
@@ -418,6 +458,17 @@
 
 	.drag-overlay.active {
 		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	}
+
+	/* Card-aware drag overlays in split mode */
+	.split-enabled .drag-overlay.left {
+		border-radius: var(--card-radius);
+		margin-right: calc(var(--gutter-width, 0px) / 2);
+	}
+
+	.split-enabled .drag-overlay.right {
+		border-radius: var(--card-radius);
+		margin-left: calc(var(--gutter-width, 0px) / 2);
 	}
 
 	/* Hide the ghost/shadow item that svelte-dnd-action creates in the drop zone */

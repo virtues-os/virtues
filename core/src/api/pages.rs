@@ -184,7 +184,7 @@ pub async fn list_pages(
     let offset = offset.unwrap_or(0);
 
     // Get total count
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM pages"#)
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
@@ -193,7 +193,7 @@ pub async fn list_pages(
     let pages = sqlx::query_as::<_, PageSummary>(
         r#"
         SELECT id, title, icon, cover_url, tags, created_at, updated_at
-        FROM pages
+        FROM app_pages
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -217,7 +217,7 @@ pub async fn get_page(pool: &SqlitePool, id: &str) -> Result<Page> {
     let page = sqlx::query_as::<_, Page>(
         r#"
         SELECT id, title, content, icon, cover_url, tags, created_at, updated_at
-        FROM pages
+        FROM app_pages
         WHERE id = $1
         "#,
     )
@@ -244,7 +244,7 @@ pub async fn create_page(pool: &SqlitePool, req: CreatePageRequest) -> Result<Pa
 
     let page = sqlx::query_as::<_, Page>(
         r#"
-        INSERT INTO pages (id, title, content, icon, cover_url, tags)
+        INSERT INTO app_pages (id, title, content, icon, cover_url, tags)
         VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id, title, content, icon, cover_url, tags, created_at, updated_at
         "#,
@@ -299,7 +299,7 @@ pub async fn update_page(pool: &SqlitePool, id: &str, req: UpdatePageRequest) ->
 
     let page = sqlx::query_as::<_, Page>(
         r#"
-        UPDATE pages
+        UPDATE app_pages
         SET title = $2, content = $3, icon = $4, cover_url = $5, tags = $6
         WHERE id = $1
         RETURNING id, title, content, icon, cover_url, tags, created_at, updated_at
@@ -322,7 +322,7 @@ pub async fn update_page(pool: &SqlitePool, id: &str, req: UpdatePageRequest) ->
 /// Also cleans up all space_items references (orphan cleanup)
 pub async fn delete_page(pool: &SqlitePool, id: &str) -> Result<()> {
     // First delete the page
-    let result = sqlx::query(r#"DELETE FROM pages WHERE id = $1"#)
+    let result = sqlx::query(r#"DELETE FROM app_pages WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
@@ -348,6 +348,7 @@ pub async fn delete_page(pool: &SqlitePool, id: &str) -> Result<()> {
 
 /// Raw entity search result from database (before URL computation)
 #[derive(Debug, Clone, sqlx::FromRow)]
+#[allow(dead_code)]
 struct RawEntitySearchResult {
     id: String,
     name: String,
@@ -365,7 +366,6 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "person" => format!("/person/{}", id),
         "place" => format!("/place/{}", id),
         "org" => format!("/org/{}", id),
-        "thing" => format!("/thing/{}", id),
         "page" => format!("/page/{}", id),
         "day" => format!("/day/{}", id),
         "year" => format!("/year/{}", id),
@@ -427,7 +427,7 @@ pub async fn search_entities(pool: &SqlitePool, query: &str) -> Result<EntitySea
         SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon,
                NULL as mime_type, updated_at,
                CASE WHEN title LIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM pages
+        FROM app_pages
         WHERE title LIKE $1
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3
@@ -476,7 +476,7 @@ pub async fn create_version(
 
     // Get next version number
     let max_version: Option<i64> = sqlx::query_scalar(
-        "SELECT MAX(version_number) FROM page_versions WHERE page_id = ?",
+        "SELECT MAX(version_number) FROM app_page_versions WHERE page_id = ?",
     )
     .bind(page_id)
     .fetch_one(pool)
@@ -492,7 +492,7 @@ pub async fn create_version(
     // Insert version
     let version = sqlx::query_as::<_, PageVersionSummary>(
         r#"
-        INSERT INTO page_versions (id, page_id, version_number, yjs_snapshot, content_preview, created_by, description)
+        INSERT INTO app_page_versions (id, page_id, version_number, yjs_snapshot, content_preview, created_by, description)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id, page_id, version_number, content_preview, created_at, created_by, description
         "#,
@@ -508,6 +508,23 @@ pub async fn create_version(
     .await
     .map_err(|e| Error::Database(format!("Failed to create version: {}", e)))?;
 
+    // Prune old versions beyond the cap (keep most recent 50)
+    sqlx::query(
+        r#"
+        DELETE FROM app_page_versions
+        WHERE page_id = $1 AND id NOT IN (
+            SELECT id FROM app_page_versions
+            WHERE page_id = $1
+            ORDER BY version_number DESC
+            LIMIT 50
+        )
+        "#,
+    )
+    .bind(page_id)
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to prune versions: {}", e)))?;
+
     Ok(version)
 }
 
@@ -522,7 +539,7 @@ pub async fn list_versions(
     let versions = sqlx::query_as::<_, PageVersionSummary>(
         r#"
         SELECT id, page_id, version_number, content_preview, created_at, created_by, description
-        FROM page_versions
+        FROM app_page_versions
         WHERE page_id = $1
         ORDER BY version_number DESC
         LIMIT $2
@@ -542,7 +559,7 @@ pub async fn get_version(pool: &SqlitePool, version_id: &str) -> Result<PageVers
     let row = sqlx::query_as::<_, PageVersionRow>(
         r#"
         SELECT id, page_id, version_number, yjs_snapshot, content_preview, created_at, created_by, description
-        FROM page_versions
+        FROM app_page_versions
         WHERE id = $1
         "#,
     )

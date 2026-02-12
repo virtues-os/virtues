@@ -76,8 +76,11 @@ pub enum Commands {
         source_id: String,
     },
 
-    /// Start server with ngrok HTTPS tunnel (for iOS/Mac development)
-    Ngrok,
+    /// Start server with Cloudflare Tunnel (for iOS/Mac development)
+    Tunnel,
+
+    /// Pre-download ML models (embedding, etc.) for offline/Docker use
+    WarmModels,
 }
 
 #[derive(Subcommand)]

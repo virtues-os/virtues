@@ -11,7 +11,13 @@
 		type ZoneId,
 	} from "$lib/stores/dndManager.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { updatePage, updateChat } from "$lib/api/client";
+	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 
 	const FLIP_DURATION_MS = 150;
@@ -120,13 +126,21 @@
 		const tabIndex = tabs.findIndex((t) => t.id === tabId);
 		const hasTabsToRight = tabIndex !== -1 && tabIndex < tabs.length - 1;
 
+		// Parse route to determine entity type for icon changes
+		const routeParts = tab.route?.split('/').filter(Boolean) ?? [];
+		const tabEntityType = routeParts[0]; // 'page', 'chat', etc.
+		const tabEntityId = routeParts[1];
+		const canChangeIcon = tabEntityType && tabEntityId && (tabEntityType === 'page' || tabEntityType === 'chat');
+
 		// Build context menu items
 		const items: ContextMenuItem[] = [
 			// Compact/Expand
 			{
 				id: "compact",
 				label: tab.pinned ? "Expand" : "Compact",
-				icon: tab.pinned ? "ri:expand-left-right-line" : "ri:contract-left-right-line",
+				icon: tab.pinned
+					? "ri:expand-left-right-line"
+					: "ri:contract-left-right-line",
 				action: () => spaceStore.togglePin(tabId),
 			},
 			// Rename
@@ -139,20 +153,46 @@
 					renameValue = tab.label;
 				},
 			},
-			// Divider + Close actions
-			{
-				id: "close",
-				label: "Close",
-				dividerBefore: true,
-				action: () => {
-					if (paneId) {
-						spaceStore.closeTabInPane(tabId, paneId);
-					} else {
-						spaceStore.closeTab(tabId);
-					}
-				},
-			},
 		];
+
+		// Change Icon (for page/chat tabs)
+		if (canChangeIcon) {
+			items.push({
+				id: "change-icon",
+				label: "Change Icon",
+				icon: "ri:emotion-line",
+				action: () => {
+					iconPickerStore.show(tab.icon ?? null, async (icon) => {
+						try {
+							if (tabEntityType === 'page') {
+								await updatePage(tabEntityId, { icon });
+								await pagesStore.load();
+							} else if (tabEntityType === 'chat') {
+								await updateChat(tabEntityId, { icon });
+								chatSessions.updateSessionIcon(tabEntityId, icon);
+							}
+							spaceStore.invalidateViewCache();
+						} catch (err) {
+							console.error("[WindowTabBar] Failed to change icon:", err);
+						}
+					});
+				},
+			});
+		}
+
+		// Divider + Close actions
+		items.push({
+			id: "close",
+			label: "Close",
+			dividerBefore: true,
+			action: () => {
+				if (paneId) {
+					spaceStore.closeTabInPane(tabId, paneId);
+				} else {
+					spaceStore.closeTab(tabId);
+				}
+			},
+		});
 
 		// Close Others (only if more than 1 tab)
 		if (tabs.length > 1) {
@@ -234,6 +274,14 @@
 		});
 	}
 
+	// Show sidebar toggle on left pane (or non-split mode)
+	const showSidebarToggle = $derived(!paneId || paneId === "left");
+
+	// Icon changes based on sidebar state
+	const sidebarIcon = $derived(
+		sidebarState.collapsed ? "ri:layout-right-line" : "ri:side-bar-line",
+	);
+
 	// Get icon for tab type
 	function getDefaultIcon(type: string): string {
 		switch (type) {
@@ -271,6 +319,17 @@
 	aria-label="Tab bar"
 	tabindex="0"
 >
+	{#if showSidebarToggle}
+		<button
+			class="sidebar-toggle"
+			onclick={() => sidebarState.toggle()}
+			aria-label="Toggle sidebar"
+			title="Toggle sidebar (⌘S)"
+		>
+			<Icon icon={sidebarIcon} />
+		</button>
+	{/if}
+
 	<div
 		class="tabs-scroll"
 		role="tablist"
@@ -308,10 +367,11 @@
 				role="button"
 				tabindex="0"
 			>
-				<Icon
-					icon={item.icon || getDefaultIcon(tab.type)}
-					class="tab-icon"
-				/>
+				{#if item.icon && isEmoji(item.icon)}
+					<span class="tab-emoji">{item.icon}</span>
+				{:else}
+					<Icon icon={item.icon || getDefaultIcon(tab.type)} class="tab-icon" />
+				{/if}
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
 						<!-- svelte-ignore a11y_autofocus -->
@@ -375,6 +435,12 @@
 		flex-shrink: 0;
 		position: relative;
 		z-index: 110; /* Above global drag overlays */
+	}
+
+	/* Card top rounding in split mode */
+	.tab-bar.split-pane {
+		border-top-left-radius: var(--card-radius, 6px);
+		border-top-right-radius: var(--card-radius, 6px);
 	}
 
 	/* Active pane in split mode gets elevated background */
@@ -491,6 +557,14 @@
 		cursor: text;
 	}
 
+	.tab-emoji {
+		font-size: 12px;
+		line-height: 14px;
+		width: 14px;
+		text-align: center;
+		flex-shrink: 0;
+	}
+
 	.tab-close {
 		display: flex;
 		align-items: center;
@@ -517,10 +591,16 @@
 	}
 
 	.tab-close:hover {
-		background: var(--color-border);
-		color: var(--color-foreground);
+		background: var(--error-subtle);
+		color: var(--error);
 	}
 
+	/* Tint tab background when hovering close button */
+	.tab:has(.tab-close:hover) {
+		background: color-mix(in srgb, var(--error-subtle) 50%, var(--color-surface));
+	}
+
+	.sidebar-toggle,
 	.split-toggle,
 	.merge-toggle {
 		display: flex;
@@ -541,6 +621,11 @@
 			color 150ms ease;
 	}
 
+	.sidebar-toggle {
+		margin-right: 2px;
+	}
+
+	.sidebar-toggle:hover,
 	.split-toggle:hover,
 	.merge-toggle:hover {
 		background: var(--color-surface-elevated);

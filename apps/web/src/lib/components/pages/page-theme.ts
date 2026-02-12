@@ -100,7 +100,6 @@ function getEntityIconFromUrl(url: string): string {
 	if (url.startsWith("/person/")) return "ri:user-line";
 	if (url.startsWith("/place/")) return "ri:map-pin-line";
 	if (url.startsWith("/org/")) return "ri:building-line";
-	if (url.startsWith("/thing/")) return "ri:box-3-line";
 	if (url.startsWith("/page/")) return "ri:file-text-line";
 	if (url.startsWith("/day/")) return "ri:calendar-line";
 	if (url.startsWith("/year/")) return "ri:calendar-2-line";
@@ -115,7 +114,7 @@ function getEntityIconFromUrl(url: string): string {
  */
 function isEntityUrl(url: string): boolean {
 	const entityPrefixes = [
-		"/person/", "/place/", "/thing/", "/org/", "/page/",
+		"/person/", "/place/", "/org/", "/page/",
 		"/day/", "/year/", "/source/", "/chat/", "/drive/"
 	];
 	return entityPrefixes.some(prefix => url.startsWith(prefix));
@@ -911,9 +910,12 @@ export const pageEditorTheme = EditorView.theme({
 	".cm-code-text": {
 		fontFamily: "var(--font-mono, ui-monospace, monospace)",
 		fontSize: "0.875em",
-		backgroundColor: "var(--color-surface)",
+		backgroundColor: "var(--color-surface-elevated)",
 		padding: "0.125rem 0.375rem",
 		borderRadius: "0.25rem",
+		border: "1px solid var(--color-border-subtle)",
+		boxDecorationBreak: "clone",
+		WebkitBoxDecorationBreak: "clone",
 	},
 
 	// ─────────────────────────────────────────────────────────────────────────

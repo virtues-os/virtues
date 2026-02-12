@@ -13,25 +13,26 @@
 	} from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import type { ViewSummary } from "$lib/api/client";
+	import { buildSpaceContextMenu } from "$lib/utils/contextMenuItems";
+	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import Modal from "$lib/components/Modal.svelte";
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
-	import WorkspaceDropdown from "./WorkspaceDropdown.svelte";
-	import IconPicker from "$lib/components/IconPicker.svelte";
+	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import UnifiedFolder from "./UnifiedFolder.svelte";
-	import VirtuesWorkspaceNav from "./VirtuesWorkspaceNav.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SearchModal from "./SearchModal.svelte";
 	import WorkspaceInfoModal from "./WorkspaceInfoModal.svelte";
 	import ColorPickerModal from "./ColorPickerModal.svelte";
+	import EntityPicker, { type EntityResult } from "$lib/components/EntityPicker.svelte";
 
 	const ANIMATION_DURATION_MS = 150;
 	const HOVER_EXPAND_DELAY_MS = 500;
 
-	const STORAGE_KEY = "virtues-sidebar-collapsed";
 	const SLIDE_WIDTH = 208; // w-52 = 13rem = 208px
 
-	// Collapsed state (icon-only mode)
-	let isCollapsed = $state(false);
+	// Collapsed state from shared store (also consumed by WindowTabBar)
+	const isCollapsed = $derived(sidebarState.collapsed);
 
 	// Search modal state
 	let isSearchOpen = $state(false);
@@ -39,19 +40,23 @@
 	// Workspace info modal state
 	let isWorkspaceInfoOpen = $state(false);
 
-	// Workspace dropdown state
-	let isWorkspaceDropdownOpen = $state(false);
-	let workspaceDropdownAnchor = $state({ x: 0, y: 0 });
+	// New Space modal state
+	let showNewSpaceModal = $state(false);
+	let newSpaceName = $state("");
+	let isCreatingSpace = $state(false);
 
 	// Inline rename state
 	let isRenaming = $state(false);
 	let renameValue = $state("");
 
-	// Icon picker state
-	let showIconPicker = $state(false);
+	// Icon picker uses shared iconPickerStore (modal rendered in +layout.svelte)
 
 	// Color picker modal state
 	let showColorPicker = $state(false);
+
+	// "Add..." entity picker state (triggered from workspace context menu)
+	let showAddPicker = $state(false);
+	let addPickerPos = $state({ x: 0, y: 0 });
 
 	// Track if store is ready
 	let storeReady = $state(false);
@@ -106,19 +111,17 @@
 		for (const ws of spaceStore.spaces) {
 			const contentItems: WorkspaceDndItem[] = [];
 
-			// Root items - backend returns them in sorted order
-			// Use index * 10 to leave gaps for folders to interleave
+			// Root items — use actual sort_order from backend
 			const wsItems = spaceStore.getSpaceItems(ws.id);
-			for (let i = 0; i < wsItems.length; i++) {
-				const entity = wsItems[i];
+			for (const item of wsItems) {
 				contentItems.push({
-					id: `item:${getHrefForEntity(entity)}`,
-					url: getHrefForEntity(entity),
-					label: entity.name,
-					icon: entity.icon,
+					id: `item:${getHrefForEntity(item)}`,
+					url: getHrefForEntity(item),
+					label: item.name,
+					icon: item.icon,
 					itemType: "root-item",
-					entity,
-					sortOrder: i * 10, // Use index-based ordering
+					entity: item,
+					sortOrder: item.sort_order,
 					sourceSpaceId: ws.id,
 				});
 			}
@@ -334,49 +337,22 @@
 	function navigateToIndex(targetIndex: number) {
 		if (!viewportEl || targetIndex === currentIndex) return;
 
-		// Direction is inverted because transitionWorkspaces already points to
-		// the destination (activeSpaceId changed before we get here). So "prev"
-		// of the new workspace = the old workspace (when going forward), and we
-		// want that to be the "incoming" that slides out.
-		const direction = targetIndex > currentIndex ? -1 : 1;
-		isProgrammaticScroll = true;
-
-		// Cancel any in-flight animation
+		// Cancel any in-flight rAF title animation
 		programmaticAnimCancelled = true;
 
+		// Record where we're scrolling FROM for proper clamping,
+		// and mark as scrolling BEFORE updating currentIndex so that
+		// handleScroll doesn't overwrite scrollStartIndex
+		scrollStartIndex = currentIndex;
+		isScrolling = true;
 		currentIndex = targetIndex;
 
-		// Instant scroll to target (no smooth scroll = no scroll events)
-		viewportEl.style.scrollBehavior = "auto";
-		viewportEl.scrollLeft = targetIndex * SLIDE_WIDTH;
-		viewportEl.style.scrollBehavior = "";
-
-		// Animate title transition: direction → 0
-		programmaticAnimCancelled = false;
-		const localCancelToken = {};
-		const capturedToken = localCancelToken;
-
-		scrollProgress = direction;
-		const startTime = performance.now();
-		const duration = 200; // ms
-
-		function animateTitle(now: number) {
-			if (programmaticAnimCancelled || capturedToken !== localCancelToken)
-				return;
-			const elapsed = now - startTime;
-			const t = Math.min(1, elapsed / duration);
-			// Ease out cubic
-			const eased = 1 - Math.pow(1 - t, 3);
-			scrollProgress = direction * (1 - eased);
-
-			if (t < 1) {
-				requestAnimationFrame(animateTitle);
-			} else {
-				scrollProgress = 0;
-				isProgrammaticScroll = false;
-			}
-		}
-		requestAnimationFrame(animateTitle);
+		// Smooth scroll — the native scroll events will drive scrollProgress
+		// naturally as the browser animates, giving us a real swipe feel
+		viewportEl.scrollTo({
+			left: targetIndex * SLIDE_WIDTH,
+			behavior: "smooth",
+		});
 	}
 
 	// Navigate to workspace (for external navigation like chevron clicks)
@@ -398,13 +374,8 @@
 		}
 	});
 
-	// Load state from localStorage and initialize
+	// Initialize workspace store and keyboard shortcuts
 	onMount(() => {
-		const storedCollapsed = localStorage.getItem(STORAGE_KEY);
-		if (storedCollapsed !== null) {
-			isCollapsed = storedCollapsed === "true";
-		}
-
 		// Initialize workspace store
 		spaceStore
 			.init()
@@ -436,16 +407,12 @@
 
 		// Keyboard shortcuts
 		window.addEventListener("keydown", handleKeydown);
+
 		return () => {
 			window.removeEventListener("keydown", handleKeydown);
 			if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
 			if (rafId) cancelAnimationFrame(rafId);
 		};
-	});
-
-	// Persist collapsed state
-	$effect(() => {
-		localStorage.setItem(STORAGE_KEY, String(isCollapsed));
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -497,13 +464,81 @@
 	}
 
 	function handleWorkspaceClick(e: MouseEvent) {
-		// Open the workspace dropdown menu
-		workspaceDropdownAnchor = { x: e.clientX, y: e.clientY };
-		isWorkspaceDropdownOpen = !isWorkspaceDropdownOpen;
+		const space = spaceStore.activeSpace;
+		if (!space) return;
+		showSpaceContextMenuAt(e, space.id);
 	}
 
-	function closeWorkspaceDropdown() {
-		isWorkspaceDropdownOpen = false;
+	function showSpaceContextMenuAt(e: MouseEvent, spaceId: string) {
+		const space = spaceStore.spaces.find(s => s.id === spaceId);
+		if (!space) return;
+
+		// Build space switcher items at the top
+		const spaceItems: import("$lib/stores/contextMenu.svelte").ContextMenuItem[] =
+			spaceStore.spaces.map((s, i) => ({
+				id: `switch-space-${s.id}`,
+				label: s.is_system ? "Virtues" : s.name,
+				icon: s.icon || (s.is_system ? "virtues:logo" : "ri:folder-line"),
+				checked: s.id === spaceStore.activeSpaceId,
+				shortcut: i < 9 ? `⌘${i + 1}` : undefined,
+				action: () => {
+					if (s.id !== spaceStore.activeSpaceId) {
+						spaceStore.switchSpace(s.id);
+					}
+				},
+			}));
+
+		// Build active space options (rename, icon, color, etc.)
+		const spaceOptions = buildSpaceContextMenu(space, {
+			onRename: (id) => {
+				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
+				startRename();
+			},
+			onChangeIcon: (id) => {
+				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
+				startChangeIcon();
+			},
+			onChangeColor: (id) => {
+				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
+				startChangeColor();
+			},
+			onNewSpace: () => {
+				newSpaceName = "";
+				showNewSpaceModal = true;
+			},
+			onSettings: (id) => {
+				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
+				openWorkspaceSettings();
+			},
+			onDelete: async (id) => {
+				const target = spaceStore.spaces.find(s => s.id === id);
+				if (!target || target.is_system) return;
+				if (confirm(`Delete "${target.name}"? Items will be moved to Virtues.`)) {
+					await spaceStore.deleteSpace(id);
+				}
+			},
+		});
+
+		// Add divider before space options
+		if (spaceOptions.length > 0) {
+			spaceOptions[0].dividerBefore = true;
+		}
+
+		contextMenu.show({ x: e.clientX, y: e.clientY }, [...spaceItems, ...spaceOptions]);
+	}
+
+	async function handleCreateNewSpace() {
+		if (!newSpaceName.trim() || isCreatingSpace) return;
+		isCreatingSpace = true;
+		try {
+			await spaceStore.createSpace(newSpaceName.trim());
+			showNewSpaceModal = false;
+			newSpaceName = "";
+		} catch (error) {
+			console.error("Failed to create workspace:", error);
+		} finally {
+			isCreatingSpace = false;
+		}
 	}
 
 	function openWorkspaceSettings() {
@@ -541,20 +576,15 @@
 	function startChangeIcon() {
 		const activeSpace = spaceStore.activeSpace;
 		if (!activeSpace || activeSpace.is_system) return;
-		showIconPicker = true;
-	}
-
-	async function handleIconSelect(icon: string | null) {
-		const activeSpace = spaceStore.activeSpace;
-		if (!activeSpace) return;
-		showIconPicker = false;
-		try {
-			await spaceStore.updateSpace(activeSpace.id, {
-				icon: icon ?? undefined,
-			});
-		} catch (e) {
-			console.error("Failed to update workspace icon:", e);
-		}
+		iconPickerStore.show(activeSpace.icon ?? null, async (icon) => {
+			try {
+				await spaceStore.updateSpace(activeSpace.id, {
+					icon: icon ?? undefined,
+				});
+			} catch (e) {
+				console.error("Failed to update workspace icon:", e);
+			}
+		});
 	}
 
 	function startChangeColor() {
@@ -593,12 +623,21 @@
 		});
 	}
 
+	async function handleAddPickerSelect(entity: EntityResult) {
+		await spaceStore.addSpaceItem(entity.url);
+		showAddPicker = false;
+	}
+
+	function closeAddPicker() {
+		showAddPicker = false;
+	}
+
 	function handleGoHome() {
 		handleNewChat();
 	}
 
 	function toggleCollapse() {
-		isCollapsed = !isCollapsed;
+		sidebarState.toggle();
 	}
 
 	// Track newly created view for auto-focus rename
@@ -608,28 +647,30 @@
 		const view = await spaceStore.createManualView("New Folder");
 		if (view) {
 			pendingRenameViewId = view.id;
+			spaceStore.openTabFromRoute(`/view/${view.id}`, {
+				label: view.name,
+				forceNew: true,
+			});
 		}
 	}
 
 	async function handleCreateSmartFolder() {
-		// Default smart folder config: recent chats
-		const defaultConfig = {
-			namespace: "chat",
-			sort: "updated_at",
-			sort_dir: "desc",
-			limit: 20,
-		};
-		const view = await spaceStore.createSmartView(
-			"New Smart Folder",
-			defaultConfig,
-		);
+		const view = await spaceStore.createSmartView("New Smart Folder");
 		if (view) {
 			pendingRenameViewId = view.id;
+			spaceStore.openTabFromRoute(`/view/${view.id}`, {
+				label: view.name,
+				forceNew: true,
+			});
 		}
 	}
 
 	// Helper to get href for entity
 	function getHrefForEntity(entity: ViewEntity): string {
+		// External URLs — use as-is
+		if (entity.id.startsWith("http://") || entity.id.startsWith("https://")) {
+			return entity.id;
+		}
 		// If already a full path, use as-is
 		if (entity.id.startsWith("/")) {
 			return entity.id;
@@ -920,26 +961,21 @@
 		}
 	}
 
-	// Persist reorder to backend
+	// Persist reorder to backend — single counter for items and folders
 	async function persistReorder(
 		items: WorkspaceDndItem[],
 		workspaceId: string,
 	) {
-		const rootItems: { url: string; sortOrder: number }[] = [];
-		const folderUpdates: { viewId: string; sortOrder: number }[] = [];
+		const itemSortOrders: Array<{ url: string; sort_order: number }> = [];
+		const folderUpdates: Array<{ viewId: string; sortOrder: number }> = [];
 
-		let itemCountSoFar = 0;
-		for (const item of items) {
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
 			if (item.itemType === "root-item" && item.url) {
-				rootItems.push({
-					url: item.url,
-					sortOrder: itemCountSoFar * 10,
-				});
-				itemCountSoFar++;
+				itemSortOrders.push({ url: item.url, sort_order: i });
 			} else if (item.itemType === "folder" && item.view) {
-				const folderSortOrder = itemCountSoFar * 10 - 5;
 				const viewId = item.id.replace("folder:", "");
-				folderUpdates.push({ viewId, sortOrder: folderSortOrder });
+				folderUpdates.push({ viewId, sortOrder: i });
 			}
 		}
 
@@ -948,15 +984,13 @@
 			await updateView(update.viewId, { sort_order: update.sortOrder });
 		}
 
-		// Refresh views if any folders were updated
 		if (folderUpdates.length > 0) {
 			await spaceStore.refreshViews();
 		}
 
-		// Persist root items order
-		if (rootItems.length > 0) {
-			const urls = rootItems.map((r) => r.url);
-			await spaceStore.reorderSpaceItems(urls, workspaceId);
+		// Update item sort_order values
+		if (itemSortOrders.length > 0) {
+			await spaceStore.reorderSpaceItems(itemSortOrders, workspaceId);
 		}
 	}
 
@@ -986,32 +1020,28 @@
 			await removeViewItem(sourceViewId, itemUrl);
 		}
 
-		// PHASE 3: Persist full order (items AND folders) using same logic as persistReorder
-		// This ensures proper interleaving of items and folders
-		const rootItemUrls: string[] = [];
-		const folderUpdates: { viewId: string; sortOrder: number }[] = [];
+		// PHASE 3: Persist full order — single counter for items and folders
+		const itemSortOrders: Array<{ url: string; sort_order: number }> = [];
+		const folderUpdates: Array<{ viewId: string; sortOrder: number }> = [];
 
-		let itemCountSoFar = 0;
-		for (const entry of intendedFullOrder) {
+		for (let i = 0; i < intendedFullOrder.length; i++) {
+			const entry = intendedFullOrder[i];
 			if (entry.type === "item") {
-				rootItemUrls.push(entry.url);
-				itemCountSoFar++;
+				itemSortOrders.push({ url: entry.url, sort_order: i });
 			} else {
-				// Folder - extract viewId from URL (/view/view_xxx)
 				const viewId = entry.url.replace("/view/", "");
-				const folderSortOrder = itemCountSoFar * 10 - 5;
-				folderUpdates.push({ viewId, sortOrder: folderSortOrder });
+				folderUpdates.push({ viewId, sortOrder: i });
 			}
 		}
 
-		// Update folder sort_order values first
+		// Update folder sort_order values
 		for (const update of folderUpdates) {
 			await updateView(update.viewId, { sort_order: update.sortOrder });
 		}
 
-		// Reorder root items
-		if (rootItemUrls.length > 0) {
-			await spaceStore.reorderSpaceItems(rootItemUrls, workspaceId);
+		// Update item sort_order values
+		if (itemSortOrders.length > 0) {
+			await spaceStore.reorderSpaceItems(itemSortOrders, workspaceId);
 		}
 
 		// PHASE 4: Invalidate cache and refresh
@@ -1022,8 +1052,9 @@
 	// Svelte action to initialize SortableJS on an element
 	function sortableAction(
 		node: HTMLElement,
-		params: { workspaceId: string },
+		params: { workspaceId: string; immutable?: boolean },
 	) {
+		if (params.immutable) return { destroy() {} };
 		const sortable = initSortable(node, params.workspaceId);
 
 		return {
@@ -1043,11 +1074,28 @@
 		e.preventDefault();
 		e.stopPropagation();
 
-		contextMenu.show({ x: e.clientX, y: e.clientY }, [
+		const menuPos = { x: e.clientX, y: e.clientY };
+
+		contextMenu.show(menuPos, [
+			{
+				id: "new-chat",
+				label: "New Chat",
+				icon: "ri:chat-new-line",
+				shortcut: "⌘N",
+				action: handleNewChat,
+			},
+			{
+				id: "new-page",
+				label: "New Page",
+				icon: "ri:file-add-line",
+				shortcut: "⌘⇧N",
+				action: handleNewPage,
+			},
 			{
 				id: "new-folder",
 				label: "New Folder",
 				icon: "ri:folder-add-line",
+				dividerBefore: true,
 				action: handleCreateFolder,
 			},
 			{
@@ -1055,6 +1103,16 @@
 				label: "New Smart Folder",
 				icon: "ri:filter-line",
 				action: handleCreateSmartFolder,
+			},
+			{
+				id: "add-item",
+				label: "Add...",
+				icon: "ri:add-circle-line",
+				dividerBefore: true,
+				action: () => {
+					addPickerPos = menuPos;
+					showAddPicker = true;
+				},
 			},
 		]);
 	}
@@ -1107,23 +1165,24 @@
 	<div class={sidebarInnerClass}>
 		<WorkspaceHeader
 			collapsed={isCollapsed}
-			onNewChat={handleNewChat}
-			onNewPage={handleNewPage}
-			onCreateFolder={handleCreateFolder}
-			onCreateSmartFolder={handleCreateSmartFolder}
-			onGoHome={handleGoHome}
-			onToggleCollapse={toggleCollapse}
-			onSearch={handleSearch}
-			onWorkspaceClick={handleWorkspaceClick}
-			logoAnimationDelay={0}
-			actionsAnimationDelay={STAGGER_DELAY}
-			{scrollProgress}
-			{transitionWorkspaces}
-			{isRenaming}
-			{renameValue}
-			onRenameDone={handleRenameDone}
-			onRenameCancel={handleRenameCancel}
+			onTitleAction={(e) => {
+				const space = spaceStore.activeSpace;
+				if (space) showSpaceContextMenuAt(e, space.id);
+			}}
+			animationDelay={STAGGER_DELAY}
 		/>
+
+		<!-- Command bar -->
+		<button
+			class="command-bar"
+			class:collapsed={isCollapsed}
+			onclick={handleSearch}
+			title="Command (⌘K)"
+			style="animation-delay: {STAGGER_DELAY * 2}ms; --stagger-delay: {STAGGER_DELAY * 2}ms"
+		>
+			<span class="command-label">Command</span>
+			<kbd class="command-kbd">⌘K</kbd>
+		</button>
 
 		<!-- Workspace slides with native scroll snap -->
 		<div
@@ -1154,19 +1213,18 @@
 							/>
 							<span>Loading...</span>
 						</div>
-					{:else if workspace.is_system}
-						<!-- System workspace uses fixed code-driven navigation -->
-						<VirtuesWorkspaceNav collapsed={isCollapsed} />
 					{:else}
-						<!-- Unified workspace content (root items + folders together) -->
-						<!-- SortableJS handles drag-and-drop -->
+						<!-- Unified workspace content: folders + root items -->
 						{@const contentItems =
 							workspaceContentByWorkspace.get(workspace.id) || []}
+						{@const wsAccentColor = workspace.accent_color || null}
+
+						<!-- Folders + root items -->
 						<div
 							class="workspace-content"
-							use:sortableAction={{ workspaceId: workspace.id }}
+							use:sortableAction={{ workspaceId: workspace.id, immutable: workspace.is_system }}
 						>
-							{#if contentItems.length === 0}
+							{#if contentItems.length === 0 && !workspace.is_system}
 								<div class="empty-state">
 									<p>This workspace is empty</p>
 									<p class="empty-hint">
@@ -1195,6 +1253,7 @@
 											<UnifiedFolder
 												view={item.view}
 												collapsed={isCollapsed}
+												accentColor={wsAccentColor}
 												autoFocusRename={pendingRenameViewId ===
 													item.view.id}
 												onRenameFocusConsumed={() =>
@@ -1213,6 +1272,7 @@
 													href: item.url,
 												}}
 												collapsed={isCollapsed}
+												accentColor={wsAccentColor}
 											/>
 										{/if}
 									</div>
@@ -1232,34 +1292,55 @@
 </aside>
 
 <SearchModal open={isSearchOpen} onClose={closeSearch} />
-<WorkspaceDropdown
-	open={isWorkspaceDropdownOpen}
-	anchor={workspaceDropdownAnchor}
-	onClose={closeWorkspaceDropdown}
-	onSpaceSettings={openWorkspaceSettings}
-	onRename={startRename}
-	onChangeIcon={startChangeIcon}
-	onChangeColor={startChangeColor}
-/>
+<Modal open={showNewSpaceModal} onClose={() => (showNewSpaceModal = false)} title="New Space" width="sm">
+	{#snippet children()}
+		<div style="display: flex; flex-direction: column;">
+			<label class="modal-label" for="new-space-name">Name</label>
+			<input
+				bind:value={newSpaceName}
+				onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateNewSpace(); } if (e.key === 'Escape') { e.preventDefault(); showNewSpaceModal = false; } }}
+				id="new-space-name"
+				type="text"
+				class="modal-input"
+				placeholder="My Space"
+				autocomplete="off"
+			/>
+		</div>
+	{/snippet}
+	{#snippet footer()}
+		<button class="modal-btn modal-btn-secondary" onclick={() => (showNewSpaceModal = false)}>
+			Cancel
+		</button>
+		<button
+			class="modal-btn modal-btn-primary"
+			onclick={handleCreateNewSpace}
+			disabled={!newSpaceName.trim() || isCreatingSpace}
+		>
+			{isCreatingSpace ? "Creating..." : "Create"}
+		</button>
+	{/snippet}
+</Modal>
 <WorkspaceInfoModal
 	open={isWorkspaceInfoOpen}
 	workspace={spaceStore.activeSpace ?? null}
 	onClose={closeWorkspaceInfo}
 />
-{#if showIconPicker}
-	<IconPicker
-		value={spaceStore.activeSpace?.icon ?? null}
-		onSelect={handleIconSelect}
-		onClose={() => (showIconPicker = false)}
-		showRemove={false}
-	/>
-{/if}
 <ColorPickerModal
 	open={showColorPicker}
 	value={spaceStore.activeSpace?.accent_color ?? null}
 	onSelect={handleColorSelect}
 	onClose={() => (showColorPicker = false)}
 />
+
+{#if showAddPicker}
+	<EntityPicker
+		mode="single"
+		position={addPickerPos}
+		placeholder="Search or paste a URL..."
+		onSelect={handleAddPickerSelect}
+		onClose={closeAddPicker}
+	/>
+{/if}
 
 <style>
 	@reference "../../../app.css";
@@ -1423,4 +1504,50 @@
 	/* SortableJS item wrapper - inherits from sidebar.css */
 
 	/* SortableJS styles are in sidebar.css */
+
+	/* Command bar — visual separator between spaces and content */
+	.command-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 4px;
+		margin: 0 0 4px 8px;
+		padding: 5px 8px;
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		border: 1px solid transparent;
+		border-radius: 6px;
+		font-family: var(--font-sans);
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		transition: all 0.15s ease;
+		animation: fadeSlideIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
+	}
+
+	.command-bar:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground-muted);
+	}
+
+	.command-bar.collapsed {
+		opacity: 0;
+		transform: translateX(-8px);
+		pointer-events: none;
+		transition:
+			opacity 150ms cubic-bezier(0.2, 0, 0, 1),
+			transform 150ms cubic-bezier(0.2, 0, 0, 1);
+	}
+
+	.command-label {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.command-kbd {
+		font-family: inherit;
+		font-size: 10px;
+		color: var(--color-foreground-subtle);
+		opacity: 0.7;
+	}
 </style>

@@ -128,11 +128,13 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             crate::server::run(virtues, &host, port).await?;
         }
 
-        Commands::Ngrok => {
-            commands::handle_ngrok_command(virtues).await?;
+        Commands::Tunnel => {
+            commands::handle_tunnel_command(virtues).await?;
         }
 
-
+        Commands::WarmModels => {
+            unreachable!("WarmModels command should be handled in main.rs");
+        }
     }
 
     Ok(())

@@ -24,14 +24,17 @@ export type Theme =
 	| 'shire';
 
 const THEME_STORAGE_KEY = 'virtues-theme';
-const DEFAULT_THEME: Theme = 'tatooine';
+
+// Fallback theme used only before the API responds (flash prevention).
+// The real default is set in virtues-registry (Rust) and delivered via /api/assistant-profile.
+const FALLBACK_THEME: Theme = 'pemberley';
 
 /**
  * Get the current theme from localStorage cache
  */
 export function getTheme(): Theme {
 	if (typeof window === 'undefined') {
-		return DEFAULT_THEME;
+		return FALLBACK_THEME;
 	}
 
 	const stored = localStorage.getItem(THEME_STORAGE_KEY) as Theme | null;
@@ -39,7 +42,7 @@ export function getTheme(): Theme {
 		return stored;
 	}
 
-	return DEFAULT_THEME;
+	return FALLBACK_THEME;
 }
 
 /**
@@ -49,7 +52,7 @@ export function applyTheme(theme: Theme): void {
 	if (typeof window === 'undefined') return;
 
 	if (!isValidTheme(theme)) {
-		theme = DEFAULT_THEME;
+		theme = FALLBACK_THEME;
 	}
 
 	document.documentElement.setAttribute('data-theme', theme);
@@ -65,7 +68,7 @@ export async function setTheme(theme: Theme): Promise<void> {
 
 	if (!isValidTheme(theme)) {
 		console.warn(`Invalid theme: ${theme}. Using default.`);
-		theme = DEFAULT_THEME;
+		theme = FALLBACK_THEME;
 	}
 
 	// Apply immediately for instant feedback
@@ -100,7 +103,7 @@ export async function setTheme(theme: Theme): Promise<void> {
  * Call this on app initialization
  */
 export async function loadThemeFromDB(): Promise<Theme> {
-	if (typeof window === 'undefined') return DEFAULT_THEME;
+	if (typeof window === 'undefined') return FALLBACK_THEME;
 
 	try {
 		const response = await fetch('/api/assistant-profile');

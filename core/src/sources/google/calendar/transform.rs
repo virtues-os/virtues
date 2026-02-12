@@ -1,7 +1,7 @@
-//! Google Calendar to calendar ontology transformation
+//! Google Calendar to calendar_event ontology transformation
 //!
 //! Transforms raw calendar events from stream_google_calendar into the normalized
-//! calendar ontology table.
+//! calendar_event ontology table.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -15,7 +15,7 @@ use crate::sources::base::{OntologyTransform, TransformRegistration, TransformRe
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
 
-/// Transform Google Calendar events to praxis_calendar ontology
+/// Transform Google Calendar events to calendar_event ontology
 ///
 /// This transform is registered with the stream in the unified registry,
 /// so the standalone inventory registration is kept for backward compatibility.
@@ -28,7 +28,7 @@ impl OntologyTransform for GoogleCalendarTransform {
     }
 
     fn target_table(&self) -> &str {
-        "calendar"
+        "calendar_event"
     }
 
     fn domain(&self) -> &str {
@@ -51,11 +51,11 @@ impl OntologyTransform for GoogleCalendarTransform {
 
         tracing::info!(
             source_id = %source_id,
-            "Starting Google Calendar to praxis_calendar transformation"
+            "Starting Google Calendar to calendar_event transformation"
         );
 
         // Read stream data using data source (memory for hot path)
-        let checkpoint_key = "calendar_to_praxis_calendar";
+        let checkpoint_key = "calendar_event_to_calendar_event";
         let read_start = std::time::Instant::now();
         let data_source = context.get_data_source().ok_or_else(|| {
             crate::Error::Other("No data source available for transform".to_string())
@@ -320,7 +320,7 @@ impl OntologyTransform for GoogleCalendarTransform {
             batch_insert_total_ms,
             batch_insert_count,
             avg_batch_insert_ms = if batch_insert_count > 0 { batch_insert_total_ms / batch_insert_count as u128 } else { 0 },
-            "Google Calendar to praxis_calendar transformation completed"
+            "Google Calendar to calendar_event transformation completed"
         );
 
         Ok(TransformResult {
@@ -362,7 +362,7 @@ async fn execute_calendar_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data_calendar",
+        "data_calendar_event",
         &[
             "id",
             "title",
@@ -426,7 +426,7 @@ async fn execute_calendar_batch_insert(
         let source_connection_id = metadata.get("source_connection_id").and_then(|v| v.as_str()).unwrap_or("unknown");
         
         // Generate deterministic ID for idempotency
-        let id = crate::ids::generate_id("calendar", &[source_connection_id, internal_id]);
+        let id = crate::ids::generate_id("calendar_event", &[source_connection_id, internal_id]);
 
         query = query
             .bind(id)
@@ -464,7 +464,7 @@ impl TransformRegistration for GoogleCalendarTransformRegistration {
         "stream_google_calendar"
     }
     fn target_table(&self) -> &'static str {
-        "calendar"
+        "calendar_event"
     }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(GoogleCalendarTransform))
@@ -483,7 +483,7 @@ mod tests {
     fn test_transform_metadata() {
         let transform = GoogleCalendarTransform;
         assert_eq!(transform.source_table(), "stream_google_calendar");
-        assert_eq!(transform.target_table(), "calendar");
+        assert_eq!(transform.target_table(), "calendar_event");
         assert_eq!(transform.domain(), "calendar");
     }
 }

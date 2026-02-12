@@ -1831,6 +1831,24 @@ pub async fn wiki_update_day_handler(
     }
 }
 
+/// Generate a daily summary for a specific date
+pub async fn wiki_generate_day_summary_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(
+                crate::api::day_summary::generate_day_summary(state.db.pool(), parsed_date).await,
+            )
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
 /// List days in a date range
 pub async fn wiki_list_days_handler(
     State(state): State<AppState>,
@@ -1957,6 +1975,22 @@ pub async fn wiki_delete_auto_events_handler(
     }
 }
 
+/// Get timeline location chunks for a day (movement map)
+pub async fn timeline_get_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::get_timeline_day(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
 /// Get data sources (ontology records) for a day
 pub async fn wiki_get_day_sources_handler(
     State(state): State<AppState>,
@@ -2073,14 +2107,14 @@ pub async fn get_chat_handler(
     api_response(crate::api::chats::get_chat(state.db.pool(), chat_id).await)
 }
 
-/// Update a chat title
+/// Update a chat (title and/or icon)
 pub async fn update_chat_handler(
     State(state): State<AppState>,
     Path(chat_id): Path<String>,
-    Json(request): Json<crate::api::chats::UpdateTitleRequest>,
+    Json(request): Json<crate::api::chats::UpdateChatRequest>,
 ) -> Response {
     api_response(
-        crate::api::chats::update_chat_title(state.db.pool(), chat_id, &request.title).await,
+        crate::api::chats::update_chat(state.db.pool(), chat_id, &request).await,
     )
 }
 
@@ -2836,10 +2870,10 @@ pub async fn remove_space_item_handler(
     }
 }
 
-/// Request to reorder space items
+/// Request to reorder space items with explicit sort_order values
 #[derive(serde::Deserialize)]
 pub struct ReorderSpaceItemsRequest {
-    pub url_order: Vec<String>,
+    pub items: Vec<crate::api::views::ItemSortOrder>,
 }
 
 /// PUT /api/spaces/:id/items/reorder - Reorder space root items
@@ -2848,7 +2882,7 @@ pub async fn reorder_space_items_handler(
     Path(id): Path<String>,
     Json(request): Json<ReorderSpaceItemsRequest>,
 ) -> Response {
-    match crate::api::views::reorder_space_items(state.db.pool(), &id, request.url_order).await {
+    match crate::api::views::reorder_space_items(state.db.pool(), &id, request.items).await {
         Ok(_) => success_message("Space items reordered"),
         Err(e) => error_response(e),
     }

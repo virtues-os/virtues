@@ -225,14 +225,6 @@ class PermissionMonitor: ObservableObject {
         }
     }
 
-    // MARK: - Actions
-
-    func openSettings() {
-        if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
-        }
-    }
-
     // MARK: - Helpers
 
     private func statusDescription(_ status: CLAuthorizationStatus) -> String {

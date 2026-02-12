@@ -33,7 +33,8 @@ import {
 	type SpaceSummary,
 	type View,
 	type ViewSummary,
-	type ViewEntity
+	type ViewEntity,
+	type SpaceItemEntity
 } from '$lib/api/client';
 import {
 	type Tab,
@@ -84,7 +85,6 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	person: { type: 'person', icon: 'ri:user-line', routePrefix: '/person' },
 	place: { type: 'place', icon: 'ri:map-pin-line', routePrefix: '/place' },
 	org: { type: 'org', icon: 'ri:building-line', routePrefix: '/org' },
-	thing: { type: 'thing', icon: 'ri:box-3-line', routePrefix: '/thing' },
 	day: { type: 'day', icon: 'ri:calendar-line', routePrefix: '/day' },
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
@@ -111,8 +111,9 @@ export function getRouteFromEntityId(entityId: string): string {
 // ============================================================================
 
 const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
-const TAB_STORAGE_VERSION = 7; // Increment for entityId removal (route is now source of truth)
+const TAB_STORAGE_VERSION = 8; // Increment for section merge (016_merge_system_sections)
 const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace';
+const EXPANDED_STORAGE_KEY = 'virtues-expanded-views';
 
 // Initialize activeSpaceId synchronously from localStorage to prevent flicker
 const initialSpaceId =
@@ -194,7 +195,7 @@ class SpaceStore {
 
 	viewCache = $state<Map<string, ViewEntity[]>>(new Map());
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
-	spaceItems = $state<Map<string, ViewEntity[]>>(new Map()); // Root-level items per workspace
+	spaceItems = $state<Map<string, SpaceItemEntity[]>>(new Map()); // Root-level items per workspace
 	registry = $state<Map<string, EntityMetadata>>(new Map());
 
 	loading = $state(false);
@@ -236,7 +237,11 @@ class SpaceStore {
 
 			await this.loadAllViews();
 			await this.loadAllSpaceItems(); // Load root items for all spaces (prevents CLS on switch)
+			this.restoreExpandedState();
 			this.restoreTabState();
+
+			// Fire-and-forget: prefetch all folder contents so expand is instant
+			this.prefetchViewEntities();
 		} catch (e) {
 			console.error('[SpaceStore] Failed to initialize:', e);
 		}
@@ -480,11 +485,47 @@ class SpaceStore {
 			newSet.add(viewId);
 		}
 		this.expandedViewIds = newSet;
+		this.persistExpandedState();
 	}
 
 	isViewExpanded(viewId: string): boolean {
 		return this.expandedViewIds.has(viewId);
 	}
+
+	expandView(viewId: string): void {
+		if (this.expandedViewIds.has(viewId)) return;
+		const newSet = new Set(this.expandedViewIds);
+		newSet.add(viewId);
+		this.expandedViewIds = newSet;
+		this.persistExpandedState();
+	}
+
+	private persistExpandedState(): void {
+		if (typeof window === 'undefined') return;
+		try {
+			localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify([...this.expandedViewIds]));
+		} catch {}
+	}
+
+	private restoreExpandedState(): void {
+		if (typeof window === 'undefined') return;
+		try {
+			const stored = localStorage.getItem(EXPANDED_STORAGE_KEY);
+			if (stored) {
+				this.expandedViewIds = new Set(JSON.parse(stored));
+				return;
+			}
+		} catch {}
+		// First run defaults
+		this.expandedViewIds = new Set([
+			'view_sys_sec_chats',
+			'view_sys_sec_pages',
+			'view_sys_sec_wiki',
+			'view_sys_sec_data',
+			'view_sys_sec_developer',
+		]);
+	}
+
 
 	// ============================================================================
 	// View CRUD
@@ -508,7 +549,7 @@ class SpaceStore {
 		}
 	}
 
-	async createSmartView(name: string, queryConfig: object, icon?: string): Promise<View | null> {
+	async createSmartView(name: string, queryConfig?: object, icon?: string): Promise<View | null> {
 		const space = this.activeSpace;
 		if (space?.is_system) return null;
 
@@ -517,7 +558,7 @@ class SpaceStore {
 				name,
 				icon,
 				view_type: 'smart',
-				query_config: queryConfig
+				query_config: queryConfig ?? { raw_sql: "" }
 			});
 			await this.refreshViews();
 			return view;
@@ -577,10 +618,10 @@ class SpaceStore {
 			return;
 		}
 
-		// Map namespace to known system view IDs
+		// Map namespace to known system section IDs
 		const namespaceToViewId: Record<string, string> = {
-			chat: 'view_sys_chats',
-			page: 'view_sys_pages',
+			chat: 'view_sys_sec_chats',
+			page: 'view_sys_sec_pages',
 		};
 
 		const viewId = namespaceToViewId[namespace];
@@ -592,6 +633,21 @@ class SpaceStore {
 		}
 	}
 
+	/**
+	 * Prefetch entities for all non-section views across all spaces.
+	 * Called once after init — warms the viewCache so folder expand is instant.
+	 */
+	private async prefetchViewEntities(): Promise<void> {
+		const viewIds: string[] = [];
+		for (const [, spaceViews] of this.views) {
+			for (const v of spaceViews) {
+				viewIds.push(v.id);
+			}
+		}
+		// Resolve all in parallel (resolveView caches internally)
+		await Promise.all(viewIds.map(id => this.resolveView(id)));
+	}
+
 	// ============================================================================
 	// Space Items (root-level items at workspace level, not in folders)
 	// ============================================================================
@@ -599,7 +655,7 @@ class SpaceStore {
 	/**
 	 * Get cached workspace items for current workspace
 	 */
-	getSpaceItems(spaceId?: string): ViewEntity[] {
+	getSpaceItems(spaceId?: string): SpaceItemEntity[] {
 		const wsId = spaceId ?? this.activeSpaceId;
 		return this.spaceItems.get(wsId) || [];
 	}
@@ -607,7 +663,7 @@ class SpaceStore {
 	/**
 	 * Load workspace items from backend
 	 */
-	async loadSpaceItems(spaceId?: string): Promise<ViewEntity[]> {
+	async loadSpaceItems(spaceId?: string): Promise<SpaceItemEntity[]> {
 		const wsId = spaceId ?? this.activeSpaceId;
 		try {
 			const items = await apiListSpaceItems(wsId);
@@ -660,11 +716,10 @@ class SpaceStore {
 	/**
 	 * Reorder workspace root items
 	 */
-	async reorderSpaceItems(urlOrder: string[], spaceId?: string): Promise<void> {
+	async reorderSpaceItems(items: Array<{ url: string; sort_order: number }>, spaceId?: string): Promise<void> {
 		const wsId = spaceId ?? this.activeSpaceId;
 		try {
-			await apiReorderSpaceItems(wsId, urlOrder);
-			// Reload to get updated order
+			await apiReorderSpaceItems(wsId, items);
 			await this.loadSpaceItems(wsId);
 		} catch (e) {
 			console.error('[SpaceStore] Failed to reorder workspace items:', e);
@@ -721,7 +776,6 @@ class SpaceStore {
 			version: TAB_STORAGE_VERSION,
 			panes: this.panes,
 			activePaneId: this.activePaneId,
-			expandedViewIds: [...this.expandedViewIds]
 		};
 
 		try {
@@ -760,9 +814,6 @@ class SpaceStore {
 
 					this.panes = deduplicatedPanes;
 					this.activePaneId = data.activePaneId || 'left';
-					if (data.expandedViewIds) {
-						this.expandedViewIds = new Set(data.expandedViewIds);
-					}
 					return;
 				}
 

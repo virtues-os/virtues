@@ -7,8 +7,8 @@
 
     let loading = $state(false);
     let success = $state(false);
-    let type = $state("feedback");
-    let message = $state("");
+    let type = $state("general");
+    let content = $state("");
 
     async function handleSubmit(e?: SubmitEvent | MouseEvent) {
         e?.preventDefault();
@@ -18,12 +18,12 @@
             const res = await fetch("/api/feedback", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ type: type, message: message }),
+                body: JSON.stringify({ type, content }),
             });
 
             if (res.ok) {
                 success = true;
-                message = ""; // clear message
+                content = ""; // clear
 
                 // Reset success message after a few seconds
                 setTimeout(() => {
@@ -73,7 +73,7 @@
                     Type
                 </label>
                 <div class="grid grid-cols-3 gap-3">
-                    {#each [{ value: "feedback", label: "General", icon: "ri:chat-smile-2-line" }, { value: "bug", label: "Bug", icon: "ri:bug-line" }, { value: "feature", label: "Feature", icon: "ri:lightbulb-flash-line" }] as option}
+                    {#each [{ value: "general", label: "General", icon: "ri:chat-smile-2-line" }, { value: "bug", label: "Bug", icon: "ri:bug-line" }, { value: "feature", label: "Feature", icon: "ri:lightbulb-flash-line" }] as option}
                         <label class="cursor-pointer group relative">
                             <input
                                 type="radio"
@@ -96,7 +96,7 @@
 
             <Textarea
                 label="Message"
-                bind:value={message}
+                bind:value={content}
                 placeholder="What's on your mind?"
                 rows={6}
                 required
@@ -105,7 +105,7 @@
             <div class="flex justify-end">
                 <Button
                     type="submit"
-                    disabled={loading || !message.trim()}
+                    disabled={loading || !content.trim()}
                     onclick={handleSubmit}
                 >
                     {#if loading}

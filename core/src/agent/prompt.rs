@@ -35,10 +35,13 @@ pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}, {user_name}'s 
 /// Tool usage instructions (only included when tools are available).
 pub const TOOL_USAGE_PROMPT: &str = r#"
 <tool_usage>
-- Use tools when appropriate - briefly explain what you're doing
-- If a query is ambiguous, ask for clarification before searching.
-- You can call multiple tools in a single step.
-- For page edits, read content first, then make targeted changes.
+- Use the think tool before complex multi-step tasks to plan your approach
+- You can call multiple tools in a single step when they're independent
+- If a query returns no results, try a broader search before giving up
+- When uncertain about table structure, use get_schema first
+- For page edits, read content first with get_page_content, then make targeted changes
+- If edit_page returns permission_needed, briefly ask the user to grant permission. The UI shows an approval button — just acknowledge you're waiting.
+- If a query is ambiguous, ask for clarification before searching
 </tool_usage>
 "#;
 
@@ -46,9 +49,17 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 pub const AGENT_MODE_PROMPT: &str = r#"
 <mode>assistant</mode>
 <tool_guidance>
-- Answer the question directly with minimal tool calls
+- For simple lookups, one query is usually enough. For multi-step tasks, use as many tools as needed
 - For simple lookups ("who is X", "what is Y"), one query is usually enough
 - Don't gather extra context unless the user asks for it
+- Do NOT use tools for: conversational replies, opinions, follow-ups on data already in context
+
+Common SQL patterns:
+- Time filtering: WHERE timestamp > datetime('now', '-7 days')
+- This month: WHERE timestamp >= date('now', 'start of month')
+- Person lookup: JOIN wiki_people ON ... WHERE name LIKE '%Sarah%'
+- Financial totals: SELECT category, SUM(amount)/100.0 as dollars FROM data_financial_transaction ...
+- Aggregation: GROUP BY + ORDER BY for top-N patterns
 </tool_guidance>
 "#;
 
@@ -56,9 +67,15 @@ pub const AGENT_MODE_PROMPT: &str = r#"
 pub const RESEARCH_MODE_PROMPT: &str = r#"
 <mode>research</mode>
 <tool_guidance>
-- Explore thoroughly across multiple data sources
-- Gather comprehensive context before synthesizing an answer
+- Start with the think tool to plan your research approach
+- Recommended workflow: think → semantic_search → sql_query → web_search → code_interpreter → synthesize
+- Explore thoroughly across multiple data sources before synthesizing
 - Cross-reference information for accuracy
+- Use sql_query for structured data: aggregates, time series, exact filters, counts
+- Use semantic_search for conceptual/fuzzy queries across all your data
+- Use web_search for external context: news, definitions, current events
+- Use code_interpreter for: calculations, statistical analysis, data transformations
+- Gather all relevant data before writing your final response
 </tool_guidance>
 "#;
 
@@ -188,9 +205,10 @@ mod tests {
         assert!(prompt.contains("Protect Adam's privacy"));
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
-        // Agent mode should include assistant mode guidance (direct, minimal calls)
+        assert!(prompt.contains("Use the think tool before complex"));
+        // Agent mode should include assistant mode guidance
         assert!(prompt.contains("<mode>assistant</mode>"));
-        assert!(prompt.contains("Answer the question directly with minimal tool calls"));
+        assert!(prompt.contains("For simple lookups, one query is usually enough"));
     }
 
     #[test]
@@ -200,7 +218,7 @@ mod tests {
         assert!(prompt.contains("<tool_usage>"));
         // Research mode should include research guidance (thorough exploration)
         assert!(prompt.contains("<mode>research</mode>"));
-        assert!(prompt.contains("Explore thoroughly across multiple data sources"));
+        assert!(prompt.contains("Start with the think tool to plan your research approach"));
     }
 
     #[test]

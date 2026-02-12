@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Model configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ModelConfig {
-    /// Unique model identifier (e.g., "anthropic/claude-sonnet-4-20250514")
+    /// Unique model identifier (e.g., "google/gemini-3-flash")
     pub model_id: String,
     /// Human-readable display name
     pub display_name: String,
@@ -80,17 +80,17 @@ pub fn default_models() -> Vec<ModelConfig> {
         },
         // LITE: Fast model for background tasks
         ModelConfig {
-            model_id: "zai/glm-4.7-flashx".to_string(),
-            display_name: "GLM 4.7 FlashX".to_string(),
-            provider: "Zhipu".to_string(),
+            model_id: "zai/glm-5".to_string(),
+            display_name: "GLM 5".to_string(),
+            provider: "Z.AI".to_string(),
             sort_order: 2,
             enabled: true,
-            context_window: 128000,
-            max_output_tokens: 8192,
+            context_window: 203000,
+            max_output_tokens: 131000,
             supports_tools: true,
             is_default: false,
-            input_cost_per_1k: Some(0.0001),
-            output_cost_per_1k: Some(0.0004),
+            input_cost_per_1k: Some(0.001),
+            output_cost_per_1k: Some(0.0032),
         },
         // REASONING: Complex analysis and thinking
         ModelConfig {
@@ -127,7 +127,7 @@ pub fn default_models() -> Vec<ModelConfig> {
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
         ModelSlot::Chat => "google/gemini-3-flash",
-        ModelSlot::Lite => "zai/glm-4.7-flashx",
+        ModelSlot::Lite => "zai/glm-5",
         ModelSlot::Reasoning => "google/gemini-3-pro-preview",
         ModelSlot::Coding => "anthropic/claude-opus-4.5",
     }
@@ -211,11 +211,12 @@ mod tests {
 
     #[test]
     fn test_get_model_pricing() {
-        let (input, output) = get_model_pricing("anthropic/claude-sonnet-4-20250514");
-        assert!(input > 0.0);
-        assert!(output > 0.0);
+        // Known model — exact match
+        let (input, output) = get_model_pricing("google/gemini-3-flash");
+        assert_eq!(input, 0.0001);
+        assert_eq!(output, 0.0004);
 
-        // Test fallback
+        // Unknown model — fallback pricing
         let (input, output) = get_model_pricing("unknown/model");
         assert_eq!(input, 0.005);
         assert_eq!(output, 0.015);

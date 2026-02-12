@@ -1,7 +1,7 @@
-//! Notion pages to knowledge_document ontology transformation
+//! Notion pages to content_document ontology transformation
 //!
 //! Transforms raw Notion pages from stream_notion_pages into the normalized
-//! knowledge_document ontology table.
+//! content_document ontology table.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -15,7 +15,7 @@ use crate::sources::base::{OntologyTransform, TransformRegistration, TransformRe
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
 
-/// Transform Notion pages to knowledge_document ontology
+/// Transform Notion pages to content_document ontology
 pub struct NotionPageTransform;
 
 #[async_trait]
@@ -25,11 +25,11 @@ impl OntologyTransform for NotionPageTransform {
     }
 
     fn target_table(&self) -> &str {
-        "knowledge_document"
+        "content_document"
     }
 
     fn domain(&self) -> &str {
-        "knowledge"
+        "content"
     }
 
     #[tracing::instrument(skip(self, db, context), fields(source_table = %self.source_table(), target_table = %self.target_table()))]
@@ -48,11 +48,11 @@ impl OntologyTransform for NotionPageTransform {
 
         tracing::info!(
             source_id = %source_id,
-            "Starting Notion pages to knowledge_document transformation"
+            "Starting Notion pages to content_document transformation"
         );
 
         // Read stream data from S3 using checkpoint
-        let checkpoint_key = "notion_to_knowledge_note";
+        let checkpoint_key = "notion_to_content_document";
         let read_start = std::time::Instant::now();
         let data_source = context.get_data_source().ok_or_else(|| {
             crate::Error::Other("No data source available for transform".to_string())
@@ -281,7 +281,7 @@ impl OntologyTransform for NotionPageTransform {
             batch_insert_total_ms,
             batch_insert_count,
             avg_batch_insert_ms = if batch_insert_count > 0 { batch_insert_total_ms / batch_insert_count as u128 } else { 0 },
-            "Notion pages to knowledge_document transformation completed"
+            "Notion pages to content_document transformation completed"
         );
 
         Ok(TransformResult {
@@ -317,7 +317,7 @@ async fn execute_notion_page_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data_knowledge_document",
+        "data_content_document",
         &[
             "id",
             "title",
@@ -436,7 +436,7 @@ impl TransformRegistration for NotionPageTransformRegistration {
         "stream_notion_pages"
     }
     fn target_table(&self) -> &'static str {
-        "knowledge_document"
+        "content_document"
     }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(NotionPageTransform))
@@ -455,8 +455,8 @@ mod tests {
     fn test_transform_metadata() {
         let transform = NotionPageTransform;
         assert_eq!(transform.source_table(), "stream_notion_pages");
-        assert_eq!(transform.target_table(), "knowledge_document");
-        assert_eq!(transform.domain(), "knowledge");
+        assert_eq!(transform.target_table(), "content_document");
+        assert_eq!(transform.domain(), "content");
     }
 
     #[test]

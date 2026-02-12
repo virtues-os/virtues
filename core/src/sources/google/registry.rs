@@ -28,7 +28,7 @@ impl SourceRegistry for GoogleSource {
                 RegisteredStream::new("calendar")
                     .config_schema(calendar_config_schema())
                     .config_example(calendar_config_example())
-                    .transform("calendar", |_ctx| Ok(Box::new(GoogleCalendarTransform)))
+                    .transform("calendar_event", |_ctx| Ok(Box::new(GoogleCalendarTransform)))
                     .stream_creator(|ctx| {
                         Ok(StreamType::Pull(Box::new(GoogleCalendarStream::new(
                             ctx.source_id.clone(),
@@ -42,7 +42,7 @@ impl SourceRegistry for GoogleSource {
                 RegisteredStream::new("gmail")
                     .config_schema(gmail_config_schema())
                     .config_example(gmail_config_example())
-                    .transform("social_email", |_ctx| Ok(Box::new(GmailEmailTransform)))
+                    .transform("communication_email", |_ctx| Ok(Box::new(GmailEmailTransform)))
                     .stream_creator(|ctx| {
                         Ok(StreamType::Pull(Box::new(GoogleGmailStream::new(
                             ctx.source_id.clone(),

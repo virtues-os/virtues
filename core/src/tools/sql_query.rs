@@ -73,17 +73,17 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     });
 
     // ============================================================================
-    // DATA TABLES - Social
+    // DATA TABLES - Communication
     // ============================================================================
-    m.insert("data_social_email", TableMetadata {
+    m.insert("data_communication_email", TableMetadata {
         description: "Email messages from Gmail, etc.",
-        category: "social",
+        category: "communication",
         key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "timestamp"],
         join_hint: Some("JOIN wiki_people ON from_person_id = wiki_people.id"),
     });
-    m.insert("data_social_message", TableMetadata {
+    m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
-        category: "social",
+        category: "communication",
         key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "timestamp"],
         join_hint: Some("JOIN wiki_people ON from_person_id = wiki_people.id"),
     });
@@ -91,7 +91,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // ============================================================================
     // DATA TABLES - Calendar
     // ============================================================================
-    m.insert("data_calendar", TableMetadata {
+    m.insert("data_calendar_event", TableMetadata {
         description: "Calendar events with attendees and location",
         category: "calendar",
         key_columns: &["title", "description", "calendar_name", "event_type", "status", "response_status", "organizer_identifier", "attendee_identifiers", "location_name", "conference_url", "start_time", "end_time", "is_all_day", "timezone"],
@@ -143,43 +143,36 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     });
 
     // ============================================================================
-    // DATA TABLES - Knowledge
+    // DATA TABLES - Content
     // ============================================================================
-    m.insert("data_knowledge_document", TableMetadata {
+    m.insert("data_content_document", TableMetadata {
         description: "Saved documents and notes",
-        category: "knowledge",
+        category: "content",
         key_columns: &["title", "content", "content_summary", "document_type", "tags", "is_authored", "created_time", "last_modified_time"],
         join_hint: None,
     });
-    m.insert("data_knowledge_ai_conversation", TableMetadata {
+    m.insert("data_content_conversation", TableMetadata {
         description: "Past AI chat conversation history",
-        category: "knowledge",
+        category: "content",
         key_columns: &["conversation_id", "message_id", "role", "content", "model", "provider", "timestamp"],
+        join_hint: None,
+    });
+    m.insert("data_content_bookmark", TableMetadata {
+        description: "Saved/starred content (GitHub stars, browser bookmarks, etc.)",
+        category: "content",
+        key_columns: &["url", "title", "description", "source_platform", "bookmark_type", "content_type", "author", "tags", "timestamp"],
         join_hint: None,
     });
 
     // ============================================================================
     // DATA TABLES - Other
     // ============================================================================
-    m.insert("data_speech_transcription", TableMetadata {
+    m.insert("data_communication_transcription", TableMetadata {
         description: "Voice/audio transcriptions",
-        category: "speech",
+        category: "communication",
         key_columns: &["text", "language", "duration_seconds", "start_time", "end_time", "speaker_count"],
         join_hint: None,
     });
-    m.insert("data_device_battery", TableMetadata {
-        description: "Device battery level snapshots",
-        category: "device",
-        key_columns: &["battery_level", "battery_state", "is_low_power_mode", "timestamp"],
-        join_hint: None,
-    });
-    m.insert("data_environment_pressure", TableMetadata {
-        description: "Barometric pressure readings",
-        category: "environment",
-        key_columns: &["pressure_hpa", "relative_altitude_change", "timestamp"],
-        join_hint: None,
-    });
-
     // ============================================================================
     // WIKI TABLES - Entities (resolved nouns)
     // ============================================================================
@@ -201,12 +194,6 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["canonical_name", "organization_type", "relationship_type", "role_title", "start_date", "end_date", "interaction_count", "first_interaction", "last_interaction"],
         join_hint: Some("JOIN wiki_places ON primary_place_id = wiki_places.id"),
     });
-    m.insert("wiki_connections", TableMetadata {
-        description: "Relationships between people/places/orgs",
-        category: "wiki_entity",
-        key_columns: &["source_type", "source_id", "target_type", "target_id", "relationship", "strength", "first_seen", "last_seen"],
-        join_hint: None,
-    });
 
     // ============================================================================
     // WIKI TABLES - Temporal
@@ -215,7 +202,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         description: "Day summaries with autobiography and context",
         category: "wiki_temporal",
         key_columns: &["date", "start_timezone", "end_timezone", "autobiography", "last_edited_by", "context_vector"],
-        join_hint: Some("JOIN narrative_acts ON act_id = narrative_acts.id"),
+        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
     });
     m.insert("wiki_years", TableMetadata {
         description: "Year summaries with highlights and themes",
@@ -241,25 +228,25 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     });
 
     // ============================================================================
-    // NARRATIVE TABLES - Life story structure
+    // WIKI TABLES - Narrative (life story structure)
     // ============================================================================
-    m.insert("narrative_telos", TableMetadata {
+    m.insert("wiki_telos", TableMetadata {
         description: "User's life purpose/direction",
-        category: "narrative",
+        category: "wiki_narrative",
         key_columns: &["title", "description", "is_active", "content"],
         join_hint: None,
     });
-    m.insert("narrative_acts", TableMetadata {
+    m.insert("wiki_acts", TableMetadata {
         description: "Major life periods (multi-year)",
-        category: "narrative",
+        category: "wiki_narrative",
         key_columns: &["title", "subtitle", "description", "start_date", "end_date", "sort_order", "themes", "location", "content"],
-        join_hint: Some("JOIN narrative_telos ON telos_id = narrative_telos.id"),
+        join_hint: Some("JOIN wiki_telos ON telos_id = wiki_telos.id"),
     });
-    m.insert("narrative_chapters", TableMetadata {
+    m.insert("wiki_chapters", TableMetadata {
         description: "Chapters within acts (months/seasons)",
-        category: "narrative",
+        category: "wiki_narrative",
         key_columns: &["act_id", "title", "subtitle", "description", "start_date", "end_date", "sort_order", "themes", "content"],
-        join_hint: Some("JOIN narrative_acts ON act_id = narrative_acts.id"),
+        join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
     });
 
     m
@@ -330,22 +317,20 @@ impl SqlQueryTool {
         }
     }
 
-    /// List all queryable tables (data_*, wiki_*, narrative_*)
+    /// List all queryable tables (data_*, wiki_*)
     async fn list_tables(&self) -> Result<ToolResult, ToolError> {
-        // Get all queryable tables: data_*, wiki_*, narrative_*
+        // Get all queryable tables: data_*, wiki_*
         let rows = sqlx::query(
             r#"
-            SELECT name FROM sqlite_master 
+            SELECT name FROM sqlite_master
             WHERE type='table' AND (
-                name LIKE 'data_%' 
-                OR name LIKE 'wiki_%' 
-                OR name LIKE 'narrative_%'
+                name LIKE 'data_%'
+                OR name LIKE 'wiki_%'
             )
-            ORDER BY 
-                CASE 
+            ORDER BY
+                CASE
                     WHEN name LIKE 'data_%' THEN 1
                     WHEN name LIKE 'wiki_%' THEN 2
-                    WHEN name LIKE 'narrative_%' THEN 3
                 END,
                 name
             "#,
@@ -401,11 +386,11 @@ impl SqlQueryTool {
             // Validate table name (must be a known queryable table)
             let is_valid = table.starts_with("data_") 
                 || table.starts_with("wiki_") 
-                || table.starts_with("narrative_");
+                ;
             
             if !is_valid {
                 return Err(ToolError::InvalidParameters(format!(
-                    "Can only get schema for data_*, wiki_*, or narrative_* tables. Got: '{}'",
+                    "Can only get schema for data_* or wiki_* tables. Got: '{}'",
                     table
                 )));
             }

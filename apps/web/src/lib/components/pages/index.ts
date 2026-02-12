@@ -1,4 +1,6 @@
-export { default as PagesSidebarSection } from './PagesSidebarSection.svelte';
-export { default as PageEditor } from './PageEditor.svelte';
-export { default as VersionHistoryPanel } from './VersionHistoryPanel.svelte';
 export * from './page-theme';
+export { default as PageCoverImage } from './PageCoverImage.svelte';
+export { default as PageEditor } from './PageEditor.svelte';
+export { default as PageStatusBar } from './PageStatusBar.svelte';
+export { default as PageToolbar } from './PageToolbar.svelte';
+export { default as VersionHistoryPanel } from './VersionHistoryPanel.svelte';

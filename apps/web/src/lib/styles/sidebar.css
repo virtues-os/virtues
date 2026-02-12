@@ -9,6 +9,7 @@
    Used by: nav-items, folder headers, section headers
    ----------------------------- */
 .sidebar-interactive {
+	position: relative;
 	display: flex;
 	align-items: center;
 	gap: var(--sidebar-interactive-gap);
@@ -66,7 +67,7 @@
 	flex-shrink: 0;
 	width: var(--sidebar-interactive-icon-size);
 	height: var(--sidebar-interactive-icon-size);
-	color: var(--color-foreground-subtle);
+	color: var(--color-foreground-muted);
 	transition: color var(--sidebar-transition-duration) var(--sidebar-transition-easing);
 }
 
@@ -190,9 +191,12 @@
    Visual feedback when dragging over collapsed folder
    ----------------------------- */
 @keyframes sidebar-expand-pulse {
-	0%, 100% {
+
+	0%,
+	100% {
 		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
 	}
+
 	50% {
 		background: color-mix(in srgb, var(--color-primary) 20%, transparent);
 	}
@@ -225,8 +229,13 @@
    Shared keyframes
    ----------------------------- */
 @keyframes sidebar-spin {
-	from { transform: rotate(0deg); }
-	to { transform: rotate(360deg); }
+	from {
+		transform: rotate(0deg);
+	}
+
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 .sidebar-spinner {
@@ -239,6 +248,7 @@
 		opacity: 0;
 		transform: translateX(-8px);
 	}
+
 	to {
 		opacity: 1;
 		transform: translateX(0);
@@ -269,8 +279,10 @@
 .sidebar-ghost {
 	background: var(--color-primary) !important;
 	opacity: 0.25 !important;
-	border-radius: 6px; /* Match tab radius */
-	min-height: 28px; /* Match sidebar-interactive height */
+	border-radius: 6px;
+	/* Match tab radius */
+	min-height: 28px;
+	/* Match sidebar-interactive height */
 }
 
 /* Hide all content inside ghost - just show the background placeholder */
@@ -295,7 +307,8 @@
 	transform: scale(1.02);
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
 	border-radius: 6px;
-	overflow: hidden; /* Clip content to border-radius */
+	overflow: hidden;
+	/* Clip content to border-radius */
 }
 
 /* Override inner element styles when dragging - needs !important to beat .active specificity */
@@ -303,4 +316,60 @@
 .sidebar-dragging .sidebar-interactive.active {
 	border-radius: 6px !important;
 	background: color-mix(in srgb, var(--color-primary) 15%, var(--color-background)) !important;
+}
+
+/* -----------------------------
+   ITEM-LEVEL HOVER ACTIONS
+   "..." button on individual nav items (chats, pages, etc.)
+   Same pattern as section actions but on sidebar-interactive items.
+   ----------------------------- */
+.sidebar-item-actions {
+	display: flex;
+	align-items: center;
+	margin-left: auto;
+	flex-shrink: 0;
+	opacity: 0;
+	transition: opacity var(--sidebar-transition-duration, 150ms) var(--sidebar-transition-easing, ease);
+}
+
+.sidebar-interactive:hover .sidebar-item-actions {
+	opacity: 1;
+}
+
+.sidebar-item-action {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 4px;
+	border: none;
+	background: transparent;
+	color: var(--color-foreground-subtle);
+	cursor: pointer;
+	padding: 0;
+	transition:
+		background-color var(--sidebar-transition-duration, 150ms) var(--sidebar-transition-easing, ease),
+		color var(--sidebar-transition-duration, 150ms) var(--sidebar-transition-easing, ease);
+}
+
+.sidebar-item-action:hover {
+	background: var(--sidebar-hover-bg);
+	color: var(--color-foreground);
+}
+
+/* -----------------------------
+   ACCENT COLOR DOT
+   Small colored indicator for items inside workspace folders
+   ----------------------------- */
+.sidebar-accent-dot {
+	position: absolute;
+	left: 4px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--dot-color);
+	pointer-events: none;
 }

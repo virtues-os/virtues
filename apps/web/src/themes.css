@@ -37,7 +37,7 @@
 	--color-surface: var(--surface);
 	--color-surface-elevated: var(--surface-elevated);
 	--color-surface-overlay: var(--surface-overlay);
-	
+
 	/* Background Treatment (gradient/texture support) */
 	--color-background-image: var(--background-image);
 	--color-surface-elevated-image: var(--surface-elevated-image);
@@ -176,7 +176,7 @@
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
-	--sidebar-interactive-radius: 8px;
+	--sidebar-interactive-radius: 6px;
 	--sidebar-interactive-gap: 10px;
 	--sidebar-interactive-font-size: 13px;
 	--sidebar-interactive-icon-size: 16px;
@@ -212,18 +212,16 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
-	
+
 	/* Background Treatment - Film grain + subtle navy gradient */
 	--background-image: none;
-	--surface-elevated-image: 
+	--surface-elevated-image:
 		url('/textures/noise.svg'),
-		linear-gradient(
-			180deg,
+		linear-gradient(180deg,
 			#FFFFFF 0%,
 			#FCFCFC 55%,
 			#EFF3F8 80%,
-			#E6ECF4 100%
-		);
+			#E6ECF4 100%);
 
 	/* Content Colors - Neutral grays */
 	--foreground: #171717;
@@ -291,18 +289,16 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--surface-overlay: #FFFFFF;
-	
+
 	/* Background Treatment - Blue to peach gradient */
 	--background-image: none;
-	--surface-elevated-image: 
+	--surface-elevated-image:
 		url('/textures/noise.svg'),
-		linear-gradient(
-			180deg,
+		linear-gradient(180deg,
 			#E8F4F8 0%,
 			#F5F5F5 35%,
 			#FAF5F3 65%,
-			#F5E6E0 100%
-		);
+			#F5E6E0 100%);
 
 	/* Content Colors - Neutral grays */
 	--foreground: #171717;
@@ -352,7 +348,7 @@
 
 /* ===================================
    OXFORD
-   Academic, studious, dotted paper
+   Academic, studious, paper texture
    =================================== */
 [data-theme="oxford"] {
 	/* Code Syntax Highlighting */
@@ -365,16 +361,16 @@
 	--code-function: #8250df;
 	--code-constant: #0550ae;
 
-	/* Surface Colors - Pure whites */
-	--background: #FFFFFF;
-	--surface: #FFFFFF;
-	--surface-elevated: #FAFAFA;
+	/* Surface Colors - Warm paper sidebar, lighter content page */
+	--background: #FAF9F6;
+	--surface: #FAF9F6;
+	--surface-elevated: #F2F1EE;
 	--surface-overlay: #FFFFFF;
-	
-	/* Background Treatment - Dotted paper pattern via CSS gradient */
-	--background-image: none;
-	--surface-elevated-image: radial-gradient(#d4d4d4 1px, transparent 1px);
-	--surface-elevated-size: 20px 20px;
+
+	/* Background Treatment - Paper texture */
+	--background-image: url('/textures/paper.webp');
+	--surface-elevated-image: url('/textures/paper.webp');
+	--surface-elevated-size: auto;
 
 	/* Content Colors - Neutral grays */
 	--foreground: #171717;
@@ -442,18 +438,16 @@
 	--surface: #1f1f35;
 	--surface-elevated: #25253d;
 	--surface-overlay: #2a2a45;
-	
+
 	/* Background Treatment - Dark blue to warm gradient */
 	--background-image: none;
-	--surface-elevated-image: 
+	--surface-elevated-image:
 		url('/textures/noise-dark.svg'),
-		linear-gradient(
-			180deg,
+		linear-gradient(180deg,
 			#1E2A4A 0%,
 			#25253d 35%,
 			#352D3D 65%,
-			#3D2D35 100%
-		);
+			#3D2D35 100%);
 
 	/* Content Colors - Light for dark bg */
 	--foreground: #e8e8f0;
@@ -521,7 +515,7 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
 	--surface-overlay: #FFFFFF;
-	
+
 	/* Background Treatment - Flat for this theme */
 	--background-image: none;
 	--surface-elevated-image: none;
@@ -592,15 +586,13 @@
 	--surface: #171717;
 	--surface-elevated: #262626;
 	--surface-overlay: #2a2a2a;
-	
+
 	/* Background Treatment - Subtle dark gradient with hint of warmth */
 	--background-image: none;
-	--surface-elevated-image: linear-gradient(
-		160deg,
-		#262626 0%,
-		#1f1f1f 40%,
-		#262626 100%
-	);
+	--surface-elevated-image: linear-gradient(160deg,
+			#262626 0%,
+			#1f1f1f 40%,
+			#262626 100%);
 
 	/* Content Colors */
 	--foreground: #fafafa;

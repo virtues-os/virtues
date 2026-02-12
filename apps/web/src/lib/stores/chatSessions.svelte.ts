@@ -4,9 +4,10 @@
  * Manages loading and refreshing chat session data from the API.
  */
 
-interface ChatSession {
+export interface ChatSession {
 	conversation_id: string;
 	title: string | null;
+	icon: string | null;
 	last_updated: string | null;
 	first_message_at: string;
 	last_message_at: string;
@@ -50,6 +51,15 @@ class ChatSessionStore {
 	 */
 	async refresh() {
 		await this.load();
+	}
+
+	/**
+	 * Update a chat's icon locally (after API call succeeds)
+	 */
+	updateSessionIcon(chatId: string, icon: string | null) {
+		this.sessions = this.sessions.map(s =>
+			s.conversation_id === chatId ? { ...s, icon } : s
+		);
 	}
 
 	/**

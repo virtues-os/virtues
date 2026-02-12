@@ -62,7 +62,7 @@ pub async fn list_namespaces(pool: &SqlitePool) -> Result<NamespaceListResponse>
     let namespaces = sqlx::query_as::<_, Namespace>(
         r#"
         SELECT name, backend, backend_config, is_entity, is_system, icon, label, created_at
-        FROM namespaces
+        FROM app_namespaces
         ORDER BY name ASC
         "#,
     )
@@ -78,7 +78,7 @@ pub async fn get_namespace(pool: &SqlitePool, name: &str) -> Result<Namespace> {
     let namespace = sqlx::query_as::<_, Namespace>(
         r#"
         SELECT name, backend, backend_config, is_entity, is_system, icon, label, created_at
-        FROM namespaces
+        FROM app_namespaces
         WHERE name = $1
         "#,
     )
@@ -96,7 +96,7 @@ pub async fn list_entity_namespaces(pool: &SqlitePool) -> Result<Vec<Namespace>>
     let namespaces = sqlx::query_as::<_, Namespace>(
         r#"
         SELECT name, backend, backend_config, is_entity, is_system, icon, label, created_at
-        FROM namespaces
+        FROM app_namespaces
         WHERE is_entity = TRUE
         ORDER BY name ASC
         "#,

@@ -21,17 +21,19 @@
 //!
 //! - `web_search`: Search the web using Exa AI
 //! - `sql_query`: Read-only SQL queries against user data
-//! - `edit_page`: AI-assisted page editing with accept/reject
+//! - `edit_page`: AI-assisted page editing (applied immediately via Yjs)
 
 mod executor;
 mod web_search;
 mod sql_query;
 mod page_editor;
+mod semantic_search;
 
 pub use executor::{ToolExecutor, ToolContext, ToolResult, ToolError};
 pub use web_search::WebSearchTool;
 pub use sql_query::SqlQueryTool;
 pub use page_editor::PageEditorTool;
+pub use semantic_search::SemanticSearchTool;
 
 /// Get tool definitions for the LLM (OpenAI/Anthropic format)
 ///

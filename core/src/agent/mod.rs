@@ -84,7 +84,7 @@ impl Default for AgentConfig {
 /// 3. Executing tool calls
 /// 4. Continuing until completion
 pub struct AgentLoop {
-    pool: Arc<SqlitePool>,
+    _pool: Arc<SqlitePool>,
     llm_config: LlmConfig,
     tool_executor: ToolExecutor,
     config: AgentConfig,
@@ -110,7 +110,7 @@ impl AgentLoop {
                 tollbooth_user_id,
                 tollbooth_secret,
             },
-            pool,
+            _pool: pool,
             config: AgentConfig::default(),
         }
     }
@@ -136,7 +136,7 @@ impl AgentLoop {
                 tollbooth_user_id,
                 tollbooth_secret,
             },
-            pool,
+            _pool: pool,
             config: AgentConfig::default(),
         }
     }

@@ -13,12 +13,3 @@ export interface SidebarNavItemData {
 	statusIcon?: string; // Completion checkmark for onboarding
 	forceActive?: boolean; // Override active state
 }
-
-export interface SidebarSectionData {
-	id: string;
-	title: string;
-	icon?: string;
-	items: SidebarNavItemData[];
-	defaultExpanded?: boolean;
-	badge?: string; // e.g., "2/4" for onboarding progress
-}

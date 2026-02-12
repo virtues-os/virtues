@@ -86,7 +86,7 @@ async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result
 
 /// Resolve people from email senders in time window
 ///
-/// Links from_email to from_person_id in data_social_email.
+/// Links from_email to from_person_id in data_communication_email.
 async fn resolve_email_senders(db: &Database, window: TimeWindow) -> Result<usize> {
     // Fetch emails without resolved from_person_id
     let emails = fetch_unresolved_emails(db, window).await?;
@@ -141,7 +141,7 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
             id,
             from_email,
             from_name
-        FROM data_social_email
+        FROM data_communication_email
         WHERE timestamp >= $1
           AND timestamp < $2
           AND from_person_id IS NULL
@@ -187,7 +187,7 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
     // Update email with resolved person ID
     sqlx::query!(
         r#"
-        UPDATE data_social_email
+        UPDATE data_communication_email
         SET from_person_id = $1,
             updated_at = datetime('now')
         WHERE id = $2
@@ -324,7 +324,7 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
         SELECT
             id,
             attendee_identifiers
-        FROM data_calendar
+        FROM data_calendar_event
         WHERE start_time >= $1
           AND start_time < $2
           AND json_array_length(attendee_identifiers) > 0
@@ -398,7 +398,7 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
 
     sqlx::query!(
         r#"
-        UPDATE data_calendar
+        UPDATE data_calendar_event
         SET attendee_person_ids = $1,
             updated_at = datetime('now')
         WHERE id = $2

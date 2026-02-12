@@ -37,6 +37,7 @@
 	class="menu-item"
 	class:focused
 	class:disabled={item.disabled}
+	class:checked={item.checked}
 	class:destructive={item.variant === 'destructive'}
 	class:has-submenu={!!item.submenu}
 	class:loading={isLoading}
@@ -59,14 +60,6 @@
 	{:else if isLoading}
 		<span class="item-icon">
 			<Icon icon="ri:loader-4-line" width="16" class="spin" />
-		</span>
-	{/if}
-
-	{#if item.checked !== undefined}
-		<span class="item-check">
-			{#if item.checked}
-				<Icon icon="ri:check-line" width="14" />
-			{/if}
 		</span>
 	{/if}
 
@@ -143,14 +136,8 @@
 		color: var(--color-error, #ef4444);
 	}
 
-	.item-check {
-		flex-shrink: 0;
-		width: 14px;
-		height: 14px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--color-foreground);
+	.menu-item.checked {
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 	}
 
 	.item-label {

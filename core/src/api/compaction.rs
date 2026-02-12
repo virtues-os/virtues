@@ -4,7 +4,6 @@
 //! Compresses older messages into a rolling summary while keeping
 //! recent exchanges verbatim.
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::time::Duration;
@@ -13,6 +12,7 @@ use tokio::time::timeout;
 use crate::api::chat::UIPart;
 use crate::api::chats::ChatMessage;
 use crate::api::token_estimation::{estimate_session_context, ContextStatus};
+use crate::types::Timestamp;
 use crate::error::Result;
 use crate::llm::client::{LLMClient, LLMRequest, TollboothClient};
 
@@ -205,7 +205,7 @@ pub async fn compact_chat(
         SELECT
             message_count,
             conversation_summary, summary_up_to_index, summary_version
-        FROM chats
+        FROM app_chats
         WHERE id = ?
         "#,
     )
@@ -217,7 +217,7 @@ pub async fn compact_chat(
         chat_row.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
 
     use sqlx::Row;
-    let message_count: i32 = chat_row.get("message_count");
+    let _message_count: i32 = chat_row.get("message_count");
     let conversation_summary: Option<String> = chat_row.get("conversation_summary");
     let summary_up_to_index: i32 = chat_row.get("summary_up_to_index");
     let summary_version: i32 = chat_row.get("summary_version");
@@ -228,7 +228,7 @@ pub async fn compact_chat(
         SELECT
             id, role, content, created_at as timestamp,
             model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
-        FROM chat_messages
+        FROM app_chat_messages
         WHERE chat_id = ?
         ORDER BY sequence_num ASC
         "#,
@@ -244,7 +244,7 @@ pub async fn compact_chat(
             let id: String = row.get("id");
             let role: String = row.get("role");
             let content: String = row.get("content");
-            let timestamp: String = row.get("timestamp");
+            let timestamp: Timestamp = row.get("timestamp");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
             let agent_id: Option<String> = row.get("agent_id");
@@ -258,7 +258,7 @@ pub async fn compact_chat(
                 .and_then(|tc| serde_json::from_str(&tc).ok());
             let intent = intent_raw
                 .and_then(|i| serde_json::from_str(&i).ok());
-            
+
             ChatMessage {
                 id: Some(id),
                 role,
@@ -358,13 +358,13 @@ pub async fn compact_chat(
         estimate_session_context(verbatim_messages, Some(&new_summary), None, context_window);
 
     // Update the chat metadata
-    let now = Utc::now().to_rfc3339();
+    let now = Timestamp::now();
     let new_version = summary_version + 1;
     let new_summary_index = split_index as i32;
 
     sqlx::query(
         r#"
-        UPDATE chats
+        UPDATE app_chats
         SET
             conversation_summary = ?,
             summary_up_to_index = ?,
@@ -390,14 +390,14 @@ pub async fn compact_chat(
         version: new_version,
         messages_summarized: new_summary_index,
         summary: new_summary.clone(),
-        timestamp: now.clone(),
+        timestamp: now.to_rfc3339(),
     };
 
     let checkpoint_message = ChatMessage {
         id: None, // Will be generated
         role: "checkpoint".to_string(),
         content: format!("Checkpoint v{}: {} messages summarized", new_version, new_summary_index),
-        timestamp: now.clone(),
+        timestamp: now,
         model: None,
         provider: None,
         agent_id: None,
@@ -590,7 +590,7 @@ pub async fn needs_compaction(
     let chat_row = sqlx::query(
         r#"
         SELECT conversation_summary, summary_up_to_index
-        FROM chats
+        FROM app_chats
         WHERE id = ?
         "#,
     )
@@ -611,7 +611,7 @@ pub async fn needs_compaction(
         SELECT
             id, role, content, created_at as timestamp,
             model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
-        FROM chat_messages
+        FROM app_chat_messages
         WHERE chat_id = ?
         ORDER BY sequence_num ASC
         "#,
@@ -627,7 +627,7 @@ pub async fn needs_compaction(
             let id: String = row.get("id");
             let role: String = row.get("role");
             let content: String = row.get("content");
-            let timestamp: String = row.get("timestamp");
+            let timestamp: Timestamp = row.get("timestamp");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
             let agent_id: Option<String> = row.get("agent_id");
@@ -689,7 +689,7 @@ mod tests {
                 id: None,
                 role: "user".to_string(),
                 content: "Hello".to_string(),
-                timestamp: "2024-01-01T00:00:00Z".to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
                 model: None,
                 provider: None,
                 agent_id: None,
@@ -704,7 +704,7 @@ mod tests {
                 id: None,
                 role: "assistant".to_string(),
                 content: "Hi there!".to_string(),
-                timestamp: "2024-01-01T00:00:01Z".to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:01Z").unwrap(),
                 model: None,
                 provider: None,
                 agent_id: None,
@@ -732,7 +732,7 @@ mod tests {
                 id: None,
                 role: "user".to_string(),
                 content: "Old message".to_string(),
-                timestamp: "2024-01-01T00:00:00Z".to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
                 model: None,
                 provider: None,
                 agent_id: None,
@@ -747,7 +747,7 @@ mod tests {
                 id: None,
                 role: "assistant".to_string(),
                 content: "Old response".to_string(),
-                timestamp: "2024-01-01T00:00:01Z".to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:01Z").unwrap(),
                 model: None,
                 provider: None,
                 agent_id: None,
@@ -762,7 +762,7 @@ mod tests {
                 id: None,
                 role: "user".to_string(),
                 content: "Recent message".to_string(),
-                timestamp: "2024-01-01T00:00:02Z".to_string(),
+                timestamp: Timestamp::parse("2024-01-01T00:00:02Z").unwrap(),
                 model: None,
                 provider: None,
                 agent_id: None,

@@ -43,6 +43,7 @@
 /* App shell background - gradient applied via inline style in layout */
 .app-shell {
 	background-attachment: fixed;
+	background-blend-mode: multiply;
 }
 
 /* Main content area background */
@@ -52,21 +53,26 @@
 }
 
 @font-face {
-  font-family: 'Lora';
-  src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
-  font-weight: 300 700;
-  font-style: normal;
-  font-display: swap;
+	font-family: 'Lora';
+	src: url('/fonts/Lora-VariableFont_wght.ttf') format('truetype');
+	font-weight: 300 700;
+	font-style: normal;
+	font-display: swap;
 }
 
 /* Serif font defaults to 400 weight */
 .font-serif {
-  font-weight: 400;
+	font-weight: 400;
 }
 
 /* Global heading styles - serif font for all headings */
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-serif);
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	font-family: var(--font-serif);
 }
 
 /* ===================================
@@ -135,7 +141,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Inline code styling - block code is handled by Streamdown */
-.markdown :not(pre) > code {
+.markdown :not(pre)>code {
 	@apply px-1.5 py-0.5 rounded text-xs font-mono;
 	color: var(--color-foreground);
 	background-color: var(--color-surface-elevated);
@@ -148,7 +154,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Remove duplicate padding and styling from streamdown's wrapper div */
-.markdown [data-streamdown-code] > div:last-child {
+.markdown [data-streamdown-code]>div:last-child {
 	padding: 0;
 	margin: 0;
 	border: none;

@@ -68,16 +68,24 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 	// IndexedDB persistence for offline support
 	const persistence = new IndexeddbPersistence(pageId, ydoc);
 
-	// Track sync state
+	// Track sync state — prefer remote (WebSocket) sync as authoritative.
+	// Local (IndexedDB) sync is sufficient ONLY if it has cached content.
+	// For brand-new pages, IndexedDB fires 'synced' instantly with an empty doc,
+	// which would prematurely show an empty editor before the server delivers content.
 	let localSynced = false;
+	let remoteSynced = false;
 
 	function checkSyncComplete() {
-		// Allow editing once IndexedDB is synced, regardless of remote state
-		// This enables offline-first editing - remote sync is nice-to-have
-		if (localSynced) {
+		if (remoteSynced) {
+			// Remote sync is authoritative — always trust it
+			isSynced.set(true);
+			isLoading.set(false);
+		} else if (localSynced && yxmlFragment.length > 0) {
+			// IndexedDB had cached content — use it for fast offline-first loading
 			isSynced.set(true);
 			isLoading.set(false);
 		}
+		// If localSynced but empty, keep waiting for remote sync
 	}
 
 	persistence.on('synced', () => {
@@ -92,12 +100,17 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 
 	provider.on('sync', () => {
 		// Remote sync completed - content is now in sync with server
+		remoteSynced = true;
 		checkSyncComplete();
 	});
 
 	provider.on('connection-error', () => {
-		// Allow offline editing when connection fails
-		checkSyncComplete();
+		// Allow offline editing when connection fails —
+		// accept local sync even if empty (best we can do offline)
+		if (localSynced) {
+			isSynced.set(true);
+			isLoading.set(false);
+		}
 	});
 
 	// UndoManager for XmlFragment

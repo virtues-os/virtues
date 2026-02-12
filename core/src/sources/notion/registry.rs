@@ -24,7 +24,7 @@ impl SourceRegistry for NotionSource {
                 RegisteredStream::new("pages")
                     .config_schema(pages_config_schema())
                     .config_example(pages_config_example())
-                    .transform("knowledge_document", |_ctx| Ok(Box::new(NotionPageTransform)))
+                    .transform("content_document", |_ctx| Ok(Box::new(NotionPageTransform)))
                     .build(),
             ],
         }

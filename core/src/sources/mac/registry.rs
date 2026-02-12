@@ -38,7 +38,7 @@ impl SourceRegistry for MacSource {
                 RegisteredStream::new("imessage")
                     .config_schema(imessage_config_schema())
                     .config_example(imessage_config_example())
-                    .transform("social_message", |_ctx| Ok(Box::new(MacIMessageTransform)))
+                    .transform("communication_message", |_ctx| Ok(Box::new(MacIMessageTransform)))
                     .build(),
             ],
         }

@@ -84,12 +84,6 @@ struct WelcomeView: View {
                             name: "Audio",
                             example: "What did we discuss at dinner?"
                         )
-                        DataStreamExample(
-                            icon: "battery.75percent",
-                            color: .warmSuccess,
-                            name: "Battery",
-                            example: "Auto-enabled, no permission needed"
-                        )
                     }
                 }
 

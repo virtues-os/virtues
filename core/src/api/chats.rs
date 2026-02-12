@@ -19,7 +19,7 @@ use crate::types::Timestamp;
 /// Get the next sequence number for a chat
 async fn get_next_sequence_num(pool: &SqlitePool, chat_id: &str) -> Result<i32> {
     let row = sqlx::query_scalar!(
-        r#"SELECT COALESCE(MAX(sequence_num), 0) as "seq!: i64" FROM chat_messages WHERE chat_id = $1"#,
+        r#"SELECT COALESCE(MAX(sequence_num), 0) as "seq!: i64" FROM app_chat_messages WHERE chat_id = $1"#,
         chat_id
     )
     .fetch_one(pool)
@@ -41,7 +41,7 @@ pub struct ChatMessage {
 
     pub role: String, // "user" | "assistant" | "system"
     pub content: String,
-    pub timestamp: String, // ISO 8601 timestamp
+    pub timestamp: Timestamp,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
@@ -114,6 +114,8 @@ pub struct Chat {
     pub title: String,
     pub messages: Vec<ChatMessage>,
     pub message_count: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -124,6 +126,8 @@ pub struct ChatListItem {
     pub conversation_id: String,
     pub title: String,
     pub message_count: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub first_message_at: Timestamp,
     pub last_updated: Timestamp,
 }
@@ -146,6 +150,8 @@ pub struct ChatDetailResponse {
 pub struct ConversationMeta {
     pub conversation_id: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub first_message_at: Timestamp,
     pub last_message_at: Timestamp,
     pub message_count: i32,
@@ -160,7 +166,7 @@ pub struct MessageResponse {
     pub id: String,
     pub role: String,
     pub content: String,
-    pub timestamp: String,
+    pub timestamp: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -174,10 +180,11 @@ pub struct MessageResponse {
     pub parts: Option<Vec<UIPart>>,
 }
 
-/// Request to update chat title
+/// Request to update chat metadata (title and/or icon)
 #[derive(Debug, Deserialize)]
-pub struct UpdateTitleRequest {
-    pub title: String,
+pub struct UpdateChatRequest {
+    pub title: Option<String>,
+    pub icon: Option<Option<String>>,
 }
 
 // System space ID - chats created here don't get auto-added
@@ -206,6 +213,8 @@ pub struct CreateChatResponse {
 pub struct UpdateChatResponse {
     pub conversation_id: String,
     pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     pub updated_at: Timestamp,
 }
 
@@ -248,10 +257,11 @@ pub async fn list_chats(pool: &SqlitePool, limit: i64) -> Result<ChatListRespons
         SELECT
             id,
             title,
+            icon,
             message_count,
             created_at,
             updated_at
-        FROM chats
+        FROM app_chats
         ORDER BY updated_at DESC
         LIMIT ?
         "#,
@@ -266,6 +276,7 @@ pub async fn list_chats(pool: &SqlitePool, limit: i64) -> Result<ChatListRespons
             use sqlx::Row;
             let id: String = row.get("id");
             let title: String = row.get("title");
+            let icon: Option<String> = row.get("icon");
             let message_count: i32 = row.get("message_count");
             let created_at: String = row.get("created_at");
             let updated_at: String = row.get("updated_at");
@@ -276,6 +287,7 @@ pub async fn list_chats(pool: &SqlitePool, limit: i64) -> Result<ChatListRespons
                 conversation_id: id,
                 title,
                 message_count,
+                icon,
                 first_message_at,
                 last_updated,
             })
@@ -298,10 +310,11 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
         SELECT
             id,
             title,
+            icon,
             message_count,
             created_at,
             updated_at
-        FROM chats
+        FROM app_chats
         WHERE id = ?
         "#,
     )
@@ -315,6 +328,7 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
     use sqlx::Row;
     let id: String = row.get("id");
     let title: String = row.get("title");
+    let icon: Option<String> = row.get("icon");
     let message_count: i32 = row.get("message_count");
     let created_at: String = row.get("created_at");
     let updated_at: String = row.get("updated_at");
@@ -325,7 +339,7 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
             SELECT
                 id, role, content, model, provider, agent_id,
                 reasoning, tool_calls, intent, subject, thought_signature, created_at, parts
-            FROM chat_messages
+            FROM app_chat_messages
             WHERE chat_id = ?
             ORDER BY sequence_num ASC
             "#,
@@ -343,13 +357,13 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
                 let role: String = row.get("role");
                 let content: String = row.get("content");
                 let model: Option<String> = row.get("model");
-                let provider: Option<String> = row.get("provider");
-                let agent_id: Option<String> = row.get("agent_id");
+                let _provider: Option<String> = row.get("provider");
+                let _agent_id: Option<String> = row.get("agent_id");
                 let reasoning: Option<String> = row.get("reasoning");
                 let tool_calls_raw: Option<String> = row.get("tool_calls");
                 let subject: Option<String> = row.get("subject");
                 let thought_signature: Option<String> = row.get("thought_signature");
-                let timestamp: String = row.get("created_at");
+                let timestamp: Timestamp = row.get("created_at");
                 let parts_raw: Option<String> = row.get("parts");
 
                 // Parse tool_calls from JSON if present
@@ -384,6 +398,7 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
     let conversation = ConversationMeta {
         conversation_id: id,
         title,
+        icon,
         first_message_at,
         last_message_at,
         message_count,
@@ -410,7 +425,7 @@ pub async fn create_chat(
     // Create chat record (no JSON blob for messages anymore!)
     let row = sqlx::query(
         r#"
-        INSERT INTO chats (id, title, message_count)
+        INSERT INTO app_chats (id, title, message_count)
         VALUES (?, ?, ?)
         RETURNING id, title, message_count, created_at, updated_at
         "#,
@@ -454,7 +469,7 @@ pub async fn create_chat(
 
         sqlx::query(
             r#"
-            INSERT INTO chat_messages (
+            INSERT INTO app_chat_messages (
                 id, chat_id, role, content, model, provider, agent_id,
                 reasoning, tool_calls, intent, subject, thought_signature, sequence_num, created_at, parts
             )
@@ -482,12 +497,12 @@ pub async fn create_chat(
         inserted_messages.push(msg);
     }
 
-    // Parse timestamps
-    let created_at = chrono::DateTime::parse_from_rfc3339(&chat_created_at)
-        .map(|dt| dt.with_timezone(&Utc))
+    // Parse timestamps (handles both SQLite "YYYY-MM-DD HH:MM:SS" and RFC 3339 formats)
+    let created_at = chat_created_at.parse::<Timestamp>()
+        .map(|ts| ts.into_inner())
         .unwrap_or_else(|_| Utc::now());
-    let updated_at = chrono::DateTime::parse_from_rfc3339(&chat_updated_at)
-        .map(|dt| dt.with_timezone(&Utc))
+    let updated_at = chat_updated_at.parse::<Timestamp>()
+        .map(|ts| ts.into_inner())
         .unwrap_or_else(|_| Utc::now());
 
     Ok(Chat {
@@ -495,6 +510,7 @@ pub async fn create_chat(
         title: chat_title,
         messages: inserted_messages,
         message_count: chat_message_count,
+        icon: None,
         created_at,
         updated_at,
     })
@@ -527,32 +543,44 @@ pub async fn create_chat_from_request(
     })
 }
 
-/// Update chat title
-pub async fn update_chat_title(
+/// Update chat metadata (title and/or icon)
+pub async fn update_chat(
     pool: &SqlitePool,
     chat_id: String,
-    title: &str,
+    request: &UpdateChatRequest,
 ) -> Result<UpdateChatResponse> {
-    let chat_id_str = chat_id;
-    let row = sqlx::query(
-        r#"
-        UPDATE chats
-        SET title = ?, updated_at = datetime('now')
-        WHERE id = ?
-        RETURNING id, title, updated_at
-        "#,
-    )
-    .bind(title)
-    .bind(&chat_id_str)
-    .fetch_optional(pool)
-    .await?;
+    // Build dynamic SET clauses
+    let mut set_clauses = vec!["updated_at = datetime('now')".to_string()];
+    let mut binds: Vec<Option<String>> = Vec::new();
 
+    if let Some(ref title) = request.title {
+        set_clauses.push("title = ?".to_string());
+        binds.push(Some(title.clone()));
+    }
+
+    if let Some(ref icon) = request.icon {
+        set_clauses.push("icon = ?".to_string());
+        binds.push(icon.clone());
+    }
+
+    let sql = format!(
+        "UPDATE app_chats SET {} WHERE id = ? RETURNING id, title, icon, updated_at",
+        set_clauses.join(", ")
+    );
+
+    let mut query = sqlx::query(&sql);
+    for bind in &binds {
+        query = query.bind(bind);
+    }
+    query = query.bind(&chat_id);
+
+    let row = query.fetch_optional(pool).await?;
     let row = row.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
 
-    // Parse ID
     use sqlx::Row;
     let id: String = row.get("id");
     let title: String = row.get("title");
+    let icon: Option<String> = row.get("icon");
     let updated_at_raw: String = row.get("updated_at");
 
     let updated_at = updated_at_raw.parse::<Timestamp>()
@@ -561,6 +589,7 @@ pub async fn update_chat_title(
     Ok(UpdateChatResponse {
         conversation_id: id,
         title,
+        icon,
         updated_at,
     })
 }
@@ -602,7 +631,7 @@ pub async fn append_message(
 
     let result = sqlx::query(
         r#"
-        INSERT OR IGNORE INTO chat_messages (
+        INSERT OR IGNORE INTO app_chat_messages (
             id, chat_id, role, content, model, provider, agent_id,
             reasoning, tool_calls, intent, subject, thought_signature, sequence_num, created_at, parts
         )
@@ -632,7 +661,7 @@ pub async fn append_message(
         // Update chat metadata (message count and updated_at)
         sqlx::query(
             r#"
-            UPDATE chats
+            UPDATE app_chats
             SET message_count = message_count + 1, updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -658,7 +687,7 @@ pub async fn update_messages(
     let message_count = messages.len() as i32;
 
     // Delete all existing messages for this chat
-    sqlx::query("DELETE FROM chat_messages WHERE chat_id = ?")
+    sqlx::query("DELETE FROM app_chat_messages WHERE chat_id = ?")
         .bind(&chat_id_str)
         .execute(pool)
         .await?;
@@ -682,7 +711,7 @@ pub async fn update_messages(
 
         sqlx::query(
             r#"
-            INSERT INTO chat_messages (
+            INSERT INTO app_chat_messages (
                 id, chat_id, role, content, model, provider, agent_id,
                 reasoning, tool_calls, intent, subject, thought_signature, sequence_num, created_at
             )
@@ -710,7 +739,7 @@ pub async fn update_messages(
     // Update chat metadata
     sqlx::query(
         r#"
-        UPDATE chats
+        UPDATE app_chats
         SET message_count = ?, updated_at = datetime('now')
         WHERE id = ?
         "#,
@@ -729,7 +758,7 @@ pub async fn delete_chat(pool: &SqlitePool, chat_id: String) -> Result<DeleteCha
     let chat_id_str = chat_id;
     let result = sqlx::query(
         r#"
-        DELETE FROM chats
+        DELETE FROM app_chats
         WHERE id = ?
         RETURNING id
         "#,
@@ -839,7 +868,7 @@ Conversation:
     // Update chat title in database
     sqlx::query(
         r#"
-        UPDATE chats
+        UPDATE app_chats
         SET title = ?, updated_at = datetime('now')
         WHERE id = ?
         "#,
@@ -862,7 +891,7 @@ mod tests {
             id: None,
             role: "user".to_string(),
             content: "Hello".to_string(),
-            timestamp: "2024-01-01T00:00:00Z".to_string(),
+            timestamp: Timestamp::parse("2024-01-01T00:00:00Z").unwrap(),
             model: None,
             provider: None,
             agent_id: None,

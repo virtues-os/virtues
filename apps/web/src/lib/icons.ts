@@ -114,6 +114,7 @@ import riMessage3Line from '@iconify-icons/ri/message-3-line';
 import riMicLine from '@iconify-icons/ri/mic-line';
 import riMickeyLine from '@iconify-icons/ri/mickey-line';
 import riMoneyDollarCircleLine from '@iconify-icons/ri/money-dollar-circle-line';
+import riMore2Fill from '@iconify-icons/ri/more-2-fill';
 import riMoonFill from '@iconify-icons/ri/moon-fill';
 import riMoonLine from '@iconify-icons/ri/moon-line';
 import riMovieFill from '@iconify-icons/ri/movie-fill';
@@ -136,6 +137,7 @@ import riSearchEyeLine from '@iconify-icons/ri/search-eye-line';
 import riSearchLine from '@iconify-icons/ri/search-line';
 import riSeedlingLine from '@iconify-icons/ri/seedling-line';
 import riSendPlaneFill from '@iconify-icons/ri/send-plane-fill';
+import riSideBarLine from '@iconify-icons/ri/side-bar-line';
 import riSendPlaneLine from '@iconify-icons/ri/send-plane-line';
 import riSettings3Line from '@iconify-icons/ri/settings-3-line';
 import riSettings4Line from '@iconify-icons/ri/settings-4-line';
@@ -270,6 +272,7 @@ addIcon('ri:message-3-line', riMessage3Line);
 addIcon('ri:mic-line', riMicLine);
 addIcon('ri:mickey-line', riMickeyLine);
 addIcon('ri:money-dollar-circle-line', riMoneyDollarCircleLine);
+addIcon('ri:more-2-fill', riMore2Fill);
 addIcon('ri:moon-fill', riMoonFill);
 addIcon('ri:moon-line', riMoonLine);
 addIcon('ri:movie-fill', riMovieFill);
@@ -292,6 +295,7 @@ addIcon('ri:search-eye-line', riSearchEyeLine);
 addIcon('ri:search-line', riSearchLine);
 addIcon('ri:seedling-line', riSeedlingLine);
 addIcon('ri:send-plane-fill', riSendPlaneFill);
+addIcon('ri:side-bar-line', riSideBarLine);
 addIcon('ri:send-plane-line', riSendPlaneLine);
 addIcon('ri:settings-3-line', riSettings3Line);
 addIcon('ri:settings-4-line', riSettings4Line);
@@ -317,6 +321,14 @@ addIcon('ri:zzz-line', riZzzLine);
 
 // Simple Icons
 addIcon('simple-icons:notion', siNotion);
+
+// Custom Icons — Virtues ∴ triangle logo (three dots)
+// Sized to look good at 16px: centered in 24x24 viewBox with adequate dot radius
+addIcon('virtues:logo', {
+	body: '<circle cx="12" cy="5" r="3" fill="currentColor"/><circle cx="4.5" cy="18" r="3" fill="currentColor"/><circle cx="19.5" cy="18" r="3" fill="currentColor"/>',
+	width: 24,
+	height: 24,
+});
 
 // Export flag to indicate icons are registered
 export const iconsRegistered = true;

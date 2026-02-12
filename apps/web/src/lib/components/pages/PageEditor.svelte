@@ -7,7 +7,6 @@
 	} from "$lib/components/EntityPicker.svelte";
 	import SlashMenu from "$lib/components/SlashMenu.svelte";
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
-	import LinkPopover from "$lib/components/LinkPopover.svelte";
 	import TableToolbar from "$lib/components/TableToolbar.svelte";
 
 	// ProseMirror imports
@@ -18,7 +17,9 @@
 		baseKeymap,
 		chainCommands,
 		createParagraphNear,
+		exitCode,
 		liftEmptyBlock,
+		newlineInCode,
 		splitBlock,
 		toggleMark,
 	} from "prosemirror-commands";
@@ -34,16 +35,9 @@
 
 	// Our custom ProseMirror setup
 	import { schema } from "$lib/prosemirror/schema";
-	import {
-		parseMarkdown,
-		serializeMarkdown,
-	} from "$lib/prosemirror/markdown";
+	import { parseMarkdown } from "$lib/prosemirror/markdown";
 	import { createNodeViews } from "$lib/prosemirror/node-views";
 	import {
-		aiHighlightPlugin,
-		addAIHighlight,
-		removeAIHighlight,
-		getAIHighlights,
 		createEntityPickerPlugin,
 		insertEntity,
 		closeEntityPicker,
@@ -65,6 +59,7 @@
 		createTableToolbarPlugin,
 		executeTableCommand,
 		createMediaPastePlugin,
+		createCodeHighlightPlugin,
 		type EntitySelection,
 		type SlashCommand,
 		type SelectionToolbarPosition,
@@ -72,11 +67,6 @@
 		type TableCommand,
 	} from "$lib/prosemirror/plugins";
 	import { uploadMedia } from "$lib/api/client";
-	import type {
-		AIEditHighlightEvent,
-		AIEditAcceptEvent,
-		AIEditRejectEvent,
-	} from "$lib/events/aiEdit";
 
 	// Yjs integration
 	import type { YjsDocument } from "$lib/yjs";
@@ -84,9 +74,18 @@
 	// Import ProseMirror theme
 	import "$lib/prosemirror/theme.css";
 
+	export interface DocStats {
+		wordCount: number;
+		charCount: number;
+		linkCount: number;
+		mediaCount: number;
+	}
+
 	interface Props {
-		content: string;
-		onSave?: (content: string) => void;
+		/** Initial markdown content (read-only, used for non-Yjs init and Yjs empty-doc init) */
+		initialContent?: string;
+		/** Called when the document changes with computed stats */
+		onDocChange?: (stats: DocStats) => void;
 		placeholder?: string;
 		/** Optional Yjs document for real-time collaboration */
 		yjsDoc?: YjsDocument;
@@ -103,8 +102,8 @@
 	}
 
 	let {
-		content = $bindable(),
-		onSave,
+		initialContent = "",
+		onDocChange,
 		placeholder: placeholderText,
 		yjsDoc,
 		disabled = false,
@@ -132,10 +131,11 @@
 	let showSelectionToolbar = $state(false);
 	let selectionToolbarPos = $state<SelectionToolbarPosition>({ x: 0, y: 0 });
 
-	// Link popover state
-	let showLinkPopover = $state(false);
-	let linkPopoverPos = $state<SelectionToolbarPosition>({ x: 0, y: 0 });
-	let existingLinkUrl = $state<string | undefined>(undefined);
+	// Link picker state (EntityPicker replaces LinkPopover)
+	let showLinkPicker = $state(false);
+	let linkPickerPos = $state({ x: 0, y: 0 });
+	let linkPickerInitialQuery = $state('');
+	let linkPickerHasExistingLink = $state(false);
 
 	// Table toolbar state
 	let showTableToolbar = $state(false);
@@ -238,7 +238,7 @@
 	) {
 		if (!view) return;
 
-		// Link shows popover for URL input
+		// Link opens EntityPicker for entity search or URL input
 		if (mark === "link") {
 			// Check if selection already has a link to get URL for editing
 			const { from, to } = view.state.selection;
@@ -253,10 +253,11 @@
 				}
 			});
 
-			existingLinkUrl = currentUrl;
-			linkPopoverPos = { ...selectionToolbarPos };
-			showSelectionToolbar = false; // Hide toolbar when showing link popover
-			showLinkPopover = true;
+			linkPickerInitialQuery = currentUrl ?? '';
+			linkPickerHasExistingLink = !!currentUrl;
+			linkPickerPos = { ...selectionToolbarPos };
+			showSelectionToolbar = false;
+			showLinkPicker = true;
 			return;
 		}
 
@@ -276,8 +277,11 @@
 		tr.addMark(from, to, schema.marks.link.create({ href: url }));
 		view.dispatch(tr);
 		view.focus();
-		showLinkPopover = false;
-		existingLinkUrl = undefined;
+	}
+
+	function handleLinkPickerSelect(entity: EntityResult) {
+		handleLinkSubmit(entity.url);
+		closeLinkPicker();
 	}
 
 	function handleLinkRemove() {
@@ -287,21 +291,20 @@
 		const tr = view.state.tr;
 		tr.removeMark(from, to, schema.marks.link);
 		view.dispatch(tr);
-		view.focus();
-		showLinkPopover = false;
-		existingLinkUrl = undefined;
+		closeLinkPicker();
 	}
 
-	function closeLinkPopover() {
-		showLinkPopover = false;
-		existingLinkUrl = undefined;
+	function closeLinkPicker() {
+		showLinkPicker = false;
+		linkPickerInitialQuery = '';
+		linkPickerHasExistingLink = false;
 		view?.focus();
 	}
 
 	// Table toolbar functions
 	function openTableToolbar(position: TableToolbarPosition) {
 		// Don't show if other floating UI is open
-		if (showEntityPicker || showSlashMenu || showLinkPopover) return;
+		if (showEntityPicker || showSlashMenu || showLinkPicker) return;
 		tableToolbarPos = position;
 		showTableToolbar = true;
 	}
@@ -483,50 +486,6 @@
 	}
 
 	// =============================================================================
-	// AI EDIT EVENT HANDLERS
-	// =============================================================================
-
-	function handleAIEditHighlight(e: Event) {
-		const event = e as CustomEvent<AIEditHighlightEvent>;
-		if (!view || !pageId || event.detail.pageId !== pageId) return;
-
-		const { editId, text } = event.detail;
-		const currentView = view; // Capture for closure
-
-		// Find the text in the document
-		const doc = currentView.state.doc;
-		let found = false;
-		doc.descendants((node, pos) => {
-			if (found || !node.isText) return;
-			const nodeText = node.text ?? "";
-			const idx = nodeText.indexOf(text);
-			if (idx !== -1) {
-				const from = pos + idx;
-				const to = from + text.length;
-				addAIHighlight(
-					editId,
-					from,
-					to,
-				)(currentView.state, currentView.dispatch);
-				found = true;
-				return false; // Stop iteration
-			}
-		});
-	}
-
-	function handleAIEditAccept(e: Event) {
-		const event = e as CustomEvent<AIEditAcceptEvent>;
-		if (!view || !pageId || event.detail.pageId !== pageId) return;
-		removeAIHighlight(event.detail.editId)(view.state, view.dispatch);
-	}
-
-	function handleAIEditReject(e: Event) {
-		const event = e as CustomEvent<AIEditRejectEvent>;
-		if (!view || !pageId || event.detail.pageId !== pageId) return;
-		// Remove the highlight - content revert was already done via API
-		removeAIHighlight(event.detail.editId)(view.state, view.dispatch);
-	}
-
 	onMount(() => {
 		// Build plugins
 		const plugins = [
@@ -546,18 +505,22 @@
 			}),
 			// List keybindings - Enter must chain with default behavior
 			keymap({
-				"Shift-Enter": (state, dispatch) => {
-					if (dispatch)
-						dispatch(
-							state.tr
-								.replaceSelectionWith(
-									schema.nodes.hard_break.create(),
-								)
-								.scrollIntoView(),
-						);
-					return true;
-				},
+				"Shift-Enter": chainCommands(
+					exitCode,
+					(state, dispatch) => {
+						if (dispatch)
+							dispatch(
+								state.tr
+									.replaceSelectionWith(
+										schema.nodes.hard_break.create(),
+									)
+									.scrollIntoView(),
+							);
+						return true;
+					},
+				),
 				Enter: chainCommands(
+					newlineInCode,
 					splitListItem(schema.nodes.list_item),
 					createParagraphNear,
 					liftEmptyBlock,
@@ -584,9 +547,6 @@
 			// Drop cursor and gap cursor
 			dropCursor(),
 			gapCursor(),
-
-			// AI edit highlight plugin
-			aiHighlightPlugin,
 
 			// Entity picker plugin
 			createEntityPickerPlugin({
@@ -656,18 +616,15 @@
 				},
 			}),
 
+			// Syntax highlighting for code blocks
+			createCodeHighlightPlugin(),
+
 			// Placeholder plugin
 			createPlaceholderPlugin(),
 		];
 
-		// Parse initial content for non-Yjs mode
-		const initialDoc = yjsDoc
-			? null // y-prosemirror will provide the document from XmlFragment
-			: parseMarkdown(content);
-
-		// Create editor state
+		// Create editor state (y-prosemirror provides the document from XmlFragment)
 		const state = EditorState.create({
-			doc: initialDoc || undefined,
 			schema,
 			plugins,
 		});
@@ -701,50 +658,68 @@
 				const newState = view.state.apply(tr);
 				view.updateState(newState);
 
-				// Serialize to markdown and update content on doc changes
+				// Compute doc stats directly from ProseMirror (no markdown serialization)
 				if (tr.docChanged && !isExternalUpdate) {
-					const markdown = serializeMarkdown(newState.doc);
-					content = markdown;
-
-					// Only call onSave if not using Yjs
-					if (!yjsDoc) {
-						onSave?.(markdown);
-					}
+					const text = newState.doc.textContent;
+					const wordCount = text.trim()
+						? text.trim().split(/\s+/).length
+						: 0;
+					const charCount = text.length;
+					let linkCount = 0;
+					let mediaCount = 0;
+					newState.doc.descendants((node) => {
+						if (node.type.name === "entity_link") linkCount++;
+						if (node.type.name === "media" || node.type.name === "image")
+							mediaCount++;
+						// Count link marks at the block level to avoid double-counting
+						// (a link spanning bold+normal text creates multiple text nodes)
+						if (node.isTextblock) {
+							let inLink = false;
+							node.forEach((child) => {
+								const hasLink =
+									child.marks?.some((m) => m.type.name === "link") ??
+									false;
+								if (hasLink && !inLink) linkCount++;
+								inLink = hasLink;
+							});
+						}
+					});
+					onDocChange?.({ wordCount, charCount, linkCount, mediaCount });
 				}
 			},
 		});
 
-		// For Yjs mode: if XmlFragment is empty but we have content prop, initialize the doc
-		// This handles the case where a page has text content but no Yjs state yet
+		// For Yjs mode: if XmlFragment is empty but we have initial content, initialize.
+		// This is a fallback — the server now initializes Yjs from markdown in DocCache.
+		// This path handles the edge case where the server hasn't initialized yet.
 		if (yjsDoc && view) {
 			let initialized = false;
 			const unsubscribe = yjsDoc.isSynced.subscribe((synced) => {
-				if (initialized) return; // Already handled
+				if (initialized) return;
 				if (
 					synced &&
 					view &&
 					yjsDoc.yxmlFragment.length === 0 &&
-					content &&
-					content.trim()
+					initialContent &&
+					initialContent.trim()
 				) {
 					initialized = true;
-					// XmlFragment is empty but we have content - initialize through ProseMirror
-					// This will sync to Yjs via y-prosemirror
-					const parsedDoc = parseMarkdown(content);
+					const parsedDoc = parseMarkdown(initialContent);
 					if (parsedDoc) {
 						isExternalUpdate = true;
-						const tr = view.state.tr.replaceWith(
-							0,
-							view.state.doc.content.size,
-							parsedDoc.content,
-						);
-						view.dispatch(tr);
-						isExternalUpdate = false;
+						try {
+							const tr = view.state.tr.replaceWith(
+								0,
+								view.state.doc.content.size,
+								parsedDoc.content,
+							);
+							view.dispatch(tr);
+						} finally {
+							isExternalUpdate = false;
+						}
 					}
-					// Unsubscribe after initializing (use setTimeout to avoid sync call issue)
 					setTimeout(() => unsubscribe(), 0);
 				} else if (synced) {
-					// Already synced with content or empty - just unsubscribe
 					initialized = true;
 					setTimeout(() => unsubscribe(), 0);
 				}
@@ -756,11 +731,6 @@
 			"page-navigate",
 			handleNavigation as EventListener,
 		);
-
-		// Listen for AI edit events
-		window.addEventListener("ai-edit-highlight", handleAIEditHighlight);
-		window.addEventListener("ai-edit-accept", handleAIEditAccept);
-		window.addEventListener("ai-edit-reject", handleAIEditReject);
 
 		// Listen for slash command media events
 		editorContainer.addEventListener(
@@ -777,25 +747,8 @@
 		);
 	});
 
-	// Sync external content changes to editor (only when not using Yjs)
-	$effect(() => {
-		if (!yjsDoc && view) {
-			const currentMarkdown = serializeMarkdown(view.state.doc);
-			if (content !== currentMarkdown) {
-				isExternalUpdate = true;
-				const newDoc = parseMarkdown(content);
-				if (newDoc) {
-					const tr = view.state.tr.replaceWith(
-						0,
-						view.state.doc.content.size,
-						newDoc.content,
-					);
-					view.dispatch(tr);
-				}
-				isExternalUpdate = false;
-			}
-		}
-	});
+	// Note: Non-Yjs external content sync was removed. All pages use Yjs now.
+	// The initialContent prop is only used for first-load initialization.
 
 	// Update editable state when disabled changes
 	$effect(() => {
@@ -822,9 +775,6 @@
 			"page-navigate",
 			handleNavigation as EventListener,
 		);
-		window.removeEventListener("ai-edit-highlight", handleAIEditHighlight);
-		window.removeEventListener("ai-edit-accept", handleAIEditAccept);
-		window.removeEventListener("ai-edit-reject", handleAIEditReject);
 		editorContainer?.removeEventListener(
 			"slash-command-image",
 			handleSlashCommandImage,
@@ -879,13 +829,20 @@
 		/>
 	{/if}
 
-	{#if showLinkPopover}
-		<LinkPopover
-			position={linkPopoverPos}
-			initialUrl={existingLinkUrl}
-			onSubmit={handleLinkSubmit}
-			onRemove={existingLinkUrl ? handleLinkRemove : undefined}
-			onClose={closeLinkPopover}
+	{#if showLinkPicker}
+		<EntityPicker
+			mode="single"
+			position={linkPickerPos}
+			placeholder="Search or paste a URL..."
+			initialQuery={linkPickerInitialQuery}
+			onSelect={handleLinkPickerSelect}
+			onClose={closeLinkPicker}
+			footerAction={linkPickerHasExistingLink ? {
+				label: 'Remove Link',
+				icon: 'ri:link-unlink',
+				action: handleLinkRemove,
+				variant: 'destructive'
+			} : undefined}
 		/>
 	{/if}
 

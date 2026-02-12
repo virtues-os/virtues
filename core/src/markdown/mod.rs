@@ -42,6 +42,7 @@ mod parser;
 mod serializer;
 
 pub use parser::markdown_to_xml_fragment;
+pub use serializer::markdown_to_plain_text;
 pub use serializer::xml_fragment_to_markdown;
 
 use thiserror::Error;

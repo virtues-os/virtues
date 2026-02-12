@@ -9,13 +9,6 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 const API_BASE = '/api';
 
-// Catalog — returns { tier: string, sources: CatalogSource[] }
-export async function listCatalogSources() {
-	const res = await fetch(`${API_BASE}/catalog/sources`);
-	if (!res.ok) throw new Error(`Failed to list catalog sources: ${res.statusText}`);
-	return res.json();
-}
-
 // Sources
 export async function listSources() {
 	const res = await fetch(`${API_BASE}/sources`);
@@ -62,7 +55,7 @@ export async function listStreams(sourceId: string) {
 export async function enableStream(
 	sourceId: string,
 	streamName: string,
-	request: any = {}
+	request: Record<string, unknown> = {}
 ) {
 	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams/${streamName}/enable`, {
 		method: 'POST',
@@ -79,41 +72,10 @@ export async function disableStream(sourceId: string, streamName: string) {
 	if (!res.ok) throw new Error(`Failed to disable stream: ${res.statusText}`);
 }
 
-export interface StreamUpdate {
-	stream_name: string;
-	is_enabled: boolean;
-	config?: Record<string, unknown>;
-}
-
-export interface BulkUpdateStreamsResponse {
-	updated_count: number;
-	streams: any[];
-}
-
-/**
- * Bulk update multiple streams in a single request.
- * More efficient than calling enableStream/disableStream for each stream.
- */
-export async function bulkUpdateStreams(
-	sourceId: string,
-	streams: StreamUpdate[]
-): Promise<BulkUpdateStreamsResponse> {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ streams })
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to update streams: ${res.statusText}`);
-	}
-	return res.json();
-}
-
 export async function syncStream(
 	sourceId: string,
 	streamName: string,
-	request: any = {}
+	request: Record<string, unknown> = {}
 ): Promise<{ job_id: string; status: string; started_at: string }> {
 	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams/${streamName}/sync`, {
 		method: 'POST',
@@ -142,7 +104,7 @@ export interface Job {
 	records_processed: number;
 	error_message?: string;
 	error_class?: string;
-	metadata: any;
+	metadata: Record<string, unknown> | null;
 	created_at: string;
 	updated_at: string;
 }
@@ -177,73 +139,6 @@ export async function cancelJob(jobId: string): Promise<void> {
 	if (!res.ok) throw new Error(`Failed to cancel job: ${res.statusText}`);
 }
 
-// Activity Metrics
-export interface ActivityMetrics {
-	summary: MetricsSummary;
-	by_job_type: JobTypeStats[];
-	by_stream: StreamStats[];
-	time_windows: TimeWindowMetrics;
-	recent_errors: RecentError[];
-}
-
-export interface MetricsSummary {
-	total_jobs: number;
-	succeeded: number;
-	failed: number;
-	cancelled: number;
-	active: number;
-	success_rate_percent: number;
-	total_records_processed: number;
-	avg_duration_seconds: number | null;
-}
-
-export interface JobTypeStats {
-	job_type: string;
-	total: number;
-	succeeded: number;
-	failed: number;
-	avg_duration_seconds: number | null;
-	total_records: number;
-}
-
-export interface StreamStats {
-	stream_name: string;
-	job_count: number;
-	success_rate_percent: number;
-	last_sync_at: string | null;
-	total_records: number;
-}
-
-export interface TimeWindowMetrics {
-	last_24h: PeriodStats;
-	last_7d: PeriodStats;
-	last_30d: PeriodStats;
-}
-
-export interface PeriodStats {
-	jobs_completed: number;
-	jobs_failed: number;
-	success_rate_percent: number;
-	records_processed: number;
-}
-
-export interface RecentError {
-	job_id: string;
-	job_type: string;
-	stream_name: string | null;
-	error_message: string;
-	error_class: string | null;
-	failed_at: string;
-}
-
-export async function getActivityMetrics(): Promise<ActivityMetrics> {
-	const res = await fetch(`${API_BASE}/metrics/activity`);
-	if (!res.ok) {
-		throw new Error(`Failed to get activity metrics: ${res.statusText}`);
-	}
-	return res.json();
-}
-
 // OAuth
 /**
  * Initiate OAuth authorization flow
@@ -267,33 +162,6 @@ export async function initiateOAuth(provider: string, returnUrl?: string) {
 	const res = await fetch(url, { method: 'POST' });
 	if (!res.ok) throw new Error(`Failed to initiate OAuth: ${res.statusText}`);
 	return res.json() as Promise<{ authorization_url: string; state: string }>;
-}
-
-/**
- * @deprecated OAuth callbacks are now handled directly by backend at /oauth/callback
- * This method is kept for backward compatibility only. The frontend no longer receives OAuth callbacks.
- */
-export async function handleOAuthCallback(params: {
-	code?: string;
-	access_token?: string;
-	refresh_token?: string;
-	expires_in?: number;
-	provider: string;
-	state?: string;
-	space_id?: string;
-	workspace_name?: string;
-	bot_id?: string;
-}) {
-	const queryParams = new URLSearchParams();
-	Object.entries(params).forEach(([key, value]) => {
-		if (value !== undefined) {
-			queryParams.set(key, value.toString());
-		}
-	});
-
-	const res = await fetch(`${API_BASE}/sources/callback?${queryParams}`);
-	if (!res.ok) throw new Error(`Failed to complete OAuth: ${res.statusText}`);
-	return res.json();
 }
 
 // Device Pairing
@@ -473,6 +341,7 @@ export interface Profile {
 	employer?: string | null;
 	theme?: string | null;
 	update_check_hour?: number | null;
+	timezone?: string | null;
 	home_place_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;
@@ -491,56 +360,6 @@ export async function updateProfile(profile: Partial<Profile>): Promise<Profile>
 		body: JSON.stringify(profile)
 	});
 	if (!res.ok) throw new Error(`Failed to update profile: ${res.statusText}`);
-	return res.json();
-}
-
-// Storage Objects
-export interface StreamObject {
-	id: string;
-	source_connection_id: string;
-	source_name: string;
-	source_type: string;
-	stream_name: string;
-	s3_key: string;
-	record_count: number;
-	size_bytes: number;
-	min_timestamp: string | null;
-	max_timestamp: string | null;
-	created_at: string;
-}
-
-export interface ObjectContent {
-	id: string;
-	s3_key: string;
-	records: unknown[];
-	record_count: number;
-}
-
-/**
- * List recent storage objects
- * @param limit - Maximum number of objects to return (default: 10)
- * @returns Array of stream object summaries
- */
-export async function listStorageObjects(limit?: number): Promise<StreamObject[]> {
-	const params = new URLSearchParams();
-	if (limit) params.set('limit', limit.toString());
-
-	const res = await fetch(`${API_BASE}/storage/objects?${params}`);
-	if (!res.ok) throw new Error(`Failed to list storage objects: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Get decrypted content of a storage object
- * @param objectId - UUID of the stream object
- * @returns Decrypted JSONL records
- */
-export async function getStorageObjectContent(objectId: string): Promise<ObjectContent> {
-	const res = await fetch(`${API_BASE}/storage/objects/${objectId}/content`);
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to get object content: ${res.statusText}`);
-	}
 	return res.json();
 }
 
@@ -581,26 +400,12 @@ export interface DriveUsage {
 	tier: string;
 }
 
-export interface QuotaWarnings {
-	warnings: string[];
-	usage_percent: number;
-}
-
 /**
  * Get drive storage usage and quota information
  */
 export async function getDriveUsage(): Promise<DriveUsage> {
 	const res = await fetch(`${API_BASE}/drive/usage`);
 	if (!res.ok) throw new Error(`Failed to get drive usage: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Get quota warning messages (80%, 90%, 100%)
- */
-export async function getDriveWarnings(): Promise<QuotaWarnings> {
-	const res = await fetch(`${API_BASE}/drive/warnings`);
-	if (!res.ok) throw new Error(`Failed to get drive warnings: ${res.statusText}`);
 	return res.json();
 }
 
@@ -906,6 +711,27 @@ export async function createChat(
 }
 
 /**
+ * Update a chat (title and/or icon)
+ */
+export async function updateChat(
+	chatId: string,
+	updates: { title?: string; icon?: string | null }
+): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
+	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(updates)
+	});
+
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to update chat: ${res.statusText}`);
+	}
+
+	return res.json();
+}
+
+/**
  * Delete a chat
  */
 export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
@@ -1039,6 +865,7 @@ export async function saveSpaceTabState(id: string, tabStateJson: string): Promi
 export interface View {
 	id: string;
 	space_id: string;
+	parent_view_id: string | null;
 	name: string;
 	icon: string | null;
 	sort_order: number;
@@ -1052,10 +879,12 @@ export interface View {
 export interface ViewSummary {
 	id: string;
 	space_id: string;
+	parent_view_id: string | null;
 	name: string;
 	icon: string | null;
 	sort_order: number;
 	view_type: 'manual' | 'smart';
+	query_config: string | null;
 	is_system: boolean;
 }
 
@@ -1071,6 +900,11 @@ export interface ViewEntity {
 	updated_at?: string;
 }
 
+/** Space item entity — ViewEntity with sort_order for unified ordering with folders */
+export interface SpaceItemEntity extends ViewEntity {
+	sort_order: number;
+}
+
 export interface ViewResolutionResponse {
 	entities: ViewEntity[];
 	total: number;
@@ -1081,6 +915,7 @@ export interface CreateViewRequest {
 	name: string;
 	icon?: string;
 	view_type: 'manual' | 'smart';
+	parent_view_id?: string;
 	query_config?: object;
 }
 
@@ -1223,6 +1058,32 @@ export async function reorderViewItems(viewId: string, urlOrder: string[]): Prom
 }
 
 // =============================================================================
+// Developer SQL API
+// =============================================================================
+
+export interface SqlResult {
+	columns: string[];
+	rows: Record<string, unknown>[];
+	row_count: number;
+}
+
+/**
+ * Execute a read-only SQL query via the developer endpoint
+ */
+export async function executeSql(sql: string): Promise<SqlResult> {
+	const res = await fetch(`${API_BASE}/developer/sql`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ query: sql })
+	});
+	if (!res.ok) {
+		const error = await res.text();
+		throw new Error(`SQL execution failed: ${error}`);
+	}
+	return res.json();
+}
+
+// =============================================================================
 // Space Items API (root-level items at space level, not in any folder)
 // =============================================================================
 
@@ -1231,7 +1092,7 @@ export async function reorderViewItems(viewId: string, urlOrder: string[]): Prom
  * @param spaceId - The space ID
  * @returns Resolved entities for the space's root items
  */
-export async function listSpaceItems(spaceId: string): Promise<ViewEntity[]> {
+export async function listSpaceItems(spaceId: string): Promise<SpaceItemEntity[]> {
 	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`);
 	if (!res.ok) throw new Error(`Failed to list space items: ${res.statusText}`);
 	return res.json();
@@ -1271,153 +1132,16 @@ export async function removeSpaceItem(spaceId: string, url: string): Promise<voi
  * @param spaceId - The space ID
  * @param urlOrder - Array of URLs in the new desired order
  */
-export async function reorderSpaceItems(spaceId: string, urlOrder: string[]): Promise<void> {
+export async function reorderSpaceItems(
+	spaceId: string,
+	items: Array<{ url: string; sort_order: number }>
+): Promise<void> {
 	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items/reorder`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url_order: urlOrder })
+		body: JSON.stringify({ items })
 	});
 	if (!res.ok) throw new Error(`Failed to reorder space items: ${res.statusText}`);
-}
-
-// =============================================================================
-// Explorer Nodes API (DEPRECATED - use Views API)
-// =============================================================================
-
-export interface ExplorerNode {
-	id: string;
-	space_id: string;
-	parent_id: string | null;
-	sort_order: number;
-	node_type: 'folder' | 'view' | 'shortcut';
-	name: string | null;
-	icon: string | null;
-	entity_id: string | null;
-	view_config_json: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface ExplorerTreeNode extends ExplorerNode {
-	children: ExplorerTreeNode[];
-}
-
-export interface SpaceTreeResponse {
-	space_id: string;
-	nodes: ExplorerTreeNode[];
-}
-
-export interface ViewConfig {
-	type: 'pages' | 'chats' | 'wiki' | 'drive' | 'sources';
-	subtype?: string;
-	folder_id?: string;
-	space_scoped?: boolean;
-	limit?: number;
-	show_more_link?: boolean;
-}
-
-/**
- * @deprecated Use Views API instead
- * Get the explorer tree for a space
- */
-export async function getSpaceTree(spaceId: string): Promise<SpaceTreeResponse> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/tree`);
-	if (!res.ok) throw new Error(`Failed to get space tree: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Create a new explorer node
- */
-export async function createExplorerNode(
-	space_id: string,
-	node_type: 'folder' | 'view' | 'shortcut',
-	options: {
-		parent_id?: string;
-		name?: string;
-		icon?: string;
-		entity_id?: string;
-		view_config_json?: string;
-	}
-): Promise<ExplorerNode> {
-	const res = await fetch(`${API_BASE}/explorer-nodes`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ space_id, node_type, ...options })
-	});
-	if (!res.ok) throw new Error(`Failed to create node: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Update an explorer node
- */
-export async function updateExplorerNode(
-	id: string,
-	updates: {
-		name?: string;
-		icon?: string;
-		parent_id?: string | null;
-		sort_order?: number;
-		view_config_json?: string;
-	}
-): Promise<ExplorerNode> {
-	const res = await fetch(`${API_BASE}/explorer-nodes/${id}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-	if (!res.ok) throw new Error(`Failed to update node: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Delete an explorer node
- */
-export async function deleteExplorerNode(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/explorer-nodes/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete node: ${res.statusText}`);
-}
-
-/**
- * Move nodes to a new parent
- */
-export async function moveExplorerNodes(
-	node_ids: string[],
-	target_parent_id: string | null,
-	target_sort_order: number
-): Promise<void> {
-	const res = await fetch(`${API_BASE}/explorer-nodes/move`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ node_ids, target_parent_id, target_sort_order })
-	});
-	if (!res.ok) throw new Error(`Failed to move nodes: ${res.statusText}`);
-}
-
-/**
- * @deprecated Use resolveView(viewId) instead. This legacy function is kept for backward compatibility.
- */
-export async function resolveViewConfig(
-	config: ViewConfig,
-	space_id: string,
-	limit?: number,
-	offset?: number
-): Promise<ViewResolutionResponse> {
-	const body = { config, space_id, limit, offset };
-
-	const res = await fetch(`${API_BASE}/views/resolve-config`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-
-	if (!res.ok) {
-		const errorBody = await res.text();
-		console.error('[resolveViewConfig] Error:', res.status, 'Body:', errorBody, 'Request was:', JSON.stringify(body));
-		throw new Error(`Failed to resolve view config: ${res.statusText}`);
-	}
-	return res.json();
 }
 
 // =============================================================================

@@ -6,6 +6,9 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
+	import Modal from "$lib/components/Modal.svelte";
+	import IconPicker from "$lib/components/IconPicker.svelte";
+	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
@@ -90,9 +93,48 @@
 				lastSeenCommit &&
 				lastSeenCommit !== BUILD_COMMIT
 			) {
-				toast.info("Virtues has been updated", { duration: 5000 });
+				toast.info("Virtues has been updated", {
+					description: BUILD_COMMIT.slice(0, 7),
+					duration: 8000,
+					action: {
+						label: "Details",
+						onClick: () =>
+							spaceStore.openTabFromRoute("/virtues/system", {
+								label: "System",
+								preferEmptyPane: true,
+							}),
+					},
+				});
 			}
 			sessionStorage.setItem("virtues_last_commit", BUILD_COMMIT);
+		}
+
+		// Timezone auto-detect: silently set on first launch, toast on mismatch
+		const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		if (!data?.profileTimezone) {
+			fetch("/api/profile", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ timezone: browserTz }),
+			}).catch((e) => console.error("[Layout] Failed to set timezone:", e));
+		} else if (data.profileTimezone !== browserTz) {
+			const formatTz = (tz: string) => tz.replace(/_/g, " ");
+			toast.info("Timezone changed?", {
+				description: `Browser: ${formatTz(browserTz)} · Profile: ${formatTz(data.profileTimezone)}`,
+				duration: 15000,
+				action: {
+					label: "Update",
+					onClick: () => {
+						fetch("/api/profile", {
+							method: "PUT",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ timezone: browserTz }),
+						})
+							.then(() => toast.success("Timezone updated"))
+							.catch((e) => console.error("Failed to update timezone:", e));
+					},
+				},
+			});
 		}
 
 		// Set up session expiry warning
@@ -234,7 +276,13 @@
 
 	<!-- Main Content -->
 	<main
-		class="flex-1 flex flex-col z-0 min-w-0 bg-surface text-foreground m-3 rounded-lg border border-border overflow-hidden"
+		class="flex-1 flex flex-col z-0 min-w-0 text-foreground m-3 overflow-hidden
+			border rounded-lg transition-[border-color,background-color] duration-150"
+		class:bg-surface={!spaceStore.isSplit}
+		class:bg-transparent={spaceStore.isSplit}
+		class:border-border={!spaceStore.isSplit}
+		class:border-transparent={spaceStore.isSplit}
+		style="background-image: {spaceStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
 	>
 		{#if initialized}
 			<!-- SplitContainer handles both split and mono modes -->
@@ -247,6 +295,17 @@
 {#if data?.serverStatus && data.serverStatus !== "ready"}
 	<ServerProvisioning initialStatus={data.serverStatus} />
 {/if}
+
+<!-- Global Icon Picker Modal -->
+<Modal open={iconPickerStore.open} onClose={() => iconPickerStore.hide()} title="Change Icon" width="md">
+	{#snippet children()}
+		<IconPicker
+			value={iconPickerStore.currentValue}
+			onSelect={(icon) => iconPickerStore.select(icon)}
+			close={() => iconPickerStore.hide()}
+		/>
+	{/snippet}
+</Modal>
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->
 <!-- svelte-ignore slot_snippet_conflict -->

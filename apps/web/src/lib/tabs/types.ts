@@ -23,6 +23,8 @@ export type TabType =
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}
 	| 'trash' // Drive trash: /trash
+	// View namespace
+	| 'view' // Folder/view pages: /view/view_{id}
 	// System namespace
 	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap|feedback}
 	// Easter eggs

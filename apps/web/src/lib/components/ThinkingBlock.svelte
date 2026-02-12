@@ -39,14 +39,8 @@
 		duration = 0,
 	}: Props = $props();
 
-	// Capture initial isThinking value for initial expanded state (intentionally captures initial value only)
-	// svelte-ignore state_referenced_locally
-	const initiallyThinking = isThinking;
-	
-	// Expansion state - starts collapsed for completed messages, expanded for active thinking
-	let expanded = $state(initiallyThinking);
-	let hasAutoCollapsed = $state(false);
-	let hasManuallyCollapsed = $state(false);
+	// Expansion state - always starts collapsed (user can expand manually)
+	let expanded = $state(false);
 
 	// Track thinking duration
 	let thinkingStartTime = $state<number | null>(null);
@@ -90,30 +84,6 @@
 		}
 	});
 
-	// Auto-collapse when streaming starts
-	$effect(() => {
-		if (isStreaming && !hasAutoCollapsed && expanded) {
-			setTimeout(() => {
-				expanded = false;
-				hasAutoCollapsed = true;
-			}, 300);
-		}
-	});
-
-	// Reset on new thinking session (but respect manual collapse)
-	$effect(() => {
-		if (isThinking && hasAutoCollapsed && !hasManuallyCollapsed) {
-			hasAutoCollapsed = false;
-			expanded = true;
-		}
-	});
-
-	// Reset manual collapse state when thinking ends (for next session)
-	$effect(() => {
-		if (!isThinking) {
-			hasManuallyCollapsed = false;
-		}
-	});
 
 	// Format duration
 	function formatDuration(seconds: number): string {
@@ -137,8 +107,17 @@
 		const input = tool.input || {};
 
 		switch (name) {
+			case "think": {
+				const thought = (input.thought as string) || "";
+				const preview = thought.length > 80 ? thought.slice(0, 80) + "…" : thought;
+				return `Planning: "${preview}"`;
+			}
 			case "web_search":
 				return `Searched the web for "${input.query || "information"}"`;
+			case "semantic_search": {
+				const q = ((input.query as string) || "").slice(0, 60);
+				return `Searching: "${q}"`;
+			}
 			case "sql_query": {
 				const op = input.operation as string;
 				if (op === "list_tables") {
@@ -188,9 +167,9 @@
 	// Check if we have content
 	const hasContent = $derived(reasoningContent || toolCalls.length > 0);
 
-	// Get unique tools for collapsed summary
+	// Get unique tools for collapsed summary (filter out "think" — rendered inline, not as a tool)
 	const uniqueToolNames = $derived.by(() => {
-		const names = toolCalls.map((t) => getToolName(t));
+		const names = toolCalls.map((t) => getToolName(t)).filter((n) => n !== "think");
 		return [...new Set(names)];
 	});
 </script>
@@ -204,7 +183,6 @@
 		onclick={() => {
 			if (hasContent) {
 				expanded = !expanded;
-				if (!expanded) hasManuallyCollapsed = true;
 			}
 		}}
 		aria-expanded={hasContent ? expanded : undefined}
@@ -264,22 +242,27 @@
 							tool.state === "input-available" ||
 							!tool.state}
 						{@const isError = tool.state === "output-error"}
-						<li
-							class="tool-item"
-							class:pending={isPending}
-							class:error={isError}
-						>
-							{#if isPending}
-								<span class="tool-spinner"></span>
-							{:else if isError}
-								<span class="tool-icon error">✕</span>
-							{:else}
-								<span class="tool-icon">✓</span>
-							{/if}
-							<span class="tool-description">
-								{getToolDescription(tool)}
-							</span>
-						</li>
+						{@const isThinkTool = getToolName(tool) === "think"}
+						{#if isThinkTool}
+							<li class="think-item">
+								<p class="think-text">{tool.input?.thought || ""}</p>
+							</li>
+						{:else}
+							<li
+								class="tool-item"
+								class:pending={isPending}
+								class:error={isError}
+							>
+								{#if isPending}
+									<span class="tool-spinner"></span>
+								{:else}
+									<span class="tool-icon" class:error={isError}>·</span>
+								{/if}
+								<span class="tool-description">
+									{getToolDescription(tool)}
+								</span>
+							</li>
+						{/if}
 					{/each}
 				</ul>
 			{/if}
@@ -418,6 +401,18 @@
 	.block-content::-webkit-scrollbar-thumb {
 		background-color: var(--color-border);
 		border-radius: 3px;
+	}
+
+	/* Think tool content */
+	.think-item {
+		list-style: none;
+	}
+
+	.think-text {
+		margin: 0;
+		color: var(--color-foreground);
+		line-height: 1.5;
+		white-space: pre-wrap;
 	}
 
 	/* Reasoning text - matches .markdown p */

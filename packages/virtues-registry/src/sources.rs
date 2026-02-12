@@ -194,6 +194,42 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
             tier: SourceTier::Standard,
             connection_policy: ConnectionPolicy::Singleton,
         },
+        // Strava
+        SourceDescriptor {
+            name: "strava",
+            display_name: "Strava",
+            description: "Sync workout activities from Strava (runs, rides, swims, etc.)",
+            auth_type: AuthType::OAuth2,
+            oauth_config: Some(OAuthConfig {
+                scopes: vec!["read,activity:read_all"],
+                auth_url: "https://www.strava.com/oauth/authorize",
+                token_url: "https://www.strava.com/oauth/token",
+            }),
+            icon: Some("simple-icons:strava"),
+            enabled: true,
+            tier: SourceTier::Standard,
+            connection_policy: ConnectionPolicy::MultiInstance {
+                limits: ConnectionLimits::new(2, 4),
+            },
+        },
+        // GitHub
+        SourceDescriptor {
+            name: "github",
+            display_name: "GitHub",
+            description: "Sync activity events from GitHub (stars, forks, PRs, commits)",
+            auth_type: AuthType::OAuth2,
+            oauth_config: Some(OAuthConfig {
+                scopes: vec!["repo", "user:email"],
+                auth_url: "https://github.com/login/oauth/authorize",
+                token_url: "https://github.com/login/oauth/access_token",
+            }),
+            icon: Some("ri:github-fill"),
+            enabled: true,
+            tier: SourceTier::Standard,
+            connection_policy: ConnectionPolicy::MultiInstance {
+                limits: ConnectionLimits::new(2, 8),
+            },
+        },
     ]
 }
 
@@ -234,6 +270,8 @@ mod tests {
         assert!(names.contains(&"mac"));
         assert!(names.contains(&"notion"));
         assert!(names.contains(&"plaid"));
+        assert!(names.contains(&"strava"));
+        assert!(names.contains(&"github"));
     }
 
     #[test]
@@ -254,7 +292,7 @@ mod tests {
             .iter()
             .filter(|s| s.auth_type == AuthType::OAuth2)
             .collect();
-        assert!(oauth_sources.len() >= 3); // google, notion, plaid
+        assert!(oauth_sources.len() >= 5); // google, notion, plaid, strava, github
 
         // Device sources
         let device_sources: Vec<_> = sources

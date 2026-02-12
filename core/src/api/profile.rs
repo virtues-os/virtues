@@ -29,6 +29,7 @@ pub struct UpdateProfileRequest {
     // Preferences
     pub theme: Option<String>,
     pub update_check_hour: Option<i32>,
+    pub timezone: Option<String>,
     // Discovery context
     pub crux: Option<String>,
     pub technology_vision: Option<String>,
@@ -99,6 +100,9 @@ pub async fn update_profile(db: &SqlitePool, request: UpdateProfileRequest) -> R
     if request.update_check_hour.is_some() {
         set_clauses.push("update_check_hour = ?");
     }
+    if request.timezone.is_some() {
+        set_clauses.push("timezone = ?");
+    }
     if request.crux.is_some() {
         set_clauses.push("crux = ?");
     }
@@ -168,6 +172,9 @@ pub async fn update_profile(db: &SqlitePool, request: UpdateProfileRequest) -> R
     if let Some(v) = request.update_check_hour {
         query_builder = query_builder.bind(v);
     }
+    if let Some(ref v) = request.timezone {
+        query_builder = query_builder.bind(v);
+    }
     if let Some(ref v) = request.crux {
         query_builder = query_builder.bind(v);
     }
@@ -203,4 +210,10 @@ pub async fn get_display_name(db: &SqlitePool) -> Result<String> {
         .preferred_name
         .or(profile.full_name)
         .unwrap_or_else(|| "the user".to_string()))
+}
+
+/// Get the user's timezone setting (IANA format), if configured.
+pub async fn get_timezone(db: &SqlitePool) -> Result<Option<String>> {
+    let profile = get_profile(db).await?;
+    Ok(profile.timezone)
 }

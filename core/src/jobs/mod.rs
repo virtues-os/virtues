@@ -290,8 +290,8 @@ pub async fn cancel_job(db: &SqlitePool, job_id: &str) -> Result<()> {
 /// * `db` - Database connection
 /// * `parent_job_id` - ID of the parent job that spawned this one
 /// * `source_table` - Source table for transformation (e.g., "content_transcription")
-/// * `target_tables` - Target tables for transformation (e.g., vec!["introspection_journal", "social_interaction"])
-/// * `domain` - Domain of the transformation (e.g., "content", "social")
+/// * `target_tables` - Target tables for transformation (e.g., vec!["calendar_event", "communication_email"])
+/// * `domain` - Domain of the transformation (e.g., "content", "communication")
 /// * `source_id` - ID of the specific source record to transform
 /// * `transform_stage` - Stage identifier (e.g., "structuring", "entity_resolution")
 ///
@@ -319,7 +319,7 @@ pub async fn create_chained_transform_job(
     // e.g. "entity_resolution" + "location" → "ER — place"
     let stream_label = match (transform_stage, domain) {
         ("entity_resolution", "location") => Some("ER — place".to_string()),
-        ("entity_resolution", "social") => Some("ER — people".to_string()),
+        ("entity_resolution", "communication") => Some("ER — people".to_string()),
         ("entity_resolution", domain) => Some(format!("ER — {}", domain)),
         (stage, domain) => Some(format!("{} — {}", stage, domain)),
     };

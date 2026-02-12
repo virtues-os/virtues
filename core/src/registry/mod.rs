@@ -78,7 +78,7 @@ pub struct StreamFactoryContext {
 /// A transform mapping from this stream to an ontology table
 #[derive(Clone)]
 pub struct StreamTransform {
-    /// Target ontology table (e.g., "calendar", "social_email")
+    /// Target ontology table (e.g., "calendar_event", "communication_email")
     pub target_table: &'static str,
     
     /// Function to create the transform instance
@@ -363,9 +363,11 @@ fn init_registry() -> Registry {
     let mut registry = Registry::new();
 
     // Register OAuth sources
+    registry.register(crate::sources::github::registry::GitHubSource::descriptor());
     registry.register(crate::sources::google::registry::GoogleSource::descriptor());
     registry.register(crate::sources::notion::registry::NotionSource::descriptor());
     registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
+    registry.register(crate::sources::strava::registry::StravaSource::descriptor());
 
     // Register device sources
     registry.register(crate::sources::ios::registry::IosSource::descriptor());
@@ -436,7 +438,7 @@ pub fn get_stream_by_table_name_including_disabled(
 ///
 /// # Arguments
 /// * `source_table` - The stream table name (e.g., "stream_google_calendar")
-/// * `target_table` - The ontology table name (e.g., "calendar")
+/// * `target_table` - The ontology table name (e.g., "calendar_event")
 /// * `context` - Transform context with dependencies
 ///
 /// # Returns
@@ -465,7 +467,7 @@ pub fn find_transform(
 /// The system uses a three-tier naming architecture:
 /// 1. **Stream Name** (registered in data.streams) - e.g., "app_export", "gmail"
 /// 2. **Stream Table** (object storage) - e.g., "stream_virtues_ai_chat", "stream_google_gmail"
-/// 3. **Ontology Table** (data schema) - e.g., "knowledge_ai_conversation", "social_email"
+/// 3. **Ontology Table** (data schema) - e.g., "content_conversation", "communication_email"
 ///
 /// This function maps stream names (tier 1) to stream tables (tier 2).
 ///

@@ -4,6 +4,7 @@ use clap::Parser;
 use std::env;
 use std::path::Path;
 use virtues::cli::types::{Cli, Commands};
+use virtues::search::Embedder;
 use virtues::VirtuesBuilder;
 
 #[tokio::main]
@@ -30,6 +31,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let cli = Cli::parse();
+
+    // Handle WarmModels early (no database needed — just downloads ML models)
+    if matches!(cli.command, Some(Commands::WarmModels)) {
+        println!("Downloading embedding model (nomic-embed-text-v1.5)...");
+        let embedder = virtues::search::get_embedder().await?;
+        println!("Embedding model ready (dim={})", embedder.dimension());
+
+        println!("Downloading reranker model (bge-reranker-v2-m3)...");
+        let _reranker = virtues::search::get_reranker().await?;
+        println!("Reranker model ready");
+
+        return Ok(());
+    }
 
     // Handle Init command early (doesn't need Virtues client)
     if matches!(cli.command, Some(Commands::Init)) {

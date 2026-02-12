@@ -1,9 +1,9 @@
 //! Developer API for database introspection and SQL execution
 
 use crate::error::{Error, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{Column, ConnectOptions, Row, TypeInfo, ValueRef};
+use sqlx::{Column, ConnectOptions, Executor, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -13,11 +13,18 @@ pub struct ExecuteSqlRequest {
     pub sql: String,
 }
 
+/// Result of a SQL query, including column names (even for empty results)
+#[derive(Debug, Serialize)]
+pub struct SqlQueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<HashMap<String, serde_json::Value>>,
+}
+
 /// Execute a SQL query in read-only mode and return results as JSON
 pub async fn execute_sql(
-    pool: &sqlx::SqlitePool,
+    _pool: &sqlx::SqlitePool,
     request: ExecuteSqlRequest,
-) -> Result<Vec<HashMap<String, serde_json::Value>>> {
+) -> Result<SqlQueryResult> {
     // Get the database URL from environment (same as main pool)
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "sqlite:./data/virtues.db".to_string());
@@ -43,6 +50,16 @@ pub async fn execute_sql(
         .fetch_all(&mut conn)
         .await
         .map_err(|e| Error::Database(format!("Query execution failed: {}", e)))?;
+
+    // Get column names — from first row if available, otherwise via describe
+    let columns: Vec<String> = if !rows.is_empty() {
+        rows[0].columns().iter().map(|c| c.name().to_string()).collect()
+    } else {
+        match (&mut conn).describe(&request.sql).await {
+            Ok(desc) => desc.columns.iter().map(|c| c.name().to_string()).collect(),
+            Err(_) => vec![],
+        }
+    };
 
     // Convert rows to JSON
     let mut results = Vec::new();
@@ -106,7 +123,7 @@ pub async fn execute_sql(
         results.push(row_map);
     }
 
-    Ok(results)
+    Ok(SqlQueryResult { columns, rows: results })
 }
 
 /// List all tables in the database (excluding internal sqlite_ tables)

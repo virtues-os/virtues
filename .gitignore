@@ -102,13 +102,13 @@ wheels/
 # Other
 /apps/oauth-proxy/.pnpm-store
 /target/
+.fastembed_cache/
 data/*
 core/data/
 core/data/*
 tmp/*
 
-# Exception: Allow oauth-proxy dist/ for Vercel deployment
-!/apps/oauth-proxy/dist/
+# oauth-proxy dist/ (Vercel compiles TypeScript natively, no dist/ needed)
 /.pnpm-store
 /apps/web/.pnpm-store
 /apps/tollbooth/target

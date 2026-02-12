@@ -3,12 +3,14 @@
 pub mod auth;
 pub mod base;
 pub mod factory;
+pub mod github;
 pub mod google;
 pub mod ios;
 pub mod mac;
 pub mod notion;
 pub mod plaid;
 pub mod pull_stream;
+pub mod strava;
 pub mod push_stream;
 pub mod stream_type;
 

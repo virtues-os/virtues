@@ -6,14 +6,19 @@
 	 * Uses Yjs for real-time collaborative editing with WebSocket sync.
 	 */
 	import { Page } from "$lib";
-	import CoverImagePicker from "$lib/components/CoverImagePicker.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
-	import { PageEditor, VersionHistoryPanel } from "$lib/components/pages";
+	import { PageEditor } from "$lib/components/pages";
+	import type { DocStats } from "$lib/components/pages/PageEditor.svelte";
+	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
+	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
+	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import { Popover } from "$lib/floating";
+	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { onMount, onDestroy, untrack } from "svelte";
 	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
+	import { saveVersion } from "$lib/yjs/versions";
+	import { onDestroy, onMount, untrack } from "svelte";
 
 	interface Props {
 		/** The page ID to display/edit */
@@ -52,11 +57,7 @@
 	let content = $state("");
 	let icon = $state<string | null>(null);
 	let coverUrl = $state<string | null>(null);
-	let showIconPicker = $state(false);
 	let showCoverPicker = $state(false);
-	let showVersionHistory = $state(false);
-	let showDeleteConfirm = $state(false);
-	let coverHover = $state(false);
 	type WidthMode = "small" | "medium" | "full";
 	let widthMode = $state<WidthMode>("medium");
 	let showDragHandles = $state(true);
@@ -71,6 +72,11 @@
 	let isTyping = $state(false);
 	let typingTimeout: ReturnType<typeof setTimeout> | null = null;
 
+	// Auto-snapshot state: idle timer (5 min) + blur trigger
+	const AUTO_SNAPSHOT_IDLE_MS = 5 * 60 * 1000;
+	let hasEditsSinceSnapshot = false;
+	let autoSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
+
 	// Yjs document for real-time sync
 	let yjsDoc = $state<YjsDocument | undefined>(undefined);
 	// Unsubscribe handles for Yjs store subscriptions
@@ -82,6 +88,9 @@
 	// Grace period: don't show "Offline" during initial connection attempt
 	let connectionGracePeriod = $state(true);
 	let graceTimerRef: ReturnType<typeof setTimeout> | null = null;
+	// Sync fallback: force-show editor if sync hasn't completed after timeout.
+	// Prevents permanent black screen if IndexedDB + WebSocket both stall.
+	let syncFallbackRef: ReturnType<typeof setTimeout> | null = null;
 
 	// AbortController for cancelling in-flight loadPage() fetches
 	let loadAbortController: AbortController | null = null;
@@ -95,15 +104,10 @@
 	// Editor ref for focusing
 	let editorContainerEl: HTMLDivElement;
 
-	// Computed stats
-	const wordCount = $derived(
-		content.trim() ? content.trim().split(/\s+/).length : 0,
-	);
-	const charCount = $derived(content.length);
-	// Count outgoing links: [text](url) patterns, excluding images ![...]()
-	const linkCount = $derived(
-		(content.match(/(?<!!)\[.+?\]\(.+?\)/g) || []).length,
-	);
+	// Doc stats from PageEditor (updated via onDocChange callback)
+	let wordCount = $state(0);
+	let charCount = $state(0);
+	let linkCount = $state(0);
 
 	// TODO: Fetch actual backlinks from API
 	const backlinks = $state(0);
@@ -111,22 +115,35 @@
 	// Copy state
 	let copied = $state(false);
 
-	// Track body content edits for the save status indicator
-	// Skip the initial value — only react to changes after mount
-	let contentInitialized = false;
-	$effect(() => {
-		content; // Track content changes
-		if (!contentInitialized) {
-			contentInitialized = true;
-			return;
-		}
-		// Content changed from user edit — show typing/syncing indicator
+	async function autoSnapshot(description: string, keepalive = false) {
+		if (!hasEditsSinceSnapshot || !yjsDoc) return;
+		hasEditsSinceSnapshot = false;
+		await saveVersion(yjsDoc.ydoc, pageId, description, 'auto', { keepalive });
+	}
+
+	function resetIdleTimer() {
+		if (autoSnapshotTimeout) clearTimeout(autoSnapshotTimeout);
+		autoSnapshotTimeout = setTimeout(() => {
+			autoSnapshot('Auto-saved (idle)');
+		}, AUTO_SNAPSHOT_IDLE_MS);
+	}
+
+	function handleDocChange(stats: DocStats) {
+		wordCount = stats.wordCount;
+		charCount = stats.charCount;
+		linkCount = stats.linkCount;
+
+		// Track edits for auto-snapshot deduplication
+		hasEditsSinceSnapshot = true;
+		resetIdleTimer();
+
+		// Show typing/syncing indicator
 		isTyping = true;
 		if (typingTimeout) clearTimeout(typingTimeout);
 		typingTimeout = setTimeout(() => {
 			isTyping = false;
 		}, 1000);
-	});
+	}
 
 	// Reset hasSaved after a delay so the checkmark fades
 	$effect(() => {
@@ -161,12 +178,16 @@
 		}
 	}
 
-	// visibilitychange: flush pending saves when tab is backgrounded
+	// visibilitychange: flush pending saves + auto-snapshot when tab is backgrounded
 	function handleVisibilityChange() {
-		if (document.hidden && saveTimeout) {
-			clearTimeout(saveTimeout);
-			saveTimeout = null;
-			save();
+		if (document.hidden) {
+			if (saveTimeout) {
+				clearTimeout(saveTimeout);
+				saveTimeout = null;
+				save();
+			}
+			// Auto-snapshot on blur with keepalive so the request survives tab switch
+			autoSnapshot('Auto-saved (background)', true);
 		}
 	}
 
@@ -211,6 +232,8 @@
 		if (saveTimeout) clearTimeout(saveTimeout);
 		if (typingTimeout) clearTimeout(typingTimeout);
 		if (graceTimerRef) clearTimeout(graceTimerRef);
+		if (syncFallbackRef) clearTimeout(syncFallbackRef);
+		if (autoSnapshotTimeout) clearTimeout(autoSnapshotTimeout);
 		// Unsubscribe from Yjs stores
 		unsubSynced?.();
 		unsubConnected?.();
@@ -256,6 +279,11 @@
 		loading = true;
 		error = null;
 
+		// Reset auto-snapshot state for the new page
+		if (autoSnapshotTimeout) clearTimeout(autoSnapshotTimeout);
+		autoSnapshotTimeout = null;
+		hasEditsSinceSnapshot = false;
+
 		// Clean up previous Yjs document if switching pages
 		if (yjsDoc) {
 			yjsDoc.destroy();
@@ -295,6 +323,9 @@
 			// This connects via WebSocket to /ws/yjs/{pageId}
 			yjsDoc = createYjsDocument(pageId);
 
+			// Keep editAllowListStore in sync so the AI has access to page content
+			editAllowListStore.updateYjsDoc(pageId, yjsDoc);
+
 			// Grace period: suppress "Offline" during initial connection
 			connectionGracePeriod = true;
 			if (graceTimerRef) clearTimeout(graceTimerRef);
@@ -302,9 +333,24 @@
 				connectionGracePeriod = false;
 			}, 1500);
 
+			// Sync fallback: if neither IndexedDB nor WebSocket sync within 4s,
+			// force-show the editor so the user never gets a permanent black screen.
+			if (syncFallbackRef) clearTimeout(syncFallbackRef);
+			syncFallbackRef = setTimeout(() => {
+				if (!isSynced) {
+					console.warn("[PageContent] Sync timeout — force-showing editor");
+					isSynced = true;
+				}
+			}, 4000);
+
 			// Subscribe to sync/connection state (store unsubscribe handles)
 			unsubSynced = yjsDoc.isSynced.subscribe((synced) => {
 				isSynced = synced;
+				// Clear fallback timer once synced normally
+				if (synced && syncFallbackRef) {
+					clearTimeout(syncFallbackRef);
+					syncFallbackRef = null;
+				}
 			});
 			unsubConnected = yjsDoc.isConnected.subscribe((connected) => {
 				isConnected = connected;
@@ -315,8 +361,7 @@
 				}
 			});
 
-			// Content is synced via bind:content from PageEditor, which properly
-			// serializes ProseMirror doc to markdown via serializeMarkdown()
+			// Content sync happens via Yjs. Doc stats are pushed via onDocChange callback.
 		} catch (e) {
 			// Ignore aborted fetches (cancelled by a newer loadPage call)
 			if (e instanceof DOMException && e.name === "AbortError") return;
@@ -333,11 +378,8 @@
 		}, 1000);
 	}
 
-	function handleContentChange(newContent: string) {
-		// Update local state for word count and stats
-		// Typing indicator is handled by the $effect watching content
-		content = newContent;
-	}
+	// Note: handleContentChange removed — stats are now computed from ProseMirror
+	// directly via onDocChange callback. Content sync happens through Yjs.
 
 	// Watch for title changes and sync to stores immediately
 	$effect(() => {
@@ -417,8 +459,6 @@
 			onNavigate?.("/pages");
 		} catch (err) {
 			console.error("Failed to delete page:", err);
-		} finally {
-			showDeleteConfirm = false;
 		}
 	}
 
@@ -439,7 +479,15 @@
 
 	async function copyMarkdown() {
 		try {
-			await navigator.clipboard.writeText(content);
+			// Fetch fresh content from API (Yjs → markdown serialized server-side)
+			const res = await fetch(`/api/pages/${pageId}`);
+			if (res.ok) {
+				const data = await res.json();
+				await navigator.clipboard.writeText(data.content || "");
+			} else {
+				// Fallback to initial content
+				await navigator.clipboard.writeText(content);
+			}
 			copied = true;
 		} catch (err) {
 			console.error("Failed to copy markdown:", err);
@@ -469,201 +517,50 @@
 	{:else if pageData}
 		<div class="page-layout">
 			<!-- Top Action Bar - flush to window -->
-			<div class="page-toolbar">
-				<div class="toolbar-spacer"></div>
-				<Popover bind:open={showIconPicker} placement="bottom-start">
-					{#snippet trigger({ toggle })}
-						<button
-							onclick={toggle}
-							class="toolbar-action"
-							title={icon ? "Change icon" : "Add icon"}
-						>
-							{#if icon}
-								{#if icon.includes(":")}
-									<Icon {icon} width="15" />
-								{:else}
-									<span class="toolbar-emoji">{icon}</span>
-								{/if}
-							{:else}
-								<Icon icon="ri:emotion-line" width="15" />
-							{/if}
-						</button>
-					{/snippet}
-					{#snippet children({ close })}
-						<IconPicker
-							value={icon}
-							onSelect={(value) => {
-								icon = value;
-								if (pageData) {
-									pagesStore.updatePageLocally(pageData.id, {
-										icon: value,
-									});
-								}
-								onIconChange?.(value);
-								save();
-							}}
-							{close}
-						/>
-					{/snippet}
-				</Popover>
-				<Popover bind:open={showCoverPicker} placement="bottom-start">
-					{#snippet trigger({ toggle })}
-						<button
-							onclick={toggle}
-							class="toolbar-action"
-							title={coverUrl ? "Change cover" : "Add cover"}
-						>
-							<Icon
-								icon={coverUrl
-									? "ri:image-edit-line"
-									: "ri:image-line"}
-								width="15"
-							/>
-						</button>
-					{/snippet}
-					{#snippet children({ close })}
-						<CoverImagePicker
-							value={coverUrl}
-							onSelect={(url) => {
-								coverUrl = url;
-								save();
-							}}
-							{close}
-						/>
-					{/snippet}
-				</Popover>
-				<button
-					onclick={() => {
-						const modes: WidthMode[] = ["small", "medium", "full"];
-						const currentIndex = modes.indexOf(widthMode);
-						widthMode = modes[(currentIndex + 1) % modes.length];
-					}}
-					class="toolbar-action"
-					title={widthMode === "small"
-						? "Small width"
-						: widthMode === "medium"
-							? "Medium width"
-							: "Full width"}
-				>
-					<Icon
-						icon={widthMode === "small"
-							? "ri:contract-left-right-line"
-							: widthMode === "medium"
-								? "ri:pause-line"
-								: "ri:expand-left-right-line"}
-						width="15"
-					/>
-				</button>
-				<button
-					onclick={() => (showDragHandles = !showDragHandles)}
-					class="toolbar-action"
-					class:active={showDragHandles}
-					title={showDragHandles
-						? "Hide line numbers"
-						: "Show line numbers"}
-				>
-					<Icon icon="ri:hashtag" width="15" />
-				</button>
-				<button
-					onclick={copyMarkdown}
-					class="toolbar-action"
-					class:active={copied}
-					title={copied ? "Copied!" : "Copy as Markdown"}
-				>
-					<Icon
-						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
-						width="15"
-					/>
-				</button>
-				<Popover bind:open={showVersionHistory} placement="bottom-end">
-					{#snippet trigger({ toggle })}
-						<button
-							onclick={toggle}
-							class="toolbar-action"
-							title="Version history"
-						>
-							<Icon icon="ri:history-line" width="15" />
-						</button>
-					{/snippet}
-					{#snippet children({ close })}
-						<VersionHistoryPanel {close} {pageId} {yjsDoc} />
-					{/snippet}
-				</Popover>
-				<div class="toolbar-divider"></div>
-				<Popover bind:open={showDeleteConfirm} placement="bottom-end">
-					{#snippet trigger({ toggle })}
-						<button
-							onclick={toggle}
-							class="toolbar-action toolbar-action-danger"
-							title="Delete page"
-						>
-							<Icon icon="ri:delete-bin-line" width="15" />
-						</button>
-					{/snippet}
-					{#snippet children({ close })}
-						<div class="delete-confirm">
-							<p class="delete-confirm-text">Delete this page?</p>
-							<div class="delete-confirm-actions">
-								<button
-									class="delete-confirm-btn delete-confirm-cancel"
-									onclick={close}
-								>
-									Cancel
-								</button>
-								<button
-									class="delete-confirm-btn delete-confirm-delete"
-									onclick={deletePage}
-								>
-									Delete
-								</button>
-							</div>
-						</div>
-					{/snippet}
-				</Popover>
-			</div>
+			<PageToolbar
+				{icon}
+				{coverUrl}
+				{widthMode}
+				{showDragHandles}
+				{copied}
+				{pageId}
+				{yjsDoc}
+				bind:showCoverPicker
+				onIconSelect={(value) => {
+					icon = value;
+					if (pageData) {
+						pagesStore.updatePageLocally(pageData.id, { icon: value });
+					}
+					onIconChange?.(value);
+					save();
+				}}
+				onCoverSelect={(url) => {
+					coverUrl = url;
+					save();
+				}}
+				onWidthCycle={() => {
+					const modes: WidthMode[] = ["small", "medium", "full"];
+					const currentIndex = modes.indexOf(widthMode);
+					widthMode = modes[(currentIndex + 1) % modes.length];
+				}}
+				onToggleDragHandles={() => (showDragHandles = !showDragHandles)}
+				onCopyMarkdown={copyMarkdown}
+				onDelete={deletePage}
+			/>
 
 			<!-- Main Content Area -->
 			<div class="page-content">
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div
-						class="cover-image-wrapper"
-						class:width-small={widthMode === "small"}
-						class:width-medium={widthMode === "medium"}
-						class:width-full={widthMode === "full"}
-						onmouseenter={() => (coverHover = true)}
-						onmouseleave={() => (coverHover = false)}
-					>
-						<div
-							class="cover-image"
-							style="background-image: url({coverUrl})"
-						></div>
-						{#if coverHover}
-							<div class="cover-overlay">
-								<button
-									class="cover-overlay-btn"
-									onclick={() => (showCoverPicker = true)}
-								>
-									<Icon
-										icon="ri:image-edit-line"
-										width="14"
-									/>
-									Change cover
-								</button>
-								<button
-									class="cover-overlay-btn cover-overlay-btn-danger"
-									onclick={() => {
-										coverUrl = null;
-										save();
-									}}
-								>
-									<Icon icon="ri:close-line" width="14" />
-									Remove
-								</button>
-							</div>
-						{/if}
-					</div>
+					<PageCoverImage
+						{coverUrl}
+						{widthMode}
+						onChangeCover={() => (showCoverPicker = true)}
+						onRemoveCover={() => {
+							coverUrl = null;
+							save();
+						}}
+					/>
 				{/if}
 
 				<div
@@ -736,8 +633,8 @@
 							{#key pageId}
 								<div class:editor-hidden={!isSynced}>
 									<PageEditor
-										bind:content
-										onSave={handleContentChange}
+										initialContent={content}
+										onDocChange={handleDocChange}
 										placeholder="Type / for styling and @ for entities"
 										{yjsDoc}
 										disabled={!isSynced}
@@ -754,72 +651,18 @@
 			</div>
 
 			<!-- Bottom Status Bar -->
-			<div class="page-status-bar">
-				<div class="status-item" title="Outgoing links">
-					<Icon icon="ri:links-line" width="12" />
-					<span>{linkCount}</span>
-				</div>
-				<div class="status-divider"></div>
-				<div class="status-item" title="Word count">
-					<span>{wordCount.toLocaleString()} words</span>
-				</div>
-				<div class="status-divider"></div>
-				<div class="status-item" title="Character count">
-					<span>{charCount.toLocaleString()} chars</span>
-				</div>
-				<div class="status-spacer"></div>
-				<!-- Unified save status -->
-				<div
-					class="status-item status-save"
-					class:saving={saving || isTyping}
-					class:saved={hasSaved ||
-						(isConnected &&
-							isSynced &&
-							!saving &&
-							!isTyping &&
-							!saveError)}
-					class:error={saveError}
-					class:offline={!isConnected && !connectionGracePeriod}
-				>
-					{#if !isConnected && !connectionGracePeriod}
-						<Icon icon="ri:wifi-off-line" width="12" />
-						<span>Offline</span>
-					{:else if saving || isTyping || connectionGracePeriod || !isSynced}
-						{#if isTyping}
-							<svg
-								width="14"
-								height="14"
-								viewBox="0 0 16 16"
-								fill="none"
-							>
-								<text
-									x="1"
-									y="12"
-									font-family="var(--font-serif)"
-									font-size="11"
-									font-weight="500"
-									fill="currentColor">Aa</text
-								>
-							</svg>
-						{:else}
-							<Icon icon="ri:cloud-line" width="12" />
-						{/if}
-						<span
-							>{saving
-								? "Saving"
-								: isTyping
-									? "Typing"
-									: "Syncing"}</span
-						>
-					{:else if saveError}
-						<Icon icon="ri:error-warning-line" width="12" />
-						<span>Error</span>
-					{:else}
-						<Icon icon="ri:cloud-line" width="12" />
-						<span>Saved</span>
-					{/if}
-				</div>
-			</div>
+			<PageStatusBar
+				{linkCount}
+				{wordCount}
+				{charCount}
+				{saving}
+				{isTyping}
+				{hasSaved}
+				{isConnected}
+				{isSynced}
+				{saveError}
+				{connectionGracePeriod}
+			/>
 		</div>
 	{/if}
 </Page>
@@ -831,59 +674,6 @@
 		flex-direction: column;
 		height: 100%;
 		min-height: 0;
-	}
-
-	/* Top Toolbar - flush to top, minimal */
-	.page-toolbar {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 4px 12px;
-		background: var(--color-background);
-		border-bottom: 1px solid var(--color-border);
-		flex-shrink: 0;
-	}
-
-	.toolbar-spacer {
-		flex: 1;
-	}
-
-	.toolbar-action {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 6px;
-		border: none;
-		background: none;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-		border-radius: 4px;
-		transition: all 0.15s ease;
-	}
-
-	.toolbar-action:hover {
-		color: var(--color-foreground);
-		background: var(--color-surface-elevated);
-	}
-
-	.toolbar-action.active {
-		color: var(--color-primary);
-	}
-
-	.toolbar-action-danger:hover {
-		color: var(--color-error);
-	}
-
-	.toolbar-emoji {
-		font-size: 14px;
-		line-height: 1;
-	}
-
-	.toolbar-divider {
-		width: 1px;
-		height: 16px;
-		background: var(--color-border);
-		margin: 0 2px;
 	}
 
 	/* Main Content Area - scrollable */
@@ -972,14 +762,18 @@
 	/* Editor Area */
 	.page-editor-area {
 		min-height: 300px;
+		position: relative;
 	}
 
-	/* Hidden editor - keeps ProseMirror DOM attached but invisible during sync */
+	/* Hidden editor - keeps ProseMirror DOM attached but invisible during sync.
+	   Uses opacity instead of height:0 to prevent permanent black screen if
+	   sync state gets stuck (the loading spinner overlays this). */
 	.editor-hidden {
-		visibility: hidden;
-		height: 0;
-		overflow: hidden;
+		opacity: 0;
 		pointer-events: none;
+		position: absolute;
+		left: 0;
+		right: 0;
 	}
 
 	/* Editor Loading State - shown while Yjs syncs */
@@ -990,56 +784,6 @@
 		padding: 2rem 0;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
-	}
-
-	/* Bottom Status Bar */
-	.page-status-bar {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 6px 16px;
-		background: var(--color-background);
-		border-top: 1px solid var(--color-border);
-		font-size: 11px;
-		color: var(--color-foreground-muted);
-		flex-shrink: 0;
-	}
-
-	.status-item {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-	}
-
-	.status-divider {
-		width: 1px;
-		height: 10px;
-		background: var(--color-border);
-	}
-
-	.status-spacer {
-		flex: 1;
-	}
-
-	/* Unified save status states */
-	.status-save {
-		transition: color 0.2s ease;
-	}
-
-	.status-save.saving {
-		color: var(--color-foreground-muted);
-	}
-
-	.status-save.saved {
-		color: var(--color-success);
-	}
-
-	.status-save.error {
-		color: var(--color-error);
-	}
-
-	.status-save.offline {
-		color: var(--color-warning);
 	}
 
 	/* Spinning animation */
@@ -1056,124 +800,4 @@
 		}
 	}
 
-	/* Cover Image - matches .page-inner width (small / medium / full) */
-	.cover-image-wrapper {
-		position: relative;
-		margin-left: auto;
-		margin-right: auto;
-		margin-bottom: 1.5rem;
-		border-radius: 0.5rem;
-		overflow: hidden;
-		transition: max-width 0.2s ease-out;
-	}
-
-	.cover-image-wrapper.width-small {
-		max-width: 32rem;
-	}
-
-	.cover-image-wrapper.width-medium {
-		max-width: 42rem;
-	}
-
-	.cover-image-wrapper.width-full {
-		max-width: 100%;
-	}
-
-	.cover-image {
-		width: 100%;
-		aspect-ratio: 3 / 1;
-		background-size: cover;
-		background-position: center;
-	}
-
-	.cover-overlay {
-		position: absolute;
-		bottom: 0;
-		right: 0;
-		display: flex;
-		gap: 4px;
-		padding: 8px;
-		animation: cover-fade-in 100ms ease-out;
-	}
-
-	@keyframes cover-fade-in {
-		from {
-			opacity: 0;
-		}
-		to {
-			opacity: 1;
-		}
-	}
-
-	.cover-overlay-btn {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 6px 10px;
-		font-size: 12px;
-		font-weight: 500;
-		color: white;
-		background: rgba(0, 0, 0, 0.6);
-		backdrop-filter: blur(4px);
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: background 150ms;
-	}
-
-	.cover-overlay-btn:hover {
-		background: rgba(0, 0, 0, 0.8);
-	}
-
-	.cover-overlay-btn-danger:hover {
-		background: rgba(220, 38, 38, 0.8);
-	}
-
-	/* Delete Confirmation Popover */
-	.delete-confirm {
-		padding: 12px;
-		min-width: 180px;
-	}
-
-	.delete-confirm-text {
-		margin: 0 0 12px 0;
-		font-size: 13px;
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-
-	.delete-confirm-actions {
-		display: flex;
-		gap: 8px;
-		justify-content: flex-end;
-	}
-
-	.delete-confirm-btn {
-		padding: 6px 12px;
-		font-size: 12px;
-		font-weight: 500;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.delete-confirm-cancel {
-		background: var(--color-surface-elevated);
-		color: var(--color-foreground-muted);
-	}
-
-	.delete-confirm-cancel:hover {
-		background: var(--color-border);
-		color: var(--color-foreground);
-	}
-
-	.delete-confirm-delete {
-		background: var(--color-error);
-		color: white;
-	}
-
-	.delete-confirm-delete:hover {
-		filter: brightness(1.1);
-	}
 </style>

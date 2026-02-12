@@ -167,8 +167,9 @@ pub async fn mark_server_ready(pool: &SqlitePool) -> Result<()> {
 /// "Setting up your server" screen from appearing after container
 /// restarts or rolling updates where the /data volume persists.
 ///
-/// If owner_email is null, this is a genuinely fresh provision and we
-/// leave server_status as 'provisioning' to wait for the Atlas hydrate call.
+/// If owner_email is null and OWNER_EMAIL env var is set, this is a production
+/// provision waiting for the Atlas hydrate call. If OWNER_EMAIL is not set
+/// (local dev), we auto-mark as ready since the first login will become owner.
 pub async fn ensure_server_status(pool: &SqlitePool) -> Result<()> {
     let row = sqlx::query!(
         r#"
@@ -187,7 +188,15 @@ pub async fn ensure_server_status(pool: &SqlitePool) -> Result<()> {
             tracing::info!("Server previously hydrated, auto-marked as ready on startup");
         }
         Ok(r) if r.server_status == "provisioning" => {
-            tracing::info!("Fresh provision — waiting for Atlas hydration");
+            // No owner_email yet. In production Atlas will call /internal/hydrate.
+            // In local dev (no OWNER_EMAIL env var), skip the provisioning screen
+            // — the first login will become owner anyway.
+            if std::env::var("OWNER_EMAIL").is_err() {
+                mark_server_ready(pool).await?;
+                tracing::info!("No OWNER_EMAIL env var — local dev mode, auto-marked as ready");
+            } else {
+                tracing::info!("Fresh provision — waiting for Atlas hydration");
+            }
         }
         Ok(_) => {
             tracing::debug!("Server already in ready state");

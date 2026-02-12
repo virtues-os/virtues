@@ -47,6 +47,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to ensure server status: {}", e);
     }
 
+    // Initialize vec_search virtual table for semantic search (requires sqlite-vec extension)
+    {
+        let search_engine = crate::search::SemanticSearchEngine::new(
+            Arc::new(client.database.pool().clone()),
+        );
+        if let Err(e) = search_engine.ensure_vec_table().await {
+            tracing::warn!("Failed to initialize vec_search table: {}", e);
+        }
+    }
+
     // Initialize StreamWriter (simple in-memory buffer)
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
@@ -66,6 +76,16 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                     // Schedule drive trash purge job (daily at 3am)
                     if let Err(e) = sched.schedule_drive_trash_purge_job().await {
                         tracing::warn!("Failed to schedule drive trash purge job: {}", e);
+                    }
+
+                    // Schedule daily summary job (runs at user's maintenance hour)
+                    if let Err(e) = sched.schedule_daily_summary_job().await {
+                        tracing::warn!("Failed to schedule daily summary job: {}", e);
+                    }
+
+                    // Schedule embedding indexer job (every 15 minutes)
+                    if let Err(e) = sched.schedule_embedding_job().await {
+                        tracing::warn!("Failed to schedule embedding job: {}", e);
                     }
 
                     // Keep scheduler alive - it will be dropped when the server shuts down
@@ -118,8 +138,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/health", get(health))
         // App server info (for device pairing)
         .route("/api/app/server-info", get(server_info))
-        // Timeline alias (redirects to wiki/day)
-        .route("/api/timeline/day/:date", get(api::wiki_get_day_handler))
+        // Timeline day (location chunks for movement map)
+        .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Data ingestion
         .route("/ingest", post(ingest::ingest))
         // OAuth flow
@@ -445,6 +465,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             delete(api::wiki_delete_auto_events_handler),
         )
         // Wiki - Day Sources (ontology data)
+        .route(
+            "/api/wiki/day/:date/summary",
+            post(api::wiki_generate_day_summary_handler),
+        )
         .route(
             "/api/wiki/day/:date/sources",
             get(api::wiki_get_day_sources_handler),
