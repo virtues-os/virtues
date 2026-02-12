@@ -45,6 +45,7 @@
 		"@iconify-json/ri": "^1.2.7",
 		"@iconify/svelte": "^5.2.1",
 		"@lezer/highlight": "^1.2.3",
+		"@shikijs/core": "^3.22.0",
 		"@tauri-apps/api": "^2",
 		"@xterm/addon-fit": "^0.11.0",
 		"@xterm/addon-web-links": "^0.12.0",
