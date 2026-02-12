@@ -9,36 +9,56 @@ use tracing::{info, error};
 
 use crate::AppState;
 
-#[derive(Debug, Deserialize, Serialize)]
+/// Payload received from core
+#[derive(Debug, Deserialize)]
 pub struct FeedbackPayload {
     #[serde(rename = "type")]
     pub feedback_type: String,
-    pub message: String,
-    // Add any metadata we might want to attach (user_id optional since it comes from header)
-    #[serde(default)]
-    pub user_id: Option<String>,
+    pub content: String,
+}
+
+/// Payload forwarded to Atlas
+#[derive(Debug, Serialize)]
+struct AtlasFeedbackPayload {
+    subdomain: String,
+    #[serde(rename = "type")]
+    feedback_type: String,
+    content: String,
+    metadata: serde_json::Value,
 }
 
 pub async fn handle_feedback(
     State(state): State<Arc<AppState>>,
-    Json(mut payload): Json<FeedbackPayload>,
+    Json(payload): Json<FeedbackPayload>,
 ) -> impl IntoResponse {
     info!("Received feedback proxy request: type={}", payload.feedback_type);
 
     // If Atlas is configured, forward immediately
     if let Some(atlas_url) = &state.config.atlas_url {
+        let subdomain = match &state.config.subdomain {
+            Some(s) => s.clone(),
+            None => {
+                error!("Cannot forward feedback: subdomain not configured");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
+
         let target_url = format!("{}/internal/feedback", atlas_url);
         let secret = state.config.atlas_secret.clone().unwrap_or_default();
-        
-        // Ensure user_id is populated if we have it in context (TODO: middleware extraction)
-        // For now, we trust the payload or headers passed through proxy
+
+        let atlas_payload = AtlasFeedbackPayload {
+            subdomain,
+            feedback_type: payload.feedback_type,
+            content: payload.content,
+            metadata: serde_json::json!({}),
+        };
 
         match state.http_client
             .post(&target_url)
             .header("X-Atlas-Secret", secret)
-            .json(&payload)
+            .json(&atlas_payload)
             .send()
-            .await 
+            .await
         {
             Ok(res) => {
                 if !res.status().is_success() {
@@ -53,7 +73,6 @@ pub async fn handle_feedback(
             }
         }
     } else {
-        // Fallback for standalone mode: just log it
         info!("Standalone mode (No Atlas): Feedback logged: {:?}", payload);
     }
 

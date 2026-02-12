@@ -7,15 +7,17 @@
 //!
 //! When YjsState is available, edits go through the Yjs layer for real-time sync.
 //!
-//! Edits are applied as clean text. The frontend handles highlighting and
-//! accept/reject UI via decorations (no CriticMarkup in the document).
+//! Edits are applied as clean text. A version snapshot is saved before each
+//! AI edit so the user can undo via version history.
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::{Arc, OnceLock};
 
-// Static regexes for stripping CriticMarkup (safety net if AI includes markers)
+// Static regexes for stripping CriticMarkup (legacy safety fallback — strips markers if LLM still outputs them)
 static ADDITION_RE: OnceLock<Regex> = OnceLock::new();
 static DELETION_RE: OnceLock<Regex> = OnceLock::new();
 
@@ -52,9 +54,12 @@ pub struct EditPageArgs {
     /// Page ID (optional - uses context if not provided)
     #[serde(default)]
     pub page_id: Option<String>,
+    /// New title for the page (optional - only set to rename)
+    #[serde(default)]
+    pub title: Option<String>,
     /// Text to find in the document (empty string for full replacement)
     pub find: String,
-    /// Replacement text (CriticMarkup markers are stripped if present)
+    /// Replacement text (supports markdown; CriticMarkup markers stripped as safety fallback)
     pub replace: String,
 }
 
@@ -93,8 +98,8 @@ impl PageEditorTool {
         Self { pool, yjs_state }
     }
 
-    /// Strip CriticMarkup markers from content
-    /// Keeps the content inside addition markers, removes deletion markers entirely
+    /// Safety fallback: strip CriticMarkup markers if the LLM still outputs them.
+    /// Keeps content inside addition markers, removes deletion markers entirely.
     fn strip_critic_markup(content: &str) -> String {
         // Use static regexes (compiled once on first use)
         let addition_re = ADDITION_RE.get_or_init(|| {
@@ -113,11 +118,9 @@ impl PageEditorTool {
         result.to_string()
     }
 
-    /// Create a new page with optional initial content
-    ///
-    /// Content is applied directly - no CriticMarkup needed.
-    /// The user does NOT need to accept/reject for new pages.
-    /// Any CriticMarkup markers are automatically stripped as a safety net.
+    /// Create a new page with optional initial content.
+    /// Content supports markdown and is applied directly.
+    /// CriticMarkup markers are stripped as a safety fallback.
     pub async fn create_page(
         &self,
         arguments: serde_json::Value,
@@ -199,16 +202,15 @@ impl PageEditorTool {
         })))
     }
 
-    /// Edit a page using find/replace
+    /// Edit a page using find/replace.
     ///
-    /// The 'find' text is located in the document and replaced with clean 'replace' text.
-    /// Any CriticMarkup markers in the replace text are stripped (safety net).
+    /// The 'find' text matches against plain text content (formatting stripped).
+    /// The 'replace' text supports markdown, which is preserved through the Yjs roundtrip.
+    /// CriticMarkup markers in replace are stripped as a safety fallback.
     /// Empty 'find' string means replace entire document.
     ///
-    /// The frontend handles highlighting and accept/reject UI via decorations.
-    ///
-    /// When YjsState is available, edits go through Yjs for real-time sync to connected clients.
-    /// Otherwise, falls back to direct database update (legacy behavior).
+    /// Edits are applied immediately via Yjs for real-time sync to connected clients.
+    /// A version snapshot is saved before each edit for undo via version history.
     ///
     /// Permission checking: If chat_id is provided in context, checks that the page has
     /// been granted edit permission for this chat. If not, returns permission_needed: true.
@@ -252,50 +254,64 @@ impl PageEditorTool {
                     "entity_id": page_id,
                     "entity_type": "page",
                     "entity_title": page_title,
-                    "message": format!("Permission required to edit \"{}\"", page_title),
+                    "message": "Waiting for the user to grant edit permission.",
                 })));
             }
         }
 
-        // Strip any CriticMarkup markers from replace text (clean document)
-        // Frontend handles highlighting via decorations, not document markup
+        // Strip CriticMarkup markers from replace text
         let replace_content = Self::strip_critic_markup(&args.replace);
+        // Plain text versions for surgical Yjs node-level edits
+        let plain_find = crate::markdown::markdown_to_plain_text(&args.find);
+        let plain_replace = crate::markdown::markdown_to_plain_text(&replace_content);
+
+        // Skip content edit when both find and replace are empty (title-only change)
+        let has_content_edit = !plain_find.is_empty() || !plain_replace.is_empty();
 
         // Apply the edit through Yjs if available, otherwise fall back to database
-        if let Some(ref yjs_state) = self.yjs_state {
+        if has_content_edit && self.yjs_state.is_some() {
+            let yjs_state = self.yjs_state.as_ref().unwrap();
+            // Auto-snapshot before AI edit for undo via version history
+            if let Ok(snapshot_bytes) = yjs_state.get_document_snapshot(&page_id).await {
+                let _ = pages::create_version(self.pool.as_ref(), &page_id, pages::CreateVersionRequest {
+                    snapshot: BASE64.encode(&snapshot_bytes),
+                    content_preview: "Auto-saved before AI edit".to_string(),
+                    created_by: "ai".to_string(),
+                    description: Some("Auto-saved before AI edit".to_string()),
+                }).await;
+            }
+
             // Apply through Yjs for real-time sync
-            yjs_state.apply_text_edit(&page_id, &args.find, &replace_content)
+            yjs_state.apply_text_edit(&page_id, &plain_find, &plain_replace, &replace_content)
                 .await
                 .map_err(|e| ToolError::ExecutionFailed(e))?;
-        } else {
+        } else if has_content_edit {
             // Fallback: direct database update (no real-time sync)
             tracing::warn!("YjsState not available, falling back to direct database update");
 
-            // Verify page exists and get current content
             let page = pages::get_page(self.pool.as_ref(), &page_id)
                 .await
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to get page: {}", e)))?;
 
-            // Validate find text exists (unless empty for full replacement)
-            if !args.find.is_empty() && !page.content.contains(&args.find) {
+            let plain_content = crate::markdown::markdown_to_plain_text(&page.content);
+
+            if !plain_find.is_empty() && !plain_content.contains(&plain_find) {
                 return Err(ToolError::ExecutionFailed(format!(
                     "Text not found in page: '{}'",
-                    if args.find.len() > 50 {
-                        format!("{}...", &args.find[..50])
+                    if plain_find.chars().count() > 50 {
+                        format!("{}...", plain_find.chars().take(50).collect::<String>())
                     } else {
-                        args.find.clone()
+                        plain_find.clone()
                     }
                 )));
             }
 
-            // Apply the edit to page content
-            let new_content = if args.find.is_empty() {
-                replace_content.clone()
+            let new_content = if plain_find.is_empty() {
+                plain_replace.clone()
             } else {
-                page.content.replacen(&args.find, &replace_content, 1)
+                page.content.replacen(&plain_find, &plain_replace, 1)
             };
 
-            // Update the page in the database
             let update_req = pages::UpdatePageRequest {
                 title: None,
                 content: Some(new_content),
@@ -309,21 +325,39 @@ impl PageEditorTool {
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update page: {}", e)))?;
         }
 
-        // Generate edit ID for tracking (edit_{hash16})
+        // Update title if provided
+        if let Some(ref new_title) = args.title {
+            let update_req = pages::UpdatePageRequest {
+                title: Some(new_title.clone()),
+                content: None,
+                icon: None,
+                cover_url: None,
+                tags: None,
+            };
+            pages::update_page(self.pool.as_ref(), &page_id, update_req)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(format!("Failed to update title: {}", e)))?;
+        }
+
         let edit_id = ids::generate_id("edit", &[&page_id, &chrono::Utc::now().to_rfc3339()]);
 
-        // Return the edit details for frontend to track and display diff
         let result = EditResult {
             edit_id,
             page_id: page_id.clone(),
-            find: args.find,      // Original text (for diff display)
-            replace: args.replace, // New text (clean, for reject/undo)
+            find: plain_find,
+            replace: plain_replace,
+        };
+
+        let message = match (&args.title, has_content_edit) {
+            (Some(t), true) => format!("Title changed to '{}' and content edit applied.", t),
+            (Some(t), false) => format!("Title changed to '{}'.", t),
+            (None, _) => "Edit applied successfully.".to_string(),
         };
 
         Ok(ToolResult::success(serde_json::json!({
             "edit": result,
             "applied": true,
-            "message": "Edit applied successfully.",
+            "message": message,
         })))
     }
 }

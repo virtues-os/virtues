@@ -108,9 +108,12 @@
 .ProseMirror code {
 	font-family: var(--font-mono, ui-monospace, monospace);
 	font-size: 0.875em;
-	background-color: var(--color-surface);
+	background-color: var(--color-surface-elevated);
 	padding: 0.125rem 0.375rem;
 	border-radius: 0.25rem;
+	border: 1px solid var(--color-border-subtle);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
 }
 
 /* =============================================================================
@@ -302,20 +305,117 @@
    CODE BLOCK
    ============================================================================= */
 
-.ProseMirror pre {
+/* NodeView wrapper: rounded container with border */
+.pm-code-block {
+	display: flex;
+	flex-direction: column;
+	border-radius: 0.75rem;
+	border: 1px solid var(--color-border-subtle);
+	overflow: hidden;
+	margin: 0.5rem 0;
+}
+
+/* Header bar: language label + copy button */
+.pm-code-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.375rem 0.75rem;
+	background: var(--code-bg, var(--color-surface));
+	border-bottom: 1px solid var(--color-border-subtle);
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.75rem;
+	color: var(--color-foreground-muted);
+	user-select: none;
+}
+
+.pm-code-language-select {
+	appearance: none;
+	background: transparent;
+	border: none;
+	font-family: inherit;
+	font-size: inherit;
+	color: var(--color-foreground-muted);
+	cursor: pointer;
+	padding: 0 12px 0 0;
+	outline: none;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 24 24'%3E%3Cpath fill='%23888' d='m12 15l-5-5h10z'/%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right center;
+}
+
+.pm-code-language-select:hover {
+	color: var(--color-foreground);
+}
+
+.pm-code-language-select option {
+	background: var(--color-surface);
+	color: var(--color-foreground);
+}
+
+.pm-code-copy {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: none;
+	color: var(--color-foreground-muted);
+	cursor: pointer;
+	padding: 2px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.pm-code-block:hover .pm-code-copy {
+	opacity: 1;
+}
+
+.pm-code-copy:hover {
+	background: var(--color-surface-elevated);
+	color: var(--color-foreground);
+}
+
+/* Code content area */
+.pm-code-pre {
 	font-family: var(--font-mono, ui-monospace, monospace);
 	font-size: 0.875em;
-	background-color: var(--color-surface);
+	background: var(--code-bg, var(--color-surface));
+	color: var(--code-fg, var(--color-foreground));
 	padding: 1rem;
-	border-radius: 0.375rem;
+	margin: 0;
+	overflow-x: auto;
+}
+
+.pm-code-pre code {
+	background: none;
+	padding: 0;
+	border-radius: 0;
+	border: none;
+	box-decoration-break: slice;
+	-webkit-box-decoration-break: slice;
+}
+
+/* Fallback for code blocks without NodeView (exclude NodeView's inner pre) */
+.ProseMirror pre:not(.pm-code-pre) {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.875em;
+	background-color: var(--code-bg, var(--color-surface));
+	color: var(--code-fg, var(--color-foreground));
+	padding: 1rem;
+	border-radius: 0.75rem;
+	border: 1px solid var(--color-border-subtle);
 	overflow-x: auto;
 	margin: 0.5rem 0;
 }
 
-.ProseMirror pre code {
+.ProseMirror pre:not(.pm-code-pre) code {
 	background: none;
 	padding: 0;
 	border-radius: 0;
+	border: none;
+	box-decoration-break: slice;
+	-webkit-box-decoration-break: slice;
 }
 
 /* =============================================================================
@@ -340,7 +440,7 @@
 .ProseMirror ol {
 	padding-left: 1.5rem;
 	margin: 0.5rem 0;
-	/* Don't set list-style-type here - let inline styles from schema control it */
+	list-style-type: decimal;
 }
 
 /* Nested ordered lists - inherit parent style but alternate for roman */
@@ -416,18 +516,6 @@
 /* Table cell selection (prosemirror-tables) */
 .ProseMirror .selectedCell {
 	background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-}
-
-/* =============================================================================
-   AI EDIT HIGHLIGHTS
-   ============================================================================= */
-
-/* AI edit highlight - shows where AI made changes */
-.pm-ai-highlight {
-	background-color: color-mix(in srgb, var(--color-success) 15%, transparent);
-	border-bottom: 2px solid var(--color-success);
-	border-radius: 2px;
-	padding: 0 1px;
 }
 
 /* =============================================================================

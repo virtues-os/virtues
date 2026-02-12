@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id, title, subtitle, description, content, cover_image, location,\n            start_date, end_date, sort_order, telos_id, themes,\n            created_at, updated_at\n        FROM wiki_acts\n        ORDER BY sort_order ASC, start_date ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "title",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "subtitle",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "description",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "content",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "cover_image",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "location",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "start_date",
+        "ordinal": 7,
+        "type_info": "Text"
+      },
+      {
+        "name": "end_date",
+        "ordinal": 8,
+        "type_info": "Text"
+      },
+      {
+        "name": "sort_order",
+        "ordinal": 9,
+        "type_info": "Integer"
+      },
+      {
+        "name": "telos_id",
+        "ordinal": 10,
+        "type_info": "Text"
+      },
+      {
+        "name": "themes",
+        "ordinal": 11,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 12,
+        "type_info": "Text"
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 13,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "2c356cf6155a02f74dbae4312a208d61e9384c816f18caa81f03d3105ea6e2db"
+}

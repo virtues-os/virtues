@@ -20,9 +20,8 @@ const ALLOWED_HTTPS_DOMAINS: &[&str] = &[
     // Staging
     "staging.virtues.com",
     "staging-app.virtues.com",
-    // Ngrok (for OAuth testing with real providers)
-    ".ngrok.io",
-    ".ngrok-free.app",
+    // Cloudflare quick tunnel (dev)
+    ".trycloudflare.com",
     // Vercel previews (if used)
     ".vercel.app",
 ];
@@ -56,7 +55,7 @@ fn validate_return_url(url: &str) -> Result<()> {
         // Check if domain matches any allowed pattern
         let is_allowed_domain = ALLOWED_HTTPS_DOMAINS.iter().any(|pattern| {
             if pattern.starts_with('.') {
-                // Suffix match (e.g., ".ngrok.io" matches "abc123.ngrok.io")
+                // Suffix match (e.g., ".trycloudflare.com" matches "random-words.trycloudflare.com")
                 host.ends_with(pattern)
             } else {
                 // Exact match
@@ -551,10 +550,9 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_return_url_ngrok() {
-        // Ngrok tunnels should be allowed for testing
-        assert!(validate_return_url("https://abc123.ngrok.io/callback").is_ok());
-        assert!(validate_return_url("https://my-tunnel.ngrok-free.app/data").is_ok());
+    fn test_validate_return_url_tunnel() {
+        // Cloudflare quick tunnel should be allowed for dev
+        assert!(validate_return_url("https://random-words-here.trycloudflare.com/callback").is_ok());
     }
 
     #[test]

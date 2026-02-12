@@ -297,6 +297,127 @@ export class HorizontalRuleView implements NodeView {
 }
 
 // =============================================================================
+// CODE BLOCK NODE VIEW
+// =============================================================================
+
+/**
+ * Code block with chrome: language label header + copy button, themed background.
+ * Uses contentDOM so ProseMirror manages the text editing natively.
+ */
+const COMMON_LANGUAGES = [
+	'', 'javascript', 'typescript', 'python', 'rust', 'go', 'java',
+	'c', 'cpp', 'csharp', 'ruby', 'php', 'swift', 'kotlin',
+	'html', 'css', 'scss', 'json', 'yaml', 'toml', 'xml',
+	'sql', 'graphql', 'bash', 'shell', 'markdown', 'dockerfile',
+];
+
+export class CodeBlockView implements NodeView {
+	dom: HTMLElement;
+	contentDOM: HTMLElement;
+	private header: HTMLElement;
+	private langSelect: HTMLSelectElement;
+	private copyBtn: HTMLElement;
+	private _view: EditorView;
+	private _getPos: () => number | undefined;
+
+	constructor(node: Node, view: EditorView, getPos: () => number | undefined) {
+		this._view = view;
+		this._getPos = getPos;
+		const language = node.attrs.language || '';
+
+		// Outer wrapper
+		this.dom = document.createElement('div');
+		this.dom.className = 'pm-code-block';
+		if (language) this.dom.setAttribute('data-language', language);
+
+		// Header: language select + copy button
+		this.header = document.createElement('div');
+		this.header.className = 'pm-code-header';
+
+		// Language dropdown
+		this.langSelect = document.createElement('select');
+		this.langSelect.className = 'pm-code-language-select';
+		this.langSelect.title = 'Code language';
+		for (const lang of COMMON_LANGUAGES) {
+			const opt = document.createElement('option');
+			opt.value = lang;
+			opt.textContent = lang || 'plain';
+			this.langSelect.appendChild(opt);
+		}
+		this.langSelect.value = COMMON_LANGUAGES.includes(language) ? language : '';
+		this.langSelect.addEventListener('change', () => {
+			const pos = this._getPos();
+			if (pos === undefined) return;
+			this._view.dispatch(
+				this._view.state.tr.setNodeMarkup(pos, null, {
+					language: this.langSelect.value,
+				})
+			);
+			this._view.focus();
+		});
+		this.header.appendChild(this.langSelect);
+
+		this.copyBtn = document.createElement('button');
+		this.copyBtn.className = 'pm-code-copy';
+		(this.copyBtn as HTMLButtonElement).type = 'button';
+		this.copyBtn.title = 'Copy code';
+		this.copyBtn.appendChild(createIcon('ri:file-copy-line', 14));
+		this.copyBtn.addEventListener('click', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			const text = this.contentDOM.textContent || '';
+			navigator.clipboard.writeText(text).then(() => {
+				this.copyBtn.innerHTML = '';
+				this.copyBtn.appendChild(createIcon('ri:check-line', 14));
+				setTimeout(() => {
+					this.copyBtn.innerHTML = '';
+					this.copyBtn.appendChild(createIcon('ri:file-copy-line', 14));
+				}, 1500);
+			});
+		});
+		this.header.appendChild(this.copyBtn);
+		this.dom.appendChild(this.header);
+
+		// Code content: <pre><code> — ProseMirror manages content inside <code>
+		const pre = document.createElement('pre');
+		pre.className = 'pm-code-pre';
+		const code = document.createElement('code');
+		if (language) code.className = `language-${language}`;
+		pre.appendChild(code);
+		this.dom.appendChild(pre);
+
+		this.contentDOM = code;
+	}
+
+	update(node: Node): boolean {
+		if (node.type.name !== 'code_block') return false;
+		const language = node.attrs.language || '';
+		this.langSelect.value = COMMON_LANGUAGES.includes(language) ? language : '';
+		if (language) {
+			this.dom.setAttribute('data-language', language);
+			this.contentDOM.className = `language-${language}`;
+		} else {
+			this.dom.removeAttribute('data-language');
+			this.contentDOM.className = '';
+		}
+		return true;
+	}
+
+	stopEvent(event: Event): boolean {
+		// Stop events on the header chrome; let ProseMirror handle code area events
+		const target = event.target as HTMLElement;
+		return this.header.contains(target);
+	}
+
+	ignoreMutation(mutation: { type: string; target: globalThis.Node }): boolean {
+		// Ignore mutations in the header chrome
+		if (this.header.contains(mutation.target as globalThis.Node)) return true;
+		// Let ProseMirror handle content mutations
+		return false;
+	}
+}
+
+// =============================================================================
 // NODE VIEW FACTORY
 // =============================================================================
 
@@ -319,5 +440,7 @@ export function createNodeViews() {
 			new CheckboxView(node, view, getPos),
 		horizontal_rule: (node: Node, view: EditorView, getPos: () => number | undefined) =>
 			new HorizontalRuleView(node, view, getPos),
+		code_block: (node: Node, view: EditorView, getPos: () => number | undefined) =>
+			new CodeBlockView(node, view, getPos),
 	};
 }

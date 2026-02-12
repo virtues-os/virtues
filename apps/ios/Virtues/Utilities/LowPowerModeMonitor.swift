@@ -15,9 +15,6 @@ class LowPowerModeMonitor: ObservableObject {
     /// Published property indicating if Low Power Mode is currently enabled
     @Published private(set) var isLowPowerModeEnabled: Bool
 
-    /// Notification posted when Low Power Mode state changes
-    static let stateChangedNotification = Notification.Name("LowPowerModeStateChanged")
-
     private init() {
         // Initialize with current state
         self.isLowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -54,17 +51,6 @@ class LowPowerModeMonitor: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             self?.isLowPowerModeEnabled = newState
         }
-
-        // Post notification for non-SwiftUI observers
-        NotificationCenter.default.post(
-            name: LowPowerModeMonitor.stateChangedNotification,
-            object: nil,
-            userInfo: ["isEnabled": newState]
-        )
     }
 
-    /// Manual check of current Low Power Mode state
-    func checkCurrentState() -> Bool {
-        return ProcessInfo.processInfo.isLowPowerModeEnabled
-    }
 }

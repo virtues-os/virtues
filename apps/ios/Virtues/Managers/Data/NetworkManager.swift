@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Combine
 import UIKit
 
 enum NetworkError: LocalizedError {
@@ -46,37 +45,6 @@ enum NetworkError: LocalizedError {
         }
     }
 
-    var errorCode: String {
-        switch self {
-        case .timeout: return "E001"
-        case .invalidToken: return "E002"
-        case .serverError: return "E003"
-        case .rateLimited: return "E004"
-        case .badRequest: return "E005"
-        case .forbidden: return "E006"
-        default: return "E000"
-        }
-    }
-
-    /// Whether this error should be retried
-    var isRetryable: Bool {
-        switch self {
-        case .serverError, .timeout, .noConnection, .rateLimited:
-            return true
-        case .invalidToken, .badRequest, .forbidden, .invalidURL, .decodingError, .unknown:
-            return false
-        }
-    }
-
-    /// Whether this error should count toward circuit breaker
-    var countsTowardCircuitBreaker: Bool {
-        switch self {
-        case .serverError, .timeout:
-            return true
-        case .rateLimited, .badRequest, .forbidden, .invalidToken, .noConnection, .invalidURL, .decodingError, .unknown:
-            return false
-        }
-    }
 }
 
 class NetworkManager: ObservableObject {
@@ -84,11 +52,6 @@ class NetworkManager: ObservableObject {
     
     private let session: URLSession
     private let timeout: TimeInterval = 30.0
-    private var cancellables = Set<AnyCancellable>()
-    
-    @Published var isConnected: Bool = true
-    @Published var lastError: NetworkError?
-    
     private init() {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = timeout

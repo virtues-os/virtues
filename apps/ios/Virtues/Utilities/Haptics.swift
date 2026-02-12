@@ -26,27 +26,6 @@ enum Haptics {
         generator.impactOccurred()
     }
 
-    /// Heavy impact - for significant actions, confirmations
-    static func heavy() {
-        let generator = UIImpactFeedbackGenerator(style: .heavy)
-        generator.prepare()
-        generator.impactOccurred()
-    }
-
-    /// Soft impact - for gentle feedback
-    static func soft() {
-        let generator = UIImpactFeedbackGenerator(style: .soft)
-        generator.prepare()
-        generator.impactOccurred()
-    }
-
-    /// Rigid impact - for firm feedback
-    static func rigid() {
-        let generator = UIImpactFeedbackGenerator(style: .rigid)
-        generator.prepare()
-        generator.impactOccurred()
-    }
-
     // MARK: - Notification Feedback
 
     /// Success feedback - for completed actions, successful connections

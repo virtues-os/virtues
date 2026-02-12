@@ -6,6 +6,8 @@
 -->
 
 <script lang="ts">
+	import { getLocalDateSlug } from '$lib/utils/dateUtils';
+
 	interface Props {
 		/** Map of date slugs (YYYY-MM-DD) to activity level (0-4) */
 		activityData?: Map<string, number>;
@@ -22,7 +24,7 @@
 	}: Props = $props();
 
 	const today = new Date();
-	const todaySlug = today.toISOString().split("T")[0];
+	const todaySlug = getLocalDateSlug(today);
 
 	// Generate grid data: array of weeks, each containing 7 days
 	const gridData = $derived.by(() => {
@@ -38,7 +40,7 @@
 				const date = new Date(startDate);
 				date.setDate(startDate.getDate() + (w * 7) + d);
 
-				const slug = date.toISOString().split("T")[0];
+				const slug = getLocalDateSlug(date);
 				const level = activityData.get(slug) ?? 0;
 				const isToday = slug === todaySlug;
 				const isFuture = date > today;

@@ -17,11 +17,10 @@
     let errorMessage = $state<string | null>(null);
     let inputBuffer = $state("");
 
-    // WebSocket URL - in dev, connect to the backend
-    // WebSocket URL - connect to backend core
-    const WS_URL = browser
-        ? `ws://${window.location.hostname}:8000/ws/terminal`
-        : "";
+    // WebSocket URL — protocol-aware (matches Yjs pattern in document.ts)
+    const wsProtocol = browser && location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = browser ? location.host : 'localhost:8000';
+    const WS_URL = browser ? `${wsProtocol}//${wsHost}/ws/terminal` : "";
 
     // Theme-aware colors (will be read from CSS vars at runtime)
     function getTerminalTheme() {
@@ -112,14 +111,7 @@
                 "\x1b[90m   \\_/ |_|_|   \\__|\\__,_|\\___||___/\x1b[0m",
             );
             terminal.writeln("");
-            terminal.writeln("\x1b[1mDeveloper Terminal\x1b[0m");
-            terminal.writeln("");
-            terminal.writeln(
-                "\x1b[33m⚡ Coming Soon:\x1b[0m SSH + terminal access to your own server.",
-            );
-            terminal.writeln(
-                "\x1b[90m   Full shell access for power users & developers.\x1b[0m",
-            );
+            terminal.writeln("\x1b[1mTerminal\x1b[0m");
             terminal.writeln("");
 
             // Connect to WebSocket
@@ -197,25 +189,11 @@
 
             webSocket.onopen = () => {
                 connectionStatus = "connected";
-                terminal?.writeln("\x1b[32m✓ Connected to backend\x1b[0m");
-                terminal?.writeln("");
-                showPrompt();
             };
 
             webSocket.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    if (msg.type === "output") {
-                        terminal?.write(msg.data);
-                    } else if (msg.type === "error") {
-                        terminal?.writeln(
-                            `\x1b[31mError: ${msg.message}\x1b[0m`,
-                        );
-                    }
-                } catch {
-                    // Plain text output
-                    terminal?.write(event.data);
-                }
+                // Backend sends raw terminal output (ANSI escape sequences etc.)
+                terminal?.write(event.data);
             };
 
             webSocket.onclose = () => {

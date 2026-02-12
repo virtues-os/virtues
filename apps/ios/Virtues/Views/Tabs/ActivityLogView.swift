@@ -47,9 +47,7 @@ struct ActivityLogView: View {
         case healthKit = "ios_healthkit"
         case location = "ios_location"
         case audio = "ios_mic"
-        case battery = "ios_battery"
         case contacts = "ios_contacts"
-        case barometer = "ios_barometer"
         case finance = "ios_finance"
         case eventKit = "ios_eventkit"
 
@@ -59,9 +57,7 @@ struct ActivityLogView: View {
             case .healthKit: return "Health"
             case .location: return "Location"
             case .audio: return "Audio"
-            case .battery: return "Battery"
             case .contacts: return "Contacts"
-            case .barometer: return "Barometer"
             case .finance: return "Finance"
             case .eventKit: return "EventKit"
             }

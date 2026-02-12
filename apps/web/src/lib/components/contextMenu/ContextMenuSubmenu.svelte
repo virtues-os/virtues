@@ -84,6 +84,7 @@
 
 		<button
 			class="menu-item"
+			class:checked={subItem.checked}
 			class:disabled={subItem.disabled}
 			class:destructive={subItem.variant === 'destructive'}
 			onclick={() => handleItemClick(subItem)}
@@ -94,14 +95,6 @@
 			{#if subItem.icon}
 				<span class="item-icon">
 					<Icon icon={subItem.icon} width="16" />
-				</span>
-			{/if}
-
-			{#if subItem.checked !== undefined}
-				<span class="item-check">
-					{#if subItem.checked}
-						<Icon icon="ri:check-line" width="14" />
-					{/if}
 				</span>
 			{/if}
 
@@ -209,14 +202,8 @@
 		color: var(--color-error, #ef4444);
 	}
 
-	.item-check {
-		flex-shrink: 0;
-		width: 14px;
-		height: 14px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: var(--color-foreground);
+	.menu-item.checked {
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 	}
 
 	.item-label {

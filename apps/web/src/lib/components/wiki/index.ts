@@ -27,5 +27,3 @@ export { default as PersonTable } from './PersonTable.svelte';
 export { default as PlaceTable } from './PlaceTable.svelte';
 export { default as OrganizationTable } from './OrganizationTable.svelte';
 
-// Sidebar
-export { default as WikiSidebarSection } from './WikiSidebarSection.svelte';

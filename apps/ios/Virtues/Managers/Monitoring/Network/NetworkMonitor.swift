@@ -161,14 +161,6 @@ class NetworkMonitor: ObservableObject {
         return Double(successCount) / Double(recentUploadResults.count)
     }
 
-    /// Reset success tracking (useful after network type change)
-    func resetSuccessTracking() {
-        DispatchQueue.main.async { [weak self] in
-            self?.recentUploadResults.removeAll()
-            self?.updateBatchSize()
-        }
-    }
-
     // MARK: - Network Quality Assessment
 
     /// Get a human-readable description of current network quality

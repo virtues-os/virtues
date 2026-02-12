@@ -147,6 +147,9 @@ pub struct WikiDay {
     pub cover_image: Option<String>,
     pub act_id: Option<String>,
     pub chapter_id: Option<String>,
+    pub context_vector: Option<String>,
+    pub chaos_score: Option<f64>,
+    pub entropy_calibration_days: Option<i32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -237,6 +240,10 @@ pub struct UpdateWikiDayRequest {
     pub autobiography_sections: Option<serde_json::Value>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
+    pub context_vector: Option<serde_json::Value>,
+    pub chaos_score: Option<f64>,
+    pub entropy_calibration_days: Option<i32>,
+    pub start_timezone: Option<String>,
 }
 
 // ============================================================================
@@ -671,7 +678,7 @@ pub async fn get_active_telos(pool: &SqlitePool) -> Result<Option<WikiTelos>> {
         SELECT
             id, title, description, content, cover_image, is_active,
             created_at, updated_at
-        FROM narrative_telos
+        FROM wiki_telos
         WHERE is_active = true
         "#
     )
@@ -705,7 +712,7 @@ pub async fn get_telos(pool: &SqlitePool, id: &str) -> Result<WikiTelos> {
         SELECT
             id, title, description, content, cover_image, is_active,
             created_at, updated_at
-        FROM narrative_telos
+        FROM wiki_telos
         WHERE id = $1
         "#,
         id
@@ -748,7 +755,7 @@ pub async fn get_act(pool: &SqlitePool, id: String) -> Result<WikiAct> {
             id, title, subtitle, description, content, cover_image, location,
             start_date, end_date, sort_order, telos_id, themes,
             created_at, updated_at
-        FROM narrative_acts
+        FROM wiki_acts
         WHERE id = $1
         "#,
         id
@@ -801,7 +808,7 @@ pub async fn list_acts(pool: &SqlitePool) -> Result<Vec<WikiAct>> {
             id, title, subtitle, description, content, cover_image, location,
             start_date, end_date, sort_order, telos_id, themes,
             created_at, updated_at
-        FROM narrative_acts
+        FROM wiki_acts
         ORDER BY sort_order ASC, start_date ASC
         "#
     )
@@ -856,7 +863,7 @@ pub async fn get_chapter(pool: &SqlitePool, id: String) -> Result<WikiChapter> {
             id, title, subtitle, description, content, cover_image,
             start_date, end_date, sort_order, act_id, themes,
             created_at, updated_at
-        FROM narrative_chapters
+        FROM wiki_chapters
         WHERE id = $1
         "#,
         id
@@ -908,7 +915,7 @@ pub async fn list_chapters_for_act(pool: &SqlitePool, act_id: String) -> Result<
             id, title, subtitle, description, content, cover_image,
             start_date, end_date, sort_order, act_id, themes,
             created_at, updated_at
-        FROM narrative_chapters
+        FROM wiki_chapters
         WHERE act_id = $1
         ORDER BY sort_order ASC, start_date ASC
         "#,
@@ -961,90 +968,82 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
     let date_str = date.format("%Y-%m-%d").to_string();
 
     // Try to get existing day
-    let existing = sqlx::query!(
+    let existing: Option<sqlx::sqlite::SqliteRow> = sqlx::query(
         r#"
         SELECT
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            last_edited_by, cover_image, act_id, chapter_id,
-            created_at, updated_at
+            last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
+            entropy_calibration_days, created_at, updated_at
         FROM wiki_days
         WHERE date = $1
         "#,
-        date_str
     )
+    .bind(&date_str)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get day: {}", e)))?;
 
     if let Some(row) = existing {
-        let id = row
-            .id
-            .clone()
-            .ok_or_else(|| Error::Database("Missing day ID".to_string()))?;
-        return Ok(WikiDay {
-            id,
-            date,
-            start_timezone: row.start_timezone.clone(),
-            end_timezone: row.end_timezone.clone(),
-            autobiography: row.autobiography.clone(),
-            autobiography_sections: row
-                .autobiography_sections
-                .as_ref()
-                .and_then(|s| serde_json::from_str(s).ok()),
-            last_edited_by: row.last_edited_by.clone(),
-            cover_image: row.cover_image.clone(),
-            act_id: row.act_id.clone(),
-            chapter_id: row.chapter_id.clone(),
-            created_at: DateTime::parse_from_rfc3339(&row.created_at)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-            updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|_| Utc::now()),
-        });
+        return wiki_day_from_row(&row, date);
     }
 
     // Create new day
     let day_id = ids::generate_id(ids::WIKI_DAY_PREFIX, &[&date_str]);
-    let row = sqlx::query!(
+    let row: sqlx::sqlite::SqliteRow = sqlx::query(
         r#"
         INSERT INTO wiki_days (id, date)
         VALUES ($1, $2)
         RETURNING
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            last_edited_by, cover_image, act_id, chapter_id,
-            created_at, updated_at
+            last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
+            entropy_calibration_days, created_at, updated_at
         "#,
-        day_id,
-        date_str
     )
+    .bind(&day_id)
+    .bind(&date_str)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create day: {}", e)))?;
 
-    let id = row
-        .id
-        .clone()
+    wiki_day_from_row(&row, date)
+}
+
+/// Parse a WikiDay from a raw SqliteRow
+fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<WikiDay> {
+    use sqlx::Row;
+
+    let id: String = row
+        .try_get::<Option<String>, _>("id")
+        .map_err(|e| Error::Database(format!("Missing day ID: {e}")))?
         .ok_or_else(|| Error::Database("Missing day ID".to_string()))?;
+    let autobiography_sections_str: Option<String> = row
+        .try_get("autobiography_sections")
+        .ok()
+        .flatten();
+    let created_at_str: String = row.try_get("created_at").unwrap_or_default();
+    let updated_at_str: String = row.try_get("updated_at").unwrap_or_default();
+    let chaos_score_raw: Option<f64> = row.try_get("chaos_score").ok().flatten();
 
     Ok(WikiDay {
         id,
         date,
-        start_timezone: row.start_timezone.clone(),
-        end_timezone: row.end_timezone.clone(),
-        autobiography: row.autobiography.clone(),
-        autobiography_sections: row
-            .autobiography_sections
+        start_timezone: row.try_get("start_timezone").ok().flatten(),
+        end_timezone: row.try_get("end_timezone").ok().flatten(),
+        autobiography: row.try_get("autobiography").ok().flatten(),
+        autobiography_sections: autobiography_sections_str
             .as_ref()
             .and_then(|s| serde_json::from_str(s).ok()),
-        last_edited_by: Some(row.last_edited_by.clone()),
-        cover_image: row.cover_image.clone(),
-        act_id: row.act_id.clone(),
-        chapter_id: row.chapter_id.clone(),
-        created_at: DateTime::parse_from_rfc3339(&row.created_at)
+        last_edited_by: row.try_get("last_edited_by").ok().flatten(),
+        cover_image: row.try_get("cover_image").ok().flatten(),
+        act_id: row.try_get("act_id").ok().flatten(),
+        chapter_id: row.try_get("chapter_id").ok().flatten(),
+        context_vector: row.try_get("context_vector").ok().flatten(),
+        chaos_score: chaos_score_raw,
+        entropy_calibration_days: row.try_get("entropy_calibration_days").ok().flatten(),
+        created_at: DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
+        updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
     })
@@ -1063,8 +1062,12 @@ pub async fn update_day(
         .autobiography_sections
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
+    let context_vector_json = req
+        .context_vector
+        .as_ref()
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE wiki_days
         SET
@@ -1072,15 +1075,23 @@ pub async fn update_day(
             autobiography_sections = COALESCE($3, autobiography_sections),
             last_edited_by = COALESCE($4, last_edited_by),
             cover_image = COALESCE($5, cover_image),
+            context_vector = COALESCE($6, context_vector),
+            chaos_score = COALESCE($7, chaos_score),
+            entropy_calibration_days = COALESCE($8, entropy_calibration_days),
+            start_timezone = COALESCE($9, start_timezone),
             updated_at = datetime('now')
         WHERE id = $1
         "#,
-        day_id_str,
-        req.autobiography,
-        autobiography_sections_json,
-        req.last_edited_by,
-        req.cover_image
     )
+    .bind(&day_id_str)
+    .bind(&req.autobiography)
+    .bind(&autobiography_sections_json)
+    .bind(&req.last_edited_by)
+    .bind(&req.cover_image)
+    .bind(&context_vector_json)
+    .bind(&req.chaos_score)
+    .bind(&req.entropy_calibration_days)
+    .bind(&req.start_timezone)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update day: {}", e)))?;
@@ -1094,52 +1105,34 @@ pub async fn list_days(
     start_date: NaiveDate,
     end_date: NaiveDate,
 ) -> Result<Vec<WikiDay>> {
+    use sqlx::Row;
+
     let start_str = start_date.format("%Y-%m-%d").to_string();
     let end_str = end_date.format("%Y-%m-%d").to_string();
 
-    let rows = sqlx::query!(
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
         r#"
         SELECT
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            last_edited_by, cover_image, act_id, chapter_id,
-            created_at, updated_at
+            last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
+            entropy_calibration_days, created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
         ORDER BY date DESC
         "#,
-        start_str,
-        end_str
     )
+    .bind(&start_str)
+    .bind(&end_str)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to list days: {}", e)))?;
 
     Ok(rows
-        .into_iter()
+        .iter()
         .filter_map(|row| {
-            let id = row.id.clone()?;
-            let date = NaiveDate::parse_from_str(&row.date, "%Y-%m-%d").ok()?;
-            Some(WikiDay {
-                id,
-                date,
-                start_timezone: row.start_timezone.clone(),
-                end_timezone: row.end_timezone.clone(),
-                autobiography: row.autobiography.clone(),
-                autobiography_sections: row
-                    .autobiography_sections
-                    .as_ref()
-                    .and_then(|s| serde_json::from_str(s).ok()),
-                last_edited_by: row.last_edited_by.clone(),
-                cover_image: row.cover_image.clone(),
-                act_id: row.act_id.clone(),
-                chapter_id: row.chapter_id.clone(),
-                created_at: DateTime::parse_from_rfc3339(&row.created_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-            })
+            let date_str: String = row.try_get("date").ok()?;
+            let date = NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()?;
+            wiki_day_from_row(row, date).ok()
         })
         .collect())
 }
@@ -1171,7 +1164,7 @@ pub fn resolve_id(id: &str) -> Result<IdResolution> {
     let entity_type = parts[0];
 
     // Validate known entity types
-    let valid_types = ["person", "place", "org", "day", "telos", "act", "chapter", "page", "chat", "thing", "year", "source"];
+    let valid_types = ["person", "place", "org", "day", "telos", "act", "chapter", "page", "chat", "year", "source"];
     if !valid_types.contains(&entity_type) {
         return Err(Error::NotFound(format!(
             "Unknown entity type in ID: {}",
@@ -1761,7 +1754,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
     let calendar_rows = sqlx::query!(
         r#"
         SELECT id, start_time, title
-        FROM data_calendar
+        FROM data_calendar_event
         WHERE start_time >= $1 AND start_time <= $2
         ORDER BY start_time ASC
         "#,
@@ -1790,7 +1783,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
     let email_rows = sqlx::query!(
         r#"
         SELECT id, timestamp, subject, from_email, direction
-        FROM data_social_email
+        FROM data_communication_email
         WHERE timestamp >= $1 AND timestamp <= $2
         ORDER BY timestamp ASC
         "#,
@@ -1824,38 +1817,38 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
         }
     }
 
-    // Location visits
-    let visit_rows = sqlx::query!(
+    // Location visits (id may be stored as blob, use hex() to read as text)
+    let visit_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
         r#"
-        SELECT id, arrival_time, place_name, duration_minutes
+        SELECT hex(id) as id, arrival_time, place_name, duration_minutes
         FROM data_location_visit
         WHERE arrival_time >= $1 AND arrival_time <= $2
         ORDER BY arrival_time ASC
         "#,
-        start_str,
-        end_str
     )
+    .bind(&start_str)
+    .bind(&end_str)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get location visit sources: {}", e)))?;
 
-    for row in visit_rows {
-        if let (Some(id_str), Ok(ts)) = (
-            row.id.as_ref(),
-            DateTime::parse_from_rfc3339(&row.arrival_time),
-        ) {
-            let label = row
-                .place_name
-                .clone()
-                .unwrap_or_else(|| "Unknown location".to_string());
-            let preview = row.duration_minutes.map(|d| format!("{} min", d));
-            sources.push(DaySource {
-                source_type: "location".to_string(),
-                id: id_str.clone(),
-                timestamp: ts.with_timezone(&Utc),
-                label,
-                preview,
-            });
+    for row in &visit_rows {
+        use sqlx::Row;
+        let id: Option<String> = row.try_get("id").ok();
+        let arrival_time: Option<String> = row.try_get("arrival_time").ok();
+        if let (Some(id_str), Some(at)) = (id, arrival_time) {
+            if let Ok(ts) = DateTime::parse_from_rfc3339(&at) {
+                let label: Option<String> = row.try_get("place_name").ok().flatten();
+                let duration: Option<i32> = row.try_get("duration_minutes").ok().flatten();
+                let preview = duration.map(|d| format!("{} min", d));
+                sources.push(DaySource {
+                    source_type: "location".to_string(),
+                    id: id_str,
+                    timestamp: ts.with_timezone(&Utc),
+                    label: label.unwrap_or_else(|| "Unknown location".to_string()),
+                    preview,
+                });
+            }
         }
     }
 
@@ -1954,7 +1947,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
                 .clone()
                 .or(row.description.clone())
                 .unwrap_or_else(|| "Transaction".to_string());
-            let preview = Some(format!("${:.2}", row.amount));
+            let preview = Some(format!("${:.2}", row.amount as f64 / 100.0));
             sources.push(DaySource {
                 source_type: "transaction".to_string(),
                 id: id_str.clone(),
@@ -1969,7 +1962,7 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
     let message_rows = sqlx::query!(
         r#"
         SELECT id, timestamp, channel, from_name, body
-        FROM data_social_message
+        FROM data_communication_message
         WHERE timestamp >= $1 AND timestamp <= $2
         ORDER BY timestamp ASC
         LIMIT 50
@@ -1991,10 +1984,11 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
                 .clone()
                 .unwrap_or_else(|| "Message".to_string());
             let preview = row.body.as_ref().map(|c| {
-                if c.len() > 50 {
-                    format!("{}...", &c[..50])
+                let truncated: String = c.chars().take(50).collect();
+                if truncated.len() < c.len() {
+                    format!("{truncated}...")
                 } else {
-                    c.clone()
+                    truncated
                 }
             });
             sources.push(DaySource {
@@ -2007,10 +2001,228 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
         }
     }
 
+    // Speech transcriptions (only show meaningful ones with confidence > 0.1)
+    let transcription_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        r#"
+        SELECT id, start_time, title, text, duration_seconds
+        FROM data_communication_transcription
+        WHERE start_time >= $1 AND start_time <= $2
+          AND (confidence IS NULL OR confidence > 0.1)
+        ORDER BY start_time ASC
+        LIMIT 50
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get transcription sources: {}", e)))?;
+
+    for row in &transcription_rows {
+        use sqlx::Row;
+        let id: String = match row.try_get("id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let start_time: String = match row.try_get("start_time") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let title: Option<String> = row.try_get("title").ok();
+        let text: Option<String> = row.try_get("text").ok();
+
+        if let Ok(ts) = DateTime::parse_from_rfc3339(&start_time) {
+            let label = title.unwrap_or_else(|| "Voice Recording".to_string());
+            let preview = text.as_ref().map(|t| {
+                let truncated: String = t.chars().take(60).collect();
+                if truncated.len() < t.len() {
+                    format!("{truncated}...")
+                } else {
+                    truncated
+                }
+            });
+            sources.push(DaySource {
+                source_type: "transcription".to_string(),
+                id,
+                timestamp: ts.with_timezone(&Utc),
+                label,
+                preview,
+            });
+        }
+    }
+
+    // Chats (created on this day)
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let chat_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        r#"
+        SELECT id, title, message_count, created_at
+        FROM app_chats
+        WHERE date(created_at) = $1
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(&date_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get chat sources: {}", e)))?;
+
+    for row in &chat_rows {
+        use sqlx::Row;
+        let id: String = match row.try_get("id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let created_at: String = match row.try_get("created_at") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let title: String = row.try_get("title").unwrap_or_else(|_| "Untitled chat".to_string());
+        let message_count: i32 = row.try_get("message_count").unwrap_or(0);
+
+        // created_at is in "YYYY-MM-DD HH:MM:SS" format (UTC)
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&created_at, "%Y-%m-%d %H:%M:%S")
+        {
+            let ts = naive.and_utc();
+            let preview = if message_count > 0 {
+                Some(format!("{} messages", message_count))
+            } else {
+                None
+            };
+            sources.push(DaySource {
+                source_type: "chat".to_string(),
+                id,
+                timestamp: ts,
+                label: title,
+                preview,
+            });
+        }
+    }
+
+    // Pages (updated on this day)
+    let page_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        r#"
+        SELECT id, title, icon, updated_at
+        FROM app_pages
+        WHERE date(updated_at) = $1
+        ORDER BY updated_at ASC
+        "#,
+    )
+    .bind(&date_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get page sources: {}", e)))?;
+
+    for row in &page_rows {
+        use sqlx::Row;
+        let id: String = match row.try_get("id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let updated_at: String = match row.try_get("updated_at") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let title: String = row.try_get("title").unwrap_or_else(|_| "Untitled".to_string());
+        let icon: Option<String> = row.try_get("icon").ok().flatten();
+
+        if let Ok(naive) =
+            chrono::NaiveDateTime::parse_from_str(&updated_at, "%Y-%m-%d %H:%M:%S")
+        {
+            let ts = naive.and_utc();
+            let icon_prefix = icon.map(|i| format!("{} ", i)).unwrap_or_default();
+            sources.push(DaySource {
+                source_type: "page".to_string(),
+                id,
+                timestamp: ts,
+                label: format!("{}{}", icon_prefix, title),
+                preview: None,
+            });
+        }
+    }
+
     // Sort all sources by timestamp
     sources.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 
     Ok(sources)
+}
+
+// ============================================================================
+// Timeline Day - Location chunks for movement map
+// ============================================================================
+
+/// A location chunk for the timeline day view
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineChunk {
+    #[serde(rename = "type")]
+    pub chunk_type: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub place_name: Option<String>,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+/// Timeline day view response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineDayView {
+    pub date: String,
+    pub chunks: Vec<TimelineChunk>,
+}
+
+/// Get location points for a day, returned as timeline chunks
+pub async fn get_timeline_day(pool: &SqlitePool, date: NaiveDate) -> Result<TimelineDayView> {
+    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let end_of_day = date
+        .succ_opt()
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_utc();
+
+    let start_str = start_of_day.to_rfc3339();
+    let end_str = end_of_day.to_rfc3339();
+
+    // Query location points for the day
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        r#"
+        SELECT latitude, longitude, timestamp
+        FROM data_location_point
+        WHERE timestamp >= $1 AND timestamp <= $2
+        ORDER BY timestamp ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get location points: {}", e)))?;
+
+    use sqlx::Row;
+    let chunks: Vec<TimelineChunk> = rows
+        .iter()
+        .filter_map(|row| {
+            let lat: Option<f64> = row.try_get("latitude").ok();
+            let lng: Option<f64> = row.try_get("longitude").ok();
+            let ts: Option<String> = row.try_get("timestamp").ok();
+            match (lat, lng, ts) {
+                (Some(lat), Some(lng), Some(ts)) => Some(TimelineChunk {
+                    chunk_type: "location".to_string(),
+                    start_time: ts.clone(),
+                    end_time: ts,
+                    place_name: None,
+                    latitude: lat,
+                    longitude: lng,
+                }),
+                _ => None,
+            }
+        })
+        .collect();
+
+    Ok(TimelineDayView {
+        date: date.to_string(),
+        chunks,
+    })
 }
 
 // ============================================================================
@@ -2050,7 +2262,7 @@ pub struct DayStreamsResponse {
 /// Dynamically queries all registered ontology tables using their
 /// timestamp_column metadata to filter records for the given day.
 pub async fn get_day_streams(pool: &SqlitePool, date: NaiveDate) -> Result<DayStreamsResponse> {
-    use crate::ontologies::registry::list_ontologies;
+    use virtues_registry::ontologies::registered_ontologies;
     use sqlx::Row;
 
     // Calculate UTC bounds for the date
@@ -2073,16 +2285,16 @@ pub async fn get_day_streams(pool: &SqlitePool, date: NaiveDate) -> Result<DaySt
     let start_str = start.to_rfc3339();
     let end_str = end.to_rfc3339();
 
-    let ontologies = list_ontologies();
+    let ontologies = registered_ontologies();
     let mut streams = Vec::new();
 
-    for ontology in ontologies {
+    for ontology in &ontologies {
         // Skip non-time-series ontologies
         if should_skip_ontology_for_streams(ontology.name) {
             continue;
         }
 
-        let table = format!("data_{}", ontology.table_name);
+        let table = ontology.table_name;
         let ts_col = ontology.timestamp_column;
 
         // Build SELECT clause for end timestamp if present
@@ -2091,12 +2303,20 @@ pub async fn get_day_streams(pool: &SqlitePool, date: NaiveDate) -> Result<DaySt
             .map(|c| format!(", {} as end_ts", c))
             .unwrap_or_default();
 
+        // Use hex(id) for tables with blob IDs (location_visit), plain id otherwise
+        let id_select = if ontology.name == "location_visit" {
+            "hex(id) as id"
+        } else {
+            "id"
+        };
+
         // Build dynamic query - select id, timestamps, and all other columns as JSON
         let sql = format!(
-            "SELECT id, {ts_col} as ts{end_select}, * FROM {table}
+            "SELECT {id_select}, {ts_col} as ts{end_select}, * FROM {table}
              WHERE {ts_col} >= ?1 AND {ts_col} < ?2
              ORDER BY {ts_col} ASC
              LIMIT 100",
+            id_select = id_select,
             ts_col = ts_col,
             end_select = end_select,
             table = table,
@@ -2199,31 +2419,32 @@ fn build_preview_for_ontology(ontology_name: &str, row: &sqlx::sqlite::SqliteRow
     use sqlx::Row;
 
     match ontology_name {
-        "praxis_calendar" => {
+        "calendar_event" => {
             serde_json::json!({
                 "title": row.try_get::<String, _>("title").ok(),
                 "location": row.try_get::<String, _>("location_name").ok(),
             })
         }
-        "social_email" => {
+        "communication_email" => {
             serde_json::json!({
                 "subject": row.try_get::<String, _>("subject").ok(),
                 "from": row.try_get::<String, _>("from_email").ok(),
                 "direction": row.try_get::<String, _>("direction").ok(),
             })
         }
-        "social_message" => {
-            let content: Option<String> = row.try_get("content").ok();
-            let preview = content.map(|c| {
-                if c.len() > 100 {
-                    format!("{}...", &c[..100])
+        "communication_message" => {
+            let body: Option<String> = row.try_get("body").ok();
+            let preview = body.map(|c| {
+                let truncated: String = c.chars().take(100).collect();
+                if truncated.len() < c.len() {
+                    format!("{truncated}...")
                 } else {
-                    c
+                    truncated
                 }
             });
             serde_json::json!({
                 "from": row.try_get::<String, _>("from_name").ok(),
-                "platform": row.try_get::<String, _>("platform").ok(),
+                "channel": row.try_get::<String, _>("channel").ok(),
                 "preview": preview,
             })
         }
@@ -2257,9 +2478,10 @@ fn build_preview_for_ontology(ontology_name: &str, row: &sqlx::sqlite::SqliteRow
             })
         }
         "financial_transaction" => {
+            let amount_cents: Option<i64> = row.try_get("amount").ok();
             serde_json::json!({
                 "merchant": row.try_get::<String, _>("merchant_name").ok(),
-                "amount": row.try_get::<f64, _>("amount").ok(),
+                "amount": amount_cents.map(|c| c as f64 / 100.0),
                 "category": row.try_get::<String, _>("merchant_category").ok(),
             })
         }
@@ -2275,13 +2497,14 @@ fn build_preview_for_ontology(ontology_name: &str, row: &sqlx::sqlite::SqliteRow
                 "page_title": row.try_get::<String, _>("page_title").ok(),
             })
         }
-        "knowledge_ai_conversation" => {
+        "content_conversation" => {
             let content: Option<String> = row.try_get("content").ok();
             let preview = content.map(|c| {
-                if c.len() > 100 {
-                    format!("{}...", &c[..100])
+                let truncated: String = c.chars().take(100).collect();
+                if truncated.len() < c.len() {
+                    format!("{truncated}...")
                 } else {
-                    c
+                    truncated
                 }
             });
             serde_json::json!({
@@ -2290,19 +2513,20 @@ fn build_preview_for_ontology(ontology_name: &str, row: &sqlx::sqlite::SqliteRow
                 "preview": preview,
             })
         }
-        "knowledge_document" => {
+        "content_document" => {
             serde_json::json!({
                 "title": row.try_get::<String, _>("title").ok(),
                 "document_type": row.try_get::<String, _>("document_type").ok(),
             })
         }
-        "speech_transcription" => {
+        "communication_transcription" => {
             let text: Option<String> = row.try_get("text").ok();
             let preview = text.map(|t| {
-                if t.len() > 100 {
-                    format!("{}...", &t[..100])
+                let truncated: String = t.chars().take(100).collect();
+                if truncated.len() < t.len() {
+                    format!("{truncated}...")
                 } else {
-                    t
+                    truncated
                 }
             });
             serde_json::json!({

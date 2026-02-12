@@ -121,62 +121,6 @@ class DeviceManager: ObservableObject {
         lastError = nil
     }
     
-    // MARK: - Connection Verification
-
-    /// Verifies the server connection. Device ID is automatically used as the auth token.
-    func verifyConfiguration() async -> Bool {
-        await MainActor.run {
-            isVerifying = true
-            lastError = nil
-        }
-
-        defer {
-            Task { @MainActor in
-                self.isVerifying = false
-            }
-        }
-
-        // Validate configuration
-        guard !configuration.apiEndpoint.isEmpty else {
-            await MainActor.run {
-                self.lastError = "Please enter a server URL"
-            }
-            return false
-        }
-
-        guard URL(string: configuration.apiEndpoint) != nil else {
-            await MainActor.run {
-                self.lastError = "Invalid server URL format"
-            }
-            return false
-        }
-
-        // Test connection to the server
-        let isReachable = await NetworkManager.shared.testConnection(endpoint: configuration.apiEndpoint)
-
-        if !isReachable {
-            await MainActor.run {
-                self.lastError = "Cannot connect to server. Please check the URL."
-                self.configurationState = .notConfigured
-            }
-            return false
-        }
-
-        // Connection successful - mark as configured
-        await MainActor.run {
-            self.configuration.configuredDate = Date()
-            self.isConfigured = true
-            self.configurationState = .configured
-            self.lastError = nil
-
-            // Save the configuration
-            self.saveConfiguration(self.configuration)
-            UserDefaults.standard.synchronize()
-        }
-
-        return true
-    }
-    
     // MARK: - Validation
     
     func validateEndpoint(_ endpoint: String) -> Bool {
@@ -194,27 +138,6 @@ class DeviceManager: ObservableObject {
         return false
     }
     
-    // MARK: - Status Helpers
-
-    var hasValidConfiguration: Bool {
-        return validateEndpoint(configuration.apiEndpoint)
-    }
-    
-    var statusMessage: String {
-        if isConfigured {
-            if let configuredDate = configuration.configuredDate {
-                let formatter = RelativeDateTimeFormatter()
-                formatter.unitsStyle = .abbreviated
-                return "Connected \(formatter.localizedString(for: configuredDate, relativeTo: Date()))"
-            }
-            return "Connected"
-        } else if !configuration.apiEndpoint.isEmpty {
-            return "Not connected - complete setup"
-        } else {
-            return "Not connected"
-        }
-    }
-
     // MARK: - Minimum Version Gate
 
     /// Check if this app version meets the server's minimum requirement.

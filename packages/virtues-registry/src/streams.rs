@@ -43,7 +43,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "Google Calendar",
             description: "Sync calendar events with attendees, locations, and conference details",
             table_name: "stream_google_calendar",
-            target_ontologies: vec!["calendar"],
+            target_ontologies: vec!["calendar_event"],
             supports_incremental: true,
             supports_full_refresh: true,
             default_cron_schedule: Some("0 */15 * * * *"), // Every 15 minutes
@@ -56,7 +56,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "Gmail",
             description: "Sync email messages and threads with full metadata",
             table_name: "stream_google_gmail",
-            target_ontologies: vec!["social_email"],
+            target_ontologies: vec!["communication_email"],
             supports_incremental: true,
             supports_full_refresh: true,
             default_cron_schedule: Some("0 */15 * * * *"), // Every 15 minutes
@@ -103,7 +103,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "Microphone",
             description: "Audio levels, transcriptions, and recordings",
             table_name: "stream_ios_microphone",
-            target_ontologies: vec!["speech_transcription"],
+            target_ontologies: vec!["communication_transcription"],
             supports_incremental: false,
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
@@ -116,33 +116,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "Contacts",
             description: "Address book contacts from iOS device",
             table_name: "stream_ios_contacts",
-            target_ontologies: vec!["wiki_people"],
-            supports_incremental: false,
-            supports_full_refresh: false,
-            default_cron_schedule: Some("0 */5 * * * *"),
-            enabled: true,
-            tier: SourceTier::Standard,
-        },
-        StreamDescriptor {
-            name: "battery",
-            source: "ios",
-            display_name: "Battery",
-            description: "Battery level and charging state from iOS device",
-            table_name: "stream_ios_battery",
-            target_ontologies: vec!["device_battery"],
-            supports_incremental: false,
-            supports_full_refresh: false,
-            default_cron_schedule: Some("0 */5 * * * *"),
-            enabled: true,
-            tier: SourceTier::Standard,
-        },
-        StreamDescriptor {
-            name: "barometer",
-            source: "ios",
-            display_name: "Barometer",
-            description: "Atmospheric pressure readings from iOS device",
-            table_name: "stream_ios_barometer",
-            target_ontologies: vec!["environment_pressure"],
+            target_ontologies: vec![],  // Contacts feed wiki_people, not an ontology table
             supports_incremental: false,
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
@@ -168,7 +142,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "EventKit",
             description: "Calendar events and reminders from iOS EventKit",
             table_name: "stream_ios_eventkit",
-            target_ontologies: vec!["calendar"],
+            target_ontologies: vec!["calendar_event"],
             supports_incremental: false,
             supports_full_refresh: false, // Push-based
             default_cron_schedule: Some("0 */5 * * * *"),
@@ -209,7 +183,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "iMessage",
             description: "Message history including SMS and iMessage conversations",
             table_name: "stream_mac_imessage",
-            target_ontologies: vec!["social_message"],
+            target_ontologies: vec!["communication_message"],
             supports_incremental: false,
             supports_full_refresh: false,
             default_cron_schedule: Some("0 */5 * * * *"),
@@ -223,7 +197,7 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             display_name: "Notion Pages",
             description: "Sync pages and their content from Notion databases and workspaces",
             table_name: "stream_notion_pages",
-            target_ontologies: vec!["knowledge_document"],
+            target_ontologies: vec!["content_document"],
             supports_incremental: false, // Notion API doesn't provide incremental sync
             supports_full_refresh: true,
             default_cron_schedule: Some("0 0 */12 * * *"), // Every 12 hours
@@ -285,6 +259,34 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             enabled: false, // Disabled: expensive API calls (~$0.25/call), no ontology yet
             tier: SourceTier::Standard,
         },
+        // ===== Strava Streams =====
+        StreamDescriptor {
+            name: "activities",
+            source: "strava",
+            display_name: "Strava Activities",
+            description: "Workout activities from Strava (runs, rides, swims, hikes, etc.)",
+            table_name: "stream_strava_activities",
+            target_ontologies: vec!["health_workout"],
+            supports_incremental: true,
+            supports_full_refresh: true,
+            default_cron_schedule: Some("0 */30 * * * *"), // Every 30 minutes
+            enabled: true,
+            tier: SourceTier::Standard,
+        },
+        // ===== GitHub Streams =====
+        StreamDescriptor {
+            name: "events",
+            source: "github",
+            display_name: "GitHub Events",
+            description: "Activity events from GitHub (stars, forks, pushes, PRs, comments)",
+            table_name: "stream_github_events",
+            target_ontologies: vec!["content_bookmark"],
+            supports_incremental: true,
+            supports_full_refresh: true,
+            default_cron_schedule: Some("0 */15 * * * *"), // Every 15 minutes
+            enabled: true,
+            tier: SourceTier::Standard,
+        },
     ]
 }
 
@@ -326,12 +328,14 @@ mod tests {
         assert!(sources.contains(&"mac"));
         assert!(sources.contains(&"notion"));
         assert!(sources.contains(&"plaid"));
+        assert!(sources.contains(&"strava"));
+        assert!(sources.contains(&"github"));
     }
 
     #[test]
     fn test_get_streams_for_source() {
         let ios_streams = get_streams_for_source("ios");
-        assert!(ios_streams.len() >= 8); // healthkit, location, microphone, contacts, battery, barometer, financekit, eventkit
+        assert!(ios_streams.len() >= 6); // healthkit, location, microphone, contacts, financekit, eventkit
 
         let google_streams = get_streams_for_source("google");
         assert!(google_streams.len() >= 2); // calendar, gmail

@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn test_create_gmail_transform() {
         let context = create_test_context();
-        let result = TransformFactory::create("stream_google_gmail", "social_email", &context);
+        let result = TransformFactory::create("stream_google_gmail", "communication_email", &context);
         assert!(result.is_ok());
     }
 

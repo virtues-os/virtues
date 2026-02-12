@@ -5,10 +5,10 @@
  * - Standard markdown elements (headings, lists, blockquotes, code blocks)
  * - Tables with cell-level editing (via prosemirror-tables)
  * - Custom nodes: entity links, media players, file cards, checkboxes
- * - Custom marks: CriticMarkup (additions/deletions)
+ * - Standard marks: bold, italic, underline, code, strikethrough, links
  */
 
-import { Schema, type NodeSpec, type MarkSpec } from 'prosemirror-model';
+import { Schema, type MarkSpec, type Node as PMNode, type NodeSpec } from 'prosemirror-model';
 import { tableNodes } from 'prosemirror-tables';
 
 // =============================================================================
@@ -207,6 +207,7 @@ const nodes: Record<string, NodeSpec> = {
 			label: {},
 		},
 		group: 'inline',
+		leafText: (node: PMNode) => node.attrs.label || '',
 		parseDOM: [
 			{
 				tag: 'a.entity-link',
@@ -290,6 +291,7 @@ const nodes: Record<string, NodeSpec> = {
 			name: {},
 		},
 		group: 'inline',
+		leafText: (node: PMNode) => node.attrs.name || '',
 		parseDOM: [
 			{
 				tag: 'a.file-card',

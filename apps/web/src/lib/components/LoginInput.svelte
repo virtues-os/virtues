@@ -254,8 +254,9 @@
 		<input
 			onfocus={() => {
 				isFocused = true;
-				updateCaretPosition();
+				setTimeout(updateCaretPosition, 0);
 			}}
+			onclick={() => setTimeout(updateCaretPosition, 0)}
 			autocomplete="off"
 			autocorrect="off"
 			autocapitalize="off"

@@ -22,18 +22,21 @@ use crate::{
 
 /// OpenAI streaming chunk format
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct StreamChunk {
     pub choices: Option<Vec<StreamChoice>>,
     pub usage: Option<StreamUsage>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct StreamChoice {
     pub delta: Option<StreamDelta>,
     pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct StreamDelta {
     pub content: Option<String>,
     pub role: Option<String>,
@@ -41,6 +44,7 @@ pub struct StreamDelta {
 
 /// Usage data from final streaming chunk (when stream_options.include_usage = true)
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct StreamUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,

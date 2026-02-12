@@ -6,8 +6,6 @@
 //
 
 import SwiftUI
-import AVFoundation
-import CoreLocation
 
 // MARK: - Permission State
 
@@ -22,7 +20,7 @@ enum PermissionState {
     case granted
     case denied
     case undetermined
-    case notRequired  // Battery
+    case notRequired
     case partial      // Location "When In Use" instead of "Always"
 
     var icon: String {
@@ -47,9 +45,7 @@ struct DataView: View {
     @ObservedObject private var healthKitManager = HealthKitManager.shared
     @ObservedObject private var locationManager = LocationManager.shared
     @ObservedObject private var audioManager = AudioManager.shared
-    @ObservedObject private var batteryManager = BatteryManager.shared
     @ObservedObject private var contactsManager = ContactsManager.shared
-    @ObservedObject private var barometerManager = BarometerManager.shared
     @ObservedObject private var financeKitManager = FinanceKitManager.shared
     @ObservedObject private var eventKitManager = EventKitManager.shared
 
@@ -61,8 +57,6 @@ struct DataView: View {
     @State private var showLocationInfo = false
     @State private var showAudioInfo = false
     @State private var showContactsInfo = false
-    @State private var showBatteryInfo = false
-    @State private var showBarometerInfo = false
     @State private var showFinanceKitInfo = false
     @State private var showEventKitInfo = false
 
@@ -108,12 +102,6 @@ struct DataView: View {
         }
         .sheet(isPresented: $showContactsInfo) {
             ContactsInfoView()
-        }
-        .sheet(isPresented: $showBatteryInfo) {
-            BatteryInfoView()
-        }
-        .sheet(isPresented: $showBarometerInfo) {
-            BarometerInfoView()
         }
         .sheet(isPresented: $showFinanceKitInfo) {
             FinanceKitInfoView()
@@ -246,33 +234,6 @@ struct DataView: View {
                     onPermissionTap: eventKitPermissionState == .denied ? openSettings : nil
                 )
 
-                StreamToggleRow(
-                    icon: "battery.75percent",
-                    iconColor: .warmSuccess,
-                    title: "Battery",
-                    subtitle: "Device status",
-                    isEnabled: batteryEnabled,
-                    onToggle: { enabled in
-                        toggleBattery(enabled)
-                    },
-                    onInfoTap: { showBatteryInfo = true },
-                    permissionState: .notRequired
-                )
-
-                if BarometerManager.isAvailable {
-                    StreamToggleRow(
-                        icon: "barometer",
-                        iconColor: .purple,
-                        title: "Barometer",
-                        subtitle: barometerEnabled ? "Pressure & altitude" : "Pressure & altitude",
-                        isEnabled: barometerEnabled,
-                        onToggle: { enabled in
-                            toggleBarometer(enabled)
-                        },
-                        onInfoTap: { showBarometerInfo = true },
-                        permissionState: .notRequired
-                    )
-                }
             } header: {
                 Text("Additional Sensors")
                     .font(.subheadline)
@@ -301,14 +262,6 @@ struct DataView: View {
 
     private var contactsEnabled: Bool {
         contactsManager.isEnabled
-    }
-
-    private var batteryEnabled: Bool {
-        batteryManager.isMonitoring
-    }
-
-    private var barometerEnabled: Bool {
-        barometerManager.isMonitoring
     }
 
     private var financeKitEnabled: Bool {
@@ -377,7 +330,7 @@ struct DataView: View {
 
     /// True if any additional sensor is enabled but location (the core sensor) is not
     private var hasAdditionalSensorsWithoutLocation: Bool {
-        let anyAdditionalEnabled = audioEnabled || healthKitEnabled || contactsEnabled || batteryEnabled || barometerEnabled || financeKitEnabled || eventKitEnabled
+        let anyAdditionalEnabled = audioEnabled || healthKitEnabled || contactsEnabled || financeKitEnabled || eventKitEnabled
         return anyAdditionalEnabled && !locationEnabled
     }
 
@@ -519,21 +472,6 @@ struct DataView: View {
         showPermissionDeniedAlert = true
     }
 
-    private func toggleBattery(_ enabled: Bool) {
-        if enabled {
-            batteryManager.startMonitoring()
-        } else {
-            batteryManager.stopMonitoring()
-        }
-    }
-
-    private func toggleBarometer(_ enabled: Bool) {
-        if enabled {
-            barometerManager.startMonitoring()
-        } else {
-            barometerManager.stopMonitoring()
-        }
-    }
 }
 
 // MARK: - No Core Sensor Banner

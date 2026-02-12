@@ -29,7 +29,7 @@ use crate::{
 pub struct PlaidLiabilitiesStream {
     source_id: String,
     client: PlaidClient,
-    db: SqlitePool,
+    _db: SqlitePool,
     stream_writer: Arc<Mutex<StreamWriter>>,
     config: PlaidLiabilitiesConfig,
     /// Access token for this Item (loaded from database)
@@ -48,7 +48,7 @@ impl PlaidLiabilitiesStream {
         Ok(Self {
             source_id,
             client,
-            db,
+            _db: db,
             stream_writer,
             config: PlaidLiabilitiesConfig::default(),
             access_token: None,
@@ -65,7 +65,7 @@ impl PlaidLiabilitiesStream {
         Self {
             source_id,
             client,
-            db,
+            _db: db,
             stream_writer,
             config: PlaidLiabilitiesConfig::default(),
             access_token: None,

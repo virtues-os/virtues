@@ -23,13 +23,23 @@ import type { DayPage, ContextVector, LinkedEntities, LinkedTemporal } from "./t
 import type { ActPage } from "./types/act";
 import type { ChapterPage } from "./types/chapter";
 import type { TelosPage } from "./types/telos";
+import { parseDateSlug, formatLongDate } from "$lib/utils/dateUtils";
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
 function emptyContextVector(): ContextVector {
-	return { when: 0, where: 0, who: 0, what: 0, why: 0, how: 0 };
+	return { who: 0, whom: 0, what: 0, when: 0, where: 0, why: 0, how: 0 };
+}
+
+function parseContextVector(raw: string | null): ContextVector {
+	if (!raw) return emptyContextVector();
+	try {
+		return JSON.parse(raw);
+	} catch {
+		return emptyContextVector();
+	}
 }
 
 function emptyLinkedEntities(): LinkedEntities {
@@ -187,13 +197,14 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 // ============================================================================
 
 export function apiToDayPage(api: WikiDayApi): DayPage {
-	const date = new Date(api.date);
+	// Parse as local date — new Date("2026-02-10") would be UTC midnight (wrong timezone)
+	const date = parseDateSlug(api.date);
 	const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 	return {
 		type: "day",
 		id: api.id,
-				title: formatDayTitle(date),
+				title: formatLongDate(date),
 		cover: api.cover_image ?? undefined,
 
 		// Day-specific fields
@@ -203,7 +214,9 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		endTimezone: api.end_timezone,
 
 		// Layers (will be populated from separate queries)
-		contextVector: emptyContextVector(),
+		contextVector: parseContextVector(api.context_vector),
+		chaosScore: api.chaos_score ?? null,
+		entropyCalibrationDays: api.entropy_calibration_days ?? null,
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
@@ -221,15 +234,6 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",
 	};
-}
-
-function formatDayTitle(date: Date): string {
-	return date.toLocaleDateString("en-US", {
-		weekday: "long",
-		year: "numeric",
-		month: "long",
-		day: "numeric",
-	});
 }
 
 // ============================================================================

@@ -65,7 +65,7 @@ pub async fn list_permissions(pool: &SqlitePool, chat_id: &str) -> Result<Permis
     let permissions = sqlx::query_as::<_, ChatEditPermission>(
         r#"
         SELECT id, chat_id, entity_id, entity_type, entity_title, granted_at
-        FROM chat_edit_permissions
+        FROM app_chat_edit_permissions
         WHERE chat_id = $1
         ORDER BY granted_at ASC
         "#,
@@ -82,7 +82,7 @@ pub async fn list_permissions(pool: &SqlitePool, chat_id: &str) -> Result<Permis
 pub async fn has_permission(pool: &SqlitePool, chat_id: &str, entity_id: &str) -> Result<bool> {
     let result = sqlx::query_scalar::<_, i64>(
         r#"
-        SELECT COUNT(*) FROM chat_edit_permissions
+        SELECT COUNT(*) FROM app_chat_edit_permissions
         WHERE chat_id = $1 AND entity_id = $2
         "#,
     )
@@ -108,7 +108,7 @@ pub async fn add_permission(
     // Use INSERT OR IGNORE so we don't conflict if chat already exists
     sqlx::query(
         r#"
-        INSERT OR IGNORE INTO chats (id, title, message_count)
+        INSERT OR IGNORE INTO app_chats (id, title, message_count)
         VALUES ($1, 'New conversation', 0)
         "#,
     )
@@ -120,7 +120,7 @@ pub async fn add_permission(
     // Use INSERT OR IGNORE to handle duplicates gracefully
     sqlx::query(
         r#"
-        INSERT OR IGNORE INTO chat_edit_permissions (id, chat_id, entity_id, entity_type, entity_title)
+        INSERT OR IGNORE INTO app_chat_edit_permissions (id, chat_id, entity_id, entity_type, entity_title)
         VALUES ($1, $2, $3, $4, $5)
         "#,
     )
@@ -137,7 +137,7 @@ pub async fn add_permission(
     let permission = sqlx::query_as::<_, ChatEditPermission>(
         r#"
         SELECT id, chat_id, entity_id, entity_type, entity_title, granted_at
-        FROM chat_edit_permissions
+        FROM app_chat_edit_permissions
         WHERE chat_id = $1 AND entity_id = $2
         "#,
     )
@@ -154,7 +154,7 @@ pub async fn add_permission(
 pub async fn remove_permission(pool: &SqlitePool, chat_id: &str, entity_id: &str) -> Result<()> {
     let result = sqlx::query(
         r#"
-        DELETE FROM chat_edit_permissions
+        DELETE FROM app_chat_edit_permissions
         WHERE chat_id = $1 AND entity_id = $2
         "#,
     )
@@ -179,7 +179,7 @@ pub async fn remove_permission(pool: &SqlitePool, chat_id: &str, entity_id: &str
 pub async fn clear_permissions(pool: &SqlitePool, chat_id: &str) -> Result<u64> {
     let result = sqlx::query(
         r#"
-        DELETE FROM chat_edit_permissions
+        DELETE FROM app_chat_edit_permissions
         WHERE chat_id = $1
         "#,
     )

@@ -17,15 +17,14 @@
 //! - `0 0 0 * * *` - Daily at midnight
 //! - `0 0 9 * * 1` - Every Monday at 9:00 AM
 
+use chrono::Timelike;
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
-
 use crate::{
     error::{Error, Result},
-    llm::LLMClient,
     storage::{stream_writer::StreamWriter, Storage},
     types::Timestamp,
 };
@@ -300,6 +299,149 @@ impl Scheduler {
             .map_err(|e| Error::Other(format!("Failed to add DriveTrashPurgeJob: {}", e)))?;
 
         tracing::info!("DriveTrashPurgeJob scheduled daily at 3am");
+        Ok(())
+    }
+
+    /// Schedule the daily summary job (hourly check, runs at user's update_check_hour)
+    ///
+    /// Checks every hour whether it's the user's configured maintenance hour
+    /// (update_check_hour) in their timezone. If so, generates yesterday's
+    /// daily summary (autobiography + context vector + chaos scoring).
+    pub async fn schedule_daily_summary_job(&self) -> Result<()> {
+        let db = self.db.clone();
+
+        // Every hour at :00
+        let cron_expr = "0 0 * * * *";
+
+        tracing::info!("Scheduling DailySummaryJob (hourly check)");
+
+        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
+            let db = db.clone();
+
+            Box::pin(async move {
+                // 1. Read user's maintenance hour and timezone
+                let profile: Option<(Option<i32>, Option<String>)> = sqlx::query_as(
+                    "SELECT update_check_hour, timezone FROM app_user_profile LIMIT 1",
+                )
+                .fetch_optional(&db)
+                .await
+                .unwrap_or(None);
+
+                let (maintenance_hour, timezone) = match profile {
+                    Some((hour, tz)) => (hour.unwrap_or(8), tz), // 8 UTC ≈ midnight PST / 3am EST
+                    None => return, // No profile yet
+                };
+
+                // 2. Compute current hour in the user's timezone (or UTC if unset)
+                let now_utc = chrono::Utc::now();
+                let current_hour = if let Some(ref tz_str) = timezone {
+                    if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
+                        now_utc.with_timezone(&tz).hour()
+                    } else {
+                        now_utc.hour()
+                    }
+                } else {
+                    now_utc.hour()
+                };
+
+                // 3. Only proceed if it's the maintenance hour
+                if current_hour != maintenance_hour as u32 {
+                    return;
+                }
+
+                tracing::info!("Running DailySummaryJob (maintenance hour {} in user's timezone)", maintenance_hour);
+
+                // 4. Compute "yesterday" in the user's timezone
+                let yesterday = if let Some(ref tz_str) = timezone {
+                    if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
+                        let local_now = now_utc.with_timezone(&tz);
+                        local_now.date_naive() - chrono::Duration::days(1)
+                    } else {
+                        now_utc.date_naive() - chrono::Duration::days(1)
+                    }
+                } else {
+                    now_utc.date_naive() - chrono::Duration::days(1)
+                };
+
+                // 5. Check if autobiography already exists (idempotent)
+                let existing = crate::api::wiki::get_or_create_day(&db, yesterday).await;
+                match existing {
+                    Ok(day) if day.autobiography.is_some() => {
+                        tracing::debug!(
+                            "DailySummaryJob: summary already exists for {}, skipping",
+                            yesterday
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        tracing::error!("DailySummaryJob: failed to check day {}: {}", yesterday, e);
+                        return;
+                    }
+                    _ => {}
+                }
+
+                // 6. Generate the summary
+                match crate::api::day_summary::generate_day_summary(&db, yesterday).await {
+                    Ok(day) => {
+                        tracing::info!(
+                            "DailySummaryJob: generated summary for {} (chaos_score={:?})",
+                            yesterday,
+                            day.chaos_score
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "DailySummaryJob: failed to generate summary for {}: {}",
+                            yesterday,
+                            e
+                        );
+                    }
+                }
+            })
+        })
+        .map_err(|e| Error::Other(format!("Failed to create DailySummaryJob: {}", e)))?;
+
+        self.scheduler
+            .add(job)
+            .await
+            .map_err(|e| Error::Other(format!("Failed to add DailySummaryJob: {}", e)))?;
+
+        tracing::info!("DailySummaryJob scheduled (checks every hour)");
+        Ok(())
+    }
+
+    /// Schedule the embedding indexer job (every 15 minutes)
+    ///
+    /// Processes new records from searchable ontologies and generates
+    /// embeddings via the local fastembed model.
+    pub async fn schedule_embedding_job(&self) -> Result<()> {
+        let db = self.db.clone();
+
+        // Every 15 minutes
+        let cron_expr = "0 */15 * * * *";
+
+        tracing::info!("Scheduling EmbeddingIndexerJob every 15 minutes");
+
+        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
+            let db = db.clone();
+
+            Box::pin(async move {
+                match crate::search::run_embedding_job(&db).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::error!("EmbeddingIndexerJob failed: {}", e);
+                    }
+                }
+            })
+        })
+        .map_err(|e| Error::Other(format!("Failed to create EmbeddingIndexerJob: {}", e)))?;
+
+        self.scheduler
+            .add(job)
+            .await
+            .map_err(|e| Error::Other(format!("Failed to add EmbeddingIndexerJob: {}", e)))?;
+
+        tracing::info!("EmbeddingIndexerJob scheduled every 15 minutes");
         Ok(())
     }
 

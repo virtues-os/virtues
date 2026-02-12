@@ -12,8 +12,6 @@ import SwiftUI
 extension Color {
     // Primary / Accent
     static let warmPrimary = Color(hex: "EB5601")
-    static let warmPrimaryHover = Color(hex: "FF6B1A")
-    static let warmPrimaryActive = Color(hex: "D14A00")
     static let warmPrimarySubtle = Color(hex: "FFF0E6")
 
     // Backgrounds
@@ -30,20 +28,12 @@ extension Color {
     // Borders
     static let warmBorder = Color(hex: "e7e5e4")
     static let warmBorderSubtle = Color(hex: "f0eeeb")
-    static let warmBorderStrong = Color(hex: "a8a29e")
-
     // Status Colors
     static let warmSuccess = Color(hex: "16a34a")
-    static let warmSuccessSubtle = Color(hex: "dcfce7")
     static let warmWarning = Color(hex: "ea580c")
     static let warmWarningSubtle = Color(hex: "ffedd5")
     static let warmError = Color(hex: "dc2626")
-    static let warmErrorSubtle = Color(hex: "fee2e2")
     static let warmInfo = Color(hex: "0284c7")
-    static let warmInfoSubtle = Color(hex: "e0f2fe")
-
-    // Highlight
-    static let warmHighlight = Color(hex: "fffbeb")
 }
 
 // MARK: - Hex Color Initializer

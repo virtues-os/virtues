@@ -32,7 +32,7 @@ pub struct View {
     pub icon: Option<String>,
     pub sort_order: i32,
     pub view_type: String,            // 'manual' or 'smart'
-    pub query_config: Option<String>, // JSON query config (smart views only)
+    pub query_config: Option<String>, // JSON query config (smart views)
     pub is_system: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -59,18 +59,20 @@ pub struct ViewSummary {
     pub icon: Option<String>,
     pub sort_order: i32,
     pub view_type: String,
+    pub query_config: Option<String>,
     pub is_system: bool,
 }
 
 /// Smart view query configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryConfig {
-    pub namespace: String,            // person, page, chat, etc.
+    pub namespace: Option<String>,    // person, page, chat, etc. (optional when raw_sql is used)
     pub filters: Option<serde_json::Value>, // Optional filters
     pub sort: Option<String>,         // Sort field
     pub sort_dir: Option<String>,     // asc or desc
     pub limit: Option<i64>,
     pub static_prefix: Option<Vec<String>>, // Static URLs to prepend before dynamic results
+    pub raw_sql: Option<String>,      // Raw SQL query for user-defined smart views
 }
 
 /// Entity returned from view resolution
@@ -81,6 +83,21 @@ pub struct ViewEntity {
     pub namespace: String,            // person, page, chat, etc.
     pub icon: String,
     pub updated_at: Option<String>,
+}
+
+/// Space item entity — ViewEntity with sort_order for unified ordering with folders
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpaceItemEntity {
+    #[serde(flatten)]
+    pub entity: ViewEntity,
+    pub sort_order: i32,
+}
+
+/// Explicit sort_order for a space item (used in reorder requests)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemSortOrder {
+    pub url: String,
+    pub sort_order: i32,
 }
 
 /// View resolution response
@@ -132,8 +149,8 @@ pub struct ViewListResponse {
 pub async fn list_views(pool: &SqlitePool, space_id: &str) -> Result<ViewListResponse> {
     let views = sqlx::query_as::<_, ViewSummary>(
         r#"
-        SELECT id, space_id, parent_view_id, name, icon, sort_order, view_type, is_system
-        FROM views
+        SELECT id, space_id, parent_view_id, name, icon, sort_order, view_type, query_config, is_system
+        FROM app_views
         WHERE space_id = $1
         ORDER BY sort_order ASC
         "#,
@@ -152,7 +169,7 @@ pub async fn get_view(pool: &SqlitePool, id: &str) -> Result<View> {
         r#"
         SELECT id, space_id, parent_view_id, name, icon, sort_order, view_type,
                query_config, is_system, created_at, updated_at
-        FROM views
+        FROM app_views
         WHERE id = $1
         "#,
     )
@@ -178,7 +195,7 @@ pub async fn create_view(pool: &SqlitePool, req: CreateViewRequest) -> Result<Vi
     // Validate based on view_type
     match req.view_type.as_str() {
         "manual" => {
-            // Manual views don't require initial items
+            // Manual views don't require query_config
         }
         "smart" => {
             if req.query_config.is_none() {
@@ -194,15 +211,11 @@ pub async fn create_view(pool: &SqlitePool, req: CreateViewRequest) -> Result<Vi
         return Err(Error::InvalidInput("View name cannot be empty".into()));
     }
 
-    // Validate parent_view_id for shallow nesting (depth=1)
-    if let Some(parent_id) = &req.parent_view_id {
-        let parent = get_view(pool, parent_id).await?;
-        // Depth=1: parent cannot itself have a parent
-        if parent.parent_view_id.is_some() {
-            return Err(Error::InvalidInput(
-                "Cannot nest views more than 1 level deep".into(),
-            ));
-        }
+    // Validate parent_view_id: no nesting allowed
+    if req.parent_view_id.is_some() {
+        return Err(Error::InvalidInput(
+            "View nesting is not supported".into(),
+        ));
     }
 
     // Generate ID
@@ -211,7 +224,7 @@ pub async fn create_view(pool: &SqlitePool, req: CreateViewRequest) -> Result<Vi
 
     // Get next sort_order
     let max_sort_order: Option<i32> =
-        sqlx::query_scalar(r#"SELECT MAX(sort_order) FROM views WHERE space_id = $1"#)
+        sqlx::query_scalar(r#"SELECT MAX(sort_order) FROM app_views WHERE space_id = $1"#)
             .bind(&req.space_id)
             .fetch_one(pool)
             .await
@@ -229,7 +242,7 @@ pub async fn create_view(pool: &SqlitePool, req: CreateViewRequest) -> Result<Vi
 
     let view = sqlx::query_as::<_, View>(
         r#"
-        INSERT INTO views (id, space_id, parent_view_id, name, icon, sort_order, view_type, query_config, is_system)
+        INSERT INTO app_views (id, space_id, parent_view_id, name, icon, sort_order, view_type, query_config, is_system)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
         RETURNING id, space_id, parent_view_id, name, icon, sort_order, view_type,
                   query_config, is_system, created_at, updated_at
@@ -282,7 +295,7 @@ pub async fn update_view(pool: &SqlitePool, id: &str, req: UpdateViewRequest) ->
 
     let view = sqlx::query_as::<_, View>(
         r#"
-        UPDATE views
+        UPDATE app_views
         SET name = $2, icon = $3, sort_order = $4, query_config = $5
         WHERE id = $1
         RETURNING id, space_id, parent_view_id, name, icon, sort_order, view_type,
@@ -310,7 +323,7 @@ pub async fn delete_view(pool: &SqlitePool, id: &str) -> Result<()> {
         return Err(Error::InvalidInput("Cannot delete system view".into()));
     }
 
-    let result = sqlx::query(r#"DELETE FROM views WHERE id = $1"#)
+    let result = sqlx::query(r#"DELETE FROM app_views WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
@@ -346,7 +359,7 @@ pub async fn add_item_to_view(pool: &SqlitePool, view_id: &str, url: &str) -> Re
 
     // Get next sort_order for this view
     let max_sort_order: Option<i32> =
-        sqlx::query_scalar(r#"SELECT MAX(sort_order) FROM space_items WHERE view_id = $1"#)
+        sqlx::query_scalar(r#"SELECT MAX(sort_order) FROM app_space_items WHERE view_id = $1"#)
             .bind(view_id)
             .fetch_one(pool)
             .await
@@ -357,7 +370,7 @@ pub async fn add_item_to_view(pool: &SqlitePool, view_id: &str, url: &str) -> Re
     // Insert into space_items (UNIQUE constraint prevents duplicates)
     let item = sqlx::query_as::<_, ViewItem>(
         r#"
-        INSERT INTO space_items (view_id, space_id, url, sort_order)
+        INSERT INTO app_space_items (view_id, space_id, url, sort_order)
         VALUES ($1, NULL, $2, $3)
         ON CONFLICT(view_id, url) WHERE view_id IS NOT NULL DO UPDATE SET sort_order = sort_order
         RETURNING id, view_id, space_id, url, sort_order, created_at
@@ -394,7 +407,7 @@ pub async fn remove_item_from_view(
         return Err(Error::InvalidInput("Cannot modify system view".into()));
     }
 
-    let result = sqlx::query(r#"DELETE FROM space_items WHERE view_id = $1 AND url = $2"#)
+    let result = sqlx::query(r#"DELETE FROM app_space_items WHERE view_id = $1 AND url = $2"#)
         .bind(view_id)
         .bind(url)
         .execute(pool)
@@ -419,7 +432,7 @@ pub async fn list_view_items(pool: &SqlitePool, view_id: &str) -> Result<Vec<Vie
     let items = sqlx::query_as::<_, ViewItem>(
         r#"
         SELECT id, view_id, space_id, url, sort_order, created_at
-        FROM space_items
+        FROM app_space_items
         WHERE view_id = $1
         ORDER BY sort_order ASC
         "#,
@@ -446,7 +459,7 @@ pub async fn reorder_view_items(
 
     // Update sort_order for each item
     for (index, url) in url_order.iter().enumerate() {
-        sqlx::query(r#"UPDATE space_items SET sort_order = $3 WHERE view_id = $1 AND url = $2"#)
+        sqlx::query(r#"UPDATE app_space_items SET sort_order = $3 WHERE view_id = $1 AND url = $2"#)
             .bind(view_id)
             .bind(url)
             .bind(index as i32)
@@ -467,7 +480,7 @@ pub async fn list_space_items(pool: &SqlitePool, space_id: &str) -> Result<Vec<V
     let items = sqlx::query_as::<_, ViewItem>(
         r#"
         SELECT id, view_id, space_id, url, sort_order, created_at
-        FROM space_items
+        FROM app_space_items
         WHERE space_id = $1
         ORDER BY sort_order ASC
         "#,
@@ -480,29 +493,22 @@ pub async fn list_space_items(pool: &SqlitePool, space_id: &str) -> Result<Vec<V
     Ok(items)
 }
 
-/// Resolve space items to entities (with full metadata)
+/// Resolve space items to entities with sort_order (for unified ordering with folders)
 pub async fn resolve_space_items(
     pool: &SqlitePool,
     space_id: &str,
-) -> Result<Vec<ViewEntity>> {
-    // Get URLs for this space
-    let urls: Vec<String> = sqlx::query_scalar(
-        r#"
-        SELECT url FROM space_items
-        WHERE space_id = $1
-        ORDER BY sort_order ASC
-        "#,
-    )
-    .bind(space_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to fetch space items: {}", e)))?;
+) -> Result<Vec<SpaceItemEntity>> {
+    // Fetch full item records (url + sort_order)
+    let items = list_space_items(pool, space_id).await?;
 
-    // Resolve each URL to its entity details
+    // Resolve each URL to its entity details, preserving sort_order
     let mut entities = Vec::new();
-    for url in &urls {
-        if let Some(entity) = resolve_url(pool, url).await? {
-            entities.push(entity);
+    for item in &items {
+        if let Some(entity) = resolve_url(pool, &item.url).await? {
+            entities.push(SpaceItemEntity {
+                entity,
+                sort_order: item.sort_order,
+            });
         }
     }
 
@@ -517,7 +523,7 @@ pub async fn add_space_item(
 ) -> Result<ViewItem> {
     // Get next sort_order for this space
     let max_sort_order: Option<i32> =
-        sqlx::query_scalar(r#"SELECT MAX(sort_order) FROM space_items WHERE space_id = $1"#)
+        sqlx::query_scalar(r#"SELECT MAX(sort_order) FROM app_space_items WHERE space_id = $1"#)
             .bind(space_id)
             .fetch_one(pool)
             .await
@@ -528,7 +534,7 @@ pub async fn add_space_item(
     // Insert into space_items (UNIQUE constraint prevents duplicates)
     let item = sqlx::query_as::<_, ViewItem>(
         r#"
-        INSERT INTO space_items (view_id, space_id, url, sort_order)
+        INSERT INTO app_space_items (view_id, space_id, url, sort_order)
         VALUES (NULL, $1, $2, $3)
         ON CONFLICT(space_id, url) WHERE space_id IS NOT NULL DO UPDATE SET sort_order = sort_order
         RETURNING id, view_id, space_id, url, sort_order, created_at
@@ -553,7 +559,7 @@ pub async fn remove_space_item(
     space_id: &str,
     url: &str,
 ) -> Result<()> {
-    let result = sqlx::query(r#"DELETE FROM space_items WHERE space_id = $1 AND url = $2"#)
+    let result = sqlx::query(r#"DELETE FROM app_space_items WHERE space_id = $1 AND url = $2"#)
         .bind(space_id)
         .bind(url)
         .execute(pool)
@@ -573,18 +579,17 @@ pub async fn remove_space_item(
     Ok(())
 }
 
-/// Reorder items at space root level
+/// Reorder items at space root level with explicit sort_order values
 pub async fn reorder_space_items(
     pool: &SqlitePool,
     space_id: &str,
-    url_order: Vec<String>,
+    items: Vec<ItemSortOrder>,
 ) -> Result<()> {
-    // Update sort_order for each item
-    for (index, url) in url_order.iter().enumerate() {
-        sqlx::query(r#"UPDATE space_items SET sort_order = $3 WHERE space_id = $1 AND url = $2"#)
+    for item in &items {
+        sqlx::query(r#"UPDATE app_space_items SET sort_order = $3 WHERE space_id = $1 AND url = $2"#)
             .bind(space_id)
-            .bind(url)
-            .bind(index as i32)
+            .bind(&item.url)
+            .bind(item.sort_order)
             .execute(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to reorder space items: {}", e)))?;
@@ -596,7 +601,7 @@ pub async fn reorder_space_items(
 /// Remove all space_items entries for a given URL (orphan cleanup)
 /// Called when an entity is deleted to clean up all references
 pub async fn remove_items_by_url(pool: &SqlitePool, url: &str) -> Result<i64> {
-    let result = sqlx::query(r#"DELETE FROM space_items WHERE url = $1"#)
+    let result = sqlx::query(r#"DELETE FROM app_space_items WHERE url = $1"#)
         .bind(url)
         .execute(pool)
         .await
@@ -640,12 +645,66 @@ pub async fn resolve_view(
             icon: view.icon,
             sort_order: view.sort_order,
             view_type: view.view_type,
+            query_config: view.query_config,
             is_system: view.is_system,
         },
         entities,
         total,
         has_more: offset + limit < total,
     })
+}
+
+async fn resolve_raw_sql(
+    pool: &SqlitePool,
+    sql: &str,
+    limit: i64,
+    _offset: i64,
+) -> Result<(Vec<ViewEntity>, i64)> {
+    // Empty query = no results (new smart folder with no query yet)
+    if sql.trim().is_empty() {
+        return Ok((Vec::new(), 0));
+    }
+
+    // Execute raw SQL via read-only query with safety limits
+    // Hard cap: 1000 rows for page view, sidebar capped client-side to 8
+    let effective_limit = limit.min(1000);
+
+    // Wrap in a limited SELECT to enforce row cap
+    let wrapped = format!(
+        "SELECT * FROM ({}) LIMIT {}",
+        sql.trim().trim_end_matches(';'),
+        effective_limit
+    );
+
+    let rows = sqlx::query(&wrapped)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Raw SQL execution failed: {}", e)))?;
+
+    // Map rows to ViewEntity using convention: first column = id, second = name/title
+    // Optional: third = icon, fourth = updated_at
+    use sqlx::Row;
+    let entities: Vec<ViewEntity> = rows
+        .iter()
+        .filter_map(|row| {
+            let id: String = row.try_get(0).ok()?;
+            let name: String = row.try_get(1).unwrap_or_else(|_| id.clone());
+            let icon: String = row
+                .try_get(2)
+                .unwrap_or_else(|_| "ri:file-line".to_string());
+            let updated_at: Option<String> = row.try_get(3).ok();
+            Some(ViewEntity {
+                id,
+                name,
+                namespace: "sql".to_string(),
+                icon,
+                updated_at,
+            })
+        })
+        .collect();
+
+    let total = entities.len() as i64;
+    Ok((entities, total))
 }
 
 async fn resolve_manual_view(
@@ -655,7 +714,7 @@ async fn resolve_manual_view(
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
     // Get total count
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM space_items WHERE view_id = $1"#)
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_space_items WHERE view_id = $1"#)
         .bind(&view.id)
         .fetch_one(pool)
         .await
@@ -664,7 +723,7 @@ async fn resolve_manual_view(
     // Get paginated URLs
     let urls: Vec<String> = sqlx::query_scalar(
         r#"
-        SELECT url FROM space_items
+        SELECT url FROM app_space_items
         WHERE view_id = $1
         ORDER BY sort_order ASC
         LIMIT $2 OFFSET $3
@@ -712,23 +771,31 @@ async fn resolve_smart_view(
         }
     }
 
-    // Route to namespace-specific resolver
-    let (mut entities, total) = match config.namespace.as_str() {
-        "chat" => resolve_chats(pool, &config, limit, offset).await?,
-        "page" => resolve_pages(pool, &config, limit, offset).await?,
-        "person" => resolve_people(pool, &config, limit, offset).await?,
-        "place" => resolve_places(pool, &config, limit, offset).await?,
-        "org" => resolve_orgs(pool, &config, limit, offset).await?,
-        "thing" => resolve_things(pool, &config, limit, offset).await?,
-        "day" => resolve_days(pool, &config, limit, offset).await?,
-        "year" => resolve_years(pool, &config, limit, offset).await?,
-        "source" => resolve_sources(pool, &config, limit, offset).await?,
-        "drive" => resolve_drive(pool, &config, limit, offset).await?,
-        _ => {
-            return Err(Error::InvalidInput(format!(
-                "Unknown namespace: {}",
-                config.namespace
-            )))
+    // Route to namespace-specific resolver or raw SQL
+    let (mut entities, total) = if let Some(ref raw_sql) = config.raw_sql {
+        resolve_raw_sql(pool, raw_sql, limit, offset).await?
+    } else {
+        match config.namespace.as_deref() {
+            Some("chat") => resolve_chats(pool, &config, limit, offset).await?,
+            Some("page") => resolve_pages(pool, &config, limit, offset).await?,
+            Some("person") => resolve_people(pool, &config, limit, offset).await?,
+            Some("place") => resolve_places(pool, &config, limit, offset).await?,
+            Some("org") => resolve_orgs(pool, &config, limit, offset).await?,
+            Some("day") => resolve_days(pool, &config, limit, offset).await?,
+            Some("year") => resolve_years(pool, &config, limit, offset).await?,
+            Some("source") => resolve_sources(pool, &config, limit, offset).await?,
+            Some("drive") => resolve_drive(pool, &config, limit, offset).await?,
+            Some(ns) => {
+                return Err(Error::InvalidInput(format!(
+                    "Unknown namespace: {}",
+                    ns
+                )))
+            }
+            None => {
+                return Err(Error::InvalidInput(
+                    "Smart view requires either namespace or raw_sql".into(),
+                ))
+            }
         }
     };
 
@@ -779,7 +846,6 @@ async fn resolve_url(pool: &SqlitePool, url: &str) -> Result<Option<ViewEntity>>
         "person" => resolve_person_by_id(pool, id).await,
         "place" => resolve_place_by_id(pool, id).await,
         "org" => resolve_org_by_id(pool, id).await,
-        "thing" => resolve_thing_by_id(pool, id).await,
         "day" => resolve_day_by_id(pool, id).await,
         "year" => resolve_year_by_id(pool, id).await,
         "source" => resolve_source_by_id(pool, id).await,
@@ -812,12 +878,13 @@ fn resolve_app_route(url: &str) -> ViewEntity {
         "/person" => ("People", "ri:user-line"),
         "/place" => ("Places", "ri:map-pin-line"),
         "/org" => ("Organizations", "ri:building-line"),
-        "/thing" => ("Things", "ri:box-3-line"),
-        "/source" => ("Sources", "ri:plug-line"),
+        "/source" | "/sources" => ("Sources", "ri:plug-line"),
         "/drive" => ("Drive", "ri:folder-line"),
         "/virtues/sql" => ("SQL Viewer", "ri:database-line"),
         "/virtues/terminal" => ("Terminal", "ri:terminal-box-line"),
         "/virtues/sitemap" => ("Sitemap", "ri:road-map-line"),
+        "/virtues/lake" => ("Lake", "ri:database-2-line"),
+        "/virtues/jobs" => ("Jobs", "ri:refresh-line"),
         _ => {
             // Derive name from URL path
             let name = url.split('/').last().unwrap_or("Page");
@@ -844,7 +911,7 @@ async fn resolve_chats(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM chats"#)
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_chats"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count chats: {}", e)))?;
@@ -852,7 +919,7 @@ async fn resolve_chats(
     let entities: Vec<ViewEntity> = sqlx::query_as::<_, (String, String, String)>(
         r#"
         SELECT id, title, updated_at
-        FROM chats
+        FROM app_chats
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -881,7 +948,7 @@ async fn resolve_pages(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM pages"#)
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
@@ -889,7 +956,7 @@ async fn resolve_pages(
     let entities: Vec<ViewEntity> = sqlx::query_as::<_, (String, String, String)>(
         r#"
         SELECT id, title, updated_at
-        FROM pages
+        FROM app_pages
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -1016,43 +1083,6 @@ async fn resolve_orgs(
         name,
         namespace: "org".to_string(),
         icon: "ri:building-line".to_string(),
-        updated_at: None,
-    })
-    .collect();
-
-    Ok((entities, total))
-}
-
-async fn resolve_things(
-    pool: &SqlitePool,
-    config: &QueryConfig,
-    limit: i64,
-    offset: i64,
-) -> Result<(Vec<ViewEntity>, i64)> {
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM wiki_things"#)
-        .fetch_one(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to count things: {}", e)))?;
-
-    let entities: Vec<ViewEntity> = sqlx::query_as::<_, (String, String)>(
-        r#"
-        SELECT id, canonical_name
-        FROM wiki_things
-        ORDER BY canonical_name ASC
-        LIMIT $1 OFFSET $2
-        "#,
-    )
-    .bind(config.limit.unwrap_or(limit).min(limit))
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to fetch things: {}", e)))?
-    .into_iter()
-    .map(|(id, name)| ViewEntity {
-        id: format!("/thing/{}", id),
-        name,
-        namespace: "thing".to_string(),
-        icon: "ri:box-3-line".to_string(),
         updated_at: None,
     })
     .collect();
@@ -1221,7 +1251,7 @@ async fn resolve_drive(
 
 async fn resolve_chat_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
     let result = sqlx::query_as::<_, (String, String)>(
-        r#"SELECT id, title FROM chats WHERE id = $1"#,
+        r#"SELECT id, title FROM app_chats WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(pool)
@@ -1238,7 +1268,7 @@ async fn resolve_chat_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEn
 }
 
 async fn resolve_page_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
-    let result = sqlx::query_as::<_, (String, String)>(r#"SELECT id, title FROM pages WHERE id = $1"#)
+    let result = sqlx::query_as::<_, (String, String)>(r#"SELECT id, title FROM app_pages WHERE id = $1"#)
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -1306,24 +1336,6 @@ async fn resolve_org_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEnt
     }))
 }
 
-async fn resolve_thing_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
-    let result = sqlx::query_as::<_, (String, String)>(
-        r#"SELECT id, canonical_name FROM wiki_things WHERE id = $1"#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to fetch thing: {}", e)))?;
-
-    Ok(result.map(|(id, name)| ViewEntity {
-        id: format!("/thing/{}", id),
-        name,
-        namespace: "thing".to_string(),
-        icon: "ri:box-3-line".to_string(),
-        updated_at: None,
-    }))
-}
-
 async fn resolve_day_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
     let result =
         sqlx::query_as::<_, (String, String)>(r#"SELECT id, date FROM wiki_days WHERE id = $1"#)
@@ -1378,7 +1390,7 @@ async fn resolve_source_by_id(pool: &SqlitePool, id: &str) -> Result<Option<View
 
 async fn resolve_view_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
     let result = sqlx::query_as::<_, (String, String, String)>(
-        r#"SELECT id, name, view_type FROM views WHERE id = $1"#,
+        r#"SELECT id, name, view_type FROM app_views WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(pool)

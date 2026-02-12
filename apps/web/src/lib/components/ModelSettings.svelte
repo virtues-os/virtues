@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import UniversalSelect from "./UniversalSelect.svelte";
+	import UniversalPicker from "./UniversalPicker.svelte";
 
 	interface Model {
 		id?: string;
@@ -150,7 +150,7 @@
 							>· {slot.description}</span
 						>
 					</div>
-					<UniversalSelect
+					<UniversalPicker
 						items={models}
 						value={slotValues[slot.key]}
 						getKey={(m) => getModelId(m)}
@@ -209,7 +209,7 @@
 								{/if}
 							</div>
 						{/snippet}
-					</UniversalSelect>
+					</UniversalPicker>
 				</div>
 			{/each}
 		</div>

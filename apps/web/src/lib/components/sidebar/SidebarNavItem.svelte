@@ -3,9 +3,12 @@
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
-	import { removeViewItem, deleteChat } from "$lib/api/client";
+	import { removeViewItem, deleteChat, updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
+	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { SidebarNavItemData } from "./types";
 
@@ -24,11 +27,13 @@
 		indent?: number;
 		/** When set, this item is inside a folder and can be removed from it */
 		inFolderContext?: FolderContext;
-		/** System items (e.g., VirtuesWorkspaceNav) can't be removed or deleted */
+		/** System items can't be removed or deleted */
 		isSystemItem?: boolean;
+		/** Workspace accent color — shows as a small dot before the icon */
+		accentColor?: string | null;
 	}
 
-	let { item, collapsed = false, indent = 0, inFolderContext, isSystemItem = false }: Props = $props();
+	let { item, collapsed = false, indent = 0, inFolderContext, isSystemItem = false, accentColor = null }: Props = $props();
 
 	// Indent class for nested items
 	const indentClass = $derived(indent === 1 ? 'sidebar-interactive--indent-1' : indent >= 2 ? 'sidebar-interactive--indent-2' : '');
@@ -145,6 +150,35 @@
 			},
 		];
 
+		// "Change Icon" for pages and chats
+		const parts = href.split('/').filter(Boolean);
+		const entityType = parts[0]; // 'page', 'chat', etc.
+		const entityId = parts[1];
+
+		if (entityType && entityId && (entityType === 'page' || entityType === 'chat')) {
+			items.push({
+				id: "change-icon",
+				label: "Change Icon",
+				icon: "ri:emotion-line",
+				action: () => {
+					iconPickerStore.show(item.icon ?? null, async (icon) => {
+						try {
+							if (entityType === 'page') {
+								await updatePage(entityId, { icon });
+								await pagesStore.load();
+							} else if (entityType === 'chat') {
+								await updateChat(entityId, { icon });
+								chatSessions.updateSessionIcon(entityId, icon);
+							}
+							spaceStore.invalidateViewCache();
+						} catch (err) {
+							console.error("[SidebarNavItem] Failed to change icon:", err);
+						}
+					});
+				},
+			});
+		}
+
 		// Add "Add to Folder" / "Move to Workspace" submenus
 		items.push(...getWorkspaceMenuItems(href));
 
@@ -166,11 +200,11 @@
 			});
 		}
 
-		// If NOT inside a folder and NOT a system item, this is a root-level workspace item - allow removal
+		// If NOT inside a folder and NOT a system item, this is a root-level space item - allow removal
 		if (!inFolderContext && !isSystemItem) {
 			items.push({
-				id: "remove-from-workspace",
-				label: "Remove from Workspace",
+				id: "remove-from-space",
+				label: "Remove from Space",
 				icon: "ri:close-circle-line",
 				dividerBefore: true,
 				action: async () => {
@@ -178,19 +212,15 @@
 						await spaceStore.removeSpaceItem(href);
 						spaceStore.invalidateViewCache();
 					} catch (err) {
-						console.error("[SidebarNavItem] Failed to remove from workspace:", err);
+						console.error("[SidebarNavItem] Failed to remove from space:", err);
 					}
 				},
 			});
 		}
 
-		// Add "Delete" option for deletable entities (pages, chats) - not for system items
-		// Parse the href to determine entity type
-		const parts = href.split('/').filter(Boolean);
-		const entityType = parts[0]; // 'page', 'chat', etc.
-		const entityId = parts[1];
-
-		if (!isSystemItem && entityType && entityId && (entityType === 'page' || entityType === 'chat')) {
+		// Add "Delete" option for deletable entities (pages, chats)
+		// Always available if the entity is a page or chat, regardless of isSystemItem
+		if (entityType && entityId && (entityType === 'page' || entityType === 'chat')) {
 			items.push({
 				id: "delete",
 				label: "Delete",
@@ -238,7 +268,9 @@
 		class:collapsed
 		title={collapsed ? item.label : undefined}
 	>
-		{#if item.icon}
+		{#if item.icon && isEmoji(item.icon)}
+			<span class="sidebar-emoji">{item.icon}</span>
+		{:else if item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
 		{#if !collapsed}
@@ -257,11 +289,24 @@
 		class:collapsed
 		title={collapsed ? item.label : undefined}
 	>
-		{#if item.icon}
+		{#if accentColor && !collapsed}
+			<span class="sidebar-accent-dot" style="--dot-color: {accentColor}"></span>
+		{/if}
+		{#if item.icon && isEmoji(item.icon)}
+			<span class="sidebar-emoji">{item.icon}</span>
+		{:else if item.icon}
 			<Icon icon={item.icon} width="16" class="sidebar-icon" />
 		{/if}
 		{#if !collapsed}
 			<span class="sidebar-label">{item.label}</span>
+			{#if item.href}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<div class="sidebar-item-actions" onclick={handleContextMenu} role="presentation">
+					<button class="sidebar-item-action" title="More options">
+						<Icon icon="ri:more-line" width="14" />
+					</button>
+				</div>
+			{/if}
 		{/if}
 	</div>
 {/if}
@@ -270,4 +315,12 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 	/* Icon styles are in sidebar.css (globally imported in app.css) */
+
+	.sidebar-emoji {
+		font-size: 14px;
+		line-height: 16px;
+		width: 16px;
+		text-align: center;
+		flex-shrink: 0;
+	}
 </style>

@@ -32,6 +32,15 @@ if [[ ! "$IMAGE_TAG" =~ ^[a-f0-9]{7,40}$ && "$IMAGE_TAG" != "latest" ]]; then
   exit 1
 fi
 
+# Optional: filter clusters by environment (staging, production)
+if [[ -n "${DEPLOY_ENV:-}" ]]; then
+  if [[ "$DEPLOY_ENV" != "staging" && "$DEPLOY_ENV" != "production" ]]; then
+    echo "ERROR: DEPLOY_ENV must be 'staging' or 'production', got: $DEPLOY_ENV"
+    exit 1
+  fi
+  echo "=== Target environment: $DEPLOY_ENV ==="
+fi
+
 if [[ ! -f "$CLUSTERS_FILE" ]]; then
   echo "ERROR: $CLUSTERS_FILE not found"
   exit 1
@@ -40,20 +49,26 @@ fi
 echo "=== Deploying image tag: $IMAGE_TAG ==="
 echo ""
 
-# Read clusters from JSON
-CLUSTER_COUNT=$(jq '.clusters | length' "$CLUSTERS_FILE")
+# Read clusters from JSON, optionally filtered by environment
+if [[ -n "${DEPLOY_ENV:-}" ]]; then
+  CLUSTERS=$(jq --arg env "$DEPLOY_ENV" '[.clusters[] | select(.environment == $env)]' "$CLUSTERS_FILE")
+else
+  CLUSTERS=$(jq '.clusters' "$CLUSTERS_FILE")
+fi
+
+CLUSTER_COUNT=$(echo "$CLUSTERS" | jq 'length')
 
 if [[ "$CLUSTER_COUNT" -eq 0 ]]; then
-  echo "WARNING: No clusters configured in $CLUSTERS_FILE"
+  echo "WARNING: No clusters matching environment '${DEPLOY_ENV:-all}' in $CLUSTERS_FILE"
   exit 0
 fi
 
 FAILED=0
 
 for i in $(seq 0 $((CLUSTER_COUNT - 1))); do
-  NAME=$(jq -r ".clusters[$i].name" "$CLUSTERS_FILE")
-  HOST=$(jq -r ".clusters[$i].host" "$CLUSTERS_FILE")
-  USER=$(jq -r ".clusters[$i].user" "$CLUSTERS_FILE")
+  NAME=$(echo "$CLUSTERS" | jq -r ".[$i].name")
+  HOST=$(echo "$CLUSTERS" | jq -r ".[$i].host")
+  USER=$(echo "$CLUSTERS" | jq -r ".[$i].user")
 
   # Validate HOST: must be an IP address or hostname (no shell metacharacters)
   if [[ ! "$HOST" =~ ^[a-zA-Z0-9._-]+$ ]]; then
@@ -69,7 +84,7 @@ for i in $(seq 0 $((CLUSTER_COUNT - 1))); do
 
   echo "--- Deploying to: $NAME ($HOST) ---"
 
-  if [[ "$HOST" == "YOUR_SERVER_IP" ]]; then
+  if [[ "$HOST" == "YOUR_SERVER_IP" || "$HOST" == "STAGING_SERVER_IP" ]]; then
     echo "  SKIPPED: Placeholder IP, configure deploy/clusters.json"
     continue
   fi

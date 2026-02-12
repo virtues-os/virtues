@@ -59,6 +59,7 @@ pub struct UserProfile {
     // Preferences
     pub theme: Option<String>,
     pub update_check_hour: Option<i32>,
+    pub timezone: Option<String>,
     // Discovery context
     pub crux: Option<String>,
     pub technology_vision: Option<String>,

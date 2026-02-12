@@ -6,18 +6,17 @@
 //
 
 import Foundation
-import UIKit
 import BackgroundTasks
 import Combine
 
-class BatchUploadCoordinator: ObservableObject {
+class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     static let shared = BatchUploadCoordinator()
     
     @Published var isUploading = false
     @Published var lastUploadDate: Date?
     @Published var lastSuccessfulSyncDate: Date?
     @Published var uploadStats: (pending: Int, failed: Int, total: Int) = (0, 0, 0)
-    @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int, battery: Int, barometer: Int) = (0, 0, 0, 0, 0, 0, 0, 0)
+    @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int) = (0, 0, 0, 0, 0, 0)
 
     // MARK: - Dependencies
     private let configProvider: ConfigurationProvider
@@ -29,7 +28,14 @@ class BatchUploadCoordinator: ObservableObject {
     private let uploadInterval: TimeInterval = 300 // 5 minutes
     private let backgroundTaskIdentifier = "com.virtues.ios.sync"
 
+    private var isPerformingUpload = false
+    private let uploadLock = NSLock()
+    private var lastUploadAttemptDate: Date?  // Written synchronously to prevent burst calls
     private var statsUpdateTimer: ReliableTimer?
+    private var cancellables = Set<AnyCancellable>()
+
+    /// Set when server returns 401 — cleared on next successful upload or timer restart
+    private var isTokenInvalid = false
 
     private let lastUploadKey = "com.virtues.lastUploadDate"
     private let lastSuccessfulSyncKey = "com.virtues.lastSuccessfulSyncDate"
@@ -75,6 +81,7 @@ class BatchUploadCoordinator: ObservableObject {
         registerBackgroundTasks()
         updateUploadStats()
         setupLowPowerModeObserver()
+        setupNetworkChangeObserver()
     }
 
     /// Legacy singleton initializer - uses default dependencies
@@ -90,6 +97,12 @@ class BatchUploadCoordinator: ObservableObject {
     
     func startPeriodicUploads() {
         stopPeriodicUploads()
+
+        // Clear any stale error flags so uploads can resume
+        isTokenInvalid = false
+
+        // Register for health monitoring (no-op if already registered)
+        HealthCheckCoordinator.shared.register(self)
 
         // Schedule timer for 5-minute intervals
         uploadTimer = ReliableTimer.builder()
@@ -128,13 +141,40 @@ class BatchUploadCoordinator: ObservableObject {
     }
     
     // MARK: - Upload Logic
-    
+
+    /// Atomically try to acquire the upload lock. Returns true if acquired.
+    private func tryBeginUpload() -> Bool {
+        uploadLock.lock()
+        defer { uploadLock.unlock() }
+        guard !isPerformingUpload else { return false }
+        isPerformingUpload = true
+        return true
+    }
+
+    /// Release the upload lock.
+    private func endUpload() {
+        uploadLock.lock()
+        isPerformingUpload = false
+        uploadLock.unlock()
+    }
+
     /// Performs upload and returns true if any uploads succeeded
     @discardableResult
     func performUpload() async -> Bool {
+        guard tryBeginUpload() else { return false }
+        defer { endUpload() }
+
         #if DEBUG
         print("🚀 Starting upload process...")
         #endif
+
+        // Check if token was invalidated — wait for timer restart (foreground) to clear
+        if isTokenInvalid {
+            #if DEBUG
+            print("🔑 Token invalid - skipping upload until re-auth")
+            #endif
+            return false
+        }
 
         // Check circuit breaker - stop retrying if too many consecutive failures
         if isCircuitOpen {
@@ -256,18 +296,6 @@ class BatchUploadCoordinator: ObservableObject {
             }
             return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
 
-        case "ios_battery":
-            guard let typedProcessor = processor as? BatteryStreamProcessor else {
-                return handleProcessorTypeMismatch(events: events, streamName: streamName)
-            }
-            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
-
-        case "ios_barometer":
-            guard let typedProcessor = processor as? BarometerStreamProcessor else {
-                return handleProcessorTypeMismatch(events: events, streamName: streamName)
-            }
-            return await uploadWithProcessor(processor: typedProcessor, events: events, to: url)
-
         case "ios_contacts":
             guard let typedProcessor = processor as? ContactsStreamProcessor else {
                 return handleProcessorTypeMismatch(events: events, streamName: streamName)
@@ -354,9 +382,10 @@ class BatchUploadCoordinator: ObservableObject {
         // Mark as complete in SQLite
         storageProvider.markAsComplete(id: event.id)
 
-        // Reset circuit breaker on success
+        // Reset circuit breaker and token flag on success
         consecutiveFailures = 0
         lastFailureTime = nil
+        isTokenInvalid = false
     }
 
     private func handleFailedUpload(event: UploadEvent, error: Error) {
@@ -388,11 +417,11 @@ class BatchUploadCoordinator: ObservableObject {
                 return
 
             case .invalidToken:
-                // Auth failure - stop all uploads until re-auth
+                // Auth failure - pause uploads but keep timer alive so foreground restart clears the flag
                 storageProvider.incrementRetry(id: event.id)
-                stopPeriodicUploads()
+                isTokenInvalid = true
                 #if DEBUG
-                print("❌ Invalid token - stopping uploads until re-auth")
+                print("❌ Invalid token - pausing uploads until re-auth (timer still running)")
                 #endif
                 return
 
@@ -494,6 +523,20 @@ class BatchUploadCoordinator: ObservableObject {
     func triggerManualUpload() async {
         await performUpload()
     }
+
+    /// Trigger upload if enough time has elapsed since last attempt.
+    /// Called from location sampling timer (~15s intervals) — the time gate keeps it to ~5-min uploads.
+    func uploadIfNeeded() {
+        uploadLock.lock()
+        let elapsed = Date().timeIntervalSince(lastUploadAttemptDate ?? .distantPast)
+        guard elapsed >= uploadInterval else {
+            uploadLock.unlock()
+            return
+        }
+        lastUploadAttemptDate = Date()
+        uploadLock.unlock()
+        Task { await performUpload() }
+    }
     
     // MARK: - Statistics
     
@@ -585,6 +628,17 @@ class BatchUploadCoordinator: ObservableObject {
 
     // MARK: - Network Monitoring
 
+    private func setupNetworkChangeObserver() {
+        networkMonitor.$isConnected
+            .removeDuplicates()
+            .filter { $0 }  // Only fire on reconnection (false → true)
+            .dropFirst()     // Skip the initial value
+            .sink { [weak self] _ in
+                self?.handleNetworkChange(isConnected: true)
+            }
+            .store(in: &cancellables)
+    }
+
     func handleNetworkChange(isConnected: Bool) {
         if isConnected && configProvider.isConfigured {
             // Network restored, trigger upload
@@ -592,5 +646,23 @@ class BatchUploadCoordinator: ObservableObject {
                 await performUpload()
             }
         }
+    }
+
+    // MARK: - HealthCheckable
+
+    var healthCheckName: String { "BatchUploadCoordinator" }
+
+    func performHealthCheck() -> HealthStatus {
+        guard configProvider.isConfigured else {
+            return .disabled
+        }
+
+        if uploadTimer == nil {
+            // Timer was killed — restart it
+            startPeriodicUploads()
+            return .unhealthy(reason: "Upload timer stopped, restarting")
+        }
+
+        return .healthy
     }
 }

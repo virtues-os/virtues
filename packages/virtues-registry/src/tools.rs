@@ -63,16 +63,58 @@ pub struct ToolConfig {
 /// - code_interpreter: Execute Python code for calculations and analysis
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
-/// - edit_page: Apply edits using find/replace with CriticMarkup
+/// - edit_page: Apply edits using find/replace
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
+        think_tool(),
         web_search_tool(),
+        semantic_search_tool(),
         sql_query_tool(),
         code_interpreter_tool(),
         create_page_tool(),
         get_page_content_tool(),
         edit_page_tool(),
     ]
+}
+
+/// Think tool - structured reasoning scratchpad
+fn think_tool() -> ToolConfig {
+    ToolConfig {
+        id: "think".to_string(),
+        name: "Think".to_string(),
+        description: "Plan your approach before acting".to_string(),
+        llm_description: r#"Use this tool to think through complex problems step-by-step before taking action.
+
+When to use:
+- Before multi-step tasks: Plan which tools to call and in what order
+- When the question is ambiguous: Break down what the user is really asking
+- For data analysis: Decide which tables to query and how to join results
+- When combining sources: Plan how to merge SQL results with web search
+
+Example thought for "How did my spending compare to last month?":
+"I need to:
+1. Query data_financial_transaction for this month's total spending by category
+2. Query the same for last month
+3. Compare the two and highlight significant changes
+Let me start with this month's data."
+
+This tool has no side effects - it just helps you organize your reasoning.
+The user can see your thoughts, so be clear and concise."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["thought"],
+            "properties": {
+                "thought": {
+                    "type": "string",
+                    "description": "Your step-by-step reasoning or plan"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:lightbulb-line".to_string(),
+        display_order: 0,
+    }
 }
 
 /// Web Search tool (Exa AI)
@@ -124,6 +166,69 @@ Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.t
     }
 }
 
+/// Semantic Search tool — meaning-based retrieval across user data
+fn semantic_search_tool() -> ToolConfig {
+    ToolConfig {
+        id: "semantic_search".to_string(),
+        name: "Semantic Search".to_string(),
+        description: "Search personal data by meaning".to_string(),
+        llm_description: r#"Search the user's personal data using natural language meaning (vector similarity).
+
+Use this tool when:
+- Finding content by topic or meaning: "emails about the project review"
+- Searching across multiple data types at once (emails, messages, calendar, documents)
+- The user's question is vague or conceptual rather than precise
+
+Do NOT use when:
+- You need exact counts, aggregates, or analytics (use sql_query)
+- You need to filter by specific dates, amounts, or structured fields (use sql_query)
+- You're looking for external/web information (use web_search)
+
+Think of it this way:
+- semantic_search = "find things ABOUT X" (meaning-based)
+- sql_query = "count/sum/filter X" (structure-based)
+
+Searchable domains: email, message, calendar, document, ai_conversation, transaction, bookmark
+
+Returns ranked results with title, preview, author, timestamp, and a similarity score.
+Use sql_query with the returned record_ids to get full details."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query describing what you're looking for"
+                },
+                "domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional filter: only search these domains (e.g., ['email', 'calendar'])"
+                },
+                "date_after": {
+                    "type": "string",
+                    "description": "Only return results after this date (ISO 8601, e.g., '2026-01-01')"
+                },
+                "date_before": {
+                    "type": "string",
+                    "description": "Only return results before this date (ISO 8601)"
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of results (1-50, default 10)",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 50
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Search,
+        icon: "ri:mind-map".to_string(),
+        display_order: 2,
+    }
+}
+
 /// SQL Query tool (read-only data access)
 fn sql_query_tool() -> ToolConfig {
     ToolConfig {
@@ -152,12 +257,13 @@ LOCATION
   data_location_point        Raw GPS coordinates (high volume)
   data_location_visit        Place visits with arrival/departure times
 
-SOCIAL
-  data_social_email          Email messages (subject, body, from/to)
-  data_social_message        Chat messages (iMessage, SMS, etc.)
+COMMUNICATION
+  data_communication_email          Email messages (subject, body, from/to)
+  data_communication_message        Chat messages (iMessage, SMS, etc.)
+  data_communication_transcription  Voice/audio transcriptions
 
 CALENDAR
-  data_calendar              Events with attendees, location, times
+  data_calendar_event        Events with attendees, location, times
 
 FINANCIAL (amounts stored in cents - divide by 100 for dollars)
   data_financial_account      Bank/credit/investment accounts
@@ -169,14 +275,10 @@ ACTIVITY
   data_activity_app_usage     Desktop/mobile app usage sessions
   data_activity_web_browsing  Web browsing history
 
-KNOWLEDGE
-  data_knowledge_document        Saved documents and notes
-  data_knowledge_ai_conversation Past AI chat history
-
-OTHER
-  data_speech_transcription   Voice/audio transcriptions
-  data_device_battery         Battery level snapshots
-  data_environment_pressure   Barometric pressure readings
+CONTENT
+  data_content_document     Saved documents and notes
+  data_content_conversation AI chat history (search artifact)
+  data_content_bookmark     Saved/curated items (GitHub stars, bookmarks)
 
 ================================================================================
 WIKI TABLES (entity resolution + temporal context)
@@ -186,7 +288,6 @@ ENTITIES (resolved nouns in user's life)
   wiki_people       People with names, emails, relationship info
   wiki_places       Places with name, address, coordinates, visit stats
   wiki_orgs         Organizations with type, role, interaction history
-  wiki_connections  Relationships between people/places/orgs
 
 TEMPORAL (daily/yearly context)
   wiki_days         Day summaries with autobiography, context vector
@@ -197,11 +298,11 @@ REFERENCES
   wiki_citations    Links wiki content to source ontology records
 
 ================================================================================
-NARRATIVE TABLES (life story structure)
+NARRATIVE TABLES (life story structure — wiki_* prefix)
 ================================================================================
-  narrative_telos     User's life purpose/direction
-  narrative_acts      Major life periods (multi-year)
-  narrative_chapters  Chapters within acts (months/seasons)
+  wiki_telos     User's life purpose/direction
+  wiki_acts      Major life periods (multi-year)
+  wiki_chapters  Chapters within acts (months/seasons)
 
 ================================================================================
 QUERY TIPS
@@ -210,7 +311,36 @@ QUERY TIPS
 - Date filter: WHERE timestamp > datetime('now', '-7 days')
 - Financial: amount/100.0 for dollars
 - JOIN data tables to wiki_* for resolved names
-- Always LIMIT results (max 200)"#.to_string(),
+- Always LIMIT results (max 200)
+
+================================================================================
+EXAMPLE QUERIES
+================================================================================
+
+-- Spending by category this month
+SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
+FROM data_financial_transaction
+WHERE timestamp >= date('now', 'start of month')
+GROUP BY category ORDER BY dollars DESC
+
+-- Most contacted people this week
+SELECT wp.name, COUNT(*) as messages
+FROM data_communication_message m
+JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
+WHERE m.timestamp > datetime('now', '-7 days')
+GROUP BY wp.name ORDER BY messages DESC LIMIT 10
+
+-- Sleep patterns last 2 weeks
+SELECT date(timestamp) as day, duration_hours, quality
+FROM data_health_sleep
+WHERE timestamp > datetime('now', '-14 days')
+ORDER BY timestamp DESC
+
+-- Calendar events today
+SELECT title, start_time, end_time, location
+FROM data_calendar_event
+WHERE date(start_time) = date('now')
+ORDER BY start_time"#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["operation"],
@@ -240,7 +370,7 @@ QUERY TIPS
         tool_type: ToolType::Builtin,
         category: ToolCategory::Data,
         icon: "ri:database-2-line".to_string(),
-        display_order: 2,
+        display_order: 3,
     }
 }
 
@@ -311,7 +441,7 @@ Example - statistics with numpy:
         tool_type: ToolType::Builtin,
         category: ToolCategory::Data,
         icon: "ri:code-s-slash-line".to_string(),
-        display_order: 3,
+        display_order: 4,
     }
 }
 
@@ -328,11 +458,7 @@ Use this tool when:
 - User wants to start a new document from scratch
 - You need to save information to a new page
 
-IMPORTANT: Write content directly - do NOT use CriticMarkup markers.
-- Do NOT use {++ or ++} markers
-- Do NOT use {-- or --} markers
-- Just write plain text/markdown content
-The content goes directly into the page without user review.
+Content supports markdown (headers, bold, lists, code blocks, etc.) and is rendered as rich text.
 
 Example:
 {
@@ -356,7 +482,7 @@ Example:
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:file-add-line".to_string(),
-        display_order: 4,
+        display_order: 5,
     }
 }
 
@@ -394,7 +520,7 @@ Returns the page title, content, and content length."#.to_string(),
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:file-text-line".to_string(),
-        display_order: 5,
+        display_order: 6,
     }
 }
 
@@ -404,11 +530,12 @@ fn edit_page_tool() -> ToolConfig {
         id: "edit_page".to_string(),
         name: "Edit Page".to_string(),
         description: "Edit a page using find/replace".to_string(),
-        llm_description: r#"Edit an existing page by finding text and replacing it.
+        llm_description: r#"Edit an existing page by finding text and replacing it. Can also rename the page title.
 
 Use this tool when:
 - User asks you to modify, update, or change their document
 - User says "help me with this", "can you improve", "fix this"
+- User asks to rename or change the title of a page
 - You need to make changes to existing content
 
 IMPORTANT: Call get_page_content FIRST to see the current document!
@@ -422,14 +549,24 @@ How it works:
 1. Provide 'page_id' - extracted from the entity link
 2. Provide 'find' - the exact text to locate in the document
 3. Provide 'replace' - the new text you want instead
+4. Optionally provide 'title' - new title for the page
 
-Changes are automatically highlighted for the user to accept/reject.
+Changes are applied immediately via real-time sync.
+The 'find' text matches against the page's plain text (formatting stripped). Use 'replace' with markdown to set formatting.
 
 Example - changing a word:
 {
   "page_id": "page_abc123",
   "find": "The quick brown fox",
   "replace": "The fast brown fox"
+}
+
+Example - renaming a page (use empty find/replace if only changing title):
+{
+  "page_id": "page_abc123",
+  "title": "New Page Title",
+  "find": "",
+  "replace": ""
 }
 
 Example - full document rewrite (find empty string):
@@ -451,27 +588,33 @@ Tips:
                     "type": "string",
                     "description": "Page ID to edit. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
                 },
+                "title": {
+                    "type": "string",
+                    "description": "New title for the page. Only provide when renaming."
+                },
                 "find": {
                     "type": "string",
-                    "description": "Text to find in the document. Use empty string for full document replacement."
+                    "description": "Text to find in the document. Use empty string for full document replacement or title-only changes."
                 },
                 "replace": {
                     "type": "string",
-                    "description": "New text to replace the found text with"
+                    "description": "Replacement text. Supports markdown (headers, bold, lists, etc.) which is rendered as rich text."
                 }
             }
         }),
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:edit-line".to_string(),
-        display_order: 6,
+        display_order: 7,
     }
 }
 
 /// Get default enabled tools configuration (for assistant profile)
 pub fn default_enabled_tools() -> serde_json::Value {
     serde_json::json!({
+        "think": true,
         "web_search": true,
+        "semantic_search": true,
         "sql_query": true,
         "code_interpreter": true,
         "create_page": true,
@@ -487,7 +630,7 @@ mod tests {
     #[test]
     fn test_default_tools() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 6, "Should have 6 tools");
+        assert_eq!(tools.len(), 8, "Should have 8 tools");
 
         // Verify all tools have required fields
         for tool in &tools {
@@ -500,7 +643,9 @@ mod tests {
 
         // Verify specific tools exist
         let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"think"));
         assert!(ids.contains(&"web_search"));
+        assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
         assert!(ids.contains(&"code_interpreter"));
         assert!(ids.contains(&"create_page"));
@@ -512,7 +657,9 @@ mod tests {
     fn test_default_enabled_tools() {
         let enabled = default_enabled_tools();
         assert!(enabled.is_object());
+        assert_eq!(enabled.get("think"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("code_interpreter"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("create_page"), Some(&serde_json::json!(true)));

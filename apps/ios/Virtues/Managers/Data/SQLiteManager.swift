@@ -619,7 +619,7 @@ class SQLiteManager {
         }
     }
     
-    func getStreamCounts() -> (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int, battery: Int, barometer: Int) {
+    func getStreamCounts() -> (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int) {
         queue.sync {
             var healthkit = 0
             var location = 0
@@ -627,8 +627,6 @@ class SQLiteManager {
             var finance = 0
             var eventkit = 0
             var contacts = 0
-            var battery = 0
-            var barometer = 0
 
             let streamSQL = """
                 SELECT stream_name, COUNT(*) as count
@@ -657,10 +655,6 @@ class SQLiteManager {
                         eventkit = count
                     case "ios_contacts":
                         contacts = count
-                    case "ios_battery":
-                        battery = count
-                    case "ios_barometer":
-                        barometer = count
                     default:
                         break
                     }
@@ -669,7 +663,7 @@ class SQLiteManager {
 
             sqlite3_finalize(statement)
 
-            return (healthkit, location, audio, finance, eventkit, contacts, battery, barometer)
+            return (healthkit, location, audio, finance, eventkit, contacts)
         }
     }
 
@@ -737,47 +731,6 @@ class SQLiteManager {
         }
     }
     
-    // MARK: - Debug Methods
-    
-    func debugPrintAllEvents() {
-        queue.sync {
-            print("🔍 DEBUG: All events in upload_queue:")
-            
-            let selectSQL = "SELECT id, stream_name, status, upload_attempts, LENGTH(data_blob) as size FROM upload_queue ORDER BY id"
-            var statement: OpaquePointer?
-            
-            if sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) == SQLITE_OK {
-                var count = 0
-                while sqlite3_step(statement) == SQLITE_ROW {
-                    count += 1
-                    let id = sqlite3_column_int64(statement, 0)
-                    
-                    let streamName: String
-                    if let streamNameCStr = sqlite3_column_text(statement, 1) {
-                        streamName = String(cString: streamNameCStr)
-                    } else {
-                        streamName = "(NULL)"
-                    }
-                    
-                    let status: String
-                    if let statusCStr = sqlite3_column_text(statement, 2) {
-                        status = String(cString: statusCStr)
-                    } else {
-                        status = "(NULL)"
-                    }
-                    
-                    let attempts = Int(sqlite3_column_int(statement, 3))
-                    let size = Int(sqlite3_column_int(statement, 4))
-                    
-                    print("  ID: \(id), Stream: '\(streamName)', Status: \(status), Attempts: \(attempts), Size: \(size) bytes")
-                }
-                print("  Total events: \(count)")
-            }
-            
-            sqlite3_finalize(statement)
-        }
-    }
-    
     // MARK: - Storage Management
 
     func getTotalDatabaseSize() -> Int64 {
@@ -802,12 +755,6 @@ class SQLiteManager {
             #endif
             return nil
         }
-    }
-
-    /// Check if storage is critically low
-    func isStorageCritical() -> Bool {
-        guard let available = getAvailableStorage() else { return false }
-        return available < storageCriticalThreshold
     }
 
     /// Perform aggressive cleanup - delete ALL completed events
@@ -886,54 +833,6 @@ class SQLiteManager {
         }
     }
 
-    // MARK: - Battery Timeline
-
-    /// Fetches today's battery metrics for chart display
-    func getTodaysBatteryHistory() -> [BatteryDataPoint] {
-        return queue.sync {
-            var dataPoints: [BatteryDataPoint] = []
-
-            let calendar = Calendar.current
-            let startOfToday = calendar.startOfDay(for: Date())
-            let startTimestamp = startOfToday.timeIntervalSince1970
-
-            let selectSQL = """
-                SELECT data_blob FROM upload_queue
-                WHERE stream_name = 'ios_battery' AND created_at >= ?
-                ORDER BY created_at ASC
-            """
-
-            var statement: OpaquePointer?
-
-            if sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) == SQLITE_OK {
-                sqlite3_bind_double(statement, 1, startTimestamp)
-
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-
-                while sqlite3_step(statement) == SQLITE_ROW {
-                    guard let blobPointer = sqlite3_column_blob(statement, 0) else { continue }
-                    let blobSize = sqlite3_column_bytes(statement, 0)
-                    let dataBlob = Data(bytes: blobPointer, count: Int(blobSize))
-
-                    // Decode BatteryStreamData
-                    if let streamData = try? decoder.decode(BatteryStreamData.self, from: dataBlob) {
-                        for metric in streamData.records {
-                            dataPoints.append(BatteryDataPoint(
-                                date: metric.timestamp,
-                                level: metric.level,
-                                isCharging: metric.state == "charging" || metric.state == "full"
-                            ))
-                        }
-                    }
-                }
-            }
-
-            sqlite3_finalize(statement)
-            return dataPoints
-        }
-    }
-
     // MARK: - Location Timeline
 
     /// Fetches today's location coordinates for map display
@@ -973,54 +872,6 @@ class SQLiteManager {
                                     longitude: record.longitude
                                 ))
                             }
-                        }
-                    }
-                }
-            }
-
-            sqlite3_finalize(statement)
-            return dataPoints
-        }
-    }
-
-    // MARK: - Barometer Timeline
-
-    /// Fetches today's barometer metrics for chart display
-    func getTodaysBarometerHistory() -> [BarometerDataPoint] {
-        return queue.sync {
-            var dataPoints: [BarometerDataPoint] = []
-
-            let calendar = Calendar.current
-            let startOfToday = calendar.startOfDay(for: Date())
-            let startTimestamp = startOfToday.timeIntervalSince1970
-
-            let selectSQL = """
-                SELECT data_blob FROM upload_queue
-                WHERE stream_name = 'ios_barometer' AND created_at >= ?
-                ORDER BY created_at ASC
-            """
-
-            var statement: OpaquePointer?
-
-            if sqlite3_prepare_v2(db, selectSQL, -1, &statement, nil) == SQLITE_OK {
-                sqlite3_bind_double(statement, 1, startTimestamp)
-
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-
-                while sqlite3_step(statement) == SQLITE_ROW {
-                    guard let blobPointer = sqlite3_column_blob(statement, 0) else { continue }
-                    let blobSize = sqlite3_column_bytes(statement, 0)
-                    let dataBlob = Data(bytes: blobPointer, count: Int(blobSize))
-
-                    // Decode BarometerStreamData
-                    if let streamData = try? decoder.decode(BarometerStreamData.self, from: dataBlob) {
-                        for metric in streamData.records {
-                            dataPoints.append(BarometerDataPoint(
-                                date: metric.timestamp,
-                                pressureKPa: metric.pressureKPa,
-                                altitudeMeters: metric.relativeAltitudeMeters
-                            ))
                         }
                     }
                 }
@@ -1102,16 +953,6 @@ struct SpeechBlock: Identifiable {
     let duration: TimeInterval
 }
 
-// MARK: - Battery Data Point Model
-
-/// Represents a battery level reading for chart display
-struct BatteryDataPoint: Identifiable {
-    let id = UUID()
-    let date: Date
-    let level: Float
-    let isCharging: Bool
-}
-
 // MARK: - Location Data Point Model
 
 /// Represents a location coordinate for map display
@@ -1120,16 +961,6 @@ struct LocationDataPoint: Identifiable {
     let date: Date
     let latitude: Double
     let longitude: Double
-}
-
-// MARK: - Barometer Data Point Model
-
-/// Represents a barometer reading for chart display
-struct BarometerDataPoint: Identifiable {
-    let id = UUID()
-    let date: Date
-    let pressureKPa: Double
-    let altitudeMeters: Double
 }
 
 // MARK: - New Contact Model

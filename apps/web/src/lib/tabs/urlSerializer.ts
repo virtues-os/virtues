@@ -21,7 +21,6 @@ const KNOWN_TYPES: TabType[] = [
 	'person',
 	'place',
 	'org',
-	'thing',
 	'day',
 	'year',
 	'source',

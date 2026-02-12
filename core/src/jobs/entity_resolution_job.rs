@@ -108,7 +108,7 @@ pub struct PeopleResolutionTransform;
 #[async_trait]
 impl OntologyTransform for PeopleResolutionTransform {
     fn source_table(&self) -> &str {
-        "calendar"
+        "calendar_event"
     }
 
     fn target_table(&self) -> &str {
@@ -154,7 +154,7 @@ struct PeopleResolutionRegistration;
 
 impl TransformRegistration for PeopleResolutionRegistration {
     fn source_table(&self) -> &'static str {
-        "calendar"
+        "calendar_event"
     }
 
     fn target_table(&self) -> &'static str {
@@ -188,7 +188,7 @@ pub fn chain_to_place_resolution(source_id: String) -> ChainedTransform {
 /// Use this in calendar transforms to chain to entity resolution.
 pub fn chain_to_people_resolution(source_id: String) -> ChainedTransform {
     ChainedTransform {
-        source_table: "calendar".to_string(),
+        source_table: "calendar_event".to_string(),
         target_tables: vec!["entities_person".to_string()],
         domain: "social".to_string(),
         source_record_id: source_id,

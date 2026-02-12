@@ -14,8 +14,8 @@ pub struct FeedbackResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct FeedbackRequest {
     #[serde(rename = "type")]
-    pub feedback_type: String, // "feedback", "bug", "feature"
-    pub message: String,
+    pub feedback_type: String, // "general", "bug", "feature"
+    pub content: String,
 }
 
 pub async fn submit_feedback(
@@ -23,8 +23,8 @@ pub async fn submit_feedback(
     Json(payload): Json<FeedbackRequest>,
 ) -> impl IntoResponse {
     info!(
-        "Feedback received: Type={}, Message={}",
-        payload.feedback_type, payload.message
+        "Feedback received: Type={}, Content={}",
+        payload.feedback_type, payload.content
     );
 
     // In production, we forward this to the Tollbooth sidecar

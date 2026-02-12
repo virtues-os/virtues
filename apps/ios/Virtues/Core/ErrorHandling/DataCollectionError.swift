@@ -41,9 +41,7 @@ enum StreamType: String, CaseIterable, Codable {
     case audio = "ios_mic"
     case location = "ios_location"
     case healthKit = "ios_healthkit"
-    case battery = "ios_battery"
     case contacts = "ios_contacts"
-    case barometer = "ios_barometer"
     case finance = "ios_finance"
     case eventKit = "ios_eventkit"
 
@@ -53,27 +51,12 @@ enum StreamType: String, CaseIterable, Codable {
         case .healthKit: return "HealthKit"
         case .location: return "Location"
         case .audio: return "Audio"
-        case .battery: return "Battery"
         case .contacts: return "Contacts"
-        case .barometer: return "Barometer"
         case .finance: return "FinanceKit"
         case .eventKit: return "EventKit"
         }
     }
 
-    /// SF Symbol icon name for UI
-    var iconName: String {
-        switch self {
-        case .healthKit: return "heart.fill"
-        case .location: return "location.fill"
-        case .audio: return "mic.fill"
-        case .battery: return "battery.100"
-        case .contacts: return "person.crop.circle.fill"
-        case .barometer: return "barometer"
-        case .finance: return "creditcard.fill"
-        case .eventKit: return "calendar"
-        }
-    }
 }
 
 /// Data encoding errors when preparing data for storage

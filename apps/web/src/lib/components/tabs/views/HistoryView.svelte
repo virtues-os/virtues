@@ -4,6 +4,7 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
+	import { formatRelativeTimestamp } from "$lib/utils/dateUtils";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -39,30 +40,7 @@
 	}
 
 	function formatDate(dateStr: string): string {
-		const date = new Date(dateStr);
-		const now = new Date();
-		const diffMs = now.getTime() - date.getTime();
-		const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-		if (diffDays === 0) {
-			return date.toLocaleTimeString("en-US", {
-				hour: "numeric",
-				minute: "2-digit",
-			});
-		} else if (diffDays === 1) {
-			return "Yesterday";
-		} else if (diffDays < 7) {
-			return date.toLocaleDateString("en-US", { weekday: "long" });
-		} else {
-			return date.toLocaleDateString("en-US", {
-				month: "short",
-				day: "numeric",
-				year:
-					now.getFullYear() !== date.getFullYear()
-						? "numeric"
-						: undefined,
-			});
-		}
+		return formatRelativeTimestamp(dateStr);
 	}
 
 	function groupByDate(sessions: Session[]) {

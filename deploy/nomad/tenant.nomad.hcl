@@ -29,15 +29,13 @@ locals {
   tier_config = {
     standard = {
       memory         = 2048
-      memory_max     = 2048    # No swap
       cpu            = 1000    # 1 full core
-      ephemeral_disk = 2048    # Matches gVisor overlay2 limit (2GB)
+      ephemeral_disk = 2048
     }
     pro = {
       memory         = 8192
-      memory_max     = 8192    # No swap, guaranteed RAM
       cpu            = 4000    # 4 cores
-      ephemeral_disk = 5120    # Matches gVisor overlay2 limit (5GB)
+      ephemeral_disk = 5120
     }
   }
 
@@ -92,22 +90,11 @@ job "virtues-tenant-${var.subdomain}" {
       unlimited      = false
     }
 
-    # Network configuration - host networking
-    # The app reads NOMAD_PORT_http to bind to the dynamically allocated port.
     network {
+      mode = "host"
       port "http" {}
     }
 
-    # Host volume for SQLite database only
-    # Drive/Lake/Media files are stored in S3
-    volume "tenant_data" {
-      type      = "host"
-      source    = "tenant_data"
-      read_only = false
-    }
-
-    # Ephemeral disk — sized to match gVisor overlay2 limit per tier.
-    # This gives Nomad scheduling awareness of overlay disk consumption.
     ephemeral_disk {
       size    = local.resources.ephemeral_disk
       migrate = false
@@ -116,24 +103,17 @@ job "virtues-tenant-${var.subdomain}" {
 
     # Main task - Rust core serving API + static files
     task "core" {
-      driver = "containerd-driver"
+      driver = "docker"
 
       config {
-        image   = "${var.ghcr_repo}/virtues-core:${var.tag}"
+        image        = "${var.ghcr_repo}/virtues-core:${var.tag}"
+        runtime      = "runsc"
+        network_mode = "host"
+        ports        = ["http"]
 
-        # Tier-specific gVisor runtime with overlay2 enforcement:
-        #   runsc-standard: 2GB root filesystem overlay
-        #   runsc-pro:      5GB root filesystem overlay
-        # The /data bind mount (SQLite) is NOT governed by overlay —
-        # it uses ext4 project quotas set during tenant provisioning.
-        runtime = "io.containerd.runsc-${var.tier}.v1"
-      }
-
-      # Mount volume for SQLite database
-      volume_mount {
-        volume      = "tenant_data"
-        destination = "/data"
-        read_only   = false
+        volumes = [
+          "/opt/tenants/${var.subdomain}/data:/data"
+        ]
       }
 
       # Environment variables
@@ -172,15 +152,15 @@ job "virtues-tenant-${var.subdomain}" {
 
       # Resource limits
       resources {
-        cpu        = local.resources.cpu
-        memory     = local.resources.memory
-        memory_max = local.resources.memory_max
+        cpu    = local.resources.cpu
+        memory = local.resources.memory
       }
 
       # Service registration for Traefik
       service {
-        name = "virtues-${var.subdomain}"
-        port = "http"
+        name     = "virtues-${var.subdomain}"
+        port     = "http"
+        provider = "nomad"
 
         tags = [
           "traefik.enable=true",

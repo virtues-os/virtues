@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
-	import UniversalSelect from './UniversalSelect.svelte';
+	import UniversalPicker from './UniversalPicker.svelte';
 	import { AGENT_MODES, type AgentMode, type AgentModeId } from '$lib/config/agentModes';
 
 	interface Props {
@@ -24,11 +24,11 @@
 	}
 </script>
 
-<UniversalSelect
+<UniversalPicker
 	bind:value
 	items={AGENT_MODES}
 	{disabled}
-	width="min-w-[180px]"
+	width="w-44"
 	getKey={getModeKey}
 	getValue={getModeValue}
 	{onSelect}
@@ -49,35 +49,24 @@
 	{/snippet}
 
 	{#snippet item(mode: AgentMode, isSelected: boolean)}
-		<div class="px-3 py-2 flex items-center justify-between gap-3">
-			<div class="flex items-center gap-2">
-				{#if mode.color}
-					<div
-						class="w-5 h-5 rounded flex items-center justify-center"
-						style="background: color-mix(in srgb, {mode.color} 20%, transparent)"
-					>
-						<Icon icon={mode.icon} width="12" style="color: {mode.color}" />
-					</div>
-				{:else}
-					<div class="w-5 h-5 rounded flex items-center justify-center bg-surface-elevated">
-						<Icon icon={mode.icon} width="12" class="text-foreground-muted" />
-					</div>
-				{/if}
-				<div class="flex flex-col">
-					<span class="text-xs font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
-						{mode.name}
-					</span>
-					<span class="text-[9px] text-foreground-muted">
-						{mode.description}
-					</span>
-				</div>
-			</div>
+		<div class="px-2.5 py-1.5 flex items-center gap-2">
+			<Icon
+				icon={mode.icon}
+				width="14"
+				style={mode.color ? `color: ${mode.color}` : ''}
+				class={mode.color ? '' : 'text-foreground-muted'}
+			/>
+			<span class="text-xs font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
+				{mode.name}
+			</span>
+			<span class="text-[10px] text-foreground-subtle">{mode.description}</span>
+			<span class="flex-1"></span>
 			{#if isSelected}
-				<Icon icon="ri:check-line" class="text-primary shrink-0" width="14" />
+				<Icon icon="ri:check-line" class="text-primary shrink-0" width="12" />
 			{/if}
 		</div>
 	{/snippet}
-</UniversalSelect>
+</UniversalPicker>
 
 <style>
 	.mode-trigger {

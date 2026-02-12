@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            from_email,\n            from_name\n        FROM data_communication_email\n        WHERE timestamp >= $1\n          AND timestamp < $2\n          AND from_person_id IS NULL\n          AND from_email IS NOT NULL\n          AND from_email != ''\n        ORDER BY timestamp ASC\n        LIMIT 1000\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "from_email",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "from_name",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "74b50afb08cc236abf63893c8990fc1674ebd107b1f93221af3302e505a4ee1d"
+}

@@ -1,6 +1,6 @@
 #!/bin/bash
 # VPS Bootstrap Script for Virtues Tenant
-# Nomad + containerd + gVisor + Traefik Stack
+# Nomad + Docker + gVisor + Traefik Stack
 #
 # Called by cloud-init during Hetzner VPS provisioning
 #
@@ -10,7 +10,7 @@
 # - OWNER_EMAIL (required)
 # - VIRTUES_ENCRYPTION_KEY (required)
 # - GHCR_REPO (required: GitHub Container Registry repository)
-# - HETZNER_DNS_API_TOKEN (required for wildcard SSL)
+# - HETZNER_DNS_API_TOKEN (optional: enables wildcard SSL via DNS-01; falls back to HTTP-01)
 # - HETZNER_STORAGE_BOX_USER (optional, for Infinite Drive)
 # - HETZNER_STORAGE_BOX_PASSWORD (optional, for Infinite Drive)
 
@@ -40,9 +40,9 @@ cleanup_on_error() {
 
 trap 'error_exit "Script failed at line $LINENO"' ERR
 
-log "======================================"
-log "Virtues VPS Setup - Nomad + gVisor"
-log "======================================"
+log "============================================"
+log "Virtues VPS Setup - Nomad + Docker + gVisor"
+log "============================================"
 
 # ============================================================================
 # Environment Validation
@@ -74,7 +74,7 @@ if ! [[ "${OWNER_EMAIL:-}" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]
 fi
 
 # Validate required secrets
-required_vars=("VIRTUES_ENCRYPTION_KEY" "GHCR_REPO" "HETZNER_DNS_API_TOKEN")
+required_vars=("VIRTUES_ENCRYPTION_KEY" "GHCR_REPO")
 for var in "${required_vars[@]}"; do
     if [ -z "${!var:-}" ]; then
         error_exit "Required environment variable $var is not set"
@@ -103,33 +103,38 @@ apt-get install -y -qq \
     jq \
     cifs-utils \
     sqlite3 \
-    awscli \
     dnsutils \
     quota
 
+# Install AWS CLI v2 (not available as apt package on Ubuntu 24.04)
+if ! command -v aws &> /dev/null; then
+    log "Installing AWS CLI v2..."
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install
+    rm -rf /tmp/awscliv2.zip /tmp/aws
+fi
+
 # ============================================================================
-# Install containerd (NOT Docker)
+# Install Docker Engine
 # ============================================================================
 
-log "Installing containerd..."
+log "Installing Docker Engine..."
+
+# Detect OS for Docker repo (debian or ubuntu)
+. /etc/os-release
+DOCKER_OS="${ID}"  # "debian" or "ubuntu"
 
 install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+curl -fsSL "https://download.docker.com/linux/${DOCKER_OS}/gpg" | gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
 chmod a+r /etc/apt/keyrings/docker.gpg
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/${DOCKER_OS} ${VERSION_CODENAME} stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 apt-get update -qq
-apt-get install -y -qq containerd.io
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io
 
-# Configure containerd
-mkdir -p /etc/containerd
-containerd config default > /etc/containerd/config.toml
-
-# Enable SystemdCgroup
-sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-log "containerd installed"
+log "Docker installed"
 
 # ============================================================================
 # Install gVisor (runsc)
@@ -137,138 +142,34 @@ log "containerd installed"
 
 log "Installing gVisor (runsc)..."
 
-curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+curl -fsSL https://gvisor.dev/archive.key | gpg --batch --yes --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" | tee /etc/apt/sources.list.d/gvisor.list > /dev/null
 
 apt-get update -qq
 apt-get install -y -qq runsc
 
-# ---------------------------------------------------------------------------
-# Create tier-specific gVisor runtime shim symlinks
-#
-# The gVisor containerd shim resolves its config file by name:
-#   containerd-shim-runsc-v1          -> /etc/containerd/runsc.toml
-#   containerd-shim-runsc-standard-v1 -> /etc/containerd/runsc-standard.toml
-#   containerd-shim-runsc-pro-v1      -> /etc/containerd/runsc-pro.toml
-#
-# This allows different overlay2 settings per tier using the same binary.
-# ---------------------------------------------------------------------------
-
-RUNSC_SHIM=$(command -v containerd-shim-runsc-v1)
-ln -sf "${RUNSC_SHIM}" /usr/local/bin/containerd-shim-runsc-standard-v1
-ln -sf "${RUNSC_SHIM}" /usr/local/bin/containerd-shim-runsc-pro-v1
-
-# Register all gVisor runtimes in containerd config
-cat >> /etc/containerd/config.toml << 'EOF'
-
-# gVisor base runtime (no overlay — for stateless services like Tollbooth)
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
-  runtime_type = "io.containerd.runsc.v1"
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
-    TypeUrl = "io.containerd.runsc.v1.options"
-    ConfigPath = "/etc/containerd/runsc.toml"
-
-# gVisor standard tier runtime (2GB root filesystem overlay)
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-standard]
-  runtime_type = "io.containerd.runsc-standard.v1"
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-standard.options]
-    TypeUrl = "io.containerd.runsc.v1.options"
-    ConfigPath = "/etc/containerd/runsc-standard.toml"
-
-# gVisor pro tier runtime (5GB root filesystem overlay)
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-pro]
-  runtime_type = "io.containerd.runsc-pro.v1"
-  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc-pro.options]
-    TypeUrl = "io.containerd.runsc.v1.options"
-    ConfigPath = "/etc/containerd/runsc-pro.toml"
-EOF
-
-# ---------------------------------------------------------------------------
-# Generate gVisor runtime configurations
-#
-# Shared settings (platform, network, file-access, etc.) are written by a
-# helper function so they stay in sync. Only overlay2 differs per tier.
-# ---------------------------------------------------------------------------
-
-generate_runsc_config() {
-    local config_path="$1"
-    local overlay_setting="$2"
-
-    cat > "${config_path}" << TOML
-[runsc]
-  platform = "systrap"
-  network = "sandbox"
-  file-access = "shared"
-  fsgofer-host-uds = true
-  directfs = true
-  overlay2 = "${overlay_setting}"
-  debug = false
-TOML
-}
-
-# Base runtime — no overlay (Tollbooth and other stateless services)
-generate_runsc_config "/etc/containerd/runsc.toml" "none"
-
-# Tier-specific runtimes — overlay2 enforces per-container root fs limits.
-# The /data bind mount (SQLite database) is NOT governed by overlay —
-# it uses ext4 project quotas set during tenant provisioning.
-for tier_name in standard pro; do
-    case "${tier_name}" in
-        standard) OVERLAY_SIZE="2g" ;;
-        pro)      OVERLAY_SIZE="5g" ;;
-    esac
-
-    mkdir -p "/var/lib/runsc/runsc-${tier_name}/overlay"
-    generate_runsc_config "/etc/containerd/runsc-${tier_name}.toml" \
-        "root:dir:/var/lib/runsc/runsc-${tier_name}/overlay,size=${OVERLAY_SIZE}"
-done
-
-mkdir -p /var/log/runsc
-
-systemctl enable containerd
-systemctl restart containerd
-
-log "gVisor installed: base (no overlay), standard (2GB overlay), pro (5GB overlay)"
-
-# ============================================================================
-# Install CNI Plugins
-# ============================================================================
-
-log "Installing CNI plugins..."
-
-CNI_VERSION="v1.4.0"
-mkdir -p /opt/cni/bin
-curl -fsSL "https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-amd64-${CNI_VERSION}.tgz" | tar -xz -C /opt/cni/bin
-
-# Create CNI bridge configuration
-mkdir -p /etc/cni/net.d
-cat > /etc/cni/net.d/10-virtues-bridge.conflist << 'EOF'
+# Register gVisor as a Docker runtime via daemon.json
+# The runsc binary is invoked by Docker with --platform=systrap --network=host --directfs=true
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json << 'DOCKERJSON'
 {
-  "cniVersion": "1.0.0",
-  "name": "virtues-bridge",
-  "plugins": [
-    {
-      "type": "bridge",
-      "bridge": "virtues0",
-      "isGateway": true,
-      "ipMasq": true,
-      "ipam": {
-        "type": "host-local",
-        "ranges": [
-          [{"subnet": "172.16.0.0/16"}]
-        ],
-        "routes": [{"dst": "0.0.0.0/0"}]
-      }
-    },
-    {
-      "type": "portmap",
-      "capabilities": {"portMappings": true}
+  "runtimes": {
+    "runsc": {
+      "path": "/usr/bin/runsc",
+      "runtimeArgs": [
+        "--platform=systrap",
+        "--network=host",
+        "--directfs=true"
+      ]
     }
-  ]
+  }
 }
-EOF
+DOCKERJSON
 
-log "CNI plugins installed"
+systemctl enable docker
+systemctl restart docker
+
+log "gVisor installed and registered as Docker runtime 'runsc'"
 
 # ============================================================================
 # Install Nomad
@@ -276,24 +177,11 @@ log "CNI plugins installed"
 
 log "Installing Nomad..."
 
-wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+wget -O- https://apt.releases.hashicorp.com/gpg | gpg --batch --yes --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
 
 apt-get update -qq
 apt-get install -y -qq nomad
-
-# ============================================================================
-# Install Nomad containerd Driver
-# ============================================================================
-
-log "Installing Nomad containerd driver..."
-
-NOMAD_CONTAINERD_VERSION="0.9.4"
-mkdir -p /opt/nomad/plugins
-wget -q "https://github.com/Roblox/nomad-driver-containerd/releases/download/v${NOMAD_CONTAINERD_VERSION}/containerd-driver" -O /opt/nomad/plugins/containerd-driver
-chmod +x /opt/nomad/plugins/containerd-driver
-
-log "Nomad containerd driver installed"
 
 # ============================================================================
 # Configure Nomad
@@ -307,32 +195,31 @@ mkdir -p /opt/nomad/data
 # Determine node class based on tier
 NODE_CLASS="${TIER}-tier"
 
+# Detect public IP for Nomad advertise address
+PUBLIC_IP=$(curl -sf http://169.254.169.254/hetzner/v1/metadata/public-ipv4 2>/dev/null \
+  || hostname -I | awk '{print $1}')
+log "Detected public IP: ${PUBLIC_IP}"
+
 cat > /etc/nomad.d/nomad.hcl << EOF
 datacenter = "dc1"
 data_dir   = "/opt/nomad/data"
 bind_addr  = "0.0.0.0"
 
-# Single server mode (bootstrap)
+advertise {
+  http = "${PUBLIC_IP}"
+  rpc  = "${PUBLIC_IP}"
+  serf = "${PUBLIC_IP}"
+}
+
 server {
   enabled          = true
   bootstrap_expect = 1
 }
 
-# Client configuration
 client {
-  enabled = true
-
+  enabled    = true
   node_class = "${NODE_CLASS}"
 
-  # Plugin directory
-  plugin_dir = "/opt/nomad/plugins"
-
-  # CNI configuration
-  cni_path = "/opt/cni/bin"
-  cni_config_dir = "/etc/cni/net.d"
-
-  # Host volume for SQLite database only
-  # Drive/Lake/Media files are stored in S3
   host_volume "tenant_data" {
     path      = "/opt/tenants/${SUBDOMAIN}/data"
     read_only = false
@@ -344,16 +231,16 @@ client {
   }
 }
 
-# containerd driver plugin
-plugin "containerd-driver" {
+plugin "docker" {
   config {
-    enabled           = true
-    containerd_runtime = "io.containerd.runsc.v1"
-    stats_interval    = "5s"
+    allow_privileged = false
+    allow_runtimes   = ["runc", "runsc"]
+    volumes {
+      enabled = true
+    }
   }
 }
 
-# Telemetry
 telemetry {
   collection_interval        = "10s"
   prometheus_metrics         = true
@@ -361,6 +248,9 @@ telemetry {
   publish_node_metrics       = true
 }
 EOF
+
+# Ensure tenant data directory exists before Nomad starts
+mkdir -p "/opt/tenants/${SUBDOMAIN}/data"
 
 systemctl enable nomad
 systemctl start nomad
@@ -384,6 +274,28 @@ mkdir -p /etc/traefik
 mkdir -p /var/log/traefik
 
 # Create Traefik static configuration
+# Uses DNS-01 (wildcard certs) if HETZNER_DNS_API_TOKEN is set, otherwise HTTP-01 (single domain)
+if [ -n "${HETZNER_DNS_API_TOKEN:-}" ]; then
+    log "Configuring Traefik with DNS-01 challenge (wildcard certs via Hetzner DNS)"
+    TRAEFIK_CERT_CONFIG="      dnsChallenge:
+        provider: hetzner
+        delayBeforeCheck: 0"
+    TRAEFIK_TLS_DOMAINS="
+      tls:
+        certResolver: hetzner
+        domains:
+          - main: \"virtues.com\"
+            sans:
+              - \"*.virtues.com\""
+else
+    log "Configuring Traefik with HTTP-01 challenge (single domain cert)"
+    TRAEFIK_CERT_CONFIG="      httpChallenge:
+        entryPoint: web"
+    TRAEFIK_TLS_DOMAINS="
+      tls:
+        certResolver: hetzner"
+fi
+
 cat > /etc/traefik/traefik.yml << EOF
 # Traefik Static Configuration
 
@@ -405,13 +317,7 @@ entryPoints:
           scheme: https
   websecure:
     address: ":443"
-    http:
-      tls:
-        certResolver: hetzner
-        domains:
-          - main: "virtues.com"
-            sans:
-              - "*.virtues.com"
+    http:${TRAEFIK_TLS_DOMAINS}
 
 providers:
   nomad:
@@ -425,9 +331,7 @@ certificatesResolvers:
     acme:
       email: "${OWNER_EMAIL}"
       storage: "/etc/traefik/acme.json"
-      dnsChallenge:
-        provider: hetzner
-        delayBeforeCheck: 0
+${TRAEFIK_CERT_CONFIG}
 
 log:
   level: WARN
@@ -439,6 +343,11 @@ accessLog:
 EOF
 
 # Create systemd service for Traefik
+TRAEFIK_ENV=""
+if [ -n "${HETZNER_DNS_API_TOKEN:-}" ]; then
+    TRAEFIK_ENV="Environment=\"HETZNER_API_KEY=${HETZNER_DNS_API_TOKEN}\""
+fi
+
 cat > /etc/systemd/system/traefik.service << EOF
 [Unit]
 Description=Traefik Proxy
@@ -447,7 +356,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment="HETZNER_API_KEY=${HETZNER_DNS_API_TOKEN}"
+${TRAEFIK_ENV}
 ExecStart=/usr/local/bin/traefik --configFile=/etc/traefik/traefik.yml
 Restart=always
 RestartSec=5
@@ -617,19 +526,16 @@ log "Creating Nomad job specification..."
 case "${TIER}" in
     free)
         MEMORY=256
-        MEMORY_MAX=768
         CPU=100
         EPHEMERAL_DISK=2048
         ;;
     standard)
         MEMORY=2048
-        MEMORY_MAX=2048
         CPU=1000
         EPHEMERAL_DISK=2048
         ;;
     pro)
         MEMORY=8192
-        MEMORY_MAX=8192
         CPU=4000
         EPHEMERAL_DISK=5120
         ;;
@@ -661,17 +567,10 @@ job "virtues-tenant-${SUBDOMAIN}" {
     }
 
     network {
+      mode = "host"
       port "http" {}
     }
 
-    # Host volume for SQLite database (ext4 project quota enforced)
-    volume "tenant_data" {
-      type      = "host"
-      source    = "tenant_data"
-      read_only = false
-    }
-
-    # Ephemeral disk — sized to match gVisor overlay2 limit
     ephemeral_disk {
       size    = ${EPHEMERAL_DISK}
       migrate = false
@@ -679,18 +578,17 @@ job "virtues-tenant-${SUBDOMAIN}" {
     }
 
     task "core" {
-      driver = "containerd-driver"
+      driver = "docker"
 
       config {
-        image   = "${GHCR_REPO}/virtues-core:${TAG:-latest}"
-        runtime = "io.containerd.runsc-${TIER}.v1"
-      }
+        image        = "${GHCR_REPO}/virtues-core:${TAG:-latest}"
+        runtime      = "runsc"
+        network_mode = "host"
+        ports        = ["http"]
 
-      # Mount volume for SQLite database
-      volume_mount {
-        volume      = "tenant_data"
-        destination = "/data"
-        read_only   = false
+        volumes = [
+          "/opt/tenants/${SUBDOMAIN}/data:/data"
+        ]
       }
 
       env {
@@ -710,17 +608,19 @@ job "virtues-tenant-${SUBDOMAIN}" {
         GOOGLE_CLIENT_ID              = "${GOOGLE_CLIENT_ID:-}"
         GOOGLE_CLIENT_SECRET          = "${GOOGLE_CLIENT_SECRET:-}"
         EXA_API_KEY                   = "${EXA_API_KEY:-}"
+        AUTH_URL                      = "https://${SUBDOMAIN}.virtues.com"
+        BACKEND_URL                   = "https://${SUBDOMAIN}.virtues.com"
       }
 
       resources {
-        cpu        = ${CPU}
-        memory     = ${MEMORY}
-        memory_max = ${MEMORY_MAX}
+        cpu    = ${CPU}
+        memory = ${MEMORY}
       }
 
       service {
-        name = "virtues-${SUBDOMAIN}"
-        port = "http"
+        name     = "virtues-${SUBDOMAIN}"
+        port     = "http"
+        provider = "nomad"
 
         tags = [
           "traefik.enable=true",
@@ -879,6 +779,6 @@ log "Web: https://${SUBDOMAIN}.virtues.com"
 log "API: https://${SUBDOMAIN}.virtues.com/api"
 log "Nomad UI: http://localhost:4646 (internal only)"
 log "======================================"
-log "Stack: Nomad + containerd + gVisor + Traefik"
+log "Stack: Nomad + Docker + gVisor + Traefik"
 log "Tier: ${TIER}"
 log "======================================"

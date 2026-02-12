@@ -31,7 +31,6 @@ struct VirtuesApp: App {
         _ = FinanceKitManager.shared
         _ = LocationManager.shared
         _ = AudioManager.shared
-        _ = BatteryManager.shared
         _ = ContactsManager.shared
         _ = EventKitManager.shared
         _ = PermissionMonitor.shared
@@ -78,11 +77,6 @@ struct VirtuesApp: App {
                     ContentView()
                 } else {
                     WelcomeView(onComplete: {
-                        // Auto-enable permission-free sensors
-                        BatteryManager.shared.startMonitoring()
-                        if BarometerManager.isAvailable {
-                            BarometerManager.shared.startMonitoring()
-                        }
                         hasSeenWelcome = true
                     })
                 }
@@ -198,7 +192,6 @@ struct VirtuesApp: App {
         let audioManager = AudioManager.shared
         let healthKitManager = HealthKitManager.shared
         let financeKitManager = FinanceKitManager.shared
-        let batteryManager = BatteryManager.shared
         let contactsManager = ContactsManager.shared
         let eventKitManager = EventKitManager.shared
 
@@ -226,14 +219,6 @@ struct VirtuesApp: App {
         // Start FinanceKit monitoring if authorized
         if financeKitManager.isAuthorized {
             financeKitManager.startMonitoring()
-        }
-
-        // Start battery monitoring (no permission required)
-        batteryManager.startMonitoring()
-
-        // Start barometer monitoring if available (no permission required)
-        if BarometerManager.isAvailable {
-            BarometerManager.shared.startMonitoring()
         }
 
         // Start EventKit monitoring if authorized

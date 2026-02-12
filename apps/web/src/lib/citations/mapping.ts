@@ -7,7 +7,7 @@ import type { DisplayInfo } from '$lib/types/Citation';
 
 /**
  * Ontology table name → display info
- * Keys match the table names in data schema (e.g., "health_sleep", "calendar")
+ * Keys match the table names in data schema (e.g., "health_sleep", "calendar_event")
  */
 export const ONTOLOGY_DISPLAY: Record<string, DisplayInfo> = {
 	// Health domain
@@ -18,22 +18,29 @@ export const ONTOLOGY_DISPLAY: Record<string, DisplayInfo> = {
 	health_workout: { icon: 'ri:run-line', color: 'text-orange-500', label: 'Workout' },
 
 	// Calendar domain
-	calendar: { icon: 'ri:calendar-line', color: 'text-blue-500', label: 'Calendar' },
+	calendar_event: { icon: 'ri:calendar-line', color: 'text-blue-500', label: 'Calendar' },
 
-	// Social domain
-	social_email: { icon: 'ri:mail-line', color: 'text-purple-500', label: 'Email' },
-	social_message: { icon: 'ri:chat-3-line', color: 'text-purple-400', label: 'Messages' },
+	// Communication domain
+	communication_email: { icon: 'ri:mail-line', color: 'text-purple-500', label: 'Email' },
+	communication_message: { icon: 'ri:chat-3-line', color: 'text-purple-400', label: 'Messages' },
+	communication_transcription: {
+		icon: 'ri:mic-line',
+		color: 'text-pink-500',
+		label: 'Transcription'
+	},
 
 	// Location domain
 	location_point: { icon: 'ri:map-pin-line', color: 'text-blue-600', label: 'Location' },
 	location_visit: { icon: 'ri:map-pin-2-line', color: 'text-blue-500', label: 'Visits' },
 
-	// Knowledge domain
-	knowledge_document: { icon: 'ri:file-text-line', color: 'text-amber-500', label: 'Documents' },
-	knowledge_ai_conversation: { icon: 'ri:chat-ai-line', color: 'text-violet-500', label: 'AI Chats' },
-
-	// Speech domain
-	speech_transcription: { icon: 'ri:mic-line', color: 'text-pink-500', label: 'Transcription' },
+	// Content domain
+	content_document: { icon: 'ri:file-text-line', color: 'text-amber-500', label: 'Documents' },
+	content_conversation: {
+		icon: 'ri:chat-ai-line',
+		color: 'text-violet-500',
+		label: 'AI Chats'
+	},
+	content_bookmark: { icon: 'ri:bookmark-line', color: 'text-amber-400', label: 'Bookmarks' },
 
 	// Activity domain
 	activity_app_usage: { icon: 'ri:apps-line', color: 'text-cyan-500', label: 'App Usage' },
@@ -88,7 +95,7 @@ export const DEFAULT_DISPLAY: DisplayInfo = {
 
 /**
  * Extract ontology table name from a SQL query
- * Looks for patterns like "FROM data.health_sleep" or "FROM data.calendar"
+ * Looks for patterns like "FROM data.health_sleep" or "FROM data.calendar_event"
  */
 export function extractOntologyFromQuery(query: string): string | null {
 	// Match "FROM data.table_name" pattern (case insensitive)

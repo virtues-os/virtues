@@ -92,6 +92,7 @@
 			theme={customTheme}
 			controls={{ table: false }}
 			defaultOrigin={origin}
+			allowedLinkPrefixes={['*']}
 			animation={{
 				enabled: isStreaming,
 				type: 'fade',

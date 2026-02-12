@@ -2,13 +2,21 @@ name: Build and Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag (default: latest + git sha)"
+        description: "Image tag to deploy (git SHA). Required for production promote."
         required: false
         default: ""
+      deploy_env:
+        description: "Deploy environment"
+        required: false
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
       skip_deploy:
         description: "Skip deployment (build only)"
         required: false
@@ -22,9 +30,14 @@ env:
 jobs:
   # ==========================================================================
   # Build unified image (Rust backend + SvelteKit static frontend)
+  # Tagged `latest` only on main (so production auto-pulls only from main)
+  # Skipped for production promote via dispatch (reuses existing image)
   # ==========================================================================
   build-core:
     runs-on: fast-runner
+    if: >
+      github.event_name == 'push' ||
+      github.event.inputs.deploy_env != 'production'
     permissions:
       contents: read
       packages: write
@@ -66,9 +79,13 @@ jobs:
 
   # ==========================================================================
   # Build Tollbooth AI proxy image
+  # Same tagging logic as build-core
   # ==========================================================================
   build-tollbooth:
     runs-on: fast-runner
+    if: >
+      github.event_name == 'push' ||
+      github.event.inputs.deploy_env != 'production'
     permissions:
       contents: read
       packages: write
@@ -107,12 +124,52 @@ jobs:
           cache-to: type=gha,mode=max
 
   # ==========================================================================
-  # Register version with Atlas (pull-based updates)
+  # Auto-deploy to staging on push to staging branch
+  # Images are tagged with SHA only (not `latest`), so production won't pull
+  # ==========================================================================
+  deploy-staging:
+    needs: [build-core, build-tollbooth]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject cluster hosts from secrets
+        run: |
+          jq --arg staging "${{ secrets.STAGING_HOST }}" \
+             --arg prod "${{ secrets.PROD_HOST }}" \
+             '(.clusters[] | select(.environment == "staging") | .host) = $staging |
+              (.clusters[] | select(.environment == "production") | .host) = $prod' \
+             deploy/clusters.json > deploy/clusters.tmp.json
+          mv deploy/clusters.tmp.json deploy/clusters.json
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          for host in $(jq -r '.clusters[] | select(.environment == "staging") | .host' deploy/clusters.json); do
+            if [[ -n "$host" ]]; then
+              ssh-keyscan -H "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
+            fi
+          done
+
+      - name: Deploy to staging
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+          DEPLOY_ENV: staging
+        run: bash deploy/deploy.sh
+
+  # ==========================================================================
+  # Register version with Atlas on push to main (production auto-pulls `latest`)
   # ==========================================================================
   register-version:
     needs: [build-core, build-tollbooth]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Notify Atlas of new version
         continue-on-error: true
@@ -126,31 +183,67 @@ jobs:
             }'
 
   # ==========================================================================
-  # Deploy to all Nomad clusters
+  # Manual deploy (workflow_dispatch) — staging or production
+  # For production: builds are skipped, deploys existing image by tag
   # ==========================================================================
   deploy:
     needs: [build-core, build-tollbooth]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event.inputs.skip_deploy != 'true'
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.skip_deploy != 'true'
     concurrency:
-      group: deploy-production
+      group: deploy-${{ github.event.inputs.deploy_env }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+
+      - name: Inject cluster hosts from secrets
+        run: |
+          jq --arg staging "${{ secrets.STAGING_HOST }}" \
+             --arg prod "${{ secrets.PROD_HOST }}" \
+             '(.clusters[] | select(.environment == "staging") | .host) = $staging |
+              (.clusters[] | select(.environment == "production") | .host) = $prod' \
+             deploy/clusters.json > deploy/clusters.tmp.json
+          mv deploy/clusters.tmp.json deploy/clusters.json
 
       - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          # Scan real hosts only (skip placeholders)
-          for host in $(jq -r '.clusters[].host' deploy/clusters.json); do
-            if [[ "$host" != "YOUR_SERVER_IP" && -n "$host" ]]; then
+          DEPLOY_ENV="${{ github.event.inputs.deploy_env }}"
+          for host in $(jq -r --arg env "$DEPLOY_ENV" '.clusters[] | select(.environment == $env) | .host' deploy/clusters.json); do
+            if [[ -n "$host" ]]; then
               ssh-keyscan -H "$host" >> ~/.ssh/known_hosts 2>/dev/null || true
             fi
           done
 
-      - name: Deploy to clusters
+      - name: Deploy to ${{ github.event.inputs.deploy_env }}
         env:
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ github.event.inputs.tag || github.sha }}
+          DEPLOY_ENV: ${{ github.event.inputs.deploy_env }}
         run: bash deploy/deploy.sh
+
+  # ==========================================================================
+  # Register version with Atlas after manual production deploy
+  # ==========================================================================
+  register-version-promote:
+    needs: [deploy]
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.deploy_env == 'production' &&
+      github.event.inputs.skip_deploy != 'true'
+    steps:
+      - name: Notify Atlas of new version
+        continue-on-error: true
+        run: |
+          IMAGE_TAG="${{ github.event.inputs.tag || github.sha }}"
+          curl -sf -X POST "${{ secrets.ATLAS_URL }}/api/internal/set-version" \
+            -H "X-Atlas-Secret: ${{ secrets.ATLAS_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"version\": \"${IMAGE_TAG}\",
+              \"image_tag\": \"${IMAGE_TAG}\"
+            }"

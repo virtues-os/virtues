@@ -1,10 +1,28 @@
 //! Database module for SQLite operations
 
+use std::sync::Once;
 use std::time::Duration;
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 use crate::error::{Error, Result};
+
+/// Register the sqlite-vec extension globally (once).
+///
+/// This must be called before any SQLite connections are created.
+/// The extension is registered via `sqlite3_auto_extension` so every
+/// connection automatically gets vec0 virtual table support.
+fn register_sqlite_vec_extension() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        unsafe {
+            libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+        tracing::info!("sqlite-vec extension registered");
+    });
+}
 
 /// Database connection and operations
 #[derive(Clone)]
@@ -15,6 +33,8 @@ pub struct Database {
 impl Database {
     /// Create a new database connection
     pub fn new(database_url: &str) -> Result<Self> {
+        // Ensure sqlite-vec is registered before creating the pool
+        register_sqlite_vec_extension();
         // Get max connections from environment (default: 5 for SQLite)
         let max_connections = std::env::var("DATABASE_MAX_CONNECTIONS")
             .ok()

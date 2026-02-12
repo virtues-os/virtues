@@ -216,8 +216,8 @@ export async function persistSidebarReorder(
 	items: SidebarDndItem[],
 	workspaceId: string
 ): Promise<void> {
-	const urls = items.map((i) => i.url);
-	await spaceStore.reorderSpaceItems(urls, workspaceId);
+	const sortedItems = items.map((item, i) => ({ url: item.url, sort_order: i }));
+	await spaceStore.reorderSpaceItems(sortedItems, workspaceId);
 }
 
 /**

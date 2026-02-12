@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::tools::default_enabled_tools;
 
+/// The canonical default theme for the application.
+/// This is the single source of truth — frontend and spaces.rs reference this.
+pub const DEFAULT_THEME: &str = "pemberley";
+
 /// Assistant profile defaults
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AssistantProfileDefaults {
@@ -27,9 +31,10 @@ pub fn assistant_profile_defaults() -> AssistantProfileDefaults {
     AssistantProfileDefaults {
         assistant_name: None,
         default_agent_id: "agent".to_string(),
-        default_model_id: "cerebras/gpt-oss-120b".to_string(),
+        default_model_id: "google/gemini-3-flash".to_string(),
         enabled_tools: default_enabled_tools(),
         ui_preferences: serde_json::json!({
+            "theme": DEFAULT_THEME,
             "contextIndicator": {
                 "alwaysVisible": false,
                 "showThreshold": 70

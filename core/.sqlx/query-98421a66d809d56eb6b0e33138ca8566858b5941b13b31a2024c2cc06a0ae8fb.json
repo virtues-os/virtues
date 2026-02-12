@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT\n            id,\n            attendee_identifiers\n        FROM data_calendar_event\n        WHERE start_time >= $1\n          AND start_time < $2\n          AND json_array_length(attendee_identifiers) > 0\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "attendee_identifiers",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "98421a66d809d56eb6b0e33138ca8566858b5941b13b31a2024c2cc06a0ae8fb"
+}

@@ -16,7 +16,7 @@ class LocationManager: NSObject, ObservableObject {
     // MARK: - Constants
     private let samplingIntervalSeconds = 15.0  // Battery optimization: ~10-15% savings vs 10s
     private let healthCheckIntervalSeconds = 30.0
-    private let locationFreshnessThresholdSeconds = 30.0
+    private let locationFreshnessThresholdSeconds = 60.0
 
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var isTracking = false
@@ -55,7 +55,7 @@ class LocationManager: NSObject, ObservableObject {
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.showsBackgroundLocationIndicator = true
-        locationManager.activityType = .fitness // Optimized for continuous tracking
+        locationManager.activityType = .other
 
         // Check initial status
         authorizationStatus = locationManager.authorizationStatus
@@ -150,10 +150,6 @@ class LocationManager: NSObject, ObservableObject {
         return authorizationStatus == .authorizedAlways
     }
 
-    func checkAuthorizationStatus() {
-        authorizationStatus = locationManager.authorizationStatus
-    }
-
     var hasPermission: Bool {
         // Accept either When In Use or Always
         // We request Always, but iOS may grant When In Use first
@@ -177,7 +173,6 @@ class LocationManager: NSObject, ObservableObject {
         print("📍 Starting location tracking")
         isTracking = true
         locationManager.startUpdatingLocation()
-        locationManager.startMonitoringSignificantLocationChanges()
         
         // Start the timer for location sampling
         print("⏱️ Starting location timer with \(samplingIntervalSeconds)-second interval")
@@ -188,7 +183,6 @@ class LocationManager: NSObject, ObservableObject {
         print("📍 Stopping location tracking")
         isTracking = false
         locationManager.stopUpdatingLocation()
-        locationManager.stopMonitoringSignificantLocationChanges()
 
         // Stop the timer
         stopLocationTimer()
@@ -265,6 +259,9 @@ extension LocationManager {
     }
 
     private func sampleCurrentLocation() {
+        // Piggyback upload flush on sampling timer (~15s) — time-gated to 5 min inside uploadIfNeeded
+        dataUploader.uploadIfNeeded()
+
         guard let location = lastLocation else {
             print("⚠️ No location available to sample")
             return
@@ -427,7 +424,5 @@ extension LocationManager: HealthCheckable {
 
             return .healthy
         }
-
-        return .healthy
     }
 }

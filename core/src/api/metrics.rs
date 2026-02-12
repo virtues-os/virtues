@@ -82,18 +82,19 @@ pub struct RecentError {
 
 /// Get comprehensive activity metrics
 pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
-    // Summary query with FILTER clauses
+    // Summary query
     let summary_row = sqlx::query(
         r#"
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'succeeded') as succeeded,
-            COUNT(*) FILTER (WHERE status = 'failed') as failed,
-            COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
-            COUNT(*) FILTER (WHERE status IN ('pending', 'running')) as active,
-            COALESCE(SUM(records_processed), 0)::bigint as total_records,
-            AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
-                FILTER (WHERE completed_at IS NOT NULL) as avg_duration
+            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as succeeded,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+            SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END) as active,
+            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as total_records,
+            AVG(CASE WHEN completed_at IS NOT NULL
+                THEN (julianday(completed_at) - julianday(started_at)) * 86400
+                ELSE NULL END) as avg_duration
         FROM elt_jobs
         "#,
     )
@@ -127,11 +128,12 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         SELECT
             job_type,
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'succeeded') as succeeded,
-            COUNT(*) FILTER (WHERE status = 'failed') as failed,
-            AVG(EXTRACT(EPOCH FROM (completed_at - started_at)))
-                FILTER (WHERE completed_at IS NOT NULL) as avg_duration,
-            COALESCE(SUM(records_processed), 0)::bigint as total_records
+            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as succeeded,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            AVG(CASE WHEN completed_at IS NOT NULL
+                THEN (julianday(completed_at) - julianday(started_at)) * 86400
+                ELSE NULL END) as avg_duration,
+            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as total_records
         FROM elt_jobs
         GROUP BY job_type
         ORDER BY total DESC
@@ -206,9 +208,9 @@ async fn get_period_stats(db: &Database, since: DateTime<Utc>) -> Result<PeriodS
     let row = sqlx::query(
         r#"
         SELECT
-            COUNT(*) FILTER (WHERE status = 'succeeded') as completed,
-            COUNT(*) FILTER (WHERE status = 'failed') as failed,
-            COALESCE(SUM(records_processed), 0)::bigint as records
+            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records
         FROM elt_jobs
         WHERE created_at >= $1
         "#,

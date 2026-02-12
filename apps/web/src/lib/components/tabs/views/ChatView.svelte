@@ -1,10 +1,8 @@
 <script lang="ts">
-	import Icon from "$lib/components/Icon.svelte";
 	import type { Tab } from "$lib/tabs/types";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import Page from "$lib/components/Page.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
-	import { toast } from "svelte-sonner";
 	import GettingStarted from "$lib/components/GettingStarted.svelte";
 	import {
 		getSelectedModel,
@@ -18,20 +16,19 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
-	import { onMount, onDestroy } from "svelte";
-	import { goto } from "$app/navigation";
+	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
-	import { activePageStore, editAllowListStore } from "$lib/stores/activePage.svelte";
-	import { addPendingEdit, acceptEdit, rejectEdit, getPendingEdit, isEditPending } from "$lib/stores/pendingEdits.svelte";
-	import { dispatchAIEditHighlight, dispatchAIEditAccept, dispatchAIEditReject } from "$lib/events/aiEdit";
+	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
+	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
+	import { ChatError } from "$lib/components/chat";
 	import { createYjsDocument } from "$lib/yjs";
 	import type { EntityResult } from "$lib/components/EntityPicker.svelte";
 	import type { AgentModeId } from "$lib/config/agentModes";
@@ -94,6 +91,7 @@
 	let scrollContainer: HTMLDivElement | null = $state(null);
 	let enableTransitions = $state(false);
 	let isLoading = $state(true);
+	let isAwaitingResponse = $state(false);
 	let loadedMessages = $state<any[]>([]);
 
 	// Track tab route to reset state when switching conversations
@@ -137,13 +135,16 @@
 		selectedCitation = null;
 	}
 
-	// Active page editing handlers
-	function handlePageChangePage() {
-		// Legacy handler - not used with inline picker
+	// Helper to get the first bound page from the edit allow list
+	function getBoundPage() {
+		return editAllowListStore.items.find((i) => i.type === 'page');
 	}
 
 	function handlePageClear() {
-		activePageStore.unbind();
+		const pages = editAllowListStore.items.filter((i) => i.type === 'page');
+		for (const page of pages) {
+			editAllowListStore.remove('page', page.id);
+		}
 	}
 
 	function handleRemoveItem(type: string, id: string) {
@@ -153,54 +154,35 @@
 	function handlePageSelect(pageId: string, pageTitle: string) {
 		// Create Yjs document for the page and bind
 		// NOTE: No auto-open - user can open the page manually if they want to see it
+		handlePageClear();
 		const yjsDoc = createYjsDocument(pageId);
-		activePageStore.bind(pageId, pageTitle, yjsDoc);
+		editAllowListStore.addPage(pageId, pageTitle, yjsDoc);
 	}
 
 	/**
-	 * Handle permission allow for AI edit
-	 * @param entityId - The entity to allow editing
-	 * @param entityType - Type of entity (page, person, etc.)
-	 * @param title - Display title
-	 * @param forChat - If true, add to allow list for entire chat session
+	 * Handle permission allow for AI edit.
+	 * Adds permission then regenerates the AI's last response (which had permission_needed).
+	 * regenerate() removes that assistant message and re-requests — no duplicate user messages.
 	 */
-	async function handlePermissionAllow(entityId: string, entityType: string, title: string, forChat: boolean) {
-		// Add to allow list (both "Allow" and "Allow for chat" add permission for retry)
-		// For MVP, both paths add to the list; "Allow once" could be refined later
-		const type = entityType === 'page' ? 'page' :
-		             entityType === 'folder' ? 'folder' : 'page';
-
+	async function handlePermissionAllow(entityId: string, entityType: string, title: string) {
+		// Add to allow list (await ensures backend has the permission before retry)
 		if (entityType === 'page') {
 			const yjsDoc = createYjsDocument(entityId);
 			await editAllowListStore.addPage(entityId, title, yjsDoc);
 		} else {
 			await editAllowListStore.add({
-				type: type as 'page' | 'folder' | 'wiki_entry',
+				type: (entityType === 'folder' ? 'folder' : 'page') as 'page' | 'folder',
 				id: entityId,
-				title: title
+				title
 			});
 		}
 
-		// Auto-retry: Find the last user message and resend it
-		// This triggers the AI to retry the edit (now with permission granted)
-		const lastUserMessage = chat.messages
-			.filter(m => m.role === 'user')
-			.pop();
-
-		if (lastUserMessage) {
-			// Extract text from the message parts
-			const textPart = (lastUserMessage.parts as any[])?.find(p => p.type === 'text');
-			const messageText = textPart?.text || '';
-
-			if (messageText && chat.status === 'ready') {
-				// Small delay to ensure permission is saved to backend
-				setTimeout(async () => {
-					try {
-						await chat.sendMessage({ text: messageText });
-					} catch (error) {
-						console.error('[ChatView] Failed to retry after permission grant:', error);
-					}
-				}, 100);
+		// Regenerate = remove last assistant message + re-request
+		if (chat.status === 'ready') {
+			try {
+				await chat.regenerate();
+			} catch (error) {
+				console.error('[ChatView] Failed to regenerate after permission grant:', error);
 			}
 		}
 	}
@@ -213,38 +195,7 @@
 		// The tool result already shows the permission was needed
 	}
 
-	/**
-	 * Revert an AI edit by calling the backend with reversed find/replace
-	 */
-	async function revertEdit(pageId: string, editId: string) {
-		const edit = getPendingEdit(pageId, editId);
-		if (!edit) return;
 
-		try {
-			// Call backend with reversed arguments to undo the edit
-			const response = await fetch(`/api/pages/${pageId}/edit`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					find: edit.replace,    // Find what AI added
-					replace: edit.find,    // Replace with original
-				})
-			});
-
-			if (response.ok) {
-				// Remove from pending edits store
-				rejectEdit(pageId, editId);
-				// Dispatch reject event to remove highlight in PageEditor
-				dispatchAIEditReject({ pageId, editId });
-			} else {
-				console.error('[ChatView] Failed to revert edit:', await response.text());
-				toast.error('Failed to revert edit');
-			}
-		} catch (error) {
-			console.error('[ChatView] Error reverting edit:', error);
-			toast.error('Failed to revert edit');
-		}
-	}
 
 	function handleSelectEntities(entities: EntityResult[]) {
 		// Add each entity to the edit allow list
@@ -278,13 +229,17 @@
 	 */
 	function handlePageCreated(pageId: string, title: string) {
 		// Auto-bind and open the newly created page in split view
-		const yjsDoc = createYjsDocument(pageId);
-		activePageStore.bind(pageId, title, yjsDoc);
+		handlePageClear();
+		// Don't create Yjs doc here — PageContent will create one when the tab mounts.
+		// Creating a second doc causes two WebSocket connections to the same room,
+		// which races with the server's markdown→XmlFragment initialization.
+		editAllowListStore.addPage(pageId, title);
 
 		if (!spaceStore.isSplit) {
 			spaceStore.enableSplit();
 		}
 		spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
+		spaceStore.refreshViews();
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
@@ -329,45 +284,7 @@
 		}
 	});
 
-	// Track completed edit_page tool calls to avoid re-registering
-	let registeredEditCalls = $state<Set<string>>(new Set());
 
-	// Effect to register new edit_page results as pending edits
-	$effect(() => {
-		if (!chat?.messages) return;
-		if (isLoading) return;
-
-		for (const message of chat.messages) {
-			if (message.role !== 'assistant') continue;
-
-			for (const part of message.parts as ToolResultPart[]) {
-				if (part.type === 'tool-edit_page' && part.state === 'output-available') {
-					const output = (part as any).output;
-					if (output?.edit?.edit_id && output?.edit?.page_id && !registeredEditCalls.has(part.toolCallId || '')) {
-						const { edit_id, page_id, find, replace } = output.edit;
-
-						// Register this edit as pending
-						addPendingEdit({
-							editId: edit_id,
-							pageId: page_id,
-							find: find || '',
-							replace: replace || '',
-							timestamp: Date.now()
-						});
-
-						// Dispatch event to highlight the edit in PageEditor
-						dispatchAIEditHighlight({
-							pageId: page_id,
-							editId: edit_id,
-							text: replace || ''
-						});
-
-						registeredEditCalls.add(part.toolCallId || '');
-					}
-				}
-			}
-		}
-	});
 
 	// Context usage state
 	interface ContextUsageState {
@@ -406,210 +323,26 @@
 		}
 	}
 
-	// ==========================================================================
-	// Context View - Detailed session data (for ?view=context mode)
-	// ==========================================================================
-	interface SessionUsage {
-		session_id: string;
-		model: string;
-		context_window: number;
-		total_tokens: number;
-		usage_percentage: number;
-		input_tokens: number;
-		output_tokens: number;
-		reasoning_tokens: number;
-		cache_read_tokens: number;
-		cache_write_tokens: number;
-		total_cost_usd: number;
-		user_message_count: number;
-		assistant_message_count: number;
-		first_message_at: string | null;
-		last_message_at: string | null;
-		compaction_status: {
-			summary_exists: boolean;
-			messages_summarized: number;
-			messages_verbatim: number;
-			summary_version: number;
-			last_compacted_at: string | null;
-		};
-		context_status: string;
-	}
-
-	interface SessionDetail {
-		conversation: {
-			conversation_id: string;
-			title: string;
-			first_message_at: string;
-			last_message_at: string;
-			message_count: number;
-			model?: string;
-			provider?: string;
-		};
-		messages: Array<{
-			id: string;
-			role: string;
-			content: string;
-			timestamp: string;
-			model?: string;
-			tool_calls?: Array<{
-				tool_name: string;
-				tool_call_id?: string;
-				arguments: unknown;
-				result?: unknown;
-				timestamp: string;
-			}>;
-			reasoning?: string;
-		}>;
-	}
-
-	interface Breakdown {
-		user: { tokens: number; pct: number };
-		assistant: { tokens: number; pct: number };
-		toolCalls: { tokens: number; pct: number };
-		other: { tokens: number; pct: number };
-	}
-
-	let sessionUsage = $state<SessionUsage | null>(null);
-	let sessionDetail = $state<SessionDetail | null>(null);
-	let contextViewLoading = $state(false);
-	let contextViewError = $state<string | null>(null);
-	let compacting = $state(false);
-
-	// Fetch detailed session data for context view
-	async function fetchContextViewData() {
-		if (!conversationId || isNewChat(tab.route)) {
-			contextViewError = 'No conversation ID';
-			return;
-		}
-
-		contextViewLoading = true;
-		contextViewError = null;
-
-		try {
-			const [usageRes, sessionRes] = await Promise.all([
-				fetch(`/api/chats/${conversationId}/usage`),
-				fetch(`/api/chats/${conversationId}`)
-			]);
-
-			if (!usageRes.ok) throw new Error(`Failed to fetch usage: ${usageRes.status}`);
-			if (!sessionRes.ok) throw new Error(`Failed to fetch session: ${sessionRes.status}`);
-
-			sessionUsage = await usageRes.json();
-			sessionDetail = await sessionRes.json();
-		} catch (e) {
-			contextViewError = e instanceof Error ? e.message : 'Unknown error';
-		} finally {
-			contextViewLoading = false;
-		}
-	}
-
-	// Compact the session
-	async function handleCompact() {
-		if (!conversationId || compacting) return;
-
-		compacting = true;
-		try {
-			const res = await fetch(`/api/chats/${conversationId}/compact`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ force: true })
-			});
-
-			if (!res.ok) throw new Error(`Failed to compact: ${res.status}`);
-
-			// Refresh context view data
-			await fetchContextViewData();
-
-			// Re-fetch messages to show the new checkpoint message
-			const messagesRes = await fetch(`/api/chats/${conversationId}`);
-			if (messagesRes.ok) {
-				const data = await messagesRes.json();
-				loadedMessages = data.messages || [];
-				chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
-					id: msg.id,
-					role: msg.role as "user" | "assistant" | "checkpoint",
-					parts: convertMessageToParts(msg),
-				}));
-			}
-		} catch (e) {
-			contextViewError = e instanceof Error ? e.message : 'Compaction failed';
-		} finally {
-			compacting = false;
-		}
-	}
-
-	// Calculate token breakdown from messages
-	function calculateBreakdown(messages: SessionDetail['messages']): Breakdown {
-		let user = 0, assistant = 0, toolCalls = 0, other = 0;
-
-		for (const msg of messages) {
-			const contentTokens = Math.ceil((msg.content?.length || 0) / 4);
-
-			if (msg.role === 'user') {
-				user += contentTokens;
-			} else if (msg.role === 'assistant') {
-				assistant += contentTokens;
-				if (msg.tool_calls) {
-					for (const tc of msg.tool_calls) {
-						toolCalls += Math.ceil(JSON.stringify(tc).length / 4);
-					}
-				}
-				if (msg.reasoning) {
-					other += Math.ceil(msg.reasoning.length / 4);
-				}
-			} else {
-				other += contentTokens;
-			}
-		}
-
-		const total = user + assistant + toolCalls + other || 1;
-		return {
-			user: { tokens: user, pct: (user / total) * 100 },
-			assistant: { tokens: assistant, pct: (assistant / total) * 100 },
-			toolCalls: { tokens: toolCalls, pct: (toolCalls / total) * 100 },
-			other: { tokens: other, pct: (other / total) * 100 }
-		};
-	}
-
-	// Format helpers for context view
-	function formatTokens(tokens: number): string {
-		if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
-		if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}K`;
-		return tokens.toLocaleString();
-	}
-
-	function formatCost(cost: number): string {
-		if (cost < 0.01) return `$${cost.toFixed(4)}`;
-		return `$${cost.toFixed(2)}`;
-	}
-
-	function formatDate(date: string | null): string {
-		if (!date) return '—';
-		return new Date(date).toLocaleString();
-	}
-
-	function formatShortDate(date: string): string {
-		return new Date(date).toLocaleString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			hour: 'numeric',
-			minute: '2-digit'
-		});
-	}
-
-	const breakdown = $derived(sessionDetail ? calculateBreakdown(sessionDetail.messages) : null);
-
-	// Fetch context data when entering context view mode
-	$effect(() => {
-		if (isContextView && active && conversationId) {
-			fetchContextViewData();
-		}
-	});
 
 	// Handle context indicator click - open context tab in split view
 	function handleContextClick() {
 		const currentPane = spaceStore.findTabPane(tab.id);
 		spaceStore.openChatContext(conversationId, currentPane);
+	}
+
+	// Handle compaction completion from ContextViewPanel - refresh messages
+	async function handleCompacted() {
+		if (!conversationId) return;
+		const messagesRes = await fetch(`/api/chats/${conversationId}`);
+		if (messagesRes.ok) {
+			const data = await messagesRes.json();
+			loadedMessages = data.messages || [];
+			chat.messages = deduplicateMessages(loadedMessages).map((msg: any) => ({
+				id: msg.id,
+				role: msg.role as "user" | "assistant" | "checkpoint",
+				parts: convertMessageToParts(msg),
+			}));
+		}
 	}
 
 	// Helper function to convert database messages to Chat parts
@@ -704,18 +437,15 @@
 				getModel: getCurrentModel,
 				getSpaceId,
 				getActivePageContext: () => {
-					const pageId = activePageStore.getBoundPageId();
-					const pageTitle = activePageStore.getBoundPageTitle();
-					const yjsDoc = activePageStore.getYjsDoc();
-
-					if (!pageId) return null;
+					const page = getBoundPage();
+					if (!page) return null;
 
 					// Include the current Yjs content so AI edits match what's in the editor
-					const content = yjsDoc?.yxmlFragment.toString() || '';
+					const content = page.yjsDoc?.yxmlFragment.toString() || '';
 
 					return {
-						page_id: pageId,
-						page_title: pageTitle || undefined,
+						page_id: page.id,
+						page_title: page.title || undefined,
 						content: content
 					};
 				},
@@ -769,14 +499,13 @@
 			messageMetadata = new Map();
 			contextUsage = undefined;
 			titleGenerated = false;
-			thinkingIndicatorVisible = false;
-			minTimeElapsed = false;
+			isAwaitingResponse = false;
 			// Reset page create tracking (for auto-open)
 			initialCompletedToolCalls = null;
 			initialLoadComplete = false;
 			// NOTE: We no longer unbind the active page when switching chats.
 			// Binding is now additive/persistent to the chat session context.
-			// activePageStore.unbind();
+			// handlePageClear();
 
 			// Load conversation if switching to an existing one
 			if (currentTabConversationId && !isNewChat(currentTabRoute)) {
@@ -964,46 +693,12 @@
 		return null;
 	});
 
-	// Thinking indicator state machine
-	// - Shows when thinking starts
-	// - Stays visible for minimum 500ms
-	// - Hides when substantial text arrives OR thinking ends (whichever is later)
-	let thinkingIndicatorVisible = $state(false);
-	let minTimeElapsed = $state(false);
-
-	// Check for substantial text content (more than 20 chars)
-	const hasSubstantialTextContent = $derived.by(() => {
-		if (!lastAssistantMessage) return false;
-		const textParts = lastAssistantMessage.parts.filter(
-			(p: any) => p.type === "text" && p.text,
-		);
-		const totalText = textParts
-			.map((p: any) => p.text)
-			.join("")
-			.trim();
-		return totalText.length > 20;
-	});
-
-	// Effect: Show indicator when thinking starts, with minimum display timer
+	// Clear optimistic indicator once the AI SDK reports thinking/streaming
 	$effect(() => {
-		if (isThinking && !thinkingIndicatorVisible) {
-			thinkingIndicatorVisible = true;
-			minTimeElapsed = false;
-			const timer = setTimeout(() => {
-				minTimeElapsed = true;
-			}, 500);
-			return () => clearTimeout(timer);
+		if (isThinking && isAwaitingResponse) {
+			isAwaitingResponse = false;
 		}
 	});
-
-	// Effect: Hide indicator when ready (min time passed AND either has text OR done thinking)
-	$effect(() => {
-		if (minTimeElapsed && (hasSubstantialTextContent || !isThinking)) {
-			thinkingIndicatorVisible = false;
-		}
-	});
-
-	const showStandaloneThinking = $derived(thinkingIndicatorVisible);
 
 	// Track thinking duration
 	let thinkingStartTime = $state<number | null>(null);
@@ -1055,11 +750,6 @@
 	});
 
 	// Reactive messages with subjects
-	// Refresh chat data (placeholder for future use)
-	async function refreshChatData() {
-		// Function intentionally empty - can be used for future chat data refresh needs
-	}
-
 	// Safety timeout
 	let thinkingTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
@@ -1091,13 +781,6 @@
 
 	// Derived state for layout mode
 	let isEmpty = $derived(uniqueMessages.length === 0);
-
-	// Time-based greeting
-	function getTimeBasedGreeting(): string {
-		return "";
-	}
-
-	let greeting = $state("");
 
 	// Generate title after first assistant response
 	async function generateTitle() {
@@ -1181,10 +864,20 @@
 		}
 		input = "";
 
+		// Optimistic: show thinking indicator immediately (before network round-trip)
+		isAwaitingResponse = true;
+		await tick(); // Flush DOM so the indicator renders before the network call
+
 		// Auto-scroll to bottom on submit
 		scrollToBottom("smooth");
 
 		try {
+			// Sync permissions to backend BEFORE sending (so AI tool calls have them during streaming)
+			// add_permission endpoint handles chat creation via INSERT OR IGNORE INTO chats
+			if (isNewChat(tab.route) && editAllowListStore.hasItems) {
+				await editAllowListStore.markChatCreated();
+			}
+
 			await chat.sendMessage({ text: messageToSend });
 
 			if (chat.messages.length === 2) {
@@ -1206,7 +899,7 @@
 					spaceStore.updateTab(tab.id, {
 						route: newRoute,
 					});
-					// Mark chat as created so pending permissions sync to backend
+					// Ensure chat is marked as created (may already be done above if hasItems)
 					await editAllowListStore.markChatCreated();
 					// Invalidate the Chats view cache so it refreshes with the new chat
 					spaceStore.invalidateViewCache('chat');
@@ -1223,14 +916,14 @@
 				clearTimeout(refreshDataTimeout as any);
 			}
 			refreshDataTimeout = setTimeout(() => {
-				refreshChatData();
-				// Refresh context usage after message completes
 				refreshContextUsage();
 				refreshDataTimeout = null;
 			}, 2000);
 		} catch (error) {
 			console.error("[handleChatSubmit] Error:", error);
 			input = "";
+		} finally {
+			isAwaitingResponse = false;
 		}
 	}
 </script>
@@ -1238,123 +931,7 @@
 {#if !chat}
 	<!-- wait for chat to initialize -->
 {:else if isContextView}
-	<!-- Context View - Full session details -->
-	<div class="context-view">
-		{#if contextViewLoading}
-			<div class="cv-loading">Loading...</div>
-		{:else if contextViewError}
-			<div class="cv-error">
-				<span>{contextViewError}</span>
-				<button type="button" onclick={fetchContextViewData}>Retry</button>
-			</div>
-		{:else if sessionUsage && sessionDetail}
-			<dl class="info-grid">
-				<dt>Session</dt>
-				<dd class="title">{sessionDetail.conversation.title || 'Untitled'}</dd>
-
-				<dt>Messages</dt>
-				<dd>{sessionDetail.conversation.message_count}</dd>
-
-				<dt>Provider</dt>
-				<dd>{sessionDetail.conversation.provider || '—'}</dd>
-
-				<dt>Model</dt>
-				<dd class="mono">{sessionUsage.model}</dd>
-
-				<dt>Context Limit</dt>
-				<dd class="mono">{formatTokens(sessionUsage.context_window)}</dd>
-
-				<dt>Total Tokens</dt>
-				<dd class="mono">{formatTokens(sessionUsage.total_tokens)}</dd>
-
-				<dt>Usage</dt>
-				<dd class="mono">{sessionUsage.usage_percentage.toFixed(1)}%</dd>
-
-				<dt>Input Tokens</dt>
-				<dd class="mono">{formatTokens(sessionUsage.input_tokens)}</dd>
-
-				<dt>Output Tokens</dt>
-				<dd class="mono">{formatTokens(sessionUsage.output_tokens)}</dd>
-
-				<dt>Reasoning Tokens</dt>
-				<dd class="mono">{formatTokens(sessionUsage.reasoning_tokens)}</dd>
-
-				<dt>Cache Tokens</dt>
-				<dd class="mono">{formatTokens(sessionUsage.cache_read_tokens)} / {formatTokens(sessionUsage.cache_write_tokens)}</dd>
-
-				<dt>User Messages</dt>
-				<dd>{sessionUsage.user_message_count}</dd>
-
-				<dt>Assistant Messages</dt>
-				<dd>{sessionUsage.assistant_message_count}</dd>
-
-				<dt>Total Cost</dt>
-				<dd class="mono">{formatCost(sessionUsage.total_cost_usd)}</dd>
-
-				<dt>Session Created</dt>
-				<dd>{formatDate(sessionUsage.first_message_at)}</dd>
-
-				<dt>Last Activity</dt>
-				<dd>{formatDate(sessionUsage.last_message_at)}</dd>
-			</dl>
-
-			<!-- Context Breakdown Bar -->
-			<div class="cv-breakdown">
-				<div class="cv-breakdown-label">Context Breakdown</div>
-				{#if breakdown && (breakdown.user.pct > 0 || breakdown.assistant.pct > 0 || breakdown.toolCalls.pct > 0 || breakdown.other.pct > 0)}
-					<div class="cv-bar">
-						{#if breakdown.user.pct > 0}
-							<div class="cv-segment cv-user" style="width: {breakdown.user.pct}%"></div>
-						{/if}
-						{#if breakdown.assistant.pct > 0}
-							<div class="cv-segment cv-assistant" style="width: {breakdown.assistant.pct}%"></div>
-						{/if}
-						{#if breakdown.toolCalls.pct > 0}
-							<div class="cv-segment cv-tools" style="width: {breakdown.toolCalls.pct}%"></div>
-						{/if}
-						{#if breakdown.other.pct > 0}
-							<div class="cv-segment cv-other" style="width: {breakdown.other.pct}%"></div>
-						{/if}
-					</div>
-					<div class="cv-legend">
-						<span><i class="cv-dot cv-user"></i> User {breakdown.user.pct.toFixed(1)}%</span>
-						<span><i class="cv-dot cv-assistant"></i> Assistant {breakdown.assistant.pct.toFixed(1)}%</span>
-						<span><i class="cv-dot cv-tools"></i> Tool Calls {breakdown.toolCalls.pct.toFixed(1)}%</span>
-						<span><i class="cv-dot cv-other"></i> Other {breakdown.other.pct.toFixed(1)}%</span>
-					</div>
-				{:else}
-					<div class="cv-bar cv-empty"></div>
-					<div class="cv-empty-note">No message data available for breakdown</div>
-				{/if}
-			</div>
-
-			<!-- Raw Messages -->
-			<div class="cv-raw-messages">
-				<div class="cv-section-label">Raw messages ({sessionDetail.messages?.length || 0})</div>
-				{#if sessionDetail.messages && sessionDetail.messages.length > 0}
-					<ul>
-						{#each sessionDetail.messages as msg, i}
-							<li>
-								<span class="cv-role">{msg.role}</span>
-								<span class="cv-msg-id">{msg.id || `msg_${i}`}</span>
-								<span class="cv-timestamp">{formatShortDate(msg.timestamp)}</span>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<div class="cv-empty-note">No messages found in session data</div>
-				{/if}
-			</div>
-
-			{#if sessionUsage.usage_percentage > 20}
-				<button class="cv-compact-btn" onclick={handleCompact} disabled={compacting}>
-					{compacting ? 'Compacting...' : 'Compact Session'}
-				</button>
-			{/if}
-		{:else}
-			<div class="cv-loading">Loading session data...</div>
-		{/if}
-	</div>
+	<ContextViewPanel {conversationId} {active} onCompacted={handleCompacted} />
 {:else}
 	<Page scrollable={false} className="h-full p-0!">
 		<div class="chat-container">
@@ -1494,8 +1071,7 @@
 														message={output.message}
 														proposedAction={output.proposed_action}
 														permissionMode={true}
-														onAllow={(id, type, title) => handlePermissionAllow(id, type, title, false)}
-														onAllowForChat={(id, type, title) => handlePermissionAllow(id, type, title, true)}
+														onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
 														onDeny={() => handlePermissionDeny()}
 													/>
 												{:else if output?.needs_binding}
@@ -1506,44 +1082,19 @@
 														onBind={handlePageSelect}
 													/>
 												{:else if output?.edit}
-													<!-- Edit was applied server-side -->
 													{@const editPageId = output.edit.page_id}
-													{@const editId = output.edit.edit_id}
-													{@const isPending = editId && editPageId ? isEditPending(editPageId, editId) : false}
 													<EditDiffCard
-														status={isPending ? 'pending' : 'accepted'}
-														{editId}
+														status={output.applied ? 'applied' : 'failed'}
 														pageId={editPageId}
 														find={output.edit.find || ''}
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
 														onViewPage={editPageId ? () => {
-															// Enable split mode if not already, then open page in right pane
 															if (!spaceStore.isSplit) {
 																spaceStore.enableSplit();
 															}
 															spaceStore.openTabFromRoute(`/page/${editPageId}`, { paneId: 'right', forceNew: true });
 														} : undefined}
-														onAccept={isPending && editId && editPageId ? () => {
-															// Accept: remove from pending (edit stays in document)
-															acceptEdit(editPageId, editId);
-															// Dispatch event to remove highlight in PageEditor
-															dispatchAIEditAccept({ pageId: editPageId, editId });
-														} : undefined}
-														onReject={isPending && editId && editPageId ? () => {
-															// Reject: revert the edit via API and remove highlight
-															revertEdit(editPageId, editId);
-														} : undefined}
-													/>
-												{/if}
-											{:else if part.type === "tool-get_page_content" && (part as any).state === "output-available"}
-												{@const output = (part as any).output}
-												{#if output?.needs_binding}
-													<PageBindingInline
-														pageId={output.page_id}
-														pageTitle={output.page_title}
-														message={output.message}
-														onBind={handlePageSelect}
 													/>
 												{/if}
 											{:else if part.type === "tool-code_interpreter"}
@@ -1587,92 +1138,23 @@
 								</div>
 							{/each}
 
-							{#if showStandaloneThinking}
+							<!-- Optimistic thinking indicator: shows immediately on submit,
+							     before the AI SDK creates the assistant message -->
+							{#if isAwaitingResponse && !isThinking}
 								<div class="flex justify-start">
-									<div class="w-full">
+									<div class="message-wrapper" data-role="assistant">
 										<ThinkingBlock
-											{isThinking}
+											isThinking={true}
 											toolCalls={[]}
 											reasoningContent=""
-											isStreaming={false}
-											duration={thinkingDuration}
+											isStreaming={true}
+											duration={0}
 										/>
 									</div>
 								</div>
 							{/if}
 
-							{#if chat.error}
-								{@const isRateLimitError =
-									chat.error.message?.includes(
-										"Rate limit exceeded",
-									) ||
-									chat.error.message?.includes(
-										"rate limit",
-									) ||
-									chat.error.message?.includes("429")}
-								<div class="flex justify-start">
-									<div
-										class="error-container"
-										class:rate-limit-error={isRateLimitError}
-									>
-										<div class="error-icon">
-											<Icon
-												icon={isRateLimitError
-													? "ri:time-line"
-													: "ri:error-warning-line"}
-												width="20"
-											/>
-										</div>
-										<div class="error-content">
-											<div class="error-title">
-												{isRateLimitError
-													? "Rate Limit Reached"
-													: "An error occurred"}
-											</div>
-											<div class="error-message">
-												{#if isRateLimitError}
-													You've reached your API
-													usage limit. Please wait for
-													the limit to reset or check
-													your usage dashboard for
-													details.
-												{:else}
-													{chat.error.message ||
-														"Something went wrong. Please try again."}
-												{/if}
-											</div>
-											<div class="error-actions">
-												{#if isRateLimitError}
-													<a
-														href="/usage"
-														class="usage-link"
-													>
-														<Icon
-															icon="ri:bar-chart-line"
-															width="16"
-														/>
-														View Usage Dashboard
-													</a>
-												{:else}
-													<button
-														type="button"
-														class="retry-button"
-														onclick={() => {
-															chat.regenerate();
-														}}
-													>
-														<Icon
-															icon="ri:refresh-line"
-															width="16"
-														/>
-														Retry
-													</button>
-												{/if}
-											</div>
-										</div>
-									</div>
-								</div>
-							{/if}
+							<ChatError error={chat.error} onRetry={() => chat.regenerate()} />
 						</div>
 					</div>
 
@@ -1699,8 +1181,7 @@
 							{contextUsage}
 							onContextClick={handleContextClick}
 							editableItems={editAllowListStore.items}
-							pageBinding={activePageStore.boundPageId ? { pageId: activePageStore.boundPageId, pageTitle: activePageStore.boundPageTitle || 'Untitled' } : undefined}
-							onPageChange={handlePageChangePage}
+							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
 							onPageClear={handlePageClear}
 							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}
@@ -1753,191 +1234,6 @@
 		to {
 			transform: rotate(360deg);
 		}
-	}
-
-	/* Context View Styles */
-	.context-view {
-		height: 100%;
-		overflow-y: auto;
-		padding: 1.5rem;
-		max-width: 600px;
-	}
-
-	.cv-loading,
-	.cv-error {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 3rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.cv-error {
-		color: var(--color-error);
-	}
-
-	.cv-error button {
-		padding: 0.5rem 1rem;
-		border: 1px solid var(--color-border);
-		background: var(--color-surface);
-		border-radius: 6px;
-		cursor: pointer;
-	}
-
-	.info-grid {
-		display: grid;
-		grid-template-columns: 140px 1fr;
-		gap: 0.5rem 1rem;
-		margin: 0;
-	}
-
-	.info-grid dt {
-		color: var(--color-foreground-muted);
-		font-size: 0.875rem;
-	}
-
-	.info-grid dd {
-		margin: 0;
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-	}
-
-	.info-grid dd.title {
-		font-weight: 500;
-	}
-
-	.info-grid dd.mono {
-		font-family: var(--font-mono);
-	}
-
-	/* Breakdown bar */
-	.cv-breakdown {
-		margin-top: 2rem;
-	}
-
-	.cv-breakdown-label,
-	.cv-section-label {
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		margin-bottom: 0.5rem;
-	}
-
-	.cv-bar {
-		display: flex;
-		height: 8px;
-		border-radius: 4px;
-		overflow: hidden;
-		background: var(--color-surface-elevated);
-	}
-
-	.cv-segment {
-		min-width: 2px;
-	}
-
-	.cv-segment.cv-user { background: #10b981; }
-	.cv-segment.cv-assistant { background: #ec4899; }
-	.cv-segment.cv-tools { background: #eab308; }
-	.cv-segment.cv-other { background: #6b7280; }
-
-	.cv-legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1rem;
-		margin-top: 0.5rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.cv-dot {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		margin-right: 4px;
-		vertical-align: middle;
-	}
-
-	.cv-dot.cv-user { background: #10b981; }
-	.cv-dot.cv-assistant { background: #ec4899; }
-	.cv-dot.cv-tools { background: #eab308; }
-	.cv-dot.cv-other { background: #6b7280; }
-
-	.cv-bar.cv-empty {
-		background: var(--color-surface-elevated);
-	}
-
-	.cv-empty-note {
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		font-style: italic;
-		margin-top: 0.5rem;
-	}
-
-	/* Raw messages */
-	.cv-raw-messages {
-		margin-top: 2rem;
-	}
-
-	.cv-raw-messages ul {
-		list-style: none;
-		padding: 0;
-		margin: 0.5rem 0 0 0;
-		max-height: 300px;
-		overflow-y: auto;
-	}
-
-	.cv-raw-messages li {
-		display: flex;
-		gap: 0.75rem;
-		padding: 0.375rem 0;
-		font-size: 0.8125rem;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.cv-raw-messages li:last-child {
-		border-bottom: none;
-	}
-
-	.cv-role {
-		min-width: 70px;
-		color: var(--color-foreground-muted);
-	}
-
-	.cv-msg-id {
-		flex: 1;
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.cv-timestamp {
-		color: var(--color-foreground-muted);
-		white-space: nowrap;
-	}
-
-	/* Compact button */
-	.cv-compact-btn {
-		margin-top: 2rem;
-		padding: 0.5rem 1rem;
-		background: transparent;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		cursor: pointer;
-		transition: background-color 0.15s ease;
-	}
-
-	.cv-compact-btn:hover:not(:disabled) {
-		background: var(--color-surface-hover);
-	}
-
-	.cv-compact-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
 	}
 
 	.chat-container {
@@ -2013,7 +1309,9 @@
 		width: 100%;
 		max-width: 48rem;
 		padding: 0 2rem 2rem 2rem;
-		background: var(--color-background);
+		background-color: var(--color-surface);
+		background-image: var(--background-image);
+		background-blend-mode: multiply;
 		box-sizing: border-box;
 		z-index: 10;
 	}
@@ -2087,107 +1385,6 @@
 	/* Assistant response text - spacing after thinking block */
 	.assistant-response {
 		padding-top: 4px;
-	}
-
-	.error-container {
-		display: flex;
-		gap: 0.75rem;
-		padding: 1rem;
-		background-color: var(--color-error-subtle);
-		border: 1px solid var(--color-error);
-		border-radius: 0.5rem;
-		width: 100%;
-		max-width: 100%;
-	}
-
-	.error-icon {
-		flex-shrink: 0;
-		color: var(--color-error);
-		margin-top: 0.125rem;
-	}
-
-	.error-content {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.error-title {
-		font-weight: 600;
-		color: var(--color-error);
-		font-size: 0.875rem;
-	}
-
-	.error-message {
-		color: var(--color-foreground-muted);
-		font-size: 0.875rem;
-		line-height: 1.5;
-	}
-
-	.error-container.rate-limit-error {
-		background-color: var(--color-warning-subtle);
-		border-color: var(--color-warning);
-	}
-
-	.error-container.rate-limit-error .error-icon {
-		color: var(--color-warning);
-	}
-
-	.error-container.rate-limit-error .error-title {
-		color: var(--color-warning);
-	}
-
-	.error-actions {
-		margin-top: 0.5rem;
-	}
-
-	.retry-button {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.375rem 0.75rem;
-		background: color-mix(in srgb, var(--color-error) 15%, transparent);
-		border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
-		border-radius: 0.375rem;
-		color: var(--color-error);
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.retry-button:hover {
-		background: var(--color-error);
-		color: white;
-	}
-
-	.retry-button:active {
-		transform: scale(0.98);
-	}
-
-	.usage-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		padding: 0.375rem 0.75rem;
-		background-color: var(--color-surface);
-		border: 1px solid var(--color-warning);
-		border-radius: 0.375rem;
-		color: var(--color-warning);
-		font-size: 0.875rem;
-		font-weight: 500;
-		text-decoration: none;
-		cursor: pointer;
-		transition: all 0.15s ease;
-	}
-
-	.usage-link:hover {
-		background-color: var(--color-warning-subtle);
-	}
-
-	.usage-link:active {
-		transform: scale(0.98);
 	}
 
 	.shiny-title {

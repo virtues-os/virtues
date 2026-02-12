@@ -54,6 +54,7 @@
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
 			controls={{ table: false }}
+			allowedLinkPrefixes={['*']}
 			animation={{
 				enabled: isStreaming,
 				type: 'fade',

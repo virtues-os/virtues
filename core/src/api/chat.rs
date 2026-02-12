@@ -37,6 +37,7 @@ use crate::http_client::tollbooth_streaming_client;
 use crate::middleware::auth::AuthUser;
 use crate::server::yjs::YjsState;
 use crate::tools::ToolContext;
+use crate::types::Timestamp;
 use tokio_util::sync::CancellationToken;
 
 // ============================================================================
@@ -370,7 +371,7 @@ async fn get_latest_checkpoint(pool: &SqlitePool, chat_id: &str) -> Option<Strea
     let row = sqlx::query(
         r#"
         SELECT id, parts, created_at
-        FROM chat_messages
+        FROM app_chat_messages
         WHERE chat_id = ? AND role = 'checkpoint'
         ORDER BY sequence_num DESC
         LIMIT 1
@@ -528,6 +529,124 @@ fn parse_tollbooth_error(status: u16, body: &str) -> StreamEvent {
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
+/// Build user context block for system prompt enrichment.
+///
+/// Queries lightweight indexed data (~20ms total) to give the LLM personal context:
+/// - Identity: occupation, employer, home location
+/// - Narrative: active telos + current chapter
+/// - Recent days: last 3 autobiographies (truncated)
+/// - Connected sources: active data source names
+async fn build_user_context(pool: &SqlitePool) -> Option<String> {
+    let mut sections = Vec::new();
+
+    // 1. Identity — occupation, employer, home place
+    if let Ok(row) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>, Option<String>)>(
+        r#"SELECT p.occupation, p.employer, wp.name, p.crux
+         FROM app_user_profile p
+         LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
+         WHERE p.id = '00000000-0000-0000-0000-000000000001'"#
+    )
+    .fetch_one(pool)
+    .await
+    {
+        let mut parts = Vec::new();
+        if let (Some(occ), Some(emp)) = (&row.0, &row.1) {
+            parts.push(format!("{} at {}", occ, emp));
+        } else if let Some(occ) = &row.0 {
+            parts.push(occ.clone());
+        }
+        if let Some(place) = &row.2 {
+            parts.push(format!("Lives in {}", place));
+        }
+        if let Some(crux) = &row.3 {
+            parts.push(crux.clone());
+        }
+        if !parts.is_empty() {
+            sections.push(format!("<identity>{}</identity>", parts.join(". ")));
+        }
+    }
+
+    // 2. Active narrative — telos + current chapter
+    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT title, description FROM wiki_telos WHERE is_active = 1 LIMIT 1"
+    )
+    .fetch_one(pool)
+    .await
+    {
+        let mut narrative = format!("Telos: {}", row.0);
+        if let Some(desc) = &row.1 {
+            let truncated: String = desc.chars().take(200).collect();
+            narrative.push_str(&format!(". {}", &truncated));
+        }
+
+        // Current chapter (most recent by start_date)
+        if let Ok(ch) = sqlx::query_as::<_, (String, Option<String>)>(
+            r#"SELECT c.title, c.themes
+             FROM wiki_chapters c
+             JOIN wiki_acts a ON c.act_id = a.id
+             WHERE a.end_date IS NULL
+             ORDER BY c.start_date DESC LIMIT 1"#
+        )
+        .fetch_one(pool)
+        .await
+        {
+            narrative.push_str(&format!(". Current chapter: \"{}\"", ch.0));
+            if let Some(themes) = &ch.1 {
+                narrative.push_str(&format!(" (themes: {})", themes));
+            }
+        }
+
+        sections.push(format!("<narrative>{}</narrative>", narrative));
+    }
+
+    // 3. Recent days — last 3 autobiographies
+    if let Ok(rows) = sqlx::query_as::<_, (String, Option<String>)>(
+        r#"SELECT date, autobiography FROM wiki_days
+         WHERE autobiography IS NOT NULL AND autobiography != ''
+         ORDER BY date DESC LIMIT 3"#
+    )
+    .fetch_all(pool)
+    .await
+    {
+        if !rows.is_empty() {
+            let mut day_lines = Vec::new();
+            for (date, auto) in &rows {
+                if let Some(text) = auto {
+                    let truncated = if text.chars().count() > 300 {
+                        let t: String = text.chars().take(300).collect();
+                        format!("{}...", t)
+                    } else {
+                        text.clone()
+                    };
+                    day_lines.push(format!("{}: {}", date, truncated));
+                }
+            }
+            if !day_lines.is_empty() {
+                sections.push(format!("<recent_days>\n{}\n</recent_days>", day_lines.join("\n")));
+            }
+        }
+    }
+
+    // 4. Connected sources — active data source names
+    if let Ok(rows) = sqlx::query_as::<_, (String,)>(
+        "SELECT name FROM elt_source_connections WHERE is_active = 1 AND is_internal = 0 ORDER BY name"
+    )
+    .fetch_all(pool)
+    .await
+    {
+        if !rows.is_empty() {
+            let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+            sections.push(format!("<connected_sources>{}</connected_sources>", names.join(", ")));
+        }
+    }
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(format!("\n\n<user_context>\n{}\n</user_context>", sections.join("\n")))
+    }
+}
+
 /// Build system prompt with dynamic active page context and personalization
 ///
 /// Combines the personalized system prompt with any active context (e.g., bound page).
@@ -587,6 +706,11 @@ async fn build_system_prompt(
         ));
     }
 
+    // Add user context (identity, narrative, recent days, connected sources)
+    if let Some(user_context) = build_user_context(pool).await {
+        prompt.push_str(&user_context);
+    }
+
     if let Some(ctx) = active_page {
         if let Some(page_id) = &ctx.page_id {
             let title = ctx.page_title.as_deref().unwrap_or("Untitled");
@@ -595,11 +719,13 @@ async fn build_system_prompt(
             // This is the source of truth - use this for edits, not the database content
             if let Some(content) = &ctx.content {
                 // Truncate large content to avoid consuming too much context
-                let (content_display, truncation_note) = if content.len() > MAX_PAGE_CONTENT_CHARS {
+                let (content_display, truncation_note) = if content.chars().count() > MAX_PAGE_CONTENT_CHARS {
+                    let truncated_content: String = content.chars().take(MAX_PAGE_CONTENT_CHARS).collect();
+                    let remaining = content.chars().count() - MAX_PAGE_CONTENT_CHARS;
                     let truncated = format!(
                         "{}...\n\n[Content truncated - {} more characters]",
-                        &content[..MAX_PAGE_CONTENT_CHARS],
-                        content.len() - MAX_PAGE_CONTENT_CHARS
+                        truncated_content,
+                        remaining
                     );
                     (truncated, " The content shown is truncated. Call get_page_content for the complete document before making edits.")
                 } else {
@@ -607,12 +733,12 @@ async fn build_system_prompt(
                 };
 
                 prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to edit this page. The content above is from the user's editor - use it as the source of truth for propose_edit operations. For full rewrites, use propose_replace_all.{}\n</active_context>",
+                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing.\n\n<current_content>\n{}\n</current_content>\n\nUse the edit_page tool to make changes. The 'find' parameter locates text, 'replace' provides the new text. For a full rewrite, set find to empty string. Edits are applied immediately via real-time sync.{}\n</active_context>",
                     title, page_id, content_display, truncation_note
                 ));
             } else {
                 prompt.push_str(&format!(
-                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use the edit_page tool with get_content to read it, then propose_edit or propose_replace_all to edit it.\n</active_context>",
+                    "\n\n<active_context>\nThe user has \"{}\" (id: {}) open for editing. Use get_page_content to read it first, then edit_page to make changes.\n</active_context>",
                     title, page_id
                 ));
             }
@@ -729,8 +855,9 @@ pub async fn chat_handler(
         })
         .unwrap_or_else(|| "New conversation".to_string());
 
-    let title = if title.len() > 50 {
-        format!("{}...", &title[..47])
+    let title = if title.chars().count() > 50 {
+        let t: String = title.chars().take(47).collect();
+        format!("{}...", t)
     } else {
         title
     };
@@ -738,7 +865,7 @@ pub async fn chat_handler(
     // Use INSERT OR IGNORE to handle concurrent requests for same chat
     // Returns rows_affected = 1 if inserted, 0 if already exists
     let insert_result =
-        sqlx::query("INSERT OR IGNORE INTO chats (id, title, message_count) VALUES ($1, $2, 0)")
+        sqlx::query("INSERT OR IGNORE INTO app_chats (id, title, message_count) VALUES ($1, $2, 0)")
             .bind(&chat_id_str)
             .bind(&title)
             .execute(&pool)
@@ -787,7 +914,7 @@ pub async fn chat_handler(
             id: None,
             role: "user".to_string(),
             content: user_content,
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: Timestamp::now(),
             model: None,
             provider: None,
             agent_id: None,
@@ -819,7 +946,7 @@ pub async fn chat_handler(
     // Load chat from DB and build context with compaction summary
     let chat_row = match sqlx::query(
         r#"SELECT conversation_summary, summary_up_to_index
-           FROM chats WHERE id = ?"#,
+           FROM app_chats WHERE id = ?"#,
     )
     .bind(&chat_id_str)
     .fetch_one(&pool)
@@ -849,7 +976,7 @@ pub async fn chat_handler(
         SELECT
             id, role, content, created_at, model, provider, agent_id,
             reasoning, tool_calls, intent, subject, thought_signature, parts
-        FROM chat_messages
+        FROM app_chat_messages
         WHERE chat_id = ?
         ORDER BY sequence_num ASC
         "#,
@@ -879,7 +1006,7 @@ pub async fn chat_handler(
             let id: String = msg.get("id");
             let role: String = msg.get("role");
             let content: String = msg.get("content");
-            let created_at: String = msg.get("created_at");
+            let created_at: Timestamp = msg.get("created_at");
             let model: Option<String> = msg.get("model");
             let provider: Option<String> = msg.get("provider");
             let agent_id: Option<String> = msg.get("agent_id");
@@ -1263,11 +1390,11 @@ fn _create_chat_stream_legacy(
         // Save assistant message to chat
         if !full_content.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
-            let assistant_message =             ChatMessage {
+            let assistant_message = ChatMessage {
                 id: None,
                 role: "assistant".to_string(),
                 content: full_content.clone(),
-                timestamp: Utc::now().to_rfc3339(),
+                timestamp: Timestamp::now(),
                 model: Some(model.clone()),
                 provider: Some(provider),
                 agent_id: Some(request.agent_id),
@@ -1377,12 +1504,12 @@ fn create_agent_stream(
         }
 
         // Determine max_steps based on agent mode
-        // - agent: 10 (full access, fewer but impactful calls)
-        // - research: 25 (read-only, needs more exploration)
-        // - chat: 10 (conversational, no tools but allows multi-turn)
+        // - agent: 20 (full access — edit, search, data)
+        // - research: 50 (read-only, needs more exploration)
+        // - chat: 20 (conversational, no tools but allows multi-turn)
         let max_steps = match request.agent_mode.as_str() {
-            "research" => 25,
-            _ => 10, // "agent", "chat", or default
+            "research" => 50,
+            _ => 20, // "agent", "chat", or default
         };
 
         // Create AgentLoop with YjsState for real-time page editing
@@ -1570,7 +1697,7 @@ fn create_agent_stream(
                 id: None,
                 role: "assistant".to_string(),
                 content: full_content.clone(),
-                timestamp: Utc::now().to_rfc3339(),
+                timestamp: Timestamp::now(),
                 model: Some(model.clone()),
                 provider: Some(provider),
                 agent_id: Some(agent_id),

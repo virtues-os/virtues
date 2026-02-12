@@ -24,19 +24,14 @@
 		),
 	);
 
-	// Day boundaries from events
+	// Day boundaries: always midnight-to-midnight (matches hour label positions)
 	const dayBoundaries = $derived(() => {
-		if (sortedEvents.length === 0) {
-			const now = new Date();
-			now.setHours(0, 0, 0, 0);
-			const end = new Date(now);
-			end.setDate(end.getDate() + 1);
-			return { start: now, end };
-		}
-		return {
-			start: sortedEvents[0].startTime,
-			end: sortedEvents[sortedEvents.length - 1].endTime,
-		};
+		const ref = sortedEvents.length > 0 ? sortedEvents[0].startTime : new Date();
+		const start = new Date(ref);
+		start.setUTCHours(0, 0, 0, 0);
+		const end = new Date(start);
+		end.setUTCDate(end.getUTCDate() + 1);
+		return { start, end };
 	});
 
 	function getEventStyle(event: DayEvent): { left: string; width: string } {

@@ -1,7 +1,8 @@
 //! iOS Microphone data processor
 //!
-//! Receives audio data from iOS devices. Transcription transforms are disabled
-//! since AssemblyAI integration has been removed.
+//! Receives audio data from iOS devices and transcribes via Gemini 2.5 Flash-Lite.
+
+pub mod transform;
 
 use async_trait::async_trait;
 use chrono::Utc;

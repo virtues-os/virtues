@@ -5,19 +5,6 @@
  */
 
 export {
-	aiHighlightPlugin,
-	aiHighlightKey,
-	addAIHighlight,
-	removeAIHighlight,
-	clearAllAIHighlights,
-	getAIHighlights,
-	hasAIHighlights,
-	countAIHighlights,
-	type AIHighlightRange,
-	type AIHighlightState,
-} from './ai-highlight';
-
-export {
 	createEntityPickerPlugin,
 	entityPickerKey,
 	insertEntity,
@@ -70,8 +57,6 @@ export {
 	type SelectionToolbarPluginOptions,
 } from './selection-toolbar';
 
-export { createMarkDecorationsPlugin, markDecorationsKey } from './mark-decorations';
-
 export {
 	createTableToolbarPlugin,
 	tableToolbarKey,
@@ -97,3 +82,5 @@ export {
 	type UploadFunction,
 	type MediaPastePluginOptions,
 } from './media-paste';
+
+export { createCodeHighlightPlugin } from './code-highlight';

@@ -54,7 +54,7 @@ pub struct ChainedTransform {
 /// Trait for transforming stream data into ontology tables
 ///
 /// Each source stream (e.g., Gmail, iMessage) implements this trait to define
-/// how its data maps to normalized ontology tables (e.g., social_email).
+/// how its data maps to normalized ontology tables (e.g., communication_email).
 ///
 /// # Example
 ///
@@ -67,13 +67,13 @@ pub struct ChainedTransform {
 /// #[async_trait]
 /// impl OntologyTransform for GmailEmailTransform {
 ///     fn source_table(&self) -> &str { "stream_google_gmail" }
-///     fn target_table(&self) -> &str { "social_email" }
+///     fn target_table(&self) -> &str { "communication_email" }
 ///     fn domain(&self) -> &str { "social" }
 ///
 ///     async fn transform(&self, db: &Database, source_id: Uuid) -> Result<TransformResult> {
 ///         // Read from stream_google_gmail
-///         // Transform to social_email schema
-///         // Write to social_email table
+///         // Transform to communication_email schema
+///         // Write to communication_email table
 ///         // Return stats
 ///     }
 /// }
@@ -83,7 +83,7 @@ pub trait OntologyTransform: Send + Sync {
     /// Source stream table name (e.g., "stream_google_gmail")
     fn source_table(&self) -> &str;
 
-    /// Target ontology table name (e.g., "social_email")
+    /// Target ontology table name (e.g., "communication_email")
     fn target_table(&self) -> &str;
 
     /// Domain of the ontology (e.g., "social", "health", "activity")
@@ -131,7 +131,7 @@ pub trait OntologyTransform: Send + Sync {
 ///
 /// impl TransformRegistration for GmailTransformRegistration {
 ///     fn source_table(&self) -> &'static str { "stream_google_gmail" }
-///     fn target_table(&self) -> &'static str { "social_email" }
+///     fn target_table(&self) -> &'static str { "communication_email" }
 ///     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
 ///         Ok(Box::new(GmailEmailTransform))
 ///     }

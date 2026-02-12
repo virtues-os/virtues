@@ -3,7 +3,6 @@
 //! Tracks token usage per chat for context management.
 //! Provides cumulative token counts, cost estimation, and compaction status.
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
@@ -139,7 +138,7 @@ pub async fn record_chat_usage(
 ) -> Result<()> {
     let chat_id_str = chat_id.clone();
     let id = format!("{}_{}", chat_id_str, model.replace('/', "_"));
-    let now = Utc::now().to_rfc3339();
+    let now = Timestamp::now();
 
     let cost = calculate_cost(
         model,
@@ -151,7 +150,7 @@ pub async fn record_chat_usage(
     // Upsert: increment existing or insert new
     sqlx::query(
         r#"
-        INSERT INTO chat_usage (
+        INSERT INTO app_chat_usage (
             id, chat_id, model,
             input_tokens, output_tokens, reasoning_tokens,
             cache_read_tokens, cache_write_tokens,
@@ -159,12 +158,12 @@ pub async fn record_chat_usage(
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (chat_id, model) DO UPDATE SET
-            input_tokens = chat_usage.input_tokens + excluded.input_tokens,
-            output_tokens = chat_usage.output_tokens + excluded.output_tokens,
-            reasoning_tokens = chat_usage.reasoning_tokens + excluded.reasoning_tokens,
-            cache_read_tokens = chat_usage.cache_read_tokens + excluded.cache_read_tokens,
-            cache_write_tokens = chat_usage.cache_write_tokens + excluded.cache_write_tokens,
-            estimated_cost_usd = chat_usage.estimated_cost_usd + excluded.estimated_cost_usd,
+            input_tokens = app_chat_usage.input_tokens + excluded.input_tokens,
+            output_tokens = app_chat_usage.output_tokens + excluded.output_tokens,
+            reasoning_tokens = app_chat_usage.reasoning_tokens + excluded.reasoning_tokens,
+            cache_read_tokens = app_chat_usage.cache_read_tokens + excluded.cache_read_tokens,
+            cache_write_tokens = app_chat_usage.cache_write_tokens + excluded.cache_write_tokens,
+            estimated_cost_usd = app_chat_usage.estimated_cost_usd + excluded.estimated_cost_usd,
             updated_at = excluded.updated_at
         "#,
     )
@@ -196,7 +195,7 @@ pub async fn get_chat_usage(pool: &SqlitePool, chat_id: String) -> Result<ChatUs
             id, title, message_count,
             conversation_summary, summary_up_to_index, summary_version, last_compacted_at,
             created_at, updated_at
-        FROM chats
+        FROM app_chats
         WHERE id = ?
         "#,
     )
@@ -220,7 +219,7 @@ pub async fn get_chat_usage(pool: &SqlitePool, chat_id: String) -> Result<ChatUs
         SELECT
             id, role, content, created_at as timestamp,
             model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
-        FROM chat_messages
+        FROM app_chat_messages
         WHERE chat_id = ?
         ORDER BY sequence_num ASC
         "#,
@@ -236,7 +235,7 @@ pub async fn get_chat_usage(pool: &SqlitePool, chat_id: String) -> Result<ChatUs
             let id: String = row.get("id");
             let role: String = row.get("role");
             let content: String = row.get("content");
-            let timestamp: String = row.get("timestamp");
+            let timestamp: Timestamp = row.get("timestamp");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
             let agent_id: Option<String> = row.get("agent_id");
@@ -280,7 +279,7 @@ pub async fn get_chat_usage(pool: &SqlitePool, chat_id: String) -> Result<ChatUs
             COALESCE(SUM(cache_write_tokens), 0) as "cache_write_tokens",
             COALESCE(SUM(estimated_cost_usd), 0.0) as "total_cost",
             model
-        FROM chat_usage
+        FROM app_chat_usage
         WHERE chat_id = ?
         GROUP BY chat_id
         "#,
@@ -309,8 +308,8 @@ pub async fn get_chat_usage(pool: &SqlitePool, chat_id: String) -> Result<ChatUs
     let assistant_message_count = messages.iter().filter(|m| m.role == "assistant").count() as i32;
 
     // Get timestamps
-    let first_message_at = messages.first().and_then(|m| m.timestamp.parse::<Timestamp>().ok());
-    let last_message_at = messages.last().and_then(|m| m.timestamp.parse::<Timestamp>().ok());
+    let first_message_at = messages.first().map(|m| m.timestamp);
+    let last_message_at = messages.last().map(|m| m.timestamp);
 
     // Parse compaction info
     let summary_exists = conversation_summary.is_some();
@@ -393,7 +392,7 @@ pub async fn check_compaction_needed(
     let chat_row = sqlx::query(
         r#"
         SELECT conversation_summary, summary_up_to_index
-        FROM chats
+        FROM app_chats
         WHERE id = ?
         "#,
     )
@@ -414,7 +413,7 @@ pub async fn check_compaction_needed(
         SELECT
             id, role, content, created_at as timestamp,
             model, provider, agent_id, reasoning, tool_calls, intent, subject, thought_signature
-        FROM chat_messages
+        FROM app_chat_messages
         WHERE chat_id = ?
         ORDER BY sequence_num ASC
         "#,
@@ -430,7 +429,7 @@ pub async fn check_compaction_needed(
             let id: String = row.get("id");
             let role: String = row.get("role");
             let content: String = row.get("content");
-            let timestamp: String = row.get("timestamp");
+            let timestamp: Timestamp = row.get("timestamp");
             let model: Option<String> = row.get("model");
             let provider: Option<String> = row.get("provider");
             let agent_id: Option<String> = row.get("agent_id");

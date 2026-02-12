@@ -17,7 +17,7 @@ export interface PageVersion {
 	version_number: number;
 	content_preview: string;
 	created_at: string;
-	created_by: 'user' | 'ai';
+	created_by: 'user' | 'ai' | 'auto';
 	description?: string;
 }
 
@@ -31,7 +31,8 @@ export async function saveVersion(
 	ydoc: Y.Doc,
 	pageId: string,
 	description?: string,
-	createdBy: 'user' | 'ai' = 'user'
+	createdBy: 'user' | 'ai' | 'auto' = 'user',
+	options?: { keepalive?: boolean }
 ): Promise<PageVersion | null> {
 	try {
 		// Capture complete document state (self-contained, works with GC)
@@ -52,7 +53,8 @@ export async function saveVersion(
 				content_preview: contentPreview,
 				description,
 				created_by: createdBy
-			})
+			}),
+			keepalive: options?.keepalive
 		});
 
 		if (!response.ok) {

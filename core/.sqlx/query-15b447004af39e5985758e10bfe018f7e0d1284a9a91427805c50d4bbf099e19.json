@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        UPDATE data_communication_email\n        SET from_person_id = $1,\n            updated_at = datetime('now')\n        WHERE id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "15b447004af39e5985758e10bfe018f7e0d1284a9a91427805c50d4bbf099e19"
+}

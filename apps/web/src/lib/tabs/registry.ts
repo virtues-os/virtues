@@ -10,6 +10,7 @@
 
 import type { Component } from 'svelte';
 import type { TabType, ParsedRoute } from './types';
+import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 // Import all view components
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
@@ -33,10 +34,12 @@ import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svel
 import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 import ChangelogView from '$lib/components/tabs/views/ChangelogView.svelte';
 import FeedbackView from '$lib/components/tabs/views/FeedbackView.svelte';
+import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
+import FolderView from '$lib/components/tabs/views/FolderView.svelte';
 
 export interface TabDefinition {
 	// Route matching
@@ -279,7 +282,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => {
 			if (path === '/day') {
 				// Default to today - normalize route to include date
-				const today = new Date().toISOString().split('T')[0];
+				const today = getLocalDateSlug();
 				return {
 					type: 'day',
 					label: 'Today',
@@ -464,6 +467,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
 				sitemap: { label: 'Sitemap', icon: 'ri:road-map-line' },
 				feedback: { label: 'Feedback', icon: 'ri:feedback-line' },
+				system: { label: 'System', icon: 'ri:computer-line' },
 			};
 
 			const config = pageConfig[page] || { label: 'Virtues', icon: 'ri:compass-3-line' };
@@ -484,6 +488,33 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'ri:compass-3-line',
 		defaultLabel: 'Virtues',
 		component: ProfileView, // Will dispatch to correct component based on virtuesPage
+	},
+
+	// ========================================================================
+	// VIEW NAMESPACE: /view/view_{id}
+	// Folder/view pages (smart + manual folder detail views)
+	// ========================================================================
+	view: {
+		match: (path) => /^\/view\/view_[^/]+$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/view\/(view_[^/]+)$/);
+			return {
+				type: 'view',
+				label: 'Folder',
+				icon: 'ri:folder-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `view_${id}` : 'view'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('view_')) {
+				return `/view/${serialized}`;
+			}
+			return '/view';
+		},
+		icon: 'ri:folder-line',
+		defaultLabel: 'Folder',
+		component: FolderView,
 	},
 
 	// ========================================================================
@@ -547,6 +578,7 @@ export function getVirtuesComponent(page: string): Component<any> {
 		terminal: DeveloperTerminalView,
 		sitemap: DeveloperSitemapView,
 		feedback: FeedbackView,
+		system: SystemInfoView,
 	};
 	return componentMap[page] || ProfileView;
 }
@@ -574,6 +606,7 @@ export function parseRoute(route: string): ParsedRoute {
 	const orderedTypes: TabType[] = [
 		// Specific patterns first
 		'source', // Source list and detail views
+		'view', // View/folder detail pages
 		'virtues', // Has /virtues/* pattern
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
@@ -607,25 +640,3 @@ export function parseRoute(route: string): ParsedRoute {
 	};
 }
 
-/**
- * Check if a route matches a namespace list view (no entity ID).
- */
-export function isListView(route: string): boolean {
-	const parsed = parseRoute(route);
-	return !parsed.entityId && !parsed.storagePath && !parsed.virtuesPage;
-}
-
-/**
- * Check if a route matches a namespace detail view (has entity ID).
- */
-export function isDetailView(route: string): boolean {
-	const parsed = parseRoute(route);
-	return !!parsed.entityId;
-}
-
-// Legacy support: Get detail component for wiki types
-// biome-ignore lint/suspicious/noExplicitAny: Component props vary by tab type
-export function getDetailComponent(type: TabType): Component<any> | null {
-	const def = tabRegistry[type];
-	return def.detailComponent || null;
-}

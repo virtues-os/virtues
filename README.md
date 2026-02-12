@@ -13,7 +13,7 @@ A private intelligence that connects your digital life — health, finance, loca
 
 Virtues replaces a fragmented app ecosystem with a single, unified system:
 
-- **Ingest** your data from APIs (Google, Notion, Plaid) and devices (iOS sensors, Mac activity)
+- **Ingest** your data from APIs (Google, Notion, Plaid, Strava, GitHub) and devices (iOS sensors, Mac activity)
 - **Build** a living knowledge graph — people, places, organizations, events — linked to your raw data
 - **Write** an autobiography that maintains itself — daily summaries, narrative arcs, temporal navigation
 - **Query** your life with an AI that has real context — not a chatbot guessing, but an agent with access to your actual data via SQL, web search, and code execution
@@ -25,9 +25,9 @@ All of it runs on a single Rust server with a SQLite database and S3 storage. Yo
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Sources                                                    │
-│  OAuth: Google Calendar · Notion · Plaid                    │
+│  OAuth: Google · Notion · Plaid · Strava · GitHub           │
 │  Device: HealthKit · Location · Microphone · Contacts       │
-│          Barometer · Battery · FinanceKit · EventKit        │
+│          FinanceKit · EventKit                              │
 └──────────────────────┬──────────────────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -53,10 +53,12 @@ All of it runs on a single Rust server with a SQLite database and S3 storage. Yo
 
 | Source | Streams | Method |
 |--------|---------|--------|
-| Google | Calendar | OAuth |
+| Google | Calendar, Gmail | OAuth |
 | Notion | Pages | OAuth |
-| Plaid | Transactions, Accounts | OAuth |
-| iOS | HealthKit, Location, Microphone, Contacts, Battery, Barometer, FinanceKit, EventKit | Device |
+| Plaid | Transactions, Accounts, Investments, Liabilities | OAuth |
+| Strava | Activities | OAuth |
+| GitHub | Events | OAuth |
+| iOS | HealthKit, Location, Microphone, Contacts, FinanceKit, EventKit | Device |
 | macOS | Apps, Browser, iMessage | Device |
 
 Extensible: implement the `Stream` trait in `core/src/sources/{provider}/` to add new sources.
@@ -134,10 +136,10 @@ The iOS companion app streams real-time sensor data to your Virtues instance:
 
 ```bash
 # Expose your local server via HTTPS for iOS development
-cd core && cargo run -- ngrok
+cd core && cargo run -- tunnel
 ```
 
-The ngrok command outputs an HTTPS URL. Enter it in the iOS app settings to pair your device. See `apps/ios/` for the Xcode project.
+The tunnel command starts a Cloudflare quick tunnel and auto-sets `BACKEND_URL` to the generated HTTPS URL. Requires `brew install cloudflared`. See `apps/ios/` for the Xcode project.
 
 ## Project Structure
 
@@ -166,10 +168,86 @@ virtues/
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
 | `elt_*` | Pipeline infrastructure | `elt_source_connections`, `elt_stream_connections`, `elt_jobs` |
-| `data_*` | Normalized ontology data | `data_health_heart_rate`, `data_location_point`, `data_financial_transaction` |
+| `data_*` | Normalized ontology data | `data_health_heart_rate`, `data_communication_email`, `data_calendar_event` |
 | `app_*` | Application state | `app_chat_sessions`, `app_user_profile` |
 | `wiki_*` | Entity graph | `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_events` |
 | `narrative_*` | Life narrative | `narrative_telos`, `narrative_acts`, `narrative_chapters` |
+
+## Daily Context & Scoring System
+
+The daily context system transforms raw ontology data into two measurable signals: **how completely a day is observed** (7-dimension coverage) and **how unusual a day is** (chaos/order score). Think of the chaos score as a **VIX for your persona** — a single number that captures the volatility of your daily experience relative to your recent baseline.
+
+### 7-Dimension Context Model
+
+Evolved from journalism's W5H framework, expanded to 7 dimensions by splitting "who" into self-awareness and relational resolution:
+
+| Dim | Key | Meaning |
+|-----|-----|---------|
+| **Who** | `who` | Self-awareness — is the person's physical/digital state tracked? (health, location, device) |
+| **Whom** | `whom` | Relational resolution — who else was involved? (messages, emails, calendar attendees) |
+| **What** | `what` | Events & content — what happened? (transcriptions, calendar, documents) |
+| **When** | `when` | Temporal coverage — how much of the 24h window is observed by continuous streams? |
+| **Where** | `where` | Spatial awareness — do we know locations? (GPS points, named place visits) |
+| **Why** | `why` | Intent & motivation — the rarest dimension, requires rich transcription or content data |
+| **How** | `how` | Physical state — body metrics (sleep, workout, heart rate, HRV, steps) |
+
+### Ontology Weight Matrix
+
+Each of the 17 ontologies carries a 7-dimensional weight vector indicating how much it contributes to each context dimension. Weights follow a strict assignment principle: **0.0 unless the ontology genuinely informs that dimension**.
+
+For example, `health_heart_rate` weights `[0.8, 0.0, 0.0, 0.8, 0.0, 0.0, 0.8]` — it tells you about self-awareness (who), temporal coverage (when), and physical state (how), but nothing about relationships, content, space, or intent. Meanwhile `communication_message` weights `[0.0, 1.0, 0.4, 0.0, 0.0, 0.0, 0.0]` — it's the strongest signal for relational resolution (whom) with modest content (what).
+
+### Coverage Formula
+
+For each of the 7 dimensions:
+
+```
+coverage[dim] = sum(weights[dim] for present ontologies) / sum(weights[dim] for ALL ontologies)
+```
+
+This produces a 0.0–1.0 score per dimension — the **ContextVector** displayed on each DayPage. A day with health data, location, and messages but no speech or knowledge will show high coverage in who/whom/when/where/how but low coverage in what/why.
+
+### Daily Summary Generation
+
+When "Generate Summary" is triggered on a DayPage, the system:
+
+1. Gathers structured day sources (calendar, locations, transactions, messages, etc.)
+2. Adds supplemental data: full transcription text, app usage, web browsing, knowledge documents, AI conversations
+3. Builds a text prompt with all sections, truncated to fit token limits
+4. Calls an LLM via Tollbooth to generate a first-person daily narrative
+5. Computes the 7-dim context vector from ontology data presence
+6. Generates per-domain embeddings and computes the chaos/order score
+7. Saves everything (autobiography, context vector, chaos score) to the wiki_days record
+
+### Chaos/Order Scoring
+
+The chaos score measures how **novel** or **routine** a day is compared to your recent 30-day baseline.
+
+**Algorithm:**
+
+1. The day's data is grouped into 7 embedding domains: communication, calendar, health, location, financial, activity, content
+2. Each domain's text content is embedded via Tollbooth `/v1/embeddings` (text-embedding-3-small)
+3. Each domain's embedding is compared to its **30-day exponentially-decayed centroid** via cosine similarity (decay rate: `exp(-0.1 * days_ago)`)
+4. Per-domain chaos: `domain_chaos = 1 - similarity`
+5. Domain chaos is **distributed across 7 dimensions** via the domain's ontology context weights
+6. Final score: `chaos = sum(chaos[dim] * coverage[dim]) / sum(coverage[dim])`
+
+The final normalization by coverage is the key insight: **sparse days don't appear artificially chaotic**. A day with only health data can't swing the chaos score wildly because its coverage is concentrated in just a few dimensions. The formula requires the chaos to be proportional to what was actually observed.
+
+- **0.0** = Perfectly ordered/routine — every domain looks like your recent average
+- **1.0** = Maximally chaotic/novel — every domain diverges from its centroid
+
+### Domain Groupings
+
+| Domain | Ontologies |
+|--------|-----------|
+| communication | communication_email, communication_message, communication_transcription |
+| calendar | calendar_event |
+| health | health_heart_rate, health_steps, health_sleep, health_workout, health_hrv |
+| location | location_point, location_visit |
+| financial | financial_transaction, financial_account |
+| activity | activity_app_usage, activity_web_browsing |
+| content | content_document, content_conversation, content_bookmark |
 
 ## License
 

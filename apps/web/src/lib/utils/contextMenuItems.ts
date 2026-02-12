@@ -6,8 +6,80 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
+import type { SpaceSummary } from '$lib/api/client';
 import { spaceStore } from '$lib/stores/space.svelte';
 import { toast } from 'svelte-sonner';
+
+/**
+ * Build context menu items for a space (used by workspace header).
+ * System spaces get limited options (no rename/icon/color/delete).
+ */
+export interface SpaceMenuCallbacks {
+	onRename: (spaceId: string) => void;
+	onChangeIcon: (spaceId: string) => void;
+	onChangeColor: (spaceId: string) => void;
+	onNewSpace: () => void;
+	onSettings: (spaceId: string) => void;
+	onDelete: (spaceId: string) => void;
+}
+
+export function buildSpaceContextMenu(
+	space: SpaceSummary,
+	callbacks: SpaceMenuCallbacks
+): ContextMenuItem[] {
+	const items: ContextMenuItem[] = [];
+
+	if (!space.is_system) {
+		items.push(
+			{
+				id: 'rename-space',
+				label: 'Rename',
+				icon: 'ri:pencil-line',
+				action: () => callbacks.onRename(space.id),
+			},
+			{
+				id: 'change-icon',
+				label: 'Change Icon',
+				icon: 'ri:emotion-line',
+				action: () => callbacks.onChangeIcon(space.id),
+			},
+			{
+				id: 'change-color',
+				label: 'Change Color',
+				icon: 'ri:palette-line',
+				action: () => callbacks.onChangeColor(space.id),
+			},
+		);
+	}
+
+	items.push({
+		id: 'new-space',
+		label: 'New Space',
+		icon: 'ri:add-line',
+		dividerBefore: items.length > 0,
+		action: () => callbacks.onNewSpace(),
+	});
+
+	items.push({
+		id: 'space-settings',
+		label: 'Space Settings...',
+		icon: 'ri:settings-3-line',
+		action: () => callbacks.onSettings(space.id),
+	});
+
+	if (!space.is_system) {
+		items.push({
+			id: 'delete-space',
+			label: 'Delete Space',
+			icon: 'ri:delete-bin-line',
+			variant: 'destructive',
+			dividerBefore: true,
+			action: () => callbacks.onDelete(space.id),
+		});
+	}
+
+	return items;
+}
 
 /**
  * Get "Add to Space" menu items

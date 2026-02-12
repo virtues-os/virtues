@@ -74,6 +74,9 @@ COPY core/.sqlx ./.sqlx
 
 RUN cargo build --release
 
+# Pre-download the embedding model (~50MB) so runtime doesn't need network access
+RUN ./target/release/virtues warm-models
+
 # ==============================================================================
 # Stage 4: Runtime
 # ==============================================================================
@@ -84,10 +87,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libpq5 \
     wget \
+    openssh-server \
     python3 \
     python3-pip \
     python3-venv \
     && rm -rf /var/lib/apt/lists/*
+
+# sshd: create privilege separation directory and hardened config
+RUN mkdir -p /run/sshd && \
+    printf '%s\n' \
+      'PermitRootLogin no' \
+      'PasswordAuthentication no' \
+      'PubkeyAuthentication yes' \
+      'AllowUsers virtues' \
+      'X11Forwarding no' \
+      'PrintMotd no' \
+      'AcceptEnv LANG LC_*' \
+    > /etc/ssh/sshd_config.d/virtues.conf
 
 # Python packages for code interpreter (gVisor provides isolation)
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -100,8 +116,8 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     python-dateutil \
     pytz
 
-# Create non-root user
-RUN useradd -r -u 1000 -U virtues
+# Create non-root user with home directory and login shell
+RUN useradd -m -u 1000 -U -s /bin/bash virtues
 
 WORKDIR /app
 
@@ -109,16 +125,22 @@ WORKDIR /app
 COPY --from=builder /repo/core/target/release/virtues /usr/local/bin/virtues
 COPY --from=builder /repo/core/migrations ./migrations
 
+# Copy pre-downloaded embedding model cache
+COPY --from=builder /root/.cache/fastembed /home/virtues/.cache/fastembed
+
 # Copy SvelteKit static build
 COPY --from=web-builder /app/build/ /app/static/
 
-# Set ownership and switch to non-root user
-RUN chown -R virtues:virtues /app
-USER virtues
+# Copy entrypoint script
+COPY core/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Set ownership (container starts as root, entrypoint drops to virtues user)
+RUN chown -R virtues:virtues /app /home/virtues
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget -qO- http://localhost:8000/health || exit 1
 
-CMD ["sh", "-c", "virtues migrate && virtues server"]
+CMD ["/usr/local/bin/entrypoint.sh"]

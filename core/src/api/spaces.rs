@@ -23,6 +23,7 @@ pub struct Space {
     pub sort_order: i32,
     pub theme_id: String,                    // Required - CSS theme name
     pub accent_color: Option<String>,
+    pub vectorize: bool,
     pub active_tab_state_json: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -38,6 +39,7 @@ pub struct SpaceSummary {
     pub sort_order: i32,
     pub theme_id: String,                    // Required - CSS theme name
     pub accent_color: Option<String>,
+    pub vectorize: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -59,6 +61,7 @@ pub struct UpdateSpaceRequest {
     pub sort_order: Option<i32>,
     pub theme_id: Option<String>,
     pub accent_color: Option<String>,
+    pub vectorize: Option<bool>,
 }
 
 /// Request to save tab state
@@ -82,8 +85,8 @@ pub async fn list_spaces(pool: &SqlitePool) -> Result<SpaceListResponse> {
     let spaces = sqlx::query_as::<_, SpaceSummary>(
         r#"
         SELECT id, name, icon, is_system, sort_order, theme_id, accent_color,
-               created_at, updated_at
-        FROM spaces
+               vectorize, created_at, updated_at
+        FROM app_spaces
         ORDER BY sort_order ASC
         "#,
     )
@@ -99,9 +102,9 @@ pub async fn get_space(pool: &SqlitePool, id: &str) -> Result<Space> {
     let space = sqlx::query_as::<_, Space>(
         r#"
         SELECT id, name, icon, is_system, sort_order,
-               theme_id, accent_color, active_tab_state_json,
+               theme_id, accent_color, vectorize, active_tab_state_json,
                created_at, updated_at
-        FROM spaces
+        FROM app_spaces
         WHERE id = $1
         "#,
     )
@@ -114,8 +117,8 @@ pub async fn get_space(pool: &SqlitePool, id: &str) -> Result<Space> {
     Ok(space)
 }
 
-/// Default theme for new spaces
-const DEFAULT_THEME_ID: &str = "pemberley";
+/// Default theme for new spaces (from registry — single source of truth)
+const DEFAULT_THEME_ID: &str = virtues_registry::DEFAULT_THEME;
 
 /// Create a new space
 pub async fn create_space(pool: &SqlitePool, req: CreateSpaceRequest) -> Result<Space> {
@@ -130,7 +133,7 @@ pub async fn create_space(pool: &SqlitePool, req: CreateSpaceRequest) -> Result<
 
     // Get next sort_order
     let max_sort_order: Option<i32> = sqlx::query_scalar(
-        r#"SELECT MAX(sort_order) FROM spaces"#
+        r#"SELECT MAX(sort_order) FROM app_spaces"#
     )
     .fetch_one(pool)
     .await
@@ -143,10 +146,10 @@ pub async fn create_space(pool: &SqlitePool, req: CreateSpaceRequest) -> Result<
 
     let space = sqlx::query_as::<_, Space>(
         r#"
-        INSERT INTO spaces (id, name, icon, is_system, sort_order, theme_id, accent_color)
+        INSERT INTO app_spaces (id, name, icon, is_system, sort_order, theme_id, accent_color)
         VALUES ($1, $2, $3, FALSE, $4, $5, $6)
         RETURNING id, name, icon, is_system, sort_order,
-                  theme_id, accent_color, active_tab_state_json,
+                  theme_id, accent_color, vectorize, active_tab_state_json,
                   created_at, updated_at
         "#,
     )
@@ -180,6 +183,7 @@ pub async fn update_space(pool: &SqlitePool, id: &str, req: UpdateSpaceRequest) 
     let sort_order = req.sort_order.unwrap_or(existing.sort_order);
     let theme_id = req.theme_id.as_deref().unwrap_or(&existing.theme_id);
     let accent_color = req.accent_color.as_ref().or(existing.accent_color.as_ref());
+    let vectorize = req.vectorize.unwrap_or(existing.vectorize);
 
     if name.trim().is_empty() {
         return Err(Error::InvalidInput("Space name cannot be empty".into()));
@@ -187,11 +191,11 @@ pub async fn update_space(pool: &SqlitePool, id: &str, req: UpdateSpaceRequest) 
 
     let space = sqlx::query_as::<_, Space>(
         r#"
-        UPDATE spaces
-        SET name = $2, icon = $3, sort_order = $4, theme_id = $5, accent_color = $6
+        UPDATE app_spaces
+        SET name = $2, icon = $3, sort_order = $4, theme_id = $5, accent_color = $6, vectorize = $7
         WHERE id = $1
         RETURNING id, name, icon, is_system, sort_order,
-                  theme_id, accent_color, active_tab_state_json,
+                  theme_id, accent_color, vectorize, active_tab_state_json,
                   created_at, updated_at
         "#,
     )
@@ -201,6 +205,7 @@ pub async fn update_space(pool: &SqlitePool, id: &str, req: UpdateSpaceRequest) 
     .bind(sort_order)
     .bind(theme_id)
     .bind(accent_color)
+    .bind(vectorize)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update space: {}", e)))?;
@@ -215,7 +220,7 @@ pub async fn save_tab_state(pool: &SqlitePool, id: &str, req: SaveTabStateReques
 
     sqlx::query(
         r#"
-        UPDATE spaces
+        UPDATE app_spaces
         SET active_tab_state_json = $2
         WHERE id = $1
         "#,
@@ -238,7 +243,7 @@ pub async fn delete_space(pool: &SqlitePool, id: &str) -> Result<()> {
         return Err(Error::InvalidInput("Cannot delete system space".into()));
     }
 
-    let result = sqlx::query(r#"DELETE FROM spaces WHERE id = $1"#)
+    let result = sqlx::query(r#"DELETE FROM app_spaces WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
@@ -254,7 +259,7 @@ pub async fn delete_space(pool: &SqlitePool, id: &str) -> Result<()> {
 /// Touch a space's updated_at timestamp to reflect activity.
 /// Call this when items are added/removed or views are created/deleted.
 pub async fn touch_space(pool: &SqlitePool, space_id: &str) -> Result<()> {
-    sqlx::query(r#"UPDATE spaces SET updated_at = datetime('now') WHERE id = $1"#)
+    sqlx::query(r#"UPDATE app_spaces SET updated_at = datetime('now') WHERE id = $1"#)
         .bind(space_id)
         .execute(pool)
         .await

@@ -1,4 +1,4 @@
-//! EventKit stream to calendar ontology transformation
+//! EventKit stream to calendar_event ontology transformation
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -12,7 +12,7 @@ use crate::sources::base::{OntologyTransform, TransformResult};
 /// Batch size for bulk inserts
 const BATCH_SIZE: usize = 500;
 
-/// Transform iOS EventKit events to calendar ontology
+/// Transform iOS EventKit events to calendar_event ontology
 pub struct IosEventKitTransform;
 
 #[async_trait]
@@ -22,7 +22,7 @@ impl OntologyTransform for IosEventKitTransform {
     }
 
     fn target_table(&self) -> &str {
-        "calendar"
+        "calendar_event"
     }
 
     fn domain(&self) -> &str {
@@ -38,14 +38,13 @@ impl OntologyTransform for IosEventKitTransform {
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
-        let records_failed = 0;
         let mut last_processed_id: Option<String> = None;
 
         let data_source = context.get_data_source().ok_or_else(|| {
             crate::Error::Other("No data source available for transform".to_string())
         })?;
 
-        let checkpoint_key = "ios_eventkit_to_calendar";
+        let checkpoint_key = "ios_eventkit_to_calendar_event";
         let batches = data_source
             .read_with_checkpoint(&source_id, "eventkit", checkpoint_key)
             .await?;
@@ -139,7 +138,7 @@ impl OntologyTransform for IosEventKitTransform {
         Ok(TransformResult {
             records_read,
             records_written,
-            records_failed,
+            records_failed: 0,
             last_processed_id,
             chained_transforms: vec![],
         })
@@ -170,7 +169,7 @@ async fn execute_calendar_batch_insert(
     }
 
     let query_str = Database::build_batch_insert_query(
-        "data_calendar",
+        "data_calendar_event",
         &[
             "id",
             "title",
@@ -222,7 +221,7 @@ impl crate::sources::base::TransformRegistration for IosEventKitRegistration {
         "stream_ios_eventkit"
     }
     fn target_table(&self) -> &'static str {
-        "calendar"
+        "calendar_event"
     }
     fn create(&self, _context: &TransformContext) -> Result<Box<dyn OntologyTransform>> {
         Ok(Box::new(IosEventKitTransform))

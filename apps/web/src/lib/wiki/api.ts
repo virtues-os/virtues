@@ -76,6 +76,9 @@ export interface WikiDayApi {
 	cover_image: string | null;
 	act_id: string | null;
 	chapter_id: string | null;
+	context_vector: string | null;
+	chaos_score: number | null;
+	entropy_calibration_days: number | null;
 	created_at: string;
 	updated_at: string;
 }

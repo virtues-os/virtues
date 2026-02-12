@@ -233,18 +233,16 @@
 	.command-item {
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		gap: 8px;
 		width: 100%;
-		padding: 8px 12px;
+		padding: 5px 10px;
 		border: none;
 		background: none;
 		text-align: left;
 		cursor: pointer;
 		color: var(--color-foreground);
-		transition: background-color 0.1s;
 	}
 
-	.command-item:hover,
 	.command-item.selected {
 		background: var(--color-primary-subtle);
 	}
@@ -253,17 +251,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 28px;
-		height: 28px;
+		width: 24px;
+		height: 24px;
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: 5px;
 		color: var(--color-foreground-muted);
 		flex-shrink: 0;
 	}
 
-	.command-item.selected .command-icon,
-	.command-item:hover .command-icon {
+	.command-item.selected .command-icon {
 		border-color: var(--color-primary);
 		color: var(--color-primary);
 	}
@@ -271,13 +268,13 @@
 	.command-info {
 		display: flex;
 		flex-direction: column;
-		gap: 1px;
 		min-width: 0;
 	}
 
 	.command-label {
 		font-size: 13px;
 		font-weight: 500;
+		line-height: 1.3;
 	}
 
 	.command-description {
@@ -286,6 +283,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		line-height: 1.3;
 	}
 
 	.footer {

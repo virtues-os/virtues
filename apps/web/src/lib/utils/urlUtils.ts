@@ -18,7 +18,6 @@ const ENTITY_NAMESPACES = [
 	'person',
 	'place',
 	'org',
-	'thing',
 	'day',
 	'year',
 	'source'
@@ -161,7 +160,6 @@ export function getNamespaceDisplayName(namespace: string): string {
 		person: 'Person',
 		place: 'Place',
 		org: 'Organization',
-		thing: 'Thing',
 		day: 'Day',
 		year: 'Year',
 		source: 'Source',

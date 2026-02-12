@@ -14,20 +14,14 @@ struct TodayView: View {
     @ObservedObject private var healthKitManager = HealthKitManager.shared
     @ObservedObject private var locationManager = LocationManager.shared
     @ObservedObject private var audioManager = AudioManager.shared
-    @ObservedObject private var batteryManager = BatteryManager.shared
-    @ObservedObject private var barometerManager = BarometerManager.shared
     @ObservedObject private var contactsManager = ContactsManager.shared
     @ObservedObject private var uploadCoordinator = BatchUploadCoordinator.shared
 
     @Environment(\.selectedTab) private var selectedTab
 
     @State private var heartRateSamples: [HeartRateSample] = []
-    @State private var todaySteps: Int = 0
-    @State private var todayWorkouts: [WorkoutSummary] = []
     @State private var locationDataPoints: [LocationDataPoint] = []
     @State private var speechBlocks: [SpeechBlock] = []
-    @State private var batteryHistory: [BatteryDataPoint] = []
-    @State private var barometerHistory: [BarometerDataPoint] = []
     @State private var todaysContacts: [NewContact] = []
     @State private var isLoading = true
     @State private var mapCameraPosition: MapCameraPosition = .automatic
@@ -38,11 +32,6 @@ struct TodayView: View {
                 VStack(spacing: 20) {
                     // Hero summary card (always visible)
                     heroSummaryCard
-
-                    // Live environment dashboard (visible if battery or barometer enabled)
-                    if batteryManager.isMonitoring || barometerManager.isMonitoring {
-                        liveEnvironmentCard
-                    }
 
                     // Loading state
                     if isLoading {
@@ -64,23 +53,13 @@ struct TodayView: View {
                             recordingsSection
                         }
 
-                        // Battery Status
-                        if batteryManager.isMonitoring {
-                            batterySection
-                        }
-
-                        // Barometer/Altitude
-                        if barometerManager.isMonitoring {
-                            barometerSection
-                        }
-
                         // Contacts
                         if contactsManager.isEnabled {
                             contactsSection
                         }
 
                         // Empty state
-                        if !healthKitManager.isAuthorized && !locationManager.hasPermission && !audioManager.hasPermission && !batteryManager.isMonitoring && !barometerManager.isMonitoring && !contactsManager.isEnabled {
+                        if !healthKitManager.isAuthorized && !locationManager.hasPermission && !audioManager.hasPermission && !contactsManager.isEnabled {
                             emptyState
                         }
                     }
@@ -140,74 +119,6 @@ struct TodayView: View {
         .padding(.horizontal)
     }
 
-    // MARK: - Live Environment Dashboard
-
-    private var liveEnvironmentCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Live Environment")
-                .font(.caption)
-                .fontWeight(.medium)
-                .foregroundColor(.warmForegroundMuted)
-                .textCase(.uppercase)
-                .tracking(0.5)
-
-            HStack(spacing: 12) {
-                // Battery metric
-                if batteryManager.isMonitoring {
-                    metricCard(
-                        icon: batteryIcon,
-                        iconColor: batteryColor,
-                        value: "\(Int(batteryManager.batteryLevel * 100))%",
-                        label: "Battery"
-                    )
-                }
-
-                // Altitude metric (if barometer available and monitoring)
-                if barometerManager.isMonitoring {
-                    metricCard(
-                        icon: "mountain.2.fill",
-                        iconColor: .warmInfo,
-                        value: barometerManager.relativeAltitude.map {
-                            String(format: "%.0fm", $0)
-                        } ?? "--",
-                        label: "Altitude"
-                    )
-
-                    metricCard(
-                        icon: "gauge.with.dots.needle.33percent",
-                        iconColor: .warmForegroundMuted,
-                        value: barometerManager.currentPressure.map {
-                            String(format: "%.0f", $0)
-                        } ?? "--",
-                        label: "kPa"
-                    )
-                }
-            }
-        }
-        .padding()
-        .background(Color.warmSurfaceElevated)
-        .cornerRadius(12)
-        .padding(.horizontal)
-    }
-
-    private func metricCard(icon: String, iconColor: Color, value: String, label: String) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.title3)
-                .foregroundColor(iconColor)
-            Text(value)
-                .font(.title2)
-                .fontWeight(.semibold)
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.warmForegroundMuted)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(Color.warmBackground)
-        .cornerRadius(10)
-    }
-
     // MARK: - Heart Rate Section
 
     private var heartRateSection: some View {
@@ -253,49 +164,7 @@ struct TodayView: View {
         .padding(.horizontal)
     }
 
-    // MARK: - Steps Card
 
-    private var stepsCard: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "figure.walk")
-                .font(.title2)
-                .foregroundColor(.warmSuccess)
-
-            Text("\(todaySteps)")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text("steps")
-                .font(.caption)
-                .foregroundColor(.warmForegroundMuted)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(Color.warmSurfaceElevated)
-        .cornerRadius(12)
-    }
-
-    // MARK: - Workouts Card
-
-    private var workoutsCard: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "flame.fill")
-                .font(.title2)
-                .foregroundColor(.warmWarning)
-
-            Text("\(todayWorkouts.count)")
-                .font(.title)
-                .fontWeight(.bold)
-
-            Text(todayWorkouts.count == 1 ? "workout" : "workouts")
-                .font(.caption)
-                .foregroundColor(.warmForegroundMuted)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(Color.warmSurfaceElevated)
-        .cornerRadius(12)
-    }
 
     // MARK: - Movement Section
 
@@ -468,268 +337,6 @@ struct TodayView: View {
         }
     }
 
-    // MARK: - Battery Section
-
-    private var batterySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: batteryIcon)
-                    .foregroundColor(batteryColor)
-                Text("Battery")
-                    .h3Style()
-                Spacer()
-                Text("\(Int(batteryManager.batteryLevel * 100))%")
-                    .font(.subheadline)
-                    .foregroundColor(.warmForegroundMuted)
-            }
-
-            if batteryHistory.isEmpty {
-                // Show current status even without history
-                VStack(spacing: 12) {
-                    HStack(spacing: 20) {
-                        // Current level gauge
-                        ZStack {
-                            Circle()
-                                .stroke(Color.warmBorder, lineWidth: 8)
-                                .frame(width: 80, height: 80)
-                            Circle()
-                                .trim(from: 0, to: CGFloat(batteryManager.batteryLevel))
-                                .stroke(batteryColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                                .frame(width: 80, height: 80)
-                                .rotationEffect(.degrees(-90))
-                            VStack(spacing: 2) {
-                                Text("\(Int(batteryManager.batteryLevel * 100))%")
-                                    .font(.headline)
-                                if batteryManager.batteryState == .charging {
-                                    Image(systemName: "bolt.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.warmSuccess)
-                                }
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(batteryManager.batteryState == .charging ? "Charging" : "On Battery")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            Text("Chart builds over time")
-                                .font(.caption)
-                                .foregroundColor(.warmForegroundMuted)
-                        }
-                        Spacer()
-                    }
-                }
-                .padding(.vertical, 8)
-            } else {
-                // Battery level chart
-                Chart(batteryHistory) { dataPoint in
-                    AreaMark(
-                        x: .value("Time", dataPoint.date),
-                        y: .value("Level", dataPoint.level * 100)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [batteryColor.opacity(0.3), batteryColor.opacity(0.1)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-
-                    LineMark(
-                        x: .value("Time", dataPoint.date),
-                        y: .value("Level", dataPoint.level * 100)
-                    )
-                    .foregroundStyle(batteryColor)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-
-                    // Show charging indicator
-                    if dataPoint.isCharging {
-                        PointMark(
-                            x: .value("Time", dataPoint.date),
-                            y: .value("Level", dataPoint.level * 100)
-                        )
-                        .foregroundStyle(Color.warmSuccess)
-                        .symbolSize(30)
-                    }
-                }
-                .frame(height: 120)
-                .chartYScale(domain: 0...100)
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: .hour, count: 6)) { _ in
-                        AxisValueLabel(format: .dateTime.hour())
-                        AxisGridLine()
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(values: [0, 50, 100]) { value in
-                        AxisValueLabel {
-                            if let intValue = value.as(Int.self) {
-                                Text("\(intValue)%")
-                                    .font(.caption2)
-                            }
-                        }
-                        AxisGridLine()
-                    }
-                }
-            }
-
-            // Low Power Mode indicator
-            if ProcessInfo.processInfo.isLowPowerModeEnabled {
-                HStack(spacing: 4) {
-                    Image(systemName: "bolt.circle.fill")
-                        .foregroundColor(.warmWarning)
-                        .font(.caption)
-                    Text("Low Power Mode enabled")
-                        .font(.caption)
-                        .foregroundColor(.warmForegroundMuted)
-                }
-            }
-        }
-        .padding()
-        .background(Color.warmSurfaceElevated)
-        .cornerRadius(12)
-        .padding(.horizontal)
-    }
-
-    private var batteryIcon: String {
-        let level = batteryManager.batteryLevel
-        switch batteryManager.batteryState {
-        case .charging, .full:
-            return "battery.100percent.bolt"
-        default:
-            if level > 0.75 {
-                return "battery.100percent"
-            } else if level > 0.5 {
-                return "battery.75percent"
-            } else if level > 0.25 {
-                return "battery.50percent"
-            } else {
-                return "battery.25percent"
-            }
-        }
-    }
-
-    private var batteryColor: Color {
-        let level = batteryManager.batteryLevel
-        switch batteryManager.batteryState {
-        case .charging, .full:
-            return .warmSuccess
-        default:
-            if level > 0.2 {
-                return .warmSuccess
-            } else if level > 0.1 {
-                return .warmWarning
-            } else {
-                return .warmError
-            }
-        }
-    }
-
-    // MARK: - Barometer Section
-
-    private var barometerSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "barometer")
-                    .foregroundColor(.warmInfo)
-                Text("Altitude")
-                    .h3Style()
-                Spacer()
-                if let current = barometerManager.relativeAltitude {
-                    Text(String(format: "%.1f m", current))
-                        .font(.subheadline)
-                        .foregroundColor(.warmForegroundMuted)
-                }
-            }
-
-            if barometerHistory.isEmpty {
-                // Show current values even without history
-                VStack(spacing: 12) {
-                    HStack(spacing: 20) {
-                        VStack(spacing: 8) {
-                            if let altitude = barometerManager.relativeAltitude {
-                                Text(String(format: "%.1f m", altitude))
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                                Text("Relative Altitude")
-                                    .font(.caption)
-                                    .foregroundColor(.warmForegroundMuted)
-                            } else {
-                                Text("--")
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                                Text("Waiting for data")
-                                    .font(.caption)
-                                    .foregroundColor(.warmForegroundMuted)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-
-                        if let pressure = barometerManager.currentPressure {
-                            VStack(spacing: 8) {
-                                Text(String(format: "%.1f", pressure))
-                                    .font(.title2)
-                                    .fontWeight(.semibold)
-                                Text("kPa")
-                                    .font(.caption)
-                                    .foregroundColor(.warmForegroundMuted)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                    }
-
-                    Text("Chart builds over time")
-                        .font(.caption)
-                        .foregroundColor(.warmForegroundMuted)
-                }
-                .padding(.vertical, 8)
-            } else {
-                Chart(barometerHistory) { dataPoint in
-                    LineMark(
-                        x: .value("Time", dataPoint.date),
-                        y: .value("Altitude", dataPoint.altitudeMeters)
-                    )
-                    .foregroundStyle(Color.warmInfo)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                }
-                .frame(height: 120)
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: .hour, count: 6)) { _ in
-                        AxisValueLabel(format: .dateTime.hour())
-                        AxisGridLine()
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks { value in
-                        AxisValueLabel {
-                            if let doubleValue = value.as(Double.self) {
-                                Text(String(format: "%.0fm", doubleValue))
-                                    .font(.caption2)
-                            }
-                        }
-                        AxisGridLine()
-                    }
-                }
-            }
-
-            // Pressure info
-            if let pressure = barometerManager.currentPressure {
-                HStack(spacing: 4) {
-                    Image(systemName: "gauge")
-                        .foregroundColor(.warmForegroundMuted)
-                        .font(.caption)
-                    Text(String(format: "%.1f kPa", pressure))
-                        .font(.caption)
-                        .foregroundColor(.warmForegroundMuted)
-                }
-            }
-        }
-        .padding()
-        .background(Color.warmSurfaceElevated)
-        .cornerRadius(12)
-        .padding(.horizontal)
-    }
-
     // MARK: - Contacts Section
 
     private var contactsSection: some View {
@@ -842,12 +449,8 @@ struct TodayView: View {
     private func loadTodayData() {
         isLoading = true
         loadHeartRate()
-        loadSteps()
-        loadWorkouts()
         loadLocationTrack()
         loadSpeechBlocks()
-        loadBatteryHistory()
-        loadBarometerHistory()
         loadTodaysContacts()
 
         isLoading = false
@@ -893,75 +496,6 @@ struct TodayView: View {
         healthStore.execute(query)
     }
 
-    private func loadSteps() {
-        guard healthKitManager.isAuthorized else { return }
-
-        let healthStore = HKHealthStore()
-        let stepsType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
-
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: Date())
-
-        let predicate = HKQuery.predicateForSamples(
-            withStart: startOfDay,
-            end: Date(),
-            options: .strictStartDate
-        )
-
-        let query = HKStatisticsQuery(
-            quantityType: stepsType,
-            quantitySamplePredicate: predicate,
-            options: .cumulativeSum
-        ) { _, result, _ in
-            guard let sum = result?.sumQuantity() else { return }
-
-            DispatchQueue.main.async {
-                self.todaySteps = Int(sum.doubleValue(for: .count()))
-            }
-        }
-
-        healthStore.execute(query)
-    }
-
-    private func loadWorkouts() {
-        guard healthKitManager.isAuthorized else { return }
-
-        let healthStore = HKHealthStore()
-
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: Date())
-
-        let predicate = HKQuery.predicateForSamples(
-            withStart: startOfDay,
-            end: Date(),
-            options: .strictStartDate
-        )
-
-        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-
-        let query = HKSampleQuery(
-            sampleType: HKWorkoutType.workoutType(),
-            predicate: predicate,
-            limit: HKObjectQueryNoLimit,
-            sortDescriptors: [sortDescriptor]
-        ) { _, samples, _ in
-            guard let workouts = samples as? [HKWorkout] else { return }
-
-            let summaries = workouts.map { workout in
-                WorkoutSummary(
-                    type: workout.workoutActivityType.name,
-                    duration: workout.duration
-                )
-            }
-
-            DispatchQueue.main.async {
-                self.todayWorkouts = summaries
-            }
-        }
-
-        healthStore.execute(query)
-    }
-
     private func loadLocationTrack() {
         let points = SQLiteManager.shared.getTodaysLocationTrack()
         locationDataPoints = downsamplePreservingEndpoints(points, maxCount: 1000)
@@ -970,14 +504,6 @@ struct TodayView: View {
     private func loadSpeechBlocks() {
         let blocks = SQLiteManager.shared.getTodaysSpeechBlocks()
         speechBlocks = downsamplePreservingEndpoints(blocks, maxCount: 500)
-    }
-
-    private func loadBatteryHistory() {
-        batteryHistory = SQLiteManager.shared.getTodaysBatteryHistory()
-    }
-
-    private func loadBarometerHistory() {
-        barometerHistory = SQLiteManager.shared.getTodaysBarometerHistory()
     }
 
     private func loadTodaysContacts() {
@@ -1027,29 +553,6 @@ struct HeartRateSample: Identifiable {
     let id = UUID()
     let date: Date
     let bpm: Double
-}
-
-struct WorkoutSummary: Identifiable {
-    let id = UUID()
-    let type: String
-    let duration: TimeInterval
-}
-
-extension HKWorkoutActivityType {
-    var name: String {
-        switch self {
-        case .running: return "Run"
-        case .walking: return "Walk"
-        case .cycling: return "Cycle"
-        case .swimming: return "Swim"
-        case .hiking: return "Hike"
-        case .yoga: return "Yoga"
-        case .functionalStrengthTraining: return "Strength"
-        case .traditionalStrengthTraining: return "Strength"
-        case .highIntensityIntervalTraining: return "HIIT"
-        default: return "Workout"
-        }
-    }
 }
 
 #Preview {

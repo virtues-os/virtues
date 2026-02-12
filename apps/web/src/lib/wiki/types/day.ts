@@ -18,20 +18,21 @@ import type { WikiPageBase, LinkedPage, Citation, AuthorType, SectionAuthorType 
 // =============================================================================
 
 /**
- * W5H dimensions for measuring day completeness.
- * Each dimension is a 0-1 score.
+ * 7-dimension context vector for measuring day completeness.
+ * Each dimension is a 0-1 score representing data coverage.
  */
 export interface ContextVector {
-	when: number; // How much of the 24h is accounted for?
-	where: number; // How many location segments have place names?
-	who: number; // Are there person mentions in transcription/calendar?
-	what: number; // Is there transcription/calendar content?
-	why: number; // Rare; requires rich transcription with intent
-	how: number; // Heart rate, steps, workout data
+	who: number; // Self-awareness — is the person's own state tracked?
+	whom: number; // Relational — who else was involved?
+	what: number; // Events & content — what happened?
+	when: number; // Temporal coverage — how much of 24h is observed?
+	where: number; // Spatial — do we know locations?
+	why: number; // Intent/motivation — do we know purpose?
+	how: number; // Physical state — body metrics
 }
 
 export function computeCompleteness(cv: ContextVector): number {
-	const values = [cv.when, cv.where, cv.who, cv.what, cv.why, cv.how];
+	const values = [cv.who, cv.whom, cv.what, cv.when, cv.where, cv.why, cv.how];
 	return values.reduce((sum, v) => sum + v, 0) / values.length;
 }
 
@@ -199,6 +200,12 @@ export interface DayPage extends WikiPageBase {
 
 	/** W5H completeness scores */
 	contextVector: ContextVector;
+
+	/** Chaos/order score (0 = ordered/routine, 1 = chaotic/novel). Null if not yet computed. */
+	chaosScore: number | null;
+
+	/** How many prior days contributed to entropy calibration. Null = never computed, 0 = baseline. */
+	entropyCalibrationDays: number | null;
 
 	/** Entities mentioned this day (people, places, organizations, things) */
 	linkedEntities: LinkedEntities;

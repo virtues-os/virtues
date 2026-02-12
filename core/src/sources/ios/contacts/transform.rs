@@ -43,7 +43,6 @@ impl OntologyTransform for IosContactsTransform {
     ) -> Result<TransformResult> {
         let mut records_read = 0;
         let mut records_written = 0;
-        let records_failed = 0;
         let mut last_processed_id: Option<String> = None;
 
         let data_source = context.get_data_source().ok_or_else(|| {
@@ -103,7 +102,7 @@ impl OntologyTransform for IosContactsTransform {
         Ok(TransformResult {
             records_read,
             records_written,
-            records_failed,
+            records_failed: 0,
             last_processed_id,
             chained_transforms: vec![],
         })

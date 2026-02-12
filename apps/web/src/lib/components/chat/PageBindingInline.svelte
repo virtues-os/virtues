@@ -25,10 +25,8 @@
 		permissionMode?: boolean;
 		/** Called when user clicks Open & Edit (binding mode) */
 		onBind?: (entityId: string, title: string) => void;
-		/** Called when user clicks Allow (permission mode - allow once) */
+		/** Called when user clicks Allow (permission mode) */
 		onAllow?: (entityId: string, entityType: string, title: string) => void;
-		/** Called when user clicks Allow for this chat (permission mode - add to list) */
-		onAllowForChat?: (entityId: string, entityType: string, title: string) => void;
 		/** Called when user clicks Deny (permission mode) */
 		onDeny?: () => void;
 	}
@@ -42,12 +40,11 @@
 		permissionMode = false,
 		onBind,
 		onAllow,
-		onAllowForChat,
 		onDeny
 	}: Props = $props();
 
 	/** Tracks which choice the user made (null = no choice yet) */
-	let selectedChoice = $state<'allow' | 'allow-chat' | 'deny' | null>(null);
+	let selectedChoice = $state<'allow' | 'deny' | null>(null);
 
 	const displayTitle = $derived(entityTitle || 'Untitled');
 
@@ -68,13 +65,6 @@
 		if (entityId && onAllow && !selectedChoice) {
 			selectedChoice = 'allow';
 			onAllow(entityId, entityType, displayTitle);
-		}
-	}
-
-	function handleAllowForChat() {
-		if (entityId && onAllowForChat && !selectedChoice) {
-			selectedChoice = 'allow-chat';
-			onAllowForChat(entityId, entityType, displayTitle);
 		}
 	}
 
@@ -117,7 +107,6 @@
 
 	<div class="actions">
 		{#if permissionMode}
-			<!-- Permission mode: Allow/Allow for chat/Deny -->
 			{#if !selectedChoice || selectedChoice === 'deny'}
 				<button
 					class="action-btn deny-btn"
@@ -127,17 +116,6 @@
 					type="button"
 				>
 					{selectedChoice === 'deny' ? 'Denied' : 'Deny'}
-				</button>
-			{/if}
-			{#if !selectedChoice || selectedChoice === 'allow-chat'}
-				<button
-					class="action-btn allow-chat-btn"
-					class:selected={selectedChoice === 'allow-chat'}
-					onclick={handleAllowForChat}
-					disabled={selectedChoice !== null}
-					type="button"
-				>
-					{selectedChoice === 'allow-chat' ? 'Allowed for chat' : 'Allow for chat'}
 				</button>
 			{/if}
 			{#if !selectedChoice || selectedChoice === 'allow'}
@@ -278,23 +256,6 @@
 	}
 
 	.allow-btn.selected {
-		background: var(--color-success-subtle);
-		color: var(--color-success);
-		border-color: var(--color-success);
-	}
-
-	.allow-chat-btn {
-		background: var(--color-surface);
-		color: var(--color-foreground);
-		border: 1px solid var(--color-border);
-	}
-
-	.allow-chat-btn:hover:not(:disabled) {
-		background: var(--color-surface-elevated);
-		border-color: var(--color-border-strong);
-	}
-
-	.allow-chat-btn.selected {
 		background: var(--color-success-subtle);
 		color: var(--color-success);
 		border-color: var(--color-success);

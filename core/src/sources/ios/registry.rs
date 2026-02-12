@@ -14,14 +14,13 @@ use super::healthkit::transform::{
 };
 use super::financekit::transform::FinanceKitTransactionTransform;
 use super::location::transform::IosLocationTransform;
-use super::battery::transform::IosBatteryTransform;
-use super::barometer::transform::IosBarometerTransform;
 use super::eventkit::transform::IosEventKitTransform;
 use super::contacts::transform::IosContactsTransform;
+use super::microphone::transform::IosMicrophoneTransform;
 
 // Import stream types for unified registration
 use super::{
-    IosBarometerStream, IosBatteryStream, IosContactsStream, IosEventKitStream,
+    IosContactsStream, IosEventKitStream,
     IosFinanceKitStream, IosHealthKitStream, IosLocationStream, IosMicrophoneStream,
 };
 
@@ -66,10 +65,13 @@ impl SourceRegistry for IosSource {
                     })
                     .build(),
 
-                // Microphone stream with stream creator (no transform yet - transcription handled separately)
+                // Microphone stream with Gemini transcription transform
                 RegisteredStream::new("microphone")
                     .config_schema(microphone_config_schema())
                     .config_example(microphone_config_example())
+                    .transform("communication_transcription", |_ctx| {
+                        Ok(Box::new(IosMicrophoneTransform::from_env()?))
+                    })
                     .stream_creator(|ctx| {
                         Ok(StreamType::Push(Box::new(IosMicrophoneStream::new(
                             ctx.db.clone(),
@@ -86,32 +88,6 @@ impl SourceRegistry for IosSource {
                     .transform("wiki_people", |_ctx| Ok(Box::new(IosContactsTransform)))
                     .stream_creator(|ctx| {
                         Ok(StreamType::Push(Box::new(IosContactsStream::new(
-                            ctx.db.clone(),
-                            ctx.stream_writer.clone(),
-                        ))))
-                    })
-                    .build(),
-
-                // Battery stream with stream creator
-                RegisteredStream::new("battery")
-                    .config_schema(serde_json::json!({}))
-                    .config_example(serde_json::json!({}))
-                    .transform("device_battery", |_ctx| Ok(Box::new(IosBatteryTransform)))
-                    .stream_creator(|ctx| {
-                        Ok(StreamType::Push(Box::new(IosBatteryStream::new(
-                            ctx.db.clone(),
-                            ctx.stream_writer.clone(),
-                        ))))
-                    })
-                    .build(),
-
-                // Barometer stream with stream creator
-                RegisteredStream::new("barometer")
-                    .config_schema(serde_json::json!({}))
-                    .config_example(serde_json::json!({}))
-                    .transform("environment_pressure", |_ctx| Ok(Box::new(IosBarometerTransform)))
-                    .stream_creator(|ctx| {
-                        Ok(StreamType::Push(Box::new(IosBarometerStream::new(
                             ctx.db.clone(),
                             ctx.stream_writer.clone(),
                         ))))
@@ -135,7 +111,7 @@ impl SourceRegistry for IosSource {
                 RegisteredStream::new("eventkit")
                     .config_schema(serde_json::json!({}))
                     .config_example(serde_json::json!({}))
-                    .transform("calendar", |_ctx| Ok(Box::new(IosEventKitTransform)))
+                    .transform("calendar_event", |_ctx| Ok(Box::new(IosEventKitTransform)))
                     .stream_creator(|ctx| {
                         Ok(StreamType::Push(Box::new(IosEventKitStream::new(
                             ctx.db.clone(),
@@ -253,7 +229,7 @@ mod tests {
         let desc = IosSource::descriptor();
         assert_eq!(desc.descriptor.name, "ios");
         assert_eq!(desc.descriptor.auth_type, AuthType::Device);
-        assert_eq!(desc.streams.len(), 8); // healthkit, location, microphone, contacts, battery, barometer, financekit, eventkit
+        assert_eq!(desc.streams.len(), 6); // healthkit, location, microphone, contacts, financekit, eventkit
     }
 
     #[test]

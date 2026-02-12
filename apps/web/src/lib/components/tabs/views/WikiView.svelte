@@ -4,6 +4,7 @@
 	import { ActivityHeatmap } from '$lib/components/wiki';
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { getLocalDateSlug, formatLongDate } from '$lib/utils/dateUtils';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -50,7 +51,7 @@
 			startDate.setFullYear(startDate.getFullYear() - 1);
 
 			const res = await fetch(
-				`/api/wiki/days?start_date=${startDate.toISOString().split('T')[0]}&end_date=${endDate.toISOString().split('T')[0]}`
+				`/api/wiki/days?start_date=${getLocalDateSlug(startDate)}&end_date=${getLocalDateSlug(endDate)}`
 			);
 
 			if (res.ok) {
@@ -87,13 +88,8 @@
 
 	// Today's formatted date
 	const today = new Date();
-	const todaySlug = today.toISOString().split('T')[0];
-	const todayFormatted = today.toLocaleDateString('en-US', {
-		weekday: 'long',
-		month: 'long',
-		day: 'numeric',
-		year: 'numeric'
-	});
+	const todaySlug = getLocalDateSlug(today);
+	const todayFormatted = formatLongDate(today);
 
 	// Entity display config
 	const entities = [

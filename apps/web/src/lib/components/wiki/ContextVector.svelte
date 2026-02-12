@@ -17,10 +17,11 @@
 	);
 
 	const dimensions = $derived([
+		{ key: "who", label: "Who", value: contextVector.who },
+		{ key: "whom", label: "Whom", value: contextVector.whom },
+		{ key: "what", label: "What", value: contextVector.what },
 		{ key: "when", label: "When", value: contextVector.when },
 		{ key: "where", label: "Where", value: contextVector.where },
-		{ key: "who", label: "Who", value: contextVector.who },
-		{ key: "what", label: "What", value: contextVector.what },
 		{ key: "why", label: "Why", value: contextVector.why },
 		{ key: "how", label: "How", value: contextVector.how },
 	]);
@@ -41,7 +42,7 @@
 				<div class="bar-fill" style="width: {completeness}%"></div>
 			</div>
 
-			<!-- All 6 dimensions in one row -->
+			<!-- All 7 dimensions in one row -->
 			<div class="dimension-row">
 				{#each dimensions as dim}
 					{@const pct = Math.round(dim.value * 100)}
@@ -56,6 +57,7 @@
 					</div>
 				{/each}
 			</div>
+			<p class="metric-description">How much of your day is captured across seven dimensions — who, whom, what, when, where, why, and how.</p>
 		</div>
 	{/if}
 </div>
@@ -157,5 +159,12 @@
 		height: 100%;
 		background: var(--color-foreground-muted);
 		border-radius: 2px;
+	}
+
+	.metric-description {
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--color-foreground-subtle);
+		margin: 0;
 	}
 </style>
