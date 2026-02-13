@@ -137,8 +137,9 @@ WORKDIR /app
 COPY --from=builder /repo/core/target/release/virtues /usr/local/bin/virtues
 COPY --from=builder /repo/core/migrations ./migrations
 
-# Copy pre-downloaded embedding model cache
-COPY --from=builder /root/.cache/fastembed /home/virtues/.cache/fastembed
+# Copy pre-downloaded embedding + reranker model cache
+# fastembed stores models in .fastembed_cache/ relative to WORKDIR
+COPY --from=builder /repo/core/.fastembed_cache /app/.fastembed_cache
 
 # Copy SvelteKit static build
 COPY --from=web-builder /app/build/ /app/static/
