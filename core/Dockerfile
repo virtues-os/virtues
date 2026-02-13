@@ -40,20 +40,27 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # ==============================================================================
 # Stage 3: Cook dependencies (cached unless Cargo.toml/lock change)
+# Ubuntu 24.04 provides glibc 2.39 (required by ort-sys/ONNX Runtime for C23)
 # ==============================================================================
-FROM rust:1.88-slim AS builder
+FROM ubuntu:24.04 AS builder
 
 ARG GIT_COMMIT=unknown
 ENV GIT_COMMIT=${GIT_COMMIT}
-
-RUN cargo install cargo-chef
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
     pkg-config \
     libssl-dev \
     libpq-dev \
-    g++ \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN cargo install cargo-chef
 
 # Mirror repo layout for path dependencies
 WORKDIR /repo/core
@@ -79,13 +86,15 @@ RUN cargo build --release
 RUN ./target/release/virtues warm-models
 
 # ==============================================================================
-# Stage 4: Runtime
+# Stage 4: Runtime (Ubuntu 24.04 for glibc 2.39 compat with ort-sys)
 # ==============================================================================
-FROM debian:bookworm-slim
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libssl3 \
+    libssl3t64 \
     libpq5 \
     wget \
     openssh-server \
