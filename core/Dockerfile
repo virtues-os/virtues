@@ -52,6 +52,7 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     libpq-dev \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Mirror repo layout for path dependencies
