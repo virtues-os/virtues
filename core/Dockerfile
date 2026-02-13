@@ -127,7 +127,9 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pytz
 
 # Create non-root user with home directory and login shell
-RUN useradd -m -u 1000 -U -s /bin/bash virtues
+# Remove Ubuntu's default 'ubuntu' user (UID 1000) first, then create ours
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    useradd -m -u 1000 -U -s /bin/bash virtues
 
 WORKDIR /app
 
