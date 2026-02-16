@@ -17,19 +17,34 @@ pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}, {user_name}'s 
 {persona_guidelines}
 </guidelines>
 
-<safety>
-- Never generate harmful, illegal, or unethical content
-- Protect {user_name}'s privacy - don't share personal data unnecessarily
-- If uncertain about a request's intent, ask for clarification
-- Decline requests that could harm {user_name} or others
-</safety>
-
 <output_format>
 - Use markdown for structured responses when helpful
 - Keep responses concise unless detail is requested
+- Don't pad, hedge, or over-qualify. Silence is better than filler.
+- Prioritize understanding over output — help {user_name} see clearly, not just get things done.
 - Use bullet points and headers for complex information
 - Include code blocks with language tags for code snippets
 </output_format>
+"#;
+
+/// Telos/axiology framing — the AI's relationship to user self-knowledge.
+///
+/// Always present (persona-independent). Dynamic telos/act/chapter data is
+/// injected by build_system_prompt() in chat.rs via the {telos_data} placeholder.
+pub const TELOS_PROMPT: &str = r#"
+<telos>
+You know {user_name} through the shape of their experiences — patterns across time, attention, and behavior mapped in vector space. You do not simulate a relationship. You observe trajectories.
+
+{user_name} may have declared a telos — their articulated vision of their own good. This orients your assistance. You are not neutral; your moral framework is theirs.
+
+- Trajectory over snapshot: notice the derivative — direction of change matters more than current position
+- Epistemic humility: say "I notice" not "you are" — hold your models lightly
+- Surface divergence between actions and stated telos to illuminate, not to correct
+- Reference narrative context when it connects naturally; never parrot it unprompted
+- Awareness without resurfacing: know without volunteering unless asked
+
+{telos_data}
+</telos>
 "#;
 
 /// Tool usage instructions (only included when tools are available).
@@ -50,7 +65,6 @@ pub const AGENT_MODE_PROMPT: &str = r#"
 <mode>assistant</mode>
 <tool_guidance>
 - For simple lookups, one query is usually enough. For multi-step tasks, use as many tools as needed
-- For simple lookups ("who is X", "what is Y"), one query is usually enough
 - Don't gather extra context unless the user asks for it
 - Do NOT use tools for: conversational replies, opinions, follow-ups on data already in context
 
@@ -156,7 +170,7 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
 /// Build the full personalized system prompt.
 ///
 /// Replaces placeholders in BASE_SYSTEM_PROMPT with actual values.
-/// Only includes tool usage instructions when agent_mode has tools available.
+/// Includes telos framing (always present) and tool instructions (when tools available).
 ///
 /// # Arguments
 /// * `assistant_name` - The assistant's name (e.g., "Ari")
@@ -164,12 +178,14 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
 /// * `persona_id` - The persona identifier
 /// * `persona_content` - Optional custom persona content from database
 /// * `agent_mode` - Agent mode controlling tool availability
+/// * `telos_data` - Dynamic telos/act/chapter data (empty string if none set)
 pub fn build_personalized_prompt(
     assistant_name: &str,
     user_name: &str,
     persona_id: &str,
     persona_content: Option<&str>,
     agent_mode: &str,
+    telos_data: &str,
 ) -> String {
     let guidelines = get_persona_guidelines(persona_id, user_name, persona_content);
 
@@ -177,6 +193,13 @@ pub fn build_personalized_prompt(
         .replace("{assistant_name}", assistant_name)
         .replace("{user_name}", user_name)
         .replace("{persona_guidelines}", &guidelines);
+
+    // Telos section — always present (persona-independent)
+    prompt.push_str(
+        &TELOS_PROMPT
+            .replace("{user_name}", user_name)
+            .replace("{telos_data}", telos_data),
+    );
 
     // Only include tool usage instructions if tools are available (not in "chat" mode)
     if agent_mode != "chat" {
@@ -198,11 +221,13 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_agent_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent");
+        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
 
         assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
         assert!(prompt.contains("Respond helpfully and accurately to Adam"));
-        assert!(prompt.contains("Protect Adam's privacy"));
+        // Telos section always present
+        assert!(prompt.contains("<telos>"));
+        assert!(prompt.contains("observe trajectories"));
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("Use the think tool before complex"));
@@ -213,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_research_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "research");
+        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "research", "");
 
         assert!(prompt.contains("<tool_usage>"));
         // Research mode should include research guidance (thorough exploration)
@@ -223,11 +248,13 @@ mod tests {
 
     #[test]
     fn test_build_personalized_prompt_chat_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "chat");
+        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
 
         assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
         // Chat mode should NOT include tool usage
         assert!(!prompt.contains("<tool_usage>"));
+        // But telos should still be present
+        assert!(prompt.contains("<telos>"));
     }
 
     #[test]
@@ -257,9 +284,35 @@ mod tests {
     #[test]
     fn test_build_prompt_with_custom_content() {
         let custom = "- Custom guideline for {user_name}";
-        let prompt = build_personalized_prompt("Ari", "Bob", "custom_persona", Some(custom), "agent");
+        let prompt = build_personalized_prompt("Ari", "Bob", "custom_persona", Some(custom), "agent", "");
 
         assert!(prompt.contains("Custom guideline for Bob"));
         assert!(prompt.contains("You are Ari, Bob's personal AI assistant"));
+    }
+
+    #[test]
+    fn test_telos_section_with_data() {
+        let prompt = build_personalized_prompt(
+            "Ari", "Adam", "standard", None, "agent",
+            "Active telos: Flourishing\nCurrent chapter: \"Building\"",
+        );
+
+        assert!(prompt.contains("<telos>"));
+        assert!(prompt.contains("Active telos: Flourishing"));
+        assert!(prompt.contains("Current chapter: \"Building\""));
+        // Telos should appear before tool_usage
+        let telos_pos = prompt.find("<telos>").unwrap();
+        let tool_pos = prompt.find("<tool_usage>").unwrap();
+        assert!(telos_pos < tool_pos, "telos should appear before tool_usage");
+    }
+
+    #[test]
+    fn test_telos_section_empty_data() {
+        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
+
+        assert!(prompt.contains("<telos>"));
+        // Static framing should still be present even with no data
+        assert!(prompt.contains("Trajectory over snapshot"));
+        assert!(prompt.contains("Epistemic humility"));
     }
 }

@@ -16,7 +16,7 @@
 --   8. data_health_steps         (14 step readings)
 --   9. data_health_heart_rate    (12 HR readings during run)
 --  10. data_health_workout       (1 run)
---  11. data_communication_transcription (2 recordings)
+--  11. data_communication_transcription (5 recordings)
 --  12. data_location_point       (25 GPS breadcrumbs)
 --
 -- All times are UTC. Austin = America/Chicago = UTC-6 in February.
@@ -258,7 +258,7 @@ INSERT OR IGNORE INTO wiki_events (
 ) VALUES (
     'ev_demo_05', 'day_2025-02-13',
     '2025-02-13T14:15:00Z', '2025-02-13T15:00:00Z',
-    'Design standup', 'Office', '["calendar", "message"]',
+    'Design standup', 'Office', '["calendar", "message", "transcription"]',
     0, 0,
     '[0.2, 0.8, 0.7, 0.7, 0.3, 0.4, 0.3]', 0.35, 0.78
 );
@@ -286,7 +286,7 @@ INSERT OR IGNORE INTO wiki_events (
 ) VALUES (
     'ev_demo_07', 'day_2025-02-13',
     '2025-02-13T17:30:00Z', '2025-02-13T18:30:00Z',
-    'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "calendar"]',
+    'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "calendar", "transcription"]',
     0, 0,
     '[0.3, 0.9, 0.5, 0.5, 0.7, 0.3, 0.2]', 0.52, 0.75
 );
@@ -342,7 +342,7 @@ INSERT OR IGNORE INTO wiki_events (
 ) VALUES (
     'ev_demo_11', 'day_2025-02-13',
     '2025-02-13T21:50:00Z', '2025-02-13T22:15:00Z',
-    'Coffee at Jo''s', 'Jo''s Coffee', '["location_visit"]',
+    'Coffee at Jo''s', 'Jo''s Coffee', '["location_visit", "transcription"]',
     0, 0,
     '[0.5, 0.0, 0.3, 0.2, 0.7, 0.5, 0.1]', 0.58, 0.55
 );
@@ -958,6 +958,124 @@ Participant 3: Definitely. Or at least tooltips on hover. Right now I''d have to
     0.94,
     '["ux-research", "navigation", "usability-testing"]',
     'demo_txn_001', 'data_communication_transcription', 'demo'
+);
+
+-- Design standup recording (08:15-09:00 CST = 14:15-15:00 UTC)
+INSERT OR IGNORE INTO data_communication_transcription (
+    id, text, language, duration_seconds,
+    start_time, end_time,
+    speaker_count, title, summary, confidence,
+    tags, entities, speaker_segments,
+    source_stream_id, source_table, source_provider
+) VALUES (
+    'txn_demo_standup',
+    'Maya: Alright, let''s get going. I want to spend most of this on the onboarding flow. The drop-off data from last week is... not great.
+
+David: Yeah, I pulled the funnel numbers yesterday. Step 3 completion is at 34 percent. It was 51 percent before the redesign.
+
+Maya: That''s worse than I thought. What changed in step 3?
+
+User: I''m sharing my screen — here''s the funnel side by side. The old flow had three fields on step 3. We added two more plus the company size selector. I think that''s where we''re losing people.
+
+David: The form validation is also more aggressive now. It flags errors inline before you even finish typing. I''ve seen users abandon forms over that.
+
+Maya: Okay, that''s two hypotheses. Field count and validation timing. Can we test both?
+
+User: We could run it through the research session this afternoon. I have three participants booked for the nav redesign test, but I can add a quick onboarding task at the end.
+
+Maya: Do it. Even five minutes of signal would help. David, can you mock up a version with lazy validation? Just flag errors on blur instead of on keystroke.
+
+David: Already on it. I''ll have a prototype in Figma by noon.
+
+Maya: Perfect. Anything else before we wrap?
+
+User: Just a heads up — I might need to leave a bit early today. Rachel found a house in Bouldin Creek that just came back on market.
+
+Maya: Oh nice! Go look at it. We''ve got things covered here.',
+    'en', 2700,
+    '2025-02-13T14:15:00Z', '2025-02-13T15:00:00Z',
+    3, 'Design Team Standup — Feb 13',
+    'Discussed onboarding funnel drop-off: step 3 completion fell from 51% to 34% after redesign. Two hypotheses — increased field count and aggressive inline validation. Plan to test both in afternoon research session. David to mock lazy validation prototype by noon.',
+    0.92,
+    '["standup", "design-team", "onboarding"]',
+    '{"people": ["Maya Chen", "David Okafor"], "topics": ["onboarding funnel", "form validation", "step 3 drop-off"], "products": ["Figma"]}',
+    '[{"speaker": "Maya Chen", "start": 0.0, "end": 15.2}, {"speaker": "David Okafor", "start": 15.2, "end": 28.5}, {"speaker": "Maya Chen", "start": 28.5, "end": 33.1}, {"speaker": "User", "start": 33.1, "end": 58.4}, {"speaker": "David Okafor", "start": 58.4, "end": 74.0}, {"speaker": "Maya Chen", "start": 74.0, "end": 88.3}, {"speaker": "User", "start": 88.3, "end": 112.0}, {"speaker": "Maya Chen", "start": 112.0, "end": 135.6}, {"speaker": "David Okafor", "start": 135.6, "end": 142.8}, {"speaker": "Maya Chen", "start": 142.8, "end": 150.1}, {"speaker": "User", "start": 150.1, "end": 168.0}, {"speaker": "Maya Chen", "start": 168.0, "end": 172.5}]',
+    'demo_txn_003', 'data_communication_transcription', 'demo'
+);
+
+-- Lunch conversation with Maya at Ramen Tatsu-ya (11:30-12:30 CST = 17:30-18:30 UTC)
+INSERT OR IGNORE INTO data_communication_transcription (
+    id, text, language, duration_seconds,
+    start_time, end_time,
+    speaker_count, title, summary, confidence,
+    tags, audio_url, metadata,
+    source_stream_id, source_table, source_provider
+) VALUES (
+    'txn_demo_lunch',
+    'Maya: I keep going back and forth on the new hire. On paper, Elise is perfect — great portfolio, strong systems thinking. But in the interview she kept defaulting to "it depends" on every design tradeoff question.
+
+User: I mean, it usually does depend though.
+
+Maya: Sure, but I wanted to see her commit to a position and defend it. You can always caveat later. I need someone who''ll push back in design reviews, not just agree with whatever the loudest voice says.
+
+User: Fair. Did you talk to her references?
+
+Maya: One of them said she''s "a great collaborator" which... could mean anything. The other was more specific — said she redesigned their entire settings architecture and reduced support tickets by 40 percent. That''s real impact.
+
+User: That''s a strong signal. Maybe the interview nerves masked the opinionated side. A lot of people are more assertive once they''re comfortable on a team.
+
+Maya: Maybe. I have until Friday to decide. Anyway — how''s the nav redesign coming? You seemed in flow this morning.
+
+User: Yeah, I think the icon-plus-label approach is the right call. I''m testing it this afternoon. Three participants, focused on settings discoverability and the main nav.
+
+Maya: Good. The tooltips-only version felt like a cop-out to me.
+
+User: Agreed. Oh — unrelated, but Rachel just texted me. That house in Bouldin Creek is back on market. The one I showed you on Zillow.
+
+Maya: The one with the huge backyard? Go see it! Today?
+
+User: She said 3 PM. I might duck out after the research session.
+
+Maya: Do it. Life''s too short to miss a good house.',
+    'en', 3600,
+    '2025-02-13T17:30:00Z', '2025-02-13T18:30:00Z',
+    2, 'Lunch with Maya — Ramen Tatsu-ya',
+    'Casual lunch conversation. Maya weighing new hire decision — strong portfolio but noncommittal in interview. Discussed nav redesign progress and upcoming research session. Mentioned Bouldin Creek house coming back on market.',
+    0.79,
+    '["personal", "work", "lunch"]',
+    'https://demo.virtues.app/audio/txn_demo_lunch.m4a',
+    '{"ambient_noise_level": "high", "recording_device": "iPhone 15 Pro", "environment": "restaurant"}',
+    'demo_txn_004', 'data_communication_transcription', 'demo'
+);
+
+-- Voice memo after house showing (~15:50 CST = 21:50 UTC)
+INSERT OR IGNORE INTO data_communication_transcription (
+    id, text, language, duration_seconds,
+    start_time, end_time,
+    speaker_count, title, summary, confidence,
+    tags, entities,
+    source_stream_id, source_table, source_provider
+) VALUES (
+    'txn_demo_voice_memo',
+    'Okay, just walked out of the house on South 3rd. I need to get this down before I forget.
+
+The kitchen — the tile is original. Like, 1940s original. It''s this deep terracotta with a cream border and it''s in perfect condition. The light in the afternoon comes through the south-facing windows and hits the tile and it just... glows. I stood there for a minute and Rachel didn''t rush me.
+
+The backyard is way bigger than the photos. There''s a mature pecan tree in the back corner and enough space for a real garden. The fence is wood, needs some work, but the bones are there.
+
+The neighborhood feels right. I walked a few blocks after — it''s quiet but not dead. I can see the SoCo restaurants from the corner. Jo''s is a five-minute walk. There''s a little free library on the next block.
+
+Price is 485. That''s at the top of my range but under the hard ceiling. Monthly would be around 2,800 with the rate I was quoted.
+
+I think I want to put in an offer. I need to sleep on it. But I think this is the one.',
+    'en', 180,
+    '2025-02-13T21:50:00Z', '2025-02-13T21:53:00Z',
+    1, 'Voice memo — Bouldin Creek house',
+    'Post-showing voice note. Loved the original 1940s terracotta tile, large backyard with pecan tree, walkable to South Congress. Price at $485K, monthly ~$2,800. Strongly considering an offer.',
+    0.96,
+    '["personal", "house-hunting", "voice-memo"]',
+    '{"places": ["1847 S 3rd St", "Bouldin Creek", "South Congress", "Jo''s Coffee"], "price": "$485,000", "features": ["original tile", "pecan tree", "south-facing windows"]}',
+    'demo_txn_005', 'data_communication_transcription', 'demo'
 );
 
 -- Feb 14: Phone call with Mom (for adjacent day)

@@ -788,7 +788,7 @@ mod tests {
         // System message should contain both prompt and summary
         let system_content = context[0]["content"].as_str().unwrap();
         assert!(system_content.contains("You are helpful."));
-        assert!(system_content.contains("<conversation_history>"));
+        assert!(system_content.contains("<compacted_conversation>"));
         assert!(system_content.contains("User asked about something."));
         assert_eq!(context[1]["content"], "Recent message");
     }

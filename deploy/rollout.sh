@@ -49,8 +49,8 @@ echo ""
 echo "[tenants] Discovering tenant jobs..."
 
 # List all running jobs that match the tenant naming pattern
-TENANT_JOBS=$(nomad job status -type=service -json 2>/dev/null | \
-  jq -r '.[] | select(.ID | startswith("virtues-tenant-")) | .ID' 2>/dev/null || echo "")
+TENANT_JOBS=$(nomad job status 2>/dev/null | \
+  awk '/virtues-tenant-/ {print $1}' || echo "")
 
 if [[ -z "$TENANT_JOBS" ]]; then
   echo "[tenants] No tenant jobs found. Nothing to update."

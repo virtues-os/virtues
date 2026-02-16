@@ -529,19 +529,89 @@ fn parse_tollbooth_error(status: u16, body: &str) -> StreamEvent {
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
+/// Build dynamic telos data for the system prompt.
+///
+/// Queries the active telos, current act, and current chapter to provide
+/// the AI with the user's declared direction and current life context.
+/// Returns formatted lines for injection into TELOS_PROMPT, or empty string.
+async fn build_telos_data(pool: &SqlitePool) -> String {
+    let mut parts = Vec::new();
+
+    // Active telos
+    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT title, description FROM wiki_telos WHERE is_active = 1 LIMIT 1"
+    )
+    .fetch_one(pool)
+    .await
+    {
+        let mut line = format!("Active telos: {}", row.0);
+        if let Some(desc) = &row.1 {
+            let truncated: String = desc.chars().take(300).collect();
+            line.push_str(&format!(" — {}", truncated));
+        }
+        parts.push(line);
+    }
+
+    // Current act (open, belonging to active telos)
+    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        r#"SELECT a.title, a.description, a.themes
+         FROM wiki_acts a
+         JOIN wiki_telos t ON a.telos_id = t.id
+         WHERE t.is_active = 1 AND a.end_date IS NULL
+         ORDER BY a.start_date DESC LIMIT 1"#
+    )
+    .fetch_one(pool)
+    .await
+    {
+        let mut line = format!("Current act: \"{}\"", row.0);
+        if let Some(desc) = &row.1 {
+            let truncated: String = desc.chars().take(200).collect();
+            line.push_str(&format!(" — {}", truncated));
+        }
+        if let Some(themes) = &row.2 {
+            line.push_str(&format!(" (themes: {})", themes));
+        }
+        parts.push(line);
+    }
+
+    // Current chapter (most recent in open act)
+    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        r#"SELECT c.title, c.description, c.themes
+         FROM wiki_chapters c
+         JOIN wiki_acts a ON c.act_id = a.id
+         JOIN wiki_telos t ON a.telos_id = t.id
+         WHERE t.is_active = 1 AND a.end_date IS NULL
+         ORDER BY c.start_date DESC LIMIT 1"#
+    )
+    .fetch_one(pool)
+    .await
+    {
+        let mut line = format!("Current chapter: \"{}\"", row.0);
+        if let Some(desc) = &row.1 {
+            let truncated: String = desc.chars().take(200).collect();
+            line.push_str(&format!(" — {}", truncated));
+        }
+        if let Some(themes) = &row.2 {
+            line.push_str(&format!(" (themes: {})", themes));
+        }
+        parts.push(line);
+    }
+
+    parts.join("\n")
+}
+
 /// Build user context block for system prompt enrichment.
 ///
 /// Queries lightweight indexed data (~20ms total) to give the LLM personal context:
 /// - Identity: occupation, employer, home location
-/// - Narrative: active telos + current chapter
 /// - Recent days: last 3 autobiographies (truncated)
 /// - Connected sources: active data source names
-async fn build_user_context(pool: &SqlitePool) -> Option<String> {
+async fn build_user_context(pool: &SqlitePool, user_name: &str) -> Option<String> {
     let mut sections = Vec::new();
 
     // 1. Identity — occupation, employer, home place
-    if let Ok(row) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>, Option<String>)>(
-        r#"SELECT p.occupation, p.employer, wp.name, p.crux
+    if let Ok(row) = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+        r#"SELECT p.occupation, p.employer, wp.name
          FROM app_user_profile p
          LEFT JOIN wiki_places wp ON p.home_place_id = wp.id
          WHERE p.id = '00000000-0000-0000-0000-000000000001'"#
@@ -558,48 +628,12 @@ async fn build_user_context(pool: &SqlitePool) -> Option<String> {
         if let Some(place) = &row.2 {
             parts.push(format!("Lives in {}", place));
         }
-        if let Some(crux) = &row.3 {
-            parts.push(crux.clone());
-        }
         if !parts.is_empty() {
             sections.push(format!("<identity>{}</identity>", parts.join(". ")));
         }
     }
 
-    // 2. Active narrative — telos + current chapter
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT title, description FROM wiki_telos WHERE is_active = 1 LIMIT 1"
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut narrative = format!("Telos: {}", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(200).collect();
-            narrative.push_str(&format!(". {}", &truncated));
-        }
-
-        // Current chapter (most recent by start_date)
-        if let Ok(ch) = sqlx::query_as::<_, (String, Option<String>)>(
-            r#"SELECT c.title, c.themes
-             FROM wiki_chapters c
-             JOIN wiki_acts a ON c.act_id = a.id
-             WHERE a.end_date IS NULL
-             ORDER BY c.start_date DESC LIMIT 1"#
-        )
-        .fetch_one(pool)
-        .await
-        {
-            narrative.push_str(&format!(". Current chapter: \"{}\"", ch.0));
-            if let Some(themes) = &ch.1 {
-                narrative.push_str(&format!(" (themes: {})", themes));
-            }
-        }
-
-        sections.push(format!("<narrative>{}</narrative>", narrative));
-    }
-
-    // 3. Recent days — last 3 autobiographies
+    // 2. Recent days — last 3 autobiographies
     if let Ok(rows) = sqlx::query_as::<_, (String, Option<String>)>(
         r#"SELECT date, autobiography FROM wiki_days
          WHERE autobiography IS NOT NULL AND autobiography != ''
@@ -627,7 +661,7 @@ async fn build_user_context(pool: &SqlitePool) -> Option<String> {
         }
     }
 
-    // 4. Connected sources — active data source names
+    // 3. Connected sources — active data source names
     if let Ok(rows) = sqlx::query_as::<_, (String,)>(
         "SELECT name FROM elt_source_connections WHERE is_active = 1 AND is_internal = 0 ORDER BY name"
     )
@@ -643,16 +677,18 @@ async fn build_user_context(pool: &SqlitePool) -> Option<String> {
     if sections.is_empty() {
         None
     } else {
-        Some(format!("\n\n<user_context>\n{}\n</user_context>", sections.join("\n")))
+        Some(format!(
+            "\n\n<user_context>\nBackground context about {}. Reference when relevant; do not recite unprompted.\n{}\n</user_context>",
+            user_name,
+            sections.join("\n")
+        ))
     }
 }
 
-/// Build system prompt with dynamic active page context and personalization
+/// Build system prompt with dynamic context and personalization.
 ///
-/// Combines the personalized system prompt with any active context (e.g., bound page).
-/// Includes current date/time for temporal awareness in searches and responses.
-/// Loads user name, assistant name, and persona from profiles.
-/// Only includes tool usage instructions when agent_mode has tools available.
+/// Assembles: identity → persona → telos → tools → datetime → user_context → active_page.
+/// Loads user name, assistant name, persona, and telos data from profiles.
 async fn build_system_prompt(
     pool: &SqlitePool,
     active_page: Option<&ActivePageContext>,
@@ -672,8 +708,11 @@ async fn build_system_prompt(
     // Load persona content from database (or fallback to registry default)
     let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
 
-    // Build personalized base prompt (tool instructions only if not chat mode)
-    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode);
+    // Build dynamic telos data (active telos + current act/chapter)
+    let telos_data = build_telos_data(pool).await;
+
+    // Build personalized base prompt (identity → persona → telos → tools)
+    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &telos_data);
 
     // Add current date/time for temporal awareness
     let now = Utc::now();
@@ -706,8 +745,8 @@ async fn build_system_prompt(
         ));
     }
 
-    // Add user context (identity, narrative, recent days, connected sources)
-    if let Some(user_context) = build_user_context(pool).await {
+    // Add user context (identity, recent days, connected sources)
+    if let Some(user_context) = build_user_context(pool, &user_name).await {
         prompt.push_str(&user_context);
     }
 
