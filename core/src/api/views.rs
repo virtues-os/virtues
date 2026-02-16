@@ -878,6 +878,7 @@ fn resolve_app_route(url: &str) -> ViewEntity {
         "/person" => ("People", "ri:user-line"),
         "/place" => ("Places", "ri:map-pin-line"),
         "/org" => ("Organizations", "ri:building-line"),
+        "/narrative-identity" => ("Narrative Identity", "ri:quill-pen-line"),
         "/source" | "/sources" => ("Sources", "ri:plug-line"),
         "/drive" => ("Drive", "ri:folder-line"),
         "/virtues/sql" => ("SQL Viewer", "ri:database-line"),

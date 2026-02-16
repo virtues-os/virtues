@@ -451,6 +451,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/organization/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
+        // Wiki - Narrative Identity
+        .route(
+            "/api/wiki/narrative-identity",
+            get(api::wiki_get_narrative_identity_handler)
+                .put(api::wiki_update_narrative_identity_handler),
+        )
         // Wiki - Telos
         .route(
             "/api/wiki/telos/active",

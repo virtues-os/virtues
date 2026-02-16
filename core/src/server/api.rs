@@ -1742,6 +1742,21 @@ pub async fn wiki_update_organization_handler(
     api_response(crate::api::update_organization(state.db.pool(), id, request).await)
 }
 
+// --- Narrative Identity ---
+
+/// Get narrative identity
+pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::get_narrative_identity(state.db.pool()).await)
+}
+
+/// Update narrative identity
+pub async fn wiki_update_narrative_identity_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::UpdateNarrativeIdentityRequest>,
+) -> Response {
+    api_response(crate::api::update_narrative_identity(state.db.pool(), request).await)
+}
+
 // --- Telos ---
 
 /// Get active telos

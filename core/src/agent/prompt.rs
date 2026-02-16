@@ -27,24 +27,25 @@ pub const BASE_SYSTEM_PROMPT: &str = r#"You are {assistant_name}, {user_name}'s 
 </output_format>
 "#;
 
-/// Telos/axiology framing — the AI's relationship to user self-knowledge.
+/// Narrative identity framing — the AI's relationship to user self-knowledge.
 ///
-/// Always present (persona-independent). Dynamic telos/act/chapter data is
-/// injected by build_system_prompt() in chat.rs via the {telos_data} placeholder.
-pub const TELOS_PROMPT: &str = r#"
-<telos>
-You know {user_name} through the shape of their experiences — patterns across time, attention, and behavior mapped in vector space. You do not simulate a relationship. You observe trajectories.
+/// Always present (persona-independent). The user's narrative identity content
+/// is injected by build_system_prompt() in chat.rs via the {narrative_identity} placeholder.
+pub const NARRATIVE_IDENTITY_PROMPT: &str = r#"
+<narrative_identity>
+{user_name} may have written a narrative identity — who they are, what they believe, what they're working on in themselves, what direction they're facing. This includes things they trust you to know but do not want repeated back: struggles, vices, faith, temperament. Read it. Absorb it. Then mostly forget you read it.
 
-{user_name} may have declared a telos — their articulated vision of their own good. This orients your assistance. You are not neutral; your moral framework is theirs.
+Most conversations don't need this context at all. A math question is a math question. A recipe is a recipe. News is news. Do not manufacture connections between routine queries and someone's narrative identity. The fastest way to lose trust is to psychoanalyze a shopping list.
 
-- Trajectory over snapshot: notice the derivative — direction of change matters more than current position
-- Epistemic humility: say "I notice" not "you are" — hold your models lightly
-- Surface divergence between actions and stated telos to illuminate, not to correct
-- Reference narrative context when it connects naturally; never parrot it unprompted
-- Awareness without resurfacing: know without volunteering unless asked
+When it IS relevant — decisions about priorities, questions about direction, moments of self-doubt, reflections on habits — let it inform your tone and framing naturally. Don't quote it. Don't reference it explicitly. Don't say "based on your narrative identity" or "I notice that aligns with your stated values." Just be a better assistant because you understand them.
 
-{telos_data}
-</telos>
+- Never lecture, nudge, or coach unless asked
+- Never resurface struggles, vices, or private admissions
+- Hold your understanding lightly — you could be wrong about what matters to them right now
+- When in doubt, just answer the question
+
+{narrative_identity}
+</narrative_identity>
 "#;
 
 /// Tool usage instructions (only included when tools are available).
@@ -170,7 +171,7 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
 /// Build the full personalized system prompt.
 ///
 /// Replaces placeholders in BASE_SYSTEM_PROMPT with actual values.
-/// Includes telos framing (always present) and tool instructions (when tools available).
+/// Includes narrative identity framing (always present) and tool instructions (when tools available).
 ///
 /// # Arguments
 /// * `assistant_name` - The assistant's name (e.g., "Ari")
@@ -178,14 +179,14 @@ pub fn get_persona_guidelines(persona: &str, user_name: &str, custom_content: Op
 /// * `persona_id` - The persona identifier
 /// * `persona_content` - Optional custom persona content from database
 /// * `agent_mode` - Agent mode controlling tool availability
-/// * `telos_data` - Dynamic telos/act/chapter data (empty string if none set)
+/// * `narrative_identity` - User's narrative identity content (empty string if none set)
 pub fn build_personalized_prompt(
     assistant_name: &str,
     user_name: &str,
     persona_id: &str,
     persona_content: Option<&str>,
     agent_mode: &str,
-    telos_data: &str,
+    narrative_identity: &str,
 ) -> String {
     let guidelines = get_persona_guidelines(persona_id, user_name, persona_content);
 
@@ -194,11 +195,11 @@ pub fn build_personalized_prompt(
         .replace("{user_name}", user_name)
         .replace("{persona_guidelines}", &guidelines);
 
-    // Telos section — always present (persona-independent)
+    // Narrative identity section — always present (persona-independent)
     prompt.push_str(
-        &TELOS_PROMPT
+        &NARRATIVE_IDENTITY_PROMPT
             .replace("{user_name}", user_name)
-            .replace("{telos_data}", telos_data),
+            .replace("{narrative_identity}", narrative_identity),
     );
 
     // Only include tool usage instructions if tools are available (not in "chat" mode)
@@ -225,9 +226,9 @@ mod tests {
 
         assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
         assert!(prompt.contains("Respond helpfully and accurately to Adam"));
-        // Telos section always present
-        assert!(prompt.contains("<telos>"));
-        assert!(prompt.contains("observe trajectories"));
+        // Narrative identity section always present
+        assert!(prompt.contains("<narrative_identity>"));
+        assert!(prompt.contains("just answer the question"));
         // Agent mode should include tool usage
         assert!(prompt.contains("<tool_usage>"));
         assert!(prompt.contains("Use the think tool before complex"));
@@ -253,8 +254,8 @@ mod tests {
         assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
         // Chat mode should NOT include tool usage
         assert!(!prompt.contains("<tool_usage>"));
-        // But telos should still be present
-        assert!(prompt.contains("<telos>"));
+        // But narrative identity should still be present
+        assert!(prompt.contains("<narrative_identity>"));
     }
 
     #[test]
@@ -291,28 +292,28 @@ mod tests {
     }
 
     #[test]
-    fn test_telos_section_with_data() {
+    fn test_narrative_identity_section_with_data() {
         let prompt = build_personalized_prompt(
             "Ari", "Adam", "standard", None, "agent",
-            "Active telos: Flourishing\nCurrent chapter: \"Building\"",
+            "I am a builder and teacher. I care about craft, clarity, and helping others grow.",
         );
 
-        assert!(prompt.contains("<telos>"));
-        assert!(prompt.contains("Active telos: Flourishing"));
-        assert!(prompt.contains("Current chapter: \"Building\""));
-        // Telos should appear before tool_usage
-        let telos_pos = prompt.find("<telos>").unwrap();
+        assert!(prompt.contains("<narrative_identity>"));
+        assert!(prompt.contains("I am a builder and teacher"));
+        assert!(prompt.contains("helping others grow"));
+        // Narrative identity should appear before tool_usage
+        let ni_pos = prompt.find("<narrative_identity>").unwrap();
         let tool_pos = prompt.find("<tool_usage>").unwrap();
-        assert!(telos_pos < tool_pos, "telos should appear before tool_usage");
+        assert!(ni_pos < tool_pos, "narrative_identity should appear before tool_usage");
     }
 
     #[test]
-    fn test_telos_section_empty_data() {
+    fn test_narrative_identity_section_empty_data() {
         let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "agent", "");
 
-        assert!(prompt.contains("<telos>"));
+        assert!(prompt.contains("<narrative_identity>"));
         // Static framing should still be present even with no data
-        assert!(prompt.contains("Trajectory over snapshot"));
-        assert!(prompt.contains("Epistemic humility"));
+        assert!(prompt.contains("Do not manufacture connections"));
+        assert!(prompt.contains("Never lecture, nudge, or coach unless asked"));
     }
 }

@@ -529,75 +529,22 @@ fn parse_tollbooth_error(status: u16, body: &str) -> StreamEvent {
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
-/// Build dynamic telos data for the system prompt.
+/// Build narrative identity content for the system prompt.
 ///
-/// Queries the active telos, current act, and current chapter to provide
-/// the AI with the user's declared direction and current life context.
-/// Returns formatted lines for injection into TELOS_PROMPT, or empty string.
-async fn build_telos_data(pool: &SqlitePool) -> String {
-    let mut parts = Vec::new();
-
-    // Active telos
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT title, description FROM wiki_telos WHERE is_active = 1 LIMIT 1"
+/// Queries the user's narrative identity (present-orientation self-portrait) to provide
+/// Returns the user's narrative identity content (up to 800 chars), or empty string.
+async fn build_narrative_identity(pool: &SqlitePool) -> String {
+    match sqlx::query_scalar::<_, String>(
+        "SELECT content FROM wiki_narrative_identity LIMIT 1"
     )
     .fetch_one(pool)
     .await
     {
-        let mut line = format!("Active telos: {}", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(300).collect();
-            line.push_str(&format!(" — {}", truncated));
+        Ok(content) if !content.is_empty() => {
+            content.chars().take(800).collect()
         }
-        parts.push(line);
+        _ => String::new(),
     }
-
-    // Current act (open, belonging to active telos)
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
-        r#"SELECT a.title, a.description, a.themes
-         FROM wiki_acts a
-         JOIN wiki_telos t ON a.telos_id = t.id
-         WHERE t.is_active = 1 AND a.end_date IS NULL
-         ORDER BY a.start_date DESC LIMIT 1"#
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut line = format!("Current act: \"{}\"", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(200).collect();
-            line.push_str(&format!(" — {}", truncated));
-        }
-        if let Some(themes) = &row.2 {
-            line.push_str(&format!(" (themes: {})", themes));
-        }
-        parts.push(line);
-    }
-
-    // Current chapter (most recent in open act)
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
-        r#"SELECT c.title, c.description, c.themes
-         FROM wiki_chapters c
-         JOIN wiki_acts a ON c.act_id = a.id
-         JOIN wiki_telos t ON a.telos_id = t.id
-         WHERE t.is_active = 1 AND a.end_date IS NULL
-         ORDER BY c.start_date DESC LIMIT 1"#
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut line = format!("Current chapter: \"{}\"", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(200).collect();
-            line.push_str(&format!(" — {}", truncated));
-        }
-        if let Some(themes) = &row.2 {
-            line.push_str(&format!(" (themes: {})", themes));
-        }
-        parts.push(line);
-    }
-
-    parts.join("\n")
 }
 
 /// Build user context block for system prompt enrichment.
@@ -687,8 +634,8 @@ async fn build_user_context(pool: &SqlitePool, user_name: &str) -> Option<String
 
 /// Build system prompt with dynamic context and personalization.
 ///
-/// Assembles: identity → persona → telos → tools → datetime → user_context → active_page.
-/// Loads user name, assistant name, persona, and telos data from profiles.
+/// Assembles: identity → persona → narrative_identity → tools → datetime → user_context → active_page.
+/// Loads user name, assistant name, persona, and narrative identity from profiles.
 async fn build_system_prompt(
     pool: &SqlitePool,
     active_page: Option<&ActivePageContext>,
@@ -708,11 +655,11 @@ async fn build_system_prompt(
     // Load persona content from database (or fallback to registry default)
     let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
 
-    // Build dynamic telos data (active telos + current act/chapter)
-    let telos_data = build_telos_data(pool).await;
+    // Build narrative identity (user's present-orientation self-portrait)
+    let narrative_identity = build_narrative_identity(pool).await;
 
-    // Build personalized base prompt (identity → persona → telos → tools)
-    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &telos_data);
+    // Build personalized base prompt (identity → persona → narrative_identity → tools)
+    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &narrative_identity);
 
     // Add current date/time for temporal awareness
     let now = Utc::now();

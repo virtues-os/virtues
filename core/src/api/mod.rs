@@ -303,6 +303,11 @@ pub use wiki::{
     delete_temporal_event,
     // Act operations
     get_act,
+    // Narrative identity
+    get_narrative_identity,
+    update_narrative_identity,
+    NarrativeIdentity,
+    UpdateNarrativeIdentityRequest,
     // Telos operations
     get_active_telos,
     // Chapter operations
