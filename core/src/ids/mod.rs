@@ -78,6 +78,7 @@ pub const DRIVE_FILE_PREFIX: &str = "file";
 // Pages Layer (User-authored knowledge documents)
 pub const PAGE_PREFIX: &str = "page";
 pub const PAGE_VERSION_PREFIX: &str = "ver";
+pub const PAGE_SHARE_PREFIX: &str = "share";
 
 // Space Layer (Organization system)
 pub const SPACE_PREFIX: &str = "space";

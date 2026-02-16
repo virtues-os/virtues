@@ -1,0 +1,755 @@
+/**
+ * CodeMirror Content Styles
+ *
+ * Styles for the markdown editor content and live preview decorations.
+ * Styles use the cm- prefix convention.
+ */
+
+/* =============================================================================
+   LIVE PREVIEW — HEADINGS (applied via line decorations)
+   ============================================================================= */
+
+.cm-heading-1 {
+	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
+	font-size: 1.75rem;
+	line-height: 1.3;
+	font-weight: 400;
+	color: var(--color-foreground);
+	margin: 0;
+}
+
+.cm-heading-2 {
+	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
+	font-size: 1.375rem;
+	line-height: 1.35;
+	font-weight: 400;
+	color: var(--color-foreground);
+}
+
+.cm-heading-3 {
+	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
+	font-size: 1.125rem;
+	line-height: 1.4;
+	font-weight: 500;
+	color: var(--color-foreground);
+}
+
+.cm-heading-4 {
+	font-size: 1rem;
+	line-height: 1.5;
+	font-weight: 500;
+	color: var(--color-foreground);
+}
+
+.cm-heading-5 {
+	font-size: 0.9375rem;
+	line-height: 1.5;
+	font-weight: 600;
+	color: var(--color-foreground);
+}
+
+.cm-heading-6 {
+	font-size: 0.875rem;
+	line-height: 1.5;
+	font-weight: 600;
+	color: var(--color-foreground);
+}
+
+/* =============================================================================
+   LIVE PREVIEW — INLINE FORMATTING (applied via mark decorations)
+   ============================================================================= */
+
+.cm-strong {
+	font-weight: 700;
+}
+
+.cm-emphasis {
+	font-style: italic;
+}
+
+.cm-strikethrough {
+	text-decoration: line-through;
+	color: var(--color-foreground-subtle);
+}
+
+.cm-underline {
+	text-decoration: underline;
+}
+
+.cm-inline-code {
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.875em;
+	background-color: var(--color-surface-elevated);
+	padding: 0.125rem 0.375rem;
+	border-radius: 0.25rem;
+	border: 1px solid var(--color-border-subtle);
+}
+
+/* Dim markdown syntax markers (##, **, *, etc.) */
+.cm-formatting-mark {
+	color: var(--color-foreground-subtle);
+	opacity: 0.4;
+	font-size: 0.9em;
+}
+
+/* Ordered list markers (1., 2.) — subtler than content but still readable */
+.cm-list-marker {
+	color: var(--color-foreground-muted);
+	font-weight: 500;
+}
+
+/* Bullet dot (replaces -, *, + on non-active lines) */
+.cm-bullet-dot {
+	color: var(--color-foreground-muted);
+}
+
+/* List lines — consistent horizontal padding for bullet/ordered lists */
+.cm-list-line {
+	padding-left: 1.25rem !important;
+	padding-right: 0.5rem !important;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — ENTITY LINKS (pill chips with type-specific icon)
+   ============================================================================= */
+
+.cm-entity-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	padding: 1px 7px 1px 5px;
+	margin: 0 1px;
+	border-radius: 100px;
+	background-color: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	color: var(--color-primary);
+	text-decoration: none;
+	cursor: pointer;
+	font-size: 0.8125rem;
+	font-weight: normal;
+	transition: background-color 0.15s ease;
+	border: none;
+	font-family: inherit;
+	user-select: none;
+	vertical-align: baseline;
+}
+
+.cm-entity-link:hover {
+	background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+	text-decoration: none;
+}
+
+.cm-entity-icon {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	opacity: 0.8;
+}
+
+.cm-entity-text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — EXTERNAL LINKS (favicon + text)
+   ============================================================================= */
+
+.cm-external-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--color-primary);
+	text-decoration: none;
+	cursor: pointer;
+	font-size: inherit;
+	vertical-align: baseline;
+}
+
+.cm-external-link:hover {
+	text-decoration: underline;
+}
+
+.cm-external-icon {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+	color: var(--color-foreground-muted);
+}
+
+.cm-external-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.cm-external-favicon {
+	display: block;
+	width: 12px;
+	height: 12px;
+	border-radius: 2px;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — INTERNAL LINKS (simple colored text)
+   ============================================================================= */
+
+.cm-internal-link {
+	color: var(--color-primary);
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.cm-internal-link:hover {
+	text-decoration: underline;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — LINK TEXT (shared)
+   ============================================================================= */
+
+.cm-link-text {
+	color: inherit;
+	text-decoration: inherit;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — IMAGES
+   ============================================================================= */
+
+.cm-image-wrapper {
+	display: block;
+	margin: 0.5rem 0;
+}
+
+.cm-image {
+	max-width: 100%;
+	height: auto;
+	border-radius: 0.375rem;
+}
+
+.cm-image-error {
+	color: var(--color-foreground-subtle);
+	font-style: italic;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — AUDIO PLAYER
+   ============================================================================= */
+
+.cm-audio-wrapper {
+	display: block;
+	margin: 0.5rem 0;
+	padding: 0.75rem;
+	background-color: var(--color-surface);
+	border-radius: 0.5rem;
+	border: 1px solid var(--color-border);
+}
+
+.cm-audio-header {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-bottom: 0.5rem;
+	color: var(--color-foreground-muted);
+}
+
+.cm-audio-name {
+	font-size: 0.875rem;
+	font-weight: 500;
+	color: var(--color-foreground);
+}
+
+.cm-audio-player {
+	width: 100%;
+	height: 32px;
+	outline: none;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — VIDEO PLAYER
+   ============================================================================= */
+
+.cm-video-wrapper {
+	display: block;
+	margin: 0.5rem 0;
+}
+
+.cm-video-player {
+	width: 100%;
+	max-width: 100%;
+	height: auto;
+	border-radius: 0.5rem;
+	background-color: var(--color-surface);
+}
+
+/* =============================================================================
+   LIVE PREVIEW — FILE CARD
+   ============================================================================= */
+
+.cm-file-card {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.625rem;
+	padding: 0.5rem 0.75rem;
+	margin: 0.5rem 0;
+	background-color: var(--color-surface);
+	border: 1px solid var(--color-border);
+	border-radius: 0.5rem;
+	color: var(--color-foreground);
+	text-decoration: none;
+	cursor: pointer;
+	transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.cm-file-card:hover {
+	background-color: var(--color-surface-elevated);
+	border-color: var(--color-primary);
+	text-decoration: none;
+}
+
+.cm-file-card-icon {
+	color: var(--color-foreground-muted);
+	flex-shrink: 0;
+}
+
+.cm-file-card-info {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	min-width: 0;
+}
+
+.cm-file-card-name {
+	font-size: 0.875rem;
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.cm-file-card-ext {
+	font-size: 0.7rem;
+	font-weight: 600;
+	color: var(--color-foreground-subtle);
+	letter-spacing: 0.025em;
+	flex-shrink: 0;
+}
+
+.cm-file-card-download {
+	color: var(--color-foreground-subtle);
+	flex-shrink: 0;
+	margin-left: auto;
+}
+
+.cm-file-card:hover .cm-file-card-download {
+	color: var(--color-primary);
+}
+
+/* =============================================================================
+   LIVE PREVIEW — CHECKBOX
+   ============================================================================= */
+
+.cm-checkbox {
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	border: 1.5px solid var(--color-border);
+	border-radius: 3px;
+	background-color: transparent;
+	cursor: pointer;
+	vertical-align: middle;
+	margin-right: 6px;
+	position: relative;
+	transition: all 0.15s ease;
+}
+
+.cm-checkbox:hover {
+	border-color: var(--color-primary);
+}
+
+.cm-checkbox:checked {
+	background-color: var(--color-primary);
+	border-color: var(--color-primary);
+}
+
+.cm-checkbox:checked::after {
+	content: '';
+	position: absolute;
+	left: 4px;
+	top: 1px;
+	width: 4px;
+	height: 8px;
+	border: solid white;
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+
+/* =============================================================================
+   LIVE PREVIEW — HORIZONTAL RULE
+   ============================================================================= */
+
+.cm-hr-widget {
+	border: none;
+	border-top: 1px solid var(--color-border);
+	margin: 1rem 0;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — BLOCKQUOTE
+   ============================================================================= */
+
+.cm-blockquote-line {
+	border-left: 3px solid var(--color-border);
+	padding-left: 1.25rem !important;
+	padding-right: 0.5rem !important;
+	color: var(--color-foreground-muted);
+	font-style: italic;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — CODE BLOCK
+   ============================================================================= */
+
+/* Header widget (block widget, rendered above the opening fence line) */
+.cm-code-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.375rem 1rem;
+	background: var(--color-surface-elevated);
+	border: 1px solid var(--color-border-subtle);
+	border-bottom: none;
+	border-radius: 0.5rem 0.5rem 0 0;
+	margin-top: 0.5rem;
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.75rem;
+	color: var(--color-foreground-muted);
+	user-select: none;
+}
+
+.cm-code-language {
+	color: var(--color-foreground-muted);
+}
+
+.cm-code-copy {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: transparent;
+	border: none;
+	color: var(--color-foreground-muted);
+	cursor: pointer;
+	padding: 2px;
+	border-radius: 4px;
+	opacity: 0;
+	transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.cm-code-header:hover .cm-code-copy {
+	opacity: 1;
+}
+
+.cm-code-copy:hover {
+	background: var(--color-surface-overlay);
+	color: var(--color-foreground);
+}
+
+/* Code block content lines (background container) */
+.cm-codeblock-line {
+	background-color: var(--color-surface-elevated);
+	font-family: var(--font-mono, ui-monospace, monospace);
+	font-size: 0.875rem;
+	padding-left: 1rem !important;
+	padding-right: 1rem !important;
+	padding-top: 0.0625rem;
+	padding-bottom: 0.0625rem;
+	border-left: 1px solid var(--color-border-subtle);
+	border-right: 1px solid var(--color-border-subtle);
+}
+
+.cm-codeblock-first {
+	padding-top: 0.25rem !important;
+}
+
+.cm-codeblock-last {
+	padding-bottom: 0.5rem !important;
+	border-bottom: 1px solid var(--color-border-subtle);
+	border-radius: 0 0 0.5rem 0.5rem;
+	margin-bottom: 0.5rem;
+}
+
+/* =============================================================================
+   LIVE PREVIEW — TABLE
+   ============================================================================= */
+
+/* --- Wrapper (positions control overlays) --- */
+.cm-table-wrapper {
+	position: relative;
+	margin: 0.5rem 0;
+}
+
+/* --- Table --- */
+.cm-table-widget {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	font-size: 0.875rem;
+	border: 1px solid var(--color-border);
+	border-radius: 0.5rem;
+	overflow: hidden;
+}
+
+.cm-table-widget th,
+.cm-table-widget td {
+	padding: 0.375rem 0.75rem;
+	border-bottom: 1px solid var(--color-border);
+	border-right: 1px solid var(--color-border);
+}
+
+.cm-table-widget th:last-child,
+.cm-table-widget td:last-child {
+	border-right: none;
+}
+
+.cm-table-widget tbody tr:last-child td {
+	border-bottom: none;
+}
+
+.cm-table-widget th {
+	background-color: var(--color-surface-elevated);
+	font-family: var(--font-serif, Georgia, 'Times New Roman', serif);
+	font-weight: 600;
+	font-size: 0.8125rem;
+	color: var(--color-foreground);
+}
+
+.cm-table-widget td {
+	color: var(--color-foreground);
+}
+
+.cm-table-widget tbody tr:hover {
+	background-color: var(--color-surface-elevated);
+}
+
+.cm-table-widget [contenteditable] {
+	cursor: text;
+	outline: none;
+}
+
+.cm-table-widget [contenteditable]:focus {
+	outline: 2px solid var(--color-primary);
+	outline-offset: -2px;
+	border-radius: 2px;
+}
+
+/* --- Control containers (hidden until wrapper hover) --- */
+.cm-table-col-controls,
+.cm-table-row-controls {
+	position: absolute;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 0.15s ease;
+	z-index: 10;
+}
+
+.cm-table-wrapper:hover .cm-table-col-controls,
+.cm-table-wrapper:hover .cm-table-row-controls {
+	pointer-events: auto;
+	opacity: 1;
+}
+
+.cm-table-col-controls {
+	top: -20px;
+	left: 0;
+	right: 0;
+	height: 20px;
+}
+
+.cm-table-row-controls {
+	top: 0;
+	left: -24px;
+	width: 24px;
+	bottom: 0;
+}
+
+/* --- Drag handles --- */
+.cm-table-col-drag-handle,
+.cm-table-row-drag-handle {
+	position: absolute;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: grab;
+	user-select: none;
+	color: var(--color-foreground-subtle, #999);
+	font-size: 10px;
+	letter-spacing: -2px;
+	border-radius: 3px;
+	transition: background-color 0.1s ease, color 0.1s ease;
+}
+
+.cm-table-col-drag-handle {
+	top: 0;
+	height: 100%;
+}
+
+.cm-table-col-drag-handle span {
+	transform: rotate(90deg);
+	display: inline-block;
+}
+
+.cm-table-row-drag-handle {
+	left: 0;
+	width: 100%;
+}
+
+.cm-table-col-drag-handle:hover,
+.cm-table-row-drag-handle:hover {
+	background-color: var(--color-surface-elevated);
+	color: var(--color-foreground);
+}
+
+.cm-table-col-drag-handle:active,
+.cm-table-row-drag-handle:active {
+	cursor: grabbing;
+}
+
+/* --- Add strips (bottom = add row, right = add column) --- */
+.cm-table-add-row-strip,
+.cm-table-add-col-strip {
+	position: absolute;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 0.15s ease, background-color 0.1s ease;
+	color: var(--color-foreground-subtle, #999);
+	font-size: 14px;
+	font-weight: 600;
+	z-index: 2;
+	border-radius: 0.375rem;
+}
+
+.cm-table-add-row-strip::after,
+.cm-table-add-col-strip::after {
+	content: '+';
+}
+
+.cm-table-add-row-strip {
+	bottom: -20px;
+	left: 0;
+	right: 0;
+	height: 20px;
+}
+
+.cm-table-add-col-strip {
+	top: 0;
+	right: -20px;
+	bottom: 0;
+	width: 20px;
+}
+
+.cm-table-wrapper:hover .cm-table-add-row-strip,
+.cm-table-wrapper:hover .cm-table-add-col-strip {
+	opacity: 0.6;
+}
+
+.cm-table-add-row-strip:hover,
+.cm-table-add-col-strip:hover {
+	opacity: 1 !important;
+	background-color: var(--color-surface-elevated);
+	color: var(--color-foreground);
+}
+
+/* --- Drag visual feedback --- */
+.cm-row-dragging {
+	opacity: 0.5;
+	background-color: var(--color-surface-elevated) !important;
+}
+
+.cm-row-drop-target {
+	box-shadow: 0 -2px 0 0 var(--color-primary) inset;
+}
+
+.cm-col-dragging {
+	opacity: 0.5;
+	background-color: var(--color-surface-elevated) !important;
+}
+
+.cm-col-drop-target {
+	box-shadow: -2px 0 0 0 var(--color-primary) inset;
+}
+
+/* --- Cell range selection --- */
+.cm-cell-selected {
+	background-color: color-mix(in srgb, var(--color-primary) 15%, transparent) !important;
+}
+
+/* --- Delete preview highlight --- */
+.cm-delete-preview {
+	background-color: color-mix(in srgb, var(--color-danger, #e53e3e) 12%, transparent) !important;
+	transition: background-color 0.1s ease;
+}
+
+/* =============================================================================
+   ACTIVE TRIGGERS (@ mentions, / commands)
+   ============================================================================= */
+
+.cm-mention-active {
+	background-color: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	border-radius: 2px;
+}
+
+.cm-slash-command-active {
+	background-color: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	border-radius: 2px;
+}
+
+/* =============================================================================
+   MEDIA UPLOAD PLACEHOLDERS
+   ============================================================================= */
+
+.cm-upload-placeholder {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+	padding: 0.5rem 1rem;
+	margin: 0.25rem 0;
+	border-radius: 6px;
+	background-color: var(--color-surface-elevated);
+	border: 1px solid var(--color-border-subtle);
+	font-size: 0.875rem;
+	color: var(--color-foreground-muted);
+}
+
+.cm-upload-spinner {
+	width: 16px;
+	height: 16px;
+	border: 2px solid var(--color-border-subtle);
+	border-top-color: var(--color-primary);
+	border-radius: 50%;
+	animation: cm-upload-spin 0.8s linear infinite;
+}
+
+@keyframes cm-upload-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* =============================================================================
+   DRAG HANDLES / LINE NUMBERS GUTTER
+   ============================================================================= */
+
+.cm-lineNumbers .cm-gutterElement {
+	cursor: grab;
+	user-select: none;
+}
+
+.cm-lineNumbers .cm-gutterElement:hover {
+	color: var(--color-foreground);
+	background-color: var(--color-surface-elevated);
+}

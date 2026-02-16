@@ -4,7 +4,7 @@
  * Single source of truth for entity badge rendering across:
  * - EntityChip.svelte (Svelte context)
  * - ChatInput.svelte (contenteditable)
- * - ProseMirror EntityLinkView (NodeView)
+ * - CodeMirror EntityLinkWidget (decoration)
  */
 
 /**

@@ -150,6 +150,7 @@ pub struct WikiDay {
     pub context_vector: Option<String>,
     pub chaos_score: Option<f64>,
     pub entropy_calibration_days: Option<i32>,
+    pub snapshot: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -244,6 +245,7 @@ pub struct UpdateWikiDayRequest {
     pub chaos_score: Option<f64>,
     pub entropy_calibration_days: Option<i32>,
     pub start_timezone: Option<String>,
+    pub snapshot: Option<String>,
 }
 
 // ============================================================================
@@ -973,7 +975,7 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
         SELECT
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
-            entropy_calibration_days, created_at, updated_at
+            entropy_calibration_days, snapshot, created_at, updated_at
         FROM wiki_days
         WHERE date = $1
         "#,
@@ -996,7 +998,7 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
         RETURNING
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
-            entropy_calibration_days, created_at, updated_at
+            entropy_calibration_days, snapshot, created_at, updated_at
         "#,
     )
     .bind(&day_id)
@@ -1040,6 +1042,7 @@ fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<W
         context_vector: row.try_get("context_vector").ok().flatten(),
         chaos_score: chaos_score_raw,
         entropy_calibration_days: row.try_get("entropy_calibration_days").ok().flatten(),
+        snapshot: row.try_get("snapshot").ok().flatten(),
         created_at: DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1079,6 +1082,7 @@ pub async fn update_day(
             chaos_score = COALESCE($7, chaos_score),
             entropy_calibration_days = COALESCE($8, entropy_calibration_days),
             start_timezone = COALESCE($9, start_timezone),
+            snapshot = COALESCE($10, snapshot),
             updated_at = datetime('now')
         WHERE id = $1
         "#,
@@ -1092,6 +1096,7 @@ pub async fn update_day(
     .bind(&req.chaos_score)
     .bind(&req.entropy_calibration_days)
     .bind(&req.start_timezone)
+    .bind(&req.snapshot)
     .execute(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update day: {}", e)))?;
@@ -1115,7 +1120,7 @@ pub async fn list_days(
         SELECT
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
-            entropy_calibration_days, created_at, updated_at
+            entropy_calibration_days, snapshot, created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
         ORDER BY date DESC
@@ -1437,6 +1442,9 @@ pub struct TemporalEvent {
     pub is_transit: Option<bool>,
     pub is_user_added: Option<bool>,
     pub is_user_edited: Option<bool>,
+    pub w6h_activation: Option<Vec<f32>>,
+    pub entropy: Option<f64>,
+    pub w6h_entropy: Option<f64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1472,56 +1480,68 @@ pub struct UpdateTemporalEventRequest {
 
 /// Get events for a day
 pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<TemporalEvent>> {
-    let day_id_str = day_id;
+    use sqlx::Row;
 
-    let rows = sqlx::query!(
+    let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
         r#"
         SELECT
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
-            created_at, updated_at
+            w6h_activation, entropy, w6h_entropy, created_at, updated_at
         FROM wiki_events
         WHERE day_id = $1
         ORDER BY start_time ASC
         "#,
-        day_id_str
     )
+    .bind(&day_id)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get day events: {}", e)))?;
 
     Ok(rows
-        .into_iter()
+        .iter()
         .filter_map(|row| {
-            let id = row.id.clone()?;
-            let day_id = row.day_id.clone();
+            let id: String = row.try_get("id").ok()?;
+            let day_id: String = row.try_get("day_id").ok()?;
+            let start_time: String = row.try_get("start_time").ok()?;
+            let end_time: String = row.try_get("end_time").ok()?;
+            let created_at: String = row.try_get("created_at").ok()?;
+            let updated_at: String = row.try_get("updated_at").ok()?;
+
             Some(TemporalEvent {
                 id,
                 day_id,
-                start_time: DateTime::parse_from_rfc3339(&row.start_time)
+                start_time: DateTime::parse_from_rfc3339(&start_time)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
-                end_time: DateTime::parse_from_rfc3339(&row.end_time)
+                end_time: DateTime::parse_from_rfc3339(&end_time)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
-                auto_label: row.auto_label.clone(),
-                auto_location: row.auto_location.clone(),
-                user_label: row.user_label.clone(),
-                user_location: row.user_location.clone(),
-                user_notes: row.user_notes.clone(),
+                auto_label: row.try_get::<Option<String>, _>("auto_label").ok().flatten(),
+                auto_location: row.try_get::<Option<String>, _>("auto_location").ok().flatten(),
+                user_label: row.try_get::<Option<String>, _>("user_label").ok().flatten(),
+                user_location: row.try_get::<Option<String>, _>("user_location").ok().flatten(),
+                user_notes: row.try_get::<Option<String>, _>("user_notes").ok().flatten(),
                 source_ontologies: row
-                    .source_ontologies
-                    .as_ref()
-                    .and_then(|s| serde_json::from_str(s).ok()),
-                is_unknown: row.is_unknown.map(|v| v != 0),
-                is_transit: row.is_transit.map(|v| v != 0),
-                is_user_added: row.is_user_added.map(|v| v != 0),
-                is_user_edited: row.is_user_edited.map(|v| v != 0),
-                created_at: DateTime::parse_from_rfc3339(&row.created_at)
+                    .try_get::<Option<String>, _>("source_ontologies")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                is_unknown: row.try_get::<Option<i32>, _>("is_unknown").ok().flatten().map(|v| v != 0),
+                is_transit: row.try_get::<Option<i32>, _>("is_transit").ok().flatten().map(|v| v != 0),
+                is_user_added: row.try_get::<Option<i32>, _>("is_user_added").ok().flatten().map(|v| v != 0),
+                is_user_edited: row.try_get::<Option<i32>, _>("is_user_edited").ok().flatten().map(|v| v != 0),
+                w6h_activation: row.try_get::<Option<String>, _>("w6h_activation")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                entropy: row.try_get::<Option<f64>, _>("entropy").ok().flatten(),
+                w6h_entropy: row.try_get::<Option<f64>, _>("w6h_entropy").ok().flatten(),
+                created_at: DateTime::parse_from_rfc3339(&created_at)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
-                updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
+                updated_at: DateTime::parse_from_rfc3339(&updated_at)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
             })
@@ -1603,6 +1623,9 @@ pub async fn create_temporal_event(
         is_transit: row.is_transit.map(|v| v != 0),
         is_user_added: row.is_user_added.map(|v| v != 0),
         is_user_edited: row.is_user_edited.map(|v| v != 0),
+        w6h_activation: None, // Computed separately after creation
+        entropy: None,       // Computed separately after creation
+        w6h_entropy: None,   // Computed separately after creation
         created_at: DateTime::parse_from_rfc3339(&row.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1674,6 +1697,9 @@ pub async fn update_temporal_event(
         is_transit: row.is_transit.map(|v| v != 0),
         is_user_added: row.is_user_added.map(|v| v != 0),
         is_user_edited: row.is_user_edited.map(|v| v != 0),
+        w6h_activation: None, // Not modified by user edit
+        entropy: None,       // Not modified by user edit
+        w6h_entropy: None,   // Not modified by user edit
         created_at: DateTime::parse_from_rfc3339(&row.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1731,12 +1757,16 @@ pub struct DaySource {
     pub preview: Option<String>,
 }
 
-/// Get all ontology data sources for a specific date
+/// Get all ontology data sources for a specific date (registry-driven).
+///
+/// Iterates over all registered ontologies that have a `DaySourceConfig` and builds
+/// dynamic SQL queries from the config. No arbitrary LIMITs — all data included
+/// with a sanity check for overflow.
 pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<DaySource>> {
-    // Calculate UTC bounds for the date
-    // We expand the window to cover any timezone: from midnight UTC to noon next day UTC
-    // This ensures we catch events in timezones up to UTC-12 and UTC+14
-    // Example: For 2025-12-17, query from 2025-12-17 00:00 UTC to 2025-12-18 12:00 UTC
+    use sqlx::Row;
+    use virtues_registry::ontologies::registered_ontologies;
+
+    // UTC bounds: midnight to noon next day (covers all timezones)
     let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end_of_day = date
         .succ_opt()
@@ -1744,406 +1774,123 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
         .and_hms_opt(12, 0, 0)
         .unwrap()
         .and_utc();
-
     let start_str = start_of_day.to_rfc3339();
     let end_str = end_of_day.to_rfc3339();
+    let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut sources: Vec<DaySource> = Vec::new();
 
-    // Calendar events
-    let calendar_rows = sqlx::query!(
-        r#"
-        SELECT id, start_time, title
-        FROM data_calendar_event
-        WHERE start_time >= $1 AND start_time <= $2
-        ORDER BY start_time ASC
-        "#,
-        start_str,
-        end_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get calendar sources: {}", e)))?;
+    for ont in registered_ontologies() {
+        let cfg = match &ont.day_source {
+            Some(c) => c,
+            None => continue,
+        };
 
-    for row in calendar_rows {
-        if let Some(id_str) = row.id.as_ref() {
-            if let Ok(ts) = DateTime::parse_from_rfc3339(&row.start_time) {
-                sources.push(DaySource {
-                    source_type: "calendar".to_string(),
-                    id: id_str.clone(),
-                    timestamp: ts.with_timezone(&Utc),
-                    label: row.title.clone(),
-                    preview: None,
-                });
+        // Build SELECT columns
+        let source_type_col = cfg
+            .source_type_sql
+            .map(|sql| format!("{} as source_type_dyn", sql))
+            .unwrap_or_else(|| format!("'{}' as source_type_dyn", cfg.source_type));
+
+        let query = if cfg.use_date_filter {
+            format!(
+                "SELECT {id} as src_id, {ts} as src_ts, {label} as src_label, {preview} as src_preview, {st} \
+                 FROM {table} t \
+                 WHERE date(t.{ts_col}) = $1 \
+                 {extra} \
+                 ORDER BY t.{ts_col} ASC",
+                id = cfg.id_sql,
+                ts = ont.timestamp_column,
+                label = cfg.label_sql,
+                preview = cfg.preview_sql,
+                st = source_type_col,
+                table = ont.table_name,
+                ts_col = ont.timestamp_column,
+                extra = cfg.extra_where.unwrap_or(""),
+            )
+        } else {
+            format!(
+                "SELECT {id} as src_id, {ts} as src_ts, {label} as src_label, {preview} as src_preview, {st} \
+                 FROM {table} t \
+                 WHERE t.{ts_col} >= $1 AND t.{ts_col} <= $2 \
+                 {extra} \
+                 ORDER BY t.{ts_col} ASC",
+                id = cfg.id_sql,
+                ts = ont.timestamp_column,
+                label = cfg.label_sql,
+                preview = cfg.preview_sql,
+                st = source_type_col,
+                table = ont.table_name,
+                ts_col = ont.timestamp_column,
+                extra = cfg.extra_where.unwrap_or(""),
+            )
+        };
+
+        let rows = if cfg.use_date_filter {
+            sqlx::query(&query)
+                .bind(&date_str)
+                .fetch_all(pool)
+                .await
+        } else {
+            sqlx::query(&query)
+                .bind(&start_str)
+                .bind(&end_str)
+                .fetch_all(pool)
+                .await
+        };
+
+        let rows = match rows {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(ontology = ont.name, error = %e, "Failed to query day sources");
+                continue;
             }
+        };
+
+        // Sanity check
+        if rows.len() > 5000 {
+            tracing::warn!(
+                ontology = ont.name,
+                count = rows.len(),
+                "Unusually large source count for single day"
+            );
         }
-    }
 
-    // Emails
-    let email_rows = sqlx::query!(
-        r#"
-        SELECT id, timestamp, subject, from_email, direction
-        FROM data_communication_email
-        WHERE timestamp >= $1 AND timestamp <= $2
-        ORDER BY timestamp ASC
-        "#,
-        start_str,
-        end_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get email sources: {}", e)))?;
-
-    for row in email_rows {
-        if let Some(id_str) = row.id.as_ref() {
-            if let Ok(ts) = DateTime::parse_from_rfc3339(&row.timestamp) {
-                let direction_prefix = if row.direction == "sent" {
-                    "To"
-                } else {
-                    "From"
-                };
-                let label = row
-                    .subject
-                    .clone()
-                    .unwrap_or_else(|| "(no subject)".to_string());
-                sources.push(DaySource {
-                    source_type: "email".to_string(),
-                    id: id_str.clone(),
-                    timestamp: ts.with_timezone(&Utc),
-                    label,
-                    preview: Some(format!("{}: {}", direction_prefix, row.from_email)),
-                });
-            }
-        }
-    }
-
-    // Location visits (id may be stored as blob, use hex() to read as text)
-    let visit_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
-        r#"
-        SELECT hex(id) as id, arrival_time, place_name, duration_minutes
-        FROM data_location_visit
-        WHERE arrival_time >= $1 AND arrival_time <= $2
-        ORDER BY arrival_time ASC
-        "#,
-    )
-    .bind(&start_str)
-    .bind(&end_str)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get location visit sources: {}", e)))?;
-
-    for row in &visit_rows {
-        use sqlx::Row;
-        let id: Option<String> = row.try_get("id").ok();
-        let arrival_time: Option<String> = row.try_get("arrival_time").ok();
-        if let (Some(id_str), Some(at)) = (id, arrival_time) {
-            if let Ok(ts) = DateTime::parse_from_rfc3339(&at) {
-                let label: Option<String> = row.try_get("place_name").ok().flatten();
-                let duration: Option<i32> = row.try_get("duration_minutes").ok().flatten();
-                let preview = duration.map(|d| format!("{} min", d));
-                sources.push(DaySource {
-                    source_type: "location".to_string(),
-                    id: id_str,
-                    timestamp: ts.with_timezone(&Utc),
-                    label: label.unwrap_or_else(|| "Unknown location".to_string()),
-                    preview,
-                });
-            }
-        }
-    }
-
-    // Workouts
-    let workout_rows = sqlx::query!(
-        r#"
-        SELECT id, start_time, workout_type, duration_minutes
-        FROM data_health_workout
-        WHERE start_time >= $1 AND start_time <= $2
-        ORDER BY start_time ASC
-        "#,
-        start_str,
-        end_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get workout sources: {}", e)))?;
-
-    for row in workout_rows {
-        if let (Some(id_str), Ok(ts)) = (
-            row.id.as_ref(),
-            DateTime::parse_from_rfc3339(&row.start_time),
-        ) {
-            let preview = row.duration_minutes.map(|d| format!("{} min", d));
-            sources.push(DaySource {
-                source_type: "workout".to_string(),
-                id: id_str.clone(),
-                timestamp: ts.with_timezone(&Utc),
-                label: row.workout_type.clone(),
-                preview,
-            });
-        }
-    }
-
-    // Sleep (check if end_time falls on this date)
-    let sleep_rows = sqlx::query!(
-        r#"
-        SELECT id, end_time, duration_minutes, sleep_quality_score
-        FROM data_health_sleep
-        WHERE end_time >= $1 AND end_time <= $2
-        ORDER BY end_time ASC
-        "#,
-        start_str,
-        end_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get sleep sources: {}", e)))?;
-
-    for row in sleep_rows {
-        if let (Some(id_str), Ok(ts)) =
-            (row.id.as_ref(), DateTime::parse_from_rfc3339(&row.end_time))
-        {
-            let duration_str = row.duration_minutes.map(|d| {
-                let hours = d / 60;
-                let mins = d % 60;
-                format!("{}h {}m", hours, mins)
-            });
-            let preview = match (duration_str, row.sleep_quality_score) {
-                (Some(d), Some(q)) => Some(format!("{}, quality: {:.0}", d, q)),
-                (Some(d), None) => Some(d),
-                _ => None,
+        for row in &rows {
+            let id: String = match row.try_get("src_id") {
+                Ok(v) => v,
+                Err(_) => continue,
             };
-            sources.push(DaySource {
-                source_type: "sleep".to_string(),
-                id: id_str.clone(),
-                timestamp: ts.with_timezone(&Utc),
-                label: "Sleep".to_string(),
-                preview,
-            });
-        }
-    }
+            let ts_str: String = match row.try_get("src_ts") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let label: String = row.try_get("src_label").unwrap_or_else(|_| ont.display_name.to_string());
+            let preview: Option<String> = row.try_get("src_preview").ok().flatten();
+            let source_type: String = row.try_get("source_type_dyn").unwrap_or_else(|_| cfg.source_type.to_string());
 
-    // Financial transactions
-    let transaction_rows = sqlx::query!(
-        r#"
-        SELECT id, timestamp, merchant_name, amount, description
-        FROM data_financial_transaction
-        WHERE timestamp >= $1 AND timestamp <= $2
-        ORDER BY timestamp ASC
-        "#,
-        start_str,
-        end_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get transaction sources: {}", e)))?;
-
-    for row in transaction_rows {
-        if let (Some(id_str), Ok(ts)) = (
-            row.id.as_ref(),
-            DateTime::parse_from_rfc3339(&row.timestamp),
-        ) {
-            let label = row
-                .merchant_name
-                .clone()
-                .or(row.description.clone())
-                .unwrap_or_else(|| "Transaction".to_string());
-            let preview = Some(format!("${:.2}", row.amount as f64 / 100.0));
-            sources.push(DaySource {
-                source_type: "transaction".to_string(),
-                id: id_str.clone(),
-                timestamp: ts.with_timezone(&Utc),
-                label,
-                preview,
-            });
-        }
-    }
-
-    // Messages
-    let message_rows = sqlx::query!(
-        r#"
-        SELECT id, timestamp, channel, from_name, body
-        FROM data_communication_message
-        WHERE timestamp >= $1 AND timestamp <= $2
-        ORDER BY timestamp ASC
-        LIMIT 50
-        "#,
-        start_str,
-        end_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get message sources: {}", e)))?;
-
-    for row in message_rows {
-        if let (Some(id_str), Ok(ts)) = (
-            row.id.as_ref(),
-            DateTime::parse_from_rfc3339(&row.timestamp),
-        ) {
-            let label = row
-                .from_name
-                .clone()
-                .unwrap_or_else(|| "Message".to_string());
-            let preview = row.body.as_ref().map(|c| {
-                let truncated: String = c.chars().take(50).collect();
-                if truncated.len() < c.len() {
-                    format!("{truncated}...")
-                } else {
-                    truncated
-                }
-            });
-            sources.push(DaySource {
-                source_type: format!("message:{}", row.channel),
-                id: id_str.clone(),
-                timestamp: ts.with_timezone(&Utc),
-                label,
-                preview,
-            });
-        }
-    }
-
-    // Speech transcriptions (only show meaningful ones with confidence > 0.1)
-    let transcription_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
-        r#"
-        SELECT id, start_time, title, text, duration_seconds
-        FROM data_communication_transcription
-        WHERE start_time >= $1 AND start_time <= $2
-          AND (confidence IS NULL OR confidence > 0.1)
-        ORDER BY start_time ASC
-        LIMIT 50
-        "#,
-    )
-    .bind(&start_str)
-    .bind(&end_str)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get transcription sources: {}", e)))?;
-
-    for row in &transcription_rows {
-        use sqlx::Row;
-        let id: String = match row.try_get("id") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let start_time: String = match row.try_get("start_time") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let title: Option<String> = row.try_get("title").ok();
-        let text: Option<String> = row.try_get("text").ok();
-
-        if let Ok(ts) = DateTime::parse_from_rfc3339(&start_time) {
-            let label = title.unwrap_or_else(|| "Voice Recording".to_string());
-            let preview = text.as_ref().map(|t| {
-                let truncated: String = t.chars().take(60).collect();
-                if truncated.len() < t.len() {
-                    format!("{truncated}...")
-                } else {
-                    truncated
-                }
-            });
-            sources.push(DaySource {
-                source_type: "transcription".to_string(),
-                id,
-                timestamp: ts.with_timezone(&Utc),
-                label,
-                preview,
-            });
-        }
-    }
-
-    // Chats (created on this day)
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let chat_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
-        r#"
-        SELECT id, title, message_count, created_at
-        FROM app_chats
-        WHERE date(created_at) = $1
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(&date_str)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get chat sources: {}", e)))?;
-
-    for row in &chat_rows {
-        use sqlx::Row;
-        let id: String = match row.try_get("id") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let created_at: String = match row.try_get("created_at") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let title: String = row.try_get("title").unwrap_or_else(|_| "Untitled chat".to_string());
-        let message_count: i32 = row.try_get("message_count").unwrap_or(0);
-
-        // created_at is in "YYYY-MM-DD HH:MM:SS" format (UTC)
-        if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(&created_at, "%Y-%m-%d %H:%M:%S")
-        {
-            let ts = naive.and_utc();
-            let preview = if message_count > 0 {
-                Some(format!("{} messages", message_count))
+            // Parse timestamp: try RFC3339 first, fall back to "YYYY-MM-DD HH:MM:SS"
+            let ts = if let Ok(parsed) = DateTime::parse_from_rfc3339(&ts_str) {
+                parsed.with_timezone(&Utc)
+            } else if let Ok(naive) =
+                chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S")
+            {
+                naive.and_utc()
             } else {
-                None
+                continue;
             };
+
             sources.push(DaySource {
-                source_type: "chat".to_string(),
+                source_type,
                 id,
                 timestamp: ts,
-                label: title,
+                label,
                 preview,
             });
         }
     }
 
-    // Pages (updated on this day)
-    let page_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
-        r#"
-        SELECT id, title, icon, updated_at
-        FROM app_pages
-        WHERE date(updated_at) = $1
-        ORDER BY updated_at ASC
-        "#,
-    )
-    .bind(&date_str)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get page sources: {}", e)))?;
-
-    for row in &page_rows {
-        use sqlx::Row;
-        let id: String = match row.try_get("id") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let updated_at: String = match row.try_get("updated_at") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let title: String = row.try_get("title").unwrap_or_else(|_| "Untitled".to_string());
-        let icon: Option<String> = row.try_get("icon").ok().flatten();
-
-        if let Ok(naive) =
-            chrono::NaiveDateTime::parse_from_str(&updated_at, "%Y-%m-%d %H:%M:%S")
-        {
-            let ts = naive.and_utc();
-            let icon_prefix = icon.map(|i| format!("{} ", i)).unwrap_or_default();
-            sources.push(DaySource {
-                source_type: "page".to_string(),
-                id,
-                timestamp: ts,
-                label: format!("{}{}", icon_prefix, title),
-                preview: None,
-            });
-        }
-    }
-
-    // Sort all sources by timestamp
     sources.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-
     Ok(sources)
 }
 

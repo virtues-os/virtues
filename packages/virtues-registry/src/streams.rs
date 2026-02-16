@@ -273,6 +273,20 @@ pub fn registered_streams() -> Vec<StreamDescriptor> {
             enabled: true,
             tier: SourceTier::Standard,
         },
+        // ===== Spotify Streams =====
+        StreamDescriptor {
+            name: "recently_played",
+            source: "spotify",
+            display_name: "Recently Played",
+            description: "Track listening history from Spotify (max 50 most recent plays per sync)",
+            table_name: "stream_spotify_recently_played",
+            target_ontologies: vec!["activity_listening"],
+            supports_incremental: true,
+            supports_full_refresh: false, // API only returns last 50, no full history access
+            default_cron_schedule: Some("0 */15 * * * *"), // Every 15 minutes
+            enabled: true,
+            tier: SourceTier::Standard,
+        },
         // ===== GitHub Streams =====
         StreamDescriptor {
             name: "events",
@@ -328,6 +342,7 @@ mod tests {
         assert!(sources.contains(&"mac"));
         assert!(sources.contains(&"notion"));
         assert!(sources.contains(&"plaid"));
+        assert!(sources.contains(&"spotify"));
         assert!(sources.contains(&"strava"));
         assert!(sources.contains(&"github"));
     }

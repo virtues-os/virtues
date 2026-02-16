@@ -54,6 +54,20 @@ impl LocalEmbedder {
             .await
             .map_err(|e| anyhow::anyhow!("Embedding task panicked: {}", e))?
     }
+
+    /// Embed multiple texts in a single batch on the blocking thread pool (async-safe).
+    ///
+    /// More efficient than calling `embed_async` in a loop — single ONNX call
+    /// for all texts (e.g. 8-16 events at once).
+    pub async fn embed_batch_async(self: &Arc<Self>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+            this.embed_batch(&refs)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("Batch embedding task panicked: {}", e))?
+    }
 }
 
 impl Embedder for LocalEmbedder {

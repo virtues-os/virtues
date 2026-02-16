@@ -30,12 +30,19 @@ chown -R virtues:virtues /home/virtues/.ssh
 chmod 700 /home/virtues/.ssh
 chmod 600 /home/virtues/.ssh/authorized_keys
 
-# Start sshd with persistent host key (runs as root in background)
-/usr/sbin/sshd -o "HostKey=$SSH_DIR/ssh_host_ed25519_key"
+# Start sshd in foreground mode (background job). gVisor doesn't support
+# sshd's default daemon mode (double-fork), so we use -D to keep it in
+# the foreground and -e to log to stderr.
+/usr/sbin/sshd -D -e -o "HostKey=$SSH_DIR/ssh_host_ed25519_key" &
 
-echo "[entrypoint] sshd started"
+echo "[entrypoint] sshd started (pid $!)"
 
 # ---------------------------------------------------------------------------
 # Drop to virtues user and run the application
 # ---------------------------------------------------------------------------
-exec su -s /bin/sh virtues -c "virtues migrate && virtues server"
+if [ "${SEED_DEMO:-}" = "true" ]; then
+    echo "[entrypoint] SEED_DEMO=true — will seed demo data"
+    exec su -s /bin/sh virtues -c "virtues migrate && virtues seed && virtues server"
+else
+    exec su -s /bin/sh virtues -c "virtues migrate && virtues server"
+fi

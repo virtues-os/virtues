@@ -2,22 +2,30 @@
 	DayPage.svelte
 
 	Renders a day page with:
-	- Data: citations, entities, context vector (always additive)
-	- Timeline: events with user-editable overrides
-	- Movement: location track for the day
-	- Data Sources: ontology records grouped by type
+	- DayToolbar: compact week picker, coverage/entropy metrics, generate button
+	- Sections: Autobiography, Event Timeline, Movement, Entities, Sources (hidden when empty)
+	- WikiRightRail: table of contents + metadata
 -->
 
 <script lang="ts">
 	import { browser } from "$app/environment";
-	import type { DayPage as DayPageType } from "$lib/wiki/types";
+	import type { DayPage as DayPageType, DayEvent } from "$lib/wiki/types";
 	import { flattenLinkedEntities } from "$lib/wiki/types";
-	import { getDaySources, updateDay, type DaySourceApi, type WikiDayApi } from "$lib/wiki/api";
+	import {
+		getDaySources,
+		getDayEvents,
+		updateDay,
+		type DaySourceApi,
+		type TemporalEventApi,
+		type WikiDayApi,
+	} from "$lib/wiki/api";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import type { ContextVector as ContextVectorType } from "$lib/wiki/types";
 	import ContextVector from "./ContextVector.svelte";
+	import DayRibbonChart from "./DayRibbonChart.svelte";
 	import DayTimeline from "./DayTimeline.svelte";
+	import DayToolbar from "./DayToolbar.svelte";
 	import WikiRightRail from "./WikiRightRail.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { slide } from "svelte/transition";
@@ -30,6 +38,9 @@
 	}
 
 	let { page }: Props = $props();
+
+	// Shared hover state for chart ↔ timeline sync
+	let hoveredEventId = $state<string | null>(null);
 
 	/** YYYY-MM-DD string for API calls */
 	const dateSlug = $derived(() => getLocalDateSlug(page.date));
@@ -47,44 +58,42 @@
 		endTz: string | null,
 	): string | null {
 		if (!startTz) return null;
-
-		// Extract city name from IANA timezone (e.g., "America/New_York" -> "New York")
 		const formatTz = (tz: string) => {
 			const parts = tz.split("/");
 			return parts[parts.length - 1].replace(/_/g, " ");
 		};
-
-		// If both exist and different, show span
 		if (endTz && endTz !== startTz) {
 			return `00:00 ${formatTz(startTz)} → 24:00 ${formatTz(endTz)}`;
 		}
-
-		// Otherwise just show the timezone
 		return formatTz(startTz);
 	}
 
 	// Flatten linked entities for entity display
 	const allLinkedPages = $derived(flattenLinkedEntities(page.linkedEntities));
 
-	// Timezone display
+	// Timezone display — fallback to browser timezone for ungenerated days
+	function getBrowserTimezone(): string | null {
+		if (!browser) return null;
+		const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+		const parts = tz.split("/");
+		return parts[parts.length - 1].replace(/_/g, " ");
+	}
+
 	const timezoneDisplay = $derived(
-		formatTimezoneDisplay(page.startTimezone, page.endTimezone),
+		formatTimezoneDisplay(page.startTimezone, page.endTimezone) ?? getBrowserTimezone(),
 	);
+
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Week navigation
 	// ─────────────────────────────────────────────────────────────────────────
-	const DAY_LETTERS = ["S", "M", "T", "W", "T", "F", "S"];
-
 	let weekOffset = $state(0);
 
-	// Reset weekOffset when page.date changes (navigating between days)
 	$effect(() => {
 		page.date; // track
 		weekOffset = 0;
 	});
 
-	// Get the Sunday that starts the week containing page.date, then apply offset
 	const weekDays = $derived(() => {
 		const ref = new Date(page.date);
 		ref.setDate(ref.getDate() - ref.getDay() + weekOffset * 7);
@@ -100,6 +109,21 @@
 	const currentDateSlug = $derived(getLocalDateSlug(page.date));
 	const todaySlug = $derived(getLocalDateSlug(new Date()));
 
+	const isPast = $derived(currentDateSlug < todaySlug);
+
+	// Relative date badge: "Today", "Yesterday", "2 days ago", "Tomorrow", "Future"
+	const relativeDateLabel = $derived(() => {
+		if (currentDateSlug === todaySlug) return "Today";
+		const pageTime = new Date(`${currentDateSlug}T12:00:00`).getTime();
+		const todayTime = new Date(`${todaySlug}T12:00:00`).getTime();
+		const diffDays = Math.round((pageTime - todayTime) / 86400000);
+		if (diffDays === -1) return "Yesterday";
+		if (diffDays === 1) return "Tomorrow";
+		if (diffDays >= 2) return "Future";
+		if (diffDays <= -2 && diffDays >= -6) return `${Math.abs(diffDays)} days ago`;
+		return null;
+	});
+
 	function navigateToDay(date: Date) {
 		const slug = getLocalDateSlug(date);
 		if (slug === currentDateSlug) return;
@@ -107,7 +131,7 @@
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Movement map (Day page)
+	// Movement map
 	// ─────────────────────────────────────────────────────────────────────────
 	type TimelineDayLocationChunk = {
 		type: "location";
@@ -137,10 +161,10 @@
 		movementLoading = true;
 		try {
 			const res = await fetch(`/api/timeline/day/${dateSlug}`);
-			if (version !== movementLoadVersion) return; // stale
+			if (version !== movementLoadVersion) return;
 			if (!res.ok) throw new Error(`timeline day api ${res.status}`);
 			const dayView = (await res.json()) as TimelineDayView;
-			if (version !== movementLoadVersion) return; // stale
+			if (version !== movementLoadVersion) return;
 			movementStops = dayView.chunks.filter(
 				(c): c is TimelineDayLocationChunk =>
 					c?.type === "location" &&
@@ -159,7 +183,6 @@
 		if (browser && page?.date) loadMovement(dateSlug());
 	});
 
-	// Use sample Rome location track for demo date (2025-12-10)
 	const sampleStopPoints = $derived(
 		sampleLocationTrack.map((p) => ({
 			lat: p.lat,
@@ -182,10 +205,8 @@
 				: [],
 	);
 
-	// Check if we have real location data
 	const hasLocationData = $derived(stopPoints.length >= 2);
 
-	// For the demo, only show first/last as stop markers (not every point)
 	const stopMarkers = $derived(
 		stopPoints.length >= 2
 			? [stopPoints[0], stopPoints[stopPoints.length - 1]]
@@ -199,7 +220,6 @@
 	let sourcesLoading = $state(false);
 	let sourcesLoadVersion = 0;
 
-	// Mock data sources for demo (2025-12-10)
 	const MOCK_DATA_SOURCES: DaySourceApi[] = [
 		{ source_type: "sleep", id: "sleep-1", timestamp: "2025-12-10T06:42:00Z", label: "Sleep ended", preview: "6h 18m total, 2 REM cycles" },
 		{ source_type: "calendar", id: "cal-1", timestamp: "2025-12-10T10:00:00Z", label: "Architecture Review", preview: "With engineering team" },
@@ -217,15 +237,13 @@
 		sourcesLoading = true;
 		try {
 			const result = await getDaySources(dateSlug);
-			if (version !== sourcesLoadVersion) return; // stale
+			if (version !== sourcesLoadVersion) return;
 			dataSources = result;
-			// Fall back to mock data for demo
 			if (dataSources.length === 0 && dateSlug === "2025-12-10") {
 				dataSources = MOCK_DATA_SOURCES;
 			}
 		} catch {
 			if (version !== sourcesLoadVersion) return;
-			// Fall back to mock data for demo
 			if (dateSlug === "2025-12-10") {
 				dataSources = MOCK_DATA_SOURCES;
 			} else {
@@ -240,7 +258,6 @@
 		if (browser && page?.date) loadDataSources(dateSlug());
 	});
 
-	// Group sources by type for display
 	const groupedSources = $derived(() => {
 		const groups: Record<string, DaySourceApi[]> = {};
 		for (const source of dataSources) {
@@ -251,7 +268,6 @@
 		return groups;
 	});
 
-	// Per-group expand state: show 3 by default, expand to show all
 	const SOURCE_PREVIEW_LIMIT = 3;
 	let expandedGroups = $state<Set<string>>(new Set());
 
@@ -265,7 +281,6 @@
 		expandedGroups = next;
 	}
 
-	// Get icon for source type
 	function getSourceIcon(sourceType: string): string {
 		const iconMap: Record<string, string> = {
 			calendar: "ri:calendar-line",
@@ -279,14 +294,12 @@
 			chat: "ri:chat-3-line",
 			page: "ri:file-text-line",
 		};
-		// Handle message:platform types
 		if (sourceType.startsWith("message:")) {
 			return "ri:message-3-line";
 		}
 		return iconMap[sourceType] ?? "ri:database-2-line";
 	}
 
-	// Get display name for source type
 	function getSourceTypeName(sourceType: string): string {
 		const nameMap: Record<string, string> = {
 			calendar: "Calendar",
@@ -307,7 +320,6 @@
 		return nameMap[sourceType] ?? sourceType;
 	}
 
-	// Format time for display in the user's local timezone
 	function formatSourceTime(timestamp: string): string {
 		const date = new Date(timestamp);
 		return date.toLocaleTimeString("en-US", {
@@ -318,17 +330,69 @@
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
+	// Events (timeline + W6H trajectory)
+	// ─────────────────────────────────────────────────────────────────────────
+	let dayEvents = $state<DayEvent[]>([]);
+	let eventsLoadVersion = 0;
+
+	function apiEventToDayEvent(api: TemporalEventApi): DayEvent {
+		const start = new Date(api.start_time);
+		const end = new Date(api.end_time);
+		return {
+			id: api.id,
+			startTime: start,
+			endTime: end,
+			durationMinutes: Math.round((end.getTime() - start.getTime()) / 60000),
+			autoLabel: api.auto_label ?? "Unknown",
+			autoLocation: api.auto_location ?? undefined,
+			sourceIds: Array.isArray(api.source_ontologies) ? api.source_ontologies as string[] : [],
+			userLabel: api.user_label || undefined,
+			userLocation: api.user_location || undefined,
+			userNotes: api.user_notes || undefined,
+			w6hActivation: api.w6h_activation ?? null,
+			entropy: api.entropy ?? null,
+			w6hEntropy: api.w6h_entropy ?? null,
+			isUserAdded: api.is_user_added ?? false,
+			isUserEdited: api.is_user_edited ?? false,
+			isTransit: api.is_transit ?? false,
+			isUnknown: api.is_unknown ?? false,
+		};
+	}
+
+	async function loadEvents(dateSlug: string) {
+		if (!browser) return;
+		const version = ++eventsLoadVersion;
+		try {
+			const result = await getDayEvents(dateSlug);
+			if (version !== eventsLoadVersion) return;
+			dayEvents = result.map(apiEventToDayEvent);
+		} catch {
+			if (version !== eventsLoadVersion) return;
+			dayEvents = [];
+		}
+	}
+
+	$effect(() => {
+		if (browser && page?.date) loadEvents(dateSlug());
+	});
+
+	// ─────────────────────────────────────────────────────────────────────────
 	// Daily Summary (autobiography generation)
 	// ─────────────────────────────────────────────────────────────────────────
-	let vixExpanded = $state(false);
+	let metricsExpanded = $state(false);
 	let summaryGenerating = $state(false);
 	let summaryText = $state(page.autobiography || "");
 	let editingAutobiography = $state(false);
+	let contextVector = $state(page.contextVector);
+	let chaosScore = $state(page.chaosScore);
+	let entropyCalibrationDays = $state(page.entropyCalibrationDays);
 
-	// Sync summaryText when page prop changes (navigating between days)
 	$effect(() => {
 		summaryText = page.autobiography || "";
 		editingAutobiography = false;
+		contextVector = page.contextVector;
+		chaosScore = page.chaosScore;
+		entropyCalibrationDays = page.entropyCalibrationDays;
 	});
 
 	function startEditingAutobiography() {
@@ -342,7 +406,10 @@
 			return;
 		}
 		try {
-			await updateDay(dateSlug(), { autobiography: trimmed, last_edited_by: "user" });
+			await updateDay(dateSlug(), {
+				autobiography: trimmed,
+				last_edited_by: "user",
+			});
 			summaryText = trimmed;
 		} catch (e) {
 			console.error("Failed to save autobiography:", e);
@@ -389,18 +456,22 @@
 	async function generateSummary() {
 		summaryGenerating = true;
 		try {
-			const res = await fetch(`/api/wiki/day/${dateSlug()}/summary`, { method: "POST" });
+			const res = await fetch(`/api/wiki/day/${dateSlug()}/summary`, {
+				method: "POST",
+			});
 			if (!res.ok) throw new Error(`Summary generation failed: ${res.status}`);
 			const updated: WikiDayApi = await res.json();
 			summaryText = updated.autobiography || "";
 
-			// Update context vector and chaos score from the response
 			const cv = parseContextVector(updated.context_vector);
 			if (cv) {
-				page.contextVector = cv;
+				contextVector = cv;
 			}
-			page.chaosScore = updated.chaos_score ?? null;
-			page.entropyCalibrationDays = updated.entropy_calibration_days ?? null;
+			chaosScore = updated.chaos_score ?? null;
+			entropyCalibrationDays = updated.entropy_calibration_days ?? null;
+
+			// Reload events after generation (Tollbooth creates structured events with W6H)
+			loadEvents(dateSlug());
 		} catch (e) {
 			console.error("Summary generation failed:", e);
 		} finally {
@@ -408,285 +479,353 @@
 		}
 	}
 
-	// Build content string for TOC that includes page structure headings
-	const fullContent = $derived(`## Autobiography
+	// ─────────────────────────────────────────────────────────────────────────
+	// Section visibility (hide empty sections)
+	// ─────────────────────────────────────────────────────────────────────────
+	const showAutobiography = $derived(!!summaryText || summaryGenerating);
+	const showTimeline = $derived(
+		dayEvents.filter((e) => !e.isUnknown).length > 0,
+	);
+	const showMovement = $derived(hasLocationData);
+	const showEntities = $derived(allLinkedPages.length > 0);
+	const showSources = $derived(dataSources.length > 0);
 
-## Timeline
+	const hasAnyContent = $derived(
+		showAutobiography ||
+			showTimeline ||
+			showMovement ||
+			showEntities ||
+			showSources,
+	);
 
-## Movement
-
-## Entities
-
-## Activity
-`);
+	// Dynamic TOC: only include headings for visible sections
+	const fullContent = $derived(() => {
+		let toc = "";
+		if (showTimeline) toc += "## Event Timeline\n\n";
+		if (showMovement) toc += "## Movement\n\n";
+		if (showEntities) toc += "## Entities\n\n";
+		if (showSources) toc += "## Sources\n\n";
+		return toc;
+	});
 </script>
 
-<div class="day-page-layout">
-	<article class="day-article wiki-article">
-		<div class="day-content">
-			<!-- Header -->
-			<header class="day-header">
-				<div class="day-header-row">
+<div class="day-page-outer">
+	<DayToolbar
+		pageDate={page.date}
+		weekDays={weekDays()}
+		{currentDateSlug}
+		{todaySlug}
+		contextVector={contextVector}
+		{chaosScore}
+		{entropyCalibrationDays}
+		{summaryGenerating}
+		summaryExists={!!summaryText}
+		onNavigateDay={navigateToDay}
+		onWeekPrev={() => weekOffset--}
+		onWeekNext={() => weekOffset++}
+		onGenerate={handleGenerateClick}
+		onToggleMetrics={() => (metricsExpanded = !metricsExpanded)}
+	/>
+
+	<div class="day-page-layout">
+		<article class="day-article wiki-article">
+			<div class="day-content">
+				<!-- Header -->
+				<header class="day-header">
 					<h1 class="day-title">
 						{formatDate(page.date, page.dayOfWeek)}
 					</h1>
-					<button
-						class="generate-day-btn"
-						onclick={handleGenerateClick}
-						disabled={summaryGenerating}
-						type="button"
-						title={summaryText ? "Regenerate day" : "Generate day"}
-					>
-						{#if summaryGenerating}
-							<Icon icon="ri:loader-4-line" class="spin-icon" />
-							<span>Generating...</span>
-						{:else}
-							<Icon icon="ri:refresh-line" />
-							<span>{summaryText ? 'Regenerate' : 'Generate'}</span>
+					<div class="day-subtitle">
+						{#if relativeDateLabel()}
+							<span class="date-badge">{relativeDateLabel()}</span>
 						{/if}
-					</button>
-				</div>
-				{#if timezoneDisplay}
-					<div class="day-timezone">Timezone: {timezoneDisplay}</div>
+						{#if timezoneDisplay}
+							<span class="day-timezone">{timezoneDisplay}</span>
+						{/if}
+					</div>
+				</header>
+
+				<!-- Lead paragraph (autobiography — above everything as the summary) -->
+				{#if showAutobiography}
+					<div class="lead-section">
+						{#if editingAutobiography}
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div
+								class="lead-text lead-editable"
+								contenteditable="true"
+								onblur={handleAutobiographyBlur}
+								onkeydown={handleAutobiographyKeydown}
+								role="textbox"
+								aria-label="Edit autobiography"
+							>
+								{summaryText}
+							</div>
+						{:else if summaryText}
+							<div class="lead-content">
+								<p class="lead-text">{summaryText}</p>
+								<button
+									class="lead-edit-btn"
+									onclick={startEditingAutobiography}
+									type="button"
+									title="Edit"
+								>
+									<Icon icon="ri:pencil-line" />
+								</button>
+							</div>
+						{:else}
+							<p class="empty-placeholder">Generating...</p>
+						{/if}
+					</div>
 				{/if}
-			</header>
 
-			<!-- Week Navigation -->
-			<nav class="week-nav">
-				<button
-					class="week-nav-chevron"
-					onclick={() => weekOffset--}
-					type="button"
-					aria-label="Previous week"
-				>
-					<Icon icon="ri:arrow-left-s-line" />
-				</button>
-				<div class="week-days">
-					{#each weekDays() as day, i}
-						{@const slug = getLocalDateSlug(day)}
-						{@const isCurrent = slug === currentDateSlug}
-						{@const isToday = slug === todaySlug}
-						<button
-							class="week-day"
-							class:current={isCurrent}
-							class:today={isToday}
-							onclick={() => navigateToDay(day)}
-							type="button"
-							aria-label={day.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-						>
-							<span class="week-day-letter">{DAY_LETTERS[i]}</span>
-							<span class="week-day-number">{day.getDate()}</span>
-						</button>
-					{/each}
-				</div>
-				<button
-					class="week-nav-chevron"
-					onclick={() => weekOffset++}
-					type="button"
-					aria-label="Next week"
-				>
-					<Icon icon="ri:arrow-right-s-line" />
-				</button>
-			</nav>
-
-			<!-- Metrics -->
-			<div class="day-metrics">
-				<ContextVector contextVector={page.contextVector} />
-				{#if page.entropyCalibrationDays != null}
-					{@const calibDays = page.entropyCalibrationDays}
-					{@const isCalibrated = calibDays >= 7}
-					{@const hasScore = page.chaosScore != null && isCalibrated}
-					<div class="vix-section">
-						<button class="vix-toggle" onclick={() => (vixExpanded = !vixExpanded)}>
-							{#if hasScore}
-								<span class="vix-toggle-label">Entropy · {Math.round(page.chaosScore! * 100)}</span>
-							{:else}
-								<span class="vix-toggle-label">Entropy · Calibrating ({calibDays}/7 days)</span>
-							{/if}
-							<Icon icon={vixExpanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"} />
-						</button>
-						{#if vixExpanded}
-							<div class="vix-details" transition:slide={{ duration: 200 }}>
+				<!-- Expanded metrics (toggled from toolbar metric labels) -->
+				{#if metricsExpanded}
+					<div class="expanded-metrics" transition:slide={{ duration: 200 }}>
+						{#if contextVector}
+							<ContextVector
+								contextVector={contextVector}
+								expanded={true}
+								showToggle={false}
+							/>
+						{/if}
+						{#if entropyCalibrationDays != null}
+							{@const calibDays = entropyCalibrationDays}
+							{@const isCalibrated = calibDays >= 7}
+							{@const hasScore =
+								chaosScore != null && isCalibrated}
+							<div class="vix-details">
 								{#if hasScore}
 									<div class="vix-bar">
-										<div class="vix-fill" style="width: {Math.round(page.chaosScore! * 100)}%"></div>
+										<div
+											class="vix-fill"
+											style="width: {Math.round(chaosScore! * 100)}%"
+										></div>
 									</div>
-									<p class="metric-description">How unpredictable your day was. Low entropy means routine and structure; high entropy means novelty and disorder.</p>
+									<p class="metric-description">
+										How unpredictable your day was. Low
+										entropy means routine and structure;
+										high entropy means novelty and disorder.
+									</p>
 								{:else}
 									<div class="vix-bar">
-										<div class="vix-fill vix-fill-calibrating" style="width: {Math.round((calibDays / 7) * 100)}%"></div>
+										<div
+											class="vix-fill vix-fill-calibrating"
+											style="width: {Math.round((calibDays / 7) * 100)}%"
+										></div>
 									</div>
-									<p class="metric-description">Entropy needs ~7 days of data to establish your baseline. {calibDays === 0 ? 'This is your first day.' : `${calibDays} day${calibDays === 1 ? '' : 's'} recorded so far.`}</p>
+									<p class="metric-description">
+										Entropy needs ~7 days of data to
+										establish your baseline. {calibDays === 0
+											? "This is your first day."
+											: `${calibDays} day${calibDays === 1 ? "" : "s"} recorded so far.`}
+									</p>
 								{/if}
+							</div>
+						{:else}
+							<div class="vix-details">
+								<p class="metric-description">
+									Entropy measures how unpredictable your day was compared to your baseline. Summarize at least one day to begin calibrating.
+								</p>
 							</div>
 						{/if}
 					</div>
 				{/if}
-			</div>
 
-			<hr class="divider" />
-
-			<!-- Autobiography -->
-			<section class="section autobiography-section">
-				<div class="autobiography-header">
-					<h2 class="section-title">Autobiography</h2>
-					{#if summaryText && !editingAutobiography}
-						<button
-							class="autobiography-edit-btn"
-							onclick={startEditingAutobiography}
-							type="button"
-							title="Edit autobiography"
-						>
-							<Icon icon="ri:pencil-line" />
-						</button>
+				{#if hasAnyContent}
+					<!-- Timeline -->
+					{#if showTimeline}
+						<section class="section" id="timeline">
+							<h2 class="section-title">Event Timeline</h2>
+							{#if dayEvents.some((e) => e.entropy != null)}
+								<DayRibbonChart events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} />
+							{/if}
+							<DayTimeline events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} />
+						</section>
 					{/if}
-				</div>
-				{#if editingAutobiography}
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<div
-						class="autobiography-text autobiography-editable"
-						contenteditable="true"
-						onblur={handleAutobiographyBlur}
-						onkeydown={handleAutobiographyKeydown}
-						role="textbox"
-						aria-label="Edit autobiography"
-					>{summaryText}</div>
-				{:else if summaryText}
-					<p class="autobiography-text">{summaryText}</p>
-				{:else}
-					<p class="empty-placeholder">No autobiography yet — generate one from today's data.</p>
-				{/if}
-			</section>
 
-			<!-- Timeline -->
-			<section class="section" id="timeline">
-				<h2 class="section-title">Timeline</h2>
-				<DayTimeline events={page.events} />
-			</section>
+					<!-- Movement -->
+					{#if showMovement}
+						<section class="section" id="movement">
+							<h2 class="section-title">Movement</h2>
+							<MovementMap
+								track={stopPoints}
+								stops={stopMarkers}
+								height={240}
+							/>
+						</section>
+					{/if}
 
-			<!-- Movement -->
-			<section class="section" id="movement">
-				<h2 class="section-title">Movement</h2>
-				{#if movementLoading}
-					<div class="movement-loading">Loading…</div>
-				{:else if hasLocationData}
-					<MovementMap
-						track={stopPoints}
-						stops={stopMarkers}
-						height={240}
-					/>
-				{:else}
-					<p class="empty-placeholder">No location data for this day</p>
-				{/if}
-			</section>
+					<!-- Entities -->
+					{#if showEntities}
+						<section class="section" id="entities">
+							<h2 class="section-title">Entities</h2>
+							<ul class="footer-list">
+								{#each allLinkedPages as entity}
+									<li>
+										<a
+											href="/wiki/{entity.pageId}"
+											class="footer-link"
+										>
+											<span class="link-text"
+												>{entity.displayName}</span
+											>
+										</a>
+									</li>
+								{/each}
+							</ul>
+						</section>
+					{/if}
 
-			<!-- Entities -->
-			<section class="section" id="entities">
-				<h2 class="section-title">Entities</h2>
-				{#if allLinkedPages.length > 0}
-					<ul class="footer-list">
-						{#each allLinkedPages as entity}
-							<li>
-								<a
-									href="/wiki/{entity.pageId}"
-									class="footer-link"
-								>
-									<span class="link-text"
-										>{entity.displayName}</span
-									>
-								</a>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<p class="empty-placeholder">No entities</p>
-				{/if}
-			</section>
-
-			<!-- Activity -->
-			<section class="section" id="activity">
-				<h2 class="section-title">Activity</h2>
-				{#if sourcesLoading}
-					<p class="empty-placeholder">Loading...</p>
-				{:else if dataSources.length > 0}
-					<div class="sources-list">
-						{#each Object.entries(groupedSources()) as [sourceType, sources]}
-							{@const isExpanded = expandedGroups.has(sourceType)}
-							{@const visibleSources = isExpanded ? sources : sources.slice(0, SOURCE_PREVIEW_LIMIT)}
-							{@const hasMore = sources.length > SOURCE_PREVIEW_LIMIT}
-							<div class="source-group">
-								<div class="source-group-header">
-									<Icon icon={getSourceIcon(sourceType)} class="source-group-icon"/>
-									<span class="source-group-name">{getSourceTypeName(sourceType)}</span>
-									<span class="source-group-count">{sources.length}</span>
-								</div>
-								<ul class="source-items">
-									{#each visibleSources as source}
-										<li class="source-item">
-											<span class="source-time">{formatSourceTime(source.timestamp)}</span>
-											<span class="source-label">{source.label}</span>
-											{#if source.preview}
-												<span class="source-preview">{source.preview}</span>
+					<!-- Sources -->
+					{#if showSources}
+						<section class="section" id="sources">
+							<h2 class="section-title">Sources</h2>
+							{#if sourcesLoading}
+								<p class="empty-placeholder">Loading...</p>
+							{:else}
+								<div class="sources-list">
+									{#each Object.entries(groupedSources()) as [sourceType, sources]}
+										{@const isExpanded =
+											expandedGroups.has(sourceType)}
+										{@const visibleSources = isExpanded
+											? sources
+											: sources.slice(
+													0,
+													SOURCE_PREVIEW_LIMIT,
+												)}
+										{@const hasMore =
+											sources.length > SOURCE_PREVIEW_LIMIT}
+										<div class="source-group">
+											<div class="source-group-header">
+												<Icon
+													icon={getSourceIcon(
+														sourceType,
+													)}
+													class="source-group-icon"
+												/>
+												<span
+													class="source-group-name"
+													>{getSourceTypeName(
+														sourceType,
+													)}</span
+												>
+												<span
+													class="source-group-count"
+													>{sources.length}</span
+												>
+											</div>
+											<ul class="source-items">
+												{#each visibleSources as source}
+													<li class="source-item">
+														<span
+															class="source-time"
+															>{formatSourceTime(
+																source.timestamp,
+															)}</span
+														>
+														<span
+															class="source-label"
+															>{source.label}</span
+														>
+														{#if source.preview}
+															<span
+																class="source-preview"
+																>{source.preview}</span
+															>
+														{/if}
+													</li>
+												{/each}
+											</ul>
+											{#if hasMore}
+												<button
+													class="source-show-more"
+													onclick={() =>
+														toggleGroupExpand(
+															sourceType,
+														)}
+													type="button"
+												>
+													{isExpanded
+														? "Show less"
+														: `Show all ${sources.length}`}
+												</button>
 											{/if}
-										</li>
+										</div>
 									{/each}
-								</ul>
-								{#if hasMore}
-									<button
-										class="source-show-more"
-										onclick={() => toggleGroupExpand(sourceType)}
-										type="button"
-									>
-										{isExpanded ? "Show less" : `Show all ${sources.length}`}
-									</button>
-								{/if}
-							</div>
-						{/each}
-					</div>
+								</div>
+							{/if}
+						</section>
+					{/if}
 				{:else}
-					<p class="empty-placeholder">No activity for this day</p>
+					<!-- Empty state: context-aware -->
+					<div class="empty-state">
+						{#if currentDateSlug > todaySlug}
+							<p class="empty-state-text">This day hasn't happened yet.</p>
+						{:else if currentDateSlug === todaySlug}
+							<p class="empty-state-text">Your day is still in progress.</p>
+						{:else if dataSources.length > 0}
+							<p class="empty-state-text">{dataSources.length} sources recorded.</p>
+							<button
+								class="empty-state-generate"
+								onclick={handleGenerateClick}
+								disabled={summaryGenerating}
+								type="button"
+							>
+								{#if summaryGenerating}
+									<Icon icon="ri:loader-4-line" class="spin-icon" />
+									Summarizing...
+								{:else}
+									Summarize this day
+								{/if}
+							</button>
+						{:else}
+							<p class="empty-state-text">No source data recorded for this day.</p>
+						{/if}
+					</div>
 				{/if}
-			</section>
-		</div>
-	</article>
-
-	<WikiRightRail content={fullContent}>
-		{#snippet metadata()}
-			<div class="sidebar-meta">
-				<div class="meta-title">{page.dayOfWeek}</div>
-				<div class="meta-date">
-					{page.date.toLocaleDateString("en-US", {
-						month: "long",
-						day: "numeric",
-						year: "numeric",
-					})}
-				</div>
-				<div class="meta-stats">
-					<span class="stat"
-						>{page.events.filter((e) => !e.isUnknown).length} events</span
-					>
-					<span class="stat-sep">·</span>
-					<span class="stat"
-						>{dataSources.length} sources</span
-					>
-				</div>
 			</div>
-		{/snippet}
-	</WikiRightRail>
+		</article>
+
+		<WikiRightRail content={fullContent()}>
+			{#snippet metadata()}
+				<div class="sidebar-meta">
+					<div class="meta-title">{page.dayOfWeek}</div>
+					<div class="meta-date">
+						{page.date.toLocaleDateString("en-US", {
+							month: "long",
+							day: "numeric",
+							year: "numeric",
+						})}
+					</div>
+					<div class="meta-stats">
+						<span class="stat"
+							>{dayEvents.filter((e) => !e.isUnknown).length} events</span
+						>
+						<span class="stat-sep">·</span>
+						<span class="stat">{dataSources.length} sources</span>
+					</div>
+				</div>
+			{/snippet}
+		</WikiRightRail>
+	</div>
 </div>
 
 <!-- Regenerate confirmation modal -->
 <Modal
 	open={showRegenerateConfirm}
-	onClose={() => showRegenerateConfirm = false}
+	onClose={() => (showRegenerateConfirm = false)}
 	title="Regenerate Day"
 	width="sm"
 >
 	<p class="regenerate-confirm-text">
-		This will regenerate the autobiography, completeness, and entropy scores. Any manual edits will be overwritten.
+		This will regenerate the autobiography, completeness, and entropy scores.
+		Any manual edits will be overwritten.
 	</p>
 	{#snippet footer()}
-		<button class="modal-btn modal-btn-secondary" onclick={() => showRegenerateConfirm = false}>
+		<button
+			class="modal-btn modal-btn-secondary"
+			onclick={() => (showRegenerateConfirm = false)}
+		>
 			Cancel
 		</button>
 		<button class="modal-btn modal-btn-primary" onclick={confirmRegenerate}>
@@ -696,9 +835,18 @@
 </Modal>
 
 <style>
+	.day-page-outer {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		width: 100%;
+		overflow: hidden;
+	}
+
 	.day-page-layout {
 		display: flex;
-		height: 100%;
+		flex: 1;
+		min-height: 0;
 		width: 100%;
 		overflow: hidden;
 	}
@@ -725,14 +873,7 @@
 
 	/* Header */
 	.day-header {
-		margin-bottom: 1rem;
-	}
-
-	.day-header-row {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 1rem;
+		margin-bottom: 1.5rem;
 	}
 
 	.day-title {
@@ -740,153 +881,40 @@
 		font-size: 1.75rem;
 		font-weight: 400;
 		color: var(--color-foreground);
-		margin: 0 0 0.5rem;
+		margin: 0 0 0.25rem;
 		line-height: 1.3;
 	}
 
-	.generate-day-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		background: none;
-		border: none;
-		padding: 0;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		white-space: nowrap;
-		flex-shrink: 0;
-	}
-	.generate-day-btn:hover {
-		color: var(--color-foreground-muted);
-	}
-	.generate-day-btn:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-
-	/* Week navigation */
-	.week-nav {
+	.day-subtitle {
 		display: flex;
 		align-items: center;
-		gap: 0.25rem;
-		margin-bottom: 0.75rem;
+		gap: 0.5rem;
+		margin-top: 0.25rem;
 	}
 
-	.week-nav-chevron {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		background: none;
-		border: none;
-		padding: 0;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		border-radius: 4px;
-		flex-shrink: 0;
-	}
-	.week-nav-chevron:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-	}
-
-	.week-days {
-		display: flex;
-		gap: 0.125rem;
-		flex: 1;
-		justify-content: space-between;
-	}
-
-	.week-day {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.125rem;
-		padding: 0.25rem 0.5rem;
-		background: none;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		color: var(--color-foreground-subtle);
-		transition: all 0.1s ease;
-		min-width: 2rem;
-	}
-	.week-day:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-	}
-	.week-day.current {
-		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-	}
-	.week-day.today:not(.current) {
-		color: var(--color-foreground-muted);
-	}
-	.week-day.today::after {
-		content: "";
-		display: block;
-		width: 3px;
-		height: 3px;
-		border-radius: 50%;
-		background: var(--color-foreground-muted);
-		margin-top: -0.125rem;
-	}
-
-	.week-day-letter {
-		font-size: 0.625rem;
-		text-transform: uppercase;
-		letter-spacing: 0.02em;
-	}
-
-	.week-day-number {
-		font-size: 0.8125rem;
+	.date-badge {
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-size: 0.6875rem;
 		font-weight: 500;
-		line-height: 1;
+		color: var(--color-foreground-muted);
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		padding: 1px 8px;
+		border-radius: 9999px;
 	}
 
 	.day-timezone {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
-		margin-top: 0.25rem;
 	}
 
-	/* Metrics block (completeness + entropy) */
-	.day-metrics {
+	/* Expanded metrics panel */
+	.expanded-metrics {
 		display: flex;
 		flex-direction: column;
-		gap: 0.75rem;
-		margin-top: 0.75rem;
-	}
-
-	/* VIX / Entropy index */
-	.vix-section {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		width: 100%;
-	}
-
-	.vix-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0;
-		background: none;
-		border: none;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		align-self: flex-start;
-	}
-
-	.vix-toggle:hover {
-		color: var(--color-foreground-muted);
-	}
-
-	.vix-toggle-label {
-		font-size: 0.8125rem;
+		gap: 1rem;
+		padding: 1rem 0;
+		margin-bottom: 1rem;
+		border-bottom: 1px solid var(--color-border);
 	}
 
 	.vix-details {
@@ -924,23 +952,23 @@
 		margin: 0;
 	}
 
-	/* Autobiography section */
-	.autobiography-section {
-		margin-bottom: 0;
+	/* Lead paragraph (autobiography without heading) */
+	.lead-section {
+		margin-bottom: 2rem;
 	}
 
-	.autobiography-header {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		margin-bottom: 0.75rem;
+	.lead-content {
+		position: relative;
 	}
 
-	.autobiography-header .section-title {
+	.lead-text {
+		font-size: 0.9375rem;
+		line-height: 1.7;
+		color: var(--color-foreground);
 		margin: 0;
 	}
 
-	.autobiography-edit-btn {
+	.lead-edit-btn {
 		display: inline-flex;
 		align-items: center;
 		background: none;
@@ -951,31 +979,33 @@
 		opacity: 0;
 		transition: opacity 0.15s ease;
 		font-size: 0.875rem;
+		margin-top: 0.5rem;
 	}
-	.autobiography-section:hover .autobiography-edit-btn {
+	.lead-content:hover .lead-edit-btn {
 		opacity: 1;
 	}
-	.autobiography-edit-btn:hover {
+	.lead-edit-btn:hover {
 		color: var(--color-foreground-muted);
 	}
 
-	.autobiography-text {
-		font-size: 0.9375rem;
-		line-height: 1.6;
-		color: var(--color-foreground-muted);
-		margin: 0;
-	}
-
-	.autobiography-editable {
+	.lead-editable {
 		outline: none;
 		border-radius: 4px;
 		padding: 0.375rem 0.5rem;
 		margin: -0.375rem -0.5rem;
-		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+		background: color-mix(
+			in srgb,
+			var(--color-foreground) 3%,
+			transparent
+		);
 		cursor: text;
 	}
-	.autobiography-editable:focus {
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+	.lead-editable:focus {
+		background: color-mix(
+			in srgb,
+			var(--color-foreground) 5%,
+			transparent
+		);
 	}
 
 	.regenerate-confirm-text {
@@ -990,14 +1020,12 @@
 	}
 
 	@keyframes spin {
-		from { transform: rotate(0deg); }
-		to { transform: rotate(360deg); }
-	}
-
-	.divider {
-		border: none;
-		border-top: 1px solid var(--color-border);
-		margin: 1rem 0 1.5rem;
+		from {
+			transform: rotate(0deg);
+		}
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	/* Sections */
@@ -1053,6 +1081,43 @@
 		margin: 0;
 	}
 
+	/* Empty state */
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		padding: 4rem 2rem;
+	}
+
+	.empty-state-text {
+		font-size: 0.9375rem;
+		color: var(--color-foreground-subtle);
+		margin: 0;
+	}
+
+	.empty-state-generate {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		background: none;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		padding: 0.5rem 1rem;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+	.empty-state-generate:hover {
+		color: var(--color-foreground);
+		border-color: var(--color-border-strong);
+	}
+	.empty-state-generate:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+
 	/* Data Sources */
 	.sources-list {
 		display: flex;
@@ -1075,7 +1140,7 @@
 		border-bottom: 1px solid var(--color-border);
 	}
 
-	.source-group-icon {
+	:global(.source-group-icon) {
 		font-size: 1rem;
 		color: var(--color-foreground-muted);
 	}
@@ -1150,19 +1215,18 @@
 		font-size: 0.75rem;
 		cursor: pointer;
 		text-align: center;
-		transition: color 0.1s ease, background 0.1s ease;
+		transition:
+			color 0.1s ease,
+			background 0.1s ease;
 	}
 
 	.source-show-more:hover {
 		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
-	}
-
-	/* Movement map */
-	.movement-loading {
-		font-size: 0.875rem;
-		color: var(--color-foreground-subtle);
-		margin-bottom: 0.5rem;
+		background: color-mix(
+			in srgb,
+			var(--color-foreground) 4%,
+			transparent
+		);
 	}
 
 	/* Sidebar metadata */

@@ -144,6 +144,16 @@ class ChatInstanceStore {
             }
         });
 
+        // Fix Svelte 5 streaming reactivity: SvelteChatState.replaceMessage() assigns
+        // the same object reference (this.messages[i] = msg), and Svelte 5's $state
+        // proxy skips notification when newValue === oldValue. Spreading into a new
+        // object on each delta forces the proxy to detect the change and re-render.
+        const internalState = (chat as any).state;
+        const originalReplace = internalState.replaceMessage;
+        internalState.replaceMessage = (index: number, message: any) => {
+            originalReplace(index, { ...message });
+        };
+
         const entry: ChatInstanceEntry = {
             chat,
             refCount: 1,

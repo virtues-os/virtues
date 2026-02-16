@@ -319,7 +319,7 @@ function createEditAllowListStore() {
 
 				// For pages with Yjs, include current content
 				if (item.type === 'page' && item.yjsDoc) {
-					context.content = item.yjsDoc.yxmlFragment.toString();
+					context.content = item.yjsDoc.ytext.toString();
 				}
 
 				return context;

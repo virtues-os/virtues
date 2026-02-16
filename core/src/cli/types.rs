@@ -76,6 +76,9 @@ pub enum Commands {
         source_id: String,
     },
 
+    /// Seed the database with demo data (people, places, events, etc.)
+    Seed,
+
     /// Start server with Cloudflare Tunnel (for iOS/Mac development)
     Tunnel,
 

@@ -12,16 +12,16 @@
 		icon: string | null;
 		coverUrl: string | null;
 		widthMode: WidthMode;
-		showDragHandles: boolean;
 		copied: boolean;
 		pageId: string;
 		yjsDoc: YjsDocument | undefined;
 		showCoverPicker?: boolean;
+		isShared?: boolean;
 		onIconSelect: (value: string | null) => void;
 		onCoverSelect: (url: string | null) => void;
 		onWidthCycle: () => void;
-		onToggleDragHandles: () => void;
 		onCopyMarkdown: () => void;
+		onShare?: () => void;
 		onDelete: () => void;
 	}
 
@@ -29,16 +29,16 @@
 		icon,
 		coverUrl,
 		widthMode,
-		showDragHandles,
 		copied,
 		pageId,
 		yjsDoc,
 		showCoverPicker = $bindable(false),
+		isShared = false,
 		onIconSelect,
 		onCoverSelect,
 		onWidthCycle,
-		onToggleDragHandles,
 		onCopyMarkdown,
+		onShare,
 		onDelete,
 	}: Props = $props();
 
@@ -121,16 +121,6 @@
 		/>
 	</button>
 	<button
-		onclick={onToggleDragHandles}
-		class="toolbar-action"
-		class:active={showDragHandles}
-		title={showDragHandles
-			? "Hide line numbers"
-			: "Show line numbers"}
-	>
-		<Icon icon="ri:hashtag" width="15" />
-	</button>
-	<button
 		onclick={onCopyMarkdown}
 		class="toolbar-action"
 		class:active={copied}
@@ -155,6 +145,19 @@
 			<VersionHistoryPanel {close} {pageId} {yjsDoc} />
 		{/snippet}
 	</Popover>
+	{#if onShare}
+		<button
+			onclick={onShare}
+			class="toolbar-action"
+			class:active={isShared}
+			title={isShared ? "Manage share link" : "Share page"}
+		>
+			<Icon
+				icon={isShared ? "ri:link" : "ri:share-line"}
+				width="15"
+			/>
+		</button>
+	{/if}
 	<div class="toolbar-divider"></div>
 	<Popover bind:open={showDeleteConfirm} placement="bottom-end">
 		{#snippet trigger({ toggle })}
