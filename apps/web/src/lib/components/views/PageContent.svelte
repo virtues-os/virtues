@@ -8,13 +8,13 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
-	import { PageEditor } from "$lib/components/pages";
-	import type { DocStats } from "$lib/components/pages/PageEditor.svelte";
+	import CodeMirrorEditor from "$lib/components/pages/CodeMirrorEditor.svelte";
+	import type { DocStats } from "$lib/components/pages/CodeMirrorEditor.svelte";
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import { Popover } from "$lib/floating";
-	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
+	import { createPageShare, getPageShare, deletePageShare } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
 	import { saveVersion } from "$lib/yjs/versions";
@@ -98,13 +98,13 @@
 	// Track whether there are unsaved changes (for beforeunload warning)
 	const hasUnsavedChanges = $derived(!!saveTimeout || saving || isTyping);
 	// Don't mount the editor until Yjs has synced (from IndexedDB or server).
-	// This prevents ySyncPlugin from writing an empty paragraph to the XmlFragment
-	// before the real content arrives, which corrupts the document.
+	// This prevents yCollab from rendering an empty document before the real
+	// content arrives via Y.Text sync.
 
 	// Editor ref for focusing
 	let editorContainerEl: HTMLDivElement;
 
-	// Doc stats from PageEditor (updated via onDocChange callback)
+	// Doc stats from CodeMirror (updated via onDocChange callback)
 	let wordCount = $state(0);
 	let charCount = $state(0);
 	let linkCount = $state(0);
@@ -114,6 +114,9 @@
 
 	// Copy state
 	let copied = $state(false);
+
+	// Share state
+	let shareToken = $state<string | null>(null);
 
 	async function autoSnapshot(description: string, keepalive = false) {
 		if (!hasEditsSinceSnapshot || !yjsDoc) return;
@@ -323,9 +326,6 @@
 			// This connects via WebSocket to /ws/yjs/{pageId}
 			yjsDoc = createYjsDocument(pageId);
 
-			// Keep editAllowListStore in sync so the AI has access to page content
-			editAllowListStore.updateYjsDoc(pageId, yjsDoc);
-
 			// Grace period: suppress "Offline" during initial connection
 			connectionGracePeriod = true;
 			if (graceTimerRef) clearTimeout(graceTimerRef);
@@ -362,6 +362,13 @@
 			});
 
 			// Content sync happens via Yjs. Doc stats are pushed via onDocChange callback.
+
+			// Fetch share state (non-blocking)
+			getPageShare(pageId).then((share) => {
+				shareToken = share?.token ?? null;
+			}).catch(() => {
+				shareToken = null;
+			});
 		} catch (e) {
 			// Ignore aborted fetches (cancelled by a newer loadPage call)
 			if (e instanceof DOMException && e.name === "AbortError") return;
@@ -378,7 +385,7 @@
 		}, 1000);
 	}
 
-	// Note: handleContentChange removed — stats are now computed from ProseMirror
+	// Note: handleContentChange removed — stats are now computed from CodeMirror
 	// directly via onDocChange callback. Content sync happens through Yjs.
 
 	// Watch for title changes and sync to stores immediately
@@ -479,18 +486,52 @@
 
 	async function copyMarkdown() {
 		try {
-			// Fetch fresh content from API (Yjs → markdown serialized server-side)
-			const res = await fetch(`/api/pages/${pageId}`);
-			if (res.ok) {
-				const data = await res.json();
-				await navigator.clipboard.writeText(data.content || "");
-			} else {
-				// Fallback to initial content
-				await navigator.clipboard.writeText(content);
-			}
+			// Read directly from the local Yjs document (always up-to-date)
+			// The API content field can be stale due to the 2s debounced save queue
+			const text = yjsDoc?.ytext?.toString() || content;
+			await navigator.clipboard.writeText(text);
 			copied = true;
 		} catch (err) {
 			console.error("Failed to copy markdown:", err);
+		}
+	}
+
+	async function handleShare() {
+		try {
+			if (shareToken) {
+				// Already shared — copy link and offer revoke
+				const url = `${window.location.origin}/s/${shareToken}`;
+				await navigator.clipboard.writeText(url);
+				// Import toast dynamically to avoid adding dependency to this file's top-level
+				const { toast } = await import("svelte-sonner");
+				toast.success("Share link copied!", {
+					description: url,
+					action: {
+						label: "Revoke",
+						onClick: async () => {
+							try {
+								await deletePageShare(pageId);
+								shareToken = null;
+								toast.info("Share link revoked");
+							} catch (err) {
+								console.error("Failed to revoke share:", err);
+							}
+						},
+					},
+				});
+			} else {
+				// Create new share
+				const share = await createPageShare(pageId);
+				shareToken = share.token;
+				const url = `${window.location.origin}/s/${share.token}`;
+				await navigator.clipboard.writeText(url);
+				const { toast } = await import("svelte-sonner");
+				toast.success("Share link copied to clipboard!", {
+					description: url,
+				});
+			}
+		} catch (err) {
+			console.error("Failed to share page:", err);
 		}
 	}
 </script>
@@ -521,11 +562,12 @@
 				{icon}
 				{coverUrl}
 				{widthMode}
-				{showDragHandles}
 				{copied}
 				{pageId}
 				{yjsDoc}
 				bind:showCoverPicker
+				isShared={!!shareToken}
+				onShare={handleShare}
 				onIconSelect={(value) => {
 					icon = value;
 					if (pageData) {
@@ -543,7 +585,6 @@
 					const currentIndex = modes.indexOf(widthMode);
 					widthMode = modes[(currentIndex + 1) % modes.length];
 				}}
-				onToggleDragHandles={() => (showDragHandles = !showDragHandles)}
 				onCopyMarkdown={copyMarkdown}
 				onDelete={deletePage}
 			/>
@@ -617,7 +658,7 @@
 						></textarea>
 					</div>
 
-					<!-- Editor area: overlay pattern to avoid destroying ProseMirror -->
+					<!-- Editor area: overlay pattern to avoid destroying CodeMirror -->
 					<div class="page-editor-area" bind:this={editorContainerEl}>
 						{#if !yjsDoc || !isSynced}
 							<div class="editor-loading">
@@ -629,21 +670,18 @@
 								<span>Loading document...</span>
 							</div>
 						{/if}
-						{#if yjsDoc}
+						{#if yjsDoc && isSynced}
 							{#key pageId}
-								<div class:editor-hidden={!isSynced}>
-									<PageEditor
-										initialContent={content}
-										onDocChange={handleDocChange}
-										placeholder="Type / for styling and @ for entities"
-										{yjsDoc}
-										disabled={!isSynced}
-										{isConnected}
-										{isSynced}
-										{showDragHandles}
-										{pageId}
-									/>
-								</div>
+								<CodeMirrorEditor
+									initialContent={content}
+									onDocChange={handleDocChange}
+									placeholder="Type / for commands, @ for entities..."
+									{yjsDoc}
+									{isConnected}
+									{isSynced}
+									{showDragHandles}
+									{pageId}
+								/>
 							{/key}
 						{/if}
 					</div>
@@ -763,17 +801,6 @@
 	.page-editor-area {
 		min-height: 300px;
 		position: relative;
-	}
-
-	/* Hidden editor - keeps ProseMirror DOM attached but invisible during sync.
-	   Uses opacity instead of height:0 to prevent permanent black screen if
-	   sync state gets stuck (the loading spinner overlays this). */
-	.editor-hidden {
-		opacity: 0;
-		pointer-events: none;
-		position: absolute;
-		left: 0;
-		right: 0;
 	}
 
 	/* Editor Loading State - shown while Yjs syncs */

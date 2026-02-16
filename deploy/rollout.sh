@@ -68,16 +68,19 @@ for JOB_ID in $TENANT_JOBS; do
   # Extract subdomain from job ID: "virtues-tenant-adam" -> "adam"
   SUBDOMAIN="${JOB_ID#virtues-tenant-}"
 
-  # Get the current tier from the running job's metadata
+  # Get the current tier and seed_demo flag from the running job's env
   TIER=$(nomad job inspect "$JOB_ID" 2>/dev/null | \
     jq -r '.Job.TaskGroups[0].Tasks[0].Env.TIER // "standard"' 2>/dev/null || echo "standard")
+  SEED_DEMO=$(nomad job inspect "$JOB_ID" 2>/dev/null | \
+    jq -r '.Job.TaskGroups[0].Tasks[0].Env.SEED_DEMO // "false"' 2>/dev/null || echo "false")
 
-  echo "  [$SUBDOMAIN] tier=$TIER -> tag=$TAG"
+  echo "  [$SUBDOMAIN] tier=$TIER seed_demo=$SEED_DEMO -> tag=$TAG"
 
   if OUTPUT=$(nomad job run \
     -var="tag=$TAG" \
     -var="subdomain=$SUBDOMAIN" \
     -var="tier=$TIER" \
+    -var="seed_demo=$SEED_DEMO" \
     -var="ghcr_repo=$GHCR_REPO" \
     "$DEPLOY_DIR/tenant.nomad.hcl" 2>&1); then
     SUCCESS=$((SUCCESS + 1))

@@ -24,6 +24,11 @@ variable "tag" {
   default = "latest"
 }
 
+variable "seed_demo" {
+  type    = string
+  default = "false"
+}
+
 # Resource configurations per tier
 locals {
   tier_config = {
@@ -124,6 +129,7 @@ job "virtues-tenant-${var.subdomain}" {
         RUST_ENV      = "production"
         TIER          = var.tier
         SUBDOMAIN     = var.subdomain
+        SEED_DEMO     = var.seed_demo
         TOLLBOOTH_URL = "http://${attr.unique.network.ip-address}:9000"
         AUTH_URL      = "https://${var.subdomain}.virtues.com"
         BACKEND_URL   = "https://${var.subdomain}.virtues.com"

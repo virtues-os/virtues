@@ -423,9 +423,15 @@ export interface TemporalEventApi {
 	is_transit: boolean | null;
 	is_user_added: boolean | null;
 	is_user_edited: boolean | null;
+	w6h_activation: [number, number, number, number, number, number, number] | null;
+	entropy: number | null;
+	w6h_entropy: number | null;
 	created_at: string;
 	updated_at: string;
 }
+
+/** W6H dimension labels in order */
+export const W6H_LABELS = ["who", "whom", "what", "when", "where", "why", "how"] as const;
 
 export interface CreateTemporalEventRequest {
 	day_id: string;
@@ -621,5 +627,35 @@ export async function getDaySources(
 ): Promise<DaySourceApi[]> {
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/sources`);
 	if (!res.ok) return [];
+	return res.json();
+}
+
+// ============================================================================
+// Day Vector Projection Types
+// ============================================================================
+
+export interface W6HProjectionApi {
+	name: string;
+	point: [number, number];
+	magnitude: number;
+	completeness: number;
+}
+
+export interface DayVectorProjectionApi {
+	date: string;
+	aggregate: [number, number];
+	dimensions: W6HProjectionApi[];
+}
+
+/**
+ * Get 2D vector projection of W6H embeddings for a day.
+ * Returns null if the day has no embeddings.
+ */
+export async function getDayVectors(
+	date: string,
+	fetchFn: FetchFn = fetch
+): Promise<DayVectorProjectionApi | null> {
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/vectors`);
+	if (!res.ok) return null;
 	return res.json();
 }

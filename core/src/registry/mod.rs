@@ -367,6 +367,7 @@ fn init_registry() -> Registry {
     registry.register(crate::sources::google::registry::GoogleSource::descriptor());
     registry.register(crate::sources::notion::registry::NotionSource::descriptor());
     registry.register(crate::sources::plaid::registry::PlaidSource::descriptor());
+    registry.register(crate::sources::spotify::registry::SpotifySource::descriptor());
     registry.register(crate::sources::strava::registry::StravaSource::descriptor());
 
     // Register device sources

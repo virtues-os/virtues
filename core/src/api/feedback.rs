@@ -30,7 +30,7 @@ pub async fn submit_feedback(
     // In production, we forward this to the Tollbooth sidecar
     if let Ok(tollbooth_url) = env::var("TOLLBOOTH_URL") {
         let client = reqwest::Client::new();
-        let target_url = format!("{}/services/feedback", tollbooth_url);
+        let target_url = format!("{}/v1/services/feedback", tollbooth_url);
 
         // We fire and forget - don't block the user if tollbooth is down
         // Realistically we should probably queue this, but for now we just try

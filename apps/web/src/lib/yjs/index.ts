@@ -6,9 +6,7 @@
 
 export {
 	createYjsDocument,
-	applyMarkup,
-	type YjsDocument,
-	type MarkupInstruction
+	type YjsDocument
 } from './document';
 
 export { saveVersion, listVersions, restoreVersion, type PageVersion } from './versions';

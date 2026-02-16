@@ -6,11 +6,11 @@
 
 	interface Props {
 		contextVector: ContextVector;
+		expanded?: boolean;
+		showToggle?: boolean;
 	}
 
-	let { contextVector }: Props = $props();
-
-	let expanded = $state(false);
+	let { contextVector, expanded = $bindable(false), showToggle = true }: Props = $props();
 
 	const completeness = $derived(
 		Math.round(computeCompleteness(contextVector) * 100),
@@ -28,12 +28,14 @@
 </script>
 
 <div class="context-vector">
-	<button class="toggle-btn" onclick={() => (expanded = !expanded)}>
-		<span class="toggle-label">Completeness · {completeness}%</span>
-		<Icon
-			icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
-		/>
-	</button>
+	{#if showToggle}
+		<button class="toggle-btn" onclick={() => (expanded = !expanded)}>
+			<span class="toggle-label">Coverage · {completeness}%</span>
+			<Icon
+				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
+			/>
+		</button>
+	{/if}
 
 	{#if expanded}
 		<div class="dimensions" transition:slide={{ duration: 200 }}>
@@ -57,7 +59,7 @@
 					</div>
 				{/each}
 			</div>
-			<p class="metric-description">How much of your day is captured across seven dimensions — who, whom, what, when, where, why, and how.</p>
+			<p class="metric-description">Data coverage across seven dimensions — who, whom, what, when, where, why, and how.</p>
 		</div>
 	{/if}
 </div>

@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get database URL from environment
     let mut database_url =
-        env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:./data/virtues.db".to_string());
+        env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:/data/virtues.db".to_string());
 
     // Auto-setup: Create data directory if it doesn't exist (for SQLite)
     if database_url.starts_with("sqlite:") {

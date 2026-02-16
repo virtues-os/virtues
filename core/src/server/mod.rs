@@ -6,6 +6,7 @@ pub mod yjs;
 
 use axum::{
     extract::DefaultBodyLimit,
+    middleware,
     response::IntoResponse,
     routing::{delete, get, post, put},
     Json, Router,
@@ -19,6 +20,7 @@ use self::ingest::AppState;
 use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
+use crate::middleware::auth::AuthUser;
 use crate::storage::stream_writer::StreamWriter;
 use crate::Virtues;
 
@@ -133,11 +135,44 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         chat_cancel_state,
     };
 
-    let app = Router::new()
+    // ============================================================
+    // Public routes (no authentication required)
+    // ============================================================
+    let public_routes = Router::new()
         // Health check
         .route("/health", get(health))
         // App server info (for device pairing)
         .route("/api/app/server-info", get(server_info))
+        // Auth API (must be public for login flow)
+        .route("/auth/signin", post(api::auth_signin_handler))
+        .route("/auth/callback", get(api::auth_callback_handler))
+        .route("/auth/signout", post(api::auth_signout_handler))
+        .route("/auth/session", get(api::auth_session_handler))
+        // OAuth callback from OAuth proxy (returns HTML redirect)
+        .route("/oauth/callback", get(api::oauth_callback_handler))
+        // Atlas webhook for owner email updates (Seed and Drift pattern)
+        .route(
+            "/api/profile/owner-email",
+            post(api::auth_owner_email_handler),
+        )
+        // Internal API (Tollbooth integration — has its own header-based auth)
+        .route("/internal/hydrate", post(api::hydrate_profile_handler))
+        .route(
+            "/internal/server-status",
+            get(api::get_server_status_handler),
+        )
+        .route("/internal/mark-ready", post(api::mark_server_ready_handler))
+        // Public page sharing (token-based access, no session needed)
+        .route("/api/s/:token", get(api::get_shared_page_handler))
+        .route(
+            "/api/s/:token/files/:file_id",
+            get(api::shared_file_download_handler),
+        );
+
+    // ============================================================
+    // Protected routes (authentication required via route_layer)
+    // ============================================================
+    let protected_routes = Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // Data ingestion
@@ -147,8 +182,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/sources/:provider/authorize",
             post(api::oauth_authorize_handler),
         )
-        // OAuth callback from OAuth proxy (returns HTML redirect)
-        .route("/oauth/callback", get(api::oauth_callback_handler))
         // Source management API
         .route("/api/sources", get(api::list_sources_handler))
         .route("/api/sources", post(api::create_source_handler))
@@ -282,8 +315,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Tools API
         .route("/api/tools", get(api::list_tools_handler))
         .route("/api/tools/:id", get(api::get_tool_handler))
-        // Note: Built-in tools cannot be updated (read-only from registry)
-        // MCP tools management endpoints to be added separately
         // Models API
         .route("/api/models", get(api::list_models_handler))
         .route(
@@ -478,6 +509,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
         )
+        // Wiki - Day Vectors (2D projection of W6H embeddings)
+        .route(
+            "/api/wiki/day/:date/vectors",
+            get(api::wiki_get_day_vectors_handler),
+        )
         // Code Execution API (AI Sandbox)
         .route("/api/code/execute", post(api::execute_code_handler))
         // Developer API
@@ -500,6 +536,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_page_handler)
                 .put(api::update_page_handler)
                 .delete(api::delete_page_handler),
+        )
+        // Page Share API
+        .route(
+            "/api/pages/:id/share",
+            post(api::create_page_share_handler)
+                .get(api::get_page_share_handler)
+                .delete(api::delete_page_share_handler),
         )
         // Page Versions API
         .route(
@@ -583,23 +626,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/chats/:id/permissions/:entity_id",
             delete(api::remove_chat_permission_handler),
         )
-        // Auth API
-        .route("/auth/signin", post(api::auth_signin_handler))
-        .route("/auth/callback", get(api::auth_callback_handler))
-        .route("/auth/signout", post(api::auth_signout_handler))
-        .route("/auth/session", get(api::auth_session_handler))
-        // Atlas webhook for owner email updates (Seed and Drift pattern)
-        .route(
-            "/api/profile/owner-email",
-            post(api::auth_owner_email_handler),
-        )
-        // Internal API (Tollbooth integration)
-        .route("/internal/hydrate", post(api::hydrate_profile_handler))
-        .route(
-            "/internal/server-status",
-            get(api::get_server_status_handler),
-        )
-        .route("/internal/mark-ready", post(api::mark_server_ready_handler))
         // Feedback API
         .route("/api/feedback", post(crate::api::feedback::submit_feedback))
         // Terminal API (WebSocket)
@@ -609,9 +635,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
+        // Blanket auth: all routes in this group require a valid session cookie
+        .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()));
+
+    // Merge public + protected, apply shared state and body limits
+    let app = public_routes
+        .merge(protected_routes)
         .with_state(state.clone())
-        .layer(DefaultBodyLimit::disable()) // Disable default 2MB limit
-        .layer(DefaultBodyLimit::max(20 * 1024 * 1024)); // Set 20MB limit for audio files
+        .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
 
     // Add MCP routes to the same server
     let mcp_server = VirtuesMcpServer::new(client.database.pool().clone());

@@ -31,6 +31,7 @@ pub mod chats;
 pub mod code;
 pub mod compaction;
 pub mod day_scoring;
+pub mod day_vectors;
 pub mod day_summary;
 pub mod device_pairing;
 pub mod drive;
@@ -201,15 +202,21 @@ pub use namespaces::{
 };
 pub use pages::{
     create_page,
+    // Sharing
+    create_page_share,
     // Version history
     create_version,
     delete_page,
+    delete_page_share,
     get_page,
+    get_page_share,
+    get_shared_page,
     get_version,
     list_pages,
     list_versions,
     search_entities,
     update_page,
+    validate_shared_file,
     CreatePageRequest,
     // Version types
     CreateVersionRequest,
@@ -217,10 +224,13 @@ pub use pages::{
     EntitySearchResult,
     Page,
     PageListResponse,
+    // Share types
+    PageShare,
     PageSummary,
     PageVersionDetail,
     PageVersionSummary,
     PageVersionsListResponse,
+    SharedPage,
     UpdatePageRequest,
 };
 pub use places::{

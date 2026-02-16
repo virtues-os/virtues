@@ -12,13 +12,28 @@ use sqlx::SqlitePool;
 use crate::error::{Error, Result};
 
 use super::wiki::{
-    get_day_sources, get_or_create_day, update_day, DaySource, UpdateWikiDayRequest, WikiDay,
+    create_temporal_event, delete_auto_events_for_day, get_day_sources, get_or_create_day,
+    update_day, CreateTemporalEventRequest, DaySource, UpdateWikiDayRequest, WikiDay,
 };
 use virtues_registry::ontologies::registered_ontologies;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = r#"You are writing a brief first-person diary entry for a personal journal. Write 2-5 sentences that capture what mattered about this day — not a log of every event, but the through-line or shape of the day. Prioritize the most meaningful events and interactions over comprehensive coverage. Be direct and concrete, never poetic or flowery. If the data is sparse, write less — even a single sentence is fine. Never infer emotions, motivations, or details not present in the data."#;
+const SYSTEM_PROMPT: &str = r#"You are writing a brief first-person diary entry for a personal journal. Write 2-5 sentences that capture what mattered about this day — not a log of every event, but the through-line or shape of the day. Prioritize the most meaningful events and interactions over comprehensive coverage. Be direct and concrete, never poetic or flowery. If the data is sparse, write less — even a single sentence is fine. Never infer emotions, motivations, or details not present in the data.
+
+After the diary entry, on a new line, output a JSON block with the day's events as a perfect 24-hour calendar. Use this exact format:
+---EVENTS---
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief description"}]
+
+Rules:
+- Events MUST cover the full 24 hours: first event starts at "00:00", last event ends at "24:00". No gaps, no overlaps.
+- Use 24-hour time format (HH:MM). Events are contiguous — each event's end time equals the next event's start time.
+- Label events based ONLY on data present in the sources. Do NOT infer activities not evidenced by the data.
+- "Sleep" is valid ONLY when sleep tracking data (e.g., Apple Health, Oura) is present in the sources. Do not infer sleep from absence of data. Do not guess wake-up times — if sleep data ends at 06:30 but the next data point is at 09:00, end the sleep event at 06:30 and mark 06:30-09:00 as "Unknown".
+- Use "Unknown" for any time period where the data is sparse or absent. It is perfectly fine to have multiple "Unknown" segments.
+- Aim for 6-16 events depending on how much data exists. A sparse day might have 6 events (mostly "Unknown"). A rich day might have 12-16.
+- Do not pad or fabricate events to reach a minimum count. If the data only supports 4 labeled events plus "Unknown" gaps, that is correct.
+- Good labels: "Morning routine", "Work session", "Lunch with Sarah", "Evening walk", "Reading", "Commute", "Sleep" (when sleep data exists). Bad labels: "Sleep" (no sleep data), "Relaxing at home" (inferred)."#;
 
 /// Max characters per prompt section before truncation
 const MAX_SECTION_CHARS: usize = 1500;
@@ -161,11 +176,23 @@ pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<
     });
 
     // 7. Call Tollbooth
-    let summary_text = call_tollbooth(pool, &prompt).await?;
+    let raw_response = call_tollbooth(pool, &prompt).await?;
 
-    // 8. Generate domain embeddings + chaos score
+    // 8. Parse response: extract diary text and structured events
+    let (summary_text, event_json) = parse_tollbooth_response(&raw_response);
+
+    // 9. Store structured events + compute per-event W6H activation + embeddings + entropy
+    //    Must happen BEFORE chaos scoring — chaos now aggregates event embeddings.
+    let day_stub = get_or_create_day(pool, date).await?;
+    let event_embeddings = if let Some(events) = event_json {
+        store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events, &start_str, &end_str).await
+    } else {
+        Vec::new()
+    };
+
+    // 10. Generate chaos score from aggregated event embeddings
     let chaos_result = super::day_scoring::generate_embeddings_and_score(
-        pool, date, &context_vector,
+        pool, date, &context_vector, &event_embeddings,
     )
     .await
     .unwrap_or_else(|e| {
@@ -173,8 +200,8 @@ pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<
         super::day_scoring::ChaosScoreResult { score: None, calibration_days: 0 }
     });
 
-    // 9. Save to wiki_days
-    update_day(
+    // 11. Save to wiki_days
+    let day = update_day(
         pool,
         date,
         UpdateWikiDayRequest {
@@ -185,10 +212,13 @@ pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<
             context_vector: Some(context_vector_json),
             chaos_score: chaos_result.score,
             entropy_calibration_days: Some(chaos_result.calibration_days),
-            start_timezone: timezone,
+            start_timezone: timezone.clone(),
+            snapshot: None,
         },
     )
-    .await
+    .await?;
+
+    Ok(day)
 }
 
 // ── Section builders ─────────────────────────────────────────────────────────
@@ -855,7 +885,7 @@ async fn call_tollbooth(pool: &SqlitePool, user_prompt: &str) -> Result<String> 
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt}
         ],
-        "max_tokens": 500,
+        "max_tokens": 1000,
         "temperature": 0.3
     }))
     .send()
@@ -896,4 +926,429 @@ async fn call_tollbooth(pool: &SqlitePool, user_prompt: &str) -> Result<String> 
     );
 
     Ok(summary)
+}
+
+// ── Structured event parsing + W6H activation ───────────────────────────────
+
+/// LLM event parsed from Tollbooth response
+#[derive(Debug, serde::Deserialize)]
+struct LlmEvent {
+    start: String,
+    end: String,
+    label: String,
+}
+
+/// Split Tollbooth response into diary text and optional events JSON.
+/// Handles markdown code fences (```json ... ```) that LLMs sometimes wrap around JSON.
+fn parse_tollbooth_response(response: &str) -> (String, Option<Vec<LlmEvent>>) {
+    if let Some(idx) = response.find("---EVENTS---") {
+        let diary = response[..idx].trim().to_string();
+        let mut events_str = response[idx + "---EVENTS---".len()..].trim();
+        // Strip markdown code fences if present
+        events_str = events_str
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        let events: Option<Vec<LlmEvent>> = serde_json::from_str(events_str)
+            .map_err(|e| {
+                tracing::warn!(error = %e, raw = events_str, "Failed to parse structured events from LLM");
+                e
+            })
+            .ok();
+        (diary, events)
+    } else {
+        (response.trim().to_string(), None)
+    }
+}
+
+/// Store LLM-identified events, compute W6H activation, embed, and compute entropy.
+///
+/// Three-pass approach:
+///   Pass 1: Create events in DB, compute W6H activation, collect ontology text per event
+///   Pass 2: Batch embed all event texts in a single ONNX call
+///   Pass 3: Compute entropy scores (embedding novelty + Shannon W6H), store everything
+///
+/// Returns `Vec<(embedding, duration_minutes)>` for events that were successfully
+/// embedded. The caller uses this to compute a duration-weighted day centroid for
+/// cross-day chaos scoring.
+async fn store_structured_events(
+    pool: &SqlitePool,
+    day: &WikiDay,
+    date: NaiveDate,
+    timezone: Option<&str>,
+    events: &[LlmEvent],
+    _start_str: &str,
+    _end_str: &str,
+) -> Vec<(Vec<f32>, f32)> {
+    use super::day_scoring::{
+        collect_ontology_texts, compute_w6h_entropy, cosine_similarity, embedding_to_bytes,
+    };
+
+    // Clear previous auto events
+    if let Err(e) = delete_auto_events_for_day(pool, day.id.clone()).await {
+        tracing::warn!(error = %e, "Failed to delete existing auto events");
+        return Vec::new();
+    }
+
+    let tz: Option<Tz> = timezone.and_then(|s| s.parse().ok());
+    let date_str = date.to_string();
+
+    // ── Backfill gaps to ensure perfect 24h coverage (00:00–24:00) ───────
+
+    let all_events = backfill_24h_events(events, date, tz.as_ref());
+
+    // ── Pass 1: Create events, compute W6H, collect text ─────────────────
+
+    struct EventWork {
+        event_id: String,
+        w6h: [f32; 7],
+        text: String,
+        duration_minutes: f32,
+    }
+
+    let mut work: Vec<EventWork> = Vec::new();
+
+    for event in &all_events {
+        let start_rfc = event.start_utc.to_rfc3339();
+        let end_rfc = event.end_utc.to_rfc3339();
+
+        // Collect ontology texts for this event's time range (needed for embedding + source tracking)
+        let ontology_texts = collect_ontology_texts(pool, &start_rfc, &end_rfc, &date_str).await;
+
+        // Extract source ontology names for this event
+        let source_names: Vec<String> = ontology_texts
+            .iter()
+            .map(|ot| ot.ontology_name.clone())
+            .collect();
+
+        // Extract auto_location from location_visit data (longest visit in time range)
+        let auto_location = extract_event_location(pool, &start_rfc, &end_rfc).await;
+
+        // Create the event row
+        let created = create_temporal_event(
+            pool,
+            CreateTemporalEventRequest {
+                day_id: day.id.clone(),
+                start_time: event.start_utc,
+                end_time: event.end_utc,
+                auto_label: Some(event.label.clone()),
+                auto_location,
+                user_label: None,
+                user_location: None,
+                user_notes: None,
+                source_ontologies: if source_names.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::json!(source_names))
+                },
+                is_unknown: Some(event.is_unknown),
+                is_transit: Some(false),
+                is_user_added: Some(false),
+            },
+        )
+        .await;
+
+        let created_event = match created {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(error = %e, label = event.label, "Failed to create temporal event");
+                continue;
+            }
+        };
+
+        // Compute W6H activation for this event's time range
+        let w6h = compute_event_w6h(pool, &start_rfc, &end_rfc).await;
+
+        // Build text for embedding (cap at 2000 chars)
+        let combined_text: String = ontology_texts
+            .iter()
+            .map(|ot| ot.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = if combined_text.len() > 2000 {
+            combined_text[..2000].to_string()
+        } else {
+            combined_text
+        };
+
+        let duration_minutes = (event.end_utc - event.start_utc).num_minutes().max(1) as f32;
+
+        work.push(EventWork {
+            event_id: created_event.id,
+            w6h,
+            text,
+            duration_minutes,
+        });
+    }
+
+    // ── Pass 2: Batch embed all event texts ──────────────────────────────
+
+    // Collect non-empty texts and their indices
+    let texts_with_idx: Vec<(usize, String)> = work
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| !w.text.trim().is_empty())
+        .map(|(i, w)| (i, w.text.clone()))
+        .collect();
+
+    let mut embeddings: Vec<Option<Vec<f32>>> = vec![None; work.len()];
+
+    if !texts_with_idx.is_empty() {
+        let batch_texts: Vec<String> = texts_with_idx.iter().map(|(_, t)| t.clone()).collect();
+        let batch_indices: Vec<usize> = texts_with_idx.iter().map(|(i, _)| *i).collect();
+
+        match crate::search::embedder::get_embedder().await {
+            Ok(embedder) => match embedder.embed_batch_async(batch_texts).await {
+                Ok(batch_results) => {
+                    for (result_idx, &work_idx) in batch_indices.iter().enumerate() {
+                        if result_idx < batch_results.len() {
+                            embeddings[work_idx] = Some(batch_results[result_idx].clone());
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Batch embedding failed, proceeding with Shannon-only entropy");
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load embedder, proceeding with Shannon-only entropy");
+            }
+        }
+    }
+
+    // ── Compute day centroid from available embeddings ─────────────────
+    let day_centroid: Option<Vec<f32>> = {
+        let embedded: Vec<(&Vec<f32>, f32)> = work
+            .iter()
+            .enumerate()
+            .filter_map(|(i, w)| embeddings[i].as_ref().map(|e| (e, w.duration_minutes)))
+            .collect();
+
+        if embedded.is_empty() {
+            None
+        } else {
+            let dim = embedded[0].0.len();
+            let mut weighted_sum = vec![0.0f64; dim];
+            let mut total_weight = 0.0f64;
+
+            for (emb, duration) in &embedded {
+                let w = *duration as f64;
+                total_weight += w;
+                for (j, &val) in emb.iter().enumerate() {
+                    if j < dim {
+                        weighted_sum[j] += val as f64 * w;
+                    }
+                }
+            }
+
+            let centroid: Vec<f32> = weighted_sum.iter().map(|v| (v / total_weight) as f32).collect();
+            let norm: f32 = centroid.iter().map(|v| v * v).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                Some(centroid.iter().map(|v| v / norm).collect())
+            } else {
+                None
+            }
+        }
+    };
+
+    // ── Pass 3: Compute entropy + store everything ───────────────────────
+
+    let mut event_embeddings: Vec<(Vec<f32>, f32)> = Vec::new();
+
+    for (i, item) in work.iter().enumerate() {
+        let w6h_json = serde_json::to_string(&item.w6h).unwrap_or_default();
+        let w6h_entropy = compute_w6h_entropy(&item.w6h);
+
+        let embedding_ref = embeddings[i].as_ref();
+
+        // Semantic distinctness: 1 - cosine_sim(this, day_centroid). Falls back to Shannon when embedding or centroid unavailable.
+        let entropy = match (embedding_ref, day_centroid.as_ref()) {
+            (Some(curr), Some(centroid)) => {
+                (1.0 - cosine_similarity(curr, centroid) as f64).clamp(0.0, 1.0)
+            }
+            _ => w6h_entropy,
+        };
+
+        // Store embedding bytes (or NULL)
+        let embedding_bytes = embedding_ref.map(|e| embedding_to_bytes(e));
+
+        if let Err(e) = sqlx::query(
+            "UPDATE wiki_events SET w6h_activation = $1, embedding = $2, entropy = $3, w6h_entropy = $4 WHERE id = $5",
+        )
+        .bind(&w6h_json)
+        .bind(&embedding_bytes)
+        .bind(entropy)
+        .bind(w6h_entropy)
+        .bind(&item.event_id)
+        .execute(pool)
+        .await
+        {
+            tracing::warn!(error = %e, event_id = item.event_id, "Failed to store event data");
+        }
+
+        // Track for day centroid computation (used by caller for chaos scoring)
+        if let Some(emb) = embedding_ref {
+            event_embeddings.push((emb.clone(), item.duration_minutes));
+        }
+    }
+
+    tracing::info!(
+        date = %date,
+        event_count = all_events.len(),
+        embedded_count = event_embeddings.len(),
+        "Stored structured events with W6H activation and entropy"
+    );
+
+    event_embeddings
+}
+
+/// Extract the primary location for an event's time range from location_visit data.
+/// Returns the place name with the longest visit duration, or None if no location data.
+async fn extract_event_location(pool: &SqlitePool, start: &str, end: &str) -> Option<String> {
+    use sqlx::Row;
+    let row: Option<sqlx::sqlite::SqliteRow> = sqlx::query(
+        "SELECT place_name FROM data_location_visit \
+         WHERE arrival_time >= $1 AND arrival_time <= $2 \
+         ORDER BY duration_minutes DESC LIMIT 1",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    row.and_then(|r| r.try_get::<Option<String>, _>("place_name").ok().flatten())
+        .filter(|s| !s.is_empty())
+}
+
+/// An event with pre-computed UTC times (either from LLM or gap-filled).
+struct ResolvedEvent {
+    start_utc: chrono::DateTime<chrono::Utc>,
+    end_utc: chrono::DateTime<chrono::Utc>,
+    label: String,
+    is_unknown: bool,
+}
+
+/// Take LLM events and produce a perfect 24h timeline (00:00–24:00) by filling gaps
+/// with "Unknown" events. Events are sorted by start time and clamped to day boundaries.
+fn backfill_24h_events(
+    llm_events: &[LlmEvent],
+    date: NaiveDate,
+    tz: Option<&Tz>,
+) -> Vec<ResolvedEvent> {
+    // Day boundaries in UTC
+    let day_start = parse_hhmm_to_utc("00:00", date, tz)
+        .unwrap_or_else(|| date.and_hms_opt(0, 0, 0).unwrap().and_utc());
+    let day_end = parse_hhmm_to_utc("00:00", date + chrono::Duration::days(1), tz)
+        .unwrap_or_else(|| (date + chrono::Duration::days(1)).and_hms_opt(0, 0, 0).unwrap().and_utc());
+
+    // Parse and sort LLM events
+    let mut parsed: Vec<ResolvedEvent> = llm_events
+        .iter()
+        .filter_map(|e| {
+            let start = parse_hhmm_to_utc(&e.start, date, tz)?;
+            let end = parse_hhmm_to_utc(&e.end, date, tz)?;
+            if end <= start { return None; } // skip invalid
+            Some(ResolvedEvent {
+                start_utc: start.max(day_start),
+                end_utc: end.min(day_end),
+                label: e.label.clone(),
+                is_unknown: false,
+            })
+        })
+        .collect();
+    parsed.sort_by_key(|e| e.start_utc);
+
+    // Resolve overlaps: if event B starts before event A ends, truncate A's end to B's start.
+    // If that makes A zero-width, drop it.
+    let mut resolved: Vec<ResolvedEvent> = Vec::new();
+    for event in parsed {
+        if let Some(prev) = resolved.last_mut() {
+            if event.start_utc < prev.end_utc {
+                // Overlap: truncate previous event
+                prev.end_utc = event.start_utc;
+                if prev.end_utc <= prev.start_utc {
+                    resolved.pop(); // zero-width, remove it
+                }
+            }
+        }
+        resolved.push(event);
+    }
+
+    // Build complete timeline with gaps filled
+    let mut result: Vec<ResolvedEvent> = Vec::new();
+    let mut cursor = day_start;
+
+    for event in resolved {
+        // Fill gap before this event
+        if event.start_utc > cursor {
+            result.push(ResolvedEvent {
+                start_utc: cursor,
+                end_utc: event.start_utc,
+                label: "Unknown".to_string(),
+                is_unknown: true,
+            });
+        }
+        cursor = event.end_utc;
+        result.push(event);
+    }
+
+    // Fill gap after last event to end of day
+    if cursor < day_end {
+        result.push(ResolvedEvent {
+            start_utc: cursor,
+            end_utc: day_end,
+            label: "Unknown".to_string(),
+            is_unknown: true,
+        });
+    }
+
+    result
+}
+
+/// Parse "HH:MM" string into UTC DateTime for the given date and timezone.
+/// Handles "24:00" as midnight of the next day.
+fn parse_hhmm_to_utc(
+    hhmm: &str,
+    date: NaiveDate,
+    tz: Option<&Tz>,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    let parts: Vec<&str> = hhmm.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let hour: u32 = parts[0].parse().ok()?;
+    let minute: u32 = parts[1].parse().ok()?;
+
+    // "24:00" means midnight of the next day
+    if hour == 24 {
+        let next_day = date + chrono::Duration::days(1);
+        let naive = next_day.and_hms_opt(0, 0, 0)?;
+        return if let Some(tz) = tz {
+            tz.from_local_datetime(&naive)
+                .earliest()
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+        } else {
+            Some(naive.and_utc())
+        };
+    }
+
+    let naive = date.and_hms_opt(hour, minute, 0)?;
+
+    if let Some(tz) = tz {
+        tz.from_local_datetime(&naive)
+            .earliest()
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    } else {
+        Some(naive.and_utc())
+    }
+}
+
+/// Compute W6H activation for a time range by checking ontology presence.
+/// Same algorithm as compute_context_vector() but for an arbitrary time range.
+async fn compute_event_w6h(pool: &SqlitePool, start: &str, end: &str) -> [f32; 7] {
+    let presence = detect_ontology_presence(pool, start, end).await;
+    compute_context_vector(&presence)
 }

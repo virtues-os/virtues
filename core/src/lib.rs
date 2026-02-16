@@ -8,7 +8,6 @@ pub mod cli;
 pub mod client;
 pub mod database;
 pub mod entity_resolution;
-pub mod markdown;
 pub mod tools;
 pub mod error;
 pub mod geo;

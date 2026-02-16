@@ -10,6 +10,7 @@ pub mod mac;
 pub mod notion;
 pub mod plaid;
 pub mod pull_stream;
+pub mod spotify;
 pub mod strava;
 pub mod push_stream;
 pub mod stream_type;

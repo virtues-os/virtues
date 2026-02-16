@@ -128,6 +128,17 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             crate::server::run(virtues, &host, port).await?;
         }
 
+        Commands::Seed => {
+            println!("📊 Running migrations...");
+            virtues.database.initialize().await?;
+            println!("✅ Migrations complete");
+            println!();
+
+            println!("🎭 Seeding demo data...");
+            crate::seeding::seed_demo_data(&virtues.database).await?;
+            println!("✅ Demo data seeded");
+        }
+
         Commands::Tunnel => {
             commands::handle_tunnel_command(virtues).await?;
         }

@@ -215,30 +215,48 @@ impl AgentLoop {
                         .map(|s| s.to_string())
                 };
 
-                // Collect events to emit after streaming
-                let mut pending_events: Vec<AgentEvent> = Vec::new();
+                // Stream events through a channel for incremental delivery.
+                // Previously events were collected into a Vec and yielded in a
+                // burst after the entire LLM response completed. Using a channel
+                // lets each text-delta reach the client as it arrives.
+                let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<AgentEvent>();
 
-                // Stream LLM response
-                let result = stream::stream_llm_response(
-                    &llm_config,
-                    &model,
-                    &messages,
-                    &tools,
-                    provider_options,
-                    thought_signature,
-                    |event| {
-                        if let AgentEvent::ThoughtSignature { signature } = &event {
-                            next_thought_signature = Some(signature.clone());
-                        }
-                        pending_events.push(event);
-                    },
-                )
-                .await;
+                // Clone data needed for the spawned streaming task
+                let llm_cfg = llm_config.clone();
+                let mdl = model.clone();
+                let msgs = messages.clone();
+                let tls = tools.clone();
 
-                // Emit all collected events
-                for event in pending_events {
+                // Spawn streaming in a separate task so events are sent
+                // through the channel immediately (not buffered until completion)
+                let stream_handle = tokio::spawn(async move {
+                    stream::stream_llm_response(
+                        &llm_cfg,
+                        &mdl,
+                        &msgs,
+                        &tls,
+                        provider_options,
+                        thought_signature,
+                        |event| {
+                            let _ = ev_tx.send(event);
+                        },
+                    )
+                    .await
+                });
+
+                // Yield events incrementally as they arrive from the stream
+                while let Some(event) = ev_rx.recv().await {
+                    if let AgentEvent::ThoughtSignature { ref signature } = event {
+                        next_thought_signature = Some(signature.clone());
+                    }
                     yield event;
                 }
+
+                // Get the streaming result after the task completes
+                let result = match stream_handle.await {
+                    Ok(inner) => inner,
+                    Err(e) => Err(StreamError::Connection(format!("Stream task panicked: {}", e))),
+                };
 
                 let result = match result {
                     Ok(r) => r,
