@@ -64,25 +64,26 @@ echo "[tenants] Found $TOTAL tenant job(s)"
 SUCCESS=0
 FAILED=0
 
+NEW_IMAGE="${GHCR_REPO}/virtues-core:${TAG}"
+
 for JOB_ID in $TENANT_JOBS; do
-  # Extract subdomain from job ID: "virtues-tenant-adam" -> "adam"
   SUBDOMAIN="${JOB_ID#virtues-tenant-}"
+  echo "  [$SUBDOMAIN] -> $NEW_IMAGE"
 
-  # Get the current tier and seed_demo flag from the running job's env
-  TIER=$(nomad job inspect "$JOB_ID" 2>/dev/null | \
-    jq -r '.Job.TaskGroups[0].Tasks[0].Env.TIER // "standard"' 2>/dev/null || echo "standard")
-  SEED_DEMO=$(nomad job inspect "$JOB_ID" 2>/dev/null | \
-    jq -r '.Job.TaskGroups[0].Tasks[0].Env.SEED_DEMO // "false"' 2>/dev/null || echo "false")
+  # Fetch running job spec, swap only the image, resubmit via Nomad API.
+  # This preserves all existing env vars, volumes, and config.
+  UPDATED=$(nomad job inspect "$JOB_ID" 2>/dev/null | \
+    jq --arg img "$NEW_IMAGE" '{Job: (.Job | .TaskGroups[0].Tasks[0].Config.image = $img)}')
 
-  echo "  [$SUBDOMAIN] tier=$TIER seed_demo=$SEED_DEMO -> tag=$TAG"
+  if [[ -z "$UPDATED" || "$UPDATED" == "null" ]]; then
+    echo "  [$SUBDOMAIN] FAILED (could not inspect job)"
+    FAILED=$((FAILED + 1))
+    continue
+  fi
 
-  if OUTPUT=$(nomad job run \
-    -var="tag=$TAG" \
-    -var="subdomain=$SUBDOMAIN" \
-    -var="tier=$TIER" \
-    -var="seed_demo=$SEED_DEMO" \
-    -var="ghcr_repo=$GHCR_REPO" \
-    "$DEPLOY_DIR/tenant.nomad.hcl" 2>&1); then
+  if OUTPUT=$(curl -sf -X POST "http://127.0.0.1:4646/v1/jobs" \
+    -H "Content-Type: application/json" \
+    -d "$UPDATED" 2>&1); then
     SUCCESS=$((SUCCESS + 1))
     echo "  [$SUBDOMAIN] OK"
   else
