@@ -79,6 +79,7 @@ COPY core/build.rs ./
 COPY core/src ./src
 COPY core/migrations ./migrations
 COPY core/.sqlx ./.sqlx
+COPY core/seed_demo_day.sql ./seed_demo_day.sql
 
 RUN cargo build --release
 
