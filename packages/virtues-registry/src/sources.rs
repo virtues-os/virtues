@@ -212,6 +212,24 @@ pub fn registered_sources() -> Vec<SourceDescriptor> {
                 limits: ConnectionLimits::new(2, 4),
             },
         },
+        // Spotify
+        SourceDescriptor {
+            name: "spotify",
+            display_name: "Spotify",
+            description: "Sync listening history from Spotify (tracks, artists, albums)",
+            auth_type: AuthType::OAuth2,
+            oauth_config: Some(OAuthConfig {
+                scopes: vec!["user-read-recently-played", "user-read-currently-playing"],
+                auth_url: "https://accounts.spotify.com/authorize",
+                token_url: "https://accounts.spotify.com/api/token",
+            }),
+            icon: Some("simple-icons:spotify"),
+            enabled: false,
+            tier: SourceTier::Standard,
+            connection_policy: ConnectionPolicy::MultiInstance {
+                limits: ConnectionLimits::new(2, 4),
+            },
+        },
         // GitHub
         SourceDescriptor {
             name: "github",
@@ -270,6 +288,7 @@ mod tests {
         assert!(names.contains(&"mac"));
         assert!(names.contains(&"notion"));
         assert!(names.contains(&"plaid"));
+        assert!(names.contains(&"spotify"));
         assert!(names.contains(&"strava"));
         assert!(names.contains(&"github"));
     }
@@ -292,7 +311,7 @@ mod tests {
             .iter()
             .filter(|s| s.auth_type == AuthType::OAuth2)
             .collect();
-        assert!(oauth_sources.len() >= 5); // google, notion, plaid, strava, github
+        assert!(oauth_sources.len() >= 6); // google, notion, plaid, spotify, strava, github
 
         // Device sources
         let device_sources: Vec<_> = sources

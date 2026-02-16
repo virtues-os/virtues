@@ -8,11 +8,12 @@
 //! Organization is handled by space_items which hold URL references.
 
 use crate::error::{Error, Result};
-use crate::ids::{generate_id, PAGE_PREFIX, PAGE_VERSION_PREFIX};
+use crate::ids::{generate_id, PAGE_PREFIX, PAGE_SHARE_PREFIX, PAGE_VERSION_PREFIX};
 use crate::types::Timestamp;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::SqlitePool;
+use yrs::{updates::decoder::Decode, Doc, GetString, ReadTxn, Transact, Update};
 
 /// Custom deserializer for Option<Option<T>> that distinguishes between:
 /// - Missing field → None (don't change)
@@ -552,6 +553,202 @@ pub async fn list_versions(
     .map_err(|e| Error::Database(format!("Failed to list versions: {}", e)))?;
 
     Ok(PageVersionsListResponse { versions })
+}
+
+// ============================================================================
+// Page Sharing
+// ============================================================================
+
+/// A page share record
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PageShare {
+    pub id: String,
+    pub page_id: String,
+    pub token: String,
+    pub created_at: Timestamp,
+}
+
+/// Public shared page data (minimal, no timestamps or tags)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedPage {
+    pub title: String,
+    pub content: String,
+    pub icon: Option<String>,
+    pub cover_url: Option<String>,
+    pub share_token: String,
+}
+
+/// Create or replace a share token for a page
+pub async fn create_page_share(pool: &SqlitePool, page_id: &str) -> Result<PageShare> {
+    // Verify page exists
+    let _ = get_page(pool, page_id).await?;
+
+    // Delete existing share for this page (one share per page)
+    sqlx::query("DELETE FROM app_page_shares WHERE page_id = $1")
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to clear existing share: {}", e)))?;
+
+    // Generate new share
+    let token = uuid::Uuid::new_v4().to_string();
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let id = generate_id(PAGE_SHARE_PREFIX, &[page_id, &timestamp]);
+
+    let share = sqlx::query_as::<_, PageShare>(
+        r#"
+        INSERT INTO app_page_shares (id, page_id, token)
+        VALUES ($1, $2, $3)
+        RETURNING id, page_id, token, created_at
+        "#,
+    )
+    .bind(&id)
+    .bind(page_id)
+    .bind(&token)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to create page share: {}", e)))?;
+
+    Ok(share)
+}
+
+/// Get the active share for a page (if any)
+pub async fn get_page_share(pool: &SqlitePool, page_id: &str) -> Result<Option<PageShare>> {
+    let share = sqlx::query_as::<_, PageShare>(
+        r#"
+        SELECT id, page_id, token, created_at
+        FROM app_page_shares
+        WHERE page_id = $1
+        "#,
+    )
+    .bind(page_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get page share: {}", e)))?;
+
+    Ok(share)
+}
+
+/// Revoke the share for a page
+pub async fn delete_page_share(pool: &SqlitePool, page_id: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM app_page_shares WHERE page_id = $1")
+        .bind(page_id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to delete page share: {}", e)))?;
+
+    if result.rows_affected() == 0 {
+        return Err(Error::NotFound(format!(
+            "No share found for page: {}",
+            page_id
+        )));
+    }
+
+    Ok(())
+}
+
+/// Get a shared page by its share token (public, no auth required)
+///
+/// Materializes markdown from the Yjs document state for proper rendering.
+/// Falls back to the raw content column if no Yjs state exists.
+pub async fn get_shared_page(pool: &SqlitePool, token: &str) -> Result<SharedPage> {
+    let row = sqlx::query_as::<_, SharedPageRow>(
+        r#"
+        SELECT p.title, p.content, p.yjs_state, p.icon, p.cover_url
+        FROM app_page_shares s
+        JOIN app_pages p ON s.page_id = p.id
+        WHERE s.token = $1
+        "#,
+    )
+    .bind(token)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get shared page: {}", e)))?
+    .ok_or_else(|| Error::NotFound("Invalid or expired share link".into()))?;
+
+    // Materialize markdown from Yjs state, fall back to raw content column.
+    // catch_unwind guards against panics in yrs (e.g. corrupted state).
+    let content = if let Some(yjs_state) = &row.yjs_state {
+        match std::panic::catch_unwind(|| yjs_state_to_markdown(yjs_state)) {
+            Ok(md) => md,
+            Err(_) => {
+                tracing::warn!("yrs panic decoding shared page, falling back to raw content");
+                row.content
+            }
+        }
+    } else {
+        row.content
+    };
+
+    Ok(SharedPage {
+        title: row.title,
+        content,
+        icon: row.icon,
+        cover_url: row.cover_url,
+        share_token: token.to_string(),
+    })
+}
+
+#[derive(sqlx::FromRow)]
+struct SharedPageRow {
+    title: String,
+    content: String,
+    yjs_state: Option<Vec<u8>>,
+    icon: Option<String>,
+    cover_url: Option<String>,
+}
+
+/// Decode Yjs binary state into markdown (Y.Text format).
+fn yjs_state_to_markdown(yjs_state: &[u8]) -> String {
+    let doc = Doc::new();
+    if let Ok(update) = Update::decode_v1(yjs_state) {
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update);
+    }
+    let txn = doc.transact();
+
+    if let Some(text) = txn.get_text("content") {
+        text.get_string(&txn)
+    } else {
+        String::new()
+    }
+}
+
+/// Validate that a file ID is referenced by a shared page (for public file access)
+pub async fn validate_shared_file(
+    pool: &SqlitePool,
+    token: &str,
+    file_id: &str,
+) -> Result<String> {
+    // Get the page content + cover_url for this share token
+    let row: Option<(String, Option<String>)> = sqlx::query_as(
+        r#"
+        SELECT p.content, p.cover_url
+        FROM app_page_shares s
+        JOIN app_pages p ON s.page_id = p.id
+        WHERE s.token = $1
+        "#,
+    )
+    .bind(token)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to validate shared file: {}", e)))?;
+
+    let (content, cover_url) = row
+        .ok_or_else(|| Error::NotFound("Invalid share token".into()))?;
+
+    // Check if file_id appears in the page content or cover_url
+    let in_content = content.contains(file_id);
+    let in_cover = cover_url
+        .as_ref()
+        .map(|url| url.contains(file_id))
+        .unwrap_or(false);
+
+    if !in_content && !in_cover {
+        return Err(Error::NotFound("File not found in shared page".into()));
+    }
+
+    Ok(file_id.to_string())
 }
 
 /// Get a single version by ID (includes snapshot for restore)

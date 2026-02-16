@@ -10,16 +10,17 @@
 
 ALTER TABLE wiki_days ADD COLUMN chaos_score REAL;
 ALTER TABLE wiki_days ADD COLUMN entropy_calibration_days INTEGER;
+ALTER TABLE wiki_days ADD COLUMN snapshot TEXT;
 
-CREATE TABLE IF NOT EXISTS wiki_day_domain_embeddings (
+CREATE TABLE IF NOT EXISTS wiki_day_embeddings (
     id TEXT PRIMARY KEY,
     day_date TEXT NOT NULL,
-    domain TEXT NOT NULL,
+    dimension TEXT NOT NULL,
     embedding BLOB NOT NULL,
     text_hash TEXT NOT NULL,
     model TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(day_date, domain)
+    UNIQUE(day_date, dimension)
 );
 
 -- =============================================================================

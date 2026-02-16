@@ -63,7 +63,7 @@ All of it runs on a single Rust server with a SQLite database and S3 storage. Yo
 
 Extensible: implement the `Stream` trait in `core/src/sources/{provider}/` to add new sources.
 
-## Features
+## Overview
 
 **Knowledge Graph** — People, places, organizations, and events extracted from your data. Entity resolution links mentions across sources (the "Sarah" in your calendar is the same one in your contacts).
 
@@ -248,6 +248,42 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 | financial | financial_transaction, financial_account |
 | activity | activity_app_usage, activity_web_browsing |
 | content | content_document, content_conversation, content_bookmark |
+
+## Features (last updated: Feb 12)
+
+**Spaces & Workspaces** — Arc-browser-style multi-space system. Each space has its own tabs, theme, and accent color. Swipeable sidebar carousel for switching between spaces. Organize your life into contexts — work, health, finance — each with its own look and layout.
+
+**Tab System** — URL-native tab management with split-pane support. Tabs persist across sessions, serialize/deserialize automatically, and support side-by-side viewing. Every entity in the system has a URL, and every URL can be a tab.
+
+**Rich Editor** — ProseMirror-based document editor with real-time collaboration via Yjs and WebSocket sync. Slash commands (`/`) for inserting blocks, `[[entity]]` linking for connecting to people/places/orgs, drag handles, table toolbar, code syntax highlighting (Shiki), markdown shortcuts, and media paste. IndexedDB persistence for offline support.
+
+**AI Agent Modes** — Three distinct modes: **Agent** (full tool access — SQL, search, code, page editing), **Chat** (conversation only, no tools), and **Research** (read-only tools). Customizable personas let you shape the AI's behavior. Multi-model support across Claude, GPT, Gemini, and more.
+
+**Semantic Search** — Two-stage retrieval pipeline: bi-encoder (nomic-embed, 768-dim) generates embeddings, then a cross-encoder reranker (BGE-reranker-v2-m3) re-scores results for precision. Per-ontology text extraction ensures every data type is searchable. Cmd+K modal for quick actions and cross-entity search.
+
+**Entity Resolution** — Automatic extraction of people, places, and organizations from your raw data. The "Sarah" in your calendar, the "Sarah" in your contacts, and the "Sarah" in your messages all resolve to one person. Dedicated wiki pages for each entity type with specialized views.
+
+**Smart Views & Manual Folders** — Smart views are query-based dynamic collections that auto-update as your data changes. Manual folders let you curate your own groupings. Three-level sidebar hierarchy: Section → Folder → Item, all with drag-and-drop reordering via SortableJS.
+
+**Automated Autobiography** — Daily summaries generated from your data — calendar, messages, health, location, transactions, transcriptions. Temporal navigation by day and year. Narrative structure: Telos (life purpose) → Acts (multi-year arcs) → Chapters → Days. Hit "Generate Summary" and the system writes your day for you.
+
+**W7H Context Score** — Every day is scored across 7 dimensions evolved from journalism's W5H framework: Who (self-awareness), Whom (relational resolution), What (events/content), When (temporal coverage), Where (spatial awareness), Why (intent/motivation), How (physical state). Each ontology carries a weight vector; coverage shows how completely a day is observed.
+
+**Entropy Calculation** — A chaos/order score that measures how novel or routine your day is. Per-domain embeddings are compared against a 30-day exponentially-decayed centroid. The result is a single number — think VIX for your persona — normalized by coverage so sparse days don't appear artificially chaotic.
+
+**Activity Heatmap** — GitHub-style contribution heatmap showing your data density over time. Visual at-a-glance view of which days have rich context and which are sparse.
+
+**Movement Map** — Leaflet-based location visualization on day pages. See your geographic movement throughout the day rendered on an interactive map.
+
+**Real-Time Collaboration** — Yjs CRDT backend with WebSocket sync. Multiple clients can edit the same page simultaneously with automatic conflict resolution. Version history with save/restore. Y.UndoManager for undo/redo.
+
+**Drive & Trash** — Personal file storage with S3 backend. Folder hierarchy, drag-and-drop upload, breadcrumb navigation, storage quotas. Soft delete moves files to trash with restore and permanent purge options.
+
+**macOS Desktop App** — Tauri-based native app with a collector daemon that runs as a LaunchAgent. Streams app usage, browser history, and iMessage data in the background. Manages Full Disk Access and Accessibility permissions. Pairs with your server instance via a 6-digit code.
+
+**SSH into Your Server** — Built-in terminal for direct server access from the web UI. Developer tools include an interactive SQL console, data lake browser, job inspector, and sitemap viewer.
+
+**Feedback & Changelog** — Built-in feedback submission and a changelog view for tracking what's new. Onboarding checklist guides new users through connecting sources, pairing devices, and starting their first chat.
 
 ## License
 

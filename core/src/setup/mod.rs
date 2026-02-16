@@ -58,7 +58,7 @@ async fn setup_database() -> Result<String> {
 
     let database_url: String = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("SQLite database path")
-        .default("sqlite:./data/virtues.db".to_string())
+        .default("sqlite:/data/virtues.db".to_string())
         .interact_text()
         .map_err(|e| crate::error::Error::Other(format!("Input error: {}", e)))?;
 

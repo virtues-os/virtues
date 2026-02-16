@@ -4,7 +4,7 @@
  * Used by:
  * - EntityChip.svelte (.entity-chip)
  * - ChatInput.svelte (.mention-chip)
- * - ProseMirror (.pm-entity-link)
+ * - CodeMirror (.cm-entity-link)
  *
  * All render as @Name mentions.
  */

@@ -1,30 +1,22 @@
 /**
- * Yjs Document Manager for ProseMirror
+ * Yjs Document Manager for CodeMirror
  *
  * Creates and manages Yjs documents for real-time collaborative editing.
- * Uses Y.XmlFragment with y-prosemirror for ProseMirror integration.
+ * Uses Y.Text for markdown-native editing with CodeMirror 6.
  * Handles WebSocket sync, IndexedDB persistence, and undo management.
  */
 
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
-import { ySyncPlugin, yCursorPlugin, yUndoPlugin } from 'y-prosemirror';
-import type { Plugin } from 'prosemirror-state';
 import { writable, type Writable } from 'svelte/store';
 
 export interface YjsDocument {
 	ydoc: Y.Doc;
-	yxmlFragment: Y.XmlFragment;
+	ytext: Y.Text;
 	provider: WebsocketProvider;
 	persistence: IndexeddbPersistence;
 	undoManager: Y.UndoManager;
-
-	/**
-	 * ProseMirror plugins for Yjs collaboration.
-	 * Add these to your EditorState plugins array.
-	 */
-	plugins: Plugin[];
 
 	// Connection state stores
 	isLoading: Writable<boolean>;
@@ -45,8 +37,8 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 	// GC enabled (default) - versions use encodeStateAsUpdate which is self-contained
 	const ydoc = new Y.Doc();
 
-	// Use XmlFragment for ProseMirror (not Y.Text)
-	const yxmlFragment = ydoc.getXmlFragment('content');
+	// Use Y.Text for markdown-native editing
+	const ytext = ydoc.getText('content');
 
 	// Connection state stores
 	const isLoading = writable(true);
@@ -66,7 +58,7 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 	});
 
 	// IndexedDB persistence for offline support
-	const persistence = new IndexeddbPersistence(pageId, ydoc);
+	const persistence = new IndexeddbPersistence(`v2-${pageId}`, ydoc);
 
 	// Track sync state — prefer remote (WebSocket) sync as authoritative.
 	// Local (IndexedDB) sync is sufficient ONLY if it has cached content.
@@ -80,7 +72,7 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 			// Remote sync is authoritative — always trust it
 			isSynced.set(true);
 			isLoading.set(false);
-		} else if (localSynced && yxmlFragment.length > 0) {
+		} else if (localSynced && ytext.length > 0) {
 			// IndexedDB had cached content — use it for fast offline-first loading
 			isSynced.set(true);
 			isLoading.set(false);
@@ -113,27 +105,19 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 		}
 	});
 
-	// UndoManager for XmlFragment
-	const undoManager = new Y.UndoManager(yxmlFragment, {
+	// UndoManager for Y.Text
+	const undoManager = new Y.UndoManager(ytext, {
 		trackedOrigins: new Set([null, 'user', 'ai']),
 		captureTimeout: 500,
 	});
 
-	// ProseMirror plugins for Yjs collaboration
-	const plugins: Plugin[] = [
-		ySyncPlugin(yxmlFragment),
-		yCursorPlugin(provider.awareness),
-		yUndoPlugin(),
-	];
-
 	// Create the document object
 	const doc: YjsDocument = {
 		ydoc,
-		yxmlFragment,
+		ytext,
 		provider,
 		persistence,
 		undoManager,
-		plugins,
 		isLoading,
 		isSynced,
 		isConnected,
@@ -146,179 +130,4 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 	};
 
 	return doc;
-}
-
-/**
- * Markup instruction for CriticMarkup-based editing
- *
- * The AI sends content WITH CriticMarkup markers ({++additions++}, {--deletions--}),
- * and this function inserts it at the specified position. The CriticMarkup plugin
- * in ProseMirror handles rendering the markers with accept/reject buttons.
- */
-export interface MarkupInstruction {
-	/** Content with CriticMarkup markers to apply */
-	content: string;
-	/** Position to apply: replace_all, replace, before, after, start, end */
-	position: 'start' | 'end' | 'before' | 'after' | 'replace' | 'replace_all';
-	/** Anchor text to find for positioning (required for replace/before/after) */
-	anchor?: string;
-}
-
-/**
- * Apply CriticMarkup content to a ProseMirror editor
- *
- * This is the core editing function for CriticMarkup-based AI editing.
- * It parses markdown content (which may contain CriticMarkup markers)
- * and inserts it at the specified position in the ProseMirror document.
- *
- * @param view - The ProseMirror EditorView
- * @param instruction - The markup instruction with content, position, and optional anchor
- * @param parser - The markdown parser function
- * @param serializer - The markdown serializer function
- * @returns true if content was applied successfully
- */
-export function applyMarkup(
-	view: import('prosemirror-view').EditorView,
-	instruction: MarkupInstruction,
-	parser: (markdown: string) => import('prosemirror-model').Node,
-	serializer: (doc: import('prosemirror-model').Node) => string
-): boolean {
-	const { state, dispatch } = view;
-	const { doc } = state;
-
-	try {
-		// Parse the new content
-		const newDoc = parser(instruction.content);
-		if (!newDoc) return false;
-
-		let tr = state.tr;
-
-		switch (instruction.position) {
-			case 'replace_all': {
-				// Replace entire document
-				tr = tr.replaceWith(0, doc.content.size, newDoc.content);
-				break;
-			}
-
-			case 'start': {
-				// Insert at document start
-				tr = tr.insert(0, newDoc.content);
-				break;
-			}
-
-			case 'end': {
-				// Insert at document end
-				tr = tr.insert(doc.content.size, newDoc.content);
-				break;
-			}
-
-			case 'replace': {
-				// Replace anchor text with content
-				if (instruction.anchor) {
-					const currentContent = serializer(doc);
-					const idx = currentContent.indexOf(instruction.anchor);
-					if (idx !== -1) {
-						// Find positions in ProseMirror doc that correspond to the anchor
-						const range = findTextRange(doc, instruction.anchor);
-						if (range) {
-							tr = tr.replaceWith(range.from, range.to, newDoc.content);
-						} else {
-							console.warn(
-								`applyMarkup: anchor not found in doc for replace: "${instruction.anchor.slice(0, 50)}..."`
-							);
-							return false;
-						}
-					} else {
-						console.warn(
-							`applyMarkup: anchor not found for replace: "${instruction.anchor.slice(0, 50)}..."`
-						);
-						return false;
-					}
-				}
-				break;
-			}
-
-			case 'before': {
-				// Insert content before anchor
-				if (instruction.anchor) {
-					const range = findTextRange(doc, instruction.anchor);
-					if (range) {
-						tr = tr.insert(range.from, newDoc.content);
-					} else {
-						console.warn(
-							`applyMarkup: anchor not found for before: "${instruction.anchor.slice(0, 50)}..."`
-						);
-						return false;
-					}
-				}
-				break;
-			}
-
-			case 'after': {
-				// Insert content after anchor
-				if (instruction.anchor) {
-					const range = findTextRange(doc, instruction.anchor);
-					if (range) {
-						tr = tr.insert(range.to, newDoc.content);
-					} else {
-						console.warn(
-							`applyMarkup: anchor not found for after: "${instruction.anchor.slice(0, 50)}..."`
-						);
-						return false;
-					}
-				}
-				break;
-			}
-		}
-
-		// Apply the transaction with AI origin for undo tracking
-		tr.setMeta('origin', 'ai');
-		dispatch(tr);
-
-		return true;
-	} catch (err) {
-		console.error('Failed to apply markup:', err);
-		return false;
-	}
-}
-
-/**
- * Find the position range of text in a ProseMirror document
- */
-function findTextRange(
-	doc: import('prosemirror-model').Node,
-	text: string
-): { from: number; to: number } | null {
-	let foundFrom: number | null = null;
-	let foundTo: number | null = null;
-	let currentText = '';
-	let startPos = 0;
-
-	doc.descendants((node, pos) => {
-		if (foundFrom !== null && foundTo !== null) return false; // Stop if found
-
-		if (node.isText) {
-			const nodeText = node.text || '';
-			currentText += nodeText;
-
-			// Check if the anchor text is in our accumulated text
-			const idx = currentText.indexOf(text);
-			if (idx !== -1) {
-				// Calculate actual positions
-				foundFrom = startPos + idx;
-				foundTo = foundFrom + text.length;
-				return false; // Stop traversal
-			}
-		} else if (node.isBlock && currentText.length > 0) {
-			// Reset for new block
-			currentText = '';
-			startPos = pos + 1;
-		}
-	});
-
-	if (foundFrom !== null && foundTo !== null) {
-		return { from: foundFrom, to: foundTo };
-	}
-
-	return null;
 }

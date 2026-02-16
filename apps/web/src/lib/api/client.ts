@@ -1278,3 +1278,42 @@ export async function searchEntities(query: string): Promise<EntitySearchRespons
 	return res.json();
 }
 
+// Page Sharing
+export interface PageShare {
+	id: string;
+	page_id: string;
+	token: string;
+	created_at: string;
+}
+
+export interface SharedPage {
+	title: string;
+	content: string;
+	icon: string | null;
+	cover_url: string | null;
+	share_token: string;
+}
+
+export async function createPageShare(pageId: string): Promise<PageShare> {
+	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to create share: ${res.statusText}`);
+	return res.json();
+}
+
+export async function getPageShare(pageId: string): Promise<PageShare | null> {
+	const res = await fetch(`${API_BASE}/pages/${pageId}/share`);
+	if (!res.ok) throw new Error(`Failed to get share: ${res.statusText}`);
+	return await res.json() ?? null;
+}
+
+export async function deletePageShare(pageId: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/pages/${pageId}/share`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete share: ${res.statusText}`);
+}
+
+export async function getSharedPage(token: string): Promise<SharedPage> {
+	const res = await fetch(`${API_BASE}/s/${token}`);
+	if (!res.ok) throw new Error(`Page not found`);
+	return res.json();
+}
+

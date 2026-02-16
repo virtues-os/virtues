@@ -28,7 +28,7 @@ export interface ContextVector {
 	when: number; // Temporal coverage — how much of 24h is observed?
 	where: number; // Spatial — do we know locations?
 	why: number; // Intent/motivation — do we know purpose?
-	how: number; // Physical state — body metrics
+	how: number; // Means/method/process
 }
 
 export function computeCompleteness(cv: ContextVector): number {
@@ -62,6 +62,15 @@ export interface DayEvent {
 	userLabel?: string; // "Architecture review with team"
 	userLocation?: string; // Override auto-detected place
 	userNotes?: string; // Brief annotation
+
+	// W6H activation vector (7 dimensions: who, whom, what, when, where, why, how)
+	w6hActivation: [number, number, number, number, number, number, number] | null;
+
+	// Entropy scores
+	/** Semantic distinctness: 1 - cosine_sim(this_event, day_centroid). How different from day average. */
+	entropy: number | null;
+	/** Shannon entropy of W6H activation vector. Internal complexity/richness. */
+	w6hEntropy: number | null;
 
 	// Tracking
 	isUserAdded: boolean; // Manually created by user (never auto-update)

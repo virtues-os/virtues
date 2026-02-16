@@ -273,6 +273,7 @@ FINANCIAL (amounts stored in cents - divide by 100 for dollars)
 
 ACTIVITY
   data_activity_app_usage     Desktop/mobile app usage sessions
+  data_activity_listening     Music/audio listening history (Spotify)
   data_activity_web_browsing  Web browsing history
 
 CONTENT

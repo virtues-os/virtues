@@ -23,9 +23,14 @@
 
 	function handleMouseEnter() {
 		onHover?.();
+		item.onMouseEnter?.();
 		if (item.submenu) {
 			contextMenu.openSubmenu(item.id);
 		}
+	}
+
+	function handleMouseLeave() {
+		item.onMouseLeave?.();
 	}
 </script>
 
@@ -43,6 +48,7 @@
 	class:loading={isLoading}
 	onclick={handleClick}
 	onmouseenter={handleMouseEnter}
+	onmouseleave={handleMouseLeave}
 	disabled={item.disabled || isLoading}
 	role="menuitem"
 	aria-disabled={item.disabled}

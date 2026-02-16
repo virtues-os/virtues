@@ -598,6 +598,7 @@ job "virtues-tenant-${SUBDOMAIN}" {
         RUST_ENV                      = "production"
         TIER                          = "${TIER}"
         SUBDOMAIN                     = "${SUBDOMAIN}"
+        SEED_DEMO                     = "${SEED_DEMO:-false}"
         VIRTUES_ENCRYPTION_KEY        = "${VIRTUES_ENCRYPTION_KEY}"
         STREAM_ENCRYPTION_MASTER_KEY  = "${STREAM_ENCRYPTION_MASTER_KEY}"
         S3_ENDPOINT                   = "${S3_ENDPOINT:-}"

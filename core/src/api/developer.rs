@@ -27,7 +27,7 @@ pub async fn execute_sql(
 ) -> Result<SqlQueryResult> {
     // Get the database URL from environment (same as main pool)
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:./data/virtues.db".to_string());
+        .unwrap_or_else(|_| "sqlite:/data/virtues.db".to_string());
     
     // Parse the URL and create read-only options
     let base_options = SqliteConnectOptions::from_str(&database_url)

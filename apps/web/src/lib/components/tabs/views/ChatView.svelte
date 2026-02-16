@@ -232,7 +232,7 @@
 		handlePageClear();
 		// Don't create Yjs doc here — PageContent will create one when the tab mounts.
 		// Creating a second doc causes two WebSocket connections to the same room,
-		// which races with the server's markdown→XmlFragment initialization.
+		// which races with the server's Y.Text initialization.
 		editAllowListStore.addPage(pageId, title);
 
 		if (!spaceStore.isSplit) {
@@ -441,7 +441,7 @@
 					if (!page) return null;
 
 					// Include the current Yjs content so AI edits match what's in the editor
-					const content = page.yjsDoc?.yxmlFragment.toString() || '';
+					const content = page.yjsDoc?.ytext.toString() || '';
 
 					return {
 						page_id: page.id,
@@ -533,9 +533,10 @@
 									data.conversation.model,
 								);
 							}
-							await refreshContextUsage();
-							// Initialize edit allow list for this chat
-							await editAllowListStore.init(currentTabConversationId);
+							await Promise.all([
+								refreshContextUsage(),
+								editAllowListStore.init(currentTabConversationId),
+							]);
 						}
 					} catch (error) {
 						// Ignore abort errors - they're expected when switching tabs
@@ -566,52 +567,50 @@
 
 	// Load conversation data on mount
 	onMount(() => {
-		// Async initialization
 		(async () => {
-			// Wait for models to load
+			// Stage 1: Models must load first (other code depends on model list)
 			await getInitializationPromise();
 
-			// Load assistant profile
+			// Stage 2: Profile fetches + conversation load in parallel (independent)
+			const tabConversationId = extractConversationId(tab.route);
+
 			let profileDefaultModelId: string | undefined;
 			let profileDefaultPersona: string | undefined;
-			try {
-				const profileResponse = await fetch("/api/assistant-profile");
-				if (profileResponse.ok) {
-					const profile = await profileResponse.json();
-					if (profile.ui_preferences) {
-						uiPreferences = profile.ui_preferences;
-					}
-					// Extract default model and persona for new chat initialization
-					profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
-					profileDefaultPersona = profile.persona;
-				}
-			} catch (error) {
-				console.error("Failed to load assistant profile:", error);
-			}
 
-			// Load preferred name from profile
-			try {
-				const response = await fetch("/api/profile");
-				if (response.ok) {
-					const profile = await response.json();
-					preferredName = profile.preferred_name;
-				}
-			} catch (error) {
-				// Non-critical, continue without preferred name
-			}
-
-			// Load conversation if it exists (not a new chat)
-			const tabConversationId = extractConversationId(tab.route);
-			if (tabConversationId) {
+			const profilePromise = (async () => {
 				try {
-					const response = await fetch(
-						`/api/chats/${tabConversationId}`,
-					);
+					const profileResponse = await fetch("/api/assistant-profile");
+					if (profileResponse.ok) {
+						const profile = await profileResponse.json();
+						if (profile.ui_preferences) {
+							uiPreferences = profile.ui_preferences;
+						}
+						profileDefaultModelId = profile.chat_model_id || profile.default_model_id;
+						profileDefaultPersona = profile.persona;
+					}
+				} catch (error) {
+					console.error("Failed to load assistant profile:", error);
+				}
+			})();
+
+			const namePromise = (async () => {
+				try {
+					const response = await fetch("/api/profile");
+					if (response.ok) {
+						const profile = await response.json();
+						preferredName = profile.preferred_name;
+					}
+				} catch {
+					// Non-critical, continue without preferred name
+				}
+			})();
+
+			const conversationPromise = tabConversationId ? (async () => {
+				try {
+					const response = await fetch(`/api/chats/${tabConversationId}`);
 					if (response.ok) {
 						const data = await response.json();
 						loadedMessages = data.messages || [];
-
-						// Update chat messages
 						chat.messages = deduplicateMessages(loadedMessages).map(
 							(msg: any) => ({
 								id: msg.id,
@@ -619,30 +618,27 @@
 								parts: convertMessageToParts(msg),
 							}),
 						);
-
-						// Initialize model from conversation
 						if (data.conversation?.model) {
 							initializeSelectedModel(data.conversation.model);
 						}
-
-						// Load initial context usage
-						await refreshContextUsage();
-
-						// Initialize edit allow list for this chat
-						await editAllowListStore.init(tabConversationId);
 					}
 				} catch (error) {
-					console.error(
-						"[ChatView] Error loading conversation:",
-						error,
-					);
+					console.error("[ChatView] Error loading conversation:", error);
 				}
+			})() : null;
+
+			await Promise.all([profilePromise, namePromise, conversationPromise]);
+
+			// Stage 3: Post-load tasks (depend on conversation being loaded)
+			if (tabConversationId) {
+				await Promise.all([
+					refreshContextUsage(),
+					editAllowListStore.init(tabConversationId),
+				]);
 			} else {
-				// New chat - set the chatId so permissions can sync when granted
+				// New chat - set defaults from profile
 				editAllowListStore.setChatId(conversationId);
-				// Initialize model and persona from assistant profile defaults
 				initializeSelectedModel(undefined, profileDefaultModelId);
-				// Also sync to local state for immediate UI update
 				const defaultModel = getSelectedModel() || getDefaultModel();
 				if (defaultModel) {
 					selectedModelValue = defaultModel;
@@ -654,7 +650,6 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				// Scroll to bottom after initial load
 				scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
@@ -693,11 +688,16 @@
 		return null;
 	});
 
-	// Clear optimistic indicator once the AI SDK reports thinking/streaming
-	$effect(() => {
-		if (isThinking && isAwaitingResponse) {
-			isAwaitingResponse = false;
-		}
+	// Whether the last assistant message has any visible content yet
+	// (text, reasoning, or tool calls). Used to keep the optimistic thinking
+	// indicator showing until real content takes over.
+	const lastAssistantHasVisibleContent = $derived.by(() => {
+		if (!lastAssistantMessage) return false;
+		return lastAssistantMessage.parts.some((p: any) =>
+			(p.type === 'text' && p.text) ||
+			(p.type === 'reasoning' && p.text) ||
+			p.type?.startsWith('tool-')
+		);
 	});
 
 	// Track thinking duration
@@ -749,7 +749,6 @@
 		}
 	});
 
-	// Reactive messages with subjects
 	// Safety timeout
 	let thinkingTimeout: ReturnType<typeof setTimeout> | null = null;
 	$effect(() => {
@@ -780,7 +779,8 @@
 	});
 
 	// Derived state for layout mode
-	let isEmpty = $derived(uniqueMessages.length === 0);
+	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
+	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
 	// Generate title after first assistant response
 	async function generateTitle() {
@@ -1017,7 +1017,7 @@
 												messageReasoning ||
 												messageToolParts.length > 0}
 
-											{#if hasThinkingContent}
+											{#if hasThinkingContent || (isStreaming && isLastMessage)}
 												<ThinkingBlock
 													isThinking={isStreaming &&
 														isLastMessage &&
@@ -1139,8 +1139,9 @@
 							{/each}
 
 							<!-- Optimistic thinking indicator: shows immediately on submit,
-							     before the AI SDK creates the assistant message -->
-							{#if isAwaitingResponse && !isThinking}
+							     only until the AI SDK creates the assistant message (at text-start).
+							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
+							{#if isAwaitingResponse && !lastAssistantMessage}
 								<div class="flex justify-start">
 									<div class="message-wrapper" data-role="assistant">
 										<ThinkingBlock
@@ -1262,30 +1263,15 @@
 		transition: opacity 0.2s ease-in-out;
 		position: relative;
 		z-index: 1;
-		/* Add padding to keep scrollbar away from resize handle */
-		padding-right: 8px;
+		/* Use standard scrollbar styling — preserves overlay scrollbar behavior on macOS
+		   (unlike ::-webkit-scrollbar which forces classic scrollbars that steal layout space) */
+		scrollbar-width: thin;
+		scrollbar-color: var(--color-border) transparent;
 	}
 
 	.chat-layout.visible {
 		opacity: 1;
 		pointer-events: auto;
-	}
-
-	.chat-layout::-webkit-scrollbar {
-		width: 6px;
-	}
-
-	.chat-layout::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.chat-layout::-webkit-scrollbar-thumb {
-		background-color: var(--color-border);
-		border-radius: 3px;
-	}
-
-	.chat-layout::-webkit-scrollbar-thumb:hover {
-		background-color: var(--color-border-strong);
 	}
 
 	.messages-container {

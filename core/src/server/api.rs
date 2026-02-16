@@ -2023,6 +2023,16 @@ pub async fn wiki_get_day_streams_handler(
     }
 }
 
+/// Get 2D vector projection of W6H embeddings for a day
+pub async fn wiki_get_day_vectors_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    api_response(
+        crate::api::day_vectors::get_day_vector_projection(state.db.pool(), &date).await,
+    )
+}
+
 // =============================================================================
 // Code Execution API (AI Sandbox)
 // =============================================================================
@@ -2732,6 +2742,115 @@ pub async fn search_entities_handler(
     Query(query): Query<EntitySearchQuery>,
 ) -> Response {
     api_response(crate::api::search_entities(state.db.pool(), &query.q).await)
+}
+
+// ============================================================================
+// Page Sharing Handlers
+// ============================================================================
+
+/// POST /api/pages/:id/share - Create or replace a share link for a page
+pub async fn create_page_share_handler(
+    State(state): State<AppState>,
+    Path(page_id): Path<String>,
+) -> Response {
+    match crate::api::create_page_share(state.db.pool(), &page_id).await {
+        Ok(share) => (StatusCode::CREATED, Json(share)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/pages/:id/share - Get the active share for a page
+pub async fn get_page_share_handler(
+    State(state): State<AppState>,
+    Path(page_id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_page_share(state.db.pool(), &page_id).await)
+}
+
+/// DELETE /api/pages/:id/share - Revoke the share for a page
+pub async fn delete_page_share_handler(
+    State(state): State<AppState>,
+    Path(page_id): Path<String>,
+) -> Response {
+    match crate::api::delete_page_share(state.db.pool(), &page_id).await {
+        Ok(_) => success_message("Share revoked"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/s/:token - Get a shared page (public, no auth)
+pub async fn get_shared_page_handler(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> Response {
+    api_response(crate::api::get_shared_page(state.db.pool(), &token).await)
+}
+
+/// GET /api/s/:token/files/:file_id - Download a file from a shared page (public, no auth)
+/// Validates that the file is referenced by the shared page's content
+pub async fn shared_file_download_handler(
+    State(state): State<AppState>,
+    Path((token, file_id)): Path<(String, String)>,
+) -> Response {
+    // Validate the share token and that this file belongs to the shared page
+    if let Err(e) = crate::api::validate_shared_file(state.db.pool(), &token, &file_id).await {
+        return error_response(e);
+    }
+
+    // Lake objects use in-memory download
+    if crate::api::is_lake_object_id(&file_id) {
+        let result =
+            crate::api::download_lake_object(state.db.pool(), &state.storage, &file_id).await;
+        return match result {
+            Ok((file, content)) => {
+                let content_type = file
+                    .mime_type
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+                let filename = sanitize_content_disposition(&file.filename);
+                (
+                    [
+                        (axum::http::header::CONTENT_TYPE, content_type),
+                        (
+                            axum::http::header::CONTENT_DISPOSITION,
+                            format!("inline; filename=\"{}\"", filename),
+                        ),
+                        (
+                            axum::http::header::CONTENT_LENGTH,
+                            content.len().to_string(),
+                        ),
+                    ],
+                    content,
+                )
+                    .into_response()
+            }
+            Err(e) => error_response(e),
+        };
+    }
+
+    // Regular drive files: stream from storage
+    let result =
+        crate::api::download_drive_file_stream(state.db.pool(), &state.drive_config, &file_id)
+            .await;
+    match result {
+        Ok((file, stream)) => {
+            let content_type = file
+                .mime_type
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+            let filename = sanitize_content_disposition(&file.filename);
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, content_type),
+                    (
+                        axum::http::header::CONTENT_DISPOSITION,
+                        format!("inline; filename=\"{}\"", filename),
+                    ),
+                ],
+                axum::body::Body::from_stream(stream),
+            )
+                .into_response()
+        }
+        Err(e) => error_response(e),
+    }
 }
 
 // ============================================================================
