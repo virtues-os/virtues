@@ -670,6 +670,60 @@ pub async fn update_organization(
 }
 
 // ============================================================================
+// Narrative Identity
+// ============================================================================
+
+/// The user's narrative identity — a present-orientation self-portrait.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NarrativeIdentity {
+    pub id: String,
+    pub content: String,
+    pub updated_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Get the narrative identity (singleton row, always exists).
+pub async fn get_narrative_identity(pool: &SqlitePool) -> Result<NarrativeIdentity> {
+    let row = sqlx::query_as::<_, (String, String, String, String)>(
+        "SELECT id, content, updated_at, created_at FROM wiki_narrative_identity LIMIT 1"
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get narrative identity: {}", e)))?;
+
+    Ok(NarrativeIdentity {
+        id: row.0,
+        content: row.1,
+        updated_at: DateTime::parse_from_rfc3339(&row.2)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        created_at: DateTime::parse_from_rfc3339(&row.3)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+    })
+}
+
+/// Update request for narrative identity
+#[derive(Debug, Deserialize)]
+pub struct UpdateNarrativeIdentityRequest {
+    pub content: String,
+}
+
+/// Update the narrative identity content.
+pub async fn update_narrative_identity(
+    pool: &SqlitePool,
+    request: UpdateNarrativeIdentityRequest,
+) -> Result<NarrativeIdentity> {
+    sqlx::query("UPDATE wiki_narrative_identity SET content = ? WHERE id = 'nar_identity_001'")
+        .bind(&request.content)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update narrative identity: {}", e)))?;
+
+    get_narrative_identity(pool).await
+}
+
+// ============================================================================
 // Telos CRUD Operations
 // ============================================================================
 

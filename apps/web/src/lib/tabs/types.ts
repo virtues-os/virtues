@@ -19,6 +19,7 @@ export type TabType =
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
+	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}

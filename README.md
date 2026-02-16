@@ -160,7 +160,7 @@ virtues/
 │   └── ios/                 # iOS companion app (Swift)
 ├── packages/
 │   └── virtues-registry/    # Shared Rust crate (models, sources, tools, personas)
-└── deploy/                  # Nomad job specs, cluster config, deployment scripts
+└── deploy/                  # Sandbox runtime config
 ```
 
 ## Database Schema

@@ -40,6 +40,7 @@ import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
 import FolderView from '$lib/components/tabs/views/FolderView.svelte';
+import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 
 export interface TabDefinition {
 	// Route matching
@@ -353,6 +354,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// NARRATIVE IDENTITY: /narrative-identity
+	// ========================================================================
+	'narrative-identity': {
+		match: (path) => path === '/narrative-identity',
+		parse: () => ({
+			type: 'narrative-identity',
+			label: 'Narrative Identity',
+			icon: 'ri:quill-pen-line',
+		}),
+		serialize: () => 'narrative-identity',
+		deserialize: () => '/narrative-identity',
+		icon: 'ri:quill-pen-line',
+		defaultLabel: 'Narrative Identity',
+		component: NarrativeIdentityView,
+	},
+
+	// ========================================================================
 	// SOURCE NAMESPACE: /sources, /sources/source_{id}
 	// Note: /source redirects to /sources for backwards compatibility
 	// ========================================================================
@@ -620,6 +638,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'org',
 		'day',
 		'year',
+		'narrative-identity',
 		// Easter eggs last
 		'conway',
 		'dog-jump',
