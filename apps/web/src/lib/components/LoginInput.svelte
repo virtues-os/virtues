@@ -45,19 +45,18 @@
 		updateCaretPosition();
 	});
 
+	export function vanish() {
+		if (inputElement && inputValue.trim() && !isSweeping) {
+			isAnimatingCursor = true;
+			generateParticles();
+		}
+	}
+
 	async function handleKeyPress(event: KeyboardEvent) {
-		if (event.key === "Enter") {
-			if (inputElement && inputValue.trim() && !isSweeping) {
-				event.preventDefault();
-
-				isAnimatingCursor = true;
-
-				// Start the sweep animation
-				generateParticles();
-
-				// Call onsubmit immediately so SENT appears with the vanish
-				onsubmit?.();
-			}
+		if (event.key === "Enter" && inputValue.trim() && !isSweeping) {
+			event.preventDefault();
+			vanish();
+			onsubmit?.();
 		} else if (event.key === "Backspace" && inputValue === "") {
 			firstKeystroke = true;
 		} else if (firstKeystroke && event.key !== "Backspace") {

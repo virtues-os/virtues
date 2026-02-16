@@ -34,7 +34,7 @@ impl Virtues {
         let storage_status = self.storage.health_check().await?;
 
         // Count active sources
-        let active_sources = sqlx::query_scalar!(
+        let active_sources = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM elt_source_connections WHERE is_active = true"
         )
         .fetch_one(self.database.pool())
@@ -133,17 +133,31 @@ impl VirtuesBuilder {
         // Storage backend selection:
         // 1. If S3 is configured, use S3 storage
         // 2. Otherwise, use file storage with explicit path or defaults
+        let file_storage_path = self
+            .storage_path
+            .or_else(|| std::env::var("STORAGE_PATH").ok())
+            .unwrap_or_else(|| "./data/lake".to_string());
+
         let storage = if crate::storage::S3Config::is_configured() {
-            tracing::info!("Using S3 storage backend");
-            Storage::s3_from_env().await?
+            match Storage::s3_from_env().await {
+                Ok(s3) => match s3.health_check().await {
+                    Ok(_) => {
+                        tracing::info!("Using S3 storage backend");
+                        s3
+                    }
+                    Err(e) => {
+                        tracing::warn!("S3 unreachable ({}), falling back to file storage", e);
+                        Storage::file(file_storage_path)?
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("S3 init failed ({}), falling back to file storage", e);
+                    Storage::file(file_storage_path)?
+                }
+            }
         } else {
-            // File storage for local development
-            let storage_path = self
-                .storage_path
-                .or_else(|| std::env::var("STORAGE_PATH").ok())
-                .unwrap_or_else(|| "./data/lake".to_string());
-            tracing::info!(path = %storage_path, "Using file storage backend");
-            Storage::file(storage_path)?
+            tracing::info!(path = %file_storage_path, "Using file storage backend");
+            Storage::file(file_storage_path)?
         };
 
         Ok(Virtues {

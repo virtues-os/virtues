@@ -110,13 +110,6 @@
 :root {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
-	--code-bg: #f6f8fa;
-	--code-fg: #24292f;
-	--code-comment: #6e7781;
-	--code-keyword: #cf222e;
-	--code-string: #0a3069;
-	--code-function: #8250df;
-	--code-constant: #0550ae;
 
 	/* Surface Colors - Pure whites */
 	--background: #FFFFFF;
@@ -199,13 +192,6 @@
 [data-theme="caladan"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
-	--code-bg: #f6f8fa;
-	--code-fg: #24292f;
-	--code-comment: #6e7781;
-	--code-keyword: #cf222e;
-	--code-string: #0a3069;
-	--code-function: #8250df;
-	--code-constant: #0550ae;
 
 	/* Surface Colors - Pure whites */
 	--background: #FFFFFF;
@@ -276,13 +262,6 @@
 [data-theme="rivendell"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
-	--code-bg: #f6f8fa;
-	--code-fg: #24292f;
-	--code-comment: #6e7781;
-	--code-keyword: #cf222e;
-	--code-string: #0a3069;
-	--code-function: #8250df;
-	--code-constant: #0550ae;
 
 	/* Surface Colors - Pure whites */
 	--background: #FFFFFF;
@@ -353,13 +332,6 @@
 [data-theme="oxford"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
-	--code-bg: #f6f8fa;
-	--code-fg: #24292f;
-	--code-comment: #6e7781;
-	--code-keyword: #cf222e;
-	--code-string: #0a3069;
-	--code-function: #8250df;
-	--code-constant: #0550ae;
 
 	/* Surface Colors - Warm paper sidebar, lighter content page */
 	--background: #FAF9F6;
@@ -425,13 +397,6 @@
 [data-theme="lothlorien"] {
 	/* Code Syntax Highlighting - Dark mode (Catppuccin Mocha) */
 	--shiki-theme: catppuccin-mocha;
-	--code-bg: #1e1e2e;
-	--code-fg: #cdd6f4;
-	--code-comment: #6c7086;
-	--code-keyword: #f38ba8;
-	--code-string: #a6e3a1;
-	--code-function: #cba6f7;
-	--code-constant: #89b4fa;
 
 	/* Surface Colors - Deep blue-purple */
 	--background: #1a1a2e;
@@ -502,13 +467,6 @@
 [data-theme="hogwarts"] {
 	/* Code Syntax Highlighting */
 	--shiki-theme: github-light;
-	--code-bg: #f6f8fa;
-	--code-fg: #24292f;
-	--code-comment: #6e7781;
-	--code-keyword: #cf222e;
-	--code-string: #0a3069;
-	--code-function: #8250df;
-	--code-constant: #0550ae;
 
 	/* Surface Colors - Paper/cream tones */
 	--background: #F7F7F4;
@@ -573,13 +531,6 @@
 [data-theme="baker-street"] {
 	/* Code Syntax Highlighting (GitHub Dark) */
 	--shiki-theme: github-dark;
-	--code-bg: #161b22;
-	--code-fg: #e6edf3;
-	--code-comment: #8b949e;
-	--code-keyword: #ff7b72;
-	--code-string: #a5d6ff;
-	--code-function: #d2a8ff;
-	--code-constant: #79c0ff;
 
 	/* Surface Colors */
 	--background: #0a0a0a;
@@ -647,13 +598,6 @@
 [data-theme="narnia"] {
 	/* Code Syntax Highlighting (Tokyo Night) */
 	--shiki-theme: tokyo-night;
-	--code-bg: #1a1b26;
-	--code-fg: #a9b1d6;
-	--code-comment: #565f89;
-	--code-keyword: #bb9af7;
-	--code-string: #9ece6a;
-	--code-function: #7aa2f7;
-	--code-constant: #ff9e64;
 
 	/* Surface Colors */
 	--background: #0C0E13;
@@ -714,13 +658,6 @@
 [data-theme="canterbury"] {
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
-	--code-bg: #121212;
-	--code-fg: #dbd7ca;
-	--code-comment: #758575;
-	--code-keyword: #cb7676;
-	--code-string: #c98a7d;
-	--code-function: #80a665;
-	--code-constant: #e6cc77;
 
 	/* Surface Colors */
 	--background: #14120B;
@@ -781,13 +718,6 @@
 [data-theme="borghese"] {
 	/* Code Syntax Highlighting (GitHub Dark High Contrast) */
 	--shiki-theme: github-dark-high-contrast;
-	--code-bg: #0a0c10;
-	--code-fg: #f0f3f6;
-	--code-comment: #9198a1;
-	--code-keyword: #ff9492;
-	--code-string: #addcff;
-	--code-function: #dcbdfb;
-	--code-constant: #91cbff;
 
 	/* Surface Colors - Pure black */
 	--background: #000000;
@@ -848,13 +778,6 @@
 [data-theme="gatsby"] {
 	/* Code Syntax Highlighting (Monokai) */
 	--shiki-theme: monokai;
-	--code-bg: #272822;
-	--code-fg: #f8f8f2;
-	--code-comment: #75715e;
-	--code-keyword: #f92672;
-	--code-string: #e6db74;
-	--code-function: #a6e22e;
-	--code-constant: #ae81ff;
 
 	/* Surface Colors - Dark olive-gray */
 	--background: #272822;
@@ -915,13 +838,6 @@
 [data-theme="lyceum"] {
 	/* Code Syntax Highlighting (One Dark) */
 	--shiki-theme: one-dark-pro;
-	--code-bg: #282c34;
-	--code-fg: #abb2bf;
-	--code-comment: #5c6370;
-	--code-keyword: #c678dd;
-	--code-string: #98c379;
-	--code-function: #61afef;
-	--code-constant: #d19a66;
 
 	/* Surface Colors - Distinctive gray-blue */
 	--background: #292d34;
@@ -982,13 +898,6 @@
 [data-theme="asgard"] {
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
-	--code-bg: #1e1e1e;
-	--code-fg: #dbd7ca;
-	--code-comment: #758575;
-	--code-keyword: #cb7676;
-	--code-string: #c98a7d;
-	--code-function: #80a665;
-	--code-constant: #e6cc77;
 
 	/* Surface Colors */
 	--background: #141414;
@@ -1049,13 +958,6 @@
 [data-theme="tatooine"] {
 	/* Code Syntax Highlighting (Solarized Light) */
 	--shiki-theme: solarized-light;
-	--code-bg: #fdf6e3;
-	--code-fg: #5d665e;
-	--code-comment: #8f918a;
-	--code-keyword: #859900;
-	--code-string: #2aa198;
-	--code-function: #268bd2;
-	--code-constant: #cb4b16;
 
 	/* Surface Colors - Warm parchment */
 	--background: #fdf6e3;
@@ -1116,13 +1018,6 @@
 [data-theme="agora"] {
 	/* Code Syntax Highlighting (Dracula) */
 	--shiki-theme: dracula;
-	--code-bg: #282a36;
-	--code-fg: #f8f8f2;
-	--code-comment: #6272a4;
-	--code-keyword: #ff79c6;
-	--code-string: #f1fa8c;
-	--code-function: #50fa7b;
-	--code-constant: #bd93f9;
 
 	/* Surface Colors - Deep purple-black */
 	--background: #282a36;
@@ -1183,13 +1078,6 @@
 [data-theme="shire"] {
 	/* Code Syntax Highlighting (Rose Pine Moon) */
 	--shiki-theme: rose-pine-moon;
-	--code-bg: #232136;
-	--code-fg: #e0def4;
-	--code-comment: #6e6a86;
-	--code-keyword: #c4a7e7;
-	--code-string: #f6c177;
-	--code-function: #9ccfd8;
-	--code-constant: #ea9a97;
 
 	/* Surface Colors - Soft purple-gray */
 	--background: #232136;

@@ -2,7 +2,7 @@
 	/**
 	 * SlashMenu - Command palette for inserting blocks
 	 *
-	 * Triggered by typing "/" in the ProseMirror editor.
+	 * Triggered by typing "/" in the CodeMirror editor.
 	 * Shows available commands filtered by query.
 	 *
 	 * Pattern follows EntityPicker - "dumb display" component
@@ -14,7 +14,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { onMount, tick } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import type { SlashCommand } from '$lib/prosemirror/plugins';
+	import type { SlashCommand } from '$lib/codemirror/extensions/slash-commands';
 	import { FloatingContent, useClickOutside } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 
@@ -107,7 +107,7 @@
 	}
 
 	onMount(() => {
-		// Focus trap - capture keyboard events (uses capture for ProseMirror integration)
+		// Focus trap - capture keyboard events (uses capture for CodeMirror integration)
 		document.addEventListener('keydown', handleKeydown, true);
 		return () => {
 			document.removeEventListener('keydown', handleKeydown, true);
@@ -148,10 +148,7 @@
 							<div class="command-icon">
 								<Icon icon={cmd.icon} width="16" />
 							</div>
-							<div class="command-info">
-								<span class="command-label">{cmd.label}</span>
-								<span class="command-description">{cmd.description}</span>
-							</div>
+							<span class="command-label">{cmd.label}</span>
 						</button>
 					{/each}
 				</div>
@@ -265,25 +262,9 @@
 		color: var(--color-primary);
 	}
 
-	.command-info {
-		display: flex;
-		flex-direction: column;
-		min-width: 0;
-	}
-
 	.command-label {
 		font-size: 13px;
 		font-weight: 500;
-		line-height: 1.3;
-	}
-
-	.command-description {
-		font-size: 11px;
-		color: var(--color-foreground-muted);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		line-height: 1.3;
 	}
 
 	.footer {

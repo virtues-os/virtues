@@ -15,7 +15,7 @@ pub const CTX_WHAT: usize = 2; // content/events
 pub const CTX_WHEN: usize = 3; // temporal coverage
 pub const CTX_WHERE: usize = 4; // spatial
 pub const CTX_WHY: usize = 5; // intent/motivation
-pub const CTX_HOW: usize = 6; // physical state
+pub const CTX_HOW: usize = 6; // means/method/process
 
 /// Embedding configuration for semantic search
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +32,46 @@ pub struct EmbeddingConfig {
     pub author_sql: Option<&'static str>,
     /// SQL expression for timestamp (use `t.` prefix — query aliases table as `t`)
     pub timestamp_sql: &'static str,
+}
+
+/// Whether an ontology produces discrete events or continuous measurement streams
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum TemporalType {
+    /// Individual occurrences with timestamps (e.g., calendar events, messages, workouts)
+    Discrete,
+    /// Constant measurement stream needing aggregation (e.g., heart rate, HRV, steps)
+    Continuous,
+}
+
+/// How a discrete ontology contributes to day sources.
+/// SQL expressions use `t.` prefix (table aliased as `t`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaySourceConfig {
+    /// Static source type label (e.g., "calendar", "email", "workout")
+    pub source_type: &'static str,
+    /// Optional SQL expression for dynamic source_type (overrides source_type when present)
+    pub source_type_sql: Option<&'static str>,
+    /// SQL expression for the event label
+    pub label_sql: &'static str,
+    /// SQL expression for the event preview text
+    pub preview_sql: &'static str,
+    /// SQL expression for the record ID
+    pub id_sql: &'static str,
+    /// Optional additional WHERE clause (e.g., confidence filters)
+    pub extra_where: Option<&'static str>,
+    /// If true, use `date(column) = $1` instead of timestamp range comparison
+    pub use_date_filter: bool,
+}
+
+/// How a continuous ontology produces per-window summary stats.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContinuousAggConfig {
+    /// Template string with placeholders: {avg}, {min}, {max}, {std}, {sum}, {count}
+    pub summary_template: &'static str,
+    /// SQL expression for the numeric value column
+    pub value_sql: &'static str,
+    /// Aggregation type: "stats" (avg/min/max/std) or "sum"
+    pub agg_type: &'static str,
 }
 
 /// Ontology descriptor - metadata only
@@ -55,6 +95,12 @@ pub struct OntologyDescriptor {
     pub end_timestamp_column: Option<&'static str>,
     /// Embedding configuration for semantic search (None if not searchable)
     pub embedding: Option<EmbeddingConfig>,
+    /// Whether this ontology produces discrete events or continuous measurements
+    pub temporal_type: TemporalType,
+    /// How discrete ontologies contribute to day sources (None for continuous/non-event ontologies)
+    pub day_source: Option<DaySourceConfig>,
+    /// How continuous ontologies produce aggregated summaries (None for discrete ontologies)
+    pub continuous_agg: Option<ContinuousAggConfig>,
     /// Context dimension weights [who, whom, what, when, where, why, how]
     pub context_weights: ContextWeights,
 }
@@ -73,8 +119,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Continuous,
+            day_source: None,
+            continuous_agg: Some(ContinuousAggConfig {
+                summary_template: "Heart rate: avg {avg} bpm ({min}-{max})",
+                value_sql: "t.bpm",
+                agg_type: "stats",
+            }),
             //                    who  whom what when where why  how
-            context_weights: [0.8, 0.0, 0.0, 0.8, 0.0, 0.0, 0.8],
+            context_weights: [0.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2],
         },
         OntologyDescriptor {
             name: "health_hrv",
@@ -86,8 +139,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Continuous,
+            day_source: None,
+            continuous_agg: Some(ContinuousAggConfig {
+                summary_template: "HRV: avg {avg}ms ({min}-{max})",
+                value_sql: "t.hrv_ms",
+                agg_type: "stats",
+            }),
             //                    who  whom what when where why  how
-            context_weights: [0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.7],
+            context_weights: [0.7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2],
         },
         OntologyDescriptor {
             name: "health_steps",
@@ -99,8 +159,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Continuous,
+            day_source: None,
+            continuous_agg: Some(ContinuousAggConfig {
+                summary_template: "Steps: {sum} total",
+                value_sql: "t.count",
+                agg_type: "sum",
+            }),
             //                    who  whom what when where why  how
-            context_weights: [0.7, 0.0, 0.0, 0.7, 0.0, 0.0, 0.6],
+            context_weights: [0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4],
         },
         OntologyDescriptor {
             name: "health_sleep",
@@ -112,8 +179,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "sleep",
+                source_type_sql: None,
+                label_sql: "'Sleep'",
+                preview_sql: "CASE WHEN t.duration_minutes IS NOT NULL THEN CAST(t.duration_minutes AS TEXT) || ' min' ELSE NULL END",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.8, 0.0, 0.0, 0.6, 0.0, 0.0, 1.0],
+            context_weights: [0.9, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
         },
         OntologyDescriptor {
             name: "health_workout",
@@ -125,8 +203,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "workout",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.workout_type, 'Workout')",
+                preview_sql: "CASE WHEN t.duration_minutes IS NOT NULL THEN CAST(t.duration_minutes AS TEXT) || ' min' ELSE NULL END",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.7, 0.0, 0.3, 0.0, 0.2, 0.0, 0.9],
+            context_weights: [0.7, 0.0, 0.5, 0.0, 0.3, 0.2, 0.6],
         },
         // ===== Location Ontologies =====
         OntologyDescriptor {
@@ -139,8 +228,11 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Continuous,
+            day_source: None,
+            continuous_agg: None, // Spatial data — not a numeric aggregate
             //                    who  whom what when where why  how
-            context_weights: [0.6, 0.0, 0.0, 0.9, 1.0, 0.0, 0.0],
+            context_weights: [0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0],
         },
         OntologyDescriptor {
             name: "location_visit",
@@ -152,8 +244,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "arrival_time",
             end_timestamp_column: Some("departure_time"),
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "location",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.place_name, 'Unknown location')",
+                preview_sql: "CASE WHEN t.duration_minutes IS NOT NULL THEN CAST(t.duration_minutes AS TEXT) || ' min' ELSE NULL END",
+                id_sql: "hex(t.id)",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.6, 0.0, 0.2, 0.4, 0.9, 0.0, 0.0],
+            context_weights: [0.0, 0.0, 0.3, 0.4, 0.9, 0.0, 0.0],
         },
         // ===== Communication Ontologies =====
         OntologyDescriptor {
@@ -173,8 +276,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.from_name"),
                 timestamp_sql: "t.timestamp",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "email",
+                source_type_sql: Some("CASE WHEN t.direction = 'sent' THEN 'email_sent' ELSE 'email' END"),
+                label_sql: "COALESCE(t.subject, '(no subject)')",
+                preview_sql: "CASE WHEN t.direction = 'sent' THEN 'To: ' ELSE 'From: ' END || COALESCE(t.from_email, 'unknown')",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.9, 0.4, 0.0, 0.0, 0.0, 0.0],
+            context_weights: [0.0, 0.9, 0.5, 0.0, 0.0, 0.2, 0.0],
         },
         OntologyDescriptor {
             name: "communication_message",
@@ -193,8 +307,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.from_name"),
                 timestamp_sql: "t.timestamp",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "message",
+                source_type_sql: Some("'message:' || COALESCE(t.channel, 'unknown')"),
+                label_sql: "COALESCE(t.from_name, 'Unknown')",
+                preview_sql: "SUBSTR(COALESCE(t.body, ''), 1, 50)",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 1.0, 0.4, 0.0, 0.0, 0.0, 0.0],
+            context_weights: [0.0, 1.0, 0.5, 0.0, 0.0, 0.2, 0.0],
         },
         // ===== Calendar Ontology =====
         OntologyDescriptor {
@@ -214,8 +339,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: None,
                 timestamp_sql: "t.start_time",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "calendar",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.title, '(no title)')",
+                preview_sql: "NULL",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.8, 0.8, 0.6, 0.0, 0.2, 0.0],
+            context_weights: [0.0, 0.8, 0.8, 0.7, 0.3, 0.3, 0.0],
         },
         // ===== Activity Ontologies =====
         OntologyDescriptor {
@@ -228,8 +364,19 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "app_usage",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.app_name, 'Unknown app')",
+                preview_sql: "t.window_title",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.4, 0.0, 0.4, 0.5, 0.0, 0.0, 0.0],
+            context_weights: [0.0, 0.0, 0.4, 0.0, 0.0, 0.0, 0.7],
         },
         OntologyDescriptor {
             name: "activity_web_browsing",
@@ -241,8 +388,43 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "timestamp",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "web_browsing",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.page_title, t.url, 'Unknown page')",
+                preview_sql: "t.domain",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.3, 0.0, 0.5, 0.0, 0.0, 0.3, 0.0],
+            context_weights: [0.0, 0.0, 0.6, 0.0, 0.0, 0.3, 0.4],
+        },
+        OntologyDescriptor {
+            name: "activity_listening",
+            display_name: "Listening History",
+            description: "Music and audio listening history from Spotify",
+            domain: "activity",
+            table_name: "data_activity_listening",
+            source_streams: vec!["stream_spotify_recently_played"],
+            timestamp_column: "played_at",
+            end_timestamp_column: None,
+            embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "listening",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.artist_name, 'Unknown') || ' — ' || t.track_name",
+                preview_sql: "CASE WHEN t.duration_ms IS NOT NULL THEN CAST(t.duration_ms / 60000 AS TEXT) || ' min' ELSE NULL END",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            context_weights: [0.7, 0.0, 0.5, 0.0, 0.0, 0.2, 0.3],
         },
         OntologyDescriptor {
             name: "communication_transcription",
@@ -254,6 +436,17 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "start_time",
             end_timestamp_column: Some("end_time"),
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "transcription",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.title, 'Transcription')",
+                preview_sql: "SUBSTR(COALESCE(t.text, ''), 1, 60)",
+                id_sql: "t.id",
+                extra_where: Some("AND (t.confidence IS NULL OR t.confidence > 0.1)"),
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.3, 0.3, 1.0, 0.0, 0.0, 0.8, 0.0],
         },
@@ -275,6 +468,17 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.source_provider"),
                 timestamp_sql: "COALESCE(t.last_modified_time, t.created_at)",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "document",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.title, 'Untitled')",
+                preview_sql: "SUBSTR(COALESCE(t.content_summary, t.content, ''), 1, 80)",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.0, 0.0, 0.7, 0.0, 0.0, 0.4, 0.0],
         },
@@ -295,6 +499,9 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.role"),
                 timestamp_sql: "t.timestamp",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: None, // Individual messages not useful as day sources
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.0, 0.0, 0.6, 0.0, 0.0, 0.5, 0.0],
         },
@@ -309,6 +516,9 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "created_at",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: None, // Not events
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         },
@@ -329,6 +539,17 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: None,
                 timestamp_sql: "t.timestamp",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "transaction",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.merchant_name, t.description, '(no description)')",
+                preview_sql: "'$' || CAST(ABS(t.amount / 100.0) AS TEXT)",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.0, 0.0, 0.5, 0.0, 0.2, 0.0, 0.0],
         },
@@ -349,6 +570,17 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 author_sql: Some("t.author"),
                 timestamp_sql: "t.timestamp",
             }),
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "bookmark",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.title, t.url, 'Bookmark')",
+                preview_sql: "SUBSTR(COALESCE(t.description, t.url, ''), 1, 80)",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.0, 0.0, 0.6, 0.0, 0.0, 0.3, 0.0],
         },
@@ -365,11 +597,22 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "created_at",
             end_timestamp_column: Some("updated_at"),
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "chat",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.title, 'Chat')",
+                preview_sql: "CAST(t.message_count AS TEXT) || ' messages'",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: true,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.1, 0.1, 0.5, 0.2, 0.0, 0.4, 0.0],
         },
         OntologyDescriptor {
-            name: "app_page_edit",
+            name: "app_page",
             display_name: "Page Edits",
             description: "Wiki page creations and modifications",
             domain: "app",
@@ -378,6 +621,17 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             timestamp_column: "updated_at",
             end_timestamp_column: None,
             embedding: None,
+            temporal_type: TemporalType::Discrete,
+            day_source: Some(DaySourceConfig {
+                source_type: "page",
+                source_type_sql: None,
+                label_sql: "COALESCE(t.icon || ' ', '') || COALESCE(t.title, 'Untitled')",
+                preview_sql: "NULL",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: true,
+            }),
+            continuous_agg: None,
             //                    who  whom what when where why  how
             context_weights: [0.1, 0.0, 0.6, 0.2, 0.0, 0.3, 0.0],
         },

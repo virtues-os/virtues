@@ -18,6 +18,8 @@ export interface ContextMenuItem {
 	dividerBefore?: boolean;
 	dividerAfter?: boolean;
 	shortcut?: string;
+	onMouseEnter?: () => void;
+	onMouseLeave?: () => void;
 }
 
 export interface ContextMenuPosition {

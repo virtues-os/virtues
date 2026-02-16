@@ -8,11 +8,12 @@
 
 	interface Props {
 		events: DayEvent[];
+		timezone: string | null;
+		hoveredEventId: string | null;
+		onhover: (id: string | null) => void;
 	}
 
-	let { events }: Props = $props();
-
-	let hoveredEventId = $state<string | null>(null);
+	let { events, timezone, hoveredEventId, onhover }: Props = $props();
 	let expandedEventId = $state<string | null>(null);
 
 	const hours = [6, 12, 18];
@@ -24,15 +25,21 @@
 		),
 	);
 
-	// Day boundaries: always midnight-to-midnight (matches hour label positions)
+	// Day boundaries: derived from event span (backfill guarantees local midnight-to-midnight)
 	const dayBoundaries = $derived(() => {
-		const ref = sortedEvents.length > 0 ? sortedEvents[0].startTime : new Date();
-		const start = new Date(ref);
-		start.setUTCHours(0, 0, 0, 0);
-		const end = new Date(start);
-		end.setUTCDate(end.getUTCDate() + 1);
+		if (sortedEvents.length === 0) {
+			const now = new Date();
+			now.setHours(0, 0, 0, 0);
+			const end = new Date(now);
+			end.setDate(end.getDate() + 1);
+			return { start: now, end };
+		}
+		const start = sortedEvents[0].startTime;
+		const end = sortedEvents[sortedEvents.length - 1].endTime;
 		return { start, end };
 	});
+
+	const GAP_PCT = 0.3; // Gap between bar segments (percentage of total width)
 
 	function getEventStyle(event: DayEvent): { left: string; width: string } {
 		const { start: dayStart, end: dayEnd } = dayBoundaries();
@@ -41,9 +48,9 @@
 		const eventStartMs = event.startTime.getTime() - dayStart.getTime();
 		const eventEndMs = event.endTime.getTime() - dayStart.getTime();
 
-		const leftPct = (eventStartMs / dayDurationMs) * 100;
+		const leftPct = (eventStartMs / dayDurationMs) * 100 + GAP_PCT / 2;
 		const widthPct = Math.max(
-			((eventEndMs - eventStartMs) / dayDurationMs) * 100 - 0.1,
+			((eventEndMs - eventStartMs) / dayDurationMs) * 100 - GAP_PCT,
 			0.15,
 		);
 
@@ -55,6 +62,7 @@
 			hour: "2-digit",
 			minute: "2-digit",
 			hour12: false,
+			timeZone: timezone ?? undefined,
 		});
 	}
 
@@ -91,8 +99,8 @@
 					class:sleep={event.autoLabel === "Sleep"}
 					class:hovered={hoveredEventId === event.id}
 					style="left: {style.left}; width: {style.width}"
-					onmouseenter={() => (hoveredEventId = event.id)}
-					onmouseleave={() => (hoveredEventId = null)}
+					onmouseenter={() => onhover(event.id)}
+					onmouseleave={() => onhover(null)}
 					title="{getEventDisplayLabel(event)} ({formatTime(
 						event.startTime,
 					)} - {formatTime(event.endTime)})"
@@ -131,8 +139,8 @@
 						class:sleep={event.autoLabel === "Sleep"}
 						class:hovered={hoveredEventId === event.id}
 						class:expanded={isExpanded}
-						onmouseenter={() => (hoveredEventId = event.id)}
-						onmouseleave={() => (hoveredEventId = null)}
+						onmouseenter={() => onhover(event.id)}
+						onmouseleave={() => onhover(null)}
 					>
 						<td class="cell-time">
 							{formatTime(event.startTime)} – {formatTime(
@@ -229,7 +237,7 @@
 
 	.bar-track {
 		position: relative;
-		height: 32px;
+		height: 30px;
 		background-color: var(--color-surface);
 		background-image: radial-gradient(
 			circle,
@@ -243,8 +251,8 @@
 
 	.bar-segment {
 		position: absolute;
-		top: 2px;
-		bottom: 2px;
+		top: 7px;
+		bottom: 7px;
 		background: var(--color-foreground-muted);
 		border-radius: 2px;
 		transition: all 0.1s ease;
@@ -258,14 +266,19 @@
 
 	.bar-segment.unknown {
 		background: transparent;
-		border: 1px dashed var(--color-border);
+		border: none;
+		top: 50%;
+		bottom: auto;
+		height: 1px;
+		background: var(--color-border);
+		border-radius: 0;
 		z-index: 0;
 	}
 
 	.bar-segment.unknown:hover,
 	.bar-segment.unknown.hovered {
-		background: color-mix(in srgb, var(--color-surface) 50%, transparent);
-		border-color: var(--color-foreground-subtle);
+		background: var(--color-foreground-subtle);
+		height: 1px;
 	}
 
 	.bar-segment.transit {
@@ -300,7 +313,6 @@
 	.bar-labels {
 		position: relative;
 		height: 1rem;
-		margin: 0 1rem;
 	}
 
 	.bar-label {

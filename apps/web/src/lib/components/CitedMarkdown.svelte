@@ -68,12 +68,12 @@
 		code: {
 			base: 'my-4 w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col',
 			container: '',
-			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-[var(--code-bg)]',
+			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-surface-elevated',
 			languageLabel: 'text-foreground-muted font-medium',
 			copyButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			copyIcon: 'w-4 h-4',
-			pre: 'overflow-x-auto p-4 text-sm bg-[var(--code-bg)]',
-			skeleton: 'block text-[var(--code-fg)] bg-transparent animate-none',
+			pre: 'overflow-x-auto p-4 text-sm bg-surface-elevated',
+			skeleton: 'block text-foreground bg-transparent animate-none',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
 		}

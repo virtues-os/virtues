@@ -8,6 +8,7 @@
 
 	let email = $state("");
 	let isLoading = $state(false);
+	let loginInput: ReturnType<typeof LoginInput>;
 	let emailSent = $state(false);
 	let error = $state<string | null>(null);
 
@@ -39,6 +40,8 @@
 	async function submitLogin() {
 		console.log('[Auth Debug] Submitting email:', JSON.stringify(email));
 		if (!email.trim() || isLoading) return;
+
+		loginInput?.vanish();
 
 		error = null;
 		isLoading = true;
@@ -100,6 +103,7 @@
 
 	<form onsubmit={handleFormSubmit} class="space-y-3">
 		<LoginInput
+			bind:this={loginInput}
 			bind:value={email}
 			placeholder="you@example.com"
 			disabled={isLoading}

@@ -1,6 +1,7 @@
-//! Media API - Content-addressed storage for page-embedded media
+//! Media API - Content-addressed storage for page-embedded files
 //!
-//! Handles upload and retrieval of images, videos, and audio files embedded in pages.
+//! Handles upload and retrieval of any file type embedded in pages.
+//! Images, video, and audio get rich inline previews; other files get a file card.
 //! Uses SHA-256 content addressing for automatic deduplication.
 //!
 //! Storage structure: `.media/{hash_prefix}/{full_hash}.{ext}`
@@ -84,14 +85,14 @@ const AUDIO_TYPES: &[&str] = &[
     "audio/x-m4a",
 ];
 
-/// Maximum file size (50 MB)
-const MAX_FILE_SIZE: usize = 50 * 1024 * 1024;
+/// Maximum file size (100 MB)
+const MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
 
 // =============================================================================
 // API Functions
 // =============================================================================
 
-/// Upload media file with content-addressed deduplication
+/// Upload file with content-addressed deduplication
 ///
 /// Files are stored at `.media/{hash_prefix}/{full_hash}.{ext}` where:
 /// - `hash_prefix` is the first 2 characters of the SHA-256 hash
@@ -121,18 +122,6 @@ pub async fn upload_media(
     let mime = mime_type
         .or_else(|| mime_guess::from_path(filename).first().map(|m| m.to_string()))
         .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    // Validate MIME type
-    let is_supported = IMAGE_TYPES.contains(&mime.as_str())
-        || VIDEO_TYPES.contains(&mime.as_str())
-        || AUDIO_TYPES.contains(&mime.as_str());
-
-    if !is_supported {
-        return Err(Error::InvalidInput(format!(
-            "Unsupported media type: {}. Supported types: images, videos, audio",
-            mime
-        )));
-    }
 
     // Calculate SHA-256 hash
     let mut hasher = Sha256::new();
@@ -275,7 +264,7 @@ mod tests {
         assert!(is_supported_media_type("audio/mpeg"));
         assert!(is_supported_media_type("audio/wav"));
 
-        // Unsupported
+        // Non-media (still uploadable, but not "media" type)
         assert!(!is_supported_media_type("application/pdf"));
         assert!(!is_supported_media_type("text/plain"));
     }

@@ -261,14 +261,12 @@ impl PageEditorTool {
 
         // Strip CriticMarkup markers from replace text
         let replace_content = Self::strip_critic_markup(&args.replace);
-        // Plain text versions for surgical Yjs node-level edits
-        let plain_find = crate::markdown::markdown_to_plain_text(&args.find);
-        let plain_replace = crate::markdown::markdown_to_plain_text(&replace_content);
 
         // Skip content edit when both find and replace are empty (title-only change)
-        let has_content_edit = !plain_find.is_empty() || !plain_replace.is_empty();
+        let has_content_edit = !args.find.is_empty() || !replace_content.is_empty();
 
         // Apply the edit through Yjs if available, otherwise fall back to database
+        // With Y.Text, the document IS markdown — no plain text conversion needed
         if has_content_edit && self.yjs_state.is_some() {
             let yjs_state = self.yjs_state.as_ref().unwrap();
             // Auto-snapshot before AI edit for undo via version history
@@ -281,8 +279,8 @@ impl PageEditorTool {
                 }).await;
             }
 
-            // Apply through Yjs for real-time sync
-            yjs_state.apply_text_edit(&page_id, &plain_find, &plain_replace, &replace_content)
+            // Apply through Yjs for real-time sync (direct markdown find/replace)
+            yjs_state.apply_text_edit(&page_id, &args.find, &replace_content)
                 .await
                 .map_err(|e| ToolError::ExecutionFailed(e))?;
         } else if has_content_edit {
@@ -293,23 +291,21 @@ impl PageEditorTool {
                 .await
                 .map_err(|e| ToolError::ExecutionFailed(format!("Failed to get page: {}", e)))?;
 
-            let plain_content = crate::markdown::markdown_to_plain_text(&page.content);
-
-            if !plain_find.is_empty() && !plain_content.contains(&plain_find) {
+            if !args.find.is_empty() && !page.content.contains(&args.find) {
                 return Err(ToolError::ExecutionFailed(format!(
                     "Text not found in page: '{}'",
-                    if plain_find.chars().count() > 50 {
-                        format!("{}...", plain_find.chars().take(50).collect::<String>())
+                    if args.find.chars().count() > 50 {
+                        format!("{}...", args.find.chars().take(50).collect::<String>())
                     } else {
-                        plain_find.clone()
+                        args.find.clone()
                     }
                 )));
             }
 
-            let new_content = if plain_find.is_empty() {
-                plain_replace.clone()
+            let new_content = if args.find.is_empty() {
+                replace_content.clone()
             } else {
-                page.content.replacen(&plain_find, &plain_replace, 1)
+                page.content.replacen(&args.find, &replace_content, 1)
             };
 
             let update_req = pages::UpdatePageRequest {
@@ -344,8 +340,8 @@ impl PageEditorTool {
         let result = EditResult {
             edit_id,
             page_id: page_id.clone(),
-            find: plain_find,
-            replace: plain_replace,
+            find: args.find.clone(),
+            replace: replace_content.clone(),
         };
 
         let message = match (&args.title, has_content_edit) {

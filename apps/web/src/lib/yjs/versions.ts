@@ -38,9 +38,9 @@ export async function saveVersion(
 		// Capture complete document state (self-contained, works with GC)
 		const fullState = Y.encodeStateAsUpdate(ydoc);
 
-		// Get content preview from XmlFragment
-		const fragment = ydoc.getXmlFragment('content');
-		const contentPreview = fragment.toString().slice(0, 500);
+		// Get content preview from Y.Text
+		const ytext = ydoc.getText('content');
+		const contentPreview = ytext.toString().slice(0, 500);
 
 		// Encode as base64 for JSON transport
 		const stateBase64 = btoa(String.fromCharCode(...fullState));
@@ -88,8 +88,8 @@ export async function listVersions(pageId: string, limit = 20): Promise<PageVers
 /**
  * Restore a document to a specific version
  *
- * Creates a fresh Y.Doc, applies the stored state, then clones
- * the content into the live document.
+ * Creates a fresh Y.Doc, applies the stored state, then copies
+ * the text content into the live document.
  */
 export async function restoreVersion(
 	yjsDoc: YjsDocument,
@@ -109,31 +109,22 @@ export async function restoreVersion(
 		// Decode stored state
 		const stateData = Uint8Array.from(atob(data.snapshot), (c) => c.charCodeAt(0));
 
-		// Create fresh doc and apply stored state (no history needed!)
+		// Create fresh doc and apply stored state
 		const freshDoc = new Y.Doc();
 		Y.applyUpdate(freshDoc, stateData);
-		const restoredFragment = freshDoc.getXmlFragment('content');
 
-		// Get the current fragment
-		const { yxmlFragment, ydoc } = yjsDoc;
+		const restoredContent = freshDoc.getText('content').toString();
 
-		ydoc.transact(() => {
-			// Clear current content
-			while (yxmlFragment.length > 0) {
-				yxmlFragment.delete(0, 1);
-			}
+		// Replace content in the live document.
+		// Must be two separate operations (not wrapped in transact) because
+		// y-codemirror.next converts a single delete+insert delta into two
+		// overlapping CM changes at position 0, which CM rejects.
+		const { ytext } = yjsDoc;
 
-			// Deep clone and insert each element from restored fragment
-			for (let i = 0; i < restoredFragment.length; i++) {
-				const node = restoredFragment.get(i);
-				if (node) {
-					const cloned = cloneYjsNode(node);
-					if (cloned) {
-						yxmlFragment.insert(i, [cloned]);
-					}
-				}
-			}
-		}, 'user');
+		if (ytext.length > 0) {
+			ytext.delete(0, ytext.length);
+		}
+		ytext.insert(0, restoredContent);
 
 		// Cleanup
 		freshDoc.destroy();
@@ -143,14 +134,4 @@ export async function restoreVersion(
 		console.error('Failed to restore version:', err);
 		return false;
 	}
-}
-
-/**
- * Clone a Yjs XmlElement or XmlText node
- *
- * Uses Yjs's built-in clone() method which properly preserves
- * all formatting attributes (bold, italic, links, etc.)
- */
-function cloneYjsNode(node: Y.XmlElement | Y.XmlText): Y.XmlElement | Y.XmlText {
-	return node.clone();
 }

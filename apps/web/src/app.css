@@ -6,24 +6,6 @@
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";
 
-/* ===================================
-   SHIKI CSS VARIABLES MAPPING
-   Maps our theme's code colors to Shiki's expected variable names
-   =================================== */
-:root {
-	--shiki-color-background: var(--code-bg);
-	--shiki-color-text: var(--code-fg);
-	--shiki-token-comment: var(--code-comment);
-	--shiki-token-keyword: var(--code-keyword);
-	--shiki-token-string: var(--code-string);
-	--shiki-token-string-expression: var(--code-string);
-	--shiki-token-function: var(--code-function);
-	--shiki-token-constant: var(--code-constant);
-	--shiki-token-parameter: var(--code-fg);
-	--shiki-token-punctuation: var(--code-comment);
-	--shiki-token-link: var(--code-string);
-}
-
 /* Global text selection/highlight styling */
 ::selection {
 	background-color: var(--color-highlight);
