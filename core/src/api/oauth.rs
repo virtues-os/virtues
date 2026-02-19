@@ -14,12 +14,9 @@ use crate::storage::{stream_writer::StreamWriter, Storage};
 /// Allowed HTTPS domains for OAuth return URLs
 /// This allowlist prevents open redirect vulnerabilities
 const ALLOWED_HTTPS_DOMAINS: &[&str] = &[
-    // Production
-    "app.virtues.com",
+    // Production + tenant subdomains (e.g., adam.virtues.com)
     "virtues.com",
-    // Staging
-    "staging.virtues.com",
-    "staging-app.virtues.com",
+    ".virtues.com",
     // Cloudflare quick tunnel (dev)
     ".trycloudflare.com",
     // Vercel previews (if used)
@@ -547,6 +544,9 @@ mod tests {
         assert!(validate_return_url("https://app.virtues.com/data/sources").is_ok());
         assert!(validate_return_url("https://virtues.com/callback").is_ok());
         assert!(validate_return_url("https://staging.virtues.com/test").is_ok());
+        // Tenant subdomains
+        assert!(validate_return_url("https://adam.virtues.com/data/sources").is_ok());
+        assert!(validate_return_url("https://mycompany.virtues.com/oauth/callback").is_ok());
     }
 
     #[test]
