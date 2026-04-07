@@ -80,7 +80,7 @@ pub async fn pause_source(db: &SqlitePool, source_id: String) -> Result<SourceCo
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to pause source: {e}")))?;
- 
+
     get_source(db, source_id).await
 }
 
@@ -94,7 +94,7 @@ pub async fn resume_source(db: &SqlitePool, source_id: String) -> Result<SourceC
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to resume source: {e}")))?;
- 
+
     get_source(db, source_id).await
 }
 
@@ -108,7 +108,7 @@ pub async fn delete_source(db: &SqlitePool, source_id: String) -> Result<()> {
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("Failed to delete source: {e}")))?;
- 
+
     Ok(())
 }
 
@@ -125,17 +125,38 @@ pub async fn get_source_status(db: &SqlitePool, source_id: String) -> Result<Sou
             s.source,
             s.is_active,
             s.is_internal,
-            (SELECT MAX(completed_at) FROM elt_jobs WHERE source_connection_id = s.id AND status = 'succeeded') as last_sync_at,
+            (SELECT MAX(r.completed_at) FROM app_action_runs r
+             JOIN app_actions t ON r.action_id = t.id
+             WHERE t.action_type = 'sync'
+               AND json_extract(t.config, '$.source_connection_id') = s.id
+               AND r.status = 'success') as last_sync_at,
             s.error_message,
-            COUNT(j.id) as total_syncs,
-            COALESCE(SUM(CASE WHEN j.status = 'succeeded' THEN 1 ELSE 0 END), 0) as successful_syncs,
-            COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0) as failed_syncs,
-            (SELECT status FROM elt_jobs WHERE source_connection_id = s.id ORDER BY started_at DESC LIMIT 1) as last_sync_status,
-            (SELECT CAST((julianday(completed_at) - julianday(started_at)) * 86400000 AS INTEGER) FROM elt_jobs WHERE source_connection_id = s.id AND completed_at IS NOT NULL ORDER BY started_at DESC LIMIT 1) as last_sync_duration_ms
+            COALESCE((SELECT COUNT(*) FROM app_action_runs r
+             JOIN app_actions t ON r.action_id = t.id
+             WHERE t.action_type = 'sync'
+               AND json_extract(t.config, '$.source_connection_id') = s.id), 0) as total_syncs,
+            COALESCE((SELECT SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) FROM app_action_runs r
+             JOIN app_actions t ON r.action_id = t.id
+             WHERE t.action_type = 'sync'
+               AND json_extract(t.config, '$.source_connection_id') = s.id), 0) as successful_syncs,
+            COALESCE((SELECT SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) FROM app_action_runs r
+             JOIN app_actions t ON r.action_id = t.id
+             WHERE t.action_type = 'sync'
+               AND json_extract(t.config, '$.source_connection_id') = s.id), 0) as failed_syncs,
+            (SELECT r.status FROM app_action_runs r
+             JOIN app_actions t ON r.action_id = t.id
+             WHERE t.action_type = 'sync'
+               AND json_extract(t.config, '$.source_connection_id') = s.id
+             ORDER BY r.started_at DESC LIMIT 1) as last_sync_status,
+            (SELECT CAST((julianday(r.completed_at) - julianday(r.started_at)) * 86400000 AS INTEGER)
+             FROM app_action_runs r
+             JOIN app_actions t ON r.action_id = t.id
+             WHERE t.action_type = 'sync'
+               AND json_extract(t.config, '$.source_connection_id') = s.id
+               AND r.completed_at IS NOT NULL
+             ORDER BY r.started_at DESC LIMIT 1) as last_sync_duration_ms
         FROM elt_source_connections s
-        LEFT JOIN elt_jobs j ON s.id = j.source_connection_id AND j.job_type = 'sync'
         WHERE s.id = $1
-        GROUP BY s.id, s.name, s.source, s.is_active, s.is_internal, s.error_message
         "#
     )
     .bind(&source_id_str)

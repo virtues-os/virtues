@@ -279,7 +279,7 @@ pub async fn exchange_public_token(
             let source_id_clone = source_id.clone();
 
             tokio::spawn(async move {
-                match crate::api::jobs::trigger_stream_sync(
+                match crate::api::actions::trigger_stream_sync(
                     &db_clone,
                     &storage_clone,
                     stream_writer_clone,
@@ -293,8 +293,8 @@ pub async fn exchange_public_token(
                         tracing::info!(
                             source_id = %source_id_clone,
                             stream = %stream_name,
-                            job_id = %response.job_id,
-                            "Initial sync job created for Plaid stream"
+                            run_id = %response.run_id,
+                            "Initial sync run created for Plaid stream"
                         );
                     }
                     Err(e) => {
@@ -302,7 +302,7 @@ pub async fn exchange_public_token(
                             source_id = %source_id_clone,
                             stream = %stream_name,
                             error = %e,
-                            "Failed to create initial sync job for Plaid stream"
+                            "Failed to create initial sync run for Plaid stream"
                         );
                     }
                 }

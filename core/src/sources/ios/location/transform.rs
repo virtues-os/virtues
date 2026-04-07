@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::jobs::{chain_to_place_resolution, TransformContext};
+use crate::pipeline::{chain_to_place_resolution, TransformContext};
 use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for database inserts
@@ -36,7 +36,7 @@ impl OntologyTransform for IosLocationTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;

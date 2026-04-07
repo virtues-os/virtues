@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::database::Database;
 use crate::error::{Error, Result};
 use crate::http_client;
-use crate::jobs::TransformContext;
+use crate::pipeline::TransformContext;
 use crate::sources::base::{OntologyTransform, TransformResult};
 use crate::tollbooth;
 

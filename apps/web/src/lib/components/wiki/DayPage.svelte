@@ -2,9 +2,9 @@
 	DayPage.svelte
 
 	Renders a day page with:
-	- DayToolbar: compact week picker, coverage/entropy metrics, generate button
+	- DayToolbar: compact week picker, generate button
 	- Sections: Autobiography, Event Timeline, Movement, Entities, Sources (hidden when empty)
-	- WikiRightRail: table of contents + metadata
+	- Full-width layout (no right rail)
 -->
 
 <script lang="ts">
@@ -17,21 +17,21 @@
 		updateDay,
 		type DaySourceApi,
 		type TemporalEventApi,
-		type WikiDayApi,
+
 	} from "$lib/wiki/api";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import type { ContextVector as ContextVectorType } from "$lib/wiki/types";
-	import ContextVector from "./ContextVector.svelte";
-	import DayRibbonChart from "./DayRibbonChart.svelte";
-	import DayTimeline from "./DayTimeline.svelte";
+	import EventTimeline from "./EventTimeline.svelte";
+	import DaylineChart from "./DaylineChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
-	import WikiRightRail from "./WikiRightRail.svelte";
+	import DayHeaderPolaroid from "./DayHeaderPolaroid.svelte";
+	import DataQualityCoverage from "./DataQualityCoverage.svelte";
+	import JournalCard from "./JournalCard.svelte";
+	import UniversalDataGrid, { type Column } from "$lib/components/UniversalDataGrid.svelte";
+
 	import Icon from "$lib/components/Icon.svelte";
-	import { slide } from "svelte/transition";
-	import Modal from "$lib/components/Modal.svelte";
+
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
-	import { sampleLocationTrack, timeNsToMs } from "$lib/dev/sampleLocationTrack";
 
 	interface Props {
 		page: DayPageType;
@@ -41,6 +41,9 @@
 
 	// Shared hover state for chart ↔ timeline sync
 	let hoveredEventId = $state<string | null>(null);
+
+	// Timeline component ref for expand/collapse all
+	let timelineRef = $state<{ toggleAll: () => void; allExpanded: boolean } | null>(null);
 
 	/** YYYY-MM-DD string for API calls */
 	const dateSlug = $derived(() => getLocalDateSlug(page.date));
@@ -84,32 +87,20 @@
 	);
 
 
-	// ─────────────────────────────────────────────────────────────────────────
-	// Week navigation
-	// ─────────────────────────────────────────────────────────────────────────
-	let weekOffset = $state(0);
-
-	$effect(() => {
-		page.date; // track
-		weekOffset = 0;
-	});
-
-	const weekDays = $derived(() => {
-		const ref = new Date(page.date);
-		ref.setDate(ref.getDate() - ref.getDay() + weekOffset * 7);
-		const days: Date[] = [];
-		for (let i = 0; i < 7; i++) {
-			const d = new Date(ref);
-			d.setDate(ref.getDate() + i);
-			days.push(d);
-		}
-		return days;
-	});
-
 	const currentDateSlug = $derived(getLocalDateSlug(page.date));
 	const todaySlug = $derived(getLocalDateSlug(new Date()));
 
 	const isPast = $derived(currentDateSlug < todaySlug);
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Day header illustration — served as BLOB via API route.
+	// Falls back to static file for dev test images.
+	// ─────────────────────────────────────────────────────────────────────────
+	const illustrationUrl = $derived(
+		page.hasIllustration
+			? `/api/wiki/day/${currentDateSlug}/illustration`
+			: `/images/day-illustrations/${currentDateSlug}.png`,
+	);
 
 	// Relative date badge: "Today", "Yesterday", "2 days ago", "Tomorrow", "Future"
 	const relativeDateLabel = $derived(() => {
@@ -129,6 +120,23 @@
 		if (slug === currentDateSlug) return;
 		spaceStore.openTabFromRoute(`/day/day_${slug}`);
 	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Header scroll observer (show date in toolbar when h1 scrolls away)
+	// ─────────────────────────────────────────────────────────────────────────
+	let headerEl = $state<HTMLElement | null>(null);
+	let scrollContainerEl = $state<HTMLElement | null>(null);
+	let headerScrolledAway = $state(false);
+
+	$effect(() => {
+		if (!browser || !headerEl || !scrollContainerEl) return;
+		const observer = new IntersectionObserver(
+			([entry]) => { headerScrolledAway = !entry.isIntersecting; },
+			{ root: scrollContainerEl, threshold: 0 },
+		);
+		observer.observe(headerEl);
+		return () => observer.disconnect();
+	});
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Movement map
@@ -183,15 +191,6 @@
 		if (browser && page?.date) loadMovement(dateSlug());
 	});
 
-	const sampleStopPoints = $derived(
-		sampleLocationTrack.map((p) => ({
-			lat: p.lat,
-			lng: p.lng,
-			label: undefined,
-			timeMs: timeNsToMs(p.timeNs),
-		})),
-	);
-
 	const stopPoints = $derived(
 		movementStops.length > 0
 			? movementStops.map((c) => ({
@@ -200,9 +199,7 @@
 					label: c.place_name ?? undefined,
 					timeMs: Date.parse(c.start_time),
 				}))
-			: dateSlug() === "2025-12-10"
-				? sampleStopPoints
-				: [],
+			: [],
 	);
 
 	const hasLocationData = $derived(stopPoints.length >= 2);
@@ -220,17 +217,6 @@
 	let sourcesLoading = $state(false);
 	let sourcesLoadVersion = 0;
 
-	const MOCK_DATA_SOURCES: DaySourceApi[] = [
-		{ source_type: "sleep", id: "sleep-1", timestamp: "2025-12-10T06:42:00Z", label: "Sleep ended", preview: "6h 18m total, 2 REM cycles" },
-		{ source_type: "calendar", id: "cal-1", timestamp: "2025-12-10T10:00:00Z", label: "Architecture Review", preview: "With engineering team" },
-		{ source_type: "calendar", id: "cal-2", timestamp: "2025-12-10T20:30:00Z", label: "Catch up", preview: "With Sarah Chen" },
-		{ source_type: "location", id: "loc-1", timestamp: "2025-12-10T08:35:00Z", label: "Arrived at Office", preview: "Via transit, 20 min" },
-		{ source_type: "location", id: "loc-2", timestamp: "2025-12-10T17:30:00Z", label: "Arrived at Gym", preview: null },
-		{ source_type: "transaction", id: "tx-1", timestamp: "2025-12-10T12:07:00Z", label: "Café Roma", preview: "$14.20" },
-		{ source_type: "workout", id: "wo-1", timestamp: "2025-12-10T17:30:00Z", label: "Functional Training", preview: "42 min, 156 avg HR" },
-		{ source_type: "message:imessage", id: "msg-1", timestamp: "2025-12-10T14:12:00Z", label: "Sarah Chen", preview: "7 messages exchanged" },
-	];
-
 	async function loadDataSources(dateSlug: string) {
 		if (!browser) return;
 		const version = ++sourcesLoadVersion;
@@ -239,16 +225,9 @@
 			const result = await getDaySources(dateSlug);
 			if (version !== sourcesLoadVersion) return;
 			dataSources = result;
-			if (dataSources.length === 0 && dateSlug === "2025-12-10") {
-				dataSources = MOCK_DATA_SOURCES;
-			}
 		} catch {
 			if (version !== sourcesLoadVersion) return;
-			if (dateSlug === "2025-12-10") {
-				dataSources = MOCK_DATA_SOURCES;
-			} else {
-				dataSources = [];
-			}
+			dataSources = [];
 		} finally {
 			if (version === sourcesLoadVersion) sourcesLoading = false;
 		}
@@ -258,79 +237,78 @@
 		if (browser && page?.date) loadDataSources(dateSlug());
 	});
 
-	const groupedSources = $derived(() => {
-		const groups: Record<string, DaySourceApi[]> = {};
-		for (const source of dataSources) {
-			const type = source.source_type;
-			if (!groups[type]) groups[type] = [];
-			groups[type].push(source);
-		}
-		return groups;
-	});
+	// ─────────────────────────────────────────────────────────────────────────
+	// Unified source table (one chronological stream)
+	// ─────────────────────────────────────────────────────────────────────────
 
-	const SOURCE_PREVIEW_LIMIT = 3;
-	let expandedGroups = $state<Set<string>>(new Set());
+	type SourceRow = DaySourceApi & { id: string };
 
-	function toggleGroupExpand(sourceType: string) {
-		const next = new Set(expandedGroups);
-		if (next.has(sourceType)) {
-			next.delete(sourceType);
-		} else {
-			next.add(sourceType);
-		}
-		expandedGroups = next;
-	}
+	const sourceRows = $derived<SourceRow[]>(
+		dataSources.map((s) => ({ ...s, id: s.id })),
+	);
 
-	function getSourceIcon(sourceType: string): string {
-		const iconMap: Record<string, string> = {
-			calendar: "ri:calendar-line",
-			email: "ri:mail-line",
-			location: "ri:map-pin-line",
-			workout: "ri:run-line",
-			sleep: "ri:zzz-line",
-			transaction: "ri:bank-card-line",
-			transcription: "ri:mic-line",
-			steps: "ri:footprint-line",
-			chat: "ri:chat-3-line",
-			page: "ri:file-text-line",
-		};
-		if (sourceType.startsWith("message:")) {
-			return "ri:message-3-line";
-		}
-		return iconMap[sourceType] ?? "ri:database-2-line";
-	}
-
-	function getSourceTypeName(sourceType: string): string {
-		const nameMap: Record<string, string> = {
-			calendar: "Calendar",
+	/** Map source_type back to the ontology display name */
+	function getOntologyName(sourceType: string): string {
+		const map: Record<string, string> = {
+			calendar: "Calendar Events",
 			email: "Email",
-			location: "Places",
-			workout: "Workout",
-			sleep: "Sleep",
-			transaction: "Transaction",
-			transcription: "Voice Transcription",
+			email_sent: "Email",
+			location: "Location Visits",
+			workout: "Workouts",
+			sleep: "Sleep Sessions",
+			transaction: "Financial Transactions",
+			transcription: "Voice Transcriptions",
 			steps: "Steps",
-			chat: "Chats",
-			page: "Pages",
+			chat: "Chat Sessions",
+			page: "Page Edits",
+			listening: "Listening History",
+			app_usage: "App Usage",
+			web_browsing: "Web Browsing",
+			document: "Documents",
+			bookmark: "Bookmarks",
 		};
-		if (sourceType.startsWith("message:")) {
-			const platform = sourceType.split(":")[1];
-			return `Message (${platform})`;
-		}
-		return nameMap[sourceType] ?? sourceType;
+		// "message:slack", "message:#design-team" etc. → Messages
+		if (sourceType.startsWith("message:")) return "Messages";
+		return map[sourceType] ?? sourceType;
 	}
 
-	function formatSourceTime(timestamp: string): string {
-		const date = new Date(timestamp);
-		return date.toLocaleTimeString("en-US", {
-			hour: "numeric",
-			minute: "2-digit",
-			hour12: true,
-		});
-	}
+	const sourceColumns: Column<SourceRow>[] = [
+		{
+			key: "timestamp",
+			label: "Time",
+			icon: "ri:time-line",
+			width: "5.5rem",
+			minWidth: "5.5rem",
+			getValue: (item) => {
+				const d = new Date(item.timestamp);
+				return d.toLocaleTimeString("en-US", {
+					hour: "numeric",
+					minute: "2-digit",
+					hour12: true,
+				});
+			},
+		},
+		{
+			key: "source_type",
+			label: "Ontology",
+			width: "10rem",
+			minWidth: "7rem",
+			getValue: (item) => getOntologyName(item.source_type),
+		},
+		{
+			key: "label",
+			label: "Description",
+		},
+		{
+			key: "preview",
+			label: "Detail",
+			hideOnMobile: true,
+			getValue: (item) => item.preview ?? "",
+		},
+	];
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Events (timeline + W6H trajectory)
+	// Events (timeline)
 	// ─────────────────────────────────────────────────────────────────────────
 	let dayEvents = $state<DayEvent[]>([]);
 	let eventsLoadVersion = 0;
@@ -345,13 +323,25 @@
 			durationMinutes: Math.round((end.getTime() - start.getTime()) / 60000),
 			autoLabel: api.auto_label ?? "Unknown",
 			autoLocation: api.auto_location ?? undefined,
-			sourceIds: Array.isArray(api.source_ontologies) ? api.source_ontologies as string[] : [],
+			sourceIds: Array.isArray(api.source_ontologies) ? api.source_ontologies : [],
 			userLabel: api.user_label || undefined,
 			userLocation: api.user_location || undefined,
 			userNotes: api.user_notes || undefined,
-			w6hActivation: api.w6h_activation ?? null,
-			entropy: api.entropy ?? null,
-			w6hEntropy: api.w6h_entropy ?? null,
+			noveltyZ: api.novelty_z ?? null,
+			autonomicZ: api.autonomic_z ?? null,
+			avgHr: api.avg_hr ?? null,
+			hrZ: api.hr_z ?? null,
+			hrvZ: api.hrv_z ?? null,
+			topics: api.topics ?? [],
+			eventSummary: api.event_summary ?? null,
+			agentAction: (api.agent_action as DayEvent["agentAction"]) ?? null,
+			isSleep: api.is_sleep ?? false,
+			userHidden: api.user_hidden ?? false,
+			userCreated: api.user_created ?? false,
+			entities: Array.isArray(api.entities) ? api.entities : [],
+			topicNovelty: api.topic_novelty ?? null,
+			entityNovelty: api.entity_novelty ?? null,
+			entityTimestamps: api.entity_timestamps ?? null,
 			isUserAdded: api.is_user_added ?? false,
 			isUserEdited: api.is_user_edited ?? false,
 			isTransit: api.is_transit ?? false,
@@ -377,22 +367,14 @@
 	});
 
 	// ─────────────────────────────────────────────────────────────────────────
-	// Daily Summary (autobiography generation)
+	// Autobiography (read-only display + inline edit)
 	// ─────────────────────────────────────────────────────────────────────────
-	let metricsExpanded = $state(false);
-	let summaryGenerating = $state(false);
 	let summaryText = $state(page.autobiography || "");
 	let editingAutobiography = $state(false);
-	let contextVector = $state(page.contextVector);
-	let chaosScore = $state(page.chaosScore);
-	let entropyCalibrationDays = $state(page.entropyCalibrationDays);
 
 	$effect(() => {
 		summaryText = page.autobiography || "";
 		editingAutobiography = false;
-		contextVector = page.contextVector;
-		chaosScore = page.chaosScore;
-		entropyCalibrationDays = page.entropyCalibrationDays;
 	});
 
 	function startEditingAutobiography() {
@@ -429,60 +411,10 @@
 		}
 	}
 
-	function parseContextVector(raw: string | null): ContextVectorType | null {
-		if (!raw) return null;
-		try {
-			return JSON.parse(raw);
-		} catch {
-			return null;
-		}
-	}
-
-	let showRegenerateConfirm = $state(false);
-
-	function handleGenerateClick() {
-		if (summaryText) {
-			showRegenerateConfirm = true;
-		} else {
-			generateSummary();
-		}
-	}
-
-	function confirmRegenerate() {
-		showRegenerateConfirm = false;
-		generateSummary();
-	}
-
-	async function generateSummary() {
-		summaryGenerating = true;
-		try {
-			const res = await fetch(`/api/wiki/day/${dateSlug()}/summary`, {
-				method: "POST",
-			});
-			if (!res.ok) throw new Error(`Summary generation failed: ${res.status}`);
-			const updated: WikiDayApi = await res.json();
-			summaryText = updated.autobiography || "";
-
-			const cv = parseContextVector(updated.context_vector);
-			if (cv) {
-				contextVector = cv;
-			}
-			chaosScore = updated.chaos_score ?? null;
-			entropyCalibrationDays = updated.entropy_calibration_days ?? null;
-
-			// Reload events after generation (Tollbooth creates structured events with W6H)
-			loadEvents(dateSlug());
-		} catch (e) {
-			console.error("Summary generation failed:", e);
-		} finally {
-			summaryGenerating = false;
-		}
-	}
-
 	// ─────────────────────────────────────────────────────────────────────────
 	// Section visibility (hide empty sections)
 	// ─────────────────────────────────────────────────────────────────────────
-	const showAutobiography = $derived(!!summaryText || summaryGenerating);
+	const showAutobiography = $derived(!!summaryText);
 	const showTimeline = $derived(
 		dayEvents.filter((e) => !e.isUnknown).length > 0,
 	);
@@ -498,56 +430,48 @@
 			showSources,
 	);
 
-	// Dynamic TOC: only include headings for visible sections
-	const fullContent = $derived(() => {
-		let toc = "";
-		if (showTimeline) toc += "## Event Timeline\n\n";
-		if (showMovement) toc += "## Movement\n\n";
-		if (showEntities) toc += "## Entities\n\n";
-		if (showSources) toc += "## Sources\n\n";
-		return toc;
-	});
 </script>
 
 <div class="day-page-outer">
 	<DayToolbar
 		pageDate={page.date}
-		weekDays={weekDays()}
 		{currentDateSlug}
 		{todaySlug}
-		contextVector={contextVector}
-		{chaosScore}
-		{entropyCalibrationDays}
-		{summaryGenerating}
-		summaryExists={!!summaryText}
 		onNavigateDay={navigateToDay}
-		onWeekPrev={() => weekOffset--}
-		onWeekNext={() => weekOffset++}
-		onGenerate={handleGenerateClick}
-		onToggleMetrics={() => (metricsExpanded = !metricsExpanded)}
+		{headerScrolledAway}
 	/>
 
 	<div class="day-page-layout">
-		<article class="day-article wiki-article">
+		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
 			<div class="day-content">
-				<!-- Header -->
-				<header class="day-header">
+				<!-- Header: title-page layout (illustration → h1 → meta → rule) -->
+				<header class="day-header" bind:this={headerEl}>
+					<div class="day-header-illustration">
+						<DayHeaderPolaroid
+							imageUrl={illustrationUrl}
+							aspect="1:1"
+							variant="naked"
+							width={220}
+						/>
+					</div>
 					<h1 class="day-title">
 						{formatDate(page.date, page.dayOfWeek)}
 					</h1>
-					<div class="day-subtitle">
-						{#if relativeDateLabel()}
+					{#if relativeDateLabel()}
+						<div class="day-subtitle">
 							<span class="date-badge">{relativeDateLabel()}</span>
-						{/if}
-						{#if timezoneDisplay}
-							<span class="day-timezone">{timezoneDisplay}</span>
-						{/if}
-					</div>
+						</div>
+					{/if}
+					{#if page.epigraph}
+						<p class="day-epigraph">{page.epigraph}</p>
+					{/if}
+					<div class="day-title-rule" aria-hidden="true"></div>
 				</header>
 
-				<!-- Lead paragraph (autobiography — above everything as the summary) -->
+				<!-- Narrative first: the day told in words (unfolds from the epigraph) -->
 				{#if showAutobiography}
-					<div class="lead-section">
+					<section class="section lead-section" id="summary">
+						<h2 class="section-title">The Day</h2>
 						{#if editingAutobiography}
 							<!-- svelte-ignore a11y_no_static_element_interactions -->
 							<div
@@ -563,83 +487,32 @@
 						{:else if summaryText}
 							<div class="lead-content">
 								<p class="lead-text">{summaryText}</p>
-								<button
-									class="lead-edit-btn"
-									onclick={startEditingAutobiography}
-									type="button"
-									title="Edit"
-								>
-									<Icon icon="ri:pencil-line" />
-								</button>
 							</div>
 						{:else}
 							<p class="empty-placeholder">Generating...</p>
 						{/if}
-					</div>
+					</section>
 				{/if}
 
-				<!-- Expanded metrics (toggled from toolbar metric labels) -->
-				{#if metricsExpanded}
-					<div class="expanded-metrics" transition:slide={{ duration: 200 }}>
-						{#if contextVector}
-							<ContextVector
-								contextVector={contextVector}
-								expanded={true}
-								showToggle={false}
-							/>
-						{/if}
-						{#if entropyCalibrationDays != null}
-							{@const calibDays = entropyCalibrationDays}
-							{@const isCalibrated = calibDays >= 7}
-							{@const hasScore =
-								chaosScore != null && isCalibrated}
-							<div class="vix-details">
-								{#if hasScore}
-									<div class="vix-bar">
-										<div
-											class="vix-fill"
-											style="width: {Math.round(chaosScore! * 100)}%"
-										></div>
-									</div>
-									<p class="metric-description">
-										How unpredictable your day was. Low
-										entropy means routine and structure;
-										high entropy means novelty and disorder.
-									</p>
-								{:else}
-									<div class="vix-bar">
-										<div
-											class="vix-fill vix-fill-calibrating"
-											style="width: {Math.round((calibDays / 7) * 100)}%"
-										></div>
-									</div>
-									<p class="metric-description">
-										Entropy needs ~7 days of data to
-										establish your baseline. {calibDays === 0
-											? "This is your first day."
-											: `${calibDays} day${calibDays === 1 ? "" : "s"} recorded so far.`}
-									</p>
-								{/if}
-							</div>
-						{:else}
-							<div class="vix-details">
-								<p class="metric-description">
-									Entropy measures how unpredictable your day was compared to your baseline. Summarize at least one day to begin calibrating.
-								</p>
-							</div>
-						{/if}
-					</div>
-				{/if}
+				<!-- Journal: personal writing for this day -->
+				<JournalCard date={currentDateSlug} />
+
+				<!-- Dayline chart: visual bridge between narrative and timeline -->
+				<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} />
 
 				{#if hasAnyContent}
 					<!-- Timeline -->
 					{#if showTimeline}
 						<section class="section" id="timeline">
-							<h2 class="section-title">Event Timeline</h2>
-							{#if dayEvents.some((e) => e.entropy != null)}
-								<DayRibbonChart events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} />
-							{/if}
-							<DayTimeline events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} />
+							<div class="section-header-row">
+								<h2 class="section-title">Event Timeline</h2>
+								<div class="section-actions">
+								<button class="section-action-btn" type="button" onclick={() => timelineRef?.toggleAll()}>
+									{timelineRef?.allExpanded ? 'Collapse all' : 'Expand all'}
+								</button>
+							</div>
+							</div>
+							<EventTimeline bind:this={timelineRef} events={dayEvents} timezone={page.startTimezone} {hoveredEventId} onhover={(id) => hoveredEventId = id} pageDate={page.date} />
 						</section>
 					{/if}
 
@@ -676,86 +549,61 @@
 						</section>
 					{/if}
 
-					<!-- Sources -->
+					<!-- Ontologies: one chronological table -->
 					{#if showSources}
-						<section class="section" id="sources">
-							<h2 class="section-title">Sources</h2>
-							{#if sourcesLoading}
-								<p class="empty-placeholder">Loading...</p>
-							{:else}
-								<div class="sources-list">
-									{#each Object.entries(groupedSources()) as [sourceType, sources]}
-										{@const isExpanded =
-											expandedGroups.has(sourceType)}
-										{@const visibleSources = isExpanded
-											? sources
-											: sources.slice(
-													0,
-													SOURCE_PREVIEW_LIMIT,
-												)}
-										{@const hasMore =
-											sources.length > SOURCE_PREVIEW_LIMIT}
-										<div class="source-group">
-											<div class="source-group-header">
-												<Icon
-													icon={getSourceIcon(
-														sourceType,
-													)}
-													class="source-group-icon"
-												/>
-												<span
-													class="source-group-name"
-													>{getSourceTypeName(
-														sourceType,
-													)}</span
-												>
-												<span
-													class="source-group-count"
-													>{sources.length}</span
-												>
-											</div>
-											<ul class="source-items">
-												{#each visibleSources as source}
-													<li class="source-item">
-														<span
-															class="source-time"
-															>{formatSourceTime(
-																source.timestamp,
-															)}</span
-														>
-														<span
-															class="source-label"
-															>{source.label}</span
-														>
-														{#if source.preview}
-															<span
-																class="source-preview"
-																>{source.preview}</span
-															>
-														{/if}
-													</li>
-												{/each}
-											</ul>
-											{#if hasMore}
-												<button
-													class="source-show-more"
-													onclick={() =>
-														toggleGroupExpand(
-															sourceType,
-														)}
-													type="button"
-												>
-													{isExpanded
-														? "Show less"
-														: `Show all ${sources.length}`}
-												</button>
-											{/if}
-										</div>
-									{/each}
-								</div>
-							{/if}
+						<section class="section" id="ontologies">
+							<h2 class="section-title">Ontologies</h2>
+							<div class="sources-table-wrapper">
+								<UniversalDataGrid
+									items={sourceRows}
+									columns={sourceColumns}
+									entityType="day-sources"
+									loading={sourcesLoading}
+									emptyIcon="ri:database-2-line"
+									emptyMessage="No source data"
+									loadingMessage="Loading sources..."
+									searchPlaceholder="Filter sources..."
+									pageSize={8}
+								/>
+							</div>
 						</section>
 					{/if}
+
+					<!-- Metadata: audit trail + ambient day context -->
+					<section class="section" id="metadata">
+						<h2 class="section-title">Metadata</h2>
+						<dl class="metadata-grid">
+							{#if page.startTimezone}
+								<dt>Timezone</dt>
+								<dd>{timezoneDisplay}</dd>
+							{/if}
+							{#if page.createdAt}
+								<dt>Created</dt>
+								<dd>{new Date(page.createdAt).toLocaleString()}</dd>
+							{/if}
+							{#if page.updatedAt}
+								<dt>Last updated</dt>
+								<dd>
+									{new Date(page.updatedAt).toLocaleString()}
+									{#if page.lastEditedBy}
+										<span class="metadata-dim">· by {page.lastEditedBy}</span>
+									{/if}
+								</dd>
+							{/if}
+							<dt>Events</dt>
+							<dd>{dayEvents.length}</dd>
+							<dt>Sources</dt>
+							<dd>{dataSources.length}</dd>
+							<dt>Page ID</dt>
+							<dd class="metadata-mono">{page.id}</dd>
+							{#if page.dataQuality}
+								<dt>Coverage</dt>
+								<dd>
+									<DataQualityCoverage dataQuality={page.dataQuality} />
+								</dd>
+							{/if}
+						</dl>
+					</section>
 				{:else}
 					<!-- Empty state: context-aware -->
 					<div class="empty-state">
@@ -764,20 +612,7 @@
 						{:else if currentDateSlug === todaySlug}
 							<p class="empty-state-text">Your day is still in progress.</p>
 						{:else if dataSources.length > 0}
-							<p class="empty-state-text">{dataSources.length} sources recorded.</p>
-							<button
-								class="empty-state-generate"
-								onclick={handleGenerateClick}
-								disabled={summaryGenerating}
-								type="button"
-							>
-								{#if summaryGenerating}
-									<Icon icon="ri:loader-4-line" class="spin-icon" />
-									Summarizing...
-								{:else}
-									Summarize this day
-								{/if}
-							</button>
+							<p class="empty-state-text">{dataSources.length} sources recorded. Events will be generated automatically.</p>
 						{:else}
 							<p class="empty-state-text">No source data recorded for this day.</p>
 						{/if}
@@ -786,53 +621,8 @@
 			</div>
 		</article>
 
-		<WikiRightRail content={fullContent()}>
-			{#snippet metadata()}
-				<div class="sidebar-meta">
-					<div class="meta-title">{page.dayOfWeek}</div>
-					<div class="meta-date">
-						{page.date.toLocaleDateString("en-US", {
-							month: "long",
-							day: "numeric",
-							year: "numeric",
-						})}
-					</div>
-					<div class="meta-stats">
-						<span class="stat"
-							>{dayEvents.filter((e) => !e.isUnknown).length} events</span
-						>
-						<span class="stat-sep">·</span>
-						<span class="stat">{dataSources.length} sources</span>
-					</div>
-				</div>
-			{/snippet}
-		</WikiRightRail>
 	</div>
 </div>
-
-<!-- Regenerate confirmation modal -->
-<Modal
-	open={showRegenerateConfirm}
-	onClose={() => (showRegenerateConfirm = false)}
-	title="Regenerate Day"
-	width="sm"
->
-	<p class="regenerate-confirm-text">
-		This will regenerate the autobiography, completeness, and entropy scores.
-		Any manual edits will be overwritten.
-	</p>
-	{#snippet footer()}
-		<button
-			class="modal-btn modal-btn-secondary"
-			onclick={() => (showRegenerateConfirm = false)}
-		>
-			Cancel
-		</button>
-		<button class="modal-btn modal-btn-primary" onclick={confirmRegenerate}>
-			Regenerate
-		</button>
-	{/snippet}
-</Modal>
 
 <style>
 	.day-page-outer {
@@ -871,25 +661,58 @@
 		padding-bottom: 4rem;
 	}
 
-	/* Header */
+	/* Header: title-page layout — illustration, h1, meta, rule, all centered */
 	.day-header {
-		margin-bottom: 1.5rem;
+		margin-bottom: 4rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 1.25rem;
+	}
+
+	.day-header-illustration {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.day-title-rule {
+		width: 3rem;
+		height: 1px;
+		background: color-mix(in srgb, var(--color-foreground) 15%, transparent);
+		margin-top: 0.25rem;
+	}
+
+	.day-epigraph {
+		font-family: var(--font-sans, system-ui, sans-serif);
+		font-style: italic;
+		font-weight: 400;
+		font-size: 0.9375rem;
+		line-height: 1.5;
+		color: var(--color-foreground-subtle);
+		letter-spacing: 0.01em;
+		margin: 0;
+		max-width: 32rem;
 	}
 
 	.day-title {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.75rem;
+		font-size: 2.25rem;
 		font-weight: 400;
 		color: var(--color-foreground);
-		margin: 0 0 0.25rem;
-		line-height: 1.3;
+		margin: 0;
+		line-height: 1.2;
+		letter-spacing: -0.01em;
 	}
 
 	.day-subtitle {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
-		margin-top: 0.25rem;
+		justify-content: center;
+		gap: 0.625rem;
+		margin-top: 0.375rem;
 	}
 
 	.date-badge {
@@ -905,51 +728,6 @@
 	.day-timezone {
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
-	}
-
-	/* Expanded metrics panel */
-	.expanded-metrics {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		padding: 1rem 0;
-		margin-bottom: 1rem;
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	.vix-details {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		width: 100%;
-	}
-
-	.vix-bar {
-		height: 10px;
-		background-image: radial-gradient(
-			color-mix(in srgb, var(--color-foreground) 20%, transparent) 1px,
-			transparent 0
-		);
-		background-size: 6px 6px;
-		border-radius: 2px;
-		overflow: hidden;
-	}
-
-	.vix-fill {
-		height: 100%;
-		background: var(--color-foreground-muted);
-		border-radius: 2px;
-	}
-
-	.vix-fill-calibrating {
-		opacity: 0.4;
-	}
-
-	.metric-description {
-		font-size: 0.75rem;
-		line-height: 1.5;
-		color: var(--color-foreground-subtle);
-		margin: 0;
 	}
 
 	/* Lead paragraph (autobiography without heading) */
@@ -1030,6 +808,7 @@
 
 	/* Sections */
 	.section {
+		position: relative;
 		margin-bottom: 2rem;
 	}
 
@@ -1040,6 +819,39 @@
 		line-height: 1.35;
 		color: var(--color-foreground);
 		margin: 0 0 0.75rem;
+	}
+
+	.section-header-row {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.section-header-row .section-title {
+		margin-bottom: 0.75rem;
+	}
+
+	.section-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		flex-shrink: 0;
+	}
+
+	.section-action-btn {
+		background: none;
+		border: none;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
+		padding: 0.125rem 0.25rem;
+		border-radius: 3px;
+	}
+
+	.section-action-btn:hover {
+		color: var(--color-foreground-muted);
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 	}
 
 	/* Footer sections */
@@ -1118,115 +930,33 @@
 		cursor: default;
 	}
 
-	/* Data Sources */
-	.sources-list {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	/* Sources table */
+	.sources-table-wrapper {
+		margin: 0 -2rem;
 	}
 
-	.source-group {
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		overflow: hidden;
-	}
-
-	.source-group-header {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		background: var(--color-surface-raised);
-		border-bottom: 1px solid var(--color-border);
-	}
-
-	:global(.source-group-icon) {
-		font-size: 1rem;
-		color: var(--color-foreground-muted);
-	}
-
-	.source-group-name {
+	/* Metadata grid */
+	.metadata-grid {
+		display: grid;
+		grid-template-columns: max-content 1fr;
+		gap: 0.375rem 1.5rem;
 		font-size: 0.8125rem;
-		font-weight: 500;
-		color: var(--color-foreground);
-		flex: 1;
-	}
-
-	.source-group-count {
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle);
-		background: var(--color-surface);
-		padding: 0.125rem 0.5rem;
-		border-radius: 9999px;
-	}
-
-	.source-items {
-		list-style: none;
 		margin: 0;
-		padding: 0;
 	}
-
-	.source-item {
-		display: flex;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.375rem 0.75rem;
-		border-bottom: 1px solid var(--color-border);
-		font-size: 0.8125rem;
-	}
-
-	.source-item:last-child {
-		border-bottom: none;
-	}
-
-	.source-time {
-		flex-shrink: 0;
-		width: 5rem;
-		color: var(--color-foreground-muted);
-		font-size: 0.75rem;
-	}
-
-	.source-label {
-		flex: 1;
-		color: var(--color-foreground);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.source-preview {
-		flex-shrink: 0;
-		max-width: 12rem;
+	.metadata-grid dt {
 		color: var(--color-foreground-subtle);
-		font-size: 0.75rem;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		font-weight: 400;
 	}
-
-	.source-show-more {
-		display: block;
-		width: 100%;
-		padding: 0.375rem 0.75rem;
-		background: none;
-		border: none;
-		border-top: 1px solid var(--color-border);
+	.metadata-grid dd {
 		color: var(--color-foreground-muted);
-		font-size: 0.75rem;
-		cursor: pointer;
-		text-align: center;
-		transition:
-			color 0.1s ease,
-			background 0.1s ease;
+		margin: 0;
 	}
-
-	.source-show-more:hover {
-		color: var(--color-foreground);
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 4%,
-			transparent
-		);
+	.metadata-dim {
+		color: var(--color-foreground-subtle);
+	}
+	.metadata-mono {
+		font-family: var(--font-mono, "SF Mono", Menlo, monospace);
+		font-size: 0.75rem;
 	}
 
 	/* Sidebar metadata */
@@ -1271,7 +1001,11 @@
 		}
 
 		.day-title {
-			font-size: 1.5rem;
+			font-size: 1.75rem;
+		}
+
+		.day-header {
+			gap: 1rem;
 		}
 	}
 </style>

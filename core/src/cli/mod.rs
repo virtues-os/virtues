@@ -1,21 +1,13 @@
 //! CLI module - command-line interface for Virtues
 
 pub mod commands;
-pub mod display;
 pub mod types;
 
-use crate::storage::stream_writer::StreamWriter;
 use crate::Virtues;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use types::{Cli, Commands};
 
 /// Run the CLI application
 pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize StreamWriter (simple in-memory buffer)
-    let stream_writer = StreamWriter::new();
-    let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
-
     // Command should always be Some at this point (main.rs handles None case)
     let command = cli.command.expect("Command should be set by main.rs");
 
@@ -28,95 +20,18 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         Commands::Migrate => {
             println!("Running database migrations...");
             virtues.database.initialize().await?;
-            println!("✅ Migrations completed successfully");
-        }
-
-        Commands::Catalog { action } => {
-            commands::handle_catalog_command(action)?;
-        }
-
-        Commands::Add {
-            source_type,
-            device_id,
-            name,
-        } => {
-            commands::handle_add_source(virtues, &source_type, device_id, name).await?;
-        }
-
-        Commands::Source { action } => {
-            commands::handle_source_command(virtues, action).await?;
-        }
-
-        Commands::Stream { action } => {
-            commands::handle_stream_command(virtues, stream_writer_arc.clone(), action).await?;
-        }
-
-        Commands::Sync { source_id } => {
-            println!("Syncing source: {}...", source_id);
-
-            // Get all enabled streams for this source
-            let streams = crate::list_source_streams(virtues.database.pool(), source_id.clone()).await?;
-            let enabled_streams: Vec<_> = streams.iter().filter(|s| s.is_enabled).collect();
-
-            if enabled_streams.is_empty() {
-                println!("⚠️  No enabled streams for this source");
-                println!(
-                    "Enable streams with: virtues stream enable {} <stream_name>",
-                    source_id
-                );
-                return Ok(());
-            }
-
-            println!("Syncing {} enabled stream(s)...\n", enabled_streams.len());
-
-            let sync_mode = crate::SyncMode::full_refresh();
-            let mut jobs_created = 0;
-            let mut failed_count = 0;
-
-            for stream in enabled_streams {
-                println!("  Creating sync job for {}...", stream.stream_name);
-
-                match crate::api::jobs::trigger_stream_sync(
-                    virtues.database.pool(),
-                    &*virtues.storage,
-                    stream_writer_arc.clone(),
-                    source_id.clone(),
-                    &stream.stream_name,
-                    Some(sync_mode.clone()),
-                )
-                .await
-                {
-                    Ok(response) => {
-                        jobs_created += 1;
-                        println!(
-                            "    ✅ Job created: {} (status: {})",
-                            response.job_id, response.status
-                        );
-                    }
-                    Err(e) => {
-                        failed_count += 1;
-                        println!("    ❌ Error: {}", e);
-                    }
-                }
-            }
-
-            println!("\n📊 Sync Summary:");
-            println!("  Jobs created: {}", jobs_created);
-            if failed_count > 0 {
-                println!("  Failed to create jobs: {}", failed_count);
-            }
-            println!("\nNote: Jobs are running in the background. Use 'virtues jobs list' to monitor progress.");
+            println!("Migrations completed successfully");
         }
 
         Commands::Server { host, port } => {
             // Run migrations and seed data
-            println!("📊 Running migrations...");
+            println!("Running migrations...");
             virtues.database.initialize().await?;
-            println!("✅ Migrations complete");
+            println!("Migrations complete");
 
-            println!("🌱 Seeding defaults...");
+            println!("Seeding defaults...");
             crate::seeding::prod_seed::seed_production_data(&virtues.database).await?;
-            println!("✅ Seeding complete");
+            println!("Seeding complete");
             println!();
 
             println!("Starting Virtues server on {}:{}", host, port);
@@ -129,14 +44,14 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::Seed => {
-            println!("📊 Running migrations...");
+            println!("Running migrations...");
             virtues.database.initialize().await?;
-            println!("✅ Migrations complete");
+            println!("Migrations complete");
             println!();
 
-            println!("🎭 Seeding demo data...");
+            println!("Seeding demo data...");
             crate::seeding::seed_demo_data(&virtues.database).await?;
-            println!("✅ Demo data seeded");
+            println!("Demo data seeded");
         }
 
         Commands::Tunnel => {
@@ -145,6 +60,107 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
         Commands::WarmModels => {
             unreachable!("WarmModels command should be handled in main.rs");
+        }
+
+        Commands::ComputeNovelty => {
+            println!("Running migrations...");
+            virtues.database.initialize().await?;
+            println!("Computing novelty scores for all days...");
+
+            let pool = virtues.database.pool();
+
+            // Get all dates that have events with summaries
+            let dates: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT d.date FROM wiki_days d \
+                 JOIN wiki_events e ON e.day_id = d.id \
+                 WHERE e.event_summary IS NOT NULL AND e.event_summary != '' \
+                 ORDER BY d.date"
+            )
+            .fetch_all(pool)
+            .await?;
+
+            println!("Found {} days with events to score", dates.len());
+
+            let mut total_scored = 0u32;
+            for (i, date_str) in dates.iter().enumerate() {
+                let date = date_str.parse::<chrono::NaiveDate>()
+                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+
+                match crate::dayline::novelty::compute_novelty_for_day(pool, date).await {
+                    Ok(scored) => {
+                        total_scored += scored;
+                        if scored > 0 || (i + 1) % 10 == 0 {
+                            println!("  {} — {} events scored ({}/{})", date_str, scored, i + 1, dates.len());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} — error: {}", date_str, e);
+                    }
+                }
+            }
+
+            println!("Event novelty: {} events scored across {} days.", total_scored, dates.len());
+
+            // Topic/entity novelty
+            println!("Computing topic/entity novelty...");
+            let mut total_te = 0u32;
+            for (i, date_str) in dates.iter().enumerate() {
+                let date = date_str.parse::<chrono::NaiveDate>()
+                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+
+                match crate::dayline::topic_entity_novelty::compute_topic_entity_novelty(pool, date).await {
+                    Ok(updated) => {
+                        total_te += updated;
+                        if (i + 1) % 20 == 0 {
+                            println!("  topic/entity: {}/{} days", i + 1, dates.len());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} — topic/entity error: {}", date_str, e);
+                    }
+                }
+            }
+
+            println!("Topic/entity novelty: {} events updated.", total_te);
+        }
+
+        Commands::ComputeAutonomic => {
+            println!("Running migrations...");
+            virtues.database.initialize().await?;
+            println!("Computing autonomic scores for all days...");
+
+            let pool = virtues.database.pool();
+
+            let dates: Vec<String> = sqlx::query_scalar(
+                "SELECT DISTINCT d.date FROM wiki_days d \
+                 JOIN wiki_events e ON e.day_id = d.id \
+                 WHERE e.avg_hr IS NOT NULL \
+                 ORDER BY d.date"
+            )
+            .fetch_all(pool)
+            .await?;
+
+            println!("Found {} days with HR data to score", dates.len());
+
+            let mut total_scored = 0u32;
+            for (i, date_str) in dates.iter().enumerate() {
+                let date = date_str.parse::<chrono::NaiveDate>()
+                    .map_err(|e| format!("Bad date {}: {}", date_str, e))?;
+
+                match crate::dayline::autonomic_scoring::compute_autonomic_for_day(pool, date).await {
+                    Ok(scored) => {
+                        total_scored += scored;
+                        if scored > 0 || (i + 1) % 10 == 0 {
+                            println!("  {} — {} events scored ({}/{})", date_str, scored, i + 1, dates.len());
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  {} — error: {}", date_str, e);
+                    }
+                }
+            }
+
+            println!("Autonomic scoring: {} events scored across {} days.", total_scored, dates.len());
         }
     }
 

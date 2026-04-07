@@ -95,6 +95,8 @@ pub struct AssistantProfile {
     pub persona: Option<String>,
     /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }
     pub personas: Option<String>,
+    /// AI-managed persistent memory (plain text, like MEMORY.md)
+    pub memory: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

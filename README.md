@@ -167,7 +167,8 @@ virtues/
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
-| `elt_*` | Pipeline infrastructure | `elt_source_connections`, `elt_stream_connections`, `elt_jobs` |
+| `elt_*` | Pipeline infrastructure | `elt_source_connections`, `elt_stream_connections` |
+| `scheduled_tasks` / `task_runs` | Unified scheduler | Task config + execution history |
 | `data_*` | Normalized ontology data | `data_health_heart_rate`, `data_communication_email`, `data_calendar_event` |
 | `app_*` | Application state | `app_chat_sessions`, `app_user_profile` |
 | `wiki_*` | Entity graph | `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_events` |
@@ -281,7 +282,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 **macOS Desktop App** — Tauri-based native app with a collector daemon that runs as a LaunchAgent. Streams app usage, browser history, and iMessage data in the background. Manages Full Disk Access and Accessibility permissions. Pairs with your server instance via a 6-digit code.
 
-**SSH into Your Server** — Built-in terminal for direct server access from the web UI. Developer tools include an interactive SQL console, data lake browser, job inspector, and sitemap viewer.
+**SSH into Your Server** — Built-in terminal for direct server access from the web UI. Developer tools include an interactive SQL console, data lake browser, task/run inspector, and sitemap viewer.
 
 **Feedback & Changelog** — Built-in feedback submission and a changelog view for tracking what's new. Onboarding checklist guides new users through connecting sources, pairing devices, and starting their first chat.
 

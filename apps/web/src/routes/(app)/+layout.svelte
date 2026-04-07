@@ -12,6 +12,7 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
+	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
@@ -60,6 +61,11 @@
 				e.dataTransfer.dropEffect = "move";
 			}
 		});
+
+		// Collapse sidebar for new users (first-time onboarding)
+		if (data?.onboardingStatus === 'new') {
+			sidebarState.collapsed = true;
+		}
 
 		// Load global data
 		chatSessions.load();

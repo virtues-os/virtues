@@ -80,6 +80,19 @@ pub struct WikiOrganization {
     pub updated_at: DateTime<Utc>,
 }
 
+/// A thing wiki page (catchall entity: pets, projects, concepts, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiThing {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub cover_image: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 // ============================================================================
 // Wiki Page Types - Narrative Views
 // ============================================================================
@@ -143,13 +156,17 @@ pub struct WikiDay {
     pub end_timezone: Option<String>,
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
+    pub epigraph: Option<String>,
+    /// True if this day has a generated illustration BLOB. The BLOB itself
+    /// is served separately via GET /api/wiki/day/:date/illustration.
+    pub has_illustration: bool,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
     pub act_id: Option<String>,
     pub chapter_id: Option<String>,
-    pub context_vector: Option<String>,
-    pub chaos_score: Option<f64>,
-    pub entropy_calibration_days: Option<i32>,
+    pub morning_baseline: Option<f64>,
+    pub battery_curve: Option<String>,
+    pub data_quality: Option<serde_json::Value>,
     pub snapshot: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -186,6 +203,15 @@ pub struct WikiOrganizationListItem {
     pub canonical_name: String,
     pub organization_type: Option<String>,
     pub relationship_type: Option<String>,
+}
+
+/// A thing list item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiThingListItem {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub description: Option<String>,
 }
 
 // ============================================================================
@@ -234,17 +260,26 @@ pub struct UpdateWikiOrganizationRequest {
     pub end_date: Option<NaiveDate>,
 }
 
+/// Request to update a thing wiki page
+#[derive(Debug, Deserialize)]
+pub struct UpdateWikiThingRequest {
+    pub name: Option<String>,
+    pub category: Option<String>,
+    pub description: Option<String>,
+    pub content: Option<String>,
+    pub cover_image: Option<String>,
+}
+
 /// Request to update a day wiki page
 #[derive(Debug, Deserialize)]
 pub struct UpdateWikiDayRequest {
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
+    pub epigraph: Option<String>,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
-    pub context_vector: Option<serde_json::Value>,
-    pub chaos_score: Option<f64>,
-    pub entropy_calibration_days: Option<i32>,
     pub start_timezone: Option<String>,
+    pub data_quality: Option<String>,
     pub snapshot: Option<String>,
 }
 
@@ -670,6 +705,107 @@ pub async fn update_organization(
 }
 
 // ============================================================================
+// Thing CRUD Operations
+// ============================================================================
+
+/// Get a thing by ID
+pub async fn get_thing(pool: &SqlitePool, id: String) -> Result<WikiThing> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            id, name, category, description, content, cover_image,
+            created_at, updated_at
+        FROM wiki_things
+        WHERE id = $1
+        "#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
+    .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", id)))?;
+
+    let row_id = row
+        .id
+        .clone()
+        .ok_or_else(|| Error::Database("Missing thing ID".to_string()))?;
+
+    Ok(WikiThing {
+        id: row_id,
+        name: row.name.clone(),
+        category: row.category.clone(),
+        description: row.description.clone(),
+        content: row.content.clone(),
+        cover_image: row.cover_image.clone(),
+        created_at: DateTime::parse_from_rfc3339(&row.created_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now()),
+    })
+}
+
+/// List all things
+pub async fn list_things(pool: &SqlitePool) -> Result<Vec<WikiThingListItem>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT id, name, category, description
+        FROM wiki_things
+        ORDER BY name ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list things: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            let id = row.id.clone()?;
+            Some(WikiThingListItem {
+                id,
+                name: row.name.clone(),
+                category: row.category.clone(),
+                description: row.description.clone(),
+            })
+        })
+        .collect())
+}
+
+/// Update a thing
+pub async fn update_thing(
+    pool: &SqlitePool,
+    id: String,
+    req: UpdateWikiThingRequest,
+) -> Result<WikiThing> {
+    sqlx::query!(
+        r#"
+        UPDATE wiki_things
+        SET
+            name = COALESCE($2, name),
+            category = COALESCE($3, category),
+            description = COALESCE($4, description),
+            content = COALESCE($5, content),
+            cover_image = COALESCE($6, cover_image),
+            updated_at = datetime('now')
+        WHERE id = $1
+        "#,
+        id,
+        req.name,
+        req.category,
+        req.description,
+        req.content,
+        req.cover_image
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update thing: {}", e)))?;
+
+    get_thing(pool, id).await
+}
+
+// ============================================================================
 // Narrative Identity
 // ============================================================================
 
@@ -1028,8 +1164,9 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
         r#"
         SELECT
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
-            entropy_calibration_days, snapshot, created_at, updated_at
+            epigraph, (illustration IS NOT NULL) as has_illustration,
+            last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
+            data_quality, snapshot, created_at, updated_at
         FROM wiki_days
         WHERE date = $1
         "#,
@@ -1051,8 +1188,9 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
         VALUES ($1, $2)
         RETURNING
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
-            entropy_calibration_days, snapshot, created_at, updated_at
+            epigraph, (illustration IS NOT NULL) as has_illustration,
+            last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
+            data_quality, snapshot, created_at, updated_at
         "#,
     )
     .bind(&day_id)
@@ -1078,8 +1216,6 @@ fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<W
         .flatten();
     let created_at_str: String = row.try_get("created_at").unwrap_or_default();
     let updated_at_str: String = row.try_get("updated_at").unwrap_or_default();
-    let chaos_score_raw: Option<f64> = row.try_get("chaos_score").ok().flatten();
-
     Ok(WikiDay {
         id,
         date,
@@ -1089,13 +1225,19 @@ fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<W
         autobiography_sections: autobiography_sections_str
             .as_ref()
             .and_then(|s| serde_json::from_str(s).ok()),
+        epigraph: row.try_get("epigraph").ok().flatten(),
+        has_illustration: row.try_get::<bool, _>("has_illustration").unwrap_or(false),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
         act_id: row.try_get("act_id").ok().flatten(),
         chapter_id: row.try_get("chapter_id").ok().flatten(),
-        context_vector: row.try_get("context_vector").ok().flatten(),
-        chaos_score: chaos_score_raw,
-        entropy_calibration_days: row.try_get("entropy_calibration_days").ok().flatten(),
+        morning_baseline: row.try_get("morning_baseline").ok().flatten(),
+        battery_curve: row.try_get("battery_curve").ok().flatten(),
+        data_quality: row
+            .try_get::<Option<String>, _>("data_quality")
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok()),
         snapshot: row.try_get("snapshot").ok().flatten(),
         created_at: DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
@@ -1119,10 +1261,6 @@ pub async fn update_day(
         .autobiography_sections
         .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
-    let context_vector_json = req
-        .context_vector
-        .as_ref()
-        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".to_string()));
 
     sqlx::query(
         r#"
@@ -1130,13 +1268,12 @@ pub async fn update_day(
         SET
             autobiography = COALESCE($2, autobiography),
             autobiography_sections = COALESCE($3, autobiography_sections),
-            last_edited_by = COALESCE($4, last_edited_by),
-            cover_image = COALESCE($5, cover_image),
-            context_vector = COALESCE($6, context_vector),
-            chaos_score = COALESCE($7, chaos_score),
-            entropy_calibration_days = COALESCE($8, entropy_calibration_days),
-            start_timezone = COALESCE($9, start_timezone),
-            snapshot = COALESCE($10, snapshot),
+            epigraph = COALESCE($4, epigraph),
+            last_edited_by = COALESCE($5, last_edited_by),
+            cover_image = COALESCE($6, cover_image),
+            start_timezone = COALESCE($7, start_timezone),
+            data_quality = COALESCE($8, data_quality),
+            snapshot = COALESCE($9, snapshot),
             updated_at = datetime('now')
         WHERE id = $1
         "#,
@@ -1144,12 +1281,11 @@ pub async fn update_day(
     .bind(&day_id_str)
     .bind(&req.autobiography)
     .bind(&autobiography_sections_json)
+    .bind(&req.epigraph)
     .bind(&req.last_edited_by)
     .bind(&req.cover_image)
-    .bind(&context_vector_json)
-    .bind(&req.chaos_score)
-    .bind(&req.entropy_calibration_days)
     .bind(&req.start_timezone)
+    .bind(&req.data_quality)
     .bind(&req.snapshot)
     .execute(pool)
     .await
@@ -1173,8 +1309,9 @@ pub async fn list_days(
         r#"
         SELECT
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
-            last_edited_by, cover_image, act_id, chapter_id, context_vector, chaos_score,
-            entropy_calibration_days, snapshot, created_at, updated_at
+            epigraph, (illustration IS NOT NULL) as has_illustration,
+            last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
+            data_quality, snapshot, created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
         ORDER BY date DESC
@@ -1194,6 +1331,32 @@ pub async fn list_days(
             wiki_day_from_row(row, date).ok()
         })
         .collect())
+}
+
+/// Fetch the raw illustration PNG bytes for a day. Returns None if no illustration.
+pub async fn get_day_illustration(pool: &SqlitePool, date: NaiveDate) -> Result<Option<Vec<u8>>> {
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let row: Option<(Vec<u8>,)> = sqlx::query_as(
+        "SELECT illustration FROM wiki_days WHERE date = ? AND illustration IS NOT NULL",
+    )
+    .bind(&date_str)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get illustration: {e}")))?;
+
+    Ok(row.map(|(blob,)| blob))
+}
+
+/// Save illustration PNG bytes to a day's BLOB column.
+pub async fn save_day_illustration(pool: &SqlitePool, date: NaiveDate, png_bytes: &[u8]) -> Result<()> {
+    let date_str = date.format("%Y-%m-%d").to_string();
+    sqlx::query("UPDATE wiki_days SET illustration = ?, updated_at = datetime('now') WHERE date = ?")
+        .bind(png_bytes)
+        .bind(&date_str)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to save illustration: {e}")))?;
+    Ok(())
 }
 
 // ============================================================================
@@ -1223,7 +1386,7 @@ pub fn resolve_id(id: &str) -> Result<IdResolution> {
     let entity_type = parts[0];
 
     // Validate known entity types
-    let valid_types = ["person", "place", "org", "day", "telos", "act", "chapter", "page", "chat", "year", "source"];
+    let valid_types = ["person", "place", "org", "thing", "day", "telos", "act", "chapter", "page", "chat", "year", "source"];
     if !valid_types.contains(&entity_type) {
         return Err(Error::NotFound(format!(
             "Unknown entity type in ID: {}",
@@ -1235,244 +1398,6 @@ pub fn resolve_id(id: &str) -> Result<IdResolution> {
         entity_type: entity_type.to_string(),
         id: id.to_string(),
     })
-}
-
-// ============================================================================
-// Citation Types
-// ============================================================================
-
-/// A citation linking wiki content to ontology data
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Citation {
-    pub id: String,
-    pub source_type: String,
-    pub source_id: String,
-    pub target_table: String,
-    pub target_id: String,
-    pub citation_index: i32,
-    pub label: Option<String>,
-    pub preview: Option<String>,
-    pub is_hidden: Option<bool>,
-    pub added_by: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-/// Request to create a citation
-#[derive(Debug, Deserialize)]
-pub struct CreateCitationRequest {
-    pub source_type: String,
-    pub source_id: String,
-    pub target_table: String,
-    pub target_id: String,
-    pub citation_index: i32,
-    pub label: Option<String>,
-    pub preview: Option<String>,
-    pub is_hidden: Option<bool>,
-    pub added_by: Option<String>,
-}
-
-/// Request to update a citation
-#[derive(Debug, Deserialize)]
-pub struct UpdateCitationRequest {
-    pub label: Option<String>,
-    pub preview: Option<String>,
-    pub is_hidden: Option<bool>,
-}
-
-// ============================================================================
-// Citation CRUD Operations
-// ============================================================================
-
-/// Get citations for a wiki page
-pub async fn get_citations(
-    pool: &SqlitePool,
-    source_type: &str,
-    source_id: String,
-) -> Result<Vec<Citation>> {
-    let source_id_str = source_id;
-
-    let rows = sqlx::query!(
-        r#"
-        SELECT
-            id, source_type, source_id, target_table, target_id,
-            citation_index, label, preview, is_hidden, added_by,
-            created_at, updated_at
-        FROM wiki_citations
-        WHERE source_type = $1 AND source_id = $2
-        ORDER BY citation_index ASC
-        "#,
-        source_type,
-        source_id_str
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get citations: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .filter_map(|row| {
-            let id = row.id.clone()?;
-            let source_id = row.source_id.clone();
-            let target_id = row.target_id.clone();
-            Some(Citation {
-                id,
-                source_type: row.source_type.clone(),
-                source_id,
-                target_table: row.target_table.clone(),
-                target_id,
-                citation_index: row.citation_index as i32,
-                label: row.label.clone(),
-                preview: row.preview.clone(),
-                is_hidden: row.is_hidden.map(|v| v != 0),
-                added_by: row.added_by.clone(),
-                created_at: DateTime::parse_from_rfc3339(&row.created_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-            })
-        })
-        .collect())
-}
-
-/// Create a citation
-pub async fn create_citation(pool: &SqlitePool, req: CreateCitationRequest) -> Result<Citation> {
-    let source_id_str = req.source_id.clone();
-    let target_id_str = req.target_id.clone();
-    let added_by = req.added_by.unwrap_or_else(|| "ai".to_string());
-
-    let timestamp = Utc::now().to_rfc3339();
-    let citation_id = ids::generate_id(ids::WIKI_CITATION_PREFIX, &[&source_id_str, &target_id_str, &timestamp]);
-    let row = sqlx::query!(
-        r#"
-        INSERT INTO wiki_citations (
-            id, source_type, source_id, target_table, target_id,
-            citation_index, label, preview, is_hidden, added_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING
-            id, source_type, source_id, target_table, target_id,
-            citation_index, label, preview, is_hidden, added_by,
-            created_at, updated_at
-        "#,
-        citation_id,
-        req.source_type,
-        source_id_str,
-        req.target_table,
-        target_id_str,
-        req.citation_index,
-        req.label,
-        req.preview,
-        req.is_hidden,
-        added_by
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create citation: {}", e)))?;
-
-    let id = row
-        .id
-        .clone()
-        .ok_or_else(|| Error::Database("Missing citation ID".to_string()))?;
-
-    Ok(Citation {
-        id,
-        source_type: row.source_type.clone(),
-        source_id: req.source_id,
-        target_table: row.target_table.clone(),
-        target_id: req.target_id,
-        citation_index: row.citation_index as i32,
-        label: row.label.clone(),
-        preview: row.preview.clone(),
-        is_hidden: row.is_hidden.map(|v| v != 0),
-        added_by: row.added_by.clone(),
-        created_at: DateTime::parse_from_rfc3339(&row.created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-    })
-}
-
-/// Update a citation
-pub async fn update_citation(
-    pool: &SqlitePool,
-    id: String,
-    req: UpdateCitationRequest,
-) -> Result<Citation> {
-    sqlx::query(
-        r#"
-        UPDATE wiki_citations
-        SET
-            label = COALESCE($2, label),
-            preview = COALESCE($3, preview),
-            is_hidden = COALESCE($4, is_hidden),
-            updated_at = datetime('now')
-        WHERE id = $1
-        "#,
-    )
-    .bind(&id)
-    .bind(&req.label)
-    .bind(&req.preview)
-    .bind(&req.is_hidden)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update citation: {}", e)))?;
-
-    // Get updated citation
-    let row = sqlx::query(
-        r#"
-        SELECT
-            id, source_type, source_id, target_table, target_id,
-            citation_index, label, preview, is_hidden, added_by,
-            created_at, updated_at
-        FROM wiki_citations
-        WHERE id = $1
-        "#,
-    )
-    .bind(&id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get updated citation: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Citation not found: {}", id)))?;
-
-    use sqlx::Row;
-    Ok(Citation {
-        id: row.try_get("id").map_err(|e| Error::Database(e.to_string()))?,
-        source_type: row.try_get("source_type").map_err(|e| Error::Database(e.to_string()))?,
-        source_id: row.try_get("source_id").map_err(|e| Error::Database(e.to_string()))?,
-        target_table: row.try_get("target_table").map_err(|e| Error::Database(e.to_string()))?,
-        target_id: row.try_get("target_id").map_err(|e| Error::Database(e.to_string()))?,
-        citation_index: row.try_get::<i32, _>("citation_index").map_err(|e| Error::Database(e.to_string()))?,
-        label: row.try_get("label").ok(),
-        preview: row.try_get("preview").ok(),
-        is_hidden: row.try_get::<Option<bool>, _>("is_hidden").ok().flatten(),
-        added_by: row.try_get("added_by").ok(),
-        created_at: DateTime::parse_from_rfc3339(&row.try_get::<String, _>("created_at").map_err(|e| Error::Database(e.to_string()))?)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.try_get::<String, _>("updated_at").map_err(|e| Error::Database(e.to_string()))?)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-    })
-}
-
-/// Delete a citation
-pub async fn delete_citation(pool: &SqlitePool, id: String) -> Result<()> {
-    let id_str = id.clone();
-
-    let result = sqlx::query!("DELETE FROM wiki_citations WHERE id = $1", id_str)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to delete citation: {}", e)))?;
-
-    if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Citation not found: {}", id)));
-    }
-
-    Ok(())
 }
 
 // ============================================================================
@@ -1496,9 +1421,26 @@ pub struct TemporalEvent {
     pub is_transit: Option<bool>,
     pub is_user_added: Option<bool>,
     pub is_user_edited: Option<bool>,
-    pub w6h_activation: Option<Vec<f32>>,
-    pub entropy: Option<f64>,
-    pub w6h_entropy: Option<f64>,
+    // Dayline fields
+    pub novelty_z: Option<f64>,
+    pub avg_hr: Option<f64>,
+    pub autonomic_z: Option<f64>,
+    pub hr_z: Option<f64>,
+    pub hrv_z: Option<f64>,
+    pub topics: Option<serde_json::Value>,
+    pub event_summary: Option<String>,
+    pub agent_action: Option<String>,
+    pub is_sleep: Option<bool>,
+    pub user_hidden: Option<bool>,
+    pub user_created: Option<bool>,
+    // Entity/topic novelty
+    pub entities: Option<serde_json::Value>,
+    pub topic_novelty: Option<serde_json::Value>,
+    pub entity_novelty: Option<serde_json::Value>,
+    /// Map of entity_id → ISO8601 timestamp of earliest ref within event window.
+    /// Sourced from wiki_entity_refs. Used to position entity dots at their actual
+    /// moment (not event center).
+    pub entity_timestamps: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1535,6 +1477,7 @@ pub struct UpdateTemporalEventRequest {
 /// Get events for a day
 pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<TemporalEvent>> {
     use sqlx::Row;
+    use std::collections::HashMap;
 
     let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
         r#"
@@ -1542,7 +1485,11 @@ pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<Tem
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
-            w6h_activation, entropy, w6h_entropy, created_at, updated_at
+            novelty_z, avg_hr, autonomic_z, hr_z, hrv_z,
+            topics, event_summary, agent_action,
+            is_sleep, user_hidden, user_created,
+            entities, topic_novelty, entity_novelty,
+            created_at, updated_at
         FROM wiki_events
         WHERE day_id = $1
         ORDER BY start_time ASC
@@ -1553,6 +1500,45 @@ pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<Tem
     .await
     .map_err(|e| Error::Database(format!("Failed to get day events: {}", e)))?;
 
+    // Fetch entity timestamps for the day: for each event's window, the earliest
+    // timestamp each entity appears in wiki_entity_refs.
+    let event_windows: Vec<(String, String, String)> = rows
+        .iter()
+        .filter_map(|row| {
+            let id: String = row.try_get("id").ok()?;
+            let start: String = row.try_get("start_time").ok()?;
+            let end: String = row.try_get("end_time").ok()?;
+            Some((id, start, end))
+        })
+        .collect();
+
+    let mut entity_ts_by_event: HashMap<String, serde_json::Value> = HashMap::new();
+    for (event_id, start, end) in &event_windows {
+        let ref_rows: Vec<(String, String)> = sqlx::query_as(
+            r#"
+            SELECT entity_id, MIN(timestamp) as earliest
+            FROM wiki_entity_refs
+            WHERE timestamp IS NOT NULL
+              AND timestamp >= $1
+              AND timestamp < $2
+            GROUP BY entity_id
+            "#,
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        if !ref_rows.is_empty() {
+            let map: serde_json::Map<String, serde_json::Value> = ref_rows
+                .into_iter()
+                .map(|(id, ts)| (id, serde_json::Value::String(ts)))
+                .collect();
+            entity_ts_by_event.insert(event_id.clone(), serde_json::Value::Object(map));
+        }
+    }
+
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -1562,6 +1548,7 @@ pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<Tem
             let end_time: String = row.try_get("end_time").ok()?;
             let created_at: String = row.try_get("created_at").ok()?;
             let updated_at: String = row.try_get("updated_at").ok()?;
+            let entity_timestamps = entity_ts_by_event.get(&id).cloned();
 
             Some(TemporalEvent {
                 id,
@@ -1586,12 +1573,33 @@ pub async fn get_day_events(pool: &SqlitePool, day_id: String) -> Result<Vec<Tem
                 is_transit: row.try_get::<Option<i32>, _>("is_transit").ok().flatten().map(|v| v != 0),
                 is_user_added: row.try_get::<Option<i32>, _>("is_user_added").ok().flatten().map(|v| v != 0),
                 is_user_edited: row.try_get::<Option<i32>, _>("is_user_edited").ok().flatten().map(|v| v != 0),
-                w6h_activation: row.try_get::<Option<String>, _>("w6h_activation")
+                novelty_z: row.try_get::<Option<f64>, _>("novelty_z").ok().flatten(),
+                avg_hr: row.try_get::<Option<f64>, _>("avg_hr").ok().flatten(),
+                autonomic_z: row.try_get::<Option<f64>, _>("autonomic_z").ok().flatten(),
+                hr_z: row.try_get::<Option<f64>, _>("hr_z").ok().flatten(),
+                hrv_z: row.try_get::<Option<f64>, _>("hrv_z").ok().flatten(),
+                topics: row.try_get::<Option<String>, _>("topics")
                     .ok()
                     .flatten()
                     .and_then(|s| serde_json::from_str(&s).ok()),
-                entropy: row.try_get::<Option<f64>, _>("entropy").ok().flatten(),
-                w6h_entropy: row.try_get::<Option<f64>, _>("w6h_entropy").ok().flatten(),
+                event_summary: row.try_get::<Option<String>, _>("event_summary").ok().flatten(),
+                agent_action: row.try_get::<Option<String>, _>("agent_action").ok().flatten(),
+                is_sleep: row.try_get::<Option<i32>, _>("is_sleep").ok().flatten().map(|v| v != 0),
+                user_hidden: row.try_get::<Option<i32>, _>("user_hidden").ok().flatten().map(|v| v != 0),
+                user_created: row.try_get::<Option<i32>, _>("user_created").ok().flatten().map(|v| v != 0),
+                entities: row.try_get::<Option<String>, _>("entities")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                topic_novelty: row.try_get::<Option<String>, _>("topic_novelty")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                entity_novelty: row.try_get::<Option<String>, _>("entity_novelty")
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok()),
+                entity_timestamps,
                 created_at: DateTime::parse_from_rfc3339(&created_at)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now()),
@@ -1677,9 +1685,21 @@ pub async fn create_temporal_event(
         is_transit: row.is_transit.map(|v| v != 0),
         is_user_added: row.is_user_added.map(|v| v != 0),
         is_user_edited: row.is_user_edited.map(|v| v != 0),
-        w6h_activation: None, // Computed separately after creation
-        entropy: None,       // Computed separately after creation
-        w6h_entropy: None,   // Computed separately after creation
+        novelty_z: None,
+        avg_hr: None,
+        autonomic_z: None,
+        hr_z: None,
+        hrv_z: None,
+        topics: None,
+        event_summary: None,
+        agent_action: None,
+        is_sleep: Some(false),
+        user_hidden: Some(false),
+        user_created: Some(false),
+        entities: None,
+        topic_novelty: None,
+        entity_novelty: None,
+        entity_timestamps: None,
         created_at: DateTime::parse_from_rfc3339(&row.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1751,9 +1771,21 @@ pub async fn update_temporal_event(
         is_transit: row.is_transit.map(|v| v != 0),
         is_user_added: row.is_user_added.map(|v| v != 0),
         is_user_edited: row.is_user_edited.map(|v| v != 0),
-        w6h_activation: None, // Not modified by user edit
-        entropy: None,       // Not modified by user edit
-        w6h_entropy: None,   // Not modified by user edit
+        novelty_z: None,
+        avg_hr: None,
+        autonomic_z: None,
+        hr_z: None,
+        hrv_z: None,
+        topics: None,
+        event_summary: None,
+        agent_action: None,
+        is_sleep: Some(false),
+        user_hidden: Some(false),
+        user_created: Some(false),
+        entities: None,
+        topic_novelty: None,
+        entity_novelty: None,
+        entity_timestamps: None,
         created_at: DateTime::parse_from_rfc3339(&row.created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),

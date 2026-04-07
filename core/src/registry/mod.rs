@@ -33,7 +33,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::error::Result;
-use crate::jobs::TransformContext;
+use crate::pipeline::TransformContext;
 use crate::sources::auth::SourceAuth;
 use crate::sources::base::OntologyTransform;
 use crate::sources::stream_type::StreamType;

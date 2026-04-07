@@ -374,7 +374,7 @@ pub async fn handle_oauth_callback(
                 let provider = params.provider.clone();
 
                 tokio::spawn(async move {
-                    match crate::api::jobs::trigger_stream_sync(
+                    match crate::api::actions::trigger_stream_sync(
                         &db_clone,
                         &storage_clone,
                         stream_writer_clone,
@@ -389,8 +389,8 @@ pub async fn handle_oauth_callback(
                                 source_id = %source_id_clone,
                                 provider = %provider,
                                 stream = %stream_name,
-                                job_id = %response.job_id,
-                                "Initial sync job created for OAuth stream"
+                                run_id = %response.run_id,
+                                "Initial sync run created for OAuth stream"
                             );
                         }
                         Err(e) => {
@@ -399,7 +399,7 @@ pub async fn handle_oauth_callback(
                                 provider = %provider,
                                 stream = %stream_name,
                                 error = %e,
-                                "Failed to create initial sync job for OAuth stream"
+                                "Failed to create initial sync run for OAuth stream"
                             );
                         }
                     }

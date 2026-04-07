@@ -10,6 +10,7 @@ import type {
 	WikiPersonApi,
 	WikiPlaceApi,
 	WikiOrganizationApi,
+	WikiThingApi,
 	WikiDayApi,
 	WikiActApi,
 	WikiChapterApi,
@@ -19,7 +20,8 @@ import type {
 import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
-import type { DayPage, ContextVector, LinkedEntities, LinkedTemporal } from "./types/day";
+import type { ThingPage } from "./types/thing";
+import type { DayPage, LinkedEntities, LinkedTemporal } from "./types/day";
 import type { ActPage } from "./types/act";
 import type { ChapterPage } from "./types/chapter";
 import type { TelosPage } from "./types/telos";
@@ -28,19 +30,6 @@ import { parseDateSlug, formatLongDate } from "$lib/utils/dateUtils";
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-function emptyContextVector(): ContextVector {
-	return { who: 0, whom: 0, what: 0, when: 0, where: 0, why: 0, how: 0 };
-}
-
-function parseContextVector(raw: string | null): ContextVector {
-	if (!raw) return emptyContextVector();
-	try {
-		return JSON.parse(raw);
-	} catch {
-		return emptyContextVector();
-	}
-}
 
 function emptyLinkedEntities(): LinkedEntities {
 	return { people: [], places: [], organizations: [] };
@@ -193,6 +182,34 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 }
 
 // ============================================================================
+// Thing Converter
+// ============================================================================
+
+export function apiToThingPage(api: WikiThingApi): ThingPage {
+	return {
+		type: "thing",
+		id: api.id,
+		title: api.name,
+		cover: api.cover_image ?? undefined,
+
+		// Thing-specific fields
+		category: api.category ?? undefined,
+		description: api.description ?? undefined,
+
+		// Content
+		content: api.content ?? "",
+
+		// Metadata
+		citations: [],
+		linkedPages: [],
+		tags: [],
+		createdAt: new Date(api.created_at),
+		updatedAt: new Date(api.updated_at),
+		lastEditedBy: "ai",
+	};
+}
+
+// ============================================================================
 // Day Converter
 // ============================================================================
 
@@ -214,16 +231,22 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		endTimezone: api.end_timezone,
 
 		// Layers (will be populated from separate queries)
-		contextVector: parseContextVector(api.context_vector),
-		chaosScore: api.chaos_score ?? null,
-		entropyCalibrationDays: api.entropy_calibration_days ?? null,
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
 		autobiography: api.autobiography ?? "",
 		autobiographySections: api.autobiography_sections
-			? (api.autobiography_sections as DayPage["autobiographySections"])
+			? api.autobiography_sections.map(s => ({
+				id: s.id,
+				heading: s.heading,
+				content: s.content,
+				authoredBy: s.authored_by as "ai" | "human",
+				lastEditedAt: new Date(s.last_edited_at),
+			}))
 			: undefined,
+		epigraph: api.epigraph ?? undefined,
+		hasIllustration: api.has_illustration ?? false,
+		dataQuality: api.data_quality ?? undefined,
 
 		// Metadata
 		citations: [],

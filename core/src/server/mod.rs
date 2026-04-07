@@ -63,31 +63,47 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let stream_writer = StreamWriter::new();
     let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
 
+    // Initialize Yjs state early (needed by both server and scheduler)
+    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
+    yjs_state.start_save_processor();
+    tracing::info!("Yjs WebSocket server initialized");
+
     // Start the scheduler in the background
     let db_pool = client.database.pool().clone();
     let storage = (*client.storage).clone();
     let scheduler_stream_writer = stream_writer_arc.clone();
+    let scheduler_yjs = yjs_state.clone();
     let _scheduler_handle = tokio::spawn(async move {
-        match crate::Scheduler::new(db_pool, storage, scheduler_stream_writer).await {
+        match crate::Scheduler::new(db_pool, storage, scheduler_stream_writer, scheduler_yjs).await {
             Ok(sched) => {
                 if let Err(e) = sched.start().await {
                     tracing::warn!("Failed to start scheduler: {}", e);
                 } else {
                     tracing::info!("Scheduler started successfully");
 
-                    // Schedule drive trash purge job (daily at 3am)
-                    if let Err(e) = sched.schedule_drive_trash_purge_job().await {
-                        tracing::warn!("Failed to schedule drive trash purge job: {}", e);
+                    // Schedule system actions (embedding indexer, trash purge)
+                    // These are seeded in migration 040 with action_type='system'
+                    if let Err(e) = sched.schedule_system_actions().await {
+                        tracing::warn!("Failed to schedule system actions: {}", e);
                     }
 
-                    // Schedule daily summary job (runs at user's maintenance hour)
-                    if let Err(e) = sched.schedule_daily_summary_job().await {
-                        tracing::warn!("Failed to schedule daily summary job: {}", e);
+                    // Seed system actions (idempotent — skips if already exist)
+                    if let Err(e) = sched.ensure_dayline_hourly_action().await {
+                        tracing::warn!("Failed to seed dayline hourly action: {}", e);
+                    }
+                    if let Err(e) = sched.ensure_dayline_eod_action().await {
+                        tracing::warn!("Failed to seed dayline EOD action: {}", e);
+                    }
+                    if let Err(e) = sched.ensure_dayline_illustration_action().await {
+                        tracing::warn!("Failed to seed dayline illustration action: {}", e);
+                    }
+                    if let Err(e) = sched.ensure_morning_examen_action().await {
+                        tracing::warn!("Failed to seed morning examen action: {}", e);
                     }
 
-                    // Schedule embedding indexer job (every 15 minutes)
-                    if let Err(e) = sched.schedule_embedding_job().await {
-                        tracing::warn!("Failed to schedule embedding job: {}", e);
+                    // Schedule action tasks (dayline hourly, EOD, user-created actions)
+                    if let Err(e) = sched.schedule_action_tasks().await {
+                        tracing::warn!("Failed to schedule action tasks: {}", e);
                     }
 
                     // Keep scheduler alive - it will be dropped when the server shuts down
@@ -113,11 +129,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     } else {
         tracing::warn!("ToolExecutor not initialized - TOLLBOOTH_INTERNAL_SECRET may not be set");
     }
-
-    // Initialize Yjs state for real-time collaborative editing
-    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
-    yjs_state.start_save_processor();
-    tracing::info!("Yjs WebSocket server initialized");
 
     // Initialize chat cancellation state for stopping in-progress requests
     let chat_cancel_state = crate::api::chat::ChatCancellationState::new();
@@ -275,10 +286,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/ontologies/overview",
             get(api::get_ontologies_overview_handler),
         )
-        // Jobs API
-        .route("/api/jobs/:id", get(api::get_job_handler))
-        .route("/api/jobs", get(api::query_jobs_handler))
-        .route("/api/jobs/:id/cancel", post(api::cancel_job_handler))
+        .route(
+            "/api/ontologies/:table_name/data",
+            get(api::query_ontology_data_handler),
+        )
+        // Actions API
+        .route("/api/actions", get(api::list_actions_handler))
+        .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        .route("/api/actions/runs/:id", get(api::get_action_run_handler))
         // Profile API
         .route("/api/profile", get(api::get_profile_handler))
         .route("/api/profile", put(api::update_profile_handler))
@@ -451,6 +466,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/organization/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
+        // Wiki - Thing
+        .route("/api/wiki/things", get(api::wiki_list_things_handler))
+        .route(
+            "/api/wiki/thing/:id",
+            get(api::wiki_get_thing_handler).put(api::wiki_update_thing_handler),
+        )
         // Wiki - Narrative Identity
         .route(
             "/api/wiki/narrative-identity",
@@ -478,14 +499,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
         )
-        // Wiki - Citations
         .route(
-            "/api/wiki/:source_type/:source_id/citations",
-            get(api::wiki_get_citations_handler).post(api::wiki_create_citation_handler),
-        )
-        .route(
-            "/api/wiki/citations/:id",
-            put(api::wiki_update_citation_handler).delete(api::wiki_delete_citation_handler),
+            "/api/wiki/day/:date/illustration",
+            get(api::wiki_get_day_illustration_handler),
         )
         // Wiki - Temporal Events
         .route(
@@ -503,10 +519,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Wiki - Day Sources (ontology data)
         .route(
-            "/api/wiki/day/:date/summary",
-            post(api::wiki_generate_day_summary_handler),
-        )
-        .route(
             "/api/wiki/day/:date/sources",
             get(api::wiki_get_day_sources_handler),
         )
@@ -514,11 +526,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
-        )
-        // Wiki - Day Vectors (2D projection of W6H embeddings)
-        .route(
-            "/api/wiki/day/:date/vectors",
-            get(api::wiki_get_day_vectors_handler),
         )
         // Code Execution API (AI Sandbox)
         .route("/api/code/execute", post(api::execute_code_handler))
@@ -536,6 +543,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/pages/search/entities",
             get(api::search_entities_handler),
+        )
+        .route(
+            "/api/pages/reflections/:date",
+            get(api::get_reflections_handler).post(api::create_reflection_handler),
         )
         .route(
             "/api/pages/:id",

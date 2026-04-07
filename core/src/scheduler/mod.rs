@@ -17,7 +17,8 @@
 //! - `0 0 0 * * *` - Daily at midnight
 //! - `0 0 9 * * 1` - Every Monday at 9:00 AM
 
-use chrono::Timelike;
+pub mod actions;
+
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -25,6 +26,7 @@ use tokio_cron_scheduler::{Job, JobScheduler};
 
 use crate::{
     error::{Error, Result},
+    server::yjs::YjsState,
     storage::{stream_writer::StreamWriter, Storage},
     types::Timestamp,
 };
@@ -35,6 +37,7 @@ pub struct Scheduler {
     storage: Storage,
     drive_config: crate::api::DriveConfig,
     stream_writer: Arc<Mutex<StreamWriter>>,
+    yjs_state: YjsState,
     scheduler: JobScheduler,
 }
 
@@ -44,6 +47,7 @@ impl Scheduler {
         db: SqlitePool,
         storage: Storage,
         stream_writer: Arc<Mutex<StreamWriter>>,
+        yjs_state: YjsState,
     ) -> Result<Self> {
         let scheduler = JobScheduler::new()
             .await
@@ -57,6 +61,7 @@ impl Scheduler {
             storage,
             drive_config,
             stream_writer,
+            yjs_state,
             scheduler,
         })
     }
@@ -69,98 +74,30 @@ impl Scheduler {
     /// Note: Only pull streams (Google, Notion) are scheduled. Push streams
     /// (Mac, iOS) are not scheduled since they're initiated by client devices.
     pub async fn start(&self) -> Result<()> {
-        // First, check for enabled streams WITHOUT cron schedules and log warnings
-        // Note: UUIDs stored as TEXT in SQLite
-        let streams_without_schedule = sqlx::query_as::<_, (String, String, String, String)>(
-            r#"
-            SELECT
-                st.id as stream_connection_id,
-                s.source,
-                s.name as source_name,
-                st.stream_name
-            FROM elt_stream_connections st
-            JOIN elt_source_connections s ON st.source_connection_id = s.id
-            WHERE st.is_enabled = true
-              AND st.cron_schedule IS NULL
-              AND s.is_active = true
-              AND s.source NOT IN ('mac', 'ios')  -- Exclude push-only sources
-            "#,
-        )
-        .fetch_all(&self.db)
-        .await?;
-
-        // Check if any enabled streams are missing schedules
-        for (stream_id, source, source_name, stream_name) in &streams_without_schedule {
-            // Look up registry default
-            if let Some(registered_stream) = crate::registry::get_stream(source, stream_name) {
-                if let Some(default_cron) = registered_stream.descriptor.default_cron_schedule {
-                    tracing::warn!(
-                        "Stream {}/{} ({}) is enabled but has no cron_schedule. \
-                        Registry default is '{}'. Consider updating the database or seed config.",
-                        source,
-                        stream_name,
-                        source_name,
-                        default_cron
-                    );
-
-                    // Apply the default schedule to the database
-                    tracing::info!(
-                        "Applying registry default cron schedule '{}' to {}/{}",
-                        default_cron,
-                        source,
-                        stream_name
-                    );
-
-                    sqlx::query!(
-                        r#"
-                        UPDATE elt_stream_connections
-                        SET cron_schedule = $1, updated_at = datetime('now')
-                        WHERE id = $2
-                        "#,
-                        default_cron,
-                        stream_id
-                    )
-                    .execute(&self.db)
-                    .await?;
-                } else {
-                    tracing::debug!(
-                        "Stream {}/{} ({}) is enabled but has no cron_schedule and no registry default. \
-                        This stream may need manual scheduling or is not meant to be scheduled.",
-                        source, stream_name, source_name
-                    );
-                }
-            } else {
-                tracing::warn!(
-                    "Stream {}/{} ({}) not found in registry. Cannot apply default schedule.",
-                    source,
-                    stream_name,
-                    source_name
-                );
-            }
-        }
-
-        // Load enabled streams from database
-        // Filter to only pull streams (not 'mac' or 'ios' which are push-only)
+        // Load enabled sync tasks from the unified app_actions table
+        // (cron_schedule moved from elt_stream_connections to app_actions in migration 032)
         let streams = sqlx::query_as::<_, (String, String, String, String, Option<String>)>(
             r#"
             SELECT
-                s.id as source_id,
+                json_extract(t.config, '$.source_connection_id') as source_id,
                 s.name as source_name,
                 s.source,
-                st.stream_name,
-                st.cron_schedule
-            FROM elt_stream_connections st
-            JOIN elt_source_connections s ON st.source_connection_id = s.id
-            WHERE st.is_enabled = true
-              AND st.cron_schedule IS NOT NULL
+                json_extract(t.config, '$.stream_name') as stream_name,
+                t.cron_schedule
+            FROM app_actions t
+            JOIN elt_source_connections s
+                ON s.id = json_extract(t.config, '$.source_connection_id')
+            WHERE t.action_type = 'sync'
+              AND t.enabled = 1
+              AND t.cron_schedule IS NOT NULL
               AND s.is_active = true
-              AND s.source NOT IN ('mac', 'ios')  -- Exclude push-only sources
+              AND s.source NOT IN ('mac', 'ios')
             "#,
         )
         .fetch_all(&self.db)
         .await?;
 
-        tracing::info!("Loading {} scheduled streams", streams.len());
+        tracing::info!("Loading {} scheduled sync tasks", streams.len());
 
         // Schedule each stream
         for (source_id, source_name, provider, stream_name, cron_schedule) in streams {
@@ -199,8 +136,8 @@ impl Scheduler {
                         source_name
                     );
 
-                    // Use the job-based API with String source_id
-                    match crate::api::jobs::trigger_stream_sync(
+                    // Use the task-based API with String source_id
+                    match crate::api::actions::trigger_stream_sync(
                         &db,
                         &storage,
                         stream_writer,
@@ -212,15 +149,15 @@ impl Scheduler {
                     {
                         Ok(response) => {
                             tracing::info!(
-                                "Scheduled sync job created: {} - job_id={}, status={}",
+                                "Scheduled sync run created: {} - run_id={}, status={}",
                                 stream_name_str,
-                                response.job_id,
+                                response.run_id,
                                 response.status
                             );
                         }
                         Err(e) => {
                             tracing::error!(
-                                "Failed to create scheduled sync job for {}: {}",
+                                "Failed to create scheduled sync run for {}: {}",
                                 stream_name_str,
                                 e
                             );
@@ -253,195 +190,456 @@ impl Scheduler {
         Ok(())
     }
 
-
-
-    /// Schedule the drive trash purge job (daily at 3am)
+    /// Load and schedule all enabled action tasks from the database.
     ///
-    /// Permanently deletes files that have been in trash for more than 30 days.
-    pub async fn schedule_drive_trash_purge_job(&self) -> Result<()> {
-        let db = self.db.clone();
-        let drive_config = self.drive_config.clone();
+    /// Each action task has a cron_schedule and an optional activation_code.
+    /// On trigger: create a ActionRun, run the activation gate, execute via run_action().
+    pub async fn schedule_action_tasks(&self) -> Result<()> {
+        let rows = sqlx::query(
+            r#"
+            SELECT *
+            FROM app_actions
+            WHERE action_type = 'agent'
+              AND enabled = 1
+              AND cron_schedule IS NOT NULL
+            "#,
+        )
+        .fetch_all(&self.db)
+        .await?;
 
-        // Daily at 3am
-        let cron_expr = "0 0 3 * * *";
+        if rows.is_empty() {
+            tracing::debug!("No action tasks to schedule");
+            return Ok(());
+        }
 
-        tracing::info!("Scheduling DriveTrashPurgeJob daily at 3am");
+        let action_list: Vec<actions::Action> = rows
+            .iter()
+            .filter_map(|r| actions::action_from_row(r).ok())
+            .collect();
 
-        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
-            let db = db.clone();
-            let config = drive_config.clone();
+        tracing::info!("Loading {} scheduled action tasks", action_list.len());
 
-            Box::pin(async move {
-                tracing::info!("Running DriveTrashPurgeJob");
+        for action in action_list {
+            let cron_schedule = match &action.cron_schedule {
+                Some(c) => c.clone(),
+                None => continue,
+            };
 
-                match crate::api::purge_old_drive_trash(&db, &config).await {
-                    Ok(count) => {
-                        if count > 0 {
-                            tracing::info!(
-                                "DriveTrashPurgeJob completed: {} files permanently deleted",
-                                count
-                            );
-                        } else {
-                            tracing::debug!("DriveTrashPurgeJob: no files to purge");
+            let db = self.db.clone();
+            let yjs = self.yjs_state.clone();
+            let name_for_log = action.name.clone();
+            let action_id_for_log = action.id.clone();
+            let action_id_captured = action.id.clone();
+
+            let job = Job::new_async(cron_schedule.as_str(), move |_uuid, _lock| {
+                let db = db.clone();
+                let yjs = yjs.clone();
+                let action_id = action_id_captured.clone();
+
+                Box::pin(async move {
+                    // Re-fetch the action from DB to get fresh memory/instruction
+                    let action = match actions::get_action(&db, &action_id).await {
+                        Ok(a) => a,
+                        Err(e) => {
+                            tracing::error!(action_id, error = %e, "Failed to load action for cron run");
+                            return;
+                        }
+                    };
+
+                    // Skip if disabled (may have been disabled since scheduler started)
+                    if !action.enabled {
+                        return;
+                    }
+
+                    // Check for overlapping runs (unless parallel mode)
+                    if action.concurrency_mode != "parallel" {
+                        if let Ok(true) = actions::has_active_run(&db, &action.id).await {
+                            tracing::debug!(action_id = action.id, "Skipping action: previous run still active");
+                            return;
                         }
                     }
-                    Err(e) => {
-                        tracing::error!("DriveTrashPurgeJob failed: {}", e);
+
+                    // Create ActionRun for audit trail
+                    let run = match actions::create_run(&db, Some(&action.id), "cron").await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            tracing::error!(action_id = action.id, error = %e, "Failed to create action run");
+                            return;
+                        }
+                    };
+
+                    // Build dynamic context for system actions
+                    let context = match action.id.as_str() {
+                        "action_agent_dayline_hourly" => {
+                            let now = chrono::Utc::now();
+                            let window_start = now - chrono::Duration::hours(1);
+                            let ctx = crate::dayline::context::build_hourly_context(
+                                &db, window_start, now,
+                            ).await;
+                            if ctx.is_empty() { None } else { Some(ctx) }
+                        }
+                        "action_agent_dayline_eod" => {
+                            match resolve_user_yesterday(&db).await {
+                                Some(yesterday) => {
+                                    Some(crate::dayline::context::build_eod_context(&db, yesterday).await)
+                                }
+                                None => None,
+                            }
+                        }
+                        _ => None,
+                    };
+
+                    // Execute the action
+                    let result = crate::agent::action_runner::run_action(
+                        &db,
+                        &yjs,
+                        &action,
+                        false, // force_run
+                        None,  // broadcast
+                        context.as_deref(),
+                    )
+                    .await;
+
+                    // Complete the ActionRun
+                    match result {
+                        Ok(action_result) => {
+                            let status = match &action_result.status {
+                                crate::agent::action_runner::ActionRunStatus::Completed => "success",
+                                crate::agent::action_runner::ActionRunStatus::ActivationSkipped => "skipped",
+                                crate::agent::action_runner::ActionRunStatus::ActivationError(_) => "error",
+                                crate::agent::action_runner::ActionRunStatus::Error(_) => "error",
+                            };
+                            let error_msg = match &action_result.status {
+                                crate::agent::action_runner::ActionRunStatus::ActivationError(e) => Some(e.as_str()),
+                                crate::agent::action_runner::ActionRunStatus::Error(e) => Some(e.as_str()),
+                                _ => None,
+                            };
+                            let _ = actions::complete_run(
+                                &db,
+                                &run.id,
+                                status,
+                                action_result.steps as i64,
+                                error_msg,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::error!(action_id = action.id, error = %e, "Action execution failed");
+                            let _ = actions::complete_run(
+                                &db,
+                                &run.id,
+                                "error",
+                                0,
+                                Some(&e.to_string()),
+                            )
+                            .await;
+                        }
                     }
-                }
+                })
             })
-        })
-        .map_err(|e| Error::Other(format!("Failed to create DriveTrashPurgeJob: {}", e)))?;
+            .map_err(|e| {
+                Error::Other(format!(
+                    "Failed to create action job '{}': {}. Cron must be 6-field format.",
+                    name_for_log, e
+                ))
+            })?;
 
-        self.scheduler
-            .add(job)
-            .await
-            .map_err(|e| Error::Other(format!("Failed to add DriveTrashPurgeJob: {}", e)))?;
-
-        tracing::info!("DriveTrashPurgeJob scheduled daily at 3am");
-        Ok(())
-    }
-
-    /// Schedule the daily summary job (hourly check, runs at user's update_check_hour)
-    ///
-    /// Checks every hour whether it's the user's configured maintenance hour
-    /// (update_check_hour) in their timezone. If so, generates yesterday's
-    /// daily summary (autobiography + context vector + chaos scoring).
-    pub async fn schedule_daily_summary_job(&self) -> Result<()> {
-        let db = self.db.clone();
-
-        // Every hour at :00
-        let cron_expr = "0 0 * * * *";
-
-        tracing::info!("Scheduling DailySummaryJob (hourly check)");
-
-        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
-            let db = db.clone();
-
-            Box::pin(async move {
-                // 1. Read user's maintenance hour and timezone
-                let profile: Option<(Option<i32>, Option<String>)> = sqlx::query_as(
-                    "SELECT update_check_hour, timezone FROM app_user_profile LIMIT 1",
-                )
-                .fetch_optional(&db)
+            self.scheduler
+                .add(job)
                 .await
-                .unwrap_or(None);
+                .map_err(|e| Error::Other(format!("Failed to add action job: {e}")))?;
 
-                let (maintenance_hour, timezone) = match profile {
-                    Some((hour, tz)) => (hour.unwrap_or(8), tz), // 8 UTC ≈ midnight PST / 3am EST
-                    None => return, // No profile yet
-                };
+            tracing::info!(action_id = action_id_for_log, name = name_for_log, cron = cron_schedule, "Scheduled action");
+        }
 
-                // 2. Compute current hour in the user's timezone (or UTC if unset)
-                let now_utc = chrono::Utc::now();
-                let current_hour = if let Some(ref tz_str) = timezone {
-                    if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
-                        now_utc.with_timezone(&tz).hour()
-                    } else {
-                        now_utc.hour()
-                    }
-                } else {
-                    now_utc.hour()
-                };
-
-                // 3. Only proceed if it's the maintenance hour
-                if current_hour != maintenance_hour as u32 {
-                    return;
-                }
-
-                tracing::info!("Running DailySummaryJob (maintenance hour {} in user's timezone)", maintenance_hour);
-
-                // 4. Compute "yesterday" in the user's timezone
-                let yesterday = if let Some(ref tz_str) = timezone {
-                    if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
-                        let local_now = now_utc.with_timezone(&tz);
-                        local_now.date_naive() - chrono::Duration::days(1)
-                    } else {
-                        now_utc.date_naive() - chrono::Duration::days(1)
-                    }
-                } else {
-                    now_utc.date_naive() - chrono::Duration::days(1)
-                };
-
-                // 5. Check if autobiography already exists (idempotent)
-                let existing = crate::api::wiki::get_or_create_day(&db, yesterday).await;
-                match existing {
-                    Ok(day) if day.autobiography.is_some() => {
-                        tracing::debug!(
-                            "DailySummaryJob: summary already exists for {}, skipping",
-                            yesterday
-                        );
-                        return;
-                    }
-                    Err(e) => {
-                        tracing::error!("DailySummaryJob: failed to check day {}: {}", yesterday, e);
-                        return;
-                    }
-                    _ => {}
-                }
-
-                // 6. Generate the summary
-                match crate::api::day_summary::generate_day_summary(&db, yesterday).await {
-                    Ok(day) => {
-                        tracing::info!(
-                            "DailySummaryJob: generated summary for {} (chaos_score={:?})",
-                            yesterday,
-                            day.chaos_score
-                        );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "DailySummaryJob: failed to generate summary for {}: {}",
-                            yesterday,
-                            e
-                        );
-                    }
-                }
-            })
-        })
-        .map_err(|e| Error::Other(format!("Failed to create DailySummaryJob: {}", e)))?;
-
-        self.scheduler
-            .add(job)
-            .await
-            .map_err(|e| Error::Other(format!("Failed to add DailySummaryJob: {}", e)))?;
-
-        tracing::info!("DailySummaryJob scheduled (checks every hour)");
         Ok(())
     }
 
-    /// Schedule the embedding indexer job (every 15 minutes)
+    // =========================================================================
+    // System action seeding
+    // =========================================================================
+
+    /// Ensure the dayline hourly action exists. Idempotent — skips if already created.
+    pub async fn ensure_dayline_hourly_action(&self) -> Result<()> {
+        let action_id = "action_agent_dayline_hourly";
+
+        // Check if already exists
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = ?)",
+        )
+        .bind(action_id)
+        .fetch_one(&self.db)
+        .await
+        .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        // Build activation code from registry — each ontology has its own timestamp column
+        let active_ontologies: Vec<(&str, &str)> = virtues_registry::ontologies::registered_ontologies()
+            .iter()
+            .filter(|o| o.is_activation_signal)
+            .map(|o| (o.table_name, o.timestamp_column))
+            .collect();
+
+        // Build Python dict of table_name -> timestamp_column
+        let table_entries: Vec<String> = active_ontologies
+            .iter()
+            .map(|(table, col)| format!("    \"{}\": \"{}\"", table, col))
+            .collect();
+
+        let activation_code = format!(
+            r#"import sqlite3, os
+db = sqlite3.connect(os.environ.get('DB_PATH', 'virtues.db'))
+tables = {{
+{}
+}}
+for t, col in tables.items():
+    try:
+        count = db.execute(f"SELECT COUNT(*) FROM {{t}} WHERE {{col}} > datetime('now', '-1 hour')").fetchone()[0]
+        if count > 0:
+            print(f"active: {{t}} ({{count}} records)")
+            break
+    except:
+        pass
+else:
+    print("")
+"#,
+            table_entries.join(",\n")
+        );
+
+        // Create the action (no chat needed — system actions are stateless)
+        sqlx::query(
+            r#"INSERT INTO app_actions (id, action_type, owner, name, instruction, cron_schedule, enabled, config, activation_code)
+               VALUES (?, 'agent', 'system', ?, ?, '0 * * * * *', 1, '{}', ?)"#,
+        )
+        .bind(action_id)
+        .bind("Dayline Hourly")
+        .bind(HOURLY_ACTION_INSTRUCTION)
+        .bind(&activation_code)
+        .execute(&self.db)
+        .await?;
+
+        tracing::info!("Seeded dayline hourly action");
+        Ok(())
+    }
+
+    /// Ensure the dayline end-of-day action exists. Idempotent.
+    pub async fn ensure_dayline_eod_action(&self) -> Result<()> {
+        let action_id = "action_agent_dayline_eod";
+
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = ?)",
+        )
+        .bind(action_id)
+        .fetch_one(&self.db)
+        .await
+        .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        // EOD runs hourly and checks if it's the user's maintenance hour in their timezone.
+        // Activation code gates execution to the correct local hour + checks for events.
+        let activation_code = r#"import sqlite3, os, datetime
+db = sqlite3.connect(os.environ.get('DB_PATH', 'virtues.db'))
+row = db.execute("SELECT update_check_hour, timezone FROM app_user_profile LIMIT 1").fetchone()
+if not row:
+    print("")
+else:
+    maint_hour, tz_name = row[0] or 8, row[1]
+    import zoneinfo
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name) if tz_name else datetime.timezone.utc
+    except Exception:
+        tz = datetime.timezone.utc
+    local_now = datetime.datetime.now(tz)
+    if local_now.hour != maint_hour:
+        print("")
+    else:
+        yesterday = (local_now - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+        count = db.execute("SELECT COUNT(*) FROM wiki_events e JOIN wiki_days d ON e.day_id = d.id WHERE d.date = ?", (yesterday,)).fetchone()[0]
+        if count > 0:
+            print(f"eod: {yesterday} ({count} events)")
+        else:
+            print("")
+"#;
+
+        // Create the action (no chat needed — system actions are stateless)
+        sqlx::query(
+            r#"INSERT INTO app_actions (id, action_type, owner, name, instruction, cron_schedule, enabled, config, activation_code)
+               VALUES (?, 'agent', 'system', ?, ?, '0 0 * * * *', 1, '{}', ?)"#,
+        )
+        .bind(action_id)
+        .bind("Dayline End of Day")
+        .bind(EOD_ACTION_INSTRUCTION)
+        .bind(activation_code)
+        .execute(&self.db)
+        .await?;
+
+        tracing::info!("Seeded dayline EOD action");
+        Ok(())
+    }
+
+    /// Ensure the nightly day illustration system action exists. Idempotent.
     ///
-    /// Processes new records from searchable ontologies and generates
-    /// embeddings via the local fastembed model.
-    pub async fn schedule_embedding_job(&self) -> Result<()> {
-        let db = self.db.clone();
+    /// Runs hourly, gated by `schedule_system_actions` dispatch — the function
+    /// itself checks for eligible days (has autobiography + epigraph, no cover
+    /// image). Runs a single day per tick to keep image-gen cost predictable.
+    pub async fn ensure_dayline_illustration_action(&self) -> Result<()> {
+        let action_id = "action_system_dayline_illustration";
 
-        // Every 15 minutes
-        let cron_expr = "0 */15 * * * *";
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = ?)",
+        )
+        .bind(action_id)
+        .fetch_one(&self.db)
+        .await
+        .unwrap_or(false)
+        {
+            return Ok(());
+        }
 
-        tracing::info!("Scheduling EmbeddingIndexerJob every 15 minutes");
+        // Hourly; the dispatched function checks for eligible days internally.
+        // Runs one illustration per tick, walking back up to 7 days.
+        let config = serde_json::json!({ "function_name": "day_illustration" });
+        sqlx::query(
+            r#"INSERT INTO app_actions (id, action_type, owner, name, cron_schedule, enabled, config)
+               VALUES (?, 'system', 'system', ?, '0 0 * * * *', 1, ?)"#,
+        )
+        .bind(action_id)
+        .bind("Dayline Illustration")
+        .bind(config)
+        .execute(&self.db)
+        .await?;
 
-        let job = Job::new_async(cron_expr, move |_uuid, _lock| {
-            let db = db.clone();
+        tracing::info!("Seeded dayline illustration action");
+        Ok(())
+    }
 
-            Box::pin(async move {
-                match crate::search::run_embedding_job(&db).await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        tracing::error!("EmbeddingIndexerJob failed: {}", e);
+    /// Ensure the Morning Examen template action exists. Idempotent.
+    /// Created as a user-owned action (not system) so users can customize it.
+    /// Disabled by default — user activates it when ready.
+    pub async fn ensure_morning_examen_action(&self) -> Result<()> {
+        let action_id = "action_agent_morning_examen";
+
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = ?)",
+        )
+        .bind(action_id)
+        .fetch_one(&self.db)
+        .await
+        .unwrap_or(false)
+        {
+            return Ok(());
+        }
+
+        let template = virtues_registry::get_action_template("morning_examen")
+            .expect("morning_examen template must exist in registry");
+
+        sqlx::query(
+            r#"INSERT INTO app_actions (id, action_type, owner, name, instruction, cron_schedule, enabled, config, activation_code)
+               VALUES (?, 'agent', 'user', ?, ?, ?, 0, '{}', ?)"#,
+        )
+        .bind(action_id)
+        .bind(template.name)
+        .bind(template.instruction)
+        .bind(template.default_schedule)
+        .bind(template.activation_code)
+        .execute(&self.db)
+        .await?;
+
+        tracing::info!("Seeded morning examen action (disabled by default)");
+        Ok(())
+    }
+
+    /// Schedule all action_type='system' actions from app_actions.
+    ///
+    /// System actions are hardcoded Rust jobs (embedding indexer, trash purge)
+    /// dispatched by `config.function_name`. Reads enabled rows from app_actions
+    /// and registers each with the cron scheduler.
+    pub async fn schedule_system_actions(&self) -> Result<()> {
+        let rows = sqlx::query_as::<_, (String, String, Option<String>, serde_json::Value)>(
+            r#"
+            SELECT id, name, cron_schedule, config
+            FROM app_actions
+            WHERE action_type = 'system'
+              AND enabled = 1
+              AND cron_schedule IS NOT NULL
+            "#,
+        )
+        .fetch_all(&self.db)
+        .await?;
+
+        for (action_id, name, cron_schedule, config) in rows {
+            let cron = match cron_schedule {
+                Some(c) => c,
+                None => continue,
+            };
+            let function_name = config
+                .get("function_name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let Some(function_name) = function_name else {
+                tracing::warn!(action_id = %action_id, "System action missing config.function_name, skipping");
+                continue;
+            };
+
+            let db = self.db.clone();
+            let drive_config = self.drive_config.clone();
+            let fn_name = function_name.clone();
+            let action_label = name.clone();
+
+            let job = Job::new_async(cron.as_str(), move |_uuid, _lock| {
+                let db = db.clone();
+                let drive_config = drive_config.clone();
+                let fn_name = fn_name.clone();
+                let action_label = action_label.clone();
+
+                Box::pin(async move {
+                    match fn_name.as_str() {
+                        "embedding_index" => {
+                            if let Err(e) = crate::search::run_embedding_job(&db).await {
+                                tracing::error!(action = %action_label, error = %e, "system action failed");
+                            }
+                        }
+                        "trash_purge" => {
+                            match crate::api::purge_old_drive_trash(&db, &drive_config).await {
+                                Ok(count) if count > 0 => tracing::info!(
+                                    action = %action_label,
+                                    "purged {} files", count
+                                ),
+                                Ok(_) => tracing::debug!(action = %action_label, "nothing to purge"),
+                                Err(e) => tracing::error!(action = %action_label, error = %e, "purge failed"),
+                            }
+                        }
+                        "day_illustration" => {
+                            if let Err(e) = crate::api::day_illustration::run_illustration_job(&db).await {
+                                tracing::error!(action = %action_label, error = %e, "illustration job failed");
+                            }
+                        }
+                        other => {
+                            tracing::warn!(function_name = %other, "unknown system action function");
+                        }
                     }
-                }
+                })
             })
-        })
-        .map_err(|e| Error::Other(format!("Failed to create EmbeddingIndexerJob: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to create system action job '{}': {}", name, e)))?;
 
-        self.scheduler
-            .add(job)
-            .await
-            .map_err(|e| Error::Other(format!("Failed to add EmbeddingIndexerJob: {}", e)))?;
+            self.scheduler
+                .add(job)
+                .await
+                .map_err(|e| Error::Other(format!("Failed to add system action job '{}': {}", name, e)))?;
 
-        tracing::info!("EmbeddingIndexerJob scheduled every 15 minutes");
+            tracing::info!(
+                action_id = %action_id,
+                name = %name,
+                function_name = %function_name,
+                cron = %cron,
+                "Scheduled system action"
+            );
+        }
+
         Ok(())
     }
 
@@ -470,17 +668,22 @@ impl Scheduler {
         >(
             r#"
             SELECT
-                s.id as source_id,
+                json_extract(t.config, '$.source_connection_id') as source_id,
                 s.name as source_name,
-                st.stream_name,
-                st.cron_schedule,
+                json_extract(t.config, '$.stream_name') as stream_name,
+                t.cron_schedule,
                 st.last_sync_at
-            FROM elt_stream_connections st
-            JOIN elt_source_connections s ON st.source_connection_id = s.id
-            WHERE st.is_enabled = true
-              AND st.cron_schedule IS NOT NULL
-              AND s.source NOT IN ('mac', 'ios')  -- Exclude push-only sources
-            ORDER BY s.name, st.stream_name
+            FROM app_actions t
+            JOIN elt_source_connections s
+                ON s.id = json_extract(t.config, '$.source_connection_id')
+            LEFT JOIN elt_stream_connections st
+                ON st.source_connection_id = json_extract(t.config, '$.source_connection_id')
+                AND st.stream_name = json_extract(t.config, '$.stream_name')
+            WHERE t.action_type = 'sync'
+              AND t.enabled = 1
+              AND t.cron_schedule IS NOT NULL
+              AND s.source NOT IN ('mac', 'ios')
+            ORDER BY s.name, json_extract(t.config, '$.stream_name')
             "#,
         )
         .fetch_all(&self.db)
@@ -524,7 +727,80 @@ mod tests {
         let pool = SqlitePool::connect_lazy("sqlite::memory:").unwrap();
         let storage = Storage::local("./test_data".to_string()).unwrap();
         let stream_writer = Arc::new(Mutex::new(StreamWriter::new()));
-        let result = Scheduler::new(pool, storage, stream_writer).await;
+        let yjs_state = YjsState::new(pool.clone());
+        let result = Scheduler::new(pool, storage, stream_writer, yjs_state).await;
         assert!(result.is_ok());
     }
 }
+
+/// Compute "yesterday" in the user's configured timezone.
+/// Returns None if no user profile exists.
+async fn resolve_user_yesterday(db: &SqlitePool) -> Option<chrono::NaiveDate> {
+    let profile: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT timezone FROM app_user_profile LIMIT 1",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()?;
+
+    let (timezone,) = profile?;
+    let now_utc = chrono::Utc::now();
+
+    let local_today = if let Some(ref tz_str) = timezone {
+        if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
+            now_utc.with_timezone(&tz).date_naive()
+        } else {
+            now_utc.date_naive()
+        }
+    } else {
+        now_utc.date_naive()
+    };
+
+    Some(local_today - chrono::Duration::days(1))
+}
+
+// ============================================================================
+// Action instruction constants
+// ============================================================================
+
+/// Instruction for the dayline hourly action.
+/// The action reads the current hour's ontology data (injected as dynamic context)
+/// and produces structured events with summaries, topics, and temporal boundaries.
+const HOURLY_ACTION_INSTRUCTION: &str = r#"You are the Dayline hourly event agent. Your job is to process the current hour's data into structured timeline events.
+
+You will receive the current hour's ontology data in the <context> block. Use the dayline_event tool to create or update events.
+
+Guidelines for event summaries (critical for embedding quality):
+- Be factual and specific, not literary
+- Include ALL data sources active during the event, even minor ones (a 5-min chess game matters)
+- Name people, places, projects, apps — specificity creates embedding distance
+- Don't editorialize ("meeting with 5 teams about 5 topics" not "stressful meeting")
+- Consistent structure: what happened, who was involved, what tools/apps were used, how long
+
+Guidelines for topics (critical for fragmentation signal):
+- Topic count reflects attentional complexity — it IS the visual signal for how fragmented or focused an event was
+- A single-focus event (commute, run, shower, deep focus) gets 1-2 topics
+- A meeting spanning multiple subjects gets one topic per distinct thread discussed (3-6)
+- A context-switching block (Slack catchup across channels, email triage) gets more topics (4-8)
+- Never pad with generic topics ("work", "morning") to fill space — fewer is better when focus was narrow
+- Use specific vocabulary consistently: "figma" not "design tool", "standup" not "meeting", "mueller-trails" not "running path"
+
+For each hour, decide one action:
+- NEW: Create a new event from this hour's data
+- CONTINUE: This hour continues the previous event (extend its end_time)
+- REVISE: Merge or split previous events based on new context
+- NO_DATA: Insufficient signal to characterize this hour"#;
+
+/// Instruction for the dayline end-of-day action.
+/// Runs once at the user's maintenance hour with full-day context.
+const EOD_ACTION_INSTRUCTION: &str = r#"You are the Dayline end-of-day agent. Your job is to polish today's timeline events and generate the day's autobiography.
+
+Review all events created by the hourly agent today. You may:
+- Polish event boundaries (merge short fragments, split overly long blocks)
+- Refine event summaries with full-day context
+- Adjust topic counts to reflect true attentional complexity (a single-focus event should have 1-2 topics, a fragmented multi-thread block should have 4-8)
+- Generate the day's autobiography (2-5 sentences capturing what mattered)
+
+Do NOT create events from scratch — the hourly agent handles that. Focus on cleanup and narrative.
+
+Save the autobiography using the edit_page tool on the day's wiki page."#;

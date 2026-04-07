@@ -89,54 +89,43 @@ export async function syncStream(
 	return res.json();
 }
 
-// Jobs
-export interface Job {
+// Actions
+export interface ActionLastRun {
+	status: string;
+	started_at: string | null;
+	records_processed: number | null;
+	error: string | null;
+}
+
+export interface Action {
 	id: string;
-	job_type: 'sync' | 'transform';
-	status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-	source_id?: string;
-	source_name?: string; // Enriched in page load, not from API
-	stream_name?: string;
-	sync_mode?: 'full_refresh' | 'incremental' | 'backfill';
-	transform_id?: string;
-	started_at: string;
-	completed_at?: string;
-	records_processed: number;
-	error_message?: string;
-	error_class?: string;
-	metadata: Record<string, unknown> | null;
+	action_type: string;
+	owner: string;
+	name: string;
+	instruction: string | null;
+	cron_schedule: string | null;
+	enabled: boolean;
+	config: Record<string, unknown>;
+	activation_code: string | null;
+	concurrency_mode: string;
+	memory: string | null;
+	is_system: boolean;
 	created_at: string;
 	updated_at: string;
+	last_run: ActionLastRun | null;
 }
 
-export async function getJobStatus(jobId: string): Promise<Job> {
-	const res = await fetch(`${API_BASE}/jobs/${jobId}`);
-	if (!res.ok) throw new Error(`Failed to get job status: ${res.statusText}`);
+export async function listActions(): Promise<Action[]> {
+	const res = await fetch(`${API_BASE}/actions`);
+	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
 	return res.json();
 }
 
-export async function queryJobs(params: {
-	source_id?: string;
-	status?: string[]; // e.g., ['succeeded', 'failed']
-	limit?: number;
-}): Promise<Job[]> {
-	const queryParams = new URLSearchParams();
-	if (params.source_id) queryParams.set('source_id', params.source_id);
-	if (params.status && params.status.length > 0) {
-		queryParams.set('status', params.status.join(','));
-	}
-	if (params.limit) queryParams.set('limit', params.limit.toString());
-
-	const res = await fetch(`${API_BASE}/jobs?${queryParams}`);
-	if (!res.ok) throw new Error(`Failed to query jobs: ${res.statusText}`);
+/** Get a single action run by ID (used for polling sync job status) */
+export async function getJobStatus(jobId: string): Promise<{ id: string; status: string; records_processed: number; error: string | null }> {
+	const res = await fetch(`${API_BASE}/actions/runs/${jobId}`);
+	if (!res.ok) throw new Error(`Failed to get run status: ${res.statusText}`);
 	return res.json();
-}
-
-export async function cancelJob(jobId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`Failed to cancel job: ${res.statusText}`);
 }
 
 // OAuth
@@ -1314,6 +1303,91 @@ export async function deletePageShare(pageId: string): Promise<void> {
 export async function getSharedPage(token: string): Promise<SharedPage> {
 	const res = await fetch(`${API_BASE}/s/${token}`);
 	if (!res.ok) throw new Error(`Page not found`);
+	return res.json();
+}
+
+// ============================================================================
+// Reflections API (pages linked to a day)
+// ============================================================================
+
+/** Get all reflections for a date. */
+export async function getReflectionsForDate(date: string): Promise<Page[]> {
+	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
+	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
+	return res.json();
+}
+
+/** Create a new reflection page for a date. */
+export async function createReflection(date: string): Promise<Page> {
+	const res = await fetch(`${API_BASE}/pages/reflections/${date}`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to create reflection: ${res.statusText}`);
+	return res.json();
+}
+
+// ============================================================================
+// Ontologies API
+// ============================================================================
+
+export interface OntologyColumnInfo {
+	name: string;
+	data_type: string;
+	is_nullable: boolean;
+}
+
+export interface OntologyDataResponse {
+	table_name: string;
+	display_name: string;
+	domain: string;
+	columns: OntologyColumnInfo[];
+	key_columns: string[];
+	timestamp_column: string;
+	rows: Record<string, unknown>[];
+	total_count: number;
+	limit: number;
+	offset: number;
+}
+
+export interface OntologyOverview {
+	name: string;
+	domain: string;
+	record_count: number;
+	sample_record: Record<string, unknown> | null;
+}
+
+export async function listAvailableOntologies(): Promise<string[]> {
+	const res = await fetch(`${API_BASE}/ontologies/available`);
+	if (!res.ok) throw new Error(`Failed to list ontologies: ${res.statusText}`);
+	return res.json();
+}
+
+export async function getOntologiesOverview(): Promise<OntologyOverview[]> {
+	const res = await fetch(`${API_BASE}/ontologies/overview`);
+	if (!res.ok) throw new Error(`Failed to get ontologies overview: ${res.statusText}`);
+	return res.json();
+}
+
+export async function queryOntologyData(
+	tableName: string,
+	params?: {
+		limit?: number;
+		offset?: number;
+		sort?: string;
+		dir?: string;
+		date?: string;
+		search?: string;
+	},
+): Promise<OntologyDataResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.limit != null) searchParams.set('limit', String(params.limit));
+	if (params?.offset != null) searchParams.set('offset', String(params.offset));
+	if (params?.sort) searchParams.set('sort', params.sort);
+	if (params?.dir) searchParams.set('dir', params.dir);
+	if (params?.date) searchParams.set('date', params.date);
+	if (params?.search) searchParams.set('search', params.search);
+
+	const qs = searchParams.toString();
+	const res = await fetch(`${API_BASE}/ontologies/${tableName}/data${qs ? `?${qs}` : ''}`);
+	if (!res.ok) throw new Error(`Failed to query ontology data: ${res.statusText}`);
 	return res.json();
 }
 

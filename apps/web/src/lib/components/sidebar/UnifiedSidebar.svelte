@@ -21,6 +21,8 @@
 	import UnifiedFolder from "./UnifiedFolder.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
+	import SystemSection from "./SystemSection.svelte";
+	import { SYSTEM_SECTIONS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import WorkspaceInfoModal from "./WorkspaceInfoModal.svelte";
 	import ColorPickerModal from "./ColorPickerModal.svelte";
@@ -1214,15 +1216,25 @@
 							<span>Loading...</span>
 						</div>
 					{:else}
-						<!-- Unified workspace content: folders + root items -->
 						{@const contentItems =
 							workspaceContentByWorkspace.get(workspace.id) || []}
 						{@const wsAccentColor = workspace.accent_color || null}
 
-						<!-- Folders + root items -->
+						<!-- System sections (from constants, not DnD) -->
+						{#if workspace.is_system}
+							{#each SYSTEM_SECTIONS as section (section.id)}
+								<SystemSection
+									{section}
+									collapsed={isCollapsed}
+									accentColor={wsAccentColor}
+								/>
+							{/each}
+						{/if}
+
+						<!-- User folders + root items (draggable) -->
 						<div
 							class="workspace-content"
-							use:sortableAction={{ workspaceId: workspace.id, immutable: workspace.is_system }}
+							use:sortableAction={{ workspaceId: workspace.id }}
 						>
 							{#if contentItems.length === 0 && !workspace.is_system}
 								<div class="empty-state">

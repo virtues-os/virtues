@@ -45,6 +45,7 @@ import {
 } from '$lib/tabs/types';
 import { parseRoute } from '$lib/tabs/registry';
 import { pushState, replaceState } from '$app/navigation';
+import { LEGACY_ID_MAP } from '$lib/sidebar/sections';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -111,7 +112,7 @@ export function getRouteFromEntityId(entityId: string): string {
 // ============================================================================
 
 const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
-const TAB_STORAGE_VERSION = 8; // Increment for section merge (016_merge_system_sections)
+const TAB_STORAGE_VERSION = 9; // System sections moved from DB to frontend constants
 const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace';
 const EXPANDED_STORAGE_KEY = 'virtues-expanded-views';
 
@@ -194,6 +195,7 @@ class SpaceStore {
 	swipeProgress = $state(0);
 
 	viewCache = $state<Map<string, ViewEntity[]>>(new Map());
+	smartSectionCache = $state<Map<string, ViewEntity[]>>(new Map());
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
 	spaceItems = $state<Map<string, SpaceItemEntity[]>>(new Map()); // Root-level items per workspace
 	registry = $state<Map<string, EntityMetadata>>(new Map());
@@ -512,17 +514,23 @@ class SpaceStore {
 		try {
 			const stored = localStorage.getItem(EXPANDED_STORAGE_KEY);
 			if (stored) {
-				this.expandedViewIds = new Set(JSON.parse(stored));
+				const ids: string[] = JSON.parse(stored);
+				// Migrate legacy DB view IDs to new constant IDs
+				const migrated = ids.map((id: string) => LEGACY_ID_MAP[id] ?? id).filter(Boolean);
+				this.expandedViewIds = new Set(migrated);
+				// Persist migrated IDs if any changed
+				if (migrated.some((id: string, i: number) => id !== ids[i])) {
+					localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(migrated));
+				}
 				return;
 			}
 		} catch {}
 		// First run defaults
 		this.expandedViewIds = new Set([
-			'view_sys_sec_chats',
-			'view_sys_sec_pages',
-			'view_sys_sec_wiki',
-			'view_sys_sec_data',
-			'view_sys_sec_developer',
+			'sys_chats',
+			'sys_pages',
+			'sys_wiki',
+			'sys_connections',
 		]);
 	}
 
@@ -614,23 +622,34 @@ class SpaceStore {
 		if (!namespace) {
 			// Clear entire cache
 			this.viewCache = new Map();
+			this.smartSectionCache = new Map();
 			this.viewCacheVersion++;
 			return;
 		}
 
-		// Map namespace to known system section IDs
-		const namespaceToViewId: Record<string, string> = {
-			chat: 'view_sys_sec_chats',
-			page: 'view_sys_sec_pages',
+		// Clear smart section cache for this namespace
+		const namespaceSectionMap: Record<string, string> = {
+			chat: 'sys_chats',
+			page: 'sys_pages',
 		};
 
-		const viewId = namespaceToViewId[namespace];
-		if (viewId) {
-			const newCache = new Map(this.viewCache);
-			newCache.delete(viewId);
-			this.viewCache = newCache;
-			this.viewCacheVersion++;
+		const sectionId = namespaceSectionMap[namespace];
+		if (sectionId) {
+			const newSmartCache = new Map(this.smartSectionCache);
+			newSmartCache.delete(sectionId);
+			this.smartSectionCache = newSmartCache;
 		}
+
+		this.viewCacheVersion++;
+	}
+
+	/**
+	 * Update the smart section cache (called by SystemSection component)
+	 */
+	updateSmartSectionCache(sectionId: string, entities: ViewEntity[]): void {
+		const newCache = new Map(this.smartSectionCache);
+		newCache.set(sectionId, entities);
+		this.smartSectionCache = newCache;
 	}
 
 	/**

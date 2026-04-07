@@ -636,12 +636,14 @@ async fn build_user_context(pool: &SqlitePool, user_name: &str) -> Option<String
 ///
 /// Assembles: identity → persona → narrative_identity → tools → datetime → user_context → active_page.
 /// Loads user name, assistant name, persona, and narrative identity from profiles.
+/// When `is_new_user` is true, appends the onboarding prompt for first conversations.
 async fn build_system_prompt(
     pool: &SqlitePool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     agent_mode: &str,
     persona_id: &str,
+    is_new_user: bool,
 ) -> String {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
@@ -660,6 +662,26 @@ async fn build_system_prompt(
 
     // Build personalized base prompt (identity → persona → narrative_identity → tools)
     let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &narrative_identity);
+
+    // Inject onboarding prompt for new users (first conversation)
+    if is_new_user {
+        prompt.push_str(crate::agent::prompt::NEW_USER_PROMPT);
+    }
+
+    // Load AI persistent memory (if any)
+    if let Ok(Some(memory)) = sqlx::query_scalar::<_, String>(
+        "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        if !memory.is_empty() {
+            prompt.push_str(&format!(
+                "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
+                memory
+            ));
+        }
+    }
 
     // Add current date/time for temporal awareness
     let now = Utc::now();
@@ -823,29 +845,48 @@ pub async fn chat_handler(
         .clone()
         .unwrap_or_else(|| format!("msg_{}", generate_id()));
 
+    // Check onboarding status early — needed for synthetic message injection and tool filtering
+    let _onboarding_status = sqlx::query_scalar::<_, String>(
+        "SELECT onboarding_status FROM app_user_profile LIMIT 1"
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "active".to_string());
+
+    // DISABLED for demo — onboarding was repeating the same message
+    let is_new_user = false; // onboarding_status == "new";
+    let is_onboarding = false; // onboarding_status == "new" || onboarding_status == "onboarding";
+
     // Ensure chat exists - use INSERT OR IGNORE to handle race conditions
     let chat_id_str = request.chat_id.clone();
-    let title = request
-        .messages
-        .iter()
-        .find(|m| m.role == "user")
-        .and_then(|m| {
-            m.content.clone().or_else(|| {
-                m.parts.as_ref().and_then(|p| {
-                    p.iter().find_map(|p| match p {
-                        UIPart::Text { text } => Some(text.clone()),
-                        _ => None,
+    let title = if is_new_user {
+        // Onboarding: first conversation, use a friendly default title
+        "Welcome".to_string()
+    } else {
+        let raw_title = request
+            .messages
+            .iter()
+            .find(|m| m.role == "user")
+            .and_then(|m| {
+                m.content.clone().or_else(|| {
+                    m.parts.as_ref().and_then(|p| {
+                        p.iter().find_map(|p| match p {
+                            UIPart::Text { text } => Some(text.clone()),
+                            _ => None,
+                        })
                     })
                 })
             })
-        })
-        .unwrap_or_else(|| "New conversation".to_string());
+            .unwrap_or_else(|| "New conversation".to_string());
 
-    let title = if title.chars().count() > 50 {
-        let t: String = title.chars().take(47).collect();
-        format!("{}...", t)
-    } else {
-        title
+        if raw_title.chars().count() > 50 {
+            let t: String = raw_title.chars().take(47).collect();
+            format!("{}...", t)
+        } else {
+            raw_title
+        }
     };
 
     // Use INSERT OR IGNORE to handle concurrent requests for same chat
@@ -877,9 +918,9 @@ pub async fn chat_handler(
         }
     }
 
-    // Save the user message to the chat
-    // Find the last user message from the request
+    // Save the last user message to the chat
     if let Some(last_user_msg) = request.messages.iter().rev().find(|m| m.role == "user") {
+        // Normal flow: save the last user message from the request
         let user_content = last_user_msg.content.clone().unwrap_or_else(|| {
             last_user_msg
                 .parts
@@ -1027,7 +1068,16 @@ pub async fn chat_handler(
         .collect();
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona).await;
+    // is_onboarding keeps the onboarding prompt active until set_user_name completes
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding).await;
+
+    // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
+    // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.
+    if is_new_user {
+        let _ = sqlx::query("UPDATE app_user_profile SET onboarding_status = 'onboarding' WHERE onboarding_status = 'new'")
+            .execute(&pool)
+            .await;
+    }
 
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
@@ -1037,17 +1087,27 @@ pub async fn chat_handler(
         Some(&system_prompt),
     );
 
-    // Create the streaming response with agent loop for tool execution
-    let stream = create_agent_stream(
-        pool,
-        yjs_state,
-        cancel_state,
-        tollbooth_config,
-        request,
-        api_messages,
-        msg_id,
-        compaction_needed,
-    );
+    // For brand-new users, skip the LLM and emit a preloaded opening message
+    let stream = if is_new_user {
+        create_preloaded_onboarding_stream(
+            pool,
+            request.chat_id.clone(),
+            msg_id,
+            request.agent_id.clone(),
+        )
+    } else {
+        create_agent_stream(
+            pool,
+            yjs_state,
+            cancel_state,
+            tollbooth_config,
+            request,
+            api_messages,
+            msg_id,
+            compaction_needed,
+            is_onboarding,
+        )
+    };
 
     // AI SDK v6 requires this header for UI Message Stream Protocol
     let mut response = Sse::new(stream)
@@ -1443,6 +1503,58 @@ fn _create_chat_stream_legacy(
     })
 }
 
+/// Create a preloaded SSE stream for the onboarding opening message.
+/// Skips the LLM entirely — emits a hardcoded message, saves it to the DB.
+fn create_preloaded_onboarding_stream(
+    pool: SqlitePool,
+    chat_id: String,
+    msg_id: String,
+    agent_id: String,
+) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
+    use crate::agent::prompt::ONBOARDING_OPENING_MESSAGE;
+
+    Box::pin(async_stream::stream! {
+        // TextStart
+        let start_event = StreamEvent::TextStart { id: msg_id.clone() };
+        yield Ok(SseEvent::default().data(serialize_event(&start_event)));
+
+        // TextDelta — emit the full preloaded message
+        let event = StreamEvent::TextDelta {
+            id: msg_id.clone(),
+            delta: ONBOARDING_OPENING_MESSAGE.to_string(),
+        };
+        yield Ok(SseEvent::default().data(serialize_event(&event)));
+
+        // TextEnd
+        let end_event = StreamEvent::TextEnd { id: msg_id.clone() };
+        yield Ok(SseEvent::default().data(serialize_event(&end_event)));
+
+        // [DONE]
+        yield Ok(SseEvent::default().data("[DONE]"));
+
+        // Save assistant message to chat
+        let assistant_message = ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: ONBOARDING_OPENING_MESSAGE.to_string(),
+            timestamp: Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: Some(agent_id),
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            thought_signature: None,
+            parts: None,
+        };
+
+        if let Err(e) = append_message(&pool, chat_id, assistant_message).await {
+            tracing::error!("Failed to save preloaded onboarding message: {}", e);
+        }
+    })
+}
+
 /// Create the SSE stream using the AgentLoop for tool execution
 fn create_agent_stream(
     pool: SqlitePool,
@@ -1453,6 +1565,7 @@ fn create_agent_stream(
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     compaction_needed: bool,
+    is_onboarding: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
     let model = request.model.clone();
     let chat_id = request.chat_id.clone();
@@ -1518,10 +1631,15 @@ fn create_agent_stream(
             user_id: None,
             space_id: request.space_id.clone(),
             chat_id: Some(request.chat_id.clone()),
+            action_id: None,
         };
 
-        // Get tool definitions based on agent mode
-        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
+        // Get tool definitions — onboarding restricts to naming/memory tools only
+        let tools = if is_onboarding {
+            crate::tools::get_tools_for_onboarding()
+        } else {
+            crate::tools::get_tools_for_agent_mode(&request.agent_mode)
+        };
 
         // Send text-start event
         let start_event = StreamEvent::TextStart { id: msg_id.clone() };
