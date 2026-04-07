@@ -25,4 +25,4 @@ export { default as ProfileContent } from '../tabs/views/ProfileView.svelte';
 export { default as AssistantContent } from '../tabs/views/AssistantView.svelte';
 export { default as UsageContent } from '../tabs/views/UsageView.svelte';
 export { default as HistoryContent } from '../tabs/views/HistoryView.svelte';
-export { default as JobsContent } from '../tabs/views/JobsView.svelte';
+

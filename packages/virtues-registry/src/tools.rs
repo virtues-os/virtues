@@ -53,6 +53,9 @@ pub struct ToolConfig {
     pub icon: String,
     /// Display order in UI
     pub display_order: i32,
+    /// Whether this tool is system-only (not shown to users in regular chats).
+    /// System tools are only available to action runners and internal callers.
+    pub is_system: bool,
 }
 
 /// Get default built-in tool configurations
@@ -64,9 +67,15 @@ pub struct ToolConfig {
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
 /// - edit_page: Apply edits using find/replace
+/// - update_memory: Persist notes across conversations
+/// - set_user_name: Set user's preferred name
+/// - set_assistant_name: Set AI assistant's name
 pub fn default_tools() -> Vec<ToolConfig> {
     vec![
         think_tool(),
+        update_memory_tool(),
+        set_user_name_tool(),
+        set_assistant_name_tool(),
         web_search_tool(),
         semantic_search_tool(),
         sql_query_tool(),
@@ -74,6 +83,9 @@ pub fn default_tools() -> Vec<ToolConfig> {
         create_page_tool(),
         get_page_content_tool(),
         edit_page_tool(),
+        setup_action_tool(),
+        update_action_memory_tool(),
+        dayline_event_tool(),
     ]
 }
 
@@ -114,6 +126,101 @@ The user can see your thoughts, so be clear and concise."#.to_string(),
         category: ToolCategory::Data,
         icon: "ri:lightbulb-line".to_string(),
         display_order: 0,
+        is_system: false,
+    }
+}
+
+/// Update Memory tool — persist notes across conversations
+fn update_memory_tool() -> ToolConfig {
+    ToolConfig {
+        id: "update_memory".to_string(),
+        name: "Memory".to_string(),
+        description: "Save notes that persist across conversations".to_string(),
+        llm_description: r#"Save or update your persistent memory — notes that carry across every conversation.
+
+Use this tool to remember:
+- The user's name, preferences, and goals
+- What role they want you to play (coach, tracker, observer, etc.)
+- Important context they've shared (habits, routines, projects)
+- Decisions made or plans agreed upon
+
+Your memory is plain text (max 2000 chars). Each call REPLACES the full content, so always include everything you want to keep. Read your current memory from the system prompt before updating.
+
+Guidelines:
+- Write in concise bullet points, not prose
+- Organize by topic (identity, goals, preferences, context)
+- Don't store sensitive data (passwords, keys, SSNs)
+- Update incrementally — add new info, keep existing info that's still relevant
+- If memory is getting long, summarize older items"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["content"],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The full memory content (replaces existing). Max 2000 characters."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:brain-line".to_string(),
+        display_order: 1,
+        is_system: false,
+    }
+}
+
+/// Set User Name tool — update user's preferred name
+fn set_user_name_tool() -> ToolConfig {
+    ToolConfig {
+        id: "set_user_name".to_string(),
+        name: "Set User Name".to_string(),
+        description: "Set the user's preferred name".to_string(),
+        llm_description: r#"Set the user's preferred name. Use this when the user tells you their name or asks to change how you address them.
+
+This updates the user's profile so their name persists across all future conversations."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The user's preferred name"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:user-line".to_string(),
+        display_order: 2,
+        is_system: false,
+    }
+}
+
+/// Set Assistant Name tool — update the AI's name
+fn set_assistant_name_tool() -> ToolConfig {
+    ToolConfig {
+        id: "set_assistant_name".to_string(),
+        name: "Set Assistant Name".to_string(),
+        description: "Set the AI assistant's name".to_string(),
+        llm_description: r#"Set your own name. Use this when the user picks or types a name for you during onboarding, or asks to rename you later.
+
+This updates your name across all future conversations."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The new name for the AI assistant"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:robot-line".to_string(),
+        display_order: 3,
+        is_system: false,
     }
 }
 
@@ -163,6 +270,7 @@ Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.t
         category: ToolCategory::Search,
         icon: "ri:search-line".to_string(),
         display_order: 1,
+        is_system: false,
     }
 }
 
@@ -226,6 +334,7 @@ Use sql_query with the returned record_ids to get full details."#.to_string(),
         category: ToolCategory::Search,
         icon: "ri:mind-map".to_string(),
         display_order: 2,
+        is_system: false,
     }
 }
 
@@ -296,7 +405,7 @@ TEMPORAL (daily/yearly context)
   wiki_events       Timeline events within a day
 
 REFERENCES
-  wiki_citations    Links wiki content to source ontology records
+  entity_references Junction table linking entities to ontology records
 
 ================================================================================
 NARRATIVE TABLES (life story structure — wiki_* prefix)
@@ -372,6 +481,7 @@ ORDER BY start_time"#.to_string(),
         category: ToolCategory::Data,
         icon: "ri:database-2-line".to_string(),
         display_order: 3,
+        is_system: false,
     }
 }
 
@@ -443,6 +553,7 @@ Example - statistics with numpy:
         category: ToolCategory::Data,
         icon: "ri:code-s-slash-line".to_string(),
         display_order: 4,
+        is_system: false,
     }
 }
 
@@ -484,6 +595,7 @@ Example:
         category: ToolCategory::Edit,
         icon: "ri:file-add-line".to_string(),
         display_order: 5,
+        is_system: false,
     }
 }
 
@@ -522,6 +634,7 @@ Returns the page title, content, and content length."#.to_string(),
         category: ToolCategory::Edit,
         icon: "ri:file-text-line".to_string(),
         display_order: 6,
+        is_system: false,
     }
 }
 
@@ -607,6 +720,158 @@ Tips:
         category: ToolCategory::Edit,
         icon: "ri:edit-line".to_string(),
         display_order: 7,
+        is_system: false,
+    }
+}
+
+/// Setup Action tool — turn current chat into a scheduled action
+fn setup_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "setup_action".to_string(),
+        name: "Setup Action".to_string(),
+        description: "Create a scheduled action".to_string(),
+        llm_description: r#"Turn the current chat into an action that runs on a schedule or as an API endpoint.
+
+Use this tool when:
+- User asks to set up a recurring task (e.g. "check Hacker News every hour")
+- User wants an automated action that runs periodically
+- User wants to create a webhook/endpoint that triggers an AI task
+
+Parameters:
+- name: Short descriptive name for the action (e.g. "HN Highlights")
+- instruction: What the action should do each time it runs. Be specific and detailed.
+- cron_schedule: Cron expression for when to run (6-field: sec min hour day month dow). Examples:
+  - "0 0 * * * *" = every hour
+  - "0 0 9 * * *" = daily at 9am UTC
+  - "0 */30 * * * *" = every 30 minutes
+  - "0 0 9 * * 1-5" = weekday mornings at 9am UTC
+- endpoint: Set to true to also expose as a triggerable API endpoint
+- activation_code: Optional Python code that runs before each invocation (e.g. to fetch data). The code is dry-run tested before saving.
+
+The action will post its results back into this chat each time it runs."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "instruction"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short name for the action (e.g. 'HN Highlights', 'Daily Digest')"
+                },
+                "instruction": {
+                    "type": "string",
+                    "description": "Detailed instruction for what the action should do each run"
+                },
+                "cron_schedule": {
+                    "type": "string",
+                    "description": "Cron schedule (6-field: sec min hour day month dow). E.g. '0 0 * * * *' for hourly"
+                },
+                "endpoint": {
+                    "type": "boolean",
+                    "description": "Whether to also expose as a triggerable API endpoint",
+                    "default": false
+                },
+                "activation_code": {
+                    "type": "string",
+                    "description": "Optional Python code to run before each invocation (e.g. fetch external data)"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:robot-2-line".to_string(),
+        display_order: 8,
+        is_system: false,
+    }
+}
+
+/// Update action memory — persistent markdown scratchpad for actions
+fn update_action_memory_tool() -> ToolConfig {
+    ToolConfig {
+        id: "update_action_memory".to_string(),
+        name: "Update Action Memory".to_string(),
+        description: "Update this action's persistent memory".to_string(),
+        llm_description: r#"Save persistent memory that will be available on your next run.
+Use this to remember facts, preferences, or state across runs. The content is markdown.
+This tool is only available when running as an action."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["content"],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Markdown content to save as this action's memory. Replaces previous memory entirely."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:brain-line".to_string(),
+        display_order: 9,
+        is_system: true,
+    }
+}
+
+/// Dayline event tool — structured event CRUD for hourly/EOD actions
+fn dayline_event_tool() -> ToolConfig {
+    ToolConfig {
+        id: "dayline_event".to_string(),
+        name: "Dayline Event".to_string(),
+        description: "Create or update dayline timeline events".to_string(),
+        llm_description: r#"Create, continue, revise, or mark timeline events for the Dayline.
+
+Actions:
+- NEW: Create a new event. Requires: event_summary, start_time, end_time. Optional: topics, auto_label, source_ontologies.
+- CONTINUE: Extend the current event. Requires: event_id, end_time. Optional: event_summary (updated), topics.
+- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, start_time, end_time, auto_label, topics.
+- NO_DATA: Mark this time period as unknown. Requires: start_time, end_time.
+
+Event summaries should be 1-3 factual sentences. Be specific: name people, places, apps, projects. Include all data sources, even minor ones."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["NEW", "CONTINUE", "REVISE", "NO_DATA"],
+                    "description": "The action to perform"
+                },
+                "event_id": {
+                    "type": "string",
+                    "description": "ID of existing event (for CONTINUE, REVISE)"
+                },
+                "event_summary": {
+                    "type": "string",
+                    "description": "1-3 factual sentences describing the event"
+                },
+                "topics": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Activity contexts (e.g., 'code review', 'commute', 'exercise')"
+                },
+                "start_time": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp for event start"
+                },
+                "end_time": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp for event end"
+                },
+                "auto_label": {
+                    "type": "string",
+                    "description": "Short label (e.g., 'Work session', 'Lunch')"
+                },
+                "source_ontologies": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Ontology record IDs that informed this event"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:timeline-line".to_string(),
+        display_order: 9,
+        is_system: true,
     }
 }
 
@@ -614,13 +879,17 @@ Tips:
 pub fn default_enabled_tools() -> serde_json::Value {
     serde_json::json!({
         "think": true,
+        "update_memory": true,
+        "set_user_name": true,
+        "set_assistant_name": true,
         "web_search": true,
         "semantic_search": true,
         "sql_query": true,
         "code_interpreter": true,
         "create_page": true,
         "get_page_content": true,
-        "edit_page": true
+        "edit_page": true,
+        "setup_action": true
     })
 }
 
@@ -631,7 +900,7 @@ mod tests {
     #[test]
     fn test_default_tools() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 8, "Should have 8 tools");
+        assert_eq!(tools.len(), 13, "Should have 13 tools");
 
         // Verify all tools have required fields
         for tool in &tools {
@@ -645,6 +914,9 @@ mod tests {
         // Verify specific tools exist
         let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"think"));
+        assert!(ids.contains(&"update_memory"));
+        assert!(ids.contains(&"set_user_name"));
+        assert!(ids.contains(&"set_assistant_name"));
         assert!(ids.contains(&"web_search"));
         assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
@@ -652,6 +924,8 @@ mod tests {
         assert!(ids.contains(&"create_page"));
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
+        assert!(ids.contains(&"setup_action"));
+        assert!(ids.contains(&"dayline_event"));
     }
 
     #[test]
@@ -659,6 +933,9 @@ mod tests {
         let enabled = default_enabled_tools();
         assert!(enabled.is_object());
         assert_eq!(enabled.get("think"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("update_memory"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("set_user_name"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("set_assistant_name"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));

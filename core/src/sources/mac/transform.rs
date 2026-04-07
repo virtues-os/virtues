@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::jobs::transform_context::TransformContext;
+use crate::pipeline::context::TransformContext;
 use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for database inserts

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use crate::database::Database;
 use crate::error::Result;
 use crate::ids;
-use crate::jobs::TransformContext;
+use crate::pipeline::TransformContext;
 use crate::sources::base::{OntologyTransform, TransformResult};
 
 /// Transform iOS Contacts to wiki_people entities

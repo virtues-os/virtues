@@ -11,7 +11,7 @@
 //! - `oauth` - OAuth flows and authentication
 //! - `device_pairing` - Device registration and pairing
 //! - `streams` - Stream management and configuration
-//! - `jobs` - Async job tracking and management
+//! - `tasks` - Async task tracking and management
 //! - `registry` - Catalog/registry queries
 //! - `ontologies` - Ontology table queries
 
@@ -21,6 +21,7 @@
 //! - `seed_testing` - Seed data pipeline validation and inspection
 //! - `metrics` - Activity metrics and job statistics
 
+pub mod action_events;
 pub mod agents;
 pub mod assistant_profile;
 pub mod auth;
@@ -30,8 +31,7 @@ pub mod chat_usage;
 pub mod chats;
 pub mod code;
 pub mod compaction;
-pub mod day_scoring;
-pub mod day_vectors;
+pub mod day_illustration;
 pub mod day_summary;
 pub mod device_pairing;
 pub mod drive;
@@ -39,7 +39,7 @@ pub mod entities;
 pub mod exa;
 pub mod feedback;
 pub mod internal;
-pub mod jobs;
+pub mod actions;
 pub mod lake;
 pub mod media;
 pub mod metrics;
@@ -156,9 +156,9 @@ pub use exa::{
     search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
 pub use feedback::{submit_feedback, FeedbackRequest};
-pub use jobs::{
-    cancel_job, get_job_history, get_job_status, query_jobs, trigger_stream_sync,
-    CreateJobResponse, QueryJobsRequest,
+pub use actions::{
+    trigger_stream_sync, cancel_run, get_run, get_run_history, list_actions,
+    query_runs, toggle_action, TriggerSyncResponse, QueryRunsRequest,
 };
 pub use media::{
     get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
@@ -208,6 +208,8 @@ pub use pages::{
     create_version,
     delete_page,
     delete_page_share,
+    get_reflections_for_date,
+    create_reflection,
     get_page,
     get_page_share,
     get_shared_page,
@@ -296,10 +298,8 @@ pub use usage::{
     UsageLimitError, UsageSummary,
 };
 pub use wiki::{
-    create_citation,
     create_temporal_event,
     delete_auto_events_for_day,
-    delete_citation,
     delete_temporal_event,
     // Act operations
     get_act,
@@ -312,7 +312,6 @@ pub use wiki::{
     get_active_telos,
     // Chapter operations
     get_chapter,
-    get_citations,
     get_day_events,
     get_day_sources,
     // Day streams (dynamic ontology queries)
@@ -327,6 +326,8 @@ pub use wiki::{
     // Person operations
     get_person,
     get_telos,
+    // Thing operations
+    get_thing,
     // Place operations (wiki-specific)
     get_wiki_place,
     list_acts,
@@ -334,17 +335,15 @@ pub use wiki::{
     list_days,
     list_organizations,
     list_people,
+    list_things,
     list_wiki_places,
     resolve_id,
-    update_citation,
     update_day,
     update_organization,
     update_person,
     update_temporal_event,
+    update_thing,
     update_wiki_place,
-    // Citation types and operations
-    Citation,
-    CreateCitationRequest,
     CreateTemporalEventRequest,
     // Day sources (ontology records for a day)
     DaySource,
@@ -355,13 +354,13 @@ pub use wiki::{
     StreamRecord,
     // Temporal event types and operations
     TemporalEvent,
-    UpdateCitationRequest,
     UpdateTemporalEventRequest,
     UpdateWikiDayRequest,
     UpdateWikiOrganizationRequest,
     // Update requests
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
+    UpdateWikiThingRequest,
     WikiAct,
     WikiChapter,
     WikiDay,
@@ -372,6 +371,8 @@ pub use wiki::{
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
+    WikiThing,
+    WikiThingListItem,
     // Narrative types
     WikiTelos,
 };

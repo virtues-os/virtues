@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::jobs::TransformContext;
+use crate::pipeline::TransformContext;
 use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 const BATCH_SIZE: usize = 500;
@@ -30,7 +30,7 @@ impl OntologyTransform for SpotifyListeningTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;

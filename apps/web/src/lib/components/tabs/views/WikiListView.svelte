@@ -1,12 +1,12 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { PersonTable, PlaceTable, OrganizationTable } from '$lib/components/wiki';
+	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	// Extract entity type from route (e.g., '/person' → 'person', '/place' → 'place')
 	const entityType = $derived.by(() => {
-		// Routes are /{type} format (e.g., /person, /place, /org)
+		// Routes are /{type} format (e.g., /person, /place, /org, /thing)
 		const match = tab.route.match(/^\/([a-z]+)$/);
 		return match?.[1] || 'person';
 	});
@@ -16,6 +16,7 @@
 		person: 'People',
 		place: 'Places',
 		org: 'Organizations',
+		thing: 'Things',
 	};
 </script>
 
@@ -30,6 +31,8 @@
 		<PlaceTable />
 	{:else if entityType === 'org'}
 		<OrganizationTable />
+	{:else if entityType === 'thing'}
+		<ThingTable />
 	{:else}
 		<div class="placeholder">
 			<p>Unknown entity type: {entityType}</p>

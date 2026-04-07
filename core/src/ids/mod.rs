@@ -24,8 +24,6 @@ use sha2::{Digest, Sha256};
 pub const WIKI_PERSON_PREFIX: &str = "person";
 pub const WIKI_PLACE_PREFIX: &str = "place";
 pub const WIKI_ORG_PREFIX: &str = "org";
-pub const WIKI_CONNECTION_PREFIX: &str = "conn";
-pub const WIKI_CITATION_PREFIX: &str = "cite";
 pub const WIKI_DAY_PREFIX: &str = "day";
 pub const WIKI_EVENT_PREFIX: &str = "event";
 

@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::jobs::TransformContext;
+use crate::pipeline::TransformContext;
 use crate::sources::base::{OntologyTransform, TransformRegistration, TransformResult};
 
 /// Batch size for bulk inserts
@@ -36,7 +36,7 @@ impl OntologyTransform for HealthKitHeartRateTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
@@ -251,7 +251,7 @@ impl OntologyTransform for HealthKitHRVTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
@@ -459,7 +459,7 @@ impl OntologyTransform for HealthKitStepsTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
@@ -652,7 +652,7 @@ impl OntologyTransform for HealthKitSleepTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
@@ -889,7 +889,7 @@ impl OntologyTransform for HealthKitWorkoutTransform {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult> {
         let mut records_read = 0;
@@ -931,7 +931,6 @@ impl OntologyTransform for HealthKitWorkoutTransform {
             Option<i32>,  // avg_heart_rate
             Option<i32>,  // max_heart_rate
             Option<f64>,  // distance_km
-            Option<String>, // place_id
             DateTime<Utc>,  // start_time
             DateTime<Utc>,  // end_time
             String,         // stream_id
@@ -1011,7 +1010,6 @@ impl OntologyTransform for HealthKitWorkoutTransform {
                     heart_rate.map(|h| h as i32),        // avg_heart_rate
                     max_heart_rate,                       // max_heart_rate
                     distance.map(|d| d / 1000.0),        // distance_km (convert m to km)
-                    None,                                 // place_id
                     timestamp,
                     end_time,
                     stream_id,
@@ -1327,7 +1325,6 @@ async fn execute_workout_batch_insert(
         Option<i32>,  // avg_heart_rate
         Option<i32>,  // max_heart_rate
         Option<f64>,  // distance_km
-        Option<String>, // place_id
         DateTime<Utc>,  // start_time
         DateTime<Utc>,  // end_time
         String,         // stream_id
@@ -1348,7 +1345,6 @@ async fn execute_workout_batch_insert(
             "avg_heart_rate",
             "max_heart_rate",
             "distance_km",
-            "place_id",
             "start_time",
             "end_time",
             "source_stream_id",
@@ -1371,7 +1367,6 @@ async fn execute_workout_batch_insert(
         avg_heart_rate,
         max_heart_rate,
         distance_km,
-        place_id,
         start_time,
         end_time,
         stream_id,
@@ -1386,7 +1381,6 @@ async fn execute_workout_batch_insert(
             .bind(avg_heart_rate)
             .bind(max_heart_rate)
             .bind(distance_km)
-            .bind(place_id)
             .bind(start_time)
             .bind(end_time)
             .bind(stream_id)

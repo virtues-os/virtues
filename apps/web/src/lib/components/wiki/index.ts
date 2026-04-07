@@ -10,8 +10,7 @@ export { default as WikiCollapsibleSection } from './WikiCollapsibleSection.svel
 
 // Day page
 export { default as DayPage } from './DayPage.svelte';
-export { default as DayTimeline } from './DayTimeline.svelte';
-export { default as ContextVector } from './ContextVector.svelte';
+export { default as EventTimeline } from './EventTimeline.svelte';
 export { default as ActivityHeatmap } from './ActivityHeatmap.svelte';
 
 // Year page
@@ -21,9 +20,12 @@ export { default as YearPage } from './YearPage.svelte';
 export { default as PersonPage } from './PersonPage.svelte';
 export { default as PlacePage } from './PlacePage.svelte';
 export { default as OrganizationPage } from './OrganizationPage.svelte';
+export { default as ThingPage } from './ThingPage.svelte';
 
 // Tables
 export { default as PersonTable } from './PersonTable.svelte';
 export { default as PlaceTable } from './PlaceTable.svelte';
 export { default as OrganizationTable } from './OrganizationTable.svelte';
+export { default as ThingTable } from './ThingTable.svelte';
+export { default as OntologyDataTable } from './OntologyDataTable.svelte';
 

@@ -19,7 +19,7 @@ use async_trait::async_trait;
 
 use crate::database::Database;
 use crate::error::Result;
-use crate::jobs::TransformContext;
+use crate::pipeline::TransformContext;
 
 /// Result of a transformation operation
 #[derive(Debug, Clone)]
@@ -114,7 +114,7 @@ pub trait OntologyTransform: Send + Sync {
     async fn transform(
         &self,
         db: &Database,
-        context: &crate::jobs::transform_context::TransformContext,
+        context: &crate::pipeline::context::TransformContext,
         source_id: String,
     ) -> Result<TransformResult>;
 }

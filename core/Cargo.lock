@@ -7559,6 +7559,7 @@ dependencies = [
  "hex",
  "hmac",
  "html-escape",
+ "image",
  "indicatif",
  "inventory",
  "lazy_static",

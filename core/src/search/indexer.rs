@@ -26,7 +26,7 @@ pub async fn run_embedding_job(pool: &SqlitePool) -> Result<()> {
         .filter(|o| o.embedding.is_some())
         .collect::<Vec<_>>();
 
-    tracing::info!("Embedding indexer: processing {} ontologies", searchable.len());
+    tracing::debug!("Embedding indexer: checking {} ontologies", searchable.len());
 
     let mut total_embedded = 0u64;
     for ontology in &searchable {

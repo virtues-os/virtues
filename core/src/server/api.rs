@@ -420,7 +420,7 @@ pub async fn update_stream_schedule_handler(
     }
 }
 
-/// Trigger a manual sync for a stream (async job-based)
+/// Trigger a manual sync for a stream (async task-based)
 pub async fn sync_stream_handler(
     State(state): State<AppState>,
     Path((source_id, stream_name)): Path<(String, String)>,
@@ -434,7 +434,7 @@ pub async fn sync_stream_handler(
         })
     });
 
-    // Use the new async job-based sync
+    // Use the new async task-based sync
     match crate::api::trigger_stream_sync(
         state.db.pool(),
         &*state.storage,
@@ -611,82 +611,213 @@ pub async fn get_ontologies_overview_handler(State(state): State<AppState>) -> R
     api_response(crate::api::ontologies::get_ontologies_overview(state.db.pool()).await)
 }
 
+/// Query data from a specific ontology table
+pub async fn query_ontology_data_handler(
+    State(state): State<AppState>,
+    Path(table_name): Path<String>,
+    Query(params): Query<crate::api::ontologies::OntologyDataQuery>,
+) -> Response {
+    api_response(
+        crate::api::ontologies::query_ontology_data(state.db.pool(), &table_name, &params).await,
+    )
+}
+
 // ============================================================================
 // Jobs API
 // ============================================================================
 
-/// Get job status by ID
-pub async fn get_job_handler(
+/// Get a single action run by ID (used for polling sync status)
+pub async fn get_action_run_handler(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
+    Path(run_id): Path<String>,
 ) -> Response {
-    match crate::api::get_job_status(state.db.pool(), &job_id).await {
-        Ok(job) => (StatusCode::OK, Json(job)).into_response(),
+    match crate::api::get_run(state.db.pool(), &run_id).await {
+        Ok(run) => (StatusCode::OK, Json(run)).into_response(),
         Err(e) => (
             StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": e.to_string()
-            })),
+            Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
     }
 }
 
-/// Query jobs with filters
-#[derive(Debug, Deserialize)]
-pub struct QueryJobsParams {
-    pub source_id: Option<String>,
-    pub status: Option<String>, // Comma-separated list
-    pub limit: Option<i64>,
-}
-
-pub async fn query_jobs_handler(
+/// Manually trigger an action run
+pub async fn trigger_action_handler(
     State(state): State<AppState>,
-    Query(params): Query<QueryJobsParams>,
+    Path(action_id): Path<String>,
 ) -> Response {
-    // Parse comma-separated status list
-    let statuses = params.status.map(|s| {
-        s.split(',')
-            .map(|s| s.trim().to_string())
-            .collect::<Vec<String>>()
-    });
+    let pool = state.db.pool();
 
-    let request = crate::api::QueryJobsRequest {
-        source_id: params.source_id,
-        status: statuses,
-        limit: Some(params.limit.unwrap_or(16)),
+    // Load the task
+    let task = match crate::scheduler::actions::get_action(pool, &action_id).await {
+        Ok(t) => t,
+        Err(e) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
     };
 
-    match crate::api::query_jobs(state.db.pool(), request).await {
-        Ok(jobs) => (StatusCode::OK, Json(jobs)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": e.to_string()
-            })),
+    // Only agent-type actions can be triggered this way
+    if task.action_type != "agent" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Only agent-type actions can be manually triggered" })),
         )
-            .into_response(),
+            .into_response();
     }
+
+    // Create an ActionRun for audit
+    let run = match crate::scheduler::actions::create_run(pool, Some(&action_id), "manual").await {
+        Ok(r) => r,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let run_id = run.id.clone();
+
+    // Spawn the action in the background
+    let pool_clone = pool.clone();
+    let yjs = state.yjs_state.clone();
+    tokio::spawn(async move {
+        let result = crate::agent::action_runner::run_action(
+            &pool_clone,
+            &yjs,
+            &task,
+            true, // force_run — manual triggers bypass activation gate
+            None,
+            None, // no pre-built context for manual triggers
+        )
+        .await;
+
+        match result {
+            Ok(action_result) => {
+                let status = match &action_result.status {
+                    crate::agent::action_runner::ActionRunStatus::Completed => "success",
+                    crate::agent::action_runner::ActionRunStatus::ActivationSkipped => "skipped",
+                    crate::agent::action_runner::ActionRunStatus::ActivationError(_) => "error",
+                    crate::agent::action_runner::ActionRunStatus::Error(_) => "error",
+                };
+                let error_msg = match &action_result.status {
+                    crate::agent::action_runner::ActionRunStatus::ActivationError(e) => Some(e.as_str()),
+                    crate::agent::action_runner::ActionRunStatus::Error(e) => Some(e.as_str()),
+                    _ => None,
+                };
+                let _ = crate::scheduler::actions::complete_run(
+                    &pool_clone, &run.id, status, action_result.steps as i64, error_msg,
+                ).await;
+            }
+            Err(e) => {
+                let _ = crate::scheduler::actions::complete_run(
+                    &pool_clone, &run.id, "error", 0, Some(&e.to_string()),
+                ).await;
+            }
+        }
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({
+            "run_id": run_id,
+            "action_id": action_id,
+            "status": "running",
+        })),
+    )
+        .into_response()
 }
 
-/// Cancel a running job
-pub async fn cancel_job_handler(
+/// List all actions (app_actions) with their latest run status
+pub async fn list_actions_handler(
     State(state): State<AppState>,
-    Path(job_id): Path<String>,
 ) -> Response {
-    match crate::api::cancel_job(state.db.pool(), &job_id).await {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "message": "Job cancelled successfully"
-            })),
+    let pool = state.db.pool();
+
+    // Join app_actions with the latest task_run for each
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            t.id, t.action_type, t.owner, t.name, t.instruction, t.cron_schedule,
+            t.enabled, t.config, t.activation_code, t.concurrency_mode, t.memory,
+            t.created_at, t.updated_at,
+            r.status AS last_run_status,
+            r.started_at AS last_run_at,
+            r.records_processed AS last_run_records,
+            r.error AS last_run_error
+        FROM app_actions t
+        LEFT JOIN app_action_runs r ON r.id = (
+            SELECT id FROM app_action_runs WHERE action_id = t.id ORDER BY created_at DESC LIMIT 1
         )
-            .into_response(),
+        ORDER BY t.action_type, t.name
+        "#,
+    )
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => {
+            use sqlx::Row;
+            let actions: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    let id: String = r.try_get("id").unwrap_or_default();
+                    let action_type: String = r.try_get("action_type").unwrap_or_default();
+                    let owner: String = r.try_get("owner").unwrap_or_else(|_| "user".to_string());
+                    let name: String = r.try_get("name").unwrap_or_default();
+                    let instruction: Option<String> = r.try_get("instruction").unwrap_or(None);
+                    let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
+                    let enabled: bool = r.try_get("enabled").unwrap_or(false);
+                    let config: serde_json::Value = r.try_get("config").unwrap_or(serde_json::json!({}));
+                    let activation: Option<String> = r.try_get("activation_code").unwrap_or(None);
+                    let concurrency_mode: String = r.try_get("concurrency_mode").unwrap_or_else(|_| "single".to_string());
+                    let memory: Option<String> = r.try_get("memory").unwrap_or(None);
+                    let created: String = r.try_get("created_at").unwrap_or_default();
+                    let updated: String = r.try_get("updated_at").unwrap_or_default();
+
+                    let last_run_status: Option<String> = r.try_get("last_run_status").unwrap_or(None);
+                    let last_run = last_run_status.map(|s| {
+                        let at: Option<String> = r.try_get("last_run_at").unwrap_or(None);
+                        let records: Option<i64> = r.try_get("last_run_records").unwrap_or(None);
+                        let err: Option<String> = r.try_get("last_run_error").unwrap_or(None);
+                        serde_json::json!({
+                            "status": s,
+                            "started_at": at,
+                            "records_processed": records,
+                            "error": err,
+                        })
+                    });
+
+                    serde_json::json!({
+                        "id": id,
+                        "action_type": action_type,
+                        "owner": owner,
+                        "name": name,
+                        "instruction": instruction,
+                        "cron_schedule": cron,
+                        "enabled": enabled,
+                        "config": config,
+                        "activation_code": activation,
+                        "concurrency_mode": concurrency_mode,
+                        "memory": memory,
+                        "created_at": created,
+                        "updated_at": updated,
+                        "is_system": owner == "system",
+                        "last_run": last_run,
+                    })
+                })
+                .collect();
+
+            (StatusCode::OK, Json(actions)).into_response()
+        }
         Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({
-                "error": e.to_string()
-            })),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
     }
@@ -705,7 +836,7 @@ pub async fn get_stream_jobs_handler(
 ) -> Response {
     let limit = params.limit.unwrap_or(10);
 
-    match crate::api::get_job_history(state.db.pool(), source_id, &stream_name, limit).await {
+    match crate::api::get_run_history(state.db.pool(), &source_id, &stream_name, limit).await {
         Ok(jobs) => (StatusCode::OK, Json(jobs)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1742,6 +1873,30 @@ pub async fn wiki_update_organization_handler(
     api_response(crate::api::update_organization(state.db.pool(), id, request).await)
 }
 
+// --- Thing ---
+
+/// Get a thing by ID
+pub async fn wiki_get_thing_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_thing(state.db.pool(), id).await)
+}
+
+/// List all things
+pub async fn wiki_list_things_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::list_things(state.db.pool()).await)
+}
+
+/// Update a thing by ID
+pub async fn wiki_update_thing_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::UpdateWikiThingRequest>,
+) -> Response {
+    api_response(crate::api::update_thing(state.db.pool(), id, request).await)
+}
+
 // --- Narrative Identity ---
 
 /// Get narrative identity
@@ -1829,6 +1984,36 @@ pub async fn wiki_get_day_handler(
     }
 }
 
+/// Serve a day's illustration as a PNG image.
+/// Returns 200 with image/png body if the illustration exists, 404 otherwise.
+pub async fn wiki_get_day_illustration_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    let parsed = match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => d,
+        Err(_) => {
+            return error_response(Error::InvalidInput(format!("Invalid date: {date}")));
+        }
+    };
+    match crate::api::wiki::get_day_illustration(state.db.pool(), parsed).await {
+        Ok(Some(bytes)) => {
+            use axum::http::header;
+            (
+                axum::http::StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, "image/png"),
+                    (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
+                ],
+                bytes,
+            )
+                .into_response()
+        }
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "no illustration").into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
 /// Update a day by date
 pub async fn wiki_update_day_handler(
     State(state): State<AppState>,
@@ -1838,24 +2023,6 @@ pub async fn wiki_update_day_handler(
     match date.parse::<chrono::NaiveDate>() {
         Ok(parsed_date) => {
             api_response(crate::api::update_day(state.db.pool(), parsed_date, request).await)
-        }
-        Err(_) => error_response(Error::InvalidInput(format!(
-            "Invalid date format: {}",
-            date
-        ))),
-    }
-}
-
-/// Generate a daily summary for a specific date
-pub async fn wiki_generate_day_summary_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(
-                crate::api::day_summary::generate_day_summary(state.db.pool(), parsed_date).await,
-            )
         }
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
@@ -1878,52 +2045,6 @@ pub async fn wiki_list_days_handler(
 }
 
 // =============================================================================
-// Wiki Citations API
-// =============================================================================
-
-/// Get citations for a wiki page
-pub async fn wiki_get_citations_handler(
-    State(state): State<AppState>,
-    Path((source_type, source_id)): Path<(String, String)>,
-) -> Response {
-    api_response(crate::api::get_citations(state.db.pool(), &source_type, source_id).await)
-}
-
-/// Create a citation for a wiki page
-pub async fn wiki_create_citation_handler(
-    State(state): State<AppState>,
-    Path((source_type, source_id)): Path<(String, String)>,
-    Json(mut request): Json<crate::api::CreateCitationRequest>,
-) -> Response {
-    // Set source type/id from path
-    request.source_type = source_type;
-    request.source_id = source_id;
-    match crate::api::create_citation(state.db.pool(), request).await {
-        Ok(citation) => (StatusCode::CREATED, Json(citation)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Update a citation
-pub async fn wiki_update_citation_handler(
-    State(state): State<AppState>,
-    Path(citation_id): Path<String>,
-    Json(request): Json<crate::api::UpdateCitationRequest>,
-) -> Response {
-    api_response(crate::api::update_citation(state.db.pool(), citation_id, request).await)
-}
-
-/// Delete a citation
-pub async fn wiki_delete_citation_handler(
-    State(state): State<AppState>,
-    Path(citation_id): Path<String>,
-) -> Response {
-    match crate::api::delete_citation(state.db.pool(), citation_id).await {
-        Ok(_) => success_message("Citation deleted"),
-        Err(e) => error_response(e),
-    }
-}
-
 // =============================================================================
 // Wiki Temporal Events API
 // =============================================================================
@@ -2038,15 +2159,6 @@ pub async fn wiki_get_day_streams_handler(
     }
 }
 
-/// Get 2D vector projection of W6H embeddings for a day
-pub async fn wiki_get_day_vectors_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    api_response(
-        crate::api::day_vectors::get_day_vector_projection(state.db.pool(), &date).await,
-    )
-}
 
 // =============================================================================
 // Code Execution API (AI Sandbox)
@@ -2741,6 +2853,25 @@ pub async fn delete_page_handler(
 ) -> Response {
     match crate::api::delete_page(state.db.pool(), &id).await {
         Ok(_) => success_message("Page deleted successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/pages/reflections/:date - Get all reflections for a date
+pub async fn get_reflections_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    api_response(crate::api::get_reflections_for_date(state.db.pool(), &date).await)
+}
+
+/// POST /api/pages/reflections/:date - Create a new reflection for a date
+pub async fn create_reflection_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match crate::api::create_reflection(state.db.pool(), &date, None).await {
+        Ok(page) => (StatusCode::CREATED, Json(page)).into_response(),
         Err(e) => error_response(e),
     }
 }

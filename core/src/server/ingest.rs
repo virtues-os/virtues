@@ -382,24 +382,25 @@ async fn trigger_transforms_for_batch(
     // Create context without data source for transform triggering
     // The create_transform_job_for_stream function will create a new context
     // with the actual MemoryDataSource when executing the transform
-    let api_keys = crate::jobs::ApiKeys::from_env();
+    let api_keys = crate::pipeline::ApiKeys::from_env();
 
-    let context = Arc::new(crate::jobs::TransformContext::new(
+    let context = Arc::new(crate::pipeline::TransformContext::new(
         Arc::clone(&state.storage),
         state.stream_writer.clone(),
         api_keys,
     ));
 
-    let executor = crate::jobs::JobExecutor::new(state.db.pool().clone(), (*context).clone());
+    let executor = crate::pipeline::PipelineExecutor::new(state.db.pool().clone(), (*context).clone());
 
     // Create and execute transform job with in-memory records (hot path)
-    let _job_id = crate::jobs::create_transform_job_for_stream(
+    let _job_id = crate::pipeline::create_transform_job_for_stream(
         state.db.pool(),
         &executor,
         &context,
         source_id.to_string(),
         stream_name,
         Some(records), // Pass collected records for direct transform
+        None,          // No parent run for push ingest
     )
     .await?;
 

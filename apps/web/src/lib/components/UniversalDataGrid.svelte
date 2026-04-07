@@ -87,11 +87,22 @@
 		});
 	});
 
-	// Apply page size limit
-	const displayedItems = $derived(filteredItems.slice(0, pageSize));
+	// Pagination
+	let currentPage = $state(1);
 	const totalCount = $derived(items.length);
 	const filteredCount = $derived(filteredItems.length);
+	const totalPages = $derived(Math.max(1, Math.ceil(filteredCount / pageSize)));
+	const displayedItems = $derived(
+		filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+	);
 	const displayedCount = $derived(displayedItems.length);
+
+	// Reset to page 1 when search or items change
+	$effect(() => {
+		void searchQuery;
+		void items;
+		currentPage = 1;
+	});
 
 	// View mode: 'table' or 'grid' only
 	// Initialize to 'table', then sync from preferences in effect
@@ -152,9 +163,7 @@
 			</div>
 			<span class="item-count">
 				{#if searchQuery && filteredCount !== totalCount}
-					{displayedCount} of {filteredCount} results
-				{:else if displayedCount < totalCount}
-					{displayedCount} of {totalCount}
+					{filteredCount} {filteredCount === 1 ? 'result' : 'results'}
 				{:else}
 					{totalCount} {totalCount === 1 ? 'item' : 'items'}
 				{/if}
@@ -297,6 +306,31 @@
 						{/if}
 					</button>
 				{/each}
+			</div>
+		{/if}
+
+		<!-- Pagination -->
+		{#if totalPages > 1}
+			<div class="pagination">
+				<button
+					class="page-btn"
+					disabled={currentPage <= 1}
+					onclick={() => currentPage--}
+					type="button"
+				>
+					Previous
+				</button>
+				<span class="page-info">
+					{currentPage} / {totalPages}
+				</span>
+				<button
+					class="page-btn"
+					disabled={currentPage >= totalPages}
+					onclick={() => currentPage++}
+					type="button"
+				>
+					Next
+				</button>
 			</div>
 		{/if}
 	{/if}
@@ -510,7 +544,7 @@
 	.data-table {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 	}
 
 	thead tr {
@@ -530,7 +564,7 @@
 	th {
 		text-align: left;
 		font-weight: 500;
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 		padding: 0.625rem 0.75rem;
 		white-space: nowrap;
@@ -598,10 +632,6 @@
 
 	.cell-text {
 		color: var(--color-foreground);
-	}
-
-	td:first-child .cell-text {
-		font-weight: 500;
 	}
 
 	/* ============================================
@@ -715,6 +745,41 @@
 	}
 
 	.empty-cell {
+		color: var(--color-foreground-subtle);
+	}
+
+	/* Pagination */
+	.pagination {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		padding: 0.75rem 0;
+	}
+
+	.page-btn {
+		padding: 0.25rem 0.625rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		background: none;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		cursor: pointer;
+		transition: all 0.1s ease;
+	}
+
+	.page-btn:hover:not(:disabled) {
+		color: var(--color-foreground);
+		border-color: var(--color-border-strong);
+	}
+
+	.page-btn:disabled {
+		opacity: 0.35;
+		cursor: default;
+	}
+
+	.page-info {
+		font-size: 0.75rem;
 		color: var(--color-foreground-subtle);
 	}
 

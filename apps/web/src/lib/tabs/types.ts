@@ -14,13 +14,18 @@ export type TabType =
 	| 'chat-history' // Chat history list: /chat-history
 	| 'page' // User documents: /page, /page/page_{id}
 	| 'wiki' // Wiki overview: /wiki
+	| 'entities' // All entities: /entities
 	| 'person' // Wiki people: /person, /person/person_{id}
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
+	| 'thing' // Wiki things: /thing, /thing/thing_{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
+	| 'tools' // Tools management: /tools
+	| 'actions' // Actions list: /actions
+	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}
 	| 'trash' // Drive trash: /trash
@@ -75,6 +80,10 @@ export function isPlaceTab(tab: Tab): tab is Tab & { type: 'place' } {
 
 export function isOrgTab(tab: Tab): tab is Tab & { type: 'org' } {
 	return tab.type === 'org';
+}
+
+export function isThingTab(tab: Tab): tab is Tab & { type: 'thing' } {
+	return tab.type === 'thing';
 }
 
 export function isDayTab(tab: Tab): tab is Tab & { type: 'day' } {

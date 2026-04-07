@@ -3,11 +3,13 @@
 //! Endpoints for querying available ontology tables based on enabled streams.
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 use std::collections::HashSet;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry;
+use crate::tools::sql_query::convert_rows_to_json;
+use virtues_registry::ontologies::registered_ontologies;
 
 /// List available ontology tables based on enabled streams
 ///
@@ -166,6 +168,216 @@ pub async fn get_ontologies_overview(db: &SqlitePool) -> Result<Vec<OntologyOver
     overviews.sort_by(|a, b| a.domain.cmp(&b.domain).then_with(|| a.name.cmp(&b.name)));
 
     Ok(overviews)
+}
+
+/// Column schema information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnInfo {
+    pub name: String,
+    pub data_type: String,
+    pub is_nullable: bool,
+}
+
+/// Response for ontology data queries
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OntologyDataResponse {
+    pub table_name: String,
+    pub display_name: String,
+    pub domain: String,
+    pub columns: Vec<ColumnInfo>,
+    pub key_columns: Vec<String>,
+    pub timestamp_column: String,
+    pub rows: Vec<serde_json::Value>,
+    pub total_count: i64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// Query parameters for ontology data endpoint
+#[derive(Debug, Deserialize)]
+pub struct OntologyDataQuery {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+    pub sort: Option<String>,
+    pub dir: Option<String>,
+    pub date: Option<String>,
+    pub search: Option<String>,
+}
+
+/// Infrastructure columns hidden from data responses
+const HIDDEN_COLUMNS: &[&str] = &[
+    "source_connection_id",
+    "source_stream_id",
+    "source_table",
+    "source_provider",
+    "deleted_at_source",
+    "is_archived",
+    "metadata",
+    "created_at",
+    "updated_at",
+];
+
+/// Query data from a specific ontology table with optional filtering
+pub async fn query_ontology_data(
+    db: &SqlitePool,
+    table_name: &str,
+    params: &OntologyDataQuery,
+) -> Result<OntologyDataResponse> {
+    // Validate table_name against registered ontologies
+    let ontology = registered_ontologies()
+        .into_iter()
+        .find(|o| o.name == table_name || o.table_name == table_name)
+        .ok_or_else(|| Error::NotFound(format!("Unknown ontology: {}", table_name)))?;
+
+    let full_table_name = ontology.table_name;
+
+    // Get column schema via PRAGMA
+    let pragma_query = format!("PRAGMA table_info({})", full_table_name);
+    let pragma_rows = sqlx::query(&pragma_query).fetch_all(db).await?;
+
+    let all_columns: Vec<ColumnInfo> = pragma_rows
+        .iter()
+        .map(|row| {
+            let name: String = row.get("name");
+            let data_type: String = row.get("type");
+            let notnull: i32 = row.get("notnull");
+            ColumnInfo {
+                name,
+                data_type,
+                is_nullable: notnull == 0,
+            }
+        })
+        .collect();
+
+    // Filter out hidden infrastructure columns for the response
+    let visible_columns: Vec<ColumnInfo> = all_columns
+        .iter()
+        .filter(|c| !HIDDEN_COLUMNS.contains(&c.name.as_str()))
+        .cloned()
+        .collect();
+
+    // Build visible column names for SELECT (include id for frontend keying)
+    let select_cols: Vec<&str> = all_columns
+        .iter()
+        .filter(|c| !HIDDEN_COLUMNS.contains(&c.name.as_str()))
+        .map(|c| c.name.as_str())
+        .collect();
+
+    let select_clause = select_cols.join(", ");
+
+    // Get key_columns from table metadata
+    let key_columns: Vec<String> = crate::tools::sql_query::get_table_metadata_for(full_table_name)
+        .map(|m| m.key_columns.iter().map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+
+    // Build WHERE clause
+    let mut where_clauses = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    // Date filter
+    if let Some(ref date) = params.date {
+        let ts_col = ontology.timestamp_column;
+        if let Some(end_ts) = ontology.end_timestamp_column {
+            // Span events: start on or before end of day, end on or after start of day
+            where_clauses.push(format!(
+                "date({}) <= ?{} AND date({}) >= ?{}",
+                ts_col,
+                bind_values.len() + 1,
+                end_ts,
+                bind_values.len() + 2,
+            ));
+            bind_values.push(date.clone());
+            bind_values.push(date.clone());
+        } else {
+            where_clauses.push(format!(
+                "date({}) = ?{}",
+                ts_col,
+                bind_values.len() + 1
+            ));
+            bind_values.push(date.clone());
+        }
+    }
+
+    // Search filter (LIKE across text key_columns)
+    if let Some(ref search) = params.search {
+        if !search.trim().is_empty() {
+            let search_cols: Vec<&str> = key_columns
+                .iter()
+                .filter(|kc| {
+                    visible_columns
+                        .iter()
+                        .any(|vc| &vc.name == *kc && vc.data_type.to_uppercase().contains("TEXT"))
+                })
+                .map(|s| s.as_str())
+                .collect();
+
+            if !search_cols.is_empty() {
+                let like_clauses: Vec<String> = search_cols
+                    .iter()
+                    .map(|col| {
+                        bind_values.push(format!("%{}%", search.trim()));
+                        format!("{} LIKE ?{}", col, bind_values.len())
+                    })
+                    .collect();
+                where_clauses.push(format!("({})", like_clauses.join(" OR ")));
+            }
+        }
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", where_clauses.join(" AND "))
+    };
+
+    // Sort
+    let sort_col = params
+        .sort
+        .as_deref()
+        .filter(|s| select_cols.contains(s))
+        .unwrap_or(ontology.timestamp_column);
+    let sort_dir = params
+        .dir
+        .as_deref()
+        .filter(|d| *d == "asc" || *d == "desc")
+        .unwrap_or("desc");
+
+    // Pagination
+    let limit = params.limit.unwrap_or(50).min(200);
+    let offset = params.offset.unwrap_or(0);
+
+    // Count query
+    let count_sql = format!("SELECT COUNT(*) FROM {}{}", full_table_name, where_sql);
+    let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
+    for val in &bind_values {
+        count_query = count_query.bind(val);
+    }
+    let total_count = count_query.fetch_one(db).await.unwrap_or(0);
+
+    // Data query
+    let data_sql = format!(
+        "SELECT {} FROM {}{} ORDER BY {} {} LIMIT {} OFFSET {}",
+        select_clause, full_table_name, where_sql, sort_col, sort_dir, limit, offset
+    );
+    let mut data_query = sqlx::query(&data_sql);
+    for val in &bind_values {
+        data_query = data_query.bind(val);
+    }
+    let rows = data_query.fetch_all(db).await?;
+    let json_rows = convert_rows_to_json(&rows);
+
+    Ok(OntologyDataResponse {
+        table_name: ontology.name.to_string(),
+        display_name: ontology.display_name.to_string(),
+        domain: ontology.domain.to_string(),
+        columns: visible_columns,
+        key_columns,
+        timestamp_column: ontology.timestamp_column.to_string(),
+        rows: json_rows,
+        total_count,
+        limit,
+        offset,
+    })
 }
 
 /// Extract domain name from table name
