@@ -247,6 +247,10 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		epigraph: api.epigraph ?? undefined,
 		hasIllustration: api.has_illustration ?? false,
 		dataQuality: api.data_quality ?? undefined,
+		newEntityCount: api.new_entity_count ?? 0,
+		newTopicCount: api.new_topic_count ?? 0,
+		readinessScore: api.readiness_score ?? null,
+		readinessDetails: api.readiness_details ?? null,
 
 		// Metadata
 		citations: [],

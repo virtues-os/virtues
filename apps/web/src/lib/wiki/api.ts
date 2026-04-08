@@ -96,6 +96,10 @@ export interface WikiDayApi {
 		overall: number;
 		note: string;
 	} | null;
+	new_entity_count: number;
+	new_topic_count: number;
+	readiness_score: number | null;
+	readiness_details: { hrv: number; rhr: number; sleep_duration: number; deep_rem: number; consistency: number } | null;
 	created_at: string;
 	updated_at: string;
 }

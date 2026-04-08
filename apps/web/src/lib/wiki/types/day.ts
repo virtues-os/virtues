@@ -234,6 +234,29 @@ export interface DayPage extends WikiPageBase {
 
 	/** W6H data quality assessment — 1-5 per dimension, overall score, and note */
 	dataQuality?: DataQuality;
+
+	/** Count of entities first referenced on this day */
+	newEntityCount: number;
+	/** Count of topics first seen on this day */
+	newTopicCount: number;
+
+	// ─────────────────────────────────────────────────────────────
+	// Readiness (morning autonomic state, 0-100)
+	// ─────────────────────────────────────────────────────────────
+
+	/** Morning readiness score (0-100) from overnight HRV, RHR, sleep */
+	readinessScore: number | null;
+	/** Component breakdown */
+	readinessDetails: ReadinessDetails | null;
+}
+
+/** Readiness score component breakdown (each 0-100) */
+export interface ReadinessDetails {
+	hrv: number;
+	rhr: number;
+	sleep_duration: number;
+	deep_rem: number;
+	consistency: number;
 }
 
 /** LLM-assessed data quality using the W6H journalist framework */

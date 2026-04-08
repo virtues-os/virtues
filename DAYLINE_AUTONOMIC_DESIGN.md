@@ -23,6 +23,26 @@ The dayline has all three. The embedding space IS the activity classifier. "Desi
 
 ---
 
+## The Three Questions
+
+The dayline chart answers three questions about each day, read left to right:
+
+### Q0: "How did I sleep, and how ready am I?"
+
+Sleep architecture (phases, depth, fragmentation) and morning readiness score. The foundation — where the day begins. This is DATA, not a scored signal.
+
+### Q1: "What was different about today?"
+
+The **novelty** signal. Semantic/cognitive unusualness — new people, new places, unusual topics, novel combinations. Z-scored against 12 weeks of personal history using embedding similarity. This is the narrative arc of the day.
+
+### Q2: "How did my body handle it?"
+
+The **autonomic** signal. Physiological response compared to personal baseline for contextually similar events. Z-scored using embedding-weighted HR comparison. This is the physical reality beneath the narrative.
+
+Q1 and Q2 are the two scored signals (±3σ). Q0 is contextual data (sleep phases + readiness score) that frames the scored signals. The relationship between Q1 and Q2 is where the unique insight lives — routine events that stressed you, novel experiences you handled with ease.
+
+---
+
 ## Two Signals, One Chart
 
 ### Novelty (Entropy) — "How unusual is this event's content?"
@@ -162,7 +182,7 @@ HRV (SDNN from Apple Watch) provides additional specificity:
 - HR 78 + depressed HRV = real stress, sympathetic dominant
 - HR 78 + elevated HRV = recovering, parasympathetic rebound
 
-When available, blend: `signal = 0.6 × hr_z + 0.4 × hrv_z_inverted`
+When available, combine using context-gated weighting (see "Context-gated HR/HRV composite" above) — physical activity uses HR only, sedentary/cognitive events weight HRV at 0.7, and sleep uses HRV only.
 
 But HRV is sparse (every 1-3 hours from Apple Watch, requires stillness). For V1, HR-only is correct.
 
@@ -296,7 +316,7 @@ Both HR and HRV are needed for the full picture.
 
 **SDNN from Apple Watch (60-second windows).** Research standard is 5-minute recordings in controlled position. Apple Watch uses ~60s during uncontrolled daily activity. Correlation with clinical devices: r ≈ 0.8-0.9 in controlled conditions, lower during movement. Directionally reliable but noisier than research-grade.
 
-**The 60/40 HR/HRV weighting.** Our composite formula (`0.6 × hrv_z + 0.4 × (-hr_z)`) is a reasonable heuristic but NOT from published research. No validated formula exists for combining HR and HRV into a single "capacity" score. Garmin's Body Battery is the closest analogue and its formula is proprietary. The 60/40 weighting favors HRV because it more directly measures reserve/capacity, while HR partially reflects demand.
+**Context-gated HR/HRV weighting.** Our composite uses context-dependent gating: physical activity = HR only (HRV compresses above ~100bpm), sedentary/cognitive = 0.3×HR + 0.7×HRV (HRV dominates for mental stress, AUC 0.78 vs 0.65), sleep = HRV only (resting HRV is the gold standard for recovery). This is a reasonable heuristic informed by physiological constraints but NOT from a single published formula. No validated universal formula exists for combining HR and HRV into a single "capacity" score. Garmin's Body Battery is the closest analogue and its formula is proprietary.
 
 **Polyvagal theory (Porges).** Influential but contested on anatomical grounds. However, the basic claim that HRV reflects autonomic flexibility does NOT depend on polyvagal theory — it's independently supported by the neurovisceral integration model.
 

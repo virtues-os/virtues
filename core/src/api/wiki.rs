@@ -168,6 +168,14 @@ pub struct WikiDay {
     pub battery_curve: Option<String>,
     pub data_quality: Option<serde_json::Value>,
     pub snapshot: Option<String>,
+    /// Count of entities first referenced on this day
+    pub new_entity_count: i64,
+    /// Count of topics first seen on this day
+    pub new_topic_count: i64,
+    /// Morning readiness score (0-100, from overnight HRV/RHR/sleep)
+    pub readiness_score: Option<i64>,
+    /// JSON breakdown of readiness components
+    pub readiness_details: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -1166,7 +1174,7 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             epigraph, (illustration IS NOT NULL) as has_illustration,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
-            data_quality, snapshot, created_at, updated_at
+            data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
         WHERE date = $1
         "#,
@@ -1177,7 +1185,8 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
     .map_err(|e| Error::Database(format!("Failed to get day: {}", e)))?;
 
     if let Some(row) = existing {
-        return wiki_day_from_row(&row, date);
+        let (ne, nt) = get_day_novelty_counts(pool, &date_str).await?;
+        return wiki_day_from_row_with_counts(&row, date, ne, nt);
     }
 
     // Create new day
@@ -1190,7 +1199,7 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             epigraph, (illustration IS NOT NULL) as has_illustration,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
-            data_quality, snapshot, created_at, updated_at
+            data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         "#,
     )
     .bind(&day_id)
@@ -1204,6 +1213,10 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
 
 /// Parse a WikiDay from a raw SqliteRow
 fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<WikiDay> {
+    wiki_day_from_row_with_counts(row, date, 0, 0)
+}
+
+fn wiki_day_from_row_with_counts(row: &sqlx::sqlite::SqliteRow, date: NaiveDate, new_entity_count: i64, new_topic_count: i64) -> Result<WikiDay> {
     use sqlx::Row;
 
     let id: String = row
@@ -1239,6 +1252,14 @@ fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<W
             .flatten()
             .and_then(|s| serde_json::from_str(&s).ok()),
         snapshot: row.try_get("snapshot").ok().flatten(),
+        new_entity_count,
+        new_topic_count,
+        readiness_score: row.try_get::<Option<i64>, _>("readiness_score").ok().flatten(),
+        readiness_details: row
+            .try_get::<Option<String>, _>("readiness_details")
+            .ok()
+            .flatten()
+            .and_then(|s| serde_json::from_str(&s).ok()),
         created_at: DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1246,6 +1267,52 @@ fn wiki_day_from_row(row: &sqlx::sqlite::SqliteRow, date: NaiveDate) -> Result<W
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
     })
+}
+
+/// Count new entities and new topics for a date.
+/// "New entity" = an entity whose earliest wiki_entity_refs.timestamp falls on this date.
+/// "New topic" = a topic in search_topic_cache whose created_at falls on this date.
+async fn get_day_novelty_counts(pool: &SqlitePool, date_str: &str) -> Result<(i64, i64)> {
+    // New entities: count distinct entity_ids where their earliest ref timestamp is on this date
+    let next_date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+        .map(|d| (d + chrono::Duration::days(1)).format("%Y-%m-%d").to_string())
+        .unwrap_or_default();
+    let new_entities: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(DISTINCT r.entity_id)
+           FROM wiki_entity_refs r
+           WHERE r.timestamp >= $1 || 'T00:00:00Z'
+             AND r.timestamp < $2 || 'T00:00:00Z'
+             AND NOT EXISTS (
+               SELECT 1 FROM wiki_entity_refs r2
+               WHERE r2.entity_id = r.entity_id
+                 AND r2.timestamp < $1 || 'T00:00:00Z'
+             )"#,
+    )
+    .bind(date_str)
+    .bind(&next_date)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    // New topics: count topics from this day's events that don't appear in prior days
+    let new_topics: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(DISTINCT jt.value)
+           FROM wiki_events e, json_each(e.topics) jt
+           WHERE e.day_id = 'day_' || $1
+             AND jt.value != 'sleep'
+             AND NOT EXISTS (
+               SELECT 1 FROM wiki_events e2, json_each(e2.topics) jt2
+               WHERE e2.day_id != e.day_id
+                 AND e2.start_time < e.start_time
+                 AND jt2.value = jt.value
+             )"#,
+    )
+    .bind(date_str)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    Ok((new_entities, new_topics))
 }
 
 /// Update a day
@@ -1311,7 +1378,7 @@ pub async fn list_days(
             id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
             epigraph, (illustration IS NOT NULL) as has_illustration,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
-            data_quality, snapshot, created_at, updated_at
+            data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
         WHERE date >= $1 AND date <= $2
         ORDER BY date DESC

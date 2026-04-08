@@ -520,26 +520,21 @@ else:
     /// Ensure the Morning Examen template action exists. Idempotent.
     /// Created as a user-owned action (not system) so users can customize it.
     /// Disabled by default — user activates it when ready.
+    /// On each startup, refreshes the instruction + activation_code from the
+    /// template registry (preserves user's enabled/schedule/memory settings).
     pub async fn ensure_morning_examen_action(&self) -> Result<()> {
         let action_id = "action_agent_morning_examen";
-
-        if sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = ?)",
-        )
-        .bind(action_id)
-        .fetch_one(&self.db)
-        .await
-        .unwrap_or(false)
-        {
-            return Ok(());
-        }
 
         let template = virtues_registry::get_action_template("morning_examen")
             .expect("morning_examen template must exist in registry");
 
         sqlx::query(
             r#"INSERT INTO app_actions (id, action_type, owner, name, instruction, cron_schedule, enabled, config, activation_code)
-               VALUES (?, 'agent', 'user', ?, ?, ?, 0, '{}', ?)"#,
+               VALUES (?, 'agent', 'user', ?, ?, ?, 0, '{}', ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   instruction = excluded.instruction,
+                   activation_code = excluded.activation_code,
+                   updated_at = datetime('now')"#,
         )
         .bind(action_id)
         .bind(template.name)
@@ -549,7 +544,7 @@ else:
         .execute(&self.db)
         .await?;
 
-        tracing::info!("Seeded morning examen action (disabled by default)");
+        tracing::info!("Seeded morning examen action");
         Ok(())
     }
 
