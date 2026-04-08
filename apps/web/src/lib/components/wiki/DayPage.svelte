@@ -23,11 +23,13 @@
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
+	import DaylineTerrainChart from "./DaylineTerrainChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
 	import DayHeaderPolaroid from "./DayHeaderPolaroid.svelte";
 	import DataQualityCoverage from "./DataQualityCoverage.svelte";
 	import JournalCard from "./JournalCard.svelte";
 	import UniversalDataGrid, { type Column } from "$lib/components/UniversalDataGrid.svelte";
+	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
 
 	import Icon from "$lib/components/Icon.svelte";
 
@@ -430,6 +432,21 @@
 			showSources,
 	);
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Table of contents headings (derived from visible sections)
+	// ─────────────────────────────────────────────────────────────────────────
+	const tocHeadings = $derived.by<TocHeading[]>(() => {
+		const h: TocHeading[] = [];
+		if (showAutobiography) h.push({ id: "summary", text: "The Day", level: 2 });
+		h.push({ id: "dayline", text: "Dayline", level: 2 });
+		if (showTimeline) h.push({ id: "timeline", text: "Event Timeline", level: 2 });
+		if (showMovement) h.push({ id: "movement", text: "Movement", level: 2 });
+		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
+		if (showSources) h.push({ id: "ontologies", text: "Ontologies", level: 2 });
+		h.push({ id: "metadata", text: "Metadata", level: 3 });
+		return h;
+	});
+
 </script>
 
 <div class="day-page-outer">
@@ -443,6 +460,7 @@
 
 	<div class="day-page-layout">
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
+			<div class="day-content-with-toc">
 			<div class="day-content">
 				<!-- Header: title-page layout (illustration → h1 → meta → rule) -->
 				<header class="day-header" bind:this={headerEl}>
@@ -498,7 +516,14 @@
 				<JournalCard date={currentDateSlug} />
 
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
-				<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} />
+				<section class="section" id="dayline">
+					<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} />
+				</section>
+
+				<!-- Experimental: single-line-with-fill terrain chart -->
+				<section class="section" id="dayline-v2">
+					<DaylineTerrainChart />
+				</section>
 
 				{#if hasAnyContent}
 					<!-- Timeline -->
@@ -594,6 +619,14 @@
 							<dd>{dayEvents.length}</dd>
 							<dt>Sources</dt>
 							<dd>{dataSources.length}</dd>
+							<dt>New entities</dt>
+							<dd>{page.newEntityCount}</dd>
+							<dt>New topics</dt>
+							<dd>{page.newTopicCount}</dd>
+							{#if page.readinessScore != null}
+								<dt>Readiness</dt>
+								<dd>{page.readinessScore}%</dd>
+							{/if}
 							<dt>Page ID</dt>
 							<dd class="metadata-mono">{page.id}</dd>
 							{#if page.dataQuality}
@@ -618,6 +651,8 @@
 						{/if}
 					</div>
 				{/if}
+			</div>
+			<TableOfContents headings={tocHeadings} scrollContainer={scrollContainerEl} />
 			</div>
 		</article>
 
@@ -654,9 +689,17 @@
 		display: none;
 	}
 
+	.day-content-with-toc {
+		display: flex;
+		justify-content: center;
+		gap: 2rem;
+		max-width: 68rem;
+		margin: 0 auto;
+	}
+
 	.day-content {
 		max-width: 48rem;
-		margin: 0 auto;
+		width: 100%;
 		padding-top: 2rem;
 		padding-bottom: 4rem;
 	}
@@ -809,7 +852,7 @@
 	/* Sections */
 	.section {
 		position: relative;
-		margin-bottom: 2rem;
+		margin-bottom: 3.5rem;
 	}
 
 	.section-title {

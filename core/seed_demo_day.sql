@@ -9,7 +9,7 @@
 --   1. data_location_visit       (10 visits — office split AM/PM, home return, Lady Bird Lake)
 --   2. wiki_days                 (3 — primary day + 2 adjacent for cross-day scoring)
 --   3. wiki_events               (24 — 13 for Feb 13, 6 for Feb 12, 5 for Feb 14)
---   4. data_health_sleep         (3 sleep records)
+--   4. data_health_sleep         (4 sleep records with phase-level stages)
 --   5. data_calendar_event       (5 calendar events)
 --   6. data_communication_message (9 Slack + text messages)
 --   7. data_activity_app_usage   (9 app sessions)
@@ -152,6 +152,11 @@ A quick run along the Mueller trails cleared her head.',
 
 -- Data quality for primary demo day
 UPDATE wiki_days SET data_quality = '{"coverage":{"who":4,"whom":3,"what":4,"when":5,"where":5,"why":1,"how":3},"overall":3,"note":"Rich location and scheduling data. No reflective or motivational signal — consider journaling."}' WHERE date = '2026-02-13';
+
+-- Readiness scores (0-100, computed from overnight HRV/RHR/sleep)
+UPDATE wiki_days SET readiness_score = 68, readiness_details = '{"hrv":62,"rhr":72,"sleep_duration":78,"deep_rem":55,"consistency":70}' WHERE date = '2026-02-13';
+UPDATE wiki_days SET readiness_score = 82, readiness_details = '{"hrv":85,"rhr":80,"sleep_duration":90,"deep_rem":75,"consistency":78}' WHERE date = '2026-02-12';
+UPDATE wiki_days SET readiness_score = 59, readiness_details = '{"hrv":50,"rhr":65,"sleep_duration":72,"deep_rem":42,"consistency":60}' WHERE date = '2026-02-14';
 
 -- Adjacent day: Feb 12 (routine Thursday — for cross-day comparison)
 INSERT OR IGNORE INTO wiki_days (
@@ -519,37 +524,144 @@ INSERT OR IGNORE INTO wiki_events (
 -- 6a. SLEEP (data_health_sleep)
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- Feb 12-13 overnight sleep
+-- Feb 12-13 overnight sleep (7pm-midnight CST = 01:00-06:00 UTC Feb 13, 5 hours — short night)
+-- 3 compressed cycles: heavy deep early, truncated final REM
 INSERT OR IGNORE INTO data_health_sleep (
     id, start_time, end_time, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'sleep_demo_feb12', '2026-02-12T06:00:00Z', '2026-02-12T13:00:00Z', 420, 0.82,
-    '{"deep": 95, "light": 180, "rem": 90, "awake": 55}',
+    'sleep_demo_feb12', '2026-02-13T01:00:00Z', '2026-02-13T06:00:00Z', 300, 0.62,
+    '[
+        {"stage": "awake",       "start": "2026-02-13T01:00:00Z", "end": "2026-02-13T01:08:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T01:08:00Z", "end": "2026-02-13T01:30:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T01:30:00Z", "end": "2026-02-13T02:05:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T02:05:00Z", "end": "2026-02-13T02:20:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T02:20:00Z", "end": "2026-02-13T02:28:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T02:28:00Z", "end": "2026-02-13T02:30:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T02:30:00Z", "end": "2026-02-13T02:55:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T02:55:00Z", "end": "2026-02-13T03:20:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T03:20:00Z", "end": "2026-02-13T03:35:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T03:35:00Z", "end": "2026-02-13T03:50:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T03:50:00Z", "end": "2026-02-13T03:52:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T03:52:00Z", "end": "2026-02-13T04:20:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T04:20:00Z", "end": "2026-02-13T04:35:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T04:35:00Z", "end": "2026-02-13T04:50:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T04:50:00Z", "end": "2026-02-13T05:05:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T05:05:00Z", "end": "2026-02-13T05:40:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T05:40:00Z", "end": "2026-02-13T05:52:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T05:52:00Z", "end": "2026-02-13T06:00:00Z"}
+    ]',
     'demo_sleep_001', 'data_health_sleep', 'demo'
 );
 
--- Feb 13 overnight sleep (midnight-6:30am CST = 06:00-12:30 UTC)
+-- Feb 13 overnight sleep (midnight-6:30am CST = 06:00-12:30 UTC, 6.5 hours)
+-- 4 full cycles: good deep in first two, increasing REM
 INSERT OR IGNORE INTO data_health_sleep (
     id, start_time, end_time, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
     'sleep_demo_feb13', '2026-02-13T06:00:00Z', '2026-02-13T12:30:00Z', 390, 0.78,
-    '{"deep": 80, "light": 170, "rem": 85, "awake": 55}',
+    '[
+        {"stage": "awake",       "start": "2026-02-13T06:00:00Z", "end": "2026-02-13T06:10:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T06:10:00Z", "end": "2026-02-13T06:35:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T06:35:00Z", "end": "2026-02-13T07:10:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T07:10:00Z", "end": "2026-02-13T07:25:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T07:25:00Z", "end": "2026-02-13T07:32:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T07:32:00Z", "end": "2026-02-13T07:34:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T07:34:00Z", "end": "2026-02-13T08:00:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T08:00:00Z", "end": "2026-02-13T08:30:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T08:30:00Z", "end": "2026-02-13T08:45:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T08:45:00Z", "end": "2026-02-13T09:00:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T09:00:00Z", "end": "2026-02-13T09:03:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T09:03:00Z", "end": "2026-02-13T09:30:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T09:30:00Z", "end": "2026-02-13T09:45:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T09:45:00Z", "end": "2026-02-13T10:05:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T10:05:00Z", "end": "2026-02-13T10:25:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T10:25:00Z", "end": "2026-02-13T10:27:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T10:27:00Z", "end": "2026-02-13T10:55:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-13T10:55:00Z", "end": "2026-02-13T11:05:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T11:05:00Z", "end": "2026-02-13T11:20:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-13T11:20:00Z", "end": "2026-02-13T11:50:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-13T11:50:00Z", "end": "2026-02-13T12:15:00Z"},
+        {"stage": "awake",       "start": "2026-02-13T12:15:00Z", "end": "2026-02-13T12:30:00Z"}
+    ]',
     'demo_sleep_002', 'data_health_sleep', 'demo'
 );
 
--- Feb 14 overnight sleep (late night after game night — shorter)
+-- Feb 14 overnight sleep (midnight-6:30am CST = 06:00-12:30 UTC, 6.5 hours — after game night)
+-- 4 cycles: slightly less deep sleep due to late alcohol, more fragmented
 INSERT OR IGNORE INTO data_health_sleep (
     id, start_time, end_time, duration_minutes, sleep_quality_score,
     sleep_stages,
     source_stream_id, source_table, source_provider
 ) VALUES (
-    'sleep_demo_feb14', '2026-02-14T06:00:00Z', '2026-02-14T12:30:00Z', 390, 0.75,
-    '{"deep": 70, "light": 185, "rem": 75, "awake": 60}',
+    'sleep_demo_feb14', '2026-02-14T06:00:00Z', '2026-02-14T12:30:00Z', 390, 0.71,
+    '[
+        {"stage": "awake",       "start": "2026-02-14T06:00:00Z", "end": "2026-02-14T06:12:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T06:12:00Z", "end": "2026-02-14T06:40:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-14T06:40:00Z", "end": "2026-02-14T07:10:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T07:10:00Z", "end": "2026-02-14T07:30:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-14T07:30:00Z", "end": "2026-02-14T07:35:00Z"},
+        {"stage": "awake",       "start": "2026-02-14T07:35:00Z", "end": "2026-02-14T07:38:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T07:38:00Z", "end": "2026-02-14T08:05:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-14T08:05:00Z", "end": "2026-02-14T08:30:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T08:30:00Z", "end": "2026-02-14T08:50:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-14T08:50:00Z", "end": "2026-02-14T09:02:00Z"},
+        {"stage": "awake",       "start": "2026-02-14T09:02:00Z", "end": "2026-02-14T09:06:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T09:06:00Z", "end": "2026-02-14T09:35:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-14T09:35:00Z", "end": "2026-02-14T09:45:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T09:45:00Z", "end": "2026-02-14T10:05:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-14T10:05:00Z", "end": "2026-02-14T10:20:00Z"},
+        {"stage": "awake",       "start": "2026-02-14T10:20:00Z", "end": "2026-02-14T10:23:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T10:23:00Z", "end": "2026-02-14T10:50:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T10:50:00Z", "end": "2026-02-14T11:10:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-14T11:10:00Z", "end": "2026-02-14T11:40:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T11:40:00Z", "end": "2026-02-14T12:10:00Z"},
+        {"stage": "awake",       "start": "2026-02-14T12:10:00Z", "end": "2026-02-14T12:30:00Z"}
+    ]',
     'demo_sleep_003', 'data_health_sleep', 'demo'
+);
+
+-- Feb 14-15 overnight sleep (3pm CST Sat = 21:00 UTC to midnight CST Sun = 06:00 UTC, 9 hours — recovery)
+-- 5 full cycles: excellent deep sleep early, long REM later, well-rested
+INSERT OR IGNORE INTO data_health_sleep (
+    id, start_time, end_time, duration_minutes, sleep_quality_score,
+    sleep_stages,
+    source_stream_id, source_table, source_provider
+) VALUES (
+    'sleep_demo_feb14_night', '2026-02-14T21:00:00Z', '2026-02-15T06:00:00Z', 540, 0.91,
+    '[
+        {"stage": "awake",       "start": "2026-02-14T21:00:00Z", "end": "2026-02-14T21:07:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T21:07:00Z", "end": "2026-02-14T21:30:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-14T21:30:00Z", "end": "2026-02-14T22:10:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T22:10:00Z", "end": "2026-02-14T22:25:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-14T22:25:00Z", "end": "2026-02-14T22:32:00Z"},
+        {"stage": "awake",       "start": "2026-02-14T22:32:00Z", "end": "2026-02-14T22:34:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T22:34:00Z", "end": "2026-02-14T23:00:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-14T23:00:00Z", "end": "2026-02-14T23:35:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-14T23:35:00Z", "end": "2026-02-14T23:50:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-14T23:50:00Z", "end": "2026-02-15T00:05:00Z"},
+        {"stage": "awake",       "start": "2026-02-15T00:05:00Z", "end": "2026-02-15T00:07:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T00:07:00Z", "end": "2026-02-15T00:35:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-15T00:35:00Z", "end": "2026-02-15T00:55:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T00:55:00Z", "end": "2026-02-15T01:15:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-15T01:15:00Z", "end": "2026-02-15T01:40:00Z"},
+        {"stage": "awake",       "start": "2026-02-15T01:40:00Z", "end": "2026-02-15T01:42:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T01:42:00Z", "end": "2026-02-15T02:10:00Z"},
+        {"stage": "asleep_deep", "start": "2026-02-15T02:10:00Z", "end": "2026-02-15T02:22:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T02:22:00Z", "end": "2026-02-15T02:45:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-15T02:45:00Z", "end": "2026-02-15T03:15:00Z"},
+        {"stage": "awake",       "start": "2026-02-15T03:15:00Z", "end": "2026-02-15T03:16:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T03:16:00Z", "end": "2026-02-15T03:45:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T03:45:00Z", "end": "2026-02-15T04:10:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-15T04:10:00Z", "end": "2026-02-15T04:45:00Z"},
+        {"stage": "asleep_core", "start": "2026-02-15T04:45:00Z", "end": "2026-02-15T05:30:00Z"},
+        {"stage": "asleep_rem",  "start": "2026-02-15T05:30:00Z", "end": "2026-02-15T05:50:00Z"},
+        {"stage": "awake",       "start": "2026-02-15T05:50:00Z", "end": "2026-02-15T06:00:00Z"}
+    ]',
+    'demo_sleep_004', 'data_health_sleep', 'demo'
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────

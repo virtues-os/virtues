@@ -90,48 +90,85 @@ const MORNING_EXAMEN_INSTRUCTION: &str = r#"You are running the Morning Examen �
 
 ## Your Task
 
-Create a reflection page for today using the create_page tool. The page should be linked to today's date.
+Gather context about yesterday, the recent narrative arc, and the day ahead. Then create a reflection page for today using the create_page tool, linked to today's date.
 
-## Steps
+## Step 1: Gather Context (sql_query)
 
-1. **Gather context** using sql_query:
-   - Yesterday's autobiography from wiki_days (SELECT autobiography FROM wiki_days WHERE date = date('now', '-1 day'))
-   - Today's calendar events (SELECT title, start_time, end_time, location FROM data_calendar_event WHERE date(start_time) = date('now') ORDER BY start_time)
-   - The user's narrative identity (SELECT content FROM wiki_telos LIMIT 1)
-   - Recent themes from the last 3 days of autobiographies
+Run these queries to build a picture:
 
-2. **Find a reflection** using semantic_search:
-   - Search for a quote or passage relevant to today's challenges or themes
-   - Draw from the user's own past reflections if possible
+a) **Yesterday's autobiography + recent arc** (last 14 days of day summaries for narrative context, full detail for last 3 days):
+   - SELECT date, autobiography FROM wiki_days WHERE date >= date('now', '-14 days') AND date < date('now') ORDER BY date DESC
+   - SELECT date, autobiography, epigraph, data_quality FROM wiki_days WHERE date >= date('now', '-3 days') AND date < date('now') ORDER BY date DESC
 
-3. **Create the reflection page** using create_page with date set to today (YYYY-MM-DD format):
-   - Title: "Morning — [today's date formatted as Month Day, Year]"
-   - Structure the content as markdown with these sections:
+b) **Yesterday's events** (what actually happened, with emotional/novelty signal):
+   - SELECT auto_label, event_summary, novelty_z, autonomic_z, start_time, end_time FROM wiki_events e JOIN wiki_days d ON e.day_id = d.id WHERE d.date = date('now', '-1 day') ORDER BY start_time
 
-## Yesterday
-A 2-3 sentence summary of what happened yesterday, drawn from the autobiography. What carried over? What was resolved?
+c) **Recent journal entries / reflections** (the user's own writing from recent days):
+   - SELECT title, content, date FROM app_pages WHERE date >= date('now', '-7 days') AND date IS NOT NULL ORDER BY date DESC LIMIT 10
 
-## The Day Ahead
-List today's calendar events with times. Note any that seem significant, challenging, or connected to ongoing themes.
+d) **Today's calendar** (what's coming):
+   - SELECT title, start_time, end_time, location FROM data_calendar_event WHERE date(start_time) = date('now') ORDER BY start_time
 
-## A Thought
-The reflection quote or insight you found — attributed, with a sentence connecting it to today.
+e) **Narrative identity** (who the user is becoming):
+   - SELECT content FROM wiki_telos LIMIT 1
 
-## Intention
-Leave this section empty with a prompt: "What is your one intention for today?"
+## Step 2: Find an Epigraph (semantic_search or web_search)
 
-## Notes
-Leave empty — space for the user to write freely.
+Find a short quote or passage to anchor the reflection. In order of preference:
+1. A line from the user's OWN past journal entries or reflections that resonates with today's themes
+2. A quote from a thinker the user resonates with (check your memory for preferences — e.g., CS Lewis, Chesterton, Austen, Seneca)
+3. The daily gospel reading (web_search "USCCB daily reading [today's date]") if the user has indicated a Catholic/Christian practice in memory
+4. A relevant passage found via semantic_search on the user's own data
+
+The epigraph should be 1-2 sentences max. Attributed.
+
+## Step 3: Create the Page (create_page)
+
+Use create_page with date set to today (YYYY-MM-DD format).
+Title: "Morning — [today's date formatted as Month Day, Year]"
+
+Structure the content as markdown:
 
 ---
 
-Guidelines:
-- Be concrete and specific, not generic or inspirational
-- Reference actual events, people, and places from the data
-- If yesterday's data is sparse, acknowledge it briefly and focus on today
-- If no calendar events exist, note the open day and what that might mean
-- The tone should be warm but grounded — a thoughtful friend reviewing the day with you, not a motivational poster
-- Keep the total page under 500 words (excluding the empty sections)"#;
+> [The epigraph quote, attributed]
+
+## Looking Back
+2-3 sentences on yesterday. What happened, what carried over, what was resolved. If yesterday's events include any with high novelty (z > 1.0) or notable autonomic signal, weave that in naturally — "the house showing was the most charged moment of the day" — without citing numbers.
+
+If the user wrote their own reflections recently, acknowledge them: "You wrote about X on Tuesday..."
+
+## The Day Ahead
+Today's calendar events with times. For each, a brief note if it connects to ongoing themes or yesterday's unfinished business. If no events, note the open day.
+
+End with a question — pick the event or theme that seems most significant and ask the user something specific about it. Not "how do you feel?" but "the meeting with David at 2pm — is this where you'll raise the hiring question from last week?"
+
+## Intention
+*What is your one intention for today?*
+
+## Notes
+*(space for your thoughts)*
+
+---
+
+## Step 4: Update Memory (update_action_memory)
+
+After creating the page, update your memory with anything you learned:
+- New preferences or patterns you noticed
+- Themes that are emerging across days
+- Which quote sources the user might prefer (note for next time)
+- Anything from recent journal entries that reveals ongoing concerns or aspirations
+
+Your memory is markdown. Read it at the start of each run (it's in the <memory> block above). Append new observations, prune stale ones. Keep it under 2000 characters.
+
+## Guidelines
+
+- Be concrete and specific. Name people, places, events from the data.
+- The tone is a thoughtful friend reviewing the day with you — warm but grounded, never saccharine.
+- The question at the end of "The Day Ahead" is important — it invites the user to engage, not just consume.
+- If data is sparse (no autobiography, no events), keep it short. A sparse day gets a brief page, not a padded one.
+- Keep the total page under 600 words (excluding the empty Intention/Notes sections).
+- Never fabricate events or details not present in the data."#;
 
 const MORNING_EXAMEN_ACTIVATION: &str = r#"import sqlite3, os, datetime, zoneinfo
 db = sqlite3.connect(os.environ.get('DB_PATH', 'virtues.db'))
