@@ -58,6 +58,100 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             commands::handle_tunnel_command(virtues).await?;
         }
 
+        Commands::ResolveEntities { hours } => {
+            use crate::entity_resolution::{self, TimeWindow};
+            println!("Running entity resolution for last {hours} hours...");
+            let window = TimeWindow::from_lookback_hours(hours);
+            println!("  window: {} → {}", window.start, window.end);
+            let stats = entity_resolution::resolve_entities(&virtues.database, window).await?;
+            println!();
+            println!("✅ Resolution complete");
+            println!("   places_resolved: {}", stats.places_resolved);
+            println!("   people_resolved: {}", stats.people_resolved);
+            println!("   duration:        {}ms", stats.duration_ms);
+        }
+
+        Commands::VerifyTokens { bearer } => {
+            use crate::sources::base::TokenEncryptor;
+            println!("Loading encryptor from VIRTUES_ENCRYPTION_KEY...");
+            let encryptor = match TokenEncryptor::from_env() {
+                Ok(e) => {
+                    println!("  ✓ encryptor loaded");
+                    e
+                }
+                Err(e) => {
+                    println!("  ✗ FAILED: {e}");
+                    return Ok(());
+                }
+            };
+            println!();
+
+            let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+                "SELECT id, device_id, device_token FROM elt_source_connections WHERE source='ios'",
+            )
+            .fetch_all(virtues.database.pool())
+            .await?;
+
+            println!("Found {} iOS row(s) in elt_source_connections:", rows.len());
+            for (id, device_id, encrypted_token) in &rows {
+                println!();
+                println!("  id={id}");
+                println!("  device_id={device_id}");
+                let Some(enc) = encrypted_token else {
+                    println!("  device_token: NULL");
+                    continue;
+                };
+                println!("  encrypted_token (len={}): {}...", enc.len(), &enc[..enc.len().min(20)]);
+                match encryptor.decrypt(enc) {
+                    Ok(plaintext) => {
+                        println!("  ✓ DECRYPT OK → '{plaintext}'");
+                        if let Some(bearer) = &bearer {
+                            if &plaintext == bearer {
+                                println!("  ✓ MATCHES bearer");
+                            } else {
+                                println!("  ✗ does NOT match bearer ('{bearer}')");
+                                println!("    plaintext bytes: {:?}", plaintext.as_bytes());
+                                println!("    bearer bytes:    {:?}", bearer.as_bytes());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("  ✗ DECRYPT FAILED: {e}");
+                    }
+                }
+            }
+        }
+
+        Commands::PairIos { device_id, name } => {
+            // Make sure the schema is in place before we touch it
+            println!("Running migrations...");
+            virtues.database.initialize().await?;
+
+            println!("Pairing iOS device {device_id} as '{name}'...");
+            let completed = crate::api::link_device_manually(
+                virtues.database.pool(),
+                &device_id,
+                &name,
+                "ios",
+            )
+            .await?;
+
+            println!();
+            println!("✅ Paired");
+            println!("   source_id (= credential_id):  {}", completed.source_id);
+            println!("   device_token:                 {}", completed.device_token);
+            println!();
+            println!("Verify the rows:");
+            println!(
+                "  sqlite3 core/data/virtues.db \"SELECT id, provider FROM action_credentials WHERE id='{}';\"",
+                completed.source_id
+            );
+            println!(
+                "  sqlite3 core/data/virtues.db \"SELECT function_name, credential_id FROM app_actions WHERE credential_id='{}';\"",
+                completed.source_id
+            );
+        }
+
         Commands::WarmModels => {
             unreachable!("WarmModels command should be handled in main.rs");
         }
@@ -122,6 +216,93 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             }
 
             println!("Topic/entity novelty: {} events updated.", total_te);
+        }
+
+        Commands::DaySummary { date } => {
+            println!("Running migrations...");
+            virtues.database.initialize().await?;
+
+            let pool = virtues.database.pool();
+
+            // Resolve target date: explicit --date, or "today" in the user's profile tz.
+            let target_date: chrono::NaiveDate = match date {
+                Some(s) => s
+                    .parse::<chrono::NaiveDate>()
+                    .map_err(|e| format!("Invalid --date '{s}': {e}"))?,
+                None => {
+                    let tz_str = crate::api::profile::get_timezone(pool).await.ok().flatten();
+                    if let Some(tz_name) = tz_str.as_deref() {
+                        match tz_name.parse::<chrono_tz::Tz>() {
+                            Ok(tz) => chrono::Utc::now().with_timezone(&tz).date_naive(),
+                            Err(_) => chrono::Local::now().date_naive(),
+                        }
+                    } else {
+                        chrono::Local::now().date_naive()
+                    }
+                }
+            };
+
+            // Resolve timezone for display formatting (events stored in UTC).
+            let tz_for_display: Option<chrono_tz::Tz> = crate::api::profile::get_timezone(pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok());
+
+            println!("Generating day summary for {target_date}...");
+            let day = crate::api::day_summary::generate_day_summary(pool, target_date).await?;
+
+            println!();
+            println!("✅ Day summary written to wiki_days id={}", day.id);
+            if let Some(epigraph) = &day.epigraph {
+                println!();
+                println!("Epigraph:");
+                println!("  {epigraph}");
+            }
+            if let Some(autobio) = &day.autobiography {
+                println!();
+                println!("Autobiography:");
+                for line in autobio.lines() {
+                    println!("  {line}");
+                }
+            }
+            if let Some(dq) = &day.data_quality {
+                println!();
+                println!("Data quality: {dq}");
+            }
+
+            // Show events that were created
+            let events = crate::api::wiki::get_day_events(pool, day.id.clone()).await?;
+            println!();
+            println!("Events ({}):", events.len());
+            for ev in &events {
+                let label = ev
+                    .auto_label
+                    .as_deref()
+                    .or(ev.user_label.as_deref())
+                    .unwrap_or("(no label)");
+                let loc = ev
+                    .auto_location
+                    .as_deref()
+                    .or(ev.user_location.as_deref())
+                    .map(|l| format!(" @ {l}"))
+                    .unwrap_or_default();
+                let (start_fmt, end_fmt) = if let Some(tz) = tz_for_display {
+                    (
+                        ev.start_time.with_timezone(&tz).format("%H:%M").to_string(),
+                        ev.end_time.with_timezone(&tz).format("%H:%M").to_string(),
+                    )
+                } else {
+                    (
+                        ev.start_time.format("%H:%M").to_string(),
+                        ev.end_time.format("%H:%M").to_string(),
+                    )
+                };
+                println!("  {start_fmt} → {end_fmt}  {label}{loc}");
+                if let Some(summary) = ev.event_summary.as_ref().filter(|s| !s.trim().is_empty()) {
+                    println!("                  {summary}");
+                }
+            }
         }
 
         Commands::ComputeAutonomic => {

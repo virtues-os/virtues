@@ -100,6 +100,13 @@ export interface WikiDayApi {
 	new_topic_count: number;
 	readiness_score: number | null;
 	readiness_details: { hrv: number; rhr: number; sleep_duration: number; deep_rem: number; consistency: number } | null;
+	sleep_cycles: Array<{
+		start_time: string;
+		end_time: string;
+		dominant_stage: string;
+		avg_hr: number | null;
+		autonomic_z: number | null;
+	}>;
 	created_at: string;
 	updated_at: string;
 }
@@ -682,6 +689,79 @@ export async function getDaySources(
 ): Promise<DaySourceApi[]> {
 	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/sources`);
 	if (!res.ok) return [];
+	return res.json();
+}
+
+// ============================================================================
+// Timeline Day View (chunked location/transit/missing-data stream)
+// ============================================================================
+
+export interface TimelineDayLocationChunk {
+	type: "location";
+	start_time: string;
+	end_time: string;
+	place_name: string | null;
+	latitude: number;
+	longitude: number;
+	place_id: string | null;
+	duration_minutes: number | null;
+	place_category: string | null;
+}
+
+export type TimelineDayChunk =
+	| TimelineDayLocationChunk
+	| { type: "transit" }
+	| { type: "missing_data" };
+
+export interface TimelineDayPoint {
+	latitude: number;
+	longitude: number;
+	timestamp: string;
+}
+
+export interface TimelineDayView {
+	date: string;
+	chunks: TimelineDayChunk[];
+	points: TimelineDayPoint[];
+}
+
+// ============================================================================
+// Day Chats (in-app Virtues + external AI conversations)
+// ============================================================================
+
+export interface DayChatApi {
+	id: string;
+	source: "virtues" | "external";
+	provider: string | null;
+	title: string;
+	message_count: number;
+	started_at: string;
+}
+
+/**
+ * Get all AI chats (in-app Virtues + external imported) that started on a day.
+ * In-app chats are navigable; external chats are display-only.
+ * @param date - The date in YYYY-MM-DD format
+ */
+export async function getDayChats(
+	date: string,
+	fetchFn: FetchFn = fetch,
+): Promise<DayChatApi[]> {
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/chats`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/**
+ * Get the chunked timeline view for a day (location stops, transit, gaps).
+ * @param date - The date in YYYY-MM-DD format
+ */
+export async function getDayTimeline(
+	date: string,
+	fetchFn: FetchFn = fetch,
+): Promise<TimelineDayView | null> {
+	const res = await fetchFn(`/api/timeline/day/${encodeURIComponent(date)}`);
+	if (!res.ok) return null;
 	return res.json();
 }
 

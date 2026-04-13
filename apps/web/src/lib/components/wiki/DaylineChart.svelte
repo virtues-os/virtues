@@ -13,16 +13,17 @@
 	import { onMount, onDestroy } from "svelte";
 	import { browser } from "$app/environment";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
-	import type { DayEvent } from "$lib/wiki/types";
+	import type { DayEvent, ScoredSleepCycle } from "$lib/wiki/types";
 
 	interface Props {
 		events: DayEvent[];
 		timezone: string | null;
 		pageDate?: Date;
 		readinessScore?: number | null;
+		sleepCycles?: ScoredSleepCycle[];
 	}
 
-	let { events, timezone, pageDate, readinessScore }: Props = $props();
+	let { events, timezone, pageDate, readinessScore, sleepCycles = [] }: Props = $props();
 
 	// ── Live clock (updates every second for the "now" marker) ──
 	let nowTime = $state(new Date());
@@ -122,10 +123,11 @@
 	interface EventPoint {
 		id: string;
 		x: number; // SVG x coordinate
-		y: number; // SVG y coordinate (novelty)
+		y: number; // SVG y coordinate (novelty, or autonomicZ for sleep)
 		autonomicY: number | null; // SVG y coordinate (autonomic, null if no data)
 		noveltyZ: number;
 		autonomicZ: number | null;
+		isSleep: boolean;
 		label: string;
 		startHour: number;
 		endHour: number;
@@ -134,9 +136,9 @@
 	}
 
 	const eventPoints = $derived<EventPoint[]>(() => {
-		// Include all non-sleep, non-hidden events (including unknown)
+		// Exclude sleep and hidden from the novelty curve — sleep only appears on autonomic
 		const sorted = events
-			.filter((e) => !e.isSleep && !e.userHidden)
+			.filter((e) => !e.userHidden && !e.isSleep)
 			.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
 
 		// First pass: create points with raw noveltyZ (null for unknown)
@@ -188,6 +190,7 @@
 				id: e.id,
 				noveltyZ: isUnknown ? null : (e.noveltyZ ?? 0),
 				autonomicZ: isUnknown ? null : (e.autonomicZ ?? null),
+				isSleep: false,
 				label: isUnknown ? "Unknown" : (e.eventSummary ?? e.autoLabel),
 				startHour,
 				endHour,
@@ -207,7 +210,7 @@
 				let prev = 0;
 				for (let j = i - 1; j >= 0; j--) {
 					if (raw[j].noveltyZ !== null) {
-						prev = raw[j].noveltyZ;
+						prev = raw[j].noveltyZ!;
 						break;
 					}
 				}
@@ -215,7 +218,7 @@
 				let next = 0;
 				for (let j = i + 1; j < raw.length; j++) {
 					if (raw[j].noveltyZ !== null) {
-						next = raw[j].noveltyZ;
+						next = raw[j].noveltyZ!;
 						break;
 					}
 				}
@@ -229,6 +232,7 @@
 				autonomicY: p.autonomicZ !== null ? yToSvg(p.autonomicZ) : null,
 				noveltyZ: nz,
 				autonomicZ: p.autonomicZ,
+				isSleep: p.isSleep,
 				label: p.label,
 				startHour: p.startHour,
 				endHour: p.endHour,
@@ -321,73 +325,6 @@
 		});
 	});
 
-	// ── Sleep phase curve ────────────────────────────────────────
-	// Generate plausible sleep cycles from sleep event time range.
-	// Maps stages to Y: deep=-2σ, light=-0.8σ, rem=-0.3σ, awake=+0.3σ
-	const STAGE_Y: Record<string, number> = { deep: -2.0, light: -0.8, rem: -0.3, awake: 0.3 };
-
-	interface SleepPoint { x: number; y: number; stage: string; hour: number; }
-
-	const sleepCurveData = $derived(() => {
-		const sleepEvent = events.find((e) => e.isSleep);
-		if (!sleepEvent) return { points: [] as SleepPoint[], path: "" };
-
-		const startHour = getHourOfDay(sleepEvent.startTime);
-		const endHour = getHourOfDay(sleepEvent.endTime);
-		const durationHours = endHour > startHour ? endHour - startHour : endHour + 24 - startHour;
-		const cycleCount = Math.max(2, Math.round(durationHours / 1.5));
-
-		// Generate phases: each cycle = light → deep → light → REM, with brief awake between cycles
-		const phases: { start: number; end: number; stage: string }[] = [];
-		let cursor = startHour;
-		for (let c = 0; c < cycleCount; c++) {
-			const cycleLen = durationHours / cycleCount;
-			const deepLen = Math.max(0.1, (0.35 - c * 0.07) * cycleLen);  // deep decreases
-			const remLen = Math.max(0.08, (0.1 + c * 0.06) * cycleLen);   // REM increases
-			const lightLen = cycleLen - deepLen - remLen - (c > 0 ? 0.05 : 0);
-
-			if (c > 0) { phases.push({ start: cursor, end: cursor + 0.05, stage: "awake" }); cursor += 0.05; }
-			phases.push({ start: cursor, end: cursor + lightLen * 0.5, stage: "light" }); cursor += lightLen * 0.5;
-			phases.push({ start: cursor, end: cursor + deepLen, stage: "deep" }); cursor += deepLen;
-			phases.push({ start: cursor, end: cursor + lightLen * 0.5, stage: "light" }); cursor += lightLen * 0.5;
-			phases.push({ start: cursor, end: cursor + remLen, stage: "rem" }); cursor += remLen;
-		}
-		// Final wake
-		if (cursor < endHour) phases.push({ start: cursor, end: endHour, stage: "awake" });
-
-		// Build points (sample at phase starts + midpoints for smoothness)
-		const points: SleepPoint[] = [];
-		for (const phase of phases) {
-			const stageZ = STAGE_Y[phase.stage] ?? 0;
-			points.push({ x: hourToX(phase.start), y: yToSvg(stageZ), stage: phase.stage, hour: phase.start });
-			if (phase.end - phase.start > 0.3) {
-				const mid = (phase.start + phase.end) / 2;
-				points.push({ x: hourToX(mid), y: yToSvg(stageZ), stage: phase.stage, hour: mid });
-			}
-		}
-
-		// Add readiness point at wake time to connect sleep → waking curves
-		const rZ = readinessScore != null ? ((readinessScore - 50) / 50) * Y_MAX : 0;
-		points.push({ x: hourToX(endHour), y: yToSvg(rZ), stage: "wake", hour: endHour });
-
-		// Build SVG path using cubic bezier
-		if (points.length < 2) return { points, path: "" };
-		const tan = points.map((_, i) => {
-			if (points.length < 2) return { tx: 0, ty: 0 };
-			if (i === 0) return { tx: points[1].x - points[0].x, ty: points[1].y - points[0].y };
-			if (i === points.length - 1) return { tx: points[i].x - points[i - 1].x, ty: points[i].y - points[i - 1].y };
-			return { tx: (points[i + 1].x - points[i - 1].x) / 2, ty: (points[i + 1].y - points[i - 1].y) / 2 };
-		});
-		const TENSION = 1 / 3;
-		let d = `M ${points[0].x},${points[0].y}`;
-		for (let i = 0; i < points.length - 1; i++) {
-			const a = points[i], b = points[i + 1];
-			d += ` C ${a.x + tan[i].tx * TENSION},${a.y + tan[i].ty * TENSION} ${b.x - tan[i + 1].tx * TENSION},${b.y - tan[i + 1].ty * TENSION} ${b.x},${b.y}`;
-		}
-
-		return { points, path: d, phases };
-	});
-
 	// ── Curve helpers ──────────────────────────────────────────
 	// All chart points: readiness anchor at wake + event points
 	const chartPoints = $derived(() => {
@@ -450,34 +387,42 @@
 		return `M ${a.x},${a.y} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${b.x},${b.y}`;
 	}
 
-	// ── Autonomic curve helpers (independent tangents) ──────
-	// Build chart points with autonomicY, using the same x positions but
-	// computing tangents purely from autonomicY values.
+	// ── Autonomic curve helpers ──────────────────────────────
+	// The autonomic curve includes ALL events (sleep + waking) with autonomic data.
+	// It's an independent curve from novelty — sleep events only appear here.
 
 	const autonomicChartPoints = $derived(() => {
-		const pts = chartPoints();
-		if (pts.length === 0) return [];
-		// Map each chart point to its autonomicY (fallback to baseline 0 for midnight anchor)
-		return pts.map((p) => ({
-			x: p.x,
-			y: p.autonomicY ?? yToSvg(0), // midnight anchor + unknowns → baseline
-			isUnknown: p.isUnknown,
-		}));
+		// All events (sleep + waking) with autonomic data, one dot each
+		return events
+			.filter((e) => !e.userHidden && e.autonomicZ != null)
+			.sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
+			.map((e) => {
+				const startHour = getHourOfDay(e.startTime);
+				const endHour = getHourOfDay(e.endTime);
+				const midHour = (startHour + endHour) / 2;
+				return {
+					x: hourToX(midHour),
+					y: yToSvg(e.autonomicZ!),
+					isUnknown: false,
+					isSleep: e.isSleep ?? false,
+				};
+			});
 	});
 
 	const autonomicTangents = $derived(() => {
 		const pts = autonomicChartPoints();
-		const xTan = chartTangents(); // share x tangents with novelty
 		return pts.map((_, i) => {
 			if (pts.length < 2) return { tx: 0, ty: 0 };
-			const tx = xTan[i].tx;
 			if (i === 0) {
-				return { tx, ty: pts[1].y - pts[0].y };
+				return { tx: pts[1].x - pts[0].x, ty: pts[1].y - pts[0].y };
 			}
 			if (i === pts.length - 1) {
-				return { tx, ty: pts[i].y - pts[i - 1].y };
+				return { tx: pts[i].x - pts[i - 1].x, ty: pts[i].y - pts[i - 1].y };
 			}
-			return { tx, ty: (pts[i + 1].y - pts[i - 1].y) / 2 };
+			return {
+				tx: (pts[i + 1].x - pts[i - 1].x) / 2,
+				ty: (pts[i + 1].y - pts[i - 1].y) / 2,
+			};
 		});
 	});
 
@@ -496,15 +441,18 @@
 
 	/** Whether any event has autonomic data */
 	const hasAutonomicData = $derived(() => {
-		return eventPoints().some((p) => p.autonomicZ !== null);
+		return events.some((e) => !e.userHidden && e.autonomicZ != null);
 	});
 
 	// ── Readiness marker at wake time ───────────────────────────
 	const wakeHour = $derived(() => {
-		// Find the first sleep event and use its end time as wake time
-		const sleepEvent = events.find((e) => e.isSleep);
-		if (!sleepEvent) return null;
-		return getHourOfDay(sleepEvent.endTime);
+		// Find the last sleep mini-event's end time = wake time
+		const sleepEvents = events.filter((e) => e.isSleep);
+		if (sleepEvents.length === 0) return null;
+		const lastSleep = sleepEvents.sort(
+			(a, b) => b.endTime.getTime() - a.endTime.getTime(),
+		)[0];
+		return getHourOfDay(lastSleep.endTime);
 	});
 
 	const wakeX = $derived(() => {
@@ -635,11 +583,14 @@
 	});
 
 	// ── Active metric pill ──────────────────────────────────────
-	type MetricView = "dayline" | "autonomic" | "dimensions";
+	type MetricView = "dayline" | "sleep" | "autonomic" | "dimensions";
 	let activeMetric = $state<MetricView>("dayline");
+
+	const hasSleepData = $derived(() => sleepCycles.length > 0);
 
 	const metrics: { id: MetricView; label: string; ready: boolean }[] = [
 		{ id: "dayline", label: "Dayline", ready: true },
+		{ id: "sleep", label: "Sleep", ready: true },
 		{ id: "autonomic", label: "Autonomic", ready: false },
 		{ id: "dimensions", label: "Dimensions", ready: false },
 	];
@@ -664,6 +615,7 @@
 		{/each}
 	</div>
 
+	{#if activeMetric === "dayline"}
 	<!-- Chart -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<svg
@@ -766,20 +718,6 @@
 				fill="var(--color-primary, #4f46e5)" fill-opacity="0.03" />
 		{/if}
 
-		<!-- Sleep phase curve -->
-		{#if sleepCurveData().path}
-			<path d={sleepCurveData().path} fill="none"
-				stroke="var(--color-foreground-muted, #888)" stroke-width="1.5"
-				stroke-opacity="0.4" stroke-linecap="round" pointer-events="none" />
-			<!-- Deep sleep dots -->
-			{#each sleepCurveData().points as sp}
-				{#if sp.stage === "deep"}
-					<circle cx={sp.x} cy={sp.y} r="1.5"
-						fill="var(--color-primary, #4f46e5)" opacity="0.4" />
-				{/if}
-			{/each}
-		{/if}
-
 		<!-- Curved segments (solid for known, dotted for unknown) + hover targets -->
 		{#each chartPoints().slice(0, -1) as _, segIdx}
 			{@const a = chartPoints()[segIdx]}
@@ -848,6 +786,23 @@
 				stroke-width="1"
 				opacity="0.5"
 			/>
+		{/if}
+
+		<!-- Sleep dots on autonomic curve -->
+		{#if hasAutonomicData()}
+			{#each autonomicChartPoints() as point}
+				{#if point.isSleep}
+					<circle
+						cx={point.x}
+						cy={point.y}
+						r="2.5"
+						fill="var(--color-foreground-muted, #888)"
+						stroke="var(--color-background, #fff)"
+						stroke-width="1"
+						opacity="0.6"
+					/>
+				{/if}
+			{/each}
 		{/if}
 
 		<!-- Event changepoint dots (novelty) -->
@@ -980,7 +935,7 @@
 			{#if evt}
 				{@const evtX1 = hourToX(evt.startHour)}
 				{@const evtX2 = hourToX(evt.endHour)}
-				{@const isMuted = evt.isSleep || evt.isUnknown}
+				{@const isMuted = evt.isUnknown}
 				{@const highlightColor = isMuted
 					? "var(--color-foreground-subtle, #aaa)"
 					: "var(--color-primary, #4f46e5)"}
@@ -1049,28 +1004,25 @@
 							? "var(--color-foreground-subtle, #aaa)"
 							: "var(--color-foreground, #333)"}
 					>
-						{evt.isSleep
-							? "Sleep"
-							: evt.isUnknown
+						{evt.isUnknown
 								? "Unknown"
 								: evt.label.length > 40
 									? evt.label.slice(0, 40) + "…"
 									: evt.label}
 					</text>
-					<!-- Readiness (shown for sleep events) -->
-					{#if evt.isSleep && readinessScore != null}
+					<!-- Scores (for all non-unknown events) -->
+					{#if evt.isSleep && evt.autonomicZ !== null}
 						<text
 							x={tooltipX}
 							y={MARGIN.top + 33}
 							text-anchor={tooltipAnchor}
-							class="crosshair-score"
-							fill="var(--color-foreground-muted, #888)"
+							class="crosshair-score autonomic-legend"
 						>
-							Readiness {readinessScore}%
+							Autonomic {evt.autonomicZ >= 0
+								? "+"
+								: ""}{evt.autonomicZ.toFixed(1)}σ
 						</text>
-					{/if}
-					<!-- Scores (only for non-sleep, non-unknown events) -->
-					{#if !isMuted && evt.noveltyZ !== null}
+					{:else if !isMuted && evt.noveltyZ !== null}
 						<text
 							x={tooltipX}
 							y={MARGIN.top + 33}
@@ -1098,6 +1050,72 @@
 			{/if}
 		{/if}
 	</svg>
+	{:else if activeMetric === "sleep"}
+	<!-- Sleep architecture view (from scored sleep cycles, not wiki_events) -->
+	{#if sleepCycles.length > 0}
+		{@const firstStart = sleepCycles[0].startTime}
+		{@const lastEnd = sleepCycles[sleepCycles.length - 1].endTime}
+		{@const totalMs = lastEnd.getTime() - firstStart.getTime()}
+		{@const SLEEP_H = 200}
+		{@const SLEEP_W = 840}
+		{@const SM = { top: 28, right: 16, bottom: 28, left: 50 }}
+		{@const plotW = SLEEP_W - SM.left - SM.right}
+		{@const plotH = SLEEP_H - SM.top - SM.bottom}
+		<svg viewBox="0 0 {SLEEP_W} {SLEEP_H}" preserveAspectRatio="xMidYMid meet" class="dayline-svg">
+			<rect x={SM.left} y={SM.top} width={plotW} height={plotH}
+				fill="var(--color-surface, #fafafa)" rx="2" />
+			<!-- Stage depth labels -->
+			{#each [
+				{ label: "Awake", y: SM.top + plotH * 0.05 },
+				{ label: "REM", y: SM.top + plotH * 0.28 },
+				{ label: "Light", y: SM.top + plotH * 0.55 },
+				{ label: "Deep", y: SM.top + plotH * 0.85 },
+			] as row}
+				<text x={SM.left - 6} y={row.y} text-anchor="end" dominant-baseline="middle"
+					class="axis-label y-label">{row.label}</text>
+				<line x1={SM.left} y1={row.y} x2={SM.left + plotW} y2={row.y}
+					stroke="var(--color-border, #e5e5e5)" stroke-width="0.5" />
+			{/each}
+			<!-- Cycle bars -->
+			{#each sleepCycles as cycle, i}
+				{@const x1 = SM.left + ((cycle.startTime.getTime() - firstStart.getTime()) / totalMs) * plotW}
+				{@const x2 = SM.left + ((cycle.endTime.getTime() - firstStart.getTime()) / totalMs) * plotW}
+				{@const barW = Math.max(2, x2 - x1)}
+				{@const az = cycle.autonomicZ ?? -1}
+				<!-- Map autonomic_z to depth: more negative = deeper recovery = taller bar from bottom -->
+				{@const depth = Math.min(1, Math.max(0, (-az + 0.5) / 2.5))}
+				{@const barH = plotH * 0.3 + depth * plotH * 0.6}
+				{@const barY = SM.top + plotH - barH}
+				<rect x={x1} y={barY} width={barW} height={barH} rx="3"
+					fill="var(--color-primary, #4f46e5)"
+					fill-opacity={0.15 + depth * 0.35} />
+				<!-- Cycle label -->
+				<text x={(x1 + x2) / 2} y={SM.top + plotH + 16} text-anchor="middle" class="axis-label x-label">
+					Cycle {i + 1}
+				</text>
+				<!-- Autonomic score inside bar -->
+				<text x={(x1 + x2) / 2} y={barY + 14} text-anchor="middle"
+					class="axis-label" fill="var(--color-primary, #4f46e5)" opacity="0.8">
+					{az >= 0 ? "+" : ""}{az.toFixed(1)}σ
+				</text>
+			{/each}
+			<!-- Border -->
+			<rect x={SM.left} y={SM.top} width={plotW} height={plotH}
+				fill="none" stroke="var(--color-border, #e5e5e5)" stroke-width="0.75" rx="2" />
+			<!-- Readiness badge -->
+			{#if readinessScore != null}
+				<text x={SM.left + plotW - 4} y={SM.top + 14} text-anchor="end"
+					class="axis-label" fill="var(--color-foreground-muted, #888)">
+					Readiness {readinessScore}%
+				</text>
+			{/if}
+		</svg>
+	{:else}
+		<div class="sleep-empty">
+			<p class="empty-placeholder">No sleep data for this day</p>
+		</div>
+	{/if}
+	{/if}
 </div>
 
 <style>

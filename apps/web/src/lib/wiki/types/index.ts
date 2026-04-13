@@ -34,6 +34,7 @@ export type { YearPage, MonthSummary } from "./year";
 export type {
 	DayPage,
 	DayEvent,
+	ScoredSleepCycle,
 	LinkedEntities,
 	LinkedTemporal,
 	AutobiographySection,

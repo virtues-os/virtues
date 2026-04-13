@@ -281,6 +281,8 @@ impl Scheduler {
                         "action_agent_dayline_eod" => {
                             match resolve_user_yesterday(&db).await {
                                 Some(yesterday) => {
+                                    // Resolve sleep events before LLM runs
+                                    crate::dayline::sleep::resolve_sleep_events(&db, yesterday).await;
                                     Some(crate::dayline::context::build_eod_context(&db, yesterday).await)
                                 }
                                 None => None,

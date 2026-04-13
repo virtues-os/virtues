@@ -164,7 +164,7 @@
 							</div>
 						{/if}
 						{#if isNovel}
-							<span class="novelty-badge">Novel</span>
+							<span class="novelty-badge">Most Novel</span>
 						{/if}
 					</div>
 

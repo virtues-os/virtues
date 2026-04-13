@@ -160,6 +160,53 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
     /// Performs upload and returns true if any uploads succeeded
     @discardableResult
+    /// Force an upload right now, clearing any stuck error state first AND
+    /// draining the entire pending queue (not just one batch).
+    ///
+    /// Use this for the manual "Send Now" button in Settings. It resets
+    /// `isTokenInvalid` and the circuit breaker, then loops `performUpload()`
+    /// until the pending queue is empty (or a safety cap is reached). This
+    /// prevents one-batch-at-a-time starvation when a high-volume stream
+    /// (like a HealthKit backfill) is monopolizing the FIFO queue.
+    func forceUpload() async -> Bool {
+        #if DEBUG
+        print("🔧 Force upload requested - clearing error state and draining queue")
+        #endif
+        isTokenInvalid = false
+        consecutiveFailures = 0
+        lastFailureTime = nil
+
+        // Drain in a loop. Each performUpload() pulls one batch from the
+        // FIFO queue. We loop until either:
+        //   - pending count hits zero
+        //   - performUpload makes no forward progress (stuck batch)
+        //   - we hit the safety cap (prevents runaway loops)
+        let maxIterations = 200
+        var anySuccess = false
+        var lastPending = -1
+        for i in 0..<maxIterations {
+            let pending = storageProvider.getQueueStats().pending
+            #if DEBUG
+            print("🔧 force-drain iteration \(i): pending=\(pending)")
+            #endif
+            if pending == 0 { break }
+            if pending == lastPending {
+                // No forward progress — bail to avoid spinning
+                #if DEBUG
+                print("🔧 force-drain: no progress, stopping")
+                #endif
+                break
+            }
+            lastPending = pending
+
+            let success = await performUpload()
+            if success { anySuccess = true }
+            // Tiny gap between batches so we don't hammer the server
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+        }
+        return anySuccess
+    }
+
     func performUpload() async -> Bool {
         guard tryBeginUpload() else { return false }
         defer { endUpload() }

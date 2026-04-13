@@ -2,6 +2,7 @@
 //!
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
+pub mod action_runner;
 pub mod agent;
 pub mod api;
 pub mod cli;

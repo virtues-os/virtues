@@ -1,0 +1,26 @@
+[workspace]
+members = [
+    "core",
+    "packages/virtues-registry",
+    "actions",
+    "actions/helpers",
+    "apps/tollbooth",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+license = "MIT"
+repository = "https://github.com/ariata-os/ariata"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+
+[profile.dev]
+opt-level = 0
+
+[profile.test]
+opt-level = 0

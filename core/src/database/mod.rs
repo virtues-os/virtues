@@ -1,11 +1,90 @@
 //! Database module for SQLite operations
 
+use std::path::PathBuf;
 use std::sync::Once;
 use std::time::Duration;
 
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 use crate::error::{Error, Result};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATABASE_URL normalization
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Normalize the `DATABASE_URL` env var to use an absolute path.
+///
+/// Reads `DATABASE_URL` from the environment, converts any relative SQLite
+/// path to an absolute path resolved against the current working directory,
+/// then writes the result back via `std::env::set_var`. Subprocesses spawned
+/// after this call inherit the absolute URL automatically.
+///
+/// This is critical for the action subprocess model — without normalization,
+/// a `sqlite:./data/virtues.db` URL resolves against whatever CWD the
+/// subprocess happens to inherit, which may not be the parent's CWD.
+///
+/// **Postgres URLs are passed through unchanged** — `postgres://...` is
+/// already location-independent, so this function is a no-op for them.
+///
+/// Returns the normalized URL (whatever the env now contains).
+///
+/// # Errors
+/// - `DATABASE_URL` is not set
+/// - The relative path cannot be canonicalized (e.g., parent dir doesn't exist
+///   AND we cannot create it)
+pub fn normalize_database_url() -> Result<String> {
+    let raw = std::env::var("DATABASE_URL").map_err(|_| {
+        Error::Configuration("DATABASE_URL env var not set".to_string())
+    })?;
+
+    // Postgres URLs are already location-independent. No-op.
+    if !raw.starts_with("sqlite:") {
+        return Ok(raw);
+    }
+
+    // Strip the "sqlite:" scheme and any query string for path resolution.
+    let after_scheme = raw.trim_start_matches("sqlite:");
+    let (path_part, query_part) = match after_scheme.find('?') {
+        Some(idx) => (&after_scheme[..idx], &after_scheme[idx..]),
+        None => (after_scheme, ""),
+    };
+
+    // Special-case in-memory and explicit absolute paths
+    if path_part == ":memory:" || path_part.starts_with('/') {
+        return Ok(raw);
+    }
+
+    // Relative path → resolve against CWD
+    let cwd = std::env::current_dir()
+        .map_err(|e| Error::Configuration(format!("failed to get CWD: {e}")))?;
+    let mut absolute = PathBuf::from(&cwd);
+    absolute.push(path_part.trim_start_matches("./"));
+
+    // Ensure the parent directory exists so SQLite can create the file
+    if let Some(parent) = absolute.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                Error::Configuration(format!(
+                    "failed to create data directory {}: {e}",
+                    parent.display()
+                ))
+            })?;
+        }
+    }
+
+    let normalized = format!("sqlite:{}{}", absolute.display(), query_part);
+
+    // Write back to env so subprocesses and later code paths get the absolute URL
+    std::env::set_var("DATABASE_URL", &normalized);
+
+    tracing::debug!(
+        original = %raw,
+        normalized = %normalized,
+        "normalized DATABASE_URL to absolute path"
+    );
+
+    Ok(normalized)
+}
 
 /// Register the sqlite-vec extension globally (once).
 ///
@@ -202,11 +281,92 @@ pub struct HealthStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[tokio::test]
     async fn test_database_creation() {
         // Use in-memory SQLite for testing
         let result = Database::new("sqlite::memory:");
         assert!(result.is_ok());
+    }
+
+    // ─── normalize_database_url tests ──────────────────────────────
+    // These mutate global env state, so they're serialized via serial_test.
+
+    #[test]
+    #[serial]
+    fn test_normalize_passes_through_postgres() {
+        std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost:5432/db");
+        let normalized = normalize_database_url().unwrap();
+        assert_eq!(normalized, "postgres://user:pass@localhost:5432/db");
+        // env should be unchanged
+        assert_eq!(
+            std::env::var("DATABASE_URL").unwrap(),
+            "postgres://user:pass@localhost:5432/db"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_normalize_passes_through_in_memory() {
+        std::env::set_var("DATABASE_URL", "sqlite::memory:");
+        let normalized = normalize_database_url().unwrap();
+        assert_eq!(normalized, "sqlite::memory:");
+    }
+
+    #[test]
+    #[serial]
+    fn test_normalize_passes_through_absolute_sqlite() {
+        std::env::set_var("DATABASE_URL", "sqlite:/var/lib/virtues/db.sqlite");
+        let normalized = normalize_database_url().unwrap();
+        assert_eq!(normalized, "sqlite:/var/lib/virtues/db.sqlite");
+    }
+
+    #[test]
+    #[serial]
+    fn test_normalize_converts_relative_sqlite_to_absolute() {
+        // Use a tempdir as CWD so the test is hermetic
+        let tmp = tempfile::tempdir().unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::env::set_var("DATABASE_URL", "sqlite:./data/test.db");
+        let normalized = normalize_database_url().unwrap();
+
+        // Should now be absolute
+        assert!(normalized.starts_with("sqlite:/"));
+        assert!(normalized.ends_with("/data/test.db"));
+        // Env var should be updated
+        let env_val = std::env::var("DATABASE_URL").unwrap();
+        assert_eq!(env_val, normalized);
+        // Parent dir should have been created
+        assert!(tmp.path().join("data").exists());
+
+        // Restore CWD
+        std::env::set_current_dir(original_cwd).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_normalize_preserves_query_string() {
+        let tmp = tempfile::tempdir().unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::env::set_var("DATABASE_URL", "sqlite:./data/test.db?mode=rwc");
+        let normalized = normalize_database_url().unwrap();
+
+        assert!(normalized.starts_with("sqlite:/"));
+        assert!(normalized.ends_with("/data/test.db?mode=rwc"));
+
+        std::env::set_current_dir(original_cwd).unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_normalize_errors_when_unset() {
+        std::env::remove_var("DATABASE_URL");
+        let result = normalize_database_url();
+        assert!(result.is_err());
     }
 }

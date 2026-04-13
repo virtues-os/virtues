@@ -150,6 +150,13 @@ class HealthKitManager: ObservableObject {
                 self.isAuthorized = hasAccess
             }
 
+            // Self-start the 5-minute timer the moment we know we have access.
+            // Without this, the timer only starts on app foreground (via
+            // VirtuesApp.startAllServices), which might be hours away.
+            if hasAccess {
+                startMonitoring()
+            }
+
             return hasAccess
         } catch {
             print("HealthKit authorization request failed: \(error)")

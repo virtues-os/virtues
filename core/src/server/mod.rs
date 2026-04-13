@@ -88,9 +88,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                     }
 
                     // Seed system actions (idempotent — skips if already exist)
-                    if let Err(e) = sched.ensure_dayline_hourly_action().await {
-                        tracing::warn!("Failed to seed dayline hourly action: {}", e);
-                    }
+                    // dayline_hourly: REMOVED — was failing every minute and the
+                    // hourly cadence/paradigm wasn't right anyway. EOD action
+                    // covers the same ground, triggered manually or end-of-day.
                     if let Err(e) = sched.ensure_dayline_eod_action().await {
                         tracing::warn!("Failed to seed dayline EOD action: {}", e);
                     }
@@ -115,6 +115,45 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             }
             Err(e) => {
                 tracing::warn!("Failed to create scheduler: {}", e);
+            }
+        }
+    });
+
+    // ─── transcription_resolution drain loop (LUNCH-DAY DUCT TAPE) ──────────
+    // Audio recordings land in `data_audio_recording` immediately (so the iOS
+    // request returns fast). This background loop spawns the device-agnostic
+    // transcription_resolution subprocess every 60s to drain untranscribed
+    // recordings via Gemini.
+    //
+    // ⚠️  This is duct tape for the lunch test. The proper home is the
+    // existing scheduler in `core/src/scheduler/`, dispatched via
+    // `action_runner` based on `app_actions.cron_schedule`. The scheduler
+    // currently uses match-dispatch for system actions; the refactor to
+    // teach it the new function_name path is the next thing after lunch.
+    // See migration 048 + actions/src/bin/transcription_resolution/.
+    let transcribe_db = client.database.pool().clone();
+    let _transcribe_handle = tokio::spawn(async move {
+        // Initial delay to let the server finish starting up
+        tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+        let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(60));
+        ticker.tick().await; // first tick fires immediately, skip it
+        loop {
+            ticker.tick().await;
+            match crate::action_runner::run_cron_action(&transcribe_db, "transcription_resolution").await {
+                Ok(Some(result)) => {
+                    if matches!(result.status, crate::action_runner::ActionRunStatus::Failed) {
+                        tracing::warn!(
+                            stderr = %result.stderr,
+                            "transcription_resolution failed"
+                        );
+                    }
+                }
+                Ok(None) => {
+                    // No action row yet (migration 048 not applied?). Quiet.
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "transcription_resolution runner error");
+                }
             }
         }
     });
@@ -178,7 +217,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/s/:token/files/:file_id",
             get(api::shared_file_download_handler),
-        );
+        )
+        // Device data ingestion. Authenticated via Bearer device-token inside
+        // the handler (validate_device_token), NOT via web session cookies.
+        // Lives in public_routes because the AuthUser extractor only knows
+        // how to read session cookies — iOS sends Authorization headers.
+        .route("/ingest", post(ingest::ingest));
 
     // ============================================================
     // Protected routes (authentication required via route_layer)
@@ -186,8 +230,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let protected_routes = Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
-        // Data ingestion
-        .route("/ingest", post(ingest::ingest))
         // OAuth flow
         .route(
             "/api/sources/:provider/authorize",
@@ -521,6 +563,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/wiki/day/:date/sources",
             get(api::wiki_get_day_sources_handler),
+        )
+        // Wiki - Day Chats (in-app + external AI conversations)
+        .route(
+            "/api/wiki/day/:date/chats",
+            get(api::wiki_get_day_chats_handler),
         )
         // Wiki - Day Streams (dynamic ontology queries)
         .route(

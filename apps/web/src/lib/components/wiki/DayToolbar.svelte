@@ -9,6 +9,7 @@
 		todaySlug: string;
 		onNavigateDay: (date: Date) => void;
 		headerScrolledAway?: boolean;
+		coveragePercent?: number | null;
 	}
 
 	let {
@@ -17,6 +18,7 @@
 		todaySlug,
 		onNavigateDay,
 		headerScrolledAway = false,
+		coveragePercent = null,
 	}: Props = $props();
 
 	const shortDateLabel = $derived(
@@ -217,6 +219,11 @@
 	<span class="toolbar-date" class:visible={headerScrolledAway}>{shortDateLabel}</span>
 
 	<div class="toolbar-right">
+		{#if coveragePercent != null}
+			<span class="coverage-badge" title="Data coverage for this day">
+				{Math.round(coveragePercent)}%
+			</span>
+		{/if}
 		<button
 			class="nav-btn"
 			type="button"
@@ -261,7 +268,19 @@
 	.toolbar-right {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
+	}
+
+	.coverage-badge {
+		font-family: var(--font-mono, "SF Mono", Menlo, monospace);
+		font-size: 0.625rem;
+		font-weight: 500;
+		color: var(--color-foreground-subtle);
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		padding: 1px 6px;
+		border-radius: 9999px;
+		letter-spacing: 0.02em;
+		cursor: default;
 	}
 
 	/* Navigation buttons (chevrons + calendar) */

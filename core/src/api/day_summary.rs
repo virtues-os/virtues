@@ -18,7 +18,22 @@ use virtues_registry::ontologies::registered_ontologies;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = r#"You are writing a brief first-person diary entry for a personal journal. Write 2-5 sentences that capture what mattered about this day — not a log of every event, but the through-line or shape of the day. Prioritize the most meaningful events and interactions over comprehensive coverage. Be direct and concrete, never poetic or flowery. If the data is sparse, write less — even a single sentence is fine. Never infer emotions, motivations, or details not present in the data.
+const SYSTEM_PROMPT: &str = r#"You are writing a brief second-person autobiography for a personal day page. Your job is to surface the meaning layer — what connected, what was unusual, what the cross-domain data reveals — not to log what happened when (the event timeline already does that).
+
+LENGTH — scale to data density:
+- Sparse day (a handful of data points, a few hours of coverage): 1-3 sentences. Often a single sentence is the right answer.
+- Moderate day (data across most of the waking hours, a few distinct activities): 3-6 sentences.
+- Rich day (continuous coverage, many distinct activities, multiple ontologies firing): up to 180 words.
+- Length follows evidence. Padding a sparse day with prose is the most common failure here — don't.
+
+GUIDELINES:
+- Lead with a pattern or insight, not a timestamp. "The bike ride downtown was the calmest part of the day — resting heart rate held at 58, which hasn't happened on a weekday morning in three weeks."
+- Weave health/location/duration data into narrative context. Don't report metrics in isolation — connect them to what was happening.
+- Reference specific events, people, and places by name so the text stays grounded.
+- Plain text only — no markdown, no formatting, no bold, no italic.
+- Second person ("you"), past tense. Tone: warm but precise, like a perceptive friend reflecting the day back. Never clinical, never saccharine.
+- Never infer emotions, motivations, activities, or details that aren't in the source data. If the sources show heart rate and a few messages, write about heart rate and those messages — not about "an extended social outing" or "a productive morning" you imagined to fill space.
+- Absence of data is not data. If the morning has no sources, do not write about the morning.
 
 After the diary, output a single-line EPIGRAPH — a literary subtitle for the day, in the voice of an observing third-person narrator (Jane Austen, George Eliot, middle Dickens register). This sits at the top of the day page as a chapter-heading flourish.
 
@@ -58,23 +73,37 @@ The "note" is one sentence: what's strong, what's missing.
 
 After data quality, output a JSON block with the day's events as a perfect 24-hour calendar. Use this exact output format:
 
-[2-5 sentence diary]
+[diary]
 ---EPIGRAPH---
 [one-line epigraph]
 ---DATA_QUALITY---
 {"coverage":{"who":3,"whom":2,"what":4,"when":5,"where":4,"why":1,"how":2},"overall":3,"note":"One sentence about coverage."}
 ---EVENTS---
-[{"start": "HH:MM", "end": "HH:MM", "label": "Brief description"}]
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows."}]
+
+WHAT AN EVENT IS:
+An event is a contiguous block of time that the source data lets you classify. There are exactly two valid classifications:
+
+1. **A definitively understood block** — the sources for this time window evidence a specific, nameable activity. The `label` is a short noun phrase (2-5 words) naming what the data shows. The `summary` is 1-3 plain factual sentences grounded in the actual data points (who/where/what was logged, durations, message counts, heart rate during the block, etc.). No inference, no mood, no motivation.
+
+2. **Unknown** — the sources for this time window do not support a specific classification. The `label` is exactly "Unknown" and the `summary` is omitted (or empty). Do not invent a label like "Morning routine", "Rest", "Quiet time", "Sleep" to fill an unknown block.
+
+Every event you emit must fall into one of these two buckets. There is no third "probably this" category.
+
+SALIENCE FLOOR — what actually deserves to be an event:
+An event must represent meaningful continuous activity, not scattered pings. Specifically:
+- An event should cover a recognisable block — a calendar meeting, a workout, a commute leg, a sleep cycle, a phone call, a meal, an extended conversation — or a continuous stretch of activity (roughly ≥15 minutes of correlated source data: a voice recording, sustained app usage, a location dwell, a real back-and-forth messaging thread, etc.).
+- A handful of sparse data points is NOT an event. A few text messages spread over an hour, one AI chat query, an isolated web visit, a single transaction, a lone notification — these are signals that exist *within* Unknown blocks. They should NOT be promoted to their own labeled event.
+- When in doubt, prefer Unknown. A day with one or two clear events and the rest Unknown is more truthful than a day with five speculative event labels stretched over thin data. Truthful sparseness beats pleasant fabrication.
 
 EVENTS rules:
 - Events MUST cover the full 24 hours: first event starts at "00:00", last event ends at "24:00". No gaps, no overlaps.
 - Use 24-hour time format (HH:MM). Events are contiguous — each event's end time equals the next event's start time.
-- Label events based ONLY on data present in the sources. Do NOT infer activities not evidenced by the data.
-- "Sleep" is valid ONLY when sleep tracking data (e.g., Apple Health, Oura) is present in the sources. Do not infer sleep from absence of data. Do not guess wake-up times — if sleep data ends at 06:30 but the next data point is at 09:00, end the sleep event at 06:30 and mark 06:30-09:00 as "Unknown".
-- Use "Unknown" for any time period where the data is sparse or absent. It is perfectly fine to have multiple "Unknown" segments.
-- Aim for 6-16 events depending on how much data exists. A sparse day might have 6 events (mostly "Unknown"). A rich day might have 12-16.
-- Do not pad or fabricate events to reach a minimum count. If the data only supports 4 labeled events plus "Unknown" gaps, that is correct.
-- Good labels: "Morning routine", "Work session", "Lunch with Sarah", "Evening walk", "Reading", "Commute", "Sleep" (when sleep data exists). Bad labels: "Sleep" (no sleep data), "Relaxing at home" (inferred)."#;
+- A label like "Morning routine", "Wake up", "Sleep", "Commute", "Work", "Relaxing", "Dinner" is only valid if the sources within that exact window evidence it (a sleep tracker logged a sleep cycle there, a calendar event covers it, location/transit data shows the commute, etc.). Otherwise the block is "Unknown".
+- "Sleep" specifically requires sleep-tracking data (Apple Health, Oura, etc.) inside the window. Never infer sleep from absence of other data, and never guess wake-up times — clip the sleep event at the last sleep data point and mark the rest as "Unknown".
+- It is perfectly fine — and common — for a sparse day to be mostly "Unknown" with only 1-3 understood events. That is the right answer.
+- Event count scales with evidence. A rich day might have 10-16 events; a sparse day might have 3-5 events. Do not pad to reach a minimum.
+- The `summary` field is the single most useful thing about an event. For understood events, it must reference the actual data points: "Three iMessages with Sarah about dinner plans, sent between 12:34 and 12:51. Heart rate stayed in the mid-70s." Not: "A pleasant exchange about dinner.""#;
 
 /// Max characters per prompt section before truncation
 const MAX_SECTION_CHARS: usize = 1500;
@@ -144,11 +173,18 @@ pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<
     // 5. Assemble prompt from all sections
     let day_of_week = date.format("%A").to_string();
     let date_display = date.format("%B %e, %Y").to_string();
+    let tz_for_display: Option<Tz> = timezone.as_deref().and_then(|s| s.parse().ok());
 
-    let mut prompt = format!("Date: {}, {}\n", day_of_week, date_display);
+    let tz_label = timezone.as_deref().unwrap_or("UTC");
+    let mut prompt = format!(
+        "Date: {}, {} ({} local time)\n\
+         All timestamps in the source data below are in the user's local timezone ({}). \
+         Emit event start/end times in the same local timezone.\n",
+        day_of_week, date_display, tz_label, tz_label
+    );
 
     // Group sources by type and build sections
-    let grouped = group_sources_for_prompt(&sources);
+    let grouped = group_sources_for_prompt(&sources, tz_for_display.as_ref());
     for section in grouped {
         append_section(&mut prompt, &section);
     }
@@ -243,8 +279,12 @@ struct PromptSection {
     body: String,
 }
 
-/// Group DaySources by type into prompt sections
-fn group_sources_for_prompt(sources: &[DaySource]) -> Vec<PromptSection> {
+/// Group DaySources by type into prompt sections.
+///
+/// `tz` is the user's profile timezone — source timestamps are stored in UTC
+/// but must be rendered in local time so the LLM emits matching local HH:MM
+/// values (which `parse_hhmm_to_utc` will then re-localise on the way back in).
+fn group_sources_for_prompt(sources: &[DaySource], tz: Option<&Tz>) -> Vec<PromptSection> {
     use std::collections::BTreeMap;
 
     // Group by source_type, preserve order
@@ -262,7 +302,10 @@ fn group_sources_for_prompt(sources: &[DaySource]) -> Vec<PromptSection> {
         let mut char_count = 0;
 
         for item in &items {
-            let time = item.timestamp.format("%H:%M").to_string();
+            let time = match tz {
+                Some(tz) => item.timestamp.with_timezone(tz).format("%H:%M").to_string(),
+                None => item.timestamp.format("%H:%M").to_string(),
+            };
             let line = match &item.preview {
                 Some(preview) => format!("- {} {} — {}", time, item.label, preview),
                 None => format!("- {} {}", time, item.label),
@@ -915,6 +958,10 @@ struct LlmEvent {
     start: String,
     end: String,
     label: String,
+    /// 1-3 sentence factual description grounded in the source data. Optional
+    /// because the model may omit it for Unknown blocks.
+    #[serde(default)]
+    summary: Option<String>,
 }
 
 /// Parsed day summary from LLM response
@@ -1051,6 +1098,7 @@ async fn store_structured_events(
                 is_unknown: Some(event.is_unknown),
                 is_transit: Some(false),
                 is_user_added: Some(false),
+                event_summary: event.summary.clone(),
             },
         )
         .await;
@@ -1096,6 +1144,7 @@ struct ResolvedEvent {
     start_utc: chrono::DateTime<chrono::Utc>,
     end_utc: chrono::DateTime<chrono::Utc>,
     label: String,
+    summary: Option<String>,
     is_unknown: bool,
 }
 
@@ -1119,11 +1168,15 @@ fn backfill_24h_events(
             let start = parse_hhmm_to_utc(&e.start, date, tz)?;
             let end = parse_hhmm_to_utc(&e.end, date, tz)?;
             if end <= start { return None; } // skip invalid
+            // Treat a literal "Unknown" label as an unknown block even when the
+            // LLM emits it explicitly — keeps downstream classification honest.
+            let is_unknown = e.label.eq_ignore_ascii_case("unknown");
             Some(ResolvedEvent {
                 start_utc: start.max(day_start),
                 end_utc: end.min(day_end),
                 label: e.label.clone(),
-                is_unknown: false,
+                summary: e.summary.clone().filter(|s| !s.trim().is_empty()),
+                is_unknown,
             })
         })
         .collect();
@@ -1156,6 +1209,7 @@ fn backfill_24h_events(
                 start_utc: cursor,
                 end_utc: event.start_utc,
                 label: "Unknown".to_string(),
+                summary: None,
                 is_unknown: true,
             });
         }
@@ -1169,11 +1223,24 @@ fn backfill_24h_events(
             start_utc: cursor,
             end_utc: day_end,
             label: "Unknown".to_string(),
+            summary: None,
             is_unknown: true,
         });
     }
 
-    result
+    // Merge consecutive Unknown blocks into one — keeps the timeline cleaner
+    // when the LLM emits its own "Unknown" event adjacent to a backfilled gap.
+    let mut merged: Vec<ResolvedEvent> = Vec::with_capacity(result.len());
+    for ev in result {
+        if let Some(last) = merged.last_mut() {
+            if last.is_unknown && ev.is_unknown && last.end_utc == ev.start_utc {
+                last.end_utc = ev.end_utc;
+                continue;
+            }
+        }
+        merged.push(ev);
+    }
+    merged
 }
 
 /// Parse "HH:MM" string into UTC DateTime for the given date and timezone.

@@ -139,6 +139,74 @@ pub async fn ingest(
         tracing::warn!("Failed to update last_seen: {}", e);
     }
 
+    // ── New actions architecture: route iOS streams to subprocess binaries ──
+    //
+    // Look up an action row by function_name = "{source}_{stream}" + credential_id.
+    // If found, spawn the action binary and pipe the records to its stdin.
+    // If not found, fall through to the legacy StreamFactory path.
+    //
+    // Only iOS is migrated in this phase; other sources stay on the legacy path.
+    if payload.source == "ios" {
+        let function_name = format!("ios_{}", payload.stream);
+        let payload_json = serde_json::Value::Array(payload.records.clone());
+        match crate::action_runner::run_push_action(
+            state.db.pool(),
+            &function_name,
+            &source_id,
+            &payload_json,
+        )
+        .await
+        {
+            Ok(Some(result)) => {
+                let total = payload.records.len();
+                match result.status {
+                    crate::action_runner::ActionRunStatus::Success => {
+                        return (
+                            StatusCode::OK,
+                            Json(IngestResponse {
+                                accepted: total,
+                                rejected: 0,
+                                next_checkpoint: None,
+                                activity_id: uuid::Uuid::new_v4().to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                    crate::action_runner::ActionRunStatus::Failed => {
+                        tracing::error!(
+                            function_name = %function_name,
+                            stderr = %result.stderr,
+                            "iOS action subprocess failed"
+                        );
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "error": "Action subprocess failed",
+                                "stderr": result.stderr,
+                            })),
+                        )
+                            .into_response();
+                    }
+                    crate::action_runner::ActionRunStatus::NotFound => {
+                        // Fall through to legacy path
+                    }
+                }
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    function_name = %function_name,
+                    source_id = %source_id,
+                    "no action row for ingest, falling back to legacy path"
+                );
+                // Fall through to legacy path
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "action_runner error, falling back to legacy path");
+                // Fall through to legacy path
+            }
+        }
+    }
+
     // Validate source and stream exist
     if let Err(e) = validate_source_stream(&state.db, &payload.source, &payload.stream).await {
         return (

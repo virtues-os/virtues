@@ -104,6 +104,14 @@ struct VirtuesApp: App {
                     Task {
                         await deviceManager.checkMinimumVersion()
                     }
+                    // Re-start services on foreground. This is critical for
+                    // HealthKit/EventKit/FinanceKit which only start their
+                    // 5-minute timers if `isAuthorized == true` — and on a
+                    // fresh install, permission is granted AFTER the first
+                    // `onAppear` runs, so the initial startAllServices() call
+                    // skipped them. startMonitoring() is idempotent (calls
+                    // stopMonitoring() first), so re-running is safe.
+                    startAllServices()
                 }
             }
         }

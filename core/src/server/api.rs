@@ -2143,6 +2143,22 @@ pub async fn wiki_get_day_sources_handler(
     }
 }
 
+/// Get AI chats (in-app Virtues + external imported) for a day
+pub async fn wiki_get_day_chats_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::get_day_chats(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
 /// Get all ontology data streams for a day (dynamic query across all ontologies)
 pub async fn wiki_get_day_streams_handler(
     State(state): State<AppState>,
