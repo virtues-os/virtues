@@ -93,7 +93,7 @@
 <style>
 	.toc {
 		position: sticky;
-		top: 6rem;
+		top: 3rem;
 		align-self: flex-start;
 		z-index: 10;
 		display: flex;
@@ -112,7 +112,7 @@
 	.toc-lines {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: 1px;
 	}
 
 	.toc-row {
@@ -121,24 +121,24 @@
 		align-items: center;
 		gap: 10px;
 		cursor: pointer;
-		padding: 2px 0;
+		padding: 1px 0;
 		position: relative;
 	}
 
 	.toc-line {
-		height: 2px;
+		height: 1.5px;
 		border-radius: 1px;
-		background: color-mix(in srgb, var(--color-foreground) 15%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		transform-origin: left center;
 		transition:
 			background 0.15s ease,
 			transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
 			width 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-		width: 24px;
+		width: 18px;
 	}
 
 	.toc-row.is-h3 .toc-line {
-		width: 14px;
+		width: 10px;
 		margin-left: 4px;
 	}
 
@@ -151,7 +151,7 @@
 	/* Active state */
 	.toc-row.active .toc-line {
 		background: var(--color-foreground);
-		height: 2.5px;
+		height: 2px;
 	}
 	.toc-row.active.hovered .toc-line {
 		transform: scaleX(1.4);

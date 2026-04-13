@@ -7,4 +7,5 @@
 pub mod autonomic_scoring;
 pub mod context;
 pub mod novelty;
+pub mod sleep;
 pub mod topic_entity_novelty;

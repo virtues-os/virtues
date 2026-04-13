@@ -248,6 +248,22 @@ export interface DayPage extends WikiPageBase {
 	readinessScore: number | null;
 	/** Component breakdown */
 	readinessDetails: ReadinessDetails | null;
+
+	// ─────────────────────────────────────────────────────────────
+	// Sleep cycles (computed at query time from ontology data)
+	// ─────────────────────────────────────────────────────────────
+
+	/** Scored sleep cycles derived from sleep stages + heart rate data */
+	sleepCycles: ScoredSleepCycle[];
+}
+
+/** A scored sleep cycle, derived at query time from sleep stages + HR data */
+export interface ScoredSleepCycle {
+	startTime: Date;
+	endTime: Date;
+	dominantStage: string; // "deep", "core", "rem"
+	avgHr: number | null;
+	autonomicZ: number | null;
 }
 
 /** Readiness score component breakdown (each 0-100) */

@@ -139,13 +139,7 @@ INSERT OR IGNORE INTO wiki_days (
     autobiography, morning_baseline, epigraph
 ) VALUES (
     'day_2026-02-13', '2026-02-13', 'America/Chicago', 'America/Chicago',
-    'The morning unfolded in its usual rhythm — coffee at the kitchen counter, the bike ride down Manor Road into downtown, Slack messages piling up before standup. The design review with Maya and David surfaced a question about the onboarding flow that would linger through the afternoon.
-
-Lunch at Tatsu-ya was unhurried, Maya talking through her doubts about the new hire. The user research session after felt productive — three participants, good signal on the navigation redesign.
-
-Then Rachel texted. The house on South 3rd was back on market. By 3 PM she was standing in its kitchen, sunlight hitting the original tile, the backyard bigger than the listing photos suggested. She walked the neighborhood after, got coffee at Jo''s, watched people on South Congress and thought about what it would mean to live here.
-
-A quick run along the Mueller trails cleared her head.',
+    'The bike ride downtown was the calmest part of the day — resting heart rate held at 58 through the commute, which hasn''t happened on a weekday morning in three weeks. The design review with Maya surfaced more than the onboarding flow; lunch at Tatsu-ya ran ninety minutes, most of it her processing doubts about the new hire, and your heart rate stayed elevated through the afternoon even after the conversation ended. Then Rachel texted about the house on South 3rd. You were in its kitchen by 3 PM, standing in a rectangle of sunlight on original tile, and you stayed in that neighborhood for two hours — the longest unscheduled time you''ve spent anywhere in February. The run on Mueller trails afterward was shorter than usual but faster, which tends to happen when you''re working something out rather than winding down. Three domains are pulling at you right now: the team, the house, the question of what it would mean to actually settle here. Today was the first day all three surfaced in the same twelve hours.',
     0.52,
     'The kitchen tile held the afternoon light like a promise she had not yet made.'
 );
@@ -182,19 +176,21 @@ INSERT OR IGNORE INTO wiki_days (
 -- 3. WIKI EVENTS — Feb 13 (13 events, partial day ending ~5:30 PM CST)
 -- ─────────────────────────────────────────────────────────────────────────────
 -- E01: Sleep (00:00-06:30 CST = 06:00-12:30 UTC)
+-- Single sleep event for the narrative timeline. Cycle-level scoring is derived
+-- at query time from data_health_sleep stages + heart rate data.
 INSERT OR IGNORE INTO wiki_events (
     id, day_id, start_time, end_time,
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit, is_sleep,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_01', 'day_2026-02-13',
     '2026-02-13T06:00:00Z', '2026-02-13T12:30:00Z',
     'Sleep', 'Home', '["sleep"]',
     0, 0, 1,
-    'Slept 6.5 hours, one brief wake-up around 3 AM. Light sleep dominant in the first half, deep sleep picked up after 4 AM.', '["sleep"]', '[]',
-    NULL, 'NEW', 57
+    'Slept 6.5 hours. Four full cycles with good deep sleep in the first two. One brief wake-up around 3 AM.', '["sleep"]', '[]',
+    NULL, -1.1, 'NEW', 56
 );
 
 -- E02: Morning routine (06:30-07:15 CST = 12:30-13:15 UTC)
@@ -203,14 +199,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_02', 'day_2026-02-13',
     '2026-02-13T12:30:00Z', '2026-02-13T13:15:00Z',
     'Morning routine', 'Home', '["app_usage"]',
     0, 0,
     'Coffee and checking Slack at home before the commute. Three unread PRs from overnight, quick scan of the design channel.', '["routine", "morning"]', '["place_demo_home"]',
-    -2.055, 'NEW', 66
+    -2.055, -0.3, 'NEW', 66
 );
 
 -- E03: Bike commute (07:15-07:45 CST = 13:15-13:45 UTC)
@@ -219,14 +215,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit, is_user_added, is_user_edited,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_03', 'day_2026-02-13',
     '2026-02-13T13:15:00Z', '2026-02-13T13:45:00Z',
     'Bike commute', NULL, '["location_visit", "steps"]',
     0, 1, 0, 0,
     'Bike commute from Mueller to downtown office. Listened to a Daily Stoic episode on patience. Cool morning, light traffic on the Speedway bike lane.', '["commute", "podcast"]', '["place_demo_home", "place_demo_office"]',
-    -1.346, 'NEW', 122
+    -1.346, -0.6, 'NEW', 122
 );
 
 -- E04: Coffee and Slack (07:45-08:15 CST = 13:45-14:15 UTC)
@@ -235,14 +231,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_04', 'day_2026-02-13',
     '2026-02-13T13:45:00Z', '2026-02-13T14:15:00Z',
     'Coffee and Slack', 'Office', '["app_usage", "message"]',
     0, 0,
     'Grabbed coffee at the office kitchen, caught up on Slack threads and reviewed Maya''s Figma comments on the nav redesign.', '["messaging", "design-review"]', '["place_demo_office", "org_demo_employer", "person_demo_maya"]',
-    -1.450, 'NEW', 67
+    -1.450, 0.1, 'NEW', 67
 );
 
 -- E05: Design standup (08:15-09:00 CST = 14:15-15:00 UTC)
@@ -251,14 +247,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_05', 'day_2026-02-13',
     '2026-02-13T14:15:00Z', '2026-02-13T15:00:00Z',
     'Design standup', 'Office', '["calendar", "message", "transcription"]',
     0, 0,
     'Design team standup with Maya and David. Main topic was the onboarding funnel drop-off at step 3 — form validation errors causing 40% abandonment. Agreed to prototype a simplified flow by Monday.', '["standup", "onboarding", "form-validation", "ux-research", "design", "hiring"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
-    1.443, 'NEW', 74
+    1.443, 0.8, 'NEW', 74
 );
 
 -- E06: Focused design work (09:00-11:30 CST = 15:00-17:30 UTC)
@@ -267,14 +263,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_06', 'day_2026-02-13',
     '2026-02-13T15:00:00Z', '2026-02-13T17:30:00Z',
     'Focused design work', 'Office', '["app_usage"]',
     0, 0,
     'Deep work session in Figma on the navigation redesign. Explored three layout variants for the sidebar collapse pattern. Hit flow state around 10 AM — no Slack interruptions for 90 minutes.', '["design", "figma", "deep-work"]', '["place_demo_office", "org_demo_employer"]',
-    0.086, 'NEW', 63
+    0.086, -0.5, 'NEW', 63
 );
 
 -- E07: Lunch with Maya (11:30-12:30 CST = 17:30-18:30 UTC)
@@ -283,14 +279,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_07', 'day_2026-02-13',
     '2026-02-13T17:30:00Z', '2026-02-13T18:30:00Z',
     'Lunch with Maya', 'Ramen Tatsu-ya', '["location_visit", "calendar", "transcription"]',
     0, 0,
     'Lunch at Ramen Tatsu-ya with Maya. She''s unsure about the new hire — talked through the tradeoffs of senior vs mid-level for the open role. Also debated whether the nav redesign needs user testing before the sprint demo.', '["social", "ramen", "hiring", "team-decisions", "design"]', '["person_demo_maya", "place_demo_ramen"]',
-    0.855, 'NEW', 76
+    0.855, 1.2, 'NEW', 76
 );
 
 -- E08: User research session (12:30-14:15 CST = 18:30-20:15 UTC)
@@ -299,14 +295,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_08', 'day_2026-02-13',
     '2026-02-13T18:30:00Z', '2026-02-13T20:15:00Z',
     'User research session', 'Office', '["calendar", "transcription"]',
     0, 0,
     'Moderated usability test with three participants on the navigation redesign. Participant 2 found the breadcrumb pattern confusing — strong signal to revisit. Recorded all sessions for the team async review.', '["ux-research", "usability-testing", "navigation", "breadcrumbs", "design", "recording"]', '["place_demo_office", "org_demo_employer"]',
-    0.752, 'NEW', 79
+    0.752, 0.7, 'NEW', 79
 );
 
 -- E09: Drive to house showing (14:15-15:00 CST = 20:15-21:00 UTC)
@@ -315,14 +311,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit, is_user_added, is_user_edited,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_09', 'day_2026-02-13',
     '2026-02-13T20:15:00Z', '2026-02-13T21:00:00Z',
     'Drive to Bouldin Creek', NULL, '["location_visit"]',
     0, 1, 0, 0,
     'Drove from the office to Bouldin Creek for the house showing. Called Rachel on the way to confirm the time. Passed the South Congress mural strip — mental note to walk it this weekend.', '["commute", "house-hunting"]', '["person_demo_rachel"]',
-    -0.811, 'NEW', 70
+    -0.811, 0.9, 'NEW', 70
 );
 
 -- E10: House showing (15:00-15:45 CST = 21:00-21:45 UTC)
@@ -331,14 +327,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_10', 'day_2026-02-13',
     '2026-02-13T21:00:00Z', '2026-02-13T21:45:00Z',
     'House showing', '1847 S 3rd St', '["location_visit", "message"]',
     0, 0,
     'Toured a Bouldin Creek bungalow at 1847 S 3rd St with Rachel. Original tile in the kitchen, larger backyard than the listing photos suggested. The neighborhood felt walkable — could see living here. Rachel thinks it''ll go fast.', '["house-hunting", "real-estate", "neighborhood"]', '["person_demo_rachel", "place_demo_house", "org_demo_realty"]',
-    0.477, 'NEW', 82
+    0.477, 1.8, 'NEW', 82
 );
 
 -- E11: Coffee at Jo's (15:45-16:15 CST = 21:45-22:15 UTC)
@@ -347,14 +343,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_11', 'day_2026-02-13',
     '2026-02-13T21:45:00Z', '2026-02-13T22:15:00Z',
     'Unknown', NULL, '[]',
     1, 0,
     NULL, '[]', '[]',
-    NULL, 'NO_DATA', NULL
+    NULL, NULL, 'NO_DATA', NULL
 );
 
 -- E11b: Drive from Jo's to Home (16:15-16:45 CST = 22:15-22:45 UTC)
@@ -363,14 +359,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit, is_user_added, is_user_edited,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_11b', 'day_2026-02-13',
     '2026-02-13T22:15:00Z', '2026-02-13T22:45:00Z',
     'Drive home', NULL, '["location_visit"]',
     0, 1, 0, 0,
     'Drove home from South Congress to Mueller. Quiet drive, replayed the house showing in my head. Texted Maya a photo of the backyard.', '["commute", "reflection"]', '["person_demo_maya", "place_demo_home"]',
-    -0.495, 'NEW', 69
+    -0.495, 0.4, 'NEW', 69
 );
 
 -- E12: Run at Mueller trails (16:45-17:30 CST = 22:45-23:30 UTC)
@@ -379,14 +375,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_12', 'day_2026-02-13',
     '2026-02-13T22:45:00Z', '2026-02-13T23:30:00Z',
     'Run', 'Mueller trails', '["steps", "heart_rate", "workout"]',
     0, 0,
     '45-minute run on the Mueller trails, 5.2 km with average heart rate 152 bpm. Felt strong after a full day — the house showing energy carried over. Sunset was good from the lake overlook.', '["exercise", "running"]', '["place_demo_mueller_trails"]',
-    -0.316, 'NEW', 152
+    -0.316, 0.4, 'NEW', 152
 );
 
 -- E13: Shower + dinner prep (17:30-18:15 CST = 23:30-00:15+1 UTC)
@@ -395,14 +391,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_13', 'day_2026-02-13',
     '2026-02-13T23:30:00Z', '2026-02-14T00:15:00Z',
     'Dinner prep', 'Home', '["app_usage"]',
     0, 0,
     'Showered after the run and started making stir-fry. Put on a Khruangbin album. The kitchen smelled like garlic and sesame.', '["routine", "cooking"]', '["place_demo_home"]',
-    NULL, 'NEW', 72
+    -1.2, -0.8, 'NEW', 72
 );
 
 -- E14: Dinner and TV (18:15-19:30 CST = 00:15-01:30+1 UTC)
@@ -411,14 +407,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_14', 'day_2026-02-13',
     '2026-02-14T00:15:00Z', '2026-02-14T01:30:00Z',
     'Dinner and TV', 'Home', '["app_usage"]',
     0, 0,
     'Ate stir-fry on the couch, watched two episodes of Severance. Texted Rachel about the house offer timeline.', '["leisure", "tv"]', '["place_demo_home", "person_demo_rachel"]',
-    NULL, 'NEW', 64
+    -1.8, -1.0, 'NEW', 64
 );
 
 -- E15: Reading and wind-down (19:30-21:00 CST = 01:30-03:00+1 UTC)
@@ -427,14 +423,14 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES (
     'ev_demo_15', 'day_2026-02-13',
     '2026-02-14T01:30:00Z', '2026-02-14T03:00:00Z',
     'Reading', 'Home', '["app_usage"]',
     0, 0,
     'Read 40 pages of Meditations. Journaled briefly about the house — could see making an offer if the inspection checks out. Lights out around 9.', '["reading", "journaling", "reflection"]', '["place_demo_home"]',
-    NULL, 'NEW', 60
+    -0.9, -1.2, 'NEW', 60
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -446,37 +442,37 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit, is_sleep,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES
 ('ev_feb12_01', 'day_2026-02-12', '2026-02-12T06:00:00Z', '2026-02-12T13:00:00Z',
  'Sleep', 'Home', '["sleep"]', 0, 0, 1,
  'Overnight sleep, 7 hours.', '["sleep"]', '[]',
- NULL, 'NEW', 56),
+ NULL, -0.9, 'NEW', 56),
 
 ('ev_feb12_02', 'day_2026-02-12', '2026-02-12T13:00:00Z', '2026-02-12T14:00:00Z',
  'Morning routine', 'Home', '["app_usage"]', 0, 0, 0,
  'Morning routine at home, coffee and news.', '["routine", "morning"]', '["place_demo_home"]',
- -0.806, 'NEW', 65),
+ -0.806, -0.2, 'NEW', 65),
 
 ('ev_feb12_03', 'day_2026-02-12', '2026-02-12T14:00:00Z', '2026-02-12T18:00:00Z',
  'Work from home', 'Home', '["app_usage", "message"]', 0, 0, 0,
  'Worked from home on design iteration for the settings page.', '["work", "design"]', '["place_demo_home", "org_demo_employer"]',
- 0.066, 'NEW', 64),
+ 0.066, 0.1, 'NEW', 64),
 
 ('ev_feb12_04', 'day_2026-02-12', '2026-02-12T18:00:00Z', '2026-02-12T23:00:00Z',
  'Office work', 'Office', '["app_usage", "calendar", "message"]', 0, 0, 0,
  'Afternoon at the office, settings page review meeting with David.', '["work", "meeting"]', '["person_demo_david", "place_demo_office", "org_demo_employer"]',
- -0.432, 'NEW', 68),
+ -0.432, 0.3, 'NEW', 68),
 
 ('ev_feb12_05', 'day_2026-02-12', '2026-02-12T23:00:00Z', '2026-02-13T01:00:00Z',
  'Dinner and reading', 'Home', '["app_usage"]', 0, 0, 0,
  'Leftovers for dinner and reading at home.', '["routine", "leisure"]', '["place_demo_home"]',
- 0.071, 'NEW', 64),
+ 0.071, -0.6, 'NEW', 64),
 
 ('ev_feb12_06', 'day_2026-02-12', '2026-02-13T01:00:00Z', '2026-02-13T06:00:00Z',
  'Sleep', 'Home', '["sleep"]', 0, 0, 1,
  'Overnight sleep, 5 hours before Friday.', '["sleep"]', '[]',
- NULL, 'NEW', 58);
+ NULL, -0.8, 'NEW', 58);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. WIKI EVENTS — Feb 14 (quiet Saturday, 5 events)
@@ -487,32 +483,32 @@ INSERT OR IGNORE INTO wiki_events (
     auto_label, auto_location, source_ontologies,
     is_unknown, is_transit, is_sleep,
     event_summary, topics, entities,
-    novelty_z, agent_action, avg_hr
+    novelty_z, autonomic_z, agent_action, avg_hr
 ) VALUES
 ('ev_feb14_01', 'day_2026-02-14', '2026-02-14T06:00:00Z', '2026-02-14T12:30:00Z',
  'Sleep', 'Home', '["sleep"]', 0, 0, 1,
- 'Overnight sleep after game night, 6.5 hours.', '["sleep"]', '[]',
- NULL, 'NEW', 59),
+ 'Overnight sleep after game night, 6.5 hours. Less deep than usual early on.', '["sleep"]', '[]',
+ NULL, -1.0, 'NEW', 58),
 
 ('ev_feb14_02', 'day_2026-02-14', '2026-02-14T13:00:00Z', '2026-02-14T17:00:00Z',
  'Sprint demo and office', 'Office', '["calendar", "message", "app_usage"]', 0, 0, 0,
  'Biweekly sprint demo showing navigation redesign progress, then early afternoon.', '["work", "meeting", "design"]', '["person_demo_maya", "person_demo_david", "place_demo_office", "org_demo_employer"]',
- 0.484, 'NEW', 73),
+ 0.484, 0.5, 'NEW', 73),
 
 ('ev_feb14_03', 'day_2026-02-14', '2026-02-14T17:30:00Z', '2026-02-14T19:00:00Z',
  'Walk at Lady Bird Lake', 'Lady Bird Lake', '["steps", "location_visit"]', 0, 0, 0,
  'Walked Lady Bird Lake for 90 minutes on Saturday afternoon.', '["exercise", "outdoors"]', '["place_demo_ladybird"]',
- 0.429, 'NEW', 92),
+ 0.429, 0.2, 'NEW', 92),
 
 ('ev_feb14_04', 'day_2026-02-14', '2026-02-14T19:30:00Z', '2026-02-14T20:30:00Z',
  'Phone call with Mom', 'Home', '["transcription"]', 0, 0, 0,
  'Weekly phone call with Mom, talked about the house and Dad''s knee surgery.', '["family", "phone-call"]', '["person_demo_mom", "place_demo_home"]',
- 0.870, 'NEW', 71),
+ 0.870, 0.6, 'NEW', 71),
 
 ('ev_feb14_05', 'day_2026-02-14', '2026-02-14T21:00:00Z', '2026-02-15T06:00:00Z',
  'Dinner and movie', 'Home', '["app_usage"]', 0, 0, 0,
  'Made pasta and watched a movie at home, quiet Valentine''s Saturday evening.', '["leisure", "food"]', '["place_demo_home"]',
- -0.613, 'NEW', 66);
+ -0.613, -0.7, 'NEW', 66);
 
 -- =============================================================================
 -- 6. ONTOLOGY SOURCE DATA

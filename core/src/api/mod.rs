@@ -312,6 +312,7 @@ pub use wiki::{
     get_active_telos,
     // Chapter operations
     get_chapter,
+    get_day_chats,
     get_day_events,
     get_day_sources,
     // Day streams (dynamic ontology queries)

@@ -176,8 +176,22 @@ pub struct WikiDay {
     pub readiness_score: Option<i64>,
     /// JSON breakdown of readiness components
     pub readiness_details: Option<serde_json::Value>,
+    /// Sleep cycles with autonomic scores, computed at query time from
+    /// data_health_sleep stages + heart rate data. Not stored.
+    pub sleep_cycles: Vec<ScoredSleepCycle>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// A single sleep cycle with autonomic scoring, derived from sleep stage
+/// boundaries and heart rate data during the cycle window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoredSleepCycle {
+    pub start_time: String,
+    pub end_time: String,
+    pub dominant_stage: String,
+    pub avg_hr: Option<f64>,
+    pub autonomic_z: Option<f64>,
 }
 
 // ============================================================================
@@ -1186,7 +1200,9 @@ pub async fn get_or_create_day(pool: &SqlitePool, date: NaiveDate) -> Result<Wik
 
     if let Some(row) = existing {
         let (ne, nt) = get_day_novelty_counts(pool, &date_str).await?;
-        return wiki_day_from_row_with_counts(&row, date, ne, nt);
+        let mut day = wiki_day_from_row_with_counts(&row, date, ne, nt)?;
+        day.sleep_cycles = compute_sleep_cycles(pool, date).await;
+        return Ok(day);
     }
 
     // Create new day
@@ -1260,6 +1276,7 @@ fn wiki_day_from_row_with_counts(row: &sqlx::sqlite::SqliteRow, date: NaiveDate,
             .ok()
             .flatten()
             .and_then(|s| serde_json::from_str(&s).ok()),
+        sleep_cycles: vec![], // populated after construction
         created_at: DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
@@ -1267,6 +1284,166 @@ fn wiki_day_from_row_with_counts(row: &sqlx::sqlite::SqliteRow, date: NaiveDate,
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
     })
+}
+
+/// Compute scored sleep cycles for a day from sleep stage data + heart rate readings.
+/// Derives cycle boundaries by splitting sleep_stages at "awake" entries,
+/// then computes avg HR per cycle and z-scores against a 14-day sleep HR baseline.
+async fn compute_sleep_cycles(pool: &SqlitePool, date: NaiveDate) -> Vec<ScoredSleepCycle> {
+    use sqlx::Row;
+
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let next_date = (date + chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    // 1. Get sleep record for this night (overlaps with this calendar day)
+    let sleep_row: Option<sqlx::sqlite::SqliteRow> = sqlx::query(
+        r#"SELECT sleep_stages FROM data_health_sleep
+           WHERE start_time >= $1 || 'T00:00:00Z'
+             AND start_time < $2 || 'T00:00:00Z'
+           ORDER BY start_time ASC LIMIT 1"#,
+    )
+    .bind(&date_str)
+    .bind(&next_date)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    let stages_json: String = match sleep_row {
+        Some(row) => match row.try_get::<Option<String>, _>("sleep_stages") {
+            Ok(Some(s)) => s,
+            _ => return vec![],
+        },
+        None => return vec![],
+    };
+
+    // 2. Parse stages and derive cycle boundaries (split at "awake" stages)
+    let stages: Vec<serde_json::Value> = match serde_json::from_str(&stages_json) {
+        Ok(v) => v,
+        Err(_) => return vec![],
+    };
+
+    // Group consecutive non-awake stages into cycles
+    let mut cycles: Vec<(String, String, String)> = vec![]; // (start, end, dominant_stage)
+    let mut cycle_start: Option<String> = None;
+    let mut cycle_end: Option<String> = None;
+    let mut stage_durations: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+
+    for stage in &stages {
+        let stage_name = stage["stage"].as_str().unwrap_or("unknown");
+        let start = stage["start"].as_str().unwrap_or("");
+        let end = stage["end"].as_str().unwrap_or("");
+
+        if stage_name == "awake" {
+            // Close current cycle if we have one
+            if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
+                let dominant = stage_durations
+                    .iter()
+                    .max_by_key(|(_, v)| *v)
+                    .map(|(k, _)| k.clone())
+                    .unwrap_or_else(|| "core".to_string());
+                cycles.push((cs.clone(), ce.clone(), dominant));
+                cycle_start = None;
+                cycle_end = None;
+                stage_durations.clear();
+            }
+        } else {
+            if cycle_start.is_none() {
+                cycle_start = Some(start.to_string());
+            }
+            cycle_end = Some(end.to_string());
+
+            // Estimate duration in minutes for dominant stage calculation
+            if let (Ok(s), Ok(e)) = (
+                DateTime::parse_from_rfc3339(start),
+                DateTime::parse_from_rfc3339(end),
+            ) {
+                let mins = (e - s).num_minutes();
+                let key = stage_name.replace("asleep_", "");
+                *stage_durations.entry(key).or_insert(0) += mins;
+            }
+        }
+    }
+    // Close final cycle
+    if let (Some(cs), Some(ce)) = (&cycle_start, &cycle_end) {
+        let dominant = stage_durations
+            .iter()
+            .max_by_key(|(_, v)| *v)
+            .map(|(k, _)| k.clone())
+            .unwrap_or_else(|| "core".to_string());
+        cycles.push((cs.clone(), ce.clone(), dominant));
+    }
+
+    if cycles.is_empty() {
+        return vec![];
+    }
+
+    // 3. Get 14-day sleep HR baseline (median of nightly avg HRs)
+    let baseline_start = (date - chrono::Duration::days(14))
+        .format("%Y-%m-%d")
+        .to_string();
+    let baseline_hrs: Vec<f64> = sqlx::query_scalar(
+        r#"SELECT AVG(CAST(hr.bpm AS REAL))
+           FROM data_health_heart_rate hr
+           INNER JOIN data_health_sleep s
+             ON hr.timestamp >= s.start_time AND hr.timestamp < s.end_time
+           WHERE s.start_time >= $1 || 'T00:00:00Z'
+             AND s.start_time < $2 || 'T00:00:00Z'
+           GROUP BY s.id"#,
+    )
+    .bind(&baseline_start)
+    .bind(&next_date)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let (baseline_mean, baseline_std) = if baseline_hrs.len() >= 2 {
+        let mean = baseline_hrs.iter().sum::<f64>() / baseline_hrs.len() as f64;
+        let variance =
+            baseline_hrs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / baseline_hrs.len() as f64;
+        let std = variance.sqrt().max(1.0); // floor at 1 bpm to avoid div-by-zero
+        (mean, std)
+    } else {
+        (0.0, 0.0) // insufficient baseline
+    };
+
+    // 4. Score each cycle
+    let mut scored: Vec<ScoredSleepCycle> = vec![];
+    for (start, end, dominant) in &cycles {
+        // Get avg HR during this cycle window
+        let avg_hr: Option<f64> = sqlx::query_scalar(
+            r#"SELECT AVG(CAST(bpm AS REAL))
+               FROM data_health_heart_rate
+               WHERE timestamp >= $1 AND timestamp < $2"#,
+        )
+        .bind(start)
+        .bind(end)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        let autonomic_z = match (avg_hr, baseline_std > 0.0) {
+            (Some(hr), true) => {
+                // For sleep: lower HR = better recovery = more negative z
+                let z = (hr - baseline_mean) / baseline_std;
+                Some(z.clamp(-3.0, 3.0))
+            }
+            _ => None,
+        };
+
+        scored.push(ScoredSleepCycle {
+            start_time: start.clone(),
+            end_time: end.clone(),
+            dominant_stage: dominant.clone(),
+            avg_hr,
+            autonomic_z,
+        });
+    }
+
+    scored
 }
 
 /// Count new entities and new topics for a date.
@@ -1527,6 +1704,9 @@ pub struct CreateTemporalEventRequest {
     pub is_unknown: Option<bool>,
     pub is_transit: Option<bool>,
     pub is_user_added: Option<bool>,
+    /// 1-3 sentence factual description of the event. Renders in the day page
+    /// timeline as the expandable detail under the label. Optional.
+    pub event_summary: Option<String>,
 }
 
 /// Request to update a temporal event
@@ -1689,6 +1869,8 @@ pub async fn create_temporal_event(
     pool: &SqlitePool,
     req: CreateTemporalEventRequest,
 ) -> Result<TemporalEvent> {
+    use sqlx::Row;
+
     let day_id_str = req.day_id.to_string();
     let start_time_str = req.start_time.to_rfc3339();
     let end_time_str = req.end_time.to_rfc3339();
@@ -1698,67 +1880,71 @@ pub async fn create_temporal_event(
         .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".to_string()));
 
     let event_id = ids::generate_id(ids::WIKI_EVENT_PREFIX, &[&req.day_id, &start_time_str, &end_time_str]);
-    let row = sqlx::query!(
+
+    // Runtime query (not the macro) so we can include `event_summary` without
+    // regenerating the sqlx offline cache.
+    let row = sqlx::query(
         r#"
         INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
-            source_ontologies, is_unknown, is_transit, is_user_added
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            source_ontologies, is_unknown, is_transit, is_user_added, event_summary
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING
-            id, day_id, start_time, end_time,
-            auto_label, auto_location, user_label, user_location, user_notes,
-            source_ontologies, is_unknown, is_transit, is_user_added, is_user_edited,
-            created_at, updated_at
+            id, is_user_edited, created_at, updated_at
         "#,
-        event_id,
-        day_id_str,
-        start_time_str,
-        end_time_str,
-        req.auto_label,
-        req.auto_location,
-        req.user_label,
-        req.user_location,
-        req.user_notes,
-        source_ontologies_str,
-        req.is_unknown,
-        req.is_transit,
-        req.is_user_added
     )
+    .bind(&event_id)
+    .bind(&day_id_str)
+    .bind(&start_time_str)
+    .bind(&end_time_str)
+    .bind(&req.auto_label)
+    .bind(&req.auto_location)
+    .bind(&req.user_label)
+    .bind(&req.user_location)
+    .bind(&req.user_notes)
+    .bind(&source_ontologies_str)
+    .bind(req.is_unknown)
+    .bind(req.is_transit)
+    .bind(req.is_user_added)
+    .bind(&req.event_summary)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create temporal event: {}", e)))?;
 
-    let id = row
-        .id
-        .clone()
-        .ok_or_else(|| Error::Database("Missing event ID".to_string()))?;
+    let id: String = row
+        .try_get("id")
+        .map_err(|e| Error::Database(format!("Missing event ID: {}", e)))?;
+    let is_user_edited: Option<i32> = row.try_get("is_user_edited").ok().flatten();
+    let created_at: String = row
+        .try_get("created_at")
+        .map_err(|e| Error::Database(format!("Missing created_at: {}", e)))?;
+    let updated_at: String = row
+        .try_get("updated_at")
+        .map_err(|e| Error::Database(format!("Missing updated_at: {}", e)))?;
 
     Ok(TemporalEvent {
         id,
         day_id: req.day_id,
         start_time: req.start_time,
         end_time: req.end_time,
-        auto_label: row.auto_label.clone(),
-        auto_location: row.auto_location.clone(),
-        user_label: row.user_label.clone(),
-        user_location: row.user_location.clone(),
-        user_notes: row.user_notes.clone(),
-        source_ontologies: row
-            .source_ontologies
-            .as_ref()
-            .and_then(|s| serde_json::from_str(s).ok()),
-        is_unknown: row.is_unknown.map(|v| v != 0),
-        is_transit: row.is_transit.map(|v| v != 0),
-        is_user_added: row.is_user_added.map(|v| v != 0),
-        is_user_edited: row.is_user_edited.map(|v| v != 0),
+        auto_label: req.auto_label,
+        auto_location: req.auto_location,
+        user_label: req.user_label,
+        user_location: req.user_location,
+        user_notes: req.user_notes,
+        source_ontologies: req.source_ontologies,
+        is_unknown: req.is_unknown,
+        is_transit: req.is_transit,
+        is_user_added: req.is_user_added,
+        is_user_edited: is_user_edited.map(|v| v != 0),
         novelty_z: None,
         avg_hr: None,
         autonomic_z: None,
         hr_z: None,
         hrv_z: None,
         topics: None,
-        event_summary: None,
+        event_summary: req.event_summary,
         agent_action: None,
         is_sleep: Some(false),
         user_hidden: Some(false),
@@ -1767,10 +1953,10 @@ pub async fn create_temporal_event(
         topic_novelty: None,
         entity_novelty: None,
         entity_timestamps: None,
-        created_at: DateTime::parse_from_rfc3339(&row.created_at)
+        created_at: DateTime::parse_from_rfc3339(&created_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&row.updated_at)
+        updated_at: DateTime::parse_from_rfc3339(&updated_at)
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now()),
     })
@@ -2051,7 +2237,12 @@ pub async fn get_day_sources(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<D
 // Timeline Day - Location chunks for movement map
 // ============================================================================
 
-/// A location chunk for the timeline day view
+/// A location chunk for the timeline day view.
+///
+/// One chunk per `data_location_visit` row, joined to its canonical place
+/// (via `wiki_entity_refs` → `wiki_places`) when one exists. Visits with no
+/// place link have `place_id`/`place_name` set to None and the frontend
+/// renders them as "Unknown".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineChunk {
     #[serde(rename = "type")]
@@ -2061,34 +2252,116 @@ pub struct TimelineChunk {
     pub place_name: Option<String>,
     pub latitude: f64,
     pub longitude: f64,
+    pub place_id: Option<String>,
+    pub duration_minutes: Option<i32>,
+    pub place_category: Option<String>,
+}
+
+/// A raw GPS point for the movement track polyline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelinePoint {
+    pub latitude: f64,
+    pub longitude: f64,
+    pub timestamp: String,
 }
 
 /// Timeline day view response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineDayView {
     pub date: String,
+    /// Visits (clustered) — used by DayLocationTimeline + map markers
     pub chunks: Vec<TimelineChunk>,
+    /// Raw GPS points — used by the map polyline (the actual path you walked)
+    pub points: Vec<TimelinePoint>,
 }
 
-/// Get location points for a day, returned as timeline chunks
+/// Get location visits for a day, returned as timeline chunks with their
+/// canonical place link (if any).
 pub async fn get_timeline_day(pool: &SqlitePool, date: NaiveDate) -> Result<TimelineDayView> {
     let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end_of_day = date
         .succ_opt()
         .unwrap()
-        .and_hms_opt(12, 0, 0)
+        .and_hms_opt(0, 0, 0)
         .unwrap()
         .and_utc();
 
     let start_str = start_of_day.to_rfc3339();
     let end_str = end_of_day.to_rfc3339();
 
-    // Query location points for the day
+    // JOIN visits → wiki_entity_refs → wiki_places.
+    // er.source_id is the visit's UUID; SQLite stores both as 16-byte BLOBs
+    // for new rows from the resolver, so the join is BLOB↔BLOB and works.
     let rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
+        r#"
+        SELECT
+            v.arrival_time           AS arrival_time,
+            v.departure_time         AS departure_time,
+            v.duration_minutes       AS duration_minutes,
+            v.latitude               AS visit_lat,
+            v.longitude              AS visit_lon,
+            er.entity_id             AS place_id,
+            p.name                   AS place_name,
+            p.latitude               AS place_lat,
+            p.longitude              AS place_lon,
+            p.category               AS place_category
+        FROM data_location_visit v
+        LEFT JOIN wiki_entity_refs er
+            ON er.source_table = 'data_location_visit'
+           AND er.source_id    = v.id
+           AND er.entity_type  = 'place'
+        LEFT JOIN wiki_places p ON p.id = er.entity_id
+        WHERE v.arrival_time >= $1 AND v.arrival_time < $2
+        ORDER BY v.arrival_time ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get location visits: {}", e)))?;
+
+    use sqlx::Row;
+    let chunks: Vec<TimelineChunk> = rows
+        .iter()
+        .filter_map(|row| {
+            let arrival: String = row.try_get("arrival_time").ok()?;
+            let departure: Option<String> = row.try_get("departure_time").ok();
+            let duration_minutes: Option<i32> = row.try_get("duration_minutes").ok();
+            let visit_lat: f64 = row.try_get("visit_lat").ok()?;
+            let visit_lon: f64 = row.try_get("visit_lon").ok()?;
+            let place_id: Option<String> = row.try_get("place_id").ok();
+            let place_name: Option<String> = row.try_get("place_name").ok();
+            let place_lat: Option<f64> = row.try_get("place_lat").ok();
+            let place_lon: Option<f64> = row.try_get("place_lon").ok();
+            let place_category: Option<String> = row.try_get("place_category").ok();
+
+            // Prefer canonical place coords over the visit centroid so all
+            // visits to "Home" land on the same map pin regardless of GPS jitter.
+            let lat = place_lat.unwrap_or(visit_lat);
+            let lon = place_lon.unwrap_or(visit_lon);
+
+            Some(TimelineChunk {
+                chunk_type: "location".to_string(),
+                start_time: arrival.clone(),
+                end_time: departure.unwrap_or(arrival),
+                place_name,
+                latitude: lat,
+                longitude: lon,
+                place_id,
+                duration_minutes,
+                place_category,
+            })
+        })
+        .collect();
+
+    // Also fetch the raw GPS points so the map can render the actual path,
+    // not just lines connecting visit centroids.
+    let point_rows: Vec<sqlx::sqlite::SqliteRow> = sqlx::query(
         r#"
         SELECT latitude, longitude, timestamp
         FROM data_location_point
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1 AND timestamp < $2
         ORDER BY timestamp ASC
         "#,
     )
@@ -2098,21 +2371,17 @@ pub async fn get_timeline_day(pool: &SqlitePool, date: NaiveDate) -> Result<Time
     .await
     .map_err(|e| Error::Database(format!("Failed to get location points: {}", e)))?;
 
-    use sqlx::Row;
-    let chunks: Vec<TimelineChunk> = rows
+    let points: Vec<TimelinePoint> = point_rows
         .iter()
         .filter_map(|row| {
             let lat: Option<f64> = row.try_get("latitude").ok();
             let lng: Option<f64> = row.try_get("longitude").ok();
             let ts: Option<String> = row.try_get("timestamp").ok();
             match (lat, lng, ts) {
-                (Some(lat), Some(lng), Some(ts)) => Some(TimelineChunk {
-                    chunk_type: "location".to_string(),
-                    start_time: ts.clone(),
-                    end_time: ts,
-                    place_name: None,
+                (Some(lat), Some(lng), Some(ts)) => Some(TimelinePoint {
                     latitude: lat,
                     longitude: lng,
+                    timestamp: ts,
                 }),
                 _ => None,
             }
@@ -2122,6 +2391,7 @@ pub async fn get_timeline_day(pool: &SqlitePool, date: NaiveDate) -> Result<Time
     Ok(TimelineDayView {
         date: date.to_string(),
         chunks,
+        points,
     })
 }
 
@@ -2438,5 +2708,201 @@ fn build_preview_for_ontology(ontology_name: &str, row: &sqlx::sqlite::SqliteRow
             // Generic fallback - just return empty object
             serde_json::json!({})
         }
+    }
+}
+
+// ============================================================================
+// Day Chats - In-app Virtues chats + external AI conversations
+// ============================================================================
+
+/// A single chat conversation surfaced on a day's wiki page.
+///
+/// Unifies two sources:
+/// - In-app Virtues chats (table: `chats`) — navigable, source = "virtues"
+/// - External AI conversations from ontology imports (table:
+///   `data_content_conversation`) — Claude.ai, Gemini, ChatGPT, etc.
+///   Not navigable; only displayed with a provider badge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DayChat {
+    pub id: String,
+    /// "virtues" for in-app chats, "external" for ontology-imported chats.
+    pub source: String,
+    /// External provider name (e.g. "claude", "gemini", "chatgpt"). None for in-app.
+    pub provider: Option<String>,
+    pub title: String,
+    pub message_count: i64,
+    pub started_at: DateTime<Utc>,
+}
+
+/// Get all AI chats (in-app + external) that started on the given day.
+///
+/// Day window matches `get_day_sources`: UTC midnight → noon next day,
+/// which covers every timezone.
+pub async fn get_day_chats(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<DayChat>> {
+    use sqlx::Row;
+
+    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+    let end_of_day = date
+        .succ_opt()
+        .unwrap()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_utc();
+    let start_str = start_of_day.to_rfc3339();
+    let end_str = end_of_day.to_rfc3339();
+
+    let mut chats: Vec<DayChat> = Vec::new();
+
+    // ── In-app Virtues chats ────────────────────────────────────────────────
+    // `chats.created_at` is stored as 'YYYY-MM-DD HH:MM:SS' UTC; compare as
+    // strings against ISO bounds works because both are zero-padded UTC.
+    let in_app_rows = sqlx::query(
+        r#"
+        SELECT id, title, message_count, created_at
+        FROM chats
+        WHERE created_at >= $1 AND created_at <= $2
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(start_of_day.format("%Y-%m-%d %H:%M:%S").to_string())
+    .bind(end_of_day.format("%Y-%m-%d %H:%M:%S").to_string())
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to query in-app chats: {}", e)))?;
+
+    for row in &in_app_rows {
+        let id: String = match row.try_get("id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let title: String = row.try_get("title").unwrap_or_else(|_| "Untitled chat".to_string());
+        let message_count: i64 = row.try_get("message_count").unwrap_or(0);
+        let created_at_str: String = match row.try_get("created_at") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let started_at = parse_db_timestamp(&created_at_str);
+        if let Some(ts) = started_at {
+            chats.push(DayChat {
+                id,
+                source: "virtues".to_string(),
+                provider: None,
+                title,
+                message_count,
+                started_at: ts,
+            });
+        }
+    }
+
+    // ── External AI conversations (ontology-imported) ───────────────────────
+    // Group messages by conversation_id in Rust to keep SQL simple. Excludes
+    // any rows with source_provider='virtues' so we don't double-count an
+    // in-app chat that was also synced into the ontology lake.
+    let ext_rows = sqlx::query(
+        r#"
+        SELECT conversation_id, role, content, provider, timestamp
+        FROM data_content_conversation
+        WHERE timestamp >= $1 AND timestamp <= $2
+          AND source_provider != 'virtues'
+        ORDER BY conversation_id, timestamp ASC
+        "#,
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to query external chats: {}", e)))?;
+
+    use std::collections::BTreeMap;
+    struct ExtAccum {
+        provider: Option<String>,
+        first_ts: Option<DateTime<Utc>>,
+        first_user_content: Option<String>,
+        count: i64,
+    }
+    let mut groups: BTreeMap<String, ExtAccum> = BTreeMap::new();
+
+    for row in &ext_rows {
+        let conv_id: String = match row.try_get("conversation_id") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let role: String = row.try_get("role").unwrap_or_default();
+        let content: String = row.try_get("content").unwrap_or_default();
+        let provider: Option<String> = row.try_get("provider").ok();
+        let ts_str: String = match row.try_get("timestamp") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let ts = match parse_db_timestamp(&ts_str) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let entry = groups.entry(conv_id).or_insert(ExtAccum {
+            provider: None,
+            first_ts: None,
+            first_user_content: None,
+            count: 0,
+        });
+        entry.count += 1;
+        if entry.provider.is_none() {
+            entry.provider = provider;
+        }
+        if entry.first_ts.map(|t| ts < t).unwrap_or(true) {
+            entry.first_ts = Some(ts);
+        }
+        if role == "user" && entry.first_user_content.is_none() && !content.trim().is_empty() {
+            entry.first_user_content = Some(content);
+        }
+    }
+
+    for (conv_id, acc) in groups {
+        let started_at = match acc.first_ts {
+            Some(t) => t,
+            None => continue,
+        };
+        let title = acc
+            .first_user_content
+            .as_deref()
+            .map(truncate_title)
+            .unwrap_or_else(|| match acc.provider.as_deref() {
+                Some(p) => format!("{} conversation", p),
+                None => "AI conversation".to_string(),
+            });
+        chats.push(DayChat {
+            id: conv_id,
+            source: "external".to_string(),
+            provider: acc.provider,
+            title,
+            message_count: acc.count,
+            started_at,
+        });
+    }
+
+    chats.sort_by(|a, b| a.started_at.cmp(&b.started_at));
+    Ok(chats)
+}
+
+/// Parse a timestamp stored as RFC3339 or "YYYY-MM-DD HH:MM:SS" (UTC).
+fn parse_db_timestamp(s: &str) -> Option<DateTime<Utc>> {
+    if let Ok(parsed) = DateTime::parse_from_rfc3339(s) {
+        return Some(parsed.with_timezone(&Utc));
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(naive.and_utc());
+    }
+    None
+}
+
+/// Truncate the first user message to a short, single-line title.
+fn truncate_title(s: &str) -> String {
+    let first_line = s.lines().next().unwrap_or("").trim();
+    let chars: Vec<char> = first_line.chars().collect();
+    if chars.len() <= 80 {
+        first_line.to_string()
+    } else {
+        let truncated: String = chars.iter().take(80).collect();
+        format!("{}…", truncated.trim_end())
     }
 }

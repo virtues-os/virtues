@@ -249,11 +249,119 @@ pub async fn complete_pairing_by_source_id(
     // Enable default streams
     crate::api::streams::enable_default_streams(db, source_id.to_string(), &device_type).await?;
 
+    // For iOS, mirror into action_credentials and seed the 6 app_actions rows
+    // so the new actions architecture (subprocess binaries) handles ingest.
+    if device_type == "ios" {
+        // Look up the row's name so the action_credentials row matches
+        let row_name: Option<(String,)> = sqlx::query_as(
+            "SELECT name FROM elt_source_connections WHERE id = $1",
+        )
+        .bind(source_id)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to fetch source name: {e}")))?;
+        let cred_name = row_name.map(|(n,)| n).unwrap_or_else(|| "iOS Device".to_string());
+
+        seed_ios_action_credential(
+            db,
+            source_id,
+            &cred_name,
+            device_id,
+            &encrypted_token,
+            Some(&device_info_json),
+        )
+        .await?;
+    }
+
     Ok(PairingCompleted {
         source_id: source_id.to_string(),
         device_token: device_id.to_string(),
         available_streams,
     })
+}
+
+/// Mirror an iOS device pairing into `action_credentials` and seed the six iOS
+/// `app_actions` rows tied to it.
+///
+/// This is the bridge between the legacy `elt_source_connections` pairing flow
+/// and the new actions architecture. The key invariant is that
+/// `action_credentials.id == elt_source_connections.id` for the same pairing,
+/// so `validate_device_token()` can return one id that the action runner uses
+/// directly as `credential_id`.
+///
+/// Idempotent — safe to call on re-pair (uses INSERT OR IGNORE on both tables).
+async fn seed_ios_action_credential(
+    db: &SqlitePool,
+    source_id: &str,
+    name: &str,
+    device_id: &str,
+    encrypted_token: &str,
+    device_info_json: Option<&str>,
+) -> Result<()> {
+    // 1. Insert into action_credentials (idempotent on id PK)
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO action_credentials (
+            id, provider, name, auth_type,
+            device_id, device_token, device_info, last_seen_at,
+            is_active, metadata, created_at, updated_at
+        )
+        VALUES ($1, 'ios', $2, 'device', $3, $4, $5, datetime('now'), 1, '{}', datetime('now'), datetime('now'))
+        "#,
+    )
+    .bind(source_id)
+    .bind(name)
+    .bind(device_id)
+    .bind(encrypted_token)
+    .bind(device_info_json)
+    .execute(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to seed action_credentials: {e}")))?;
+
+    // 2. Seed the six iOS action rows (one per stream).
+    //    Mirrors the seed in migration 047 — keep these in sync.
+    //    Function names must match the binary names in actions/src/bin/*.
+    //    Stream values come from the iOS app's *StreamData.swift models.
+    const IOS_STREAMS: &[(&str, &str)] = &[
+        ("ios_healthkit", "iOS HealthKit"),
+        ("ios_location", "iOS Location"),
+        ("ios_microphone", "iOS Microphone"),
+        ("ios_contacts", "iOS Contacts"),
+        ("ios_eventkit", "iOS EventKit"),
+        ("ios_financekit", "iOS FinanceKit"),
+    ];
+
+    for (function_name, display_name) in IOS_STREAMS {
+        let action_id = format!("action_{}_{}", function_name, source_id);
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO app_actions (
+                id, action_type, owner, name, enabled, config,
+                function_name, credential_id, created_at, updated_at
+            )
+            VALUES ($1, 'sync', 'system', $2, 1, '{}', $3, $4, datetime('now'), datetime('now'))
+            "#,
+        )
+        .bind(&action_id)
+        .bind(display_name)
+        .bind(function_name)
+        .bind(source_id)
+        .execute(db)
+        .await
+        .map_err(|e| {
+            Error::Database(format!(
+                "Failed to seed app_action {function_name}: {e}"
+            ))
+        })?;
+    }
+
+    tracing::info!(
+        source_id = %source_id,
+        device_id = %device_id,
+        "seeded action_credentials + 6 iOS app_actions rows"
+    );
+
+    Ok(())
 }
 
 /// Link a device manually using its device ID as the token
@@ -354,6 +462,12 @@ pub async fn link_device_manually(
 
     // Enable default streams
     crate::api::streams::enable_default_streams(db, source_id.clone(), device_type).await?;
+
+    // For iOS, mirror into action_credentials and seed the 6 app_actions rows
+    // so the new actions architecture (subprocess binaries) handles ingest.
+    if device_type == "ios" {
+        seed_ios_action_credential(db, &source_id, name, device_id, &encrypted_token, None).await?;
+    }
 
     Ok(PairingCompleted {
         source_id,
