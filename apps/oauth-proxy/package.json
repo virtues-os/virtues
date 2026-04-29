@@ -1,5 +1,5 @@
 {
-  "name": "@ariata/oauth-proxy",
+  "name": "@virtues/oauth-proxy",
   "version": "0.1.0",
   "description": "OAuth proxy service for multiple providers (Google, Notion, etc.)",
   "main": "dist/server.js",
@@ -27,7 +27,7 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0"
   },
-  "keywords": ["oauth", "proxy", "ariata", "self-hosted"],
-  "author": "Ariata",
+  "keywords": ["oauth", "proxy", "virtues", "self-hosted"],
+  "author": "Virtues",
   "license": "MIT"
 }
