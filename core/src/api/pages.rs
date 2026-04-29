@@ -46,6 +46,7 @@ pub struct Page {
     pub icon: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<String>, // JSON array: ["tag1", "tag2"]
+    pub date: Option<String>, // YYYY-MM-DD — if set, this page is a reflection for that day
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -58,6 +59,7 @@ pub struct PageSummary {
     pub icon: Option<String>,
     pub cover_url: Option<String>,
     pub tags: Option<String>, // JSON array: ["tag1", "tag2"]
+    pub date: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -184,17 +186,18 @@ pub async fn list_pages(
     let limit = limit.unwrap_or(50).min(100);
     let offset = offset.unwrap_or(0);
 
-    // Get total count
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages"#)
+    // Get total count (exclude day-linked reflections from regular page list)
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE date IS NULL"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
 
-    // Get pages
+    // Get pages (exclude day-linked reflections)
     let pages = sqlx::query_as::<_, PageSummary>(
         r#"
-        SELECT id, title, icon, cover_url, tags, created_at, updated_at
+        SELECT id, title, icon, cover_url, tags, date, created_at, updated_at
         FROM app_pages
+        WHERE date IS NULL
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -217,7 +220,7 @@ pub async fn list_pages(
 pub async fn get_page(pool: &SqlitePool, id: &str) -> Result<Page> {
     let page = sqlx::query_as::<_, Page>(
         r#"
-        SELECT id, title, content, icon, cover_url, tags, created_at, updated_at
+        SELECT id, title, content, icon, cover_url, tags, date, created_at, updated_at
         FROM app_pages
         WHERE id = $1
         "#,
@@ -247,7 +250,7 @@ pub async fn create_page(pool: &SqlitePool, req: CreatePageRequest) -> Result<Pa
         r#"
         INSERT INTO app_pages (id, title, content, icon, cover_url, tags)
         VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, title, content, icon, cover_url, tags, created_at, updated_at
+        RETURNING id, title, content, icon, cover_url, tags, date, created_at, updated_at
         "#,
     )
     .bind(&id)
@@ -303,7 +306,7 @@ pub async fn update_page(pool: &SqlitePool, id: &str, req: UpdatePageRequest) ->
         UPDATE app_pages
         SET title = $2, content = $3, icon = $4, cover_url = $5, tags = $6
         WHERE id = $1
-        RETURNING id, title, content, icon, cover_url, tags, created_at, updated_at
+        RETURNING id, title, content, icon, cover_url, tags, date, created_at, updated_at
         "#,
     )
     .bind(id)
@@ -341,6 +344,60 @@ pub async fn delete_page(pool: &SqlitePool, id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Reflections (pages linked to a day)
+// ============================================================================
+
+/// Get all reflections for a specific date.
+pub async fn get_reflections_for_date(pool: &SqlitePool, date: &str) -> Result<Vec<Page>> {
+    let pages = sqlx::query_as::<_, Page>(
+        r#"
+        SELECT id, title, content, icon, cover_url, tags, date, created_at, updated_at
+        FROM app_pages
+        WHERE date = $1
+        ORDER BY created_at ASC
+        "#,
+    )
+    .bind(date)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get reflections: {}", e)))?;
+
+    Ok(pages)
+}
+
+/// Create a new reflection page linked to a date.
+pub async fn create_reflection(pool: &SqlitePool, date: &str, title: Option<&str>) -> Result<Page> {
+    // Default title is the formatted date
+    let title = title.unwrap_or_else(|| "").trim();
+    let title = if title.is_empty() {
+        chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .map(|d| d.format("%B %-d, %Y").to_string())
+            .unwrap_or_else(|_| date.to_string())
+    } else {
+        title.to_string()
+    };
+
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let id = generate_id(PAGE_PREFIX, &[&title, &timestamp]);
+
+    let page = sqlx::query_as::<_, Page>(
+        r#"
+        INSERT INTO app_pages (id, title, content, icon, date)
+        VALUES ($1, $2, '', '✎', $3)
+        RETURNING id, title, content, icon, cover_url, tags, date, created_at, updated_at
+        "#,
+    )
+    .bind(&id)
+    .bind(&title)
+    .bind(date)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to create reflection: {}", e)))?;
+
+    Ok(page)
 }
 
 // ============================================================================
@@ -422,7 +479,7 @@ pub async fn search_entities(pool: &SqlitePool, query: &str) -> Result<EntitySea
         SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
                mime_type, updated_at,
                CASE WHEN filename LIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM drive_files
+        FROM app_drive_files
         WHERE filename LIKE $1 AND deleted_at IS NULL
         UNION ALL
         SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon,

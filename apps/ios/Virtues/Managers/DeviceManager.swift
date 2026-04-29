@@ -69,6 +69,15 @@ class DeviceManager: ObservableObject {
         // Save configuration to UserDefaults
         saveConfiguration(configuration)
     }
+
+    /// Replace the stored `function_name → action_id` map. Called after a
+    /// successful pair or after a refetch from `/api/devices/action-ids`.
+    func updateActionIds(_ actionIds: [String: String]) {
+        Task { @MainActor in
+            self.configuration.actionIds = actionIds
+            self.saveConfiguration(self.configuration)
+        }
+    }
     
     func updateEndpoint(_ newEndpoint: String) async -> Bool {
         let trimmedEndpoint = newEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)

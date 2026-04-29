@@ -86,7 +86,7 @@ async fn resolve_calendar_attendees(db: &Database, window: TimeWindow) -> Result
 
 /// Resolve people from email senders in time window
 ///
-/// Links from_email to from_person_id in data_communication_email.
+/// Links from_email to person entity via wiki_entity_refs.
 async fn resolve_email_senders(db: &Database, window: TimeWindow) -> Result<usize> {
     // Fetch emails without resolved from_person_id
     let emails = fetch_unresolved_emails(db, window).await?;
@@ -133,21 +133,26 @@ struct EmailRecord {
     from_name: Option<String>,
 }
 
-/// Fetch emails without resolved from_person_id
+/// Fetch emails without resolved sender entity reference
 async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Vec<EmailRecord>> {
     let rows = sqlx::query!(
         r#"
         SELECT
-            id,
-            from_email,
-            from_name
-        FROM data_communication_email
-        WHERE timestamp >= $1
-          AND timestamp < $2
-          AND from_person_id IS NULL
-          AND from_email IS NOT NULL
-          AND from_email != ''
-        ORDER BY timestamp ASC
+            e.id,
+            e.from_email,
+            e.from_name
+        FROM data_communication_email e
+        WHERE e.timestamp >= $1
+          AND e.timestamp < $2
+          AND e.from_email IS NOT NULL
+          AND e.from_email != ''
+          AND NOT EXISTS (
+              SELECT 1 FROM wiki_entity_refs er
+              WHERE er.source_table = 'data_communication_email'
+                AND er.source_id = e.id
+                AND er.role = 'sender'
+          )
+        ORDER BY e.timestamp ASC
         LIMIT 1000
         "#,
         window.start,
@@ -170,7 +175,7 @@ async fn fetch_unresolved_emails(db: &Database, window: TimeWindow) -> Result<Ve
     Ok(emails)
 }
 
-/// Resolve email sender and link to person entity
+/// Resolve email sender and link to person entity via wiki_entity_refs
 ///
 /// Returns true if a new person was created or linked.
 async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord) -> Result<bool> {
@@ -184,14 +189,16 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
     )
     .await?;
 
-    // Update email with resolved person ID
+    // Link via wiki_entity_refs
+    let ref_id = ids::generate_id("eref", &[&email_record.id, &person_id, "sender"]);
     sqlx::query!(
         r#"
-        UPDATE data_communication_email
-        SET from_person_id = $1,
-            updated_at = datetime('now')
-        WHERE id = $2
+        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', timestamp
+        FROM data_communication_email WHERE id = $3
+        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
+        ref_id,
         person_id,
         email_record.id
     )
@@ -202,7 +209,7 @@ async fn resolve_and_link_email_sender(db: &Database, email_record: &EmailRecord
         email_id = %email_record.id,
         from_email = %email_record.from_email,
         person_id = %person_id,
-        "Linked email sender to person"
+        "Linked email sender to person via wiki_entity_refs"
     );
 
     Ok(true)
@@ -355,7 +362,7 @@ async fn fetch_calendar_events(db: &Database, window: TimeWindow) -> Result<Vec<
     Ok(events)
 }
 
-/// Resolve all attendees for an event and update the calendar record
+/// Resolve all attendees for an event and link via wiki_entity_refs
 ///
 /// Returns the number of unique people resolved.
 async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) -> Result<usize> {
@@ -363,17 +370,41 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
         return Ok(0);
     }
 
-    // Resolve each attendee email to person entity
-    let mut person_ids: Vec<String> = Vec::new();
     let mut unique_people = std::collections::HashSet::new();
+    let event_id_str = event.id.to_string();
+
+    // Fetch event start_time for the wiki_entity_refs timestamp
+    let event_timestamp: Option<String> = sqlx::query_scalar(
+        "SELECT start_time FROM data_calendar_event WHERE id = $1",
+    )
+    .bind(&event_id_str)
+    .fetch_optional(db.pool())
+    .await?;
+
+    let timestamp = event_timestamp.unwrap_or_default();
 
     for email in &event.attendee_identifiers {
         let email_lower = email.to_lowercase();
 
         match resolve_or_create_person(db, &email_lower).await {
             Ok(person_id) => {
-                unique_people.insert(person_id.clone());
-                person_ids.push(person_id);
+                if unique_people.insert(person_id.clone()) {
+                    // Create entity_reference for this attendee
+                    let ref_id = ids::generate_id("eref", &[&event_id_str, &person_id, "attendee"]);
+                    sqlx::query!(
+                        r#"
+                        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+                        VALUES ($1, 'person', $2, 'data_calendar_event', $3, 'attendee', $4)
+                        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+                        "#,
+                        ref_id,
+                        person_id,
+                        event_id_str,
+                        timestamp
+                    )
+                    .execute(db.pool())
+                    .await?;
+                }
             }
             Err(e) => {
                 tracing::warn!(
@@ -386,34 +417,13 @@ async fn resolve_and_link_event_attendees(db: &Database, event: &CalendarEvent) 
         }
     }
 
-    if person_ids.is_empty() {
-        return Ok(0);
+    if !unique_people.is_empty() {
+        tracing::debug!(
+            event_id = %event.id,
+            people_count = unique_people.len(),
+            "Linked attendees to calendar event via wiki_entity_refs"
+        );
     }
-
-    // Update calendar event with resolved person IDs
-    // SQLite doesn't support arrays - serialize to JSON
-    let person_ids_json =
-        serde_json::to_string(&person_ids).unwrap_or_else(|_| "[]".to_string());
-    let event_id_str = event.id.to_string();
-
-    sqlx::query!(
-        r#"
-        UPDATE data_calendar_event
-        SET attendee_person_ids = $1,
-            updated_at = datetime('now')
-        WHERE id = $2
-        "#,
-        person_ids_json,
-        event_id_str
-    )
-    .execute(db.pool())
-    .await?;
-
-    tracing::debug!(
-        event_id = %event.id,
-        people_count = unique_people.len(),
-        "Linked attendees to calendar event"
-    );
 
     Ok(unique_people.len())
 }

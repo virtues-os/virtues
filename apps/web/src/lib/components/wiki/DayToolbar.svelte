@@ -1,126 +1,238 @@
 <script lang="ts">
+	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
-	import { computeCompleteness, type ContextVector } from "$lib/wiki";
 
 	interface Props {
 		pageDate: Date;
-		weekDays: Date[];
 		currentDateSlug: string;
 		todaySlug: string;
-		contextVector: ContextVector | null;
-		chaosScore: number | null;
-		entropyCalibrationDays: number | null;
-		summaryGenerating: boolean;
-		summaryExists: boolean;
 		onNavigateDay: (date: Date) => void;
-		onWeekPrev: () => void;
-		onWeekNext: () => void;
-		onGenerate: () => void;
-		onToggleMetrics: () => void;
+		headerScrolledAway?: boolean;
+		coveragePercent?: number | null;
 	}
 
 	let {
 		pageDate,
-		weekDays,
 		currentDateSlug,
 		todaySlug,
-		contextVector,
-		chaosScore,
-		entropyCalibrationDays,
-		summaryGenerating,
-		summaryExists,
 		onNavigateDay,
-		onWeekPrev,
-		onWeekNext,
-		onGenerate,
-		onToggleMetrics,
+		headerScrolledAway = false,
+		coveragePercent = null,
 	}: Props = $props();
 
-	const completeness = $derived(
-		contextVector ? Math.round(computeCompleteness(contextVector) * 100) : 0,
+	const shortDateLabel = $derived(
+		pageDate.toLocaleDateString("en-US", {
+			weekday: "short",
+			month: "short",
+			day: "numeric",
+			year: "numeric",
+		}),
 	);
 
-	const entropyDisplay = $derived(() => {
-		if (entropyCalibrationDays == null) return "--";
-		const calibDays = entropyCalibrationDays;
-		const isCalibrated = calibDays >= 7;
-		if (isCalibrated && chaosScore != null) {
-			return String(Math.round(chaosScore * 100));
+	// Yesterday / Tomorrow dates
+	const yesterday = $derived(() => {
+		const d = new Date(pageDate);
+		d.setDate(d.getDate() - 1);
+		return d;
+	});
+
+	const tomorrow = $derived(() => {
+		const d = new Date(pageDate);
+		d.setDate(d.getDate() + 1);
+		return d;
+	});
+
+	// Calendar popover state
+	let calendarOpen = $state(false);
+	let calendarMonth = $state(pageDate.getMonth());
+	let calendarYear = $state(pageDate.getFullYear());
+	let popoverEl = $state<HTMLDivElement | null>(null);
+	let calendarBtnEl = $state<HTMLButtonElement | null>(null);
+
+	// Reset calendar view when current date slug changes
+	$effect(() => {
+		currentDateSlug; // track
+		calendarMonth = pageDate.getMonth();
+		calendarYear = pageDate.getFullYear();
+	});
+
+	function toggleCalendar() {
+		calendarOpen = !calendarOpen;
+	}
+
+	function closeCalendar() {
+		calendarOpen = false;
+	}
+
+	// Close on click outside (exclude the toggle button itself)
+	function handleWindowClick(e: MouseEvent) {
+		const target = e.target as Node;
+		if (calendarBtnEl?.contains(target)) return;
+		if (popoverEl && !popoverEl.contains(target)) {
+			closeCalendar();
 		}
-		return `(${calibDays}/7)`;
+	}
+
+	$effect(() => {
+		if (calendarOpen) {
+			window.addEventListener("click", handleWindowClick, true);
+			return () => window.removeEventListener("click", handleWindowClick, true);
+		}
 	});
 
-	const isPast = $derived(currentDateSlug < todaySlug);
+	// Calendar grid computation
+	const calendarDays = $derived(() => {
+		const firstDay = new Date(calendarYear, calendarMonth, 1);
+		const startDow = firstDay.getDay(); // 0=Sun
+		const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
 
-	const monthLabel = $derived(() => {
-		if (weekDays.length === 0) return "";
-		const first = weekDays[0].toLocaleDateString("en-US", { month: "short" });
-		const last = weekDays[weekDays.length - 1].toLocaleDateString("en-US", { month: "short" });
-		return first === last ? first : `${first}–${last}`;
+		const cells: (Date | null)[] = [];
+		// Leading blanks
+		for (let i = 0; i < startDow; i++) cells.push(null);
+		// Days
+		for (let d = 1; d <= daysInMonth; d++) {
+			cells.push(new Date(calendarYear, calendarMonth, d));
+		}
+		return cells;
 	});
+
+	const calendarMonthLabel = $derived(
+		new Date(calendarYear, calendarMonth).toLocaleDateString("en-US", {
+			month: "long",
+			year: "numeric",
+		}),
+	);
+
+	function prevMonth() {
+		if (calendarMonth === 0) {
+			calendarMonth = 11;
+			calendarYear--;
+		} else {
+			calendarMonth--;
+		}
+	}
+
+	function nextMonth() {
+		if (calendarMonth === 11) {
+			calendarMonth = 0;
+			calendarYear++;
+		} else {
+			calendarMonth++;
+		}
+	}
+
+	function selectCalendarDay(date: Date) {
+		onNavigateDay(date);
+		closeCalendar();
+	}
+
+	const isNotToday = $derived(currentDateSlug !== todaySlug);
 </script>
 
 <div class="day-toolbar">
-	<button class="toolbar-metric-btn" onclick={onToggleMetrics} type="button">
-		{completeness}% coverage · Entropy {entropyDisplay()}
-	</button>
-
-	<div class="week-picker">
+	<div class="toolbar-left">
 		<button
-			class="week-chevron"
-			onclick={onWeekPrev}
+			class="nav-btn"
+			onclick={() => onNavigateDay(yesterday())}
 			type="button"
-			aria-label="Previous week"
+			aria-label="Previous day"
+			title={yesterday().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
 		>
-			<Icon icon="ri:arrow-left-s-line" width="14" />
+			<Icon icon="ri:arrow-left-s-line" width="16" />
 		</button>
-		<span class="week-month">{monthLabel()}</span>
-		{#each weekDays as day}
-			{@const slug = getLocalDateSlug(day)}
-			{@const isCurrent = slug === currentDateSlug}
-			{@const isToday = slug === todaySlug}
+
+		<div class="calendar-anchor">
 			<button
-				class="week-day"
-				class:current={isCurrent}
-				class:today={isToday}
-				onclick={() => onNavigateDay(day)}
+				class="nav-btn calendar-btn"
+				bind:this={calendarBtnEl}
+				onclick={toggleCalendar}
 				type="button"
-				aria-label={day.toLocaleDateString("en-US", {
-					weekday: "long",
-					month: "long",
-					day: "numeric",
-				})}
+				aria-label="Open date picker"
 			>
-				{day.getDate()}
+				<Icon icon="ri:calendar-line" width="15" />
 			</button>
-		{/each}
+
+			{#if calendarOpen}
+				<div class="calendar-popover" bind:this={popoverEl} transition:fade={{ duration: 100 }}>
+					<div class="cal-header">
+						<button class="cal-nav" onclick={prevMonth} type="button" aria-label="Previous month">
+							<Icon icon="ri:arrow-left-s-line" width="14" />
+						</button>
+						<span class="cal-month-label">{calendarMonthLabel}</span>
+						<button class="cal-nav" onclick={nextMonth} type="button" aria-label="Next month">
+							<Icon icon="ri:arrow-right-s-line" width="14" />
+						</button>
+					</div>
+					<div class="cal-dow-row">
+						{#each ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as dow}
+							<span class="cal-dow">{dow}</span>
+						{/each}
+					</div>
+					<div class="cal-grid">
+						{#each calendarDays() as cell}
+							{#if cell === null}
+								<span class="cal-cell cal-blank"></span>
+							{:else}
+								{@const slug = getLocalDateSlug(cell)}
+								{@const isCurrent = slug === currentDateSlug}
+								{@const isToday = slug === todaySlug}
+								<button
+									class="cal-cell cal-day"
+									class:current={isCurrent}
+									class:today={isToday}
+									onclick={() => selectCalendarDay(cell)}
+									type="button"
+								>
+									{cell.getDate()}
+								</button>
+							{/if}
+						{/each}
+					</div>
+				</div>
+			{/if}
+		</div>
+
+		{#if isNotToday}
+			<button
+				class="nav-btn calendar-btn"
+				onclick={() => onNavigateDay(new Date())}
+				type="button"
+				aria-label="Go to today"
+				title="Today"
+			>
+				<Icon icon="ri:calendar-check-line" width="15" />
+			</button>
+		{/if}
+
 		<button
-			class="week-chevron"
-			onclick={onWeekNext}
+			class="nav-btn"
+			onclick={() => onNavigateDay(tomorrow())}
 			type="button"
-			aria-label="Next week"
+			aria-label="Next day"
+			title={tomorrow().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
 		>
-			<Icon icon="ri:arrow-right-s-line" width="14" />
+			<Icon icon="ri:arrow-right-s-line" width="16" />
 		</button>
 	</div>
 
+	<span class="toolbar-date" class:visible={headerScrolledAway}>{shortDateLabel}</span>
+
 	<div class="toolbar-right">
-		{#if isPast}
-			<button
-				class="toolbar-generate"
-				onclick={onGenerate}
-				disabled={summaryGenerating}
-				type="button"
-			>
-				<Icon
-					icon={summaryGenerating ? "ri:loader-4-line" : "ri:refresh-line"}
-					width="12"
-					class={summaryGenerating ? "spin-icon" : ""}
-				/>
-				{summaryGenerating ? "Generating..." : summaryExists ? "Regenerate" : "Generate"}
-			</button>
+		{#if coveragePercent != null}
+			<span class="coverage-badge" title="Data coverage for this day">
+				{Math.round(coveragePercent)}%
+			</span>
 		{/if}
+		<button
+			class="nav-btn"
+			type="button"
+			title="Page settings"
+			aria-label="Page settings"
+			disabled
+		>
+			<Icon icon="ri:more-2-fill" width="16" />
+		</button>
 	</div>
 </div>
 
@@ -135,39 +247,98 @@
 		flex-shrink: 0;
 	}
 
-	.week-picker {
+	.toolbar-left {
 		display: flex;
 		align-items: center;
-		gap: 1px;
+		gap: 2px;
 	}
 
-	.week-month {
-		font-size: 0.6875rem;
+	.toolbar-date {
+		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
-		margin-right: 2px;
+		opacity: 0;
+		transition: opacity 0.2s ease;
+		pointer-events: none;
 		white-space: nowrap;
 	}
+	.toolbar-date.visible {
+		opacity: 1;
+	}
 
-	.week-chevron {
+	.toolbar-right {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.coverage-badge {
+		font-family: var(--font-mono, "SF Mono", Menlo, monospace);
+		font-size: 0.625rem;
+		font-weight: 500;
+		color: var(--color-foreground-subtle);
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		padding: 1px 6px;
+		border-radius: 9999px;
+		letter-spacing: 0.02em;
+		cursor: default;
+	}
+
+	/* Navigation buttons (chevrons + calendar) */
+	.nav-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 22px;
-		height: 22px;
+		width: 28px;
+		height: 28px;
 		background: none;
 		border: none;
 		padding: 0;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
-		border-radius: 4px;
+		border-radius: 6px;
 		flex-shrink: 0;
 	}
-	.week-chevron:hover {
+	.nav-btn:hover {
 		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 	}
 
-	.week-day {
+	.calendar-btn {
+		color: var(--color-foreground-muted);
+	}
+
+	/* Calendar popover anchor */
+	.calendar-anchor {
+		position: relative;
+	}
+
+	.calendar-popover {
+		position: absolute;
+		top: calc(100% + 4px);
+		left: -4px;
+		z-index: 100;
+		background: var(--color-background);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+		padding: 10px;
+		width: 240px;
+	}
+
+	.cal-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 8px;
+	}
+
+	.cal-month-label {
+		font-size: 0.8125rem;
+		font-weight: 600;
+		color: var(--color-foreground);
+	}
+
+	.cal-nav {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -175,86 +346,77 @@
 		height: 24px;
 		background: none;
 		border: none;
+		color: var(--color-foreground-subtle);
+		cursor: pointer;
 		border-radius: 4px;
-		cursor: pointer;
-		color: var(--color-foreground-subtle);
-		font-size: 0.75rem;
-		font-weight: 500;
 		padding: 0;
-		position: relative;
 	}
-	.week-day:hover {
+	.cal-nav:hover {
 		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-	}
-	.week-day.current {
-		color: var(--color-primary);
-		font-weight: 600;
-	}
-	.week-day.today:not(.current) {
-		color: var(--color-success, #22c55e);
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 	}
 
-	.toolbar-metric-btn {
-		flex: 1;
-		font-size: 0.6875rem;
+	.cal-dow-row {
+		display: grid;
+		grid-template-columns: repeat(7, 1fr);
+		gap: 0;
+		margin-bottom: 2px;
+	}
+
+	.cal-dow {
+		text-align: center;
+		font-size: 0.625rem;
+		font-weight: 500;
 		color: var(--color-foreground-subtle);
-		white-space: nowrap;
-		background: none;
-		border: none;
-		padding: 2px 4px;
-		border-radius: 3px;
-		cursor: pointer;
-		text-align: left;
-	}
-	.toolbar-metric-btn:hover {
-		color: var(--color-foreground-muted);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		padding: 2px 0;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
 	}
 
-	.toolbar-right {
-		flex: 1;
+	.cal-grid {
+		display: grid;
+		grid-template-columns: repeat(7, 1fr);
+		gap: 1px;
+	}
+
+	.cal-cell {
 		display: flex;
 		align-items: center;
-		justify-content: flex-end;
-		min-width: 0;
+		justify-content: center;
+		width: 100%;
+		aspect-ratio: 1;
+		font-size: 0.75rem;
+		border-radius: 6px;
 	}
 
-	.toolbar-generate {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 8px;
-		border: none;
+	.cal-blank {
 		background: none;
+	}
+
+	.cal-day {
+		background: none;
+		border: none;
 		color: var(--color-foreground-muted);
-		font-size: 0.6875rem;
 		cursor: pointer;
-		border-radius: 4px;
-		white-space: nowrap;
-		transition: all 0.15s ease;
+		font-weight: 400;
+		padding: 0;
 	}
-
-	.toolbar-generate:hover {
+	.cal-day:hover {
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 		color: var(--color-foreground);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+	}
+	.cal-day.current {
+		background: var(--color-primary);
+		color: white;
+		font-weight: 600;
+	}
+	.cal-day.today:not(.current) {
+		color: var(--color-success, #22c55e);
+		font-weight: 600;
 	}
 
-	.toolbar-generate:disabled {
-		opacity: 0.5;
+	.nav-btn:disabled {
+		opacity: 0.4;
 		cursor: default;
-	}
-
-	:global(.spin-icon) {
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
 	}
 </style>

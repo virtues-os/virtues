@@ -178,13 +178,9 @@ export CEREBRAS_API_KEY="..."  # Optional
 cargo run
 ```
 
-## Deployment (Nomad)
+## Deployment
 
-See `deploy/nomad/tollbooth.nomad` for production deployment.
-
-```bash
-nomad job run deploy/nomad/tollbooth.nomad
-```
+Production deployment is managed by Atlas. Images are built and pushed to GHCR by CI on every push to `main` or `staging`.
 
 ## License
 

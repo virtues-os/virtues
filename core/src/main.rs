@@ -2,7 +2,6 @@
 
 use clap::Parser;
 use std::env;
-use std::path::Path;
 use virtues::cli::types::{Cli, Commands};
 use virtues::search::Embedder;
 use virtues::VirtuesBuilder;
@@ -65,31 +64,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // Get database URL from environment
-    let mut database_url =
-        env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:/data/virtues.db".to_string());
+    // Ensure DATABASE_URL is set with a sensible default before normalization
+    if env::var("DATABASE_URL").is_err() {
+        env::set_var("DATABASE_URL", "sqlite:./data/virtues.db");
+    }
 
-    // Auto-setup: Create data directory if it doesn't exist (for SQLite)
-    if database_url.starts_with("sqlite:") {
-        let db_path = database_url.trim_start_matches("sqlite:");
-        // Strip query parameters to get the file path
-        let file_path = db_path.split('?').next().unwrap_or(db_path);
+    // Normalize DATABASE_URL: relative SQLite paths → absolute, write back to env
+    // so subprocess actions inherit the absolute URL. No-op for postgres URLs.
+    let mut database_url = virtues::database::normalize_database_url()?;
 
-        if let Some(parent) = Path::new(file_path).parent() {
-            if !parent.exists() {
-                println!("📁 Creating data directory: {}", parent.display());
-                std::fs::create_dir_all(parent)?;
-            }
+    // Ensure SQLite creates the file if it doesn't exist (mode=rwc)
+    if database_url.starts_with("sqlite:") && !database_url.contains("mode=") {
+        if database_url.contains('?') {
+            database_url.push_str("&mode=rwc");
+        } else {
+            database_url.push_str("?mode=rwc");
         }
-
-        // Ensure SQLite creates the file if it doesn't exist (mode=rwc)
-        if !database_url.contains("mode=") {
-            if database_url.contains('?') {
-                database_url.push_str("&mode=rwc");
-            } else {
-                database_url.push_str("?mode=rwc");
-            }
-        }
+        // Re-set env var with the mode parameter so subprocesses see it too
+        env::set_var("DATABASE_URL", &database_url);
     }
 
     // Initialize Virtues client

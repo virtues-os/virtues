@@ -10,13 +10,11 @@
 
 	interface Props {
 		collapsed?: boolean;
-		onTitleAction?: (e: MouseEvent) => void;
 		animationDelay?: number;
 	}
 
 	let {
 		collapsed = false,
-		onTitleAction,
 		animationDelay = 0,
 	}: Props = $props();
 
@@ -158,15 +156,9 @@
 </script>
 
 <div class="header-container" class:collapsed>
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="title-row animate-row"
 		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
-		onclick={(e) => onTitleAction?.(e)}
-		oncontextmenu={(e) => {
-			e.preventDefault();
-			onTitleAction?.(e);
-		}}
 	>
 		<!-- Morphing icon -->
 		<div class="title-icon" style:color={accentColor}>
@@ -186,20 +178,6 @@
 		</div>
 
 		<span class="title-label" style:color={accentColor}>{activeLabel}</span>
-
-		<!-- Hover action: ... opens space context menu -->
-		<div class="title-actions">
-			<button
-				class="title-action"
-				onclick={(e) => {
-					e.stopPropagation();
-					onTitleAction?.(e);
-				}}
-				title="Space options"
-			>
-				<Icon icon="ri:more-2-fill" width="14" />
-			</button>
-		</div>
 	</div>
 </div>
 

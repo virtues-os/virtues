@@ -160,6 +160,53 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
     /// Performs upload and returns true if any uploads succeeded
     @discardableResult
+    /// Force an upload right now, clearing any stuck error state first AND
+    /// draining the entire pending queue (not just one batch).
+    ///
+    /// Use this for the manual "Send Now" button in Settings. It resets
+    /// `isTokenInvalid` and the circuit breaker, then loops `performUpload()`
+    /// until the pending queue is empty (or a safety cap is reached). This
+    /// prevents one-batch-at-a-time starvation when a high-volume stream
+    /// (like a HealthKit backfill) is monopolizing the FIFO queue.
+    func forceUpload() async -> Bool {
+        #if DEBUG
+        print("🔧 Force upload requested - clearing error state and draining queue")
+        #endif
+        isTokenInvalid = false
+        consecutiveFailures = 0
+        lastFailureTime = nil
+
+        // Drain in a loop. Each performUpload() pulls one batch from the
+        // FIFO queue. We loop until either:
+        //   - pending count hits zero
+        //   - performUpload makes no forward progress (stuck batch)
+        //   - we hit the safety cap (prevents runaway loops)
+        let maxIterations = 200
+        var anySuccess = false
+        var lastPending = -1
+        for i in 0..<maxIterations {
+            let pending = storageProvider.getQueueStats().pending
+            #if DEBUG
+            print("🔧 force-drain iteration \(i): pending=\(pending)")
+            #endif
+            if pending == 0 { break }
+            if pending == lastPending {
+                // No forward progress — bail to avoid spinning
+                #if DEBUG
+                print("🔧 force-drain: no progress, stopping")
+                #endif
+                break
+            }
+            lastPending = pending
+
+            let success = await performUpload()
+            if success { anySuccess = true }
+            // Tiny gap between batches so we don't hammer the server
+            try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+        }
+        return anySuccess
+    }
+
     func performUpload() async -> Bool {
         guard tryBeginUpload() else { return false }
         defer { endUpload() }
@@ -206,10 +253,6 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             return false
         }
 
-        guard let ingestURL = configProvider.ingestURL else {
-            return false
-        }
-        
         await MainActor.run {
             self.isUploading = true
         }
@@ -240,9 +283,31 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         // Track if any uploads succeeded
         var anyUploadSucceeded = false
 
-        // Process each stream group as a batch
+        // Process each stream group as a batch. Each stream now has its own
+        // webhook URL keyed by the backend action_id that was returned at
+        // pair time.
+        var refetchAttempted = false
         for (streamName, events) in groupedEvents {
-            let success = await uploadBatchedEvents(streamName: streamName, events: events, to: ingestURL)
+            var webhookURL = configProvider.webhookURL(forStream: streamName)
+
+            if webhookURL == nil && !refetchAttempted {
+                // First missing action_id in this batch: try a one-shot
+                // refetch from /api/devices/action-ids. This covers devices
+                // whose Keychain entry predates the webhook unification.
+                refetchAttempted = true
+                if await refetchActionIds() {
+                    webhookURL = configProvider.webhookURL(forStream: streamName)
+                }
+            }
+
+            guard let url = webhookURL else {
+                #if DEBUG
+                print("⚠️ No action_id for stream \(streamName); skipping batch")
+                #endif
+                continue
+            }
+
+            let success = await uploadBatchedEvents(streamName: streamName, events: events, to: url)
 
             // Record upload result for adaptive batching
             networkMonitor.recordUploadResult(success: success)
@@ -329,6 +394,45 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             storageProvider.incrementRetry(id: event.id)
         }
         return false
+    }
+
+    /// Fetch the latest `function_name → action_id` map from
+    /// `GET /api/devices/action-ids` and persist it via `DeviceManager`.
+    /// Returns true on success.
+    ///
+    /// Called lazily from the upload loop when a stream has no known
+    /// action_id — typically a device whose Keychain entry predates the
+    /// webhook unification, or one where a new iOS stream was added to
+    /// `templates.toml` after the device was paired.
+    private func refetchActionIds() async -> Bool {
+        guard let url = configProvider.actionIdsFetchURL else { return false }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(configProvider.deviceToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 30
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return false
+            }
+            struct ActionIdsResponse: Decodable {
+                let credential_id: String
+                let action_ids: [String: String]
+            }
+            let decoded = try JSONDecoder().decode(ActionIdsResponse.self, from: data)
+            DeviceManager.shared.updateActionIds(decoded.action_ids)
+            // Give the @Published update a beat to propagate so the next
+            // `configProvider.webhookURL(...)` call sees it.
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return true
+        } catch {
+            #if DEBUG
+            print("⚠️ refetchActionIds failed: \(error)")
+            #endif
+            return false
+        }
     }
 
     /// Generic upload method that works with any stream processor

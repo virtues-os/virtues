@@ -5,7 +5,6 @@
 //! - System default agents (assistant configurations)
 //! - Sample axiology tags (common task categories)
 
-use std::env;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use virtues::database::Database;
@@ -27,7 +26,8 @@ async fn main() {
 
     // Get database URL from environment
     dotenv::dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database_url = virtues::database::normalize_database_url()
+        .expect("DATABASE_URL must be set");
 
     // Connect to database
     info!("Connecting to database...");

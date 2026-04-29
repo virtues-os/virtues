@@ -38,7 +38,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				preferredName: profile.preferred_name || null,
 				serverStatus: profile.server_status || 'ready',
 				sessionExpires: sessionData.expires || null,
-				profileTimezone: profile.timezone || null
+				profileTimezone: profile.timezone || null,
+				onboardingStatus: profile.onboarding_status || 'active'
 			};
 		}
 
@@ -47,7 +48,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 			preferredName: null,
 			serverStatus: 'ready', // Assume ready if profile fetch fails
 			sessionExpires: sessionData.expires || null,
-			profileTimezone: null
+			profileTimezone: null,
+			onboardingStatus: 'active'
 		};
 	} catch (error) {
 		// Re-throw redirects

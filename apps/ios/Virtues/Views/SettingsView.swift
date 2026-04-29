@@ -24,6 +24,8 @@ struct SettingsView: View {
     @State private var isCompletingPairing = false
     @State private var pairingError: String?
     @State private var showCopiedToast = false
+    @State private var isForceSyncing = false
+    @State private var forceSyncResult: String?
     
     var body: some View {
         NavigationView {
@@ -187,6 +189,68 @@ struct SettingsView: View {
                                 .foregroundColor(.warmForegroundMuted)
                         }
                     }
+
+                    // Manual upload trigger — clears stuck error state and
+                    // forces an immediate upload of all pending events.
+                    Button(action: {
+                        Haptics.light()
+                        isForceSyncing = true
+                        forceSyncResult = nil
+                        Task {
+                            let ok = await uploadCoordinator.forceUpload()
+                            await MainActor.run {
+                                isForceSyncing = false
+                                forceSyncResult = ok ? "✓ Upload sent" : "✗ Upload failed (see logs)"
+                                Haptics.success()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    forceSyncResult = nil
+                                }
+                            }
+                        }
+                    }) {
+                        HStack {
+                            if isForceSyncing {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle())
+                                    .scaleEffect(0.8)
+                                Text("Sending...")
+                            } else {
+                                Label("Send Now", systemImage: "paperplane.fill")
+                            }
+                        }
+                        .foregroundColor(.warmPrimary)
+                    }
+                    .disabled(isForceSyncing)
+
+                    if let result = forceSyncResult {
+                        Text(result)
+                            .font(.caption)
+                            .foregroundColor(.warmForegroundMuted)
+                    }
+                }
+
+                // Device Identity Section
+                Section(header: Text("Device Identity")) {
+                    HStack(alignment: .top) {
+                        Text("Device ID")
+                        Spacer()
+                        Text(deviceManager.deviceId)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.warmForegroundMuted)
+                            .multilineTextAlignment(.trailing)
+                            .textSelection(.enabled)
+                    }
+
+                    Button(action: {
+                        Haptics.light()
+                        UIPasteboard.general.string = deviceManager.deviceId
+                        withAnimation { showCopiedToast = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                            withAnimation { showCopiedToast = false }
+                        }
+                    }) {
+                        Label("Copy Device ID", systemImage: "doc.on.doc")
+                    }
                 }
 
                 // About Section
@@ -266,7 +330,7 @@ struct SettingsView: View {
 
         Task {
             do {
-                let _ = try await NetworkManager.shared.completePairing(
+                let response = try await NetworkManager.shared.completePairing(
                     endpoint: endpoint,
                     sourceId: sourceId,
                     deviceId: DeviceManager.shared.deviceId
@@ -274,6 +338,9 @@ struct SettingsView: View {
 
                 await MainActor.run {
                     deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    if let actionIds = response.actionIds {
+                        deviceManager.updateActionIds(actionIds)
+                    }
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured
                     isCompletingPairing = false

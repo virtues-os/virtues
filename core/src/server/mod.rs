@@ -1,27 +1,25 @@
 //! HTTP server for data ingestion and API
 
 pub mod api;
-pub mod ingest;
+pub mod webhook;
 pub mod yjs;
 
 use axum::{
     extract::DefaultBodyLimit,
     middleware,
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 
 use std::env;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
-use self::ingest::AppState;
+use self::webhook::AppState;
 use self::yjs::yjs_websocket_handler;
 use crate::error::Result;
 use crate::mcp::{http::add_mcp_routes, VirtuesMcpServer};
 use crate::middleware::auth::AuthUser;
-use crate::storage::stream_writer::StreamWriter;
 use crate::Virtues;
 
 /// Run the HTTP ingestion server with integrated scheduler
@@ -59,39 +57,34 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         }
     }
 
-    // Initialize StreamWriter (simple in-memory buffer)
-    let stream_writer = StreamWriter::new();
-    let stream_writer_arc = Arc::new(Mutex::new(stream_writer));
+    // Initialize Yjs state early (needed by both server and scheduler)
+    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
+    yjs_state.start_save_processor();
+    tracing::info!("Yjs WebSocket server initialized");
+
+    // Reconcile action templates from actions/templates.toml — creates/updates
+    // system action rows. Safe to call on every startup (user-managed fields
+    // preserved).
+    if let Err(e) = crate::action_templates::reconcile_templates(client.database.pool()).await {
+        tracing::warn!("Failed to reconcile action templates: {}", e);
+    }
 
     // Start the scheduler in the background
     let db_pool = client.database.pool().clone();
-    let storage = (*client.storage).clone();
-    let scheduler_stream_writer = stream_writer_arc.clone();
+    let scheduler_yjs = yjs_state.clone();
     let _scheduler_handle = tokio::spawn(async move {
-        match crate::Scheduler::new(db_pool, storage, scheduler_stream_writer).await {
+        match crate::Scheduler::new(db_pool, scheduler_yjs).await {
             Ok(sched) => {
+                if let Err(e) = sched.schedule_all().await {
+                    tracing::warn!("Failed to schedule cron actions: {}", e);
+                }
                 if let Err(e) = sched.start().await {
                     tracing::warn!("Failed to start scheduler: {}", e);
                 } else {
                     tracing::info!("Scheduler started successfully");
-
-                    // Schedule drive trash purge job (daily at 3am)
-                    if let Err(e) = sched.schedule_drive_trash_purge_job().await {
-                        tracing::warn!("Failed to schedule drive trash purge job: {}", e);
-                    }
-
-                    // Schedule daily summary job (runs at user's maintenance hour)
-                    if let Err(e) = sched.schedule_daily_summary_job().await {
-                        tracing::warn!("Failed to schedule daily summary job: {}", e);
-                    }
-
-                    // Schedule embedding indexer job (every 15 minutes)
-                    if let Err(e) = sched.schedule_embedding_job().await {
-                        tracing::warn!("Failed to schedule embedding job: {}", e);
-                    }
-
-                    // Keep scheduler alive - it will be dropped when the server shuts down
-                    // The JobScheduler runs background tasks that need to stay active
+                    // Keep the scheduler handle alive — tokio-cron-scheduler
+                    // runs background tasks on its own tokio tasks, but the
+                    // JobScheduler itself needs to stay in scope.
                     loop {
                         tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
                     }
@@ -114,11 +107,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("ToolExecutor not initialized - TOLLBOOTH_INTERNAL_SECRET may not be set");
     }
 
-    // Initialize Yjs state for real-time collaborative editing
-    let yjs_state = yjs::YjsState::new(client.database.pool().clone());
-    yjs_state.start_save_processor();
-    tracing::info!("Yjs WebSocket server initialized");
-
     // Initialize chat cancellation state for stopping in-progress requests
     let chat_cancel_state = crate::api::chat::ChatCancellationState::new();
 
@@ -129,7 +117,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         db: client.database.clone(),
         storage: client.storage.clone(),
         drive_config,
-        stream_writer: stream_writer_arc.clone(),
         tool_executor,
         yjs_state: yjs_state.clone(),
         chat_cancel_state,
@@ -148,8 +135,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/auth/callback", get(api::auth_callback_handler))
         .route("/auth/signout", post(api::auth_signout_handler))
         .route("/auth/session", get(api::auth_session_handler))
-        // OAuth callback from OAuth proxy (returns HTML redirect)
-        .route("/oauth/callback", get(api::oauth_callback_handler))
+        // OAuth callback — removed in the actions cutover; re-added when the
+        // first OAuth-based source comes back as an action binary.
         // Atlas webhook for owner email updates (Seed and Drift pattern)
         .route(
             "/api/profile/owner-email",
@@ -167,6 +154,19 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/s/:token/files/:file_id",
             get(api::shared_file_download_handler),
+        )
+        // Webhook ingestion. Authenticated via Bearer device-token (looked up
+        // O(1) by HMAC against `credentials.secret_lookup_hash`), NOT via web
+        // session cookies. Lives in public_routes because the AuthUser
+        // extractor only knows how to read session cookies.
+        .route("/webhook/:action_id", post(webhook::webhook))
+        // Device re-fetch for stream → action_id map. Used by paired devices
+        // whose Keychain entry predates the webhook unification, or after
+        // templates.toml adds a new stream. Same device-token bearer auth as
+        // the webhook endpoint.
+        .route(
+            "/api/devices/action-ids",
+            get(api::device_action_ids_handler),
         );
 
     // ============================================================
@@ -175,110 +175,56 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let protected_routes = Router::new()
         // Timeline day (location chunks for movement map)
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
-        // Data ingestion
-        .route("/ingest", post(ingest::ingest))
-        // OAuth flow
+        // ─── Source connect flows (Phase 3) ──────────────────────────
+        // These coexist with the legacy /api/devices/pairing/... routes
+        // during the dual-path window. Phase 6 deletes the legacy path.
         .route(
-            "/api/sources/:provider/authorize",
-            post(api::oauth_authorize_handler),
-        )
-        // Source management API
-        .route("/api/sources", get(api::list_sources_handler))
-        .route("/api/sources", post(api::create_source_handler))
-        .route(
-            "/api/sources/register-device",
-            post(api::register_device_handler),
-        )
-        // Device pairing endpoints
-        .route(
-            "/api/devices/pairing/initiate",
-            post(api::initiate_device_pairing_handler),
+            "/api/pairing/initiate",
+            post(crate::api::source_auth::pair_initiate_handler),
         )
         .route(
-            "/api/devices/pairing/complete",
-            post(api::complete_device_pairing_handler),
+            "/api/pairing/complete/:credential_id",
+            post(crate::api::source_auth::pair_complete_handler),
         )
         .route(
-            "/api/devices/pairing/link",
-            post(api::link_device_manual_handler),
+            "/api/connect/:source_id/start",
+            post(crate::api::source_auth::oauth_start_handler),
         )
         .route(
-            "/api/devices/pairing/:source_id/complete",
-            post(api::complete_qr_pairing_handler),
+            "/api/connect/:source_id/complete",
+            post(crate::api::source_auth::apikey_complete_handler),
         )
         .route(
-            "/api/devices/pairing/:source_id",
-            get(api::check_pairing_status_handler),
+            "/oauth/callback",
+            axum::routing::get(crate::api::source_auth::oauth_callback_handler),
         )
-        .route(
-            "/api/devices/pending-pairings",
-            get(api::list_pending_pairings_handler),
-        )
+        // Legacy /api/devices/pairing/* routes were removed in Phase 6 cutover.
+        // The flows are now driven by the source_auth handlers above.
+        // Legacy device-health endpoint kept for now (used by mobile/admin UIs).
         .route("/api/devices/health", get(api::device_health_check_handler))
-        .route("/api/sources/:id", get(api::get_source_handler))
-        .route("/api/sources/:id", delete(api::delete_source_handler))
-        .route("/api/sources/:id/pause", post(api::pause_source_handler))
-        .route("/api/sources/:id/resume", post(api::resume_source_handler))
+        // Actions API
         .route(
-            "/api/sources/:id/status",
-            get(api::get_source_status_handler),
-        )
-        // Stream management API
-        .route("/api/sources/:id/streams", get(api::list_streams_handler))
-        .route(
-            "/api/sources/:id/streams",
-            post(api::bulk_update_streams_handler),
+            "/api/actions",
+            get(api::list_actions_handler).post(api::create_action_handler),
         )
         .route(
-            "/api/sources/:id/streams/:name",
-            get(api::get_stream_handler),
+            "/api/actions/:id",
+            get(api::get_action_handler)
+                .patch(api::patch_action_handler)
+                .delete(api::delete_action_handler),
         )
+        .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        .route("/api/actions/:id/runs", get(api::list_action_runs_handler))
+        .route("/api/actions/runs/:id", get(api::get_action_run_handler))
+        .route("/api/runs", get(api::list_runs_handler))
+        // Credentials API
+        .route("/api/credentials", get(api::list_credentials_handler))
         .route(
-            "/api/sources/:id/streams/:name/enable",
-            post(api::enable_stream_handler),
+            "/api/credentials/:id",
+            patch(api::patch_credential_handler).delete(api::delete_credential_handler),
         )
-        .route(
-            "/api/sources/:id/streams/:name/disable",
-            post(api::disable_stream_handler),
-        )
-        .route(
-            "/api/sources/:id/streams/:name",
-            delete(api::disable_stream_handler),
-        )
-        .route(
-            "/api/sources/:id/streams/:name/config",
-            put(api::update_stream_config_handler),
-        )
-        .route(
-            "/api/sources/:id/streams/:name/schedule",
-            put(api::update_stream_schedule_handler),
-        )
-        .route(
-            "/api/sources/:id/streams/:name/sync",
-            post(api::sync_stream_handler),
-        )
-        .route(
-            "/api/sources/:id/streams/:name/jobs",
-            get(api::get_stream_jobs_handler),
-        )
-        // Catalog/Registry API
-        .route(
-            "/api/catalog/sources",
-            get(api::list_catalog_sources_handler),
-        )
-        // Ontologies API
-        .route(
-            "/api/ontologies/available",
-            get(api::list_available_ontologies_handler),
-        )
-        .route(
-            "/api/ontologies/overview",
-            get(api::get_ontologies_overview_handler),
-        )
-        // Jobs API
-        .route("/api/jobs/:id", get(api::get_job_handler))
-        .route("/api/jobs", get(api::query_jobs_handler))
-        .route("/api/jobs/:id/cancel", post(api::cancel_job_handler))
+        // Source catalog (drives the Sources tile grid)
+        .route("/api/sources", get(api::list_sources_handler))
         // Profile API
         .route("/api/profile", get(api::get_profile_handler))
         .route("/api/profile", put(api::update_profile_handler))
@@ -349,23 +295,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/metrics/activity",
             get(api::get_activity_metrics_handler),
-        )
-        // Plaid Link API (different from standard OAuth)
-        .route(
-            "/api/plaid/link-token",
-            post(api::create_plaid_link_token_handler),
-        )
-        .route(
-            "/api/plaid/exchange-token",
-            post(api::exchange_plaid_token_handler),
-        )
-        .route(
-            "/api/plaid/:source_id/accounts",
-            get(api::get_plaid_accounts_handler),
-        )
-        .route(
-            "/api/plaid/:source_id",
-            delete(api::remove_plaid_item_handler),
         )
         // Usage API
         .route("/api/usage", get(api::usage_handler))
@@ -451,6 +380,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/organization/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
+        // Wiki - Thing
+        .route("/api/wiki/things", get(api::wiki_list_things_handler))
+        .route(
+            "/api/wiki/thing/:id",
+            get(api::wiki_get_thing_handler).put(api::wiki_update_thing_handler),
+        )
+        // Wiki - Narrative Identity
+        .route(
+            "/api/wiki/narrative-identity",
+            get(api::wiki_get_narrative_identity_handler)
+                .put(api::wiki_update_narrative_identity_handler),
+        )
         // Wiki - Telos
         .route(
             "/api/wiki/telos/active",
@@ -472,14 +413,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
         )
-        // Wiki - Citations
         .route(
-            "/api/wiki/:source_type/:source_id/citations",
-            get(api::wiki_get_citations_handler).post(api::wiki_create_citation_handler),
-        )
-        .route(
-            "/api/wiki/citations/:id",
-            put(api::wiki_update_citation_handler).delete(api::wiki_delete_citation_handler),
+            "/api/wiki/day/:date/illustration",
+            get(api::wiki_get_day_illustration_handler),
         )
         // Wiki - Temporal Events
         .route(
@@ -497,22 +433,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Wiki - Day Sources (ontology data)
         .route(
-            "/api/wiki/day/:date/summary",
-            post(api::wiki_generate_day_summary_handler),
-        )
-        .route(
             "/api/wiki/day/:date/sources",
             get(api::wiki_get_day_sources_handler),
+        )
+        // Wiki - Day Chats (in-app + external AI conversations)
+        .route(
+            "/api/wiki/day/:date/chats",
+            get(api::wiki_get_day_chats_handler),
         )
         // Wiki - Day Streams (dynamic ontology queries)
         .route(
             "/api/wiki/day/:date/streams",
             get(api::wiki_get_day_streams_handler),
-        )
-        // Wiki - Day Vectors (2D projection of W6H embeddings)
-        .route(
-            "/api/wiki/day/:date/vectors",
-            get(api::wiki_get_day_vectors_handler),
         )
         // Code Execution API (AI Sandbox)
         .route("/api/code/execute", post(api::execute_code_handler))
@@ -530,6 +462,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/pages/search/entities",
             get(api::search_entities_handler),
+        )
+        .route(
+            "/api/pages/reflections/:date",
+            get(api::get_reflections_handler).post(api::create_reflection_handler),
         )
         .route(
             "/api/pages/:id",
@@ -553,18 +489,35 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pages/versions/:version_id",
             get(api::get_page_version_handler),
         )
-        // Spaces API
+        // Projects API
+        .route(
+            "/api/projects",
+            get(api::list_projects_handler).post(api::create_project_handler),
+        )
+        .route(
+            "/api/projects/:id",
+            get(api::get_project_handler)
+                .patch(api::update_project_handler)
+                .delete(api::delete_project_handler),
+        )
+        .route(
+            "/api/projects/:id/items",
+            post(api::add_project_item_handler).delete(api::remove_project_item_handler),
+        )
+        .route(
+            "/api/projects/:id/items/reorder",
+            put(api::reorder_project_items_handler),
+        )
+        // Spaces API (single system workspace — create/delete/tabs removed)
         .route(
             "/api/spaces",
-            get(api::list_spaces_handler).post(api::create_space_handler),
+            get(api::list_spaces_handler),
         )
         .route(
             "/api/spaces/:id",
             get(api::get_space_handler)
-                .put(api::update_space_handler)
-                .delete(api::delete_space_handler),
+                .put(api::update_space_handler),
         )
-        .route("/api/spaces/:id/tabs", put(api::save_space_tabs_handler))
         .route("/api/spaces/:id/views", get(api::list_space_views_handler))
         // Space Items API (root-level items at space level, not in any folder)
         .route(
@@ -713,16 +666,6 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
         Err(_) => "disconnected",
     };
 
-    // Read update_check_hour for Atlas health check sync
-    let update_check_hour = sqlx::query_scalar::<_, Option<i32>>(
-        "SELECT update_check_hour FROM app_user_profile WHERE id = '00000000-0000-0000-0000-000000000001'"
-    )
-    .fetch_optional(state.db.pool())
-    .await
-    .ok()
-    .flatten()
-    .flatten();
-
     let is_healthy = db_status == "connected";
     let status_code = if is_healthy {
         axum::http::StatusCode::OK
@@ -741,7 +684,6 @@ async fn health(axum::extract::State(state): axum::extract::State<AppState>) -> 
             "commit": env!("GIT_COMMIT"),
             "built_at": env!("BUILD_TIME"),
             "min_ios_version": min_ios_version,
-            "update_check_hour": update_check_hour,
             "database": db_status,
             "pool": {
                 "size": state.db.pool().size(),

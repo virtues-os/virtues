@@ -10,16 +10,19 @@ import type {
 	WikiPersonApi,
 	WikiPlaceApi,
 	WikiOrganizationApi,
+	WikiThingApi,
 	WikiDayApi,
 	WikiActApi,
 	WikiChapterApi,
 	WikiTelosApi,
+	TemporalEventApi,
 } from "./api";
 
 import type { PersonPage } from "./types/person";
 import type { PlacePage, PlaceType } from "./types/place";
 import type { OrganizationPage, OrganizationType } from "./types/organization";
-import type { DayPage, ContextVector, LinkedEntities, LinkedTemporal } from "./types/day";
+import type { ThingPage } from "./types/thing";
+import type { DayPage, DayEvent, LinkedEntities, LinkedTemporal } from "./types/day";
 import type { ActPage } from "./types/act";
 import type { ChapterPage } from "./types/chapter";
 import type { TelosPage } from "./types/telos";
@@ -28,19 +31,6 @@ import { parseDateSlug, formatLongDate } from "$lib/utils/dateUtils";
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-function emptyContextVector(): ContextVector {
-	return { who: 0, whom: 0, what: 0, when: 0, where: 0, why: 0, how: 0 };
-}
-
-function parseContextVector(raw: string | null): ContextVector {
-	if (!raw) return emptyContextVector();
-	try {
-		return JSON.parse(raw);
-	} catch {
-		return emptyContextVector();
-	}
-}
 
 function emptyLinkedEntities(): LinkedEntities {
 	return { people: [], places: [], organizations: [] };
@@ -193,6 +183,34 @@ export function apiToOrganizationPage(api: WikiOrganizationApi): OrganizationPag
 }
 
 // ============================================================================
+// Thing Converter
+// ============================================================================
+
+export function apiToThingPage(api: WikiThingApi): ThingPage {
+	return {
+		type: "thing",
+		id: api.id,
+		title: api.name,
+		cover: api.cover_image ?? undefined,
+
+		// Thing-specific fields
+		category: api.category ?? undefined,
+		description: api.description ?? undefined,
+
+		// Content
+		content: api.content ?? "",
+
+		// Metadata
+		citations: [],
+		linkedPages: [],
+		tags: [],
+		createdAt: new Date(api.created_at),
+		updatedAt: new Date(api.updated_at),
+		lastEditedBy: "ai",
+	};
+}
+
+// ============================================================================
 // Day Converter
 // ============================================================================
 
@@ -214,16 +232,33 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		endTimezone: api.end_timezone,
 
 		// Layers (will be populated from separate queries)
-		contextVector: parseContextVector(api.context_vector),
-		chaosScore: api.chaos_score ?? null,
-		entropyCalibrationDays: api.entropy_calibration_days ?? null,
 		linkedEntities: emptyLinkedEntities(),
 		linkedTemporal: emptyLinkedTemporal(),
 		events: [],
 		autobiography: api.autobiography ?? "",
 		autobiographySections: api.autobiography_sections
-			? (api.autobiography_sections as DayPage["autobiographySections"])
+			? api.autobiography_sections.map(s => ({
+				id: s.id,
+				heading: s.heading,
+				content: s.content,
+				authoredBy: s.authored_by as "ai" | "human",
+				lastEditedAt: new Date(s.last_edited_at),
+			}))
 			: undefined,
+		epigraph: api.epigraph ?? undefined,
+		hasIllustration: api.has_illustration ?? false,
+		dataQuality: api.data_quality ?? undefined,
+		newEntityCount: api.new_entity_count ?? 0,
+		newTopicCount: api.new_topic_count ?? 0,
+		readinessScore: api.readiness_score ?? null,
+		readinessDetails: api.readiness_details ?? null,
+		sleepCycles: (api.sleep_cycles ?? []).map((c: { start_time: string; end_time: string; dominant_stage: string; avg_hr: number | null; autonomic_z: number | null }) => ({
+			startTime: new Date(c.start_time),
+			endTime: new Date(c.end_time),
+			dominantStage: c.dominant_stage,
+			avgHr: c.avg_hr,
+			autonomicZ: c.autonomic_z,
+		})),
 
 		// Metadata
 		citations: [],
@@ -233,6 +268,46 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		createdAt: new Date(api.created_at),
 		updatedAt: new Date(api.updated_at),
 		lastEditedBy: (api.last_edited_by as "ai" | "human") ?? "ai",
+	};
+}
+
+// ============================================================================
+// Day Event Converter
+// ============================================================================
+
+export function apiToDayEvent(api: TemporalEventApi): DayEvent {
+	const start = new Date(api.start_time);
+	const end = new Date(api.end_time);
+	return {
+		id: api.id,
+		startTime: start,
+		endTime: end,
+		durationMinutes: Math.round((end.getTime() - start.getTime()) / 60000),
+		autoLabel: api.auto_label ?? "Unknown",
+		autoLocation: api.auto_location ?? undefined,
+		sourceIds: Array.isArray(api.source_ontologies) ? api.source_ontologies : [],
+		userLabel: api.user_label || undefined,
+		userLocation: api.user_location || undefined,
+		userNotes: api.user_notes || undefined,
+		noveltyZ: api.novelty_z ?? null,
+		autonomicZ: api.autonomic_z ?? null,
+		avgHr: api.avg_hr ?? null,
+		hrZ: api.hr_z ?? null,
+		hrvZ: api.hrv_z ?? null,
+		topics: api.topics ?? [],
+		eventSummary: api.event_summary ?? null,
+		agentAction: (api.agent_action as DayEvent["agentAction"]) ?? null,
+		isSleep: api.is_sleep ?? false,
+		userHidden: api.user_hidden ?? false,
+		userCreated: api.user_created ?? false,
+		entities: Array.isArray(api.entities) ? api.entities : [],
+		topicNovelty: api.topic_novelty ?? null,
+		entityNovelty: api.entity_novelty ?? null,
+		entityTimestamps: api.entity_timestamps ?? null,
+		isUserAdded: api.is_user_added ?? false,
+		isUserEdited: api.is_user_edited ?? false,
+		isTransit: api.is_transit ?? false,
+		isUnknown: api.is_unknown ?? false,
 	};
 }
 

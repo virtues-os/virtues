@@ -29,7 +29,7 @@
 		const _activeTabId = spaceStore.activeTabId;
 		const _splitEnabled = spaceStore.isSplit;
 		const activeTabs = spaceStore.getActiveTabsForSidebar();
-		return activeTabs.some(t => t.route.startsWith('/virtues/'));
+		return activeTabs.some(t => t.route.startsWith('/virtues/') || t.route === '/sources' || t.route.startsWith('/sources/') || t.route === '/tools');
 	});
 
 	function toggleSettings() {
@@ -53,11 +53,17 @@
 	}
 
 	const settingsItems: SidebarNavItemData[] = [
+		{ id: 'settings-sources', type: 'link', label: 'Sources', icon: 'ri:plug-line', href: '/sources' },
+		{ id: 'settings-tools', type: 'link', label: 'Tools', icon: 'ri:tools-line', href: '/tools' },
 		{ id: 'settings-profile', type: 'link', label: 'Profile', icon: 'ri:user-3-line', href: '/virtues/account' },
 		{ id: 'settings-assistant', type: 'link', label: 'Assistant', icon: 'ri:robot-line', href: '/virtues/assistant' },
 		{ id: 'settings-billing', type: 'link', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
 		{ id: 'settings-system', type: 'link', label: 'System', icon: 'ri:computer-line', href: '/virtues/system' },
 		{ id: 'settings-feedback', type: 'link', label: 'Feedback', icon: 'ri:feedback-line', href: '/virtues/feedback' },
+		{ id: 'dev-sql', type: 'link', label: 'SQL', icon: 'ri:database-2-line', href: '/virtues/sql' },
+		{ id: 'dev-terminal', type: 'link', label: 'Terminal', icon: 'ri:terminal-box-line', href: '/virtues/terminal' },
+		{ id: 'dev-sitemap', type: 'link', label: 'Sitemap', icon: 'ri:road-map-line', href: '/virtues/sitemap' },
+		{ id: 'dev-lake', type: 'link', label: 'Lake', icon: 'ri:database-2-line', href: '/virtues/lake' },
 	];
 
 	const signOutItem: SidebarNavItemData = {

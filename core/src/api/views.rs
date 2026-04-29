@@ -145,13 +145,13 @@ pub struct ViewListResponse {
 // CRUD Operations
 // ============================================================================
 
-/// List views for a space
+/// List views for a space (excludes system views — those are frontend constants now)
 pub async fn list_views(pool: &SqlitePool, space_id: &str) -> Result<ViewListResponse> {
     let views = sqlx::query_as::<_, ViewSummary>(
         r#"
         SELECT id, space_id, parent_view_id, name, icon, sort_order, view_type, query_config, is_system
         FROM app_views
-        WHERE space_id = $1
+        WHERE space_id = $1 AND is_system = FALSE
         ORDER BY sort_order ASC
         "#,
     )
@@ -846,12 +846,13 @@ async fn resolve_url(pool: &SqlitePool, url: &str) -> Result<Option<ViewEntity>>
         "person" => resolve_person_by_id(pool, id).await,
         "place" => resolve_place_by_id(pool, id).await,
         "org" => resolve_org_by_id(pool, id).await,
+        "thing" => resolve_thing_by_id(pool, id).await,
         "day" => resolve_day_by_id(pool, id).await,
         "year" => resolve_year_by_id(pool, id).await,
         "source" => resolve_source_by_id(pool, id).await,
         "view" => resolve_view_by_id(pool, id).await,
         // App routes (frontend-rendered, no backend lookup)
-        "wiki" | "drive" | "virtues" | "" => Ok(Some(resolve_app_route(url))),
+        "wiki" | "entities" | "drive" | "tools" | "virtues" | "" => Ok(Some(resolve_app_route(url))),
         // Unknown namespace
         _ => Ok(None),
     }
@@ -875,10 +876,14 @@ fn resolve_app_route(url: &str) -> ViewEntity {
         "/page" => ("All Pages", "ri:file-list-3-line"),
         "/wiki" => ("Overview", "ri:compass-line"),
         "/day" => ("Today", "ri:calendar-todo-line"),
+        "/entities" => ("Entities", "ri:group-line"),
         "/person" => ("People", "ri:user-line"),
         "/place" => ("Places", "ri:map-pin-line"),
         "/org" => ("Organizations", "ri:building-line"),
+        "/thing" => ("Things", "ri:lightbulb-line"),
+        "/narrative-identity" => ("Narrative Identity", "ri:quill-pen-line"),
         "/source" | "/sources" => ("Sources", "ri:plug-line"),
+        "/tools" => ("Tools", "ri:tools-line"),
         "/drive" => ("Drive", "ri:folder-line"),
         "/virtues/sql" => ("SQL Viewer", "ri:database-line"),
         "/virtues/terminal" => ("Terminal", "ri:terminal-box-line"),
@@ -948,7 +953,7 @@ async fn resolve_pages(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages"#)
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM app_pages WHERE date IS NULL"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count pages: {}", e)))?;
@@ -957,6 +962,7 @@ async fn resolve_pages(
         r#"
         SELECT id, title, updated_at
         FROM app_pages
+        WHERE date IS NULL
         ORDER BY updated_at DESC
         LIMIT $1 OFFSET $2
         "#,
@@ -1170,7 +1176,8 @@ async fn resolve_sources(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM elt_source_connections"#)
+    // Post-cutover: sources are now `credentials` (the Vault).
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM credentials"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count sources: {}", e)))?;
@@ -1178,7 +1185,7 @@ async fn resolve_sources(
     let entities: Vec<ViewEntity> = sqlx::query_as::<_, (String, String)>(
         r#"
         SELECT id, name
-        FROM elt_source_connections
+        FROM credentials
         ORDER BY name ASC
         LIMIT $1 OFFSET $2
         "#,
@@ -1208,7 +1215,7 @@ async fn resolve_drive(
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
     let total: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM drive_files WHERE parent_id IS NULL AND deleted_at IS NULL"#,
+        r#"SELECT COUNT(*) FROM app_drive_files WHERE parent_id IS NULL AND deleted_at IS NULL"#,
     )
     .fetch_one(pool)
     .await
@@ -1217,7 +1224,7 @@ async fn resolve_drive(
     let entities: Vec<ViewEntity> = sqlx::query_as::<_, (String, String, bool)>(
         r#"
         SELECT id, filename, is_folder
-        FROM drive_files
+        FROM app_drive_files
         WHERE parent_id IS NULL AND deleted_at IS NULL
         ORDER BY is_folder DESC, filename ASC
         LIMIT $1 OFFSET $2
@@ -1336,6 +1343,24 @@ async fn resolve_org_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEnt
     }))
 }
 
+async fn resolve_thing_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
+    let result = sqlx::query_as::<_, (String, String)>(
+        r#"SELECT id, name FROM wiki_things WHERE id = $1"#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to fetch thing: {}", e)))?;
+
+    Ok(result.map(|(id, name)| ViewEntity {
+        id: format!("/thing/{}", id),
+        name,
+        namespace: "thing".to_string(),
+        icon: "ri:lightbulb-line".to_string(),
+        updated_at: None,
+    }))
+}
+
 async fn resolve_day_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
     let result =
         sqlx::query_as::<_, (String, String)>(r#"SELECT id, date FROM wiki_days WHERE id = $1"#)
@@ -1372,7 +1397,7 @@ async fn resolve_year_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEn
 
 async fn resolve_source_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
     let result = sqlx::query_as::<_, (String, String)>(
-        r#"SELECT id, name FROM elt_source_connections WHERE id = $1"#,
+        r#"SELECT id, name FROM credentials WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(pool)

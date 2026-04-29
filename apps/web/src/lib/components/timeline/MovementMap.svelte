@@ -16,14 +16,25 @@
 		/** Lower-frequency stops (markers), e.g. location chunks */
 		stops?: MapPoint[];
 		height?: number;
+		/** Optional cursor time (epoch ms) — renders a moving dot interpolated
+		 * along the track at this timestamp. Set null to hide. */
+		hoverTimeMs?: number | null;
 	}
 
-	let { track = [], stops = [], height = 260 }: Props = $props();
+	let {
+		track = [],
+		stops = [],
+		height = 260,
+		hoverTimeMs = null,
+	}: Props = $props();
 
 	let container: HTMLDivElement | null = null;
 	let map: any = null;
 	let L: any = null;
 	let layer: any = null;
+	// Persistent hover marker that gets re-positioned (not re-created) on
+	// every hoverTimeMs change. Lives outside `layer` so it survives renders.
+	let hoverMarker: any = null;
 
 	function clearLayer() {
 		if (layer) {
@@ -100,6 +111,94 @@
 				// ignore
 			}
 		}
+
+		// Re-add the hover marker (it lives outside `layer` so a fresh
+		// render() doesn't strand it). null reset cleans up.
+		if (hoverMarker) {
+			try {
+				hoverMarker.remove();
+			} catch {
+				// ignore
+			}
+			hoverMarker = null;
+		}
+	}
+
+	/// Find the lat/lng on the track corresponding to a target timestamp.
+	/// Linear interpolation between the two nearest points. Returns null if
+	/// the timestamp falls outside the track's time range or the track is
+	/// too sparse.
+	function interpolateTrack(
+		timeMs: number,
+	): [number, number] | null {
+		if (track.length < 2) return null;
+		// Track is sorted by timeMs ascending (we sorted upstream).
+		const first = track[0];
+		const last = track[track.length - 1];
+		if (
+			first.timeMs == null ||
+			last.timeMs == null ||
+			timeMs < first.timeMs ||
+			timeMs > last.timeMs
+		) {
+			return null;
+		}
+		// Binary search for the bracket
+		let lo = 0;
+		let hi = track.length - 1;
+		while (lo < hi - 1) {
+			const mid = (lo + hi) >> 1;
+			const midT = track[mid].timeMs!;
+			if (midT <= timeMs) lo = mid;
+			else hi = mid;
+		}
+		const a = track[lo];
+		const b = track[hi];
+		const at = a.timeMs!;
+		const bt = b.timeMs!;
+		if (bt === at) return [a.lat, a.lng];
+		const t = (timeMs - at) / (bt - at);
+		return [a.lat + (b.lat - a.lat) * t, a.lng + (b.lng - a.lng) * t];
+	}
+
+	function updateHoverMarker() {
+		if (!map || !L) return;
+		// Hide
+		if (hoverTimeMs == null) {
+			if (hoverMarker) {
+				try {
+					hoverMarker.remove();
+				} catch {
+					// ignore
+				}
+				hoverMarker = null;
+			}
+			return;
+		}
+		const pos = interpolateTrack(hoverTimeMs);
+		if (!pos) {
+			// Outside track range — hide
+			if (hoverMarker) {
+				try {
+					hoverMarker.remove();
+				} catch {
+					// ignore
+				}
+				hoverMarker = null;
+			}
+			return;
+		}
+		if (!hoverMarker) {
+			hoverMarker = L.circleMarker(pos, {
+				radius: 5,
+				weight: 2,
+				color: "var(--color-primary)",
+				fillColor: "var(--color-primary)",
+				fillOpacity: 1,
+			}).addTo(map);
+		} else {
+			hoverMarker.setLatLng(pos);
+		}
 	}
 
 	onMount(async () => {
@@ -129,11 +228,30 @@
 
 	$effect(() => {
 		if (!browser) return;
-		// Re-render when props change
+		// Re-render when track/stops change
+		// (deps: track, stops — referenced inside render())
+		track;
+		stops;
 		render();
 	});
 
+	$effect(() => {
+		if (!browser) return;
+		// React only to hoverTimeMs — don't re-run the full render() on every
+		// cursor move (that would re-fit bounds and clear stops).
+		hoverTimeMs;
+		updateHoverMarker();
+	});
+
 	onDestroy(() => {
+		if (hoverMarker) {
+			try {
+				hoverMarker.remove();
+			} catch {
+				// ignore
+			}
+			hoverMarker = null;
+		}
 		clearLayer();
 		if (map) {
 			try {

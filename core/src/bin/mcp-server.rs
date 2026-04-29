@@ -8,7 +8,6 @@ use clap::Parser;
 use dotenv::dotenv;
 use rmcp::{transport::stdio, ServiceExt};
 use sqlx::sqlite::SqlitePoolOptions;
-use std::env;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use virtues::mcp::VirtuesMcpServer;
@@ -38,9 +37,10 @@ async fn main() -> Result<()> {
 
     info!("Starting Virtues MCP Server (stdio transport)");
 
-    // Get database URL from environment
-    let database_url =
-        env::var("DATABASE_URL").expect("DATABASE_URL must be set in environment or .env file");
+    // Normalize DATABASE_URL: relative SQLite paths → absolute, write back to env.
+    // No-op for postgres URLs.
+    let database_url = virtues::database::normalize_database_url()
+        .expect("DATABASE_URL must be set in environment or .env file");
 
     // Create database connection pool
     let pool = SqlitePoolOptions::new()

@@ -5,18 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Weights for each context dimension: [who, whom, what, when, where, why, how]
-/// Values 0.0-1.0, only non-zero where the ontology genuinely informs that dimension.
-pub type ContextWeights = [f32; 7];
-
-pub const CTX_WHO: usize = 0; // self-awareness
-pub const CTX_WHOM: usize = 1; // relational
-pub const CTX_WHAT: usize = 2; // content/events
-pub const CTX_WHEN: usize = 3; // temporal coverage
-pub const CTX_WHERE: usize = 4; // spatial
-pub const CTX_WHY: usize = 5; // intent/motivation
-pub const CTX_HOW: usize = 6; // means/method/process
-
 /// Embedding configuration for semantic search
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddingConfig {
@@ -101,8 +89,10 @@ pub struct OntologyDescriptor {
     pub day_source: Option<DaySourceConfig>,
     /// How continuous ontologies produce aggregated summaries (None for discrete ontologies)
     pub continuous_agg: Option<ContinuousAggConfig>,
-    /// Context dimension weights [who, whom, what, when, where, why, how]
-    pub context_weights: ContextWeights,
+    /// Whether this ontology represents active behavioral signal (for action activation gates).
+    /// True for: app_usage, location_visit, calendar, outbound messages, transcription, web_browsing, listening, workout.
+    /// False for passive data: heart_rate, hrv, steps, sleep, inbound email, financial records.
+    pub is_activation_signal: bool,
 }
 
 /// Get all registered ontology descriptors
@@ -127,7 +117,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 agg_type: "stats",
             }),
             //                    who  whom what when where why  how
-            context_weights: [0.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "health_hrv",
@@ -147,7 +137,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 agg_type: "stats",
             }),
             //                    who  whom what when where why  how
-            context_weights: [0.7, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "health_steps",
@@ -167,7 +157,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
                 agg_type: "sum",
             }),
             //                    who  whom what when where why  how
-            context_weights: [0.6, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "health_sleep",
@@ -191,7 +181,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.9, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "health_workout",
@@ -215,7 +205,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.7, 0.0, 0.5, 0.0, 0.3, 0.2, 0.6],
+            is_activation_signal: true,
         },
         // ===== Location Ontologies =====
         OntologyDescriptor {
@@ -232,7 +222,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             day_source: None,
             continuous_agg: None, // Spatial data — not a numeric aggregate
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.0, 0.2, 1.0, 0.0, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "location_visit",
@@ -256,7 +246,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.3, 0.4, 0.9, 0.0, 0.0],
+            is_activation_signal: true,
         },
         // ===== Communication Ontologies =====
         OntologyDescriptor {
@@ -288,7 +278,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.9, 0.5, 0.0, 0.0, 0.2, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "communication_message",
@@ -319,7 +309,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 1.0, 0.5, 0.0, 0.0, 0.2, 0.0],
+            is_activation_signal: true,
         },
         // ===== Calendar Ontology =====
         OntologyDescriptor {
@@ -351,7 +341,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.8, 0.8, 0.7, 0.3, 0.3, 0.0],
+            is_activation_signal: true,
         },
         // ===== Activity Ontologies =====
         OntologyDescriptor {
@@ -376,7 +366,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.4, 0.0, 0.0, 0.0, 0.7],
+            is_activation_signal: true,
         },
         OntologyDescriptor {
             name: "activity_web_browsing",
@@ -400,7 +390,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.6, 0.0, 0.0, 0.3, 0.4],
+            is_activation_signal: true,
         },
         OntologyDescriptor {
             name: "activity_listening",
@@ -424,7 +414,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.7, 0.0, 0.5, 0.0, 0.0, 0.2, 0.3],
+            is_activation_signal: true,
         },
         OntologyDescriptor {
             name: "communication_transcription",
@@ -448,7 +438,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.3, 0.3, 1.0, 0.0, 0.0, 0.8, 0.0],
+            is_activation_signal: true,
         },
         // ===== Content Ontologies =====
         OntologyDescriptor {
@@ -480,7 +470,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.7, 0.0, 0.0, 0.4, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "content_conversation",
@@ -503,7 +493,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             day_source: None, // Individual messages not useful as day sources
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.6, 0.0, 0.0, 0.5, 0.0],
+            is_activation_signal: false,
         },
         // ===== Financial Ontologies =====
         OntologyDescriptor {
@@ -520,7 +510,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             day_source: None, // Not events
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "financial_transaction",
@@ -551,7 +541,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.5, 0.0, 0.2, 0.0, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "content_bookmark",
@@ -582,7 +572,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.0, 0.0, 0.6, 0.0, 0.0, 0.3, 0.0],
+            is_activation_signal: false,
         },
         // ─────────────────────────────────────────────────────────────
         // App (intra-Virtues activity)
@@ -609,7 +599,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.1, 0.1, 0.5, 0.2, 0.0, 0.4, 0.0],
+            is_activation_signal: false,
         },
         OntologyDescriptor {
             name: "app_page",
@@ -633,7 +623,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             }),
             continuous_agg: None,
             //                    who  whom what when where why  how
-            context_weights: [0.1, 0.0, 0.6, 0.2, 0.0, 0.3, 0.0],
+            is_activation_signal: false,
         },
     ]
 }

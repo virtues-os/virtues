@@ -37,7 +37,7 @@ pub mod quotas {
 /// Default drive path for local file storage (development only)
 const DEFAULT_DRIVE_PATH: &str = "./data/drive";
 
-/// Singleton ID for drive_usage table
+/// Singleton ID for app_drive_usage table
 const USAGE_SINGLETON_ID: &str = "00000000-0000-0000-0000-000000000001";
 
 /// Virtual folder ID for the data lake
@@ -330,7 +330,7 @@ fn validate_filename(filename: &str) -> Result<()> {
 
 /// Initialize drive quota from TIER environment variable
 ///
-/// Updates the drive_usage table with tier-appropriate quota
+/// Updates the app_drive_usage table with tier-appropriate quota
 pub async fn init_drive_quota(pool: &SqlitePool) -> Result<()> {
     let tier = DriveTier::from_env();
     let quota_bytes = tier.quota_bytes();
@@ -344,7 +344,7 @@ pub async fn init_drive_quota(pool: &SqlitePool) -> Result<()> {
 
     sqlx::query(
         r#"
-        UPDATE drive_usage
+        UPDATE app_drive_usage
         SET quota_bytes = $1, updated_at = datetime('now')
         WHERE id = $2
         "#,
@@ -364,11 +364,11 @@ pub async fn init_drive_quota(pool: &SqlitePool) -> Result<()> {
 
 /// Get current drive usage statistics with breakdown
 pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
-    // Get drive usage from drive_usage table
+    // Get drive usage from app_drive_usage table
     let row = sqlx::query_as::<_, (i64, i64, i64, i64)>(
         r#"
         SELECT drive_bytes, quota_bytes, file_count, folder_count
-        FROM drive_usage
+        FROM app_drive_usage
         WHERE id = $1
         "#,
     )
@@ -379,16 +379,7 @@ pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
 
     let (drive_bytes, quota_bytes, file_count, folder_count) = row;
 
-    // Get data lake usage from elt_stream_objects
-    let data_lake_bytes: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COALESCE(SUM(size_bytes), 0)
-        FROM elt_stream_objects
-        "#,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get data lake usage: {e}")))?;
+    let data_lake_bytes: i64 = 0;
 
     let total_bytes = drive_bytes + data_lake_bytes;
     let usage_percent = if quota_bytes > 0 {
@@ -422,7 +413,7 @@ async fn update_usage_add(pool: &SqlitePool, size_bytes: i64, is_folder: bool) -
 
     sqlx::query(
         r#"
-        UPDATE drive_usage
+        UPDATE app_drive_usage
         SET drive_bytes = drive_bytes + $1,
             total_bytes = total_bytes + $1,
             file_count = file_count + $2,
@@ -448,7 +439,7 @@ async fn update_usage_remove(pool: &SqlitePool, size_bytes: i64, is_folder: bool
 
     sqlx::query(
         r#"
-        UPDATE drive_usage
+        UPDATE app_drive_usage
         SET drive_bytes = MAX(0, drive_bytes - $1),
             total_bytes = MAX(0, total_bytes - $1),
             file_count = MAX(0, file_count - $2),
@@ -481,7 +472,7 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
     let (w80, w90, w100): (bool, bool, bool) = sqlx::query_as(
         r#"
         SELECT warning_80_sent, warning_90_sent, warning_100_sent
-        FROM drive_usage
+        FROM app_drive_usage
         WHERE id = $1
         "#,
     )
@@ -496,7 +487,7 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
         warnings.push(
             "Storage quota reached (100%). Delete files or upgrade to continue uploading.".into(),
         );
-        sqlx::query("UPDATE drive_usage SET warning_100_sent = 1 WHERE id = $1")
+        sqlx::query("UPDATE app_drive_usage SET warning_100_sent = 1 WHERE id = $1")
             .bind(USAGE_SINGLETON_ID)
             .execute(pool)
             .await
@@ -506,14 +497,14 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
             "Storage usage at {:.1}%. Consider upgrading or cleaning up.",
             percent
         ));
-        sqlx::query("UPDATE drive_usage SET warning_90_sent = 1 WHERE id = $1")
+        sqlx::query("UPDATE app_drive_usage SET warning_90_sent = 1 WHERE id = $1")
             .bind(USAGE_SINGLETON_ID)
             .execute(pool)
             .await
             .ok();
     } else if percent >= 80.0 && !w80 {
         warnings.push(format!("Storage usage at {:.1}%.", percent));
-        sqlx::query("UPDATE drive_usage SET warning_80_sent = 1 WHERE id = $1")
+        sqlx::query("UPDATE app_drive_usage SET warning_80_sent = 1 WHERE id = $1")
             .bind(USAGE_SINGLETON_ID)
             .execute(pool)
             .await
@@ -523,7 +514,7 @@ pub async fn check_usage_warnings(pool: &SqlitePool) -> Result<QuotaWarnings> {
     // Reset warnings if usage drops below thresholds
     if percent < 80.0 && (w80 || w90 || w100) {
         sqlx::query(
-            "UPDATE drive_usage SET warning_80_sent = 0, warning_90_sent = 0, warning_100_sent = 0 WHERE id = $1",
+            "UPDATE app_drive_usage SET warning_80_sent = 0, warning_90_sent = 0, warning_100_sent = 0 WHERE id = $1",
         )
         .bind(USAGE_SINGLETON_ID)
         .execute(pool)
@@ -595,7 +586,7 @@ pub async fn reconcile_folder(pool: &SqlitePool, config: &DriveConfig, path: &st
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
                    is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-            FROM drive_files
+            FROM app_drive_files
             WHERE parent_id IS NULL
             "#,
         )
@@ -605,7 +596,7 @@ pub async fn reconcile_folder(pool: &SqlitePool, config: &DriveConfig, path: &st
     } else {
         // Look up parent folder ID
         let parent_id = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+            "SELECT id FROM app_drive_files WHERE path = $1 AND is_folder = 1",
         )
         .bind(&path_str)
         .fetch_optional(pool)
@@ -617,7 +608,7 @@ pub async fn reconcile_folder(pool: &SqlitePool, config: &DriveConfig, path: &st
                 r#"
                     SELECT id, path, filename, mime_type, size_bytes,
                            is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-                    FROM drive_files
+                    FROM app_drive_files
                     WHERE parent_id = $1
                     "#,
             )
@@ -663,7 +654,7 @@ pub async fn reconcile_folder(pool: &SqlitePool, config: &DriveConfig, path: &st
         }
         // Check if file exists in storage
         if !storage_filenames.contains(&file.filename) {
-            sqlx::query("DELETE FROM drive_files WHERE id = $1")
+            sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
                 .bind(&file.id)
                 .execute(pool)
                 .await
@@ -697,7 +688,7 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
                    is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-            FROM drive_files
+            FROM app_drive_files
             WHERE parent_id IS NULL
               AND deleted_at IS NULL
               AND filename NOT LIKE '.%'
@@ -710,7 +701,7 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
     } else {
         // Get parent folder ID
         let parent = sqlx::query_as::<_, (String,)>(
-            r#"SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1"#,
+            r#"SELECT id FROM app_drive_files WHERE path = $1 AND is_folder = 1"#,
         )
         .bind(&path_str)
         .fetch_optional(pool)
@@ -722,7 +713,7 @@ pub async fn list_files(pool: &SqlitePool, path: &str) -> Result<Vec<DriveFile>>
                 r#"
                     SELECT id, path, filename, mime_type, size_bytes,
                            is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-                    FROM drive_files
+                    FROM app_drive_files
                     WHERE parent_id = $1
                       AND deleted_at IS NULL
                       AND filename NOT LIKE '.%'
@@ -761,21 +752,14 @@ pub fn is_lake_folder_id(file_id: &str) -> bool {
 ///
 /// Handles both regular drive files and virtual lake objects.
 pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<DriveFile> {
-    // Handle virtual lake folder IDs
     if file_id == LAKE_VIRTUAL_ID {
-        let lake_size: i64 =
-            sqlx::query_scalar("SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects")
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-
         let now = Timestamp::now();
         return Ok(DriveFile {
             id: LAKE_VIRTUAL_ID.to_string(),
             path: "lake".to_string(),
             filename: "lake".to_string(),
             mime_type: None,
-            size_bytes: lake_size,
+            size_bytes: 0,
             is_folder: true,
             parent_id: None,
             sha256_hash: None,
@@ -784,40 +768,11 @@ pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<Drive
             updated_at: now,
         });
     }
-
-    // Handle virtual lake stream folder IDs
     if let Some(stream_name) = file_id.strip_prefix(LAKE_STREAM_PREFIX) {
-        let stream_info = sqlx::query_as::<_, (i64, Timestamp)>(
-            r#"
-            SELECT SUM(size_bytes), MAX(created_at)
-            FROM elt_stream_objects
-            WHERE stream_name = $1
-            "#,
-        )
-        .bind(stream_name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to get stream info: {e}")))?
-        .ok_or_else(|| Error::NotFound(format!("Stream not found: {stream_name}")))?;
-
-        return Ok(DriveFile {
-            id: file_id.to_string(),
-            path: format!("lake/{}", stream_name),
-            filename: stream_name.to_string(),
-            mime_type: None,
-            size_bytes: stream_info.0,
-            is_folder: true,
-            parent_id: Some(LAKE_VIRTUAL_ID.to_string()),
-            sha256_hash: None,
-            deleted_at: None,
-            created_at: stream_info.1,
-            updated_at: stream_info.1,
-        });
+        return Err(Error::NotFound(format!("Stream not found: {stream_name}")));
     }
-
-    // Handle virtual lake object IDs
     if let Some(object_id) = file_id.strip_prefix(LAKE_OBJECT_PREFIX) {
-        return get_lake_object_metadata(pool, object_id).await;
+        return Err(Error::NotFound(format!("Lake object not found: {object_id}")));
     }
 
     // Regular drive file
@@ -825,7 +780,7 @@ pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<Drive
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE id = $1
         "#,
     )
@@ -836,45 +791,6 @@ pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<Drive
     .ok_or_else(|| Error::NotFound(format!("File not found: {file_id}")))?;
 
     Ok(file)
-}
-
-/// Get metadata for a lake stream object by its real ID
-async fn get_lake_object_metadata(pool: &SqlitePool, object_id: &str) -> Result<DriveFile> {
-    let obj = sqlx::query_as::<_, (String, String, String, i64, Timestamp, Timestamp)>(
-        r#"
-        SELECT id, stream_name, storage_key, size_bytes, created_at, updated_at
-        FROM elt_stream_objects
-        WHERE id = $1
-        "#,
-    )
-    .bind(object_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get lake object: {e}")))?
-    .ok_or_else(|| Error::NotFound(format!("Lake object not found: {object_id}")))?;
-
-    let (id, stream_name, storage_key, size_bytes, created_at, updated_at) = obj;
-
-    // Extract filename from storage_key
-    let filename = storage_key
-        .rsplit('/')
-        .next()
-        .unwrap_or(&storage_key)
-        .to_string();
-
-    Ok(DriveFile {
-        id: format!("{}{}", LAKE_OBJECT_PREFIX, id),
-        path: format!("lake/{}/{}", stream_name, filename),
-        filename,
-        mime_type: Some("application/x-jsonlines".to_string()),
-        size_bytes,
-        is_folder: false,
-        parent_id: Some(format!("{}{}", LAKE_STREAM_PREFIX, stream_name)),
-        sha256_hash: None,
-        deleted_at: None,
-        created_at,
-        updated_at,
-    })
 }
 
 /// Upload a file
@@ -908,7 +824,7 @@ pub async fn upload_file(
 
     // Check if file already exists (only non-deleted files)
     let existing = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM drive_files WHERE path = $1 AND deleted_at IS NULL",
+        "SELECT id FROM app_drive_files WHERE path = $1 AND deleted_at IS NULL",
     )
     .bind(&file_path_str)
     .fetch_optional(pool)
@@ -956,7 +872,7 @@ pub async fn upload_file(
     let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
     sqlx::query(
         r#"
-        INSERT INTO drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
+        INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
         VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
         "#,
     )
@@ -1015,7 +931,7 @@ pub async fn upload_system_file(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL
         "#,
     )
@@ -1060,7 +976,7 @@ pub async fn upload_system_file(
     let file_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&file_path_str]);
     sqlx::query(
         r#"
-        INSERT INTO drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
+        INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
         VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
         "#,
     )
@@ -1093,7 +1009,7 @@ async fn get_or_create_system_folder_record(
 
     // Check if folder exists
     let existing = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+        "SELECT id FROM app_drive_files WHERE path = $1 AND is_folder = 1",
     )
     .bind(path)
     .fetch_optional(pool)
@@ -1125,7 +1041,7 @@ async fn get_or_create_system_folder_record(
     let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[path]);
     sqlx::query(
         r#"
-        INSERT INTO drive_files (id, path, filename, size_bytes, parent_id, is_folder)
+        INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
         VALUES ($1, $2, $3, 0, $4, 1)
         ON CONFLICT (path) DO NOTHING
         "#,
@@ -1140,7 +1056,7 @@ async fn get_or_create_system_folder_record(
 
     // Return the ID (may be different if another process created it)
     let id = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+        "SELECT id FROM app_drive_files WHERE path = $1 AND is_folder = 1",
     )
     .bind(path)
     .fetch_optional(pool)
@@ -1156,7 +1072,7 @@ pub async fn get_file_by_path(pool: &SqlitePool, path: &str) -> Result<DriveFile
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL
         "#,
     )
@@ -1223,36 +1139,14 @@ pub async fn download_file(
 /// # Returns
 /// Tuple of (DriveFile metadata, raw bytes)
 pub async fn download_lake_object(
-    pool: &SqlitePool,
-    storage: &crate::storage::Storage,
+    _pool: &SqlitePool,
+    _storage: &crate::storage::Storage,
     file_id: &str,
 ) -> Result<(DriveFile, Vec<u8>)> {
-    // Extract the real object ID
-    let object_id = extract_lake_object_id(file_id)
-        .ok_or_else(|| Error::InvalidInput("Invalid lake object ID".into()))?;
-
-    // Get metadata
-    let file = get_lake_object_metadata(pool, object_id).await?;
-
-    // Query storage key and source info for decryption
-    let obj_info = sqlx::query_as::<_, (String, String, String)>(
-        r#"
-        SELECT source_connection_id, stream_name, storage_key
-        FROM elt_stream_objects
-        WHERE id = $1
-        "#,
-    )
-    .bind(object_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get lake object info: {e}")))?;
-
-    let (_source_connection_id, _stream_name, storage_key) = obj_info;
-
-    // Download from filesystem storage
-    let data = storage.download(&storage_key).await?;
-
-    Ok((file, data))
+    // Post actions-cutover: lake objects no longer exist; return NotFound.
+    Err(Error::NotFound(format!(
+        "Lake object not found: {file_id}"
+    )))
 }
 
 /// Download a file as a stream (for HTTP streaming responses)
@@ -1334,7 +1228,7 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
         soft_delete_folder_recursive(pool, &file.id).await?
     } else {
         // Soft delete single file (mark as deleted, keep on disk)
-        sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
+        sqlx::query("UPDATE app_drive_files SET deleted_at = datetime('now') WHERE id = $1")
             .bind(file_id)
             .execute(pool)
             .await
@@ -1345,7 +1239,7 @@ pub async fn delete_file(pool: &SqlitePool, _config: &DriveConfig, file_id: &str
     // Update trash tracking with actual bytes and count
     sqlx::query(
         r#"
-        UPDATE drive_usage
+        UPDATE app_drive_usage
         SET trash_bytes = trash_bytes + $1,
             trash_count = trash_count + $2,
             updated_at = datetime('now')
@@ -1370,7 +1264,7 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE parent_id = $1 AND deleted_at IS NULL
         "#,
     )
@@ -1390,7 +1284,7 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
             total_count += count;
         } else {
             // Soft delete the file
-            sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
+            sqlx::query("UPDATE app_drive_files SET deleted_at = datetime('now') WHERE id = $1")
                 .bind(&child.id)
                 .execute(pool)
                 .await
@@ -1401,7 +1295,7 @@ async fn soft_delete_folder_recursive(pool: &SqlitePool, folder_id: &str) -> Res
     }
 
     // Soft delete the folder itself
-    sqlx::query("UPDATE drive_files SET deleted_at = datetime('now') WHERE id = $1")
+    sqlx::query("UPDATE app_drive_files SET deleted_at = datetime('now') WHERE id = $1")
         .bind(folder_id)
         .execute(pool)
         .await
@@ -1423,7 +1317,7 @@ async fn hard_delete_folder_recursive(
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE parent_id = $1
         "#,
     )
@@ -1440,7 +1334,7 @@ async fn hard_delete_folder_recursive(
             // Delete from storage (handles both S3 and local filesystem)
             config.storage.delete(&child.path).await.ok();
 
-            sqlx::query("DELETE FROM drive_files WHERE id = $1")
+            sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
                 .bind(&child.id)
                 .execute(pool)
                 .await
@@ -1453,7 +1347,7 @@ async fn hard_delete_folder_recursive(
 
     // Delete folder record from database
     // Note: S3 has no real directories, so we only delete the DB record
-    sqlx::query("DELETE FROM drive_files WHERE id = $1")
+    sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
         .bind(&folder.id)
         .execute(pool)
         .await
@@ -1474,7 +1368,7 @@ pub async fn list_trash(pool: &SqlitePool) -> Result<Vec<DriveFile>> {
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE deleted_at IS NOT NULL
           AND deleted_at > datetime('now', '-30 days')
         ORDER BY deleted_at DESC
@@ -1512,7 +1406,7 @@ pub async fn restore_file(pool: &SqlitePool, file_id: &str) -> Result<DriveFile>
     // Check for naming conflict with existing files
     let conflict = sqlx::query_scalar::<_, String>(
         r#"
-        SELECT id FROM drive_files
+        SELECT id FROM app_drive_files
         WHERE path = $1 AND deleted_at IS NULL AND id != $2
         "#,
     )
@@ -1532,7 +1426,7 @@ pub async fn restore_file(pool: &SqlitePool, file_id: &str) -> Result<DriveFile>
 
         sqlx::query(
             r#"
-            UPDATE drive_files
+            UPDATE app_drive_files
             SET deleted_at = NULL, path = $1, filename = $2, updated_at = datetime('now')
             WHERE id = $3
             "#,
@@ -1547,7 +1441,7 @@ pub async fn restore_file(pool: &SqlitePool, file_id: &str) -> Result<DriveFile>
         // No conflict, just restore
         sqlx::query(
             r#"
-            UPDATE drive_files
+            UPDATE app_drive_files
             SET deleted_at = NULL, updated_at = datetime('now')
             WHERE id = $1
             "#,
@@ -1561,7 +1455,7 @@ pub async fn restore_file(pool: &SqlitePool, file_id: &str) -> Result<DriveFile>
     // Update trash tracking
     sqlx::query(
         r#"
-        UPDATE drive_usage
+        UPDATE app_drive_usage
         SET trash_bytes = MAX(0, trash_bytes - $1),
             trash_count = MAX(0, trash_count - 1),
             updated_at = datetime('now')
@@ -1590,7 +1484,7 @@ pub async fn purge_file(pool: &SqlitePool, config: &DriveConfig, file_id: &str) 
         config.storage.delete(&file.path).await.ok();
 
         // Delete from database
-        sqlx::query("DELETE FROM drive_files WHERE id = $1")
+        sqlx::query("DELETE FROM app_drive_files WHERE id = $1")
             .bind(file_id)
             .execute(pool)
             .await
@@ -1604,7 +1498,7 @@ pub async fn purge_file(pool: &SqlitePool, config: &DriveConfig, file_id: &str) 
     if file.deleted_at.is_some() {
         sqlx::query(
             r#"
-            UPDATE drive_usage
+            UPDATE app_drive_usage
             SET trash_bytes = MAX(0, trash_bytes - $1),
                 trash_count = MAX(0, trash_count - 1),
                 updated_at = datetime('now')
@@ -1652,7 +1546,7 @@ pub async fn purge_old_trash(pool: &SqlitePool, config: &DriveConfig) -> Result<
         r#"
         SELECT id, path, filename, mime_type, size_bytes,
                is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-        FROM drive_files
+        FROM app_drive_files
         WHERE deleted_at IS NOT NULL
           AND deleted_at < datetime('now', '-30 days')
         "#,
@@ -1712,7 +1606,7 @@ async fn get_unique_path(pool: &SqlitePool, original_path: &str) -> Result<Strin
         };
 
         let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM drive_files WHERE path = $1 AND deleted_at IS NULL",
+            "SELECT id FROM app_drive_files WHERE path = $1 AND deleted_at IS NULL",
         )
         .bind(&new_path)
         .fetch_optional(pool)
@@ -1751,7 +1645,7 @@ pub async fn create_folder(
     let folder_path_str = folder_path.to_string_lossy().to_string();
 
     // Check if already exists
-    let existing = sqlx::query_scalar::<_, String>("SELECT id FROM drive_files WHERE path = $1")
+    let existing = sqlx::query_scalar::<_, String>("SELECT id FROM app_drive_files WHERE path = $1")
         .bind(&folder_path_str)
         .fetch_optional(pool)
         .await
@@ -1780,7 +1674,7 @@ pub async fn create_folder(
     let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[&folder_path_str]);
     sqlx::query(
         r#"
-        INSERT INTO drive_files (id, path, filename, size_bytes, parent_id, is_folder)
+        INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
         VALUES ($1, $2, $3, 0, $4, 1)
         "#,
     )
@@ -1831,7 +1725,7 @@ pub async fn move_file(
     let new_path_str = validated_new_path.to_string_lossy().to_string();
 
     // Check if destination exists
-    let existing = sqlx::query_scalar::<_, String>("SELECT id FROM drive_files WHERE path = $1")
+    let existing = sqlx::query_scalar::<_, String>("SELECT id FROM app_drive_files WHERE path = $1")
         .bind(&new_path_str)
         .fetch_optional(pool)
         .await
@@ -1885,7 +1779,7 @@ pub async fn move_file(
     // Update database record for the file/folder itself
     sqlx::query(
         r#"
-        UPDATE drive_files
+        UPDATE app_drive_files
         SET path = $1, filename = $2, parent_id = $3, updated_at = datetime('now')
         WHERE id = $4
         "#,
@@ -1907,7 +1801,7 @@ pub async fn move_file(
             r#"
             SELECT id, path, filename, mime_type, size_bytes,
                    is_folder, parent_id, sha256_hash, deleted_at, created_at, updated_at
-            FROM drive_files
+            FROM app_drive_files
             WHERE path LIKE $1 AND is_folder = 0 AND deleted_at IS NULL
             "#,
         )
@@ -1934,7 +1828,7 @@ pub async fn move_file(
         let like_pattern = format!("{}/%", file.path);
         sqlx::query(
             r#"
-            UPDATE drive_files
+            UPDATE app_drive_files
             SET path = $1 || substr(path, $2),
                 updated_at = datetime('now')
             WHERE path LIKE $3
@@ -1963,7 +1857,7 @@ async fn get_or_create_folder_record(pool: &SqlitePool, path: &str) -> Result<Op
 
     // Check if folder exists
     let existing = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+        "SELECT id FROM app_drive_files WHERE path = $1 AND is_folder = 1",
     )
     .bind(path)
     .fetch_optional(pool)
@@ -1995,7 +1889,7 @@ async fn get_or_create_folder_record(pool: &SqlitePool, path: &str) -> Result<Op
     let folder_id = ids::generate_id(ids::DRIVE_FILE_PREFIX, &[path]);
     sqlx::query(
         r#"
-        INSERT INTO drive_files (id, path, filename, size_bytes, parent_id, is_folder)
+        INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
         VALUES ($1, $2, $3, 0, $4, 1)
         ON CONFLICT (path) DO NOTHING
         "#,
@@ -2010,7 +1904,7 @@ async fn get_or_create_folder_record(pool: &SqlitePool, path: &str) -> Result<Op
 
     // Return the ID (may be different if another process created it)
     let id = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM drive_files WHERE path = $1 AND is_folder = 1",
+        "SELECT id FROM app_drive_files WHERE path = $1 AND is_folder = 1",
     )
     .bind(path)
     .fetch_optional(pool)
@@ -2034,7 +1928,7 @@ pub async fn reconcile_usage(pool: &SqlitePool, _config: &DriveConfig) -> Result
             COALESCE(SUM(size_bytes), 0),
             COALESCE(SUM(CASE WHEN is_folder = 0 THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN is_folder = 1 THEN 1 ELSE 0 END), 0)
-        FROM drive_files
+        FROM app_drive_files
         "#,
     )
     .fetch_one(pool)
@@ -2044,7 +1938,7 @@ pub async fn reconcile_usage(pool: &SqlitePool, _config: &DriveConfig) -> Result
     // Update usage table (drive_bytes and total_bytes for backwards compat)
     sqlx::query(
         r#"
-        UPDATE drive_usage
+        UPDATE app_drive_usage
         SET drive_bytes = $1,
             total_bytes = $1,
             file_count = $2,

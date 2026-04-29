@@ -1,4 +1,4 @@
-use crate::server::ingest::AppState;
+use crate::server::webhook::AppState;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use std::env;

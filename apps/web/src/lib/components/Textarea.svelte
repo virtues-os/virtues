@@ -181,7 +181,7 @@
 		class:focused={isFocused}
 		class:has-content={hasContent}
 		class:saving={isSaving}
-		class:saved={hasSaved}
+		class:saved={hasSaved && hasContent}
 		class:error={saveError}
 		class:warning={!!warning}
 		class:disabled
@@ -284,6 +284,7 @@
 					class="icon icon-check"
 					class:visible={!isFocused &&
 						hasSaved &&
+						hasContent &&
 						!saveError &&
 						!isSaving &&
 						!warning}

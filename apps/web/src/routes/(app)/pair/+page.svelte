@@ -68,7 +68,7 @@
 					Pairing Successful!
 				</h1>
 				<p class="text-foreground-muted mb-6">
-					Your device is now connected to Ariata.
+					Your device is now connected to Virtues.
 				</p>
 				<div
 					class="bg-success-subtle border border-success rounded-lg p-4"
@@ -139,7 +139,7 @@
 
 				<p class="text-xs text-foreground-subtle mt-4">
 					By linking this device, you authorize it to sync your
-					personal data to Ariata.
+					personal data to Virtues.
 				</p>
 			</div>
 		{/if}
