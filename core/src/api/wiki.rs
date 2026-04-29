@@ -2759,7 +2759,7 @@ pub async fn get_day_chats(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<Day
     let in_app_rows = sqlx::query(
         r#"
         SELECT id, title, message_count, created_at
-        FROM chats
+        FROM app_chats
         WHERE created_at >= $1 AND created_at <= $2
         ORDER BY created_at ASC
         "#,

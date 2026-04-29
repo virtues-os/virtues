@@ -13,7 +13,7 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { queryOntologyData, type OntologyDataResponse, type OntologyColumnInfo } from '$lib/api/client';
-	import UniversalDataGrid, { type Column } from '$lib/components/UniversalDataGrid.svelte';
+	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 
 	interface Props {
 		ontologyName: string;

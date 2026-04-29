@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
 description = "Open source personal data ecosystem - High-performance Rust core"
 license = "MIT"
-repository = "https://github.com/ariata-os/ariata"
+repository = "https://github.com/virtues-os/virtues"
 keywords = ["etl", "data-pipeline", "personal-data", "timeseries"]
 categories = ["database", "data-structures"]
 build = "build.rs"
@@ -32,6 +32,9 @@ path = "src/bin/prod_seed.rs"
 # Shared registry
 virtues-registry = { path = "../packages/virtues-registry" }
 
+# Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
+virtues-helpers = { path = "../crates/virtues-helpers" }
+
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 
@@ -51,6 +54,7 @@ sqlite-vec = "0.1"           # sqlite-vec extension for vector similarity search
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"
 
 # Error handling
 anyhow = "1.0"

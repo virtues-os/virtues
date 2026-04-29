@@ -9,6 +9,7 @@ import rateLimit from 'express-rate-limit';
 import { githubRouter } from './routes/github';
 import { googleRouter } from './routes/google';
 import notionRouter from './routes/notion';
+import { plaidRouter } from './routes/plaid';
 import { stravaRouter } from './routes/strava';
 import { errorHandler } from './middleware/error-handler';
 import { logger } from './middleware/logger';
@@ -108,6 +109,7 @@ app.get('/health', (req: Request, res: Response) => {
 app.use('/github', githubRouter);
 app.use('/google', googleRouter);
 app.use('/notion', notionRouter);
+app.use('/plaid', plaidRouter);
 app.use('/strava', stravaRouter);
 
 // Error handling

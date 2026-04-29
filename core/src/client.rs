@@ -9,7 +9,11 @@ use crate::database::Database;
 use crate::error::{Error, Result};
 use crate::storage::Storage;
 
-/// Main Virtues client for managing personal data
+/// Main Virtues client for managing personal data.
+///
+/// Connectors are not held here — they're a `&'static` const slice in
+/// `crate::connectors::CONNECTORS`, accessible app-wide without
+/// dependency injection. See `CREDENTIALS.md` for the rationale.
 pub struct Virtues {
     pub database: Arc<Database>,
     pub storage: Arc<Storage>,
@@ -33,9 +37,8 @@ impl Virtues {
         let db_status = self.database.health_check().await?;
         let storage_status = self.storage.health_check().await?;
 
-        // Count active sources
         let active_sources = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM elt_source_connections WHERE is_active = true"
+            "SELECT COUNT(*) FROM credentials WHERE status = 'active'"
         )
         .fetch_one(self.database.pool())
         .await

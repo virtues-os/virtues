@@ -29,6 +29,7 @@ pub(crate) mod sql_query;
 mod page_editor;
 mod semantic_search;
 pub mod action_setup;
+pub mod action_management;
 pub mod dayline_events;
 
 pub use executor::{ToolExecutor, ToolContext, ToolResult, ToolError};

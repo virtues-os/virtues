@@ -15,7 +15,7 @@ use anyhow::Result;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use sqlx::Row;
-use virtues_action_helpers::ids::{generate_id, WIKI_PERSON_PREFIX};
+use virtues_helpers::ids::{generate_id, WIKI_PERSON_PREFIX};
 
 #[derive(Debug)]
 struct ContactRecord {

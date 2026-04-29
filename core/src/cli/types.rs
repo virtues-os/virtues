@@ -53,12 +53,10 @@ pub enum Commands {
     /// Compute autonomic z-scores for all days with avg_hr data
     ComputeAutonomic,
 
-    /// Pair an iOS device manually (dev shortcut — bypasses web UI auth)
+    /// Pair an iOS device manually (dev shortcut — bypasses web UI auth).
     ///
-    /// Calls `link_device_manually()` directly, which writes to both
-    /// `elt_source_connections` and `action_credentials`, then seeds the
-    /// six iOS `app_actions` rows. Idempotent — re-running with the same
-    /// device id is safe.
+    /// Calls `link_device_manually()`, which writes a `credentials` row
+    /// (Vault) and fans out the per-device iOS `app_actions`. Idempotent.
     PairIos {
         /// Device UUID from the iOS app's Settings → Device Identity
         device_id: String,

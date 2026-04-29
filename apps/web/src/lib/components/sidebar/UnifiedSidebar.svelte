@@ -13,9 +13,7 @@
 	} from "$lib/api/client";
 	import Icon from "$lib/components/Icon.svelte";
 	import type { ViewSummary } from "$lib/api/client";
-	import { buildSpaceContextMenu } from "$lib/utils/contextMenuItems";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
-	import Modal from "$lib/components/Modal.svelte";
 	import WorkspaceHeader from "./WorkspaceHeader.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import UnifiedFolder from "./UnifiedFolder.svelte";
@@ -24,14 +22,10 @@
 	import SystemSection from "./SystemSection.svelte";
 	import { SYSTEM_SECTIONS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
-	import WorkspaceInfoModal from "./WorkspaceInfoModal.svelte";
-	import ColorPickerModal from "./ColorPickerModal.svelte";
 	import EntityPicker, { type EntityResult } from "$lib/components/EntityPicker.svelte";
 
 	const ANIMATION_DURATION_MS = 150;
 	const HOVER_EXPAND_DELAY_MS = 500;
-
-	const SLIDE_WIDTH = 208; // w-52 = 13rem = 208px
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
 	const isCollapsed = $derived(sidebarState.collapsed);
@@ -39,48 +33,12 @@
 	// Search modal state
 	let isSearchOpen = $state(false);
 
-	// Workspace info modal state
-	let isWorkspaceInfoOpen = $state(false);
-
-	// New Space modal state
-	let showNewSpaceModal = $state(false);
-	let newSpaceName = $state("");
-	let isCreatingSpace = $state(false);
-
-	// Inline rename state
-	let isRenaming = $state(false);
-	let renameValue = $state("");
-
-	// Icon picker uses shared iconPickerStore (modal rendered in +layout.svelte)
-
-	// Color picker modal state
-	let showColorPicker = $state(false);
-
 	// "Add..." entity picker state (triggered from workspace context menu)
 	let showAddPicker = $state(false);
 	let addPickerPos = $state({ x: 0, y: 0 });
 
 	// Track if store is ready
 	let storeReady = $state(false);
-
-	// Scroll progress for title animation (-1 to 1 relative to current snap)
-	let scrollProgress = $state(0);
-
-	// Viewport element for scroll snap
-	let viewportEl: HTMLDivElement | null = $state(null);
-	let currentIndex = $state(0);
-	let scrollEndTimeout: ReturnType<typeof setTimeout> | null = null;
-	let isScrolling = $state(false);
-	let isProgrammaticScroll = false;
-	let scrollStartIndex = $state(0);
-
-	// Track active touch/drag to defer snap until release (Arc-style behavior)
-	let isPointerDown = $state(false);
-
-	// rAF-based smoothing for scroll progress updates
-	// This ensures updates happen exactly once per frame, eliminating jitter
-	let rafId: number | null = null;
-	let pendingProgress = 0;
 
 	// Extended DnD item for workspace content (root items + folders)
 	interface WorkspaceDndItem extends SidebarDndItem {
@@ -160,260 +118,22 @@
 		workspaceContentByWorkspace = newContentMap;
 	});
 
-	// Workspace info type for header transitions
-	type WorkspaceInfo = {
-		name: string;
-		icon: string | null;
-		accentColor: string | null;
-		isSystem: boolean;
-	};
-
-	// Get workspace info by index
-	function getWorkspaceInfo(index: number): WorkspaceInfo | null {
-		const ws = spaceStore.spaces[index];
-		if (!ws) return null;
-		return {
-			name: ws.is_system ? "Virtues" : ws.name,
-			icon: ws.icon || null,
-			accentColor: ws.accent_color || null,
-			isSystem: ws.is_system,
-		};
-	}
-
-	// Current transition workspaces [prev, current, next]
-	// Derived from currentIndex (local) rather than activeSpaceId (store) so that
-	// scrollProgress and the workspace info update in the same render frame.
-	const transitionWorkspaces = $derived.by(
-		(): [WorkspaceInfo | null, WorkspaceInfo, WorkspaceInfo | null] => {
-			return [
-				getWorkspaceInfo(currentIndex - 1),
-				getWorkspaceInfo(currentIndex) || {
-					name: "Workspace",
-					icon: null,
-					accentColor: null,
-					isSystem: false,
-				},
-				getWorkspaceInfo(currentIndex + 1),
-			];
-		},
-	);
-
-	// Handle pointer/touch down - disable snap for free dragging (Arc-style)
-	function handlePointerDown() {
-		isPointerDown = true;
-		if (viewportEl) {
-			// Disable snap and smooth behavior for instant 1:1 tracking
-			viewportEl.style.scrollSnapType = "none";
-			viewportEl.style.scrollBehavior = "auto";
-		}
-	}
-
-	// Handle pointer/touch up - re-enable snap and let browser settle
-	function handlePointerUp() {
-		if (!isPointerDown) return;
-		isPointerDown = false;
-
-		// Clear any pending scroll end timeout
-		if (scrollEndTimeout) {
-			clearTimeout(scrollEndTimeout);
-			scrollEndTimeout = null;
-		}
-
-		if (viewportEl) {
-			// Re-enable smooth behavior first, then snap
-			// This ensures the snap animation is smooth
-			viewportEl.style.scrollBehavior = "smooth";
-			viewportEl.style.scrollSnapType = "x mandatory";
-
-			// Wait for snap animation to complete before finalizing
-			// The scroll events from snapping will reset this timeout,
-			// but if there's no snapping needed, this ensures we still finalize
-			scrollEndTimeout = setTimeout(handleScrollEnd, 300);
-		}
-	}
-
-	// Touch event handlers as fallback for devices where pointer events might not fire correctly
-	function handleTouchStart() {
-		handlePointerDown();
-	}
-
-	function handleTouchEnd() {
-		handlePointerUp();
-	}
-
-	// Handle native scroll events
-	function handleScroll() {
-		if (!viewportEl || isProgrammaticScroll) return;
-
-		const scrollLeft = viewportEl.scrollLeft;
-
-		// Mark as scrolling and capture start index
-		if (!isScrolling) {
-			isScrolling = true;
-			scrollStartIndex = currentIndex;
-		}
-
-		// Clamp scroll to max 1 slide away from start index (prevents 1→3 jumps)
-		const minScroll = Math.max(0, (scrollStartIndex - 1) * SLIDE_WIDTH);
-		const maxScroll = Math.min(
-			(spaceStore.spaces.length - 1) * SLIDE_WIDTH,
-			(scrollStartIndex + 1) * SLIDE_WIDTH,
-		);
-
-		if (scrollLeft < minScroll || scrollLeft > maxScroll) {
-			const clampedScroll = Math.max(
-				minScroll,
-				Math.min(maxScroll, scrollLeft),
-			);
-			viewportEl.scrollLeft = clampedScroll;
-			return;
-		}
-
-		// Calculate progress relative to current index (-1 to 1)
-		const offset = scrollLeft - currentIndex * SLIDE_WIDTH;
-		pendingProgress = Math.max(-1, Math.min(1, offset / SLIDE_WIDTH));
-
-		// Schedule ONE update per frame using rAF
-		// This batches multiple scroll events into a single visual update,
-		// eliminating jitter from irregular scroll event timing
-		if (!rafId) {
-			rafId = requestAnimationFrame(() => {
-				scrollProgress = pendingProgress;
-				spaceStore.swipeProgress = pendingProgress;
-				rafId = null;
-			});
-		}
-
-		// Debounce scroll end detection
-		if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
-		scrollEndTimeout = setTimeout(handleScrollEnd, 100);
-	}
-
-	async function handleScrollEnd() {
-		if (!viewportEl) return;
-
-		// Don't finalize while user is still dragging
-		if (isPointerDown) return;
-
-		// Cancel any pending rAF to prevent stale updates
-		if (rafId) {
-			cancelAnimationFrame(rafId);
-			rafId = null;
-		}
-
-		// Determine which slide we landed on (clamping ensures it's only ±1 from start)
-		const scrollLeft = viewportEl.scrollLeft;
-		const newIndex = Math.round(scrollLeft / SLIDE_WIDTH);
-
-		try {
-			if (newIndex !== currentIndex) {
-				currentIndex = newIndex;
-
-				// Reset progress BEFORE switching workspace so the header
-				// doesn't flash stale accent colors for one frame.
-				scrollProgress = 0;
-				pendingProgress = 0;
-				spaceStore.swipeProgress = 0;
-
-				const workspace = spaceStore.spaces[newIndex];
-				if (workspace && workspace.id !== spaceStore.activeSpaceId) {
-					await spaceStore.switchSpace(workspace.id);
-				}
-			}
-		} catch (e) {
-			console.error("[UnifiedSidebar] Error during workspace switch:", e);
-		} finally {
-			// Always reset state, even on error - prevents frozen UI
-			isScrolling = false;
-			scrollProgress = 0;
-			pendingProgress = 0;
-			spaceStore.swipeProgress = 0;
-			isProgrammaticScroll = false;
-		}
-	}
-
-	// Programmatic workspace navigation with title animation
-	// Used by both the external sync $effect and scrollToWorkspace()
-	let programmaticAnimCancelled = false;
-
-	function navigateToIndex(targetIndex: number) {
-		if (!viewportEl || targetIndex === currentIndex) return;
-
-		// Cancel any in-flight rAF title animation
-		programmaticAnimCancelled = true;
-
-		// Record where we're scrolling FROM for proper clamping,
-		// and mark as scrolling BEFORE updating currentIndex so that
-		// handleScroll doesn't overwrite scrollStartIndex
-		scrollStartIndex = currentIndex;
-		isScrolling = true;
-		currentIndex = targetIndex;
-
-		// Smooth scroll — the native scroll events will drive scrollProgress
-		// naturally as the browser animates, giving us a real swipe feel
-		viewportEl.scrollTo({
-			left: targetIndex * SLIDE_WIDTH,
-			behavior: "smooth",
-		});
-	}
-
-	// Navigate to workspace (for external navigation like chevron clicks)
-	export function scrollToWorkspace(workspaceId: string) {
-		const index = spaceStore.spaces.findIndex((w) => w.id === workspaceId);
-		if (index >= 0 && viewportEl) {
-			navigateToIndex(index);
-		}
-	}
-
-	// Sync scroll position when workspace changes externally (e.g. ⌘1-9 shortcuts)
-	$effect(() => {
-		if (!viewportEl || !storeReady || isScrolling) return;
-		const targetIndex = spaceStore.spaces.findIndex(
-			(w) => w.id === spaceStore.activeSpaceId,
-		);
-		if (targetIndex >= 0 && targetIndex !== currentIndex) {
-			navigateToIndex(targetIndex);
-		}
-	});
-
 	// Initialize workspace store and keyboard shortcuts
 	onMount(() => {
-		// Initialize workspace store
 		spaceStore
 			.init()
 			.then(() => {
-				// Set initial scroll position BEFORE storeReady
-				// This prevents the $effect from triggering a smooth scroll animation
-				if (viewportEl) {
-					const idx = spaceStore.spaces.findIndex(
-						(w) => w.id === spaceStore.activeSpaceId,
-					);
-					if (idx >= 0) {
-						currentIndex = idx;
-						// Temporarily disable smooth scroll for instant initial position
-						viewportEl.style.scrollBehavior = "auto";
-						viewportEl.scrollLeft = idx * SLIDE_WIDTH;
-						// Re-enable smooth scroll for user interactions
-						viewportEl.style.scrollBehavior = "";
-					}
-				}
 				storeReady = true;
 			})
 			.catch((err) => {
-				console.error(
-					"[UnifiedSidebar] Failed to initialize workspace store:",
-					err,
-				);
+				console.error("[UnifiedSidebar] Failed to initialize:", err);
 				storeReady = true;
 			});
 
-		// Keyboard shortcuts
 		window.addEventListener("keydown", handleKeydown);
 
 		return () => {
 			window.removeEventListener("keydown", handleKeydown);
-			if (scrollEndTimeout) clearTimeout(scrollEndTimeout);
-			if (rafId) cancelAnimationFrame(rafId);
 		};
 	});
 
@@ -463,148 +183,6 @@
 			label: "Wiki",
 			preferEmptyPane: true,
 		});
-	}
-
-	function handleWorkspaceClick(e: MouseEvent) {
-		const space = spaceStore.activeSpace;
-		if (!space) return;
-		showSpaceContextMenuAt(e, space.id);
-	}
-
-	function showSpaceContextMenuAt(e: MouseEvent, spaceId: string) {
-		const space = spaceStore.spaces.find(s => s.id === spaceId);
-		if (!space) return;
-
-		// Build space switcher items at the top
-		const spaceItems: import("$lib/stores/contextMenu.svelte").ContextMenuItem[] =
-			spaceStore.spaces.map((s, i) => ({
-				id: `switch-space-${s.id}`,
-				label: s.is_system ? "Virtues" : s.name,
-				icon: s.icon || (s.is_system ? "virtues:logo" : "ri:folder-line"),
-				checked: s.id === spaceStore.activeSpaceId,
-				shortcut: i < 9 ? `⌘${i + 1}` : undefined,
-				action: () => {
-					if (s.id !== spaceStore.activeSpaceId) {
-						spaceStore.switchSpace(s.id);
-					}
-				},
-			}));
-
-		// Build active space options (rename, icon, color, etc.)
-		const spaceOptions = buildSpaceContextMenu(space, {
-			onRename: (id) => {
-				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
-				startRename();
-			},
-			onChangeIcon: (id) => {
-				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
-				startChangeIcon();
-			},
-			onChangeColor: (id) => {
-				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
-				startChangeColor();
-			},
-			onNewSpace: () => {
-				newSpaceName = "";
-				showNewSpaceModal = true;
-			},
-			onSettings: (id) => {
-				if (id !== spaceStore.activeSpaceId) spaceStore.switchSpace(id, true);
-				openWorkspaceSettings();
-			},
-			onDelete: async (id) => {
-				const target = spaceStore.spaces.find(s => s.id === id);
-				if (!target || target.is_system) return;
-				if (confirm(`Delete "${target.name}"? Items will be moved to Virtues.`)) {
-					await spaceStore.deleteSpace(id);
-				}
-			},
-		});
-
-		// Add divider before space options
-		if (spaceOptions.length > 0) {
-			spaceOptions[0].dividerBefore = true;
-		}
-
-		contextMenu.show({ x: e.clientX, y: e.clientY }, [...spaceItems, ...spaceOptions]);
-	}
-
-	async function handleCreateNewSpace() {
-		if (!newSpaceName.trim() || isCreatingSpace) return;
-		isCreatingSpace = true;
-		try {
-			await spaceStore.createSpace(newSpaceName.trim());
-			showNewSpaceModal = false;
-			newSpaceName = "";
-		} catch (error) {
-			console.error("Failed to create workspace:", error);
-		} finally {
-			isCreatingSpace = false;
-		}
-	}
-
-	function openWorkspaceSettings() {
-		isWorkspaceInfoOpen = true;
-	}
-
-	function closeWorkspaceInfo() {
-		isWorkspaceInfoOpen = false;
-	}
-
-	function startRename() {
-		const activeSpace = spaceStore.activeSpace;
-		if (!activeSpace || activeSpace.is_system) return;
-		renameValue = activeSpace.name;
-		isRenaming = true;
-	}
-
-	async function handleRenameDone(newName: string) {
-		const activeSpace = spaceStore.activeSpace;
-		if (!activeSpace) return;
-		isRenaming = false;
-		if (newName !== activeSpace.name) {
-			try {
-				await spaceStore.updateSpace(activeSpace.id, { name: newName });
-			} catch (e) {
-				console.error("Failed to rename workspace:", e);
-			}
-		}
-	}
-
-	function handleRenameCancel() {
-		isRenaming = false;
-	}
-
-	function startChangeIcon() {
-		const activeSpace = spaceStore.activeSpace;
-		if (!activeSpace || activeSpace.is_system) return;
-		iconPickerStore.show(activeSpace.icon ?? null, async (icon) => {
-			try {
-				await spaceStore.updateSpace(activeSpace.id, {
-					icon: icon ?? undefined,
-				});
-			} catch (e) {
-				console.error("Failed to update workspace icon:", e);
-			}
-		});
-	}
-
-	function startChangeColor() {
-		const activeSpace = spaceStore.activeSpace;
-		if (!activeSpace || activeSpace.is_system) return;
-		showColorPicker = true;
-	}
-
-	async function handleColorSelect(color: string | null) {
-		const activeSpace = spaceStore.activeSpace;
-		if (!activeSpace) return;
-		try {
-			await spaceStore.updateSpace(activeSpace.id, {
-				accent_color: color ?? undefined,
-			});
-		} catch (e) {
-			console.error("Failed to update workspace color:", e);
-		}
 	}
 
 	function handleNewChat() {
@@ -1167,10 +745,6 @@
 	<div class={sidebarInnerClass}>
 		<WorkspaceHeader
 			collapsed={isCollapsed}
-			onTitleAction={(e) => {
-				const space = spaceStore.activeSpace;
-				if (space) showSpaceContextMenuAt(e, space.id);
-			}}
 			animationDelay={STAGGER_DELAY}
 		/>
 
@@ -1186,115 +760,73 @@
 			<kbd class="command-kbd">⌘K</kbd>
 		</button>
 
-		<!-- Workspace slides with native scroll snap -->
-		<div
-			class="slides-viewport"
+		<!-- Single workspace content (carousel removed) -->
+		<nav
+			class="workspace-nav"
 			class:collapsed={isCollapsed}
-			bind:this={viewportEl}
-			onscroll={handleScroll}
-			onpointerdown={handlePointerDown}
-			onpointerup={handlePointerUp}
-			onpointerleave={handlePointerUp}
-			onpointercancel={handlePointerUp}
-			ontouchstart={handleTouchStart}
-			ontouchend={handleTouchEnd}
+			oncontextmenu={(e) => {
+				const ws = spaceStore.activeSpace;
+				if (ws) handleSidebarContextMenu(e, ws);
+			}}
 		>
-			{#each spaceStore.spaces as workspace (workspace.id)}
-				<nav
-					class="slide"
-					class:collapsed={isCollapsed}
-					oncontextmenu={(e) =>
-						handleSidebarContextMenu(e, workspace)}
-				>
-					{#if !storeReady}
-						<div class="loading-state">
-							<Icon
-								icon="ri:loader-4-line"
-								width="16"
-								class="spinner"
-							/>
-							<span>Loading...</span>
-						</div>
-					{:else}
-						{@const contentItems =
-							workspaceContentByWorkspace.get(workspace.id) || []}
-						{@const wsAccentColor = workspace.accent_color || null}
+			{#if !storeReady}
+				<div class="loading-state">
+					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
+					<span>Loading...</span>
+				</div>
+			{:else}
+				{@const contentItems = workspaceContentByWorkspace.get(spaceStore.activeSpaceId) || []}
+				{@const wsAccentColor = spaceStore.activeSpace?.accent_color || null}
 
-						<!-- System sections (from constants, not DnD) -->
-						{#if workspace.is_system}
-							{#each SYSTEM_SECTIONS as section (section.id)}
-								<SystemSection
-									{section}
+				<!-- System sections (from constants) -->
+				{#each SYSTEM_SECTIONS as section (section.id)}
+					<SystemSection
+						{section}
+						collapsed={isCollapsed}
+						accentColor={wsAccentColor}
+					/>
+				{/each}
+
+				<!-- User folders + root items (draggable) -->
+				<div
+					class="workspace-content"
+					use:sortableAction={{ workspaceId: spaceStore.activeSpaceId }}
+				>
+					{#each contentItems as item (item.id)}
+						<div
+							class="sidebar-dnd-item"
+							data-url={item.url}
+							data-is-folder={item.itemType === "folder" ? "true" : null}
+							data-source-space-id={item.sourceSpaceId || null}
+							data-source-view-id={item.sourceViewId || null}
+							data-source-smart-view={item.sourceIsSmartView ? "true" : null}
+						>
+							{#if item.itemType === "folder" && item.view}
+								<UnifiedFolder
+									view={item.view}
+									collapsed={isCollapsed}
+									accentColor={wsAccentColor}
+									autoFocusRename={pendingRenameViewId === item.view.id}
+									onRenameFocusConsumed={() => (pendingRenameViewId = null)}
+								/>
+							{:else if item.entity}
+								<SidebarNavItem
+									item={{
+										id: item.entity.id,
+										type: "link",
+										label: item.entity.name,
+										icon: item.entity.icon || "ri:file-text-line",
+										href: item.url,
+									}}
 									collapsed={isCollapsed}
 									accentColor={wsAccentColor}
 								/>
-							{/each}
-						{/if}
-
-						<!-- User folders + root items (draggable) -->
-						<div
-							class="workspace-content"
-							use:sortableAction={{ workspaceId: workspace.id }}
-						>
-							{#if contentItems.length === 0 && !workspace.is_system}
-								<div class="empty-state">
-									<p>This workspace is empty</p>
-									<p class="empty-hint">
-										Drag items here or right-click to add
-										folders
-									</p>
-								</div>
-							{:else}
-								{#each contentItems as item (item.id)}
-									<div
-										class="sidebar-dnd-item"
-										data-url={item.url}
-										data-is-folder={item.itemType ===
-										"folder"
-											? "true"
-											: null}
-										data-source-space-id={item.sourceSpaceId ||
-											null}
-										data-source-view-id={item.sourceViewId ||
-											null}
-										data-source-smart-view={item.sourceIsSmartView
-											? "true"
-											: null}
-									>
-										{#if item.itemType === "folder" && item.view}
-											<UnifiedFolder
-												view={item.view}
-												collapsed={isCollapsed}
-												accentColor={wsAccentColor}
-												autoFocusRename={pendingRenameViewId ===
-													item.view.id}
-												onRenameFocusConsumed={() =>
-													(pendingRenameViewId =
-														null)}
-											/>
-										{:else if item.entity}
-											<SidebarNavItem
-												item={{
-													id: item.entity.id,
-													type: "link",
-													label: item.entity.name,
-													icon:
-														item.entity.icon ||
-														"ri:file-text-line",
-													href: item.url,
-												}}
-												collapsed={isCollapsed}
-												accentColor={wsAccentColor}
-											/>
-										{/if}
-									</div>
-								{/each}
 							{/if}
 						</div>
-					{/if}
-				</nav>
-			{/each}
-		</div>
+					{/each}
+				</div>
+			{/if}
+		</nav>
 
 		<SidebarFooter
 			collapsed={isCollapsed}
@@ -1304,45 +836,6 @@
 </aside>
 
 <SearchModal open={isSearchOpen} onClose={closeSearch} />
-<Modal open={showNewSpaceModal} onClose={() => (showNewSpaceModal = false)} title="New Space" width="sm">
-	{#snippet children()}
-		<div style="display: flex; flex-direction: column;">
-			<label class="modal-label" for="new-space-name">Name</label>
-			<input
-				bind:value={newSpaceName}
-				onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateNewSpace(); } if (e.key === 'Escape') { e.preventDefault(); showNewSpaceModal = false; } }}
-				id="new-space-name"
-				type="text"
-				class="modal-input"
-				placeholder="My Space"
-				autocomplete="off"
-			/>
-		</div>
-	{/snippet}
-	{#snippet footer()}
-		<button class="modal-btn modal-btn-secondary" onclick={() => (showNewSpaceModal = false)}>
-			Cancel
-		</button>
-		<button
-			class="modal-btn modal-btn-primary"
-			onclick={handleCreateNewSpace}
-			disabled={!newSpaceName.trim() || isCreatingSpace}
-		>
-			{isCreatingSpace ? "Creating..." : "Create"}
-		</button>
-	{/snippet}
-</Modal>
-<WorkspaceInfoModal
-	open={isWorkspaceInfoOpen}
-	workspace={spaceStore.activeSpace ?? null}
-	onClose={closeWorkspaceInfo}
-/>
-<ColorPickerModal
-	open={showColorPicker}
-	value={spaceStore.activeSpace?.accent_color ?? null}
-	onSelect={handleColorSelect}
-	onClose={() => (showColorPicker = false)}
-/>
 
 {#if showAddPicker}
 	<EntityPicker
@@ -1408,46 +901,16 @@
 		}
 	}
 
-	/* Native scroll snap carousel */
-	.slides-viewport {
+	/* Single workspace nav (carousel removed) */
+	.workspace-nav {
 		flex: 1;
-		min-height: 0; /* Allow flex shrinking */
-		overflow-x: auto;
-		overflow-y: hidden;
-		scroll-snap-type: x mandatory;
-		scroll-behavior: smooth;
-		display: flex;
-		/* Hide scrollbar */
-		scrollbar-width: none;
-		-ms-overflow-style: none;
-		/* Prevent text selection during drag */
-		user-select: none;
-		-webkit-user-select: none;
-		/* Smooth touch scrolling on iOS */
-		-webkit-overflow-scrolling: touch;
-	}
-
-	.slides-viewport::-webkit-scrollbar {
-		display: none;
-	}
-
-	.slides-viewport.collapsed {
-		pointer-events: none;
-		overflow: hidden;
-	}
-
-	.slide {
-		flex: 0 0 208px; /* SLIDE_WIDTH - must match JS constant */
-		width: 208px;
-		min-width: 208px;
+		min-height: 0;
 		overflow-y: auto;
 		overflow-x: hidden;
 		padding: 12px 0 12px 8px;
-		scroll-snap-align: start;
-		scroll-snap-stop: always;
 	}
 
-	.slide.collapsed {
+	.workspace-nav.collapsed {
 		display: flex;
 		flex-direction: column;
 		align-items: center;

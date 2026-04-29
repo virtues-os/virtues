@@ -18,6 +18,7 @@
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { projectsStore } from "$lib/stores/projects.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
 	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
@@ -119,6 +120,26 @@
 	// Citation panel state
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
+
+	// Attached projects (context lens) — IDs are sent with each message so the agent
+	// sees the project's items as salience hints. Persisted per-tab only (ephemeral).
+	let attachedProjectIds = $state<string[]>([]);
+
+	function attachProject(projectId: string) {
+		if (!attachedProjectIds.includes(projectId)) {
+			attachedProjectIds = [...attachedProjectIds, projectId];
+		}
+	}
+
+	function detachProject(projectId: string) {
+		attachedProjectIds = attachedProjectIds.filter((id) => id !== projectId);
+	}
+
+	const attachedProjects = $derived.by(() =>
+		attachedProjectIds
+			.map((id) => projectsStore.projects.find((p) => p.id === id))
+			.filter((p): p is NonNullable<typeof p> => p !== undefined),
+	);
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -448,6 +469,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
+				getProjectIds: () => attachedProjectIds,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -1201,6 +1223,10 @@
 							onContextClick={handleContextClick}
 							editableItems={editAllowListStore.items}
 							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
+							attachedProjects={attachedProjects}
+							allProjects={projectsStore.projects}
+							onAttachProject={attachProject}
+							onDetachProject={detachProject}
 							onPageClear={handlePageClear}
 							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}

@@ -31,6 +31,7 @@ interface CreateChatConfig {
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
+    getProjectIds?: () => string[]; // Getter for attached project IDs (for @project context lens)
 }
 
 class ChatInstanceStore {
@@ -43,7 +44,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getSpaceId, getActivePageContext, getPersona, getAgentMode } = config;
+        const { conversationId, getModel, getSpaceId, getActivePageContext, getPersona, getAgentMode, getProjectIds } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -66,6 +67,7 @@ class ChatInstanceStore {
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'agent';
+                    const projectIds = getProjectIds?.() ?? [];
                     const entry = this.instances.get(conversationId);
                     const thoughtSignature = entry?.lastThoughtSignature;
 
@@ -83,6 +85,8 @@ class ChatInstanceStore {
                             ...(spaceId && { spaceId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
+                            // Include attached project IDs (salience lens for the agent)
+                            ...(projectIds.length > 0 && { projectIds }),
                             // Include thought signature if available
                             ...(thoughtSignature && { thoughtSignature })
                         }

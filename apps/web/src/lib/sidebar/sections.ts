@@ -17,8 +17,12 @@ export interface SystemSection {
 	id: string;
 	name: string;
 	icon: string;
-	type: 'smart' | 'static';
+	type: 'smart' | 'static' | 'link';
 	sortOrder: number;
+	/** Link sections: direct route */
+	href?: string;
+	/** Visual group break — adds extra spacing above this item */
+	groupBreak?: boolean;
 	/** Smart sections: namespace for fetching recent items */
 	namespace?: string;
 	/** Smart sections: max items to show */
@@ -33,67 +37,84 @@ export interface SystemSection {
 
 export const SYSTEM_SECTIONS: SystemSection[] = [
 	{
-		id: 'sys_chats',
-		name: 'Chats',
+		id: 'sys_home',
+		name: 'Today',
+		icon: 'ri:sun-line',
+		type: 'link',
+		sortOrder: 50,
+		href: '/day',
+	},
+	{
+		id: 'sys_chat',
+		name: 'Chat',
 		icon: 'ri:chat-1-line',
-		type: 'smart',
+		type: 'link',
 		sortOrder: 100,
-		namespace: 'chat',
-		limit: 8,
+		href: '/chat-history',
 		quickAdd: 'chat',
-		moreRoute: '/chat-history',
 	},
 	{
 		id: 'sys_pages',
 		name: 'Pages',
 		icon: 'ri:file-text-line',
-		type: 'smart',
+		type: 'link',
 		sortOrder: 200,
-		namespace: 'page',
-		limit: 8,
+		href: '/page',
+		groupBreak: true,
 		quickAdd: 'page',
-		moreRoute: '/page',
 	},
 	{
 		id: 'sys_wiki',
 		name: 'Wiki',
 		icon: 'ri:book-open-line',
-		type: 'static',
+		type: 'link',
 		sortOrder: 300,
-		items: [
-			{ id: 'wiki-day', label: 'Today', icon: 'ri:calendar-todo-line', href: '/day' },
-			{ id: 'wiki-entities', label: 'Entities', icon: 'ri:group-line', href: '/entities' },
-			{ id: 'wiki-narrative', label: 'Narrative Identity', icon: 'ri:quill-pen-line', href: '/narrative-identity' },
-		],
+		href: '/entities',
 	},
 	{
-		id: 'sys_files',
-		name: 'Files',
-		icon: 'ri:folder-line',
-		type: 'static',
+		id: 'sys_drive',
+		name: 'Drive',
+		icon: 'ri:hard-drive-2-line',
+		type: 'link',
 		sortOrder: 350,
-		items: [
-			{ id: 'files-drive', label: 'Drive', icon: 'ri:hard-drive-2-line', href: '/drive' },
-		],
+		href: '/drive',
 	},
 	{
-		id: 'sys_apps',
-		name: 'Apps',
+		id: 'sys_projects',
+		name: 'Projects',
+		icon: 'ri:folder-open-line',
+		type: 'link',
+		sortOrder: 360,
+		href: '/projects',
+	},
+	{
+		id: 'sys_actions',
+		name: 'Actions',
+		icon: 'ri:flashlight-line',
+		type: 'link',
+		sortOrder: 450,
+		href: '/actions',
+		groupBreak: true,
+	},
+	{
+		id: 'sys_applets',
+		name: 'Applets',
 		icon: 'ri:apps-line',
-		type: 'static',
-		sortOrder: 375,
-		items: [
-			{ id: 'apps-actions', label: 'Actions', icon: 'ri:flashlight-line', href: '/actions' },
-		],
+		type: 'link',
+		sortOrder: 500,
+		href: '/applets',
 	},
 ];
 
 /** Map old DB view IDs → new constant IDs (for localStorage migration) */
 export const LEGACY_ID_MAP: Record<string, string> = {
-	'view_sys_sec_chats': 'sys_chats',
+	'view_sys_sec_chats': 'sys_chat',
 	'view_sys_sec_pages': 'sys_pages',
 	'view_sys_sec_wiki': 'sys_wiki',
-	'view_sys_sec_files': 'sys_files',
-	'view_sys_sec_data': 'sys_connections',
-	'view_sys_sec_developer': '', // deleted, no mapping
+	'view_sys_sec_files': 'sys_drive',
+	'view_sys_sec_data': '',
+	'view_sys_sec_developer': '',
+	'sys_chats': 'sys_chat',
+	'sys_files': 'sys_drive',
+	'sys_apps': 'sys_applets',
 };

@@ -142,7 +142,25 @@
 </script>
 
 {#if !collapsed}
-	<div class="system-section">
+	{#if section.type === 'link' && section.href}
+		<div class="system-section" class:group-break={section.groupBreak}>
+			<SidebarNavItem
+				item={{
+					id: section.id,
+					type: 'link',
+					label: section.name,
+					icon: section.icon,
+					href: section.href,
+				}}
+				{collapsed}
+				{accentColor}
+				isSystemItem={true}
+				onQuickAdd={section.quickAdd ? handleQuickAdd : undefined}
+				quickAddTitle={section.quickAdd === 'chat' ? 'New Chat' : section.quickAdd === 'page' ? 'New Page' : undefined}
+			/>
+		</div>
+	{:else}
+	<div class="system-section" class:group-break={section.groupBreak}>
 		<button
 			class="sidebar-interactive system"
 			onclick={handleClick}
@@ -246,6 +264,7 @@
 			</div>
 		</div>
 	</div>
+	{/if}
 {/if}
 
 <style>
@@ -255,6 +274,10 @@
 	.system-section {
 		display: flex;
 		flex-direction: column;
+	}
+
+	.system-section.group-break {
+		margin-top: 12px;
 	}
 
 	/* ------- Icon ↔ Chevron slide toggle (matches UnifiedFolder) ------- */

@@ -9,7 +9,7 @@
 	import { onMount } from 'svelte';
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import { listPlaces, type WikiPlaceListItem } from "$lib/wiki/api";
-	import UniversalDataGrid, { type Column } from "$lib/components/UniversalDataGrid.svelte";
+	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
 	let places = $state<WikiPlaceListItem[]>([]);

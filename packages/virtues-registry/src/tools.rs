@@ -85,7 +85,13 @@ pub fn default_tools() -> Vec<ToolConfig> {
         edit_page_tool(),
         setup_action_tool(),
         update_action_memory_tool(),
+        list_actions_tool(),
+        get_action_tool(),
+        edit_action_tool(),
+        delete_action_tool(),
+        run_action_tool(),
         dayline_event_tool(),
+        get_project_item_tool(),
     ]
 }
 
@@ -784,6 +790,178 @@ The action will post its results back into this chat each time it runs."#.to_str
     }
 }
 
+/// List actions — lightweight catalog for chat-driven discovery
+fn list_actions_tool() -> ToolConfig {
+    ToolConfig {
+        id: "list_actions".to_string(),
+        name: "List Actions".to_string(),
+        description: "List scheduled actions".to_string(),
+        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, cron_schedule, triggers, and last_run for each.
+
+Use this when:
+- User asks "what automations do I have?"
+- You need to find an action by name before editing/running it
+- Before suggesting a new action, to check whether something similar already exists
+
+Optional filters:
+- owner: "system" or "user" (system = built-in, user = user-created)
+- enabled: true/false
+- trigger: "cron" | "manual" | "tool" | "api" | "webhook"
+"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string", "enum": ["system", "user"] },
+                "enabled": { "type": "boolean" },
+                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:list-check".to_string(),
+        display_order: 10,
+        is_system: false,
+    }
+}
+
+/// Get a single action's full details + recent runs
+fn get_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "get_action".to_string(),
+        name: "Get Action".to_string(),
+        description: "Fetch a single action".to_string(),
+        llm_description: r#"Fetch a single action by id, including its full configuration (agent, cron_schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
+
+Use this when:
+- User asks "what does this action do?"
+- You need to read the current agent prompt before suggesting an edit
+- You're debugging why an action is failing and need recent run errors
+"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string", "description": "The action id (e.g. 'action_user_weekly_planner')" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:file-search-line".to_string(),
+        display_order: 11,
+        is_system: false,
+    }
+}
+
+/// Edit an existing action — partial update with system-owner guard
+fn edit_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "edit_action".to_string(),
+        name: "Edit Action".to_string(),
+        description: "Update an action's configuration".to_string(),
+        llm_description: r#"Update one or more fields on an existing action. Send only the fields you want to change as a `patch` object.
+
+Editable fields:
+- name (user rows only)
+- agent (user rows only; the LLM prompt)
+- cron_schedule (nullable — set to null to remove)
+- enabled (bool)
+- config (object — full replace)
+- condition (nullable SQL expression; user rows only)
+- triggers (array of cron|manual|tool|api|webhook; user rows only)
+- memory (nullable markdown scratchpad)
+
+System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, cron_schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
+
+Use this when the user asks to:
+- Change an action's prompt
+- Reschedule it
+- Disable/enable it
+- Update its memory"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id", "patch"],
+            "properties": {
+                "id": { "type": "string" },
+                "patch": {
+                    "type": "object",
+                    "description": "Fields to update. Unknown fields are rejected.",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "agent": { "type": ["string", "null"] },
+                        "cron_schedule": { "type": ["string", "null"] },
+                        "enabled": { "type": "boolean" },
+                        "config": { "type": "object" },
+                        "condition": { "type": ["string", "null"] },
+                        "triggers": { "type": "array", "items": { "type": "string" } },
+                        "memory": { "type": ["string", "null"] }
+                    }
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:edit-2-line".to_string(),
+        display_order: 12,
+        is_system: false,
+    }
+}
+
+/// Delete a user-owned action
+fn delete_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "delete_action".to_string(),
+        name: "Delete Action".to_string(),
+        description: "Delete a user-owned action".to_string(),
+        llm_description: r#"Delete an action by id. Only user-owned actions can be deleted — system rows (built-in pipelines like day_summary_eod, embedding_index, trash_purge) are protected and will return an error. Tell the user to disable them instead.
+
+This is destructive. Confirm with the user before calling unless the request is explicit ("delete the weekly planner action")."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:delete-bin-line".to_string(),
+        display_order: 13,
+        is_system: false,
+    }
+}
+
+/// Manually run an action
+fn run_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "run_action".to_string(),
+        name: "Run Action".to_string(),
+        description: "Trigger an action to run now".to_string(),
+        llm_description: r#"Manually dispatch an action to run immediately. The action must have `tool` in its triggers list.
+
+Returns a run_id and final status (success / skipped / error / forbidden / not_found). For agent actions, `summary` contains the LLM's final message; for subprocess actions, it's the binary's result string.
+
+Optional parameters:
+- payload: arbitrary JSON forwarded to the action as context
+- date: YYYY-MM-DD override for date-scoped actions (e.g. day_summary_eod). Merged into the action's config.date.
+
+Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string" },
+                "payload": { "description": "Arbitrary JSON forwarded to the action as context" },
+                "date": { "type": "string", "description": "YYYY-MM-DD override for date-scoped actions" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:play-circle-line".to_string(),
+        display_order: 14,
+        is_system: false,
+    }
+}
+
 /// Update action memory — persistent markdown scratchpad for actions
 fn update_action_memory_tool() -> ToolConfig {
     ToolConfig {
@@ -875,6 +1053,39 @@ Event summaries should be 1-3 factual sentences. Be specific: name people, place
     }
 }
 
+/// Get Project Item tool - fetches the full content of a reference in an attached project.
+fn get_project_item_tool() -> ToolConfig {
+    ToolConfig {
+        id: "get_project_item".to_string(),
+        name: "Get Project Item".to_string(),
+        description: "Read the full content of a reference inside an attached project".to_string(),
+        llm_description: r#"Fetch the full content of an item referenced in an attached project.
+
+Use this when:
+- An attached_project lists items and you need to read one's full content
+- The user asks about a specific item in their project
+- You need deeper context beyond the labels shown in the attached_project block
+
+The item_url comes from the url attribute in the <item> tags of the attached project context.
+Returns the entity's content (page text, chat messages, person details, etc.)."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["item_url"],
+            "properties": {
+                "item_url": {
+                    "type": "string",
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /person/person_xxx, /chat/chat_xxx"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:folder-open-line".to_string(),
+        display_order: 5,
+        is_system: false,
+    }
+}
+
 /// Get default enabled tools configuration (for assistant profile)
 pub fn default_enabled_tools() -> serde_json::Value {
     serde_json::json!({
@@ -889,7 +1100,8 @@ pub fn default_enabled_tools() -> serde_json::Value {
         "create_page": true,
         "get_page_content": true,
         "edit_page": true,
-        "setup_action": true
+        "setup_action": true,
+        "get_project_item": true
     })
 }
 
@@ -900,7 +1112,7 @@ mod tests {
     #[test]
     fn test_default_tools() {
         let tools = default_tools();
-        assert_eq!(tools.len(), 13, "Should have 13 tools");
+        assert_eq!(tools.len(), 14, "Should have 14 tools");
 
         // Verify all tools have required fields
         for tool in &tools {

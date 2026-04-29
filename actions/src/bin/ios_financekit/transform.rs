@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::SqlitePool;
 use uuid::Uuid;
-use virtues_action_helpers::dedup::BATCH_SIZE;
+use virtues_helpers::dedup::BATCH_SIZE;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Accounts

@@ -23,7 +23,6 @@ employer             TEXT
 onboarding_status    TEXT NOT NULL DEFAULT 'welcome'   CHECK IN ('welcome','profile','places','tools','complete')
 home_place_id        TEXT                              -- FK wiki_places
 theme                TEXT DEFAULT 'light'
-update_check_hour    INTEGER DEFAULT 8                 CHECK 0-23
 crux                 TEXT                              -- legacy (unused)
 technology_vision    TEXT                              -- legacy (unused)
 pain_point_primary   TEXT                              -- legacy (unused)

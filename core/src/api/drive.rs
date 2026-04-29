@@ -379,16 +379,7 @@ pub async fn get_drive_usage(pool: &SqlitePool) -> Result<DriveUsage> {
 
     let (drive_bytes, quota_bytes, file_count, folder_count) = row;
 
-    // Get data lake usage from elt_stream_objects
-    let data_lake_bytes: i64 = sqlx::query_scalar(
-        r#"
-        SELECT COALESCE(SUM(size_bytes), 0)
-        FROM elt_stream_objects
-        "#,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get data lake usage: {e}")))?;
+    let data_lake_bytes: i64 = 0;
 
     let total_bytes = drive_bytes + data_lake_bytes;
     let usage_percent = if quota_bytes > 0 {
@@ -761,21 +752,14 @@ pub fn is_lake_folder_id(file_id: &str) -> bool {
 ///
 /// Handles both regular drive files and virtual lake objects.
 pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<DriveFile> {
-    // Handle virtual lake folder IDs
     if file_id == LAKE_VIRTUAL_ID {
-        let lake_size: i64 =
-            sqlx::query_scalar("SELECT COALESCE(SUM(size_bytes), 0) FROM elt_stream_objects")
-                .fetch_one(pool)
-                .await
-                .unwrap_or(0);
-
         let now = Timestamp::now();
         return Ok(DriveFile {
             id: LAKE_VIRTUAL_ID.to_string(),
             path: "lake".to_string(),
             filename: "lake".to_string(),
             mime_type: None,
-            size_bytes: lake_size,
+            size_bytes: 0,
             is_folder: true,
             parent_id: None,
             sha256_hash: None,
@@ -784,40 +768,11 @@ pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<Drive
             updated_at: now,
         });
     }
-
-    // Handle virtual lake stream folder IDs
     if let Some(stream_name) = file_id.strip_prefix(LAKE_STREAM_PREFIX) {
-        let stream_info = sqlx::query_as::<_, (i64, Timestamp)>(
-            r#"
-            SELECT SUM(size_bytes), MAX(created_at)
-            FROM elt_stream_objects
-            WHERE stream_name = $1
-            "#,
-        )
-        .bind(stream_name)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to get stream info: {e}")))?
-        .ok_or_else(|| Error::NotFound(format!("Stream not found: {stream_name}")))?;
-
-        return Ok(DriveFile {
-            id: file_id.to_string(),
-            path: format!("lake/{}", stream_name),
-            filename: stream_name.to_string(),
-            mime_type: None,
-            size_bytes: stream_info.0,
-            is_folder: true,
-            parent_id: Some(LAKE_VIRTUAL_ID.to_string()),
-            sha256_hash: None,
-            deleted_at: None,
-            created_at: stream_info.1,
-            updated_at: stream_info.1,
-        });
+        return Err(Error::NotFound(format!("Stream not found: {stream_name}")));
     }
-
-    // Handle virtual lake object IDs
     if let Some(object_id) = file_id.strip_prefix(LAKE_OBJECT_PREFIX) {
-        return get_lake_object_metadata(pool, object_id).await;
+        return Err(Error::NotFound(format!("Lake object not found: {object_id}")));
     }
 
     // Regular drive file
@@ -836,45 +791,6 @@ pub async fn get_file_metadata(pool: &SqlitePool, file_id: &str) -> Result<Drive
     .ok_or_else(|| Error::NotFound(format!("File not found: {file_id}")))?;
 
     Ok(file)
-}
-
-/// Get metadata for a lake stream object by its real ID
-async fn get_lake_object_metadata(pool: &SqlitePool, object_id: &str) -> Result<DriveFile> {
-    let obj = sqlx::query_as::<_, (String, String, String, i64, Timestamp, Timestamp)>(
-        r#"
-        SELECT id, stream_name, storage_key, size_bytes, created_at, updated_at
-        FROM elt_stream_objects
-        WHERE id = $1
-        "#,
-    )
-    .bind(object_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get lake object: {e}")))?
-    .ok_or_else(|| Error::NotFound(format!("Lake object not found: {object_id}")))?;
-
-    let (id, stream_name, storage_key, size_bytes, created_at, updated_at) = obj;
-
-    // Extract filename from storage_key
-    let filename = storage_key
-        .rsplit('/')
-        .next()
-        .unwrap_or(&storage_key)
-        .to_string();
-
-    Ok(DriveFile {
-        id: format!("{}{}", LAKE_OBJECT_PREFIX, id),
-        path: format!("lake/{}/{}", stream_name, filename),
-        filename,
-        mime_type: Some("application/x-jsonlines".to_string()),
-        size_bytes,
-        is_folder: false,
-        parent_id: Some(format!("{}{}", LAKE_STREAM_PREFIX, stream_name)),
-        sha256_hash: None,
-        deleted_at: None,
-        created_at,
-        updated_at,
-    })
 }
 
 /// Upload a file
@@ -1223,36 +1139,14 @@ pub async fn download_file(
 /// # Returns
 /// Tuple of (DriveFile metadata, raw bytes)
 pub async fn download_lake_object(
-    pool: &SqlitePool,
-    storage: &crate::storage::Storage,
+    _pool: &SqlitePool,
+    _storage: &crate::storage::Storage,
     file_id: &str,
 ) -> Result<(DriveFile, Vec<u8>)> {
-    // Extract the real object ID
-    let object_id = extract_lake_object_id(file_id)
-        .ok_or_else(|| Error::InvalidInput("Invalid lake object ID".into()))?;
-
-    // Get metadata
-    let file = get_lake_object_metadata(pool, object_id).await?;
-
-    // Query storage key and source info for decryption
-    let obj_info = sqlx::query_as::<_, (String, String, String)>(
-        r#"
-        SELECT source_connection_id, stream_name, storage_key
-        FROM elt_stream_objects
-        WHERE id = $1
-        "#,
-    )
-    .bind(object_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get lake object info: {e}")))?;
-
-    let (_source_connection_id, _stream_name, storage_key) = obj_info;
-
-    // Download from filesystem storage
-    let data = storage.download(&storage_key).await?;
-
-    Ok((file, data))
+    // Post actions-cutover: lake objects no longer exist; return NotFound.
+    Err(Error::NotFound(format!(
+        "Lake object not found: {file_id}"
+    )))
 }
 
 /// Download a file as a stream (for HTTP streaming responses)

@@ -140,6 +140,10 @@ pub struct ChatRequest {
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
+    /// Attached project IDs — each is expanded to its item list and inlined
+    /// into the system prompt as a salience lens for the agent.
+    #[serde(rename = "projectIds", default)]
+    pub project_ids: Vec<String>,
 }
 
 fn default_agent() -> String {
@@ -608,9 +612,9 @@ async fn build_user_context(pool: &SqlitePool, user_name: &str) -> Option<String
         }
     }
 
-    // 3. Connected sources — active data source names
+    // 3. Connected sources — active credential names
     if let Ok(rows) = sqlx::query_as::<_, (String,)>(
-        "SELECT name FROM elt_source_connections WHERE is_active = 1 AND is_internal = 0 ORDER BY name"
+        "SELECT name FROM credentials WHERE status = 'active' ORDER BY name"
     )
     .fetch_all(pool)
     .await
@@ -644,6 +648,7 @@ async fn build_system_prompt(
     agent_mode: &str,
     persona_id: &str,
     is_new_user: bool,
+    project_ids: &[String],
 ) -> String {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
@@ -719,6 +724,15 @@ async fn build_system_prompt(
         prompt.push_str(&user_context);
     }
 
+    // Inline attached project context blocks. Each block lists the project's
+    // items (label, url, type) as salience hints. Full content is fetched on
+    // demand via the get_project_item tool.
+    if !project_ids.is_empty() {
+        if let Some(block) = build_projects_context(pool, project_ids).await {
+            prompt.push_str(&block);
+        }
+    }
+
     if let Some(ctx) = active_page {
         if let Some(page_id) = &ctx.page_id {
             let title = ctx.page_title.as_deref().unwrap_or("Untitled");
@@ -754,6 +768,101 @@ async fn build_system_prompt(
     }
 
     prompt
+}
+
+/// Maximum items to inline per project before truncating.
+/// Projects with more items still work — the agent can page through via the
+/// get_project_item tool — but the metadata block stays bounded.
+const MAX_PROJECT_ITEMS_INLINED: usize = 100;
+
+/// Build a context block for all attached projects. Returns None if no
+/// projects are found (silently ignores missing/invalid IDs).
+async fn build_projects_context(pool: &SqlitePool, project_ids: &[String]) -> Option<String> {
+    let mut out = String::new();
+    let mut any_rendered = false;
+
+    for project_id in project_ids {
+        let detail = match crate::api::get_project(pool, project_id).await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("[chat] failed to load attached project {}: {}", project_id, e);
+                continue;
+            }
+        };
+
+        any_rendered = true;
+
+        let description_attr = detail
+            .project
+            .description
+            .as_deref()
+            .map(|d| format!(" description=\"{}\"", escape_attr(d)))
+            .unwrap_or_default();
+
+        out.push_str(&format!(
+            "\n\n<attached_project id=\"{}\" name=\"{}\"{}>",
+            detail.project.id,
+            escape_attr(&detail.project.name),
+            description_attr,
+        ));
+
+        let total = detail.items.len();
+        let inlined: Vec<_> = detail.items.iter().take(MAX_PROJECT_ITEMS_INLINED).collect();
+
+        for item in &inlined {
+            let name = item.name.as_deref().unwrap_or(&item.url);
+            let desc_attr = item.description.as_deref()
+                .map(|d| format!(" description=\"{}\"", escape_attr(d)))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "\n  <item url=\"{}\" name=\"{}\"{}/>",
+                escape_attr(&item.url),
+                escape_attr(name),
+                desc_attr,
+            ));
+        }
+
+        if total > MAX_PROJECT_ITEMS_INLINED {
+            out.push_str(&format!(
+                "\n  <!-- {} more items not shown; use get_project_item to page through -->",
+                total - MAX_PROJECT_ITEMS_INLINED
+            ));
+        }
+
+        out.push_str("\n</attached_project>");
+    }
+
+    if !any_rendered {
+        return None;
+    }
+
+    // Preamble explaining what this block means to the model.
+    let preamble = "\n\n<attached_projects_preamble>\nThe user has attached the following project(s) as a context lens. Treat the listed items as high-salience: they are the user's actively curated focus. You may fetch an item's full content on demand with the get_project_item tool.\n</attached_projects_preamble>";
+
+    Some(format!("{}{}", preamble, out))
+}
+
+/// Classify a project item URL to a human-readable type label.
+fn item_type_label(url: &str) -> &'static str {
+    if url.starts_with("/page/") { "page" }
+    else if url.starts_with("/chat/") { "chat" }
+    else if url.starts_with("/person/") { "person" }
+    else if url.starts_with("/place/") { "place" }
+    else if url.starts_with("/org/") { "organization" }
+    else if url.starts_with("/thing/") { "thing" }
+    else if url.starts_with("/day/") { "day" }
+    else if url.starts_with("/drive/") { "file" }
+    else if url.starts_with("/source/") || url.starts_with("/sources/") { "source" }
+    else if url.starts_with("http") { "link" }
+    else { "reference" }
+}
+
+/// Minimal XML attribute escaping for the inlined context block.
+fn escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Tollbooth configuration validated at handler entry
@@ -1069,7 +1178,7 @@ pub async fn chat_handler(
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // is_onboarding keeps the onboarding prompt active until set_user_name completes
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding).await;
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, &request.project_ids).await;
 
     // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
     // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.

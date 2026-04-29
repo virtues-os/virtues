@@ -1176,7 +1176,8 @@ async fn resolve_sources(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<ViewEntity>, i64)> {
-    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM elt_source_connections"#)
+    // Post-cutover: sources are now `credentials` (the Vault).
+    let total: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM credentials"#)
         .fetch_one(pool)
         .await
         .map_err(|e| Error::Database(format!("Failed to count sources: {}", e)))?;
@@ -1184,7 +1185,7 @@ async fn resolve_sources(
     let entities: Vec<ViewEntity> = sqlx::query_as::<_, (String, String)>(
         r#"
         SELECT id, name
-        FROM elt_source_connections
+        FROM credentials
         ORDER BY name ASC
         LIMIT $1 OFFSET $2
         "#,
@@ -1396,7 +1397,7 @@ async fn resolve_year_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEn
 
 async fn resolve_source_by_id(pool: &SqlitePool, id: &str) -> Result<Option<ViewEntity>> {
     let result = sqlx::query_as::<_, (String, String)>(
-        r#"SELECT id, name FROM elt_source_connections WHERE id = $1"#,
+        r#"SELECT id, name FROM credentials WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(pool)

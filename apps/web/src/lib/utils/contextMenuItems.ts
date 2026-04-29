@@ -6,132 +6,79 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import type { SpaceSummary } from '$lib/api/client';
-import { spaceStore } from '$lib/stores/space.svelte';
+import { projectsStore } from '$lib/stores/projects.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
- * Build context menu items for a space (used by workspace header).
- * System spaces get limited options (no rename/icon/color/delete).
+ * Get "Add to Project" menu items. Shows all projects as a submenu; if no
+ * projects exist yet, offers "New Project…" that creates one and adds the
+ * URL to it immediately.
+ * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
+ * @param name - Optional display name for the item
  */
-export interface SpaceMenuCallbacks {
-	onRename: (spaceId: string) => void;
-	onChangeIcon: (spaceId: string) => void;
-	onChangeColor: (spaceId: string) => void;
-	onNewSpace: () => void;
-	onSettings: (spaceId: string) => void;
-	onDelete: (spaceId: string) => void;
-}
-
-export function buildSpaceContextMenu(
-	space: SpaceSummary,
-	callbacks: SpaceMenuCallbacks
+export function getAddToProjectMenuItems(
+	url: string,
+	name?: string | null,
 ): ContextMenuItem[] {
-	const items: ContextMenuItem[] = [];
+	const projects = projectsStore.projects;
 
-	if (!space.is_system) {
-		items.push(
-			{
-				id: 'rename-space',
-				label: 'Rename',
-				icon: 'ri:pencil-line',
-				action: () => callbacks.onRename(space.id),
-			},
-			{
-				id: 'change-icon',
-				label: 'Change Icon',
-				icon: 'ri:emotion-line',
-				action: () => callbacks.onChangeIcon(space.id),
-			},
-			{
-				id: 'change-color',
-				label: 'Change Color',
-				icon: 'ri:palette-line',
-				action: () => callbacks.onChangeColor(space.id),
-			},
-		);
-	}
+	const submenu: ContextMenuItem[] = projects.map((p) => ({
+		id: `project-${p.id}`,
+		label: p.name,
+		icon: p.icon || 'ri:folder-open-line',
+		action: async () => {
+			try {
+				await projectsStore.addItem(p.id, url, { name });
+				toast(`Added to ${p.name}`);
+			} catch (e) {
+				console.error('[contextMenuItems] Failed to add to project:', e);
+				toast.error('Failed to add to project');
+			}
+		},
+	}));
 
-	items.push({
-		id: 'new-space',
-		label: 'New Space',
+	submenu.push({
+		id: 'new-project-with-item',
+		label: projects.length > 0 ? 'New Project…' : 'Create First Project…',
 		icon: 'ri:add-line',
-		dividerBefore: items.length > 0,
-		action: () => callbacks.onNewSpace(),
+		dividerBefore: projects.length > 0,
+		action: async () => {
+			const projectName = prompt('Project name:');
+			if (!projectName || !projectName.trim()) return;
+			try {
+				const project = await projectsStore.create(projectName.trim());
+				await projectsStore.addItem(project.id, url, { name });
+				toast(`Created "${project.name}" and added item`);
+			} catch (e) {
+				console.error('[contextMenuItems] Failed to create project:', e);
+				toast.error('Failed to create project');
+			}
+		},
 	});
-
-	items.push({
-		id: 'space-settings',
-		label: 'Space Settings...',
-		icon: 'ri:settings-3-line',
-		action: () => callbacks.onSettings(space.id),
-	});
-
-	if (!space.is_system) {
-		items.push({
-			id: 'delete-space',
-			label: 'Delete Space',
-			icon: 'ri:delete-bin-line',
-			variant: 'destructive',
-			dividerBefore: true,
-			action: () => callbacks.onDelete(space.id),
-		});
-	}
-
-	return items;
-}
-
-/**
- * Get "Add to Space" menu items
- * Works for any URL - the sidebar is URL-based per DND_UX_SPEC.md
- * Shows all user spaces (excludes current space and system space)
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/chat/chat_abc')
- */
-export function getMoveToWorkspaceMenuItems(url: string): ContextMenuItem[] {
-	// Get all user spaces (exclude current and system space)
-	const currentSpaceId = spaceStore.activeSpaceId;
-	const userSpaces = spaceStore.spaces.filter(
-		(ws) => ws.id !== currentSpaceId && !ws.is_system
-	);
-
-	if (userSpaces.length === 0) {
-		return [];
-	}
 
 	return [
 		{
-			id: 'add-to-space',
-			label: 'Add to Space',
-			icon: 'ri:add-line',
+			id: 'add-to-project',
+			label: 'Add to Project',
+			icon: 'ri:folder-add-line',
 			dividerBefore: true,
-			submenu: userSpaces.map((ws) => ({
-				id: `space-${ws.id}`,
-				label: ws.name,
-				icon: ws.icon || 'ri:folder-line',
-				action: async () => {
-					try {
-						await spaceStore.addSpaceItem(url, ws.id);
-						toast(`Added to ${ws.name}`);
-					} catch (e) {
-						console.error('[contextMenuItems] Failed to add to space:', e);
-						toast.error('Failed to add to space');
-					}
-				}
-			}))
-		}
+			submenu,
+		},
 	];
 }
 
 /**
- * Get all space-related menu items (Add to Space only - use drag-drop for folders)
- * Used by tab context menus
+ * Get organization-related menu items (Add to Project).
+ * Used by tab context menus. "Move to Workspace" removed — single workspace.
  * @param url - The URL of the item (e.g., '/page/page_xyz')
+ * @param label - Optional cached label for the item
+ * @param icon - Optional cached icon for the item
  */
-export function getWorkspaceMenuItems(url: string): ContextMenuItem[] {
-	// "Add to Folder" removed - use drag-drop instead for clearer UX
-	return [
-		...getMoveToWorkspaceMenuItems(url)
-	];
+export function getWorkspaceMenuItems(
+	url: string,
+	name?: string | null,
+): ContextMenuItem[] {
+	return getAddToProjectMenuItems(url, name);
 }
 
 /**

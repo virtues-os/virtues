@@ -30,13 +30,11 @@
 	import DayToolbar from "./DayToolbar.svelte";
 	import DataQualityCoverage from "./DataQualityCoverage.svelte";
 	import JournalCard from "./JournalCard.svelte";
-	import UniversalDataGrid, { type Column } from "$lib/components/UniversalDataGrid.svelte";
+	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import TableOfContents, { type TocHeading } from "$lib/components/TableOfContents.svelte";
 
 	import Icon from "$lib/components/Icon.svelte";
 
-	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
-	import DayLocationTimeline from "$lib/components/timeline/DayLocationTimeline.svelte";
 
 	interface Props {
 		page: DayPageType;
@@ -158,9 +156,6 @@
 	let movementTrack = $state<{ lat: number; lng: number; timeMs: number }[]>(
 		[],
 	);
-	// Shared hover state: timeline writes, map reads. Used to render a moving
-	// dot on the GPS path that follows the cursor across the 24h scrubber.
-	let movementHoverTimeMs = $state<number | null>(null);
 
 	const loadMovement = makeLoader(
 		(slug) => getDayTimeline(slug),
@@ -409,10 +404,9 @@
 		h.push({ id: "dayline", text: "The Dayline", level: 2 });
 		if (showTimeline) h.push({ id: "timeline", text: "Event Timeline", level: 2 });
 		if (hasAnyContent) h.push({ id: "writing", text: "Your Writing", level: 2 });
-		if (showMovement) h.push({ id: "movement", text: "Movement", level: 2 });
 		if (showChats) h.push({ id: "chats", text: "AI Chats", level: 2 });
 		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
-		if (showSources) h.push({ id: "ontologies", text: "Ontologies", level: 2 });
+		if (showSources) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
 		if (hasAnyContent) h.push({ id: "metadata", text: "Metadata", level: 3 });
 		return h;
 	});
@@ -483,7 +477,7 @@
 				<!-- Dayline chart: visual bridge between narrative and timeline -->
 				<section class="section" id="dayline">
 					<h2 class="section-title">The Dayline</h2>
-					<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} />
+					<DaylineChart events={dayEvents} timezone={page.startTimezone} pageDate={page.date} readinessScore={page.readinessScore} sleepCycles={page.sleepCycles} {movementStops} {movementTrack} {dedupedMarkers} dayDateSlug={currentDateSlug} {hasLocationData} />
 				</section>
 
 				{#if hasAnyContent}
@@ -508,25 +502,7 @@
 						<JournalCard date={currentDateSlug} />
 					</section>
 
-					<!-- Movement -->
-					{#if showMovement}
-						<section class="section" id="movement">
-							<h2 class="section-title">Movement</h2>
-							{#if movementStops.length > 0}
-								<DayLocationTimeline
-									visits={movementStops}
-									dayDate={currentDateSlug}
-									bind:hoverTimeMs={movementHoverTimeMs}
-								/>
-							{/if}
-							<MovementMap
-								track={movementTrack}
-								stops={dedupedMarkers}
-								height={240}
-								hoverTimeMs={movementHoverTimeMs}
-							/>
-						</section>
-					{/if}
+					<!-- Movement is now in the Dayline chart's "Location" pill -->
 
 					<!-- AI Chats: conversations from this day -->
 					{#if showChats}
@@ -592,7 +568,7 @@
 					<!-- Ontologies: one chronological table -->
 					{#if showSources}
 						<section class="section" id="ontologies">
-							<h2 class="section-title">Ontologies</h2>
+							<h2 class="section-title">Data Ontologies</h2>
 							<div class="sources-table-wrapper">
 								<UniversalDataGrid
 									items={sourceRows}

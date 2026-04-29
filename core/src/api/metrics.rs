@@ -82,7 +82,6 @@ pub struct RecentError {
 
 /// Get comprehensive activity metrics
 pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
-    // Summary query — uses app_action_runs instead of elt_jobs
     let summary_row = sqlx::query(
         r#"
         SELECT

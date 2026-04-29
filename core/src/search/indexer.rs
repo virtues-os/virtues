@@ -19,7 +19,9 @@ const BATCH_SIZE: i64 = 500;
 /// 2. Embed them via fastembed
 /// 3. Insert into search_embeddings + vec_search in a transaction
 /// 4. Update progress checkpoint
-pub async fn run_embedding_job(pool: &SqlitePool) -> Result<()> {
+///
+/// Returns the total number of records embedded in this run.
+pub async fn run_embedding_job(pool: &SqlitePool) -> Result<u64> {
     let embedder = get_embedder().await?;
     let searchable = virtues_registry::ontologies::registered_ontologies()
         .into_iter()
@@ -180,5 +182,5 @@ pub async fn run_embedding_job(pool: &SqlitePool) -> Result<()> {
         tracing::debug!("Embedding indexer: no new records to embed");
     }
 
-    Ok(())
+    Ok(total_embedded)
 }
