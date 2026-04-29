@@ -334,6 +334,8 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
     let updated_at: String = row.get("updated_at");
 
         // Query messages from normalized table
+        // Filter out onboarding synthetic triggers (subject='onboarding_synthetic')
+        // so the user only sees the AI's opening message on revisit
         let message_rows = sqlx::query(
             r#"
             SELECT
@@ -341,6 +343,7 @@ pub async fn get_chat(pool: &SqlitePool, chat_id: String) -> Result<ChatDetailRe
                 reasoning, tool_calls, intent, subject, thought_signature, created_at, parts
             FROM app_chat_messages
             WHERE chat_id = ?
+              AND (subject IS NULL OR subject != 'onboarding_synthetic')
             ORDER BY sequence_num ASC
             "#,
         )

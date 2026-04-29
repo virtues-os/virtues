@@ -47,17 +47,6 @@
 
 	const isExpanded = $derived(spaceStore.isViewExpanded(view.id));
 
-	// Extract namespace from query_config (for system folder context menu actions)
-	function getFolderNamespace(): string | null {
-		if (!view.query_config) return null;
-		try {
-			const config = JSON.parse(view.query_config);
-			return config.namespace ?? null;
-		} catch {
-			return null;
-		}
-	}
-
 	// Rename state
 	let isRenaming = $state(false);
 	let renameValue = $state("");
@@ -197,24 +186,13 @@
 		handleContextMenu(e);
 	}
 
-	// Quick-add for system folders (Chats/Pages)
-	function handleQuickAdd(e: MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		const ns = getFolderNamespace();
-		if (ns === 'chat') handleNewChat();
-		else if (ns === 'page') handleNewPage();
-	}
-
-	const hasQuickAdd = $derived(view.is_system && ['chat', 'page'].includes(getFolderNamespace() ?? ''));
-
 	function handleContextMenu(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
 
 		const items: ContextMenuItem[] = [];
 
-		// Open Folder — always available (all folder types)
+		// Open Folder
 		items.push({
 			id: "open-folder",
 			label: "Open Folder",
@@ -227,97 +205,65 @@
 		});
 
 		// Creation options
-		if (view.is_system) {
-			// System folders: contextual creation based on namespace
-			const ns = getFolderNamespace();
-			if (ns === 'chat') {
-				items.push({
-					id: "new-chat",
-					label: "New Chat",
-					icon: "ri:chat-1-line",
-					shortcut: "⌘N",
-					action: handleNewChat,
+		items.push({
+			id: "new-chat",
+			label: "New Chat",
+			icon: "ri:chat-1-line",
+			shortcut: "⌘N",
+			action: handleNewChat,
+		});
+		items.push({
+			id: "new-page",
+			label: "New Page",
+			icon: "ri:file-text-line",
+			shortcut: "⌘⇧N",
+			action: handleNewPage,
+		});
+
+		// Rename
+		items.push({
+			id: "rename",
+			label: "Rename",
+			icon: "ri:edit-line",
+			action: startRename,
+			dividerBefore: true,
+		});
+
+		// Change Icon
+		items.push({
+			id: "change-icon",
+			label: "Change Icon",
+			icon: "ri:emotion-line",
+			action: () => {
+				iconPickerStore.show(view.icon ?? null, async (icon) => {
+					try {
+						await updateView(view.id, {
+							icon: icon ?? undefined,
+						});
+						spaceStore.invalidateViewCache();
+					} catch (err) {
+						console.error(
+							"[UnifiedFolder] Failed to change icon:",
+							err,
+						);
+					}
 				});
-			} else if (ns === 'page') {
-				items.push({
-					id: "new-page",
-					label: "New Page",
-					icon: "ri:file-text-line",
-					shortcut: "⌘⇧N",
-					action: handleNewPage,
-				});
-			}
-		} else {
-			// User folders: offer both creation options
-			items.push({
-				id: "new-chat",
-				label: "New Chat",
-				icon: "ri:chat-1-line",
-				shortcut: "⌘N",
-				action: handleNewChat,
-			});
-			items.push({
-				id: "new-page",
-				label: "New Page",
-				icon: "ri:file-text-line",
-				shortcut: "⌘⇧N",
-				action: handleNewPage,
-			});
-		}
+			},
+		});
 
-		// Rename (non-system only)
-		if (!view.is_system) {
-			items.push({
-				id: "rename",
-				label: "Rename",
-				icon: "ri:edit-line",
-				action: startRename,
-				dividerBefore: true,
-			});
-		}
+		// Delete
+		items.push({
+			id: "delete",
+			label: "Delete",
+			icon: "ri:delete-bin-line",
+			variant: "destructive",
+			action: handleDelete,
+		});
 
-		// Change Icon (non-system only)
-		if (!view.is_system) {
-			items.push({
-				id: "change-icon",
-				label: "Change Icon",
-				icon: "ri:emotion-line",
-				action: () => {
-					iconPickerStore.show(view.icon ?? null, async (icon) => {
-						try {
-							await updateView(view.id, {
-								icon: icon ?? undefined,
-							});
-							spaceStore.invalidateViewCache();
-						} catch (err) {
-							console.error(
-								"[UnifiedFolder] Failed to change icon:",
-								err,
-							);
-						}
-					});
-				},
-			});
-		}
-
-		// Delete (non-system only)
-		if (!view.is_system) {
-			items.push({
-				id: "delete",
-				label: "Delete",
-				icon: "ri:delete-bin-line",
-				variant: "destructive",
-				action: handleDelete,
-			});
-		}
-
-		if (items.length > 0) {
-			contextMenu.show({ x: e.clientX, y: e.clientY }, items);
-		}
+		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
 	function startRename() {
-		if (view.is_system) return;
 		isRenaming = true;
 		renameValue = view.name;
 	}
@@ -356,8 +302,6 @@
 	}
 
 	async function handleDelete() {
-		if (view.is_system) return;
-
 		try {
 			await deleteView(view.id);
 			await spaceStore.refreshViews();
@@ -403,9 +347,8 @@
 	// SortableJS Integration
 	// ============================================================================
 
-	// Initialize SortableJS when folder is expanded (skip for system views)
+	// Initialize SortableJS when folder is expanded
 	$effect(() => {
-		if (view.is_system) return;
 		if (isExpanded && folderListEl && !sortableInstance) {
 			sortableInstance = initSortable(folderListEl);
 		}
@@ -657,7 +600,6 @@
 		<button
 			class="sidebar-interactive"
 			class:renaming={isRenaming}
-			class:system={view.is_system}
 			class:expand-pending={isExpandPending}
 			class:smart-view={view.view_type === "smart"}
 			class:drop-target={isDragOver}
@@ -723,17 +665,6 @@
 							<circle cx="12" cy="8" r="1.25" />
 						</svg>
 					</button>
-					{#if hasQuickAdd}
-						<button
-							class="sidebar-item-action"
-							title="New {getFolderNamespace() === 'chat' ? 'Chat' : 'Page'}"
-							onclick={handleQuickAdd}
-						>
-							<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-								<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
-							</svg>
-						</button>
-					{/if}
 				</span>
 			{/if}
 		</button>
@@ -790,7 +721,7 @@
 											indent={1}
 											inFolderContext={{
 												viewId: view.id,
-												isSystemFolder: view.is_system,
+												isSystemFolder: false,
 											}}
 											{accentColor}
 										/>

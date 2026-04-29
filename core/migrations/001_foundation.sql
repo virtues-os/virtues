@@ -298,7 +298,6 @@ CREATE TABLE IF NOT EXISTS app_user_profile (
     onboarding_status TEXT NOT NULL DEFAULT 'welcome' CHECK (onboarding_status IN ('welcome', 'profile', 'places', 'tools', 'complete')),
     home_place_id TEXT,  -- References wiki_places after 002_entities
     theme TEXT DEFAULT 'light',
-    update_check_hour INTEGER DEFAULT 8 CHECK (update_check_hour >= 0 AND update_check_hour <= 23),
     crux TEXT,
     technology_vision TEXT,
     pain_point_primary TEXT,

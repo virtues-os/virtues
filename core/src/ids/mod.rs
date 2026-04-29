@@ -24,8 +24,6 @@ use sha2::{Digest, Sha256};
 pub const WIKI_PERSON_PREFIX: &str = "person";
 pub const WIKI_PLACE_PREFIX: &str = "place";
 pub const WIKI_ORG_PREFIX: &str = "org";
-pub const WIKI_CONNECTION_PREFIX: &str = "conn";
-pub const WIKI_CITATION_PREFIX: &str = "cite";
 pub const WIKI_DAY_PREFIX: &str = "day";
 pub const WIKI_EVENT_PREFIX: &str = "event";
 
@@ -79,6 +77,10 @@ pub const DRIVE_FILE_PREFIX: &str = "file";
 pub const PAGE_PREFIX: &str = "page";
 pub const PAGE_VERSION_PREFIX: &str = "ver";
 pub const PAGE_SHARE_PREFIX: &str = "share";
+
+// Projects Layer (Curated reference bundles used as chat context)
+pub const PROJECT_PREFIX: &str = "prj";
+pub const PROJECT_ITEM_PREFIX: &str = "prji";
 
 // Space Layer (Organization system)
 pub const SPACE_PREFIX: &str = "space";

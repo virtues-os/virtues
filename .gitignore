@@ -116,3 +116,4 @@ tmp/*
 /apps/mac/.build
 /packages/virtues-registry/target
 /core/core/
+/core/.sqlx

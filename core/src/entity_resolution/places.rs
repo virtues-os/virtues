@@ -182,20 +182,24 @@ async fn fetch_unresolved_transactions(
     db: &Database,
     window: TimeWindow,
 ) -> Result<Vec<TransactionRecord>> {
-    // Fetch transactions where metadata doesn't have merchant_org_id
     let rows = sqlx::query!(
         r#"
         SELECT
-            id,
-            merchant_name,
-            merchant_category
-        FROM data_financial_transaction
-        WHERE timestamp >= $1
-          AND timestamp < $2
-          AND merchant_name IS NOT NULL
-          AND merchant_name != ''
-          AND (metadata IS NULL OR json_extract(metadata, '$.merchant_org_id') IS NULL)
-        ORDER BY timestamp ASC
+            t.id,
+            t.merchant_name,
+            t.merchant_category
+        FROM data_financial_transaction t
+        WHERE t.timestamp >= $1
+          AND t.timestamp < $2
+          AND t.merchant_name IS NOT NULL
+          AND t.merchant_name != ''
+          AND NOT EXISTS (
+              SELECT 1 FROM wiki_entity_refs er
+              WHERE er.source_table = 'data_financial_transaction'
+                AND er.source_id = t.id
+                AND er.role = 'merchant'
+          )
+        ORDER BY t.timestamp ASC
         LIMIT 500
         "#,
         window.start,
@@ -218,7 +222,7 @@ async fn fetch_unresolved_transactions(
     Ok(transactions)
 }
 
-/// Resolve merchant to wiki_orgs and link to transaction
+/// Resolve merchant to wiki_orgs and link to transaction via wiki_entity_refs
 async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Result<bool> {
     let merchant_name = txn.merchant_name.trim();
     if merchant_name.is_empty() {
@@ -229,19 +233,26 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
     let org_id = resolve_or_create_merchant_org(db, merchant_name, txn.merchant_category.as_deref())
         .await?;
 
-    // Update transaction metadata with org reference
+    // Get transaction timestamp for the entity reference
+    let timestamp: Option<String> = sqlx::query_scalar(
+        "SELECT timestamp FROM data_financial_transaction WHERE id = $1",
+    )
+    .bind(&txn.id)
+    .fetch_optional(db.pool())
+    .await?;
+
+    // Link via wiki_entity_refs
+    let ref_id = ids::generate_id("eref", &[&txn.id, &org_id, "merchant"]);
     sqlx::query!(
         r#"
-        UPDATE data_financial_transaction
-        SET metadata = json_set(
-            COALESCE(metadata, '{}'),
-            '$.merchant_org_id', $1
-        ),
-        updated_at = datetime('now')
-        WHERE id = $2
+        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        VALUES ($1, 'organization', $2, 'data_financial_transaction', $3, 'merchant', $4)
+        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
         "#,
+        ref_id,
         org_id,
-        txn.id
+        txn.id,
+        timestamp
     )
     .execute(db.pool())
     .await?;
@@ -250,7 +261,7 @@ async fn resolve_and_link_merchant(db: &Database, txn: &TransactionRecord) -> Re
         transaction_id = %txn.id,
         merchant_name = %merchant_name,
         org_id = %org_id,
-        "Linked transaction to merchant organization"
+        "Linked transaction to merchant organization via wiki_entity_refs"
     );
 
     Ok(true)
@@ -601,7 +612,7 @@ fn generate_visit_id(centroid_lat: f64, centroid_lon: f64, start_time: DateTime<
     Uuid::new_v5(&Uuid::NAMESPACE_OID, hash_input.as_bytes())
 }
 
-/// Write visit idempotently to database and link to place entity
+/// Write visit idempotently to database and link to place entity via wiki_entity_refs
 async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> {
     let visit_id = generate_visit_id(visit.centroid_lat, visit.centroid_lon, visit.start_time);
 
@@ -615,11 +626,11 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
         "radius_meters": calculate_visit_radius(visit),
     });
 
+    // Write the location visit (without place_id FK)
     sqlx::query!(
         r#"
         INSERT INTO data_location_visit (
             id,
-            place_id,
             latitude,
             longitude,
             arrival_time,
@@ -630,10 +641,9 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
             source_provider,
             metadata
         ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
         )
         ON CONFLICT (id) DO UPDATE SET
-            place_id = EXCLUDED.place_id,
             departure_time = EXCLUDED.departure_time,
             duration_minutes = EXCLUDED.duration_minutes,
             latitude = EXCLUDED.latitude,
@@ -641,10 +651,8 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
             metadata = EXCLUDED.metadata,
             updated_at = datetime('now')
         WHERE data_location_visit.departure_time < EXCLUDED.departure_time
-           OR data_location_visit.place_id IS NULL
         "#,
         visit_id,
-        place_id,
         visit.centroid_lat,
         visit.centroid_lon,
         visit.start_time,
@@ -654,6 +662,22 @@ async fn write_visit_and_link_place(db: &Database, visit: &Visit) -> Result<()> 
         "location_point",
         "ios",
         metadata
+    )
+    .execute(db.pool())
+    .await?;
+
+    // Link visit to place entity via wiki_entity_refs
+    let ref_id = ids::generate_id("eref", &[&visit_id.to_string(), &place_id, "location"]);
+    sqlx::query!(
+        r#"
+        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)
+        VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4)
+        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING
+        "#,
+        ref_id,
+        place_id,
+        visit_id,
+        visit.start_time
     )
     .execute(db.pool())
     .await?;

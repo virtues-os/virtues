@@ -3,7 +3,7 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
-	import { invalidate } from "$app/navigation";
+
 
 	// @ts-ignore — Vite compile-time constant (see vite.config.ts + app.d.ts)
 	const BUILD_COMMIT: string = __BUILD_COMMIT__;
@@ -20,40 +20,6 @@
 	let database = $state("unknown");
 	let poolSize = $state(0);
 	let poolIdle = $state(0);
-
-	// Update preference
-	let updateCheckHour = $state<number>(8);
-
-	// Convert UTC hour (0-23) to a local time label like "3:00 AM"
-	function utcHourToLocalLabel(utcHour: number): string {
-		const date = new Date();
-		date.setUTCHours(utcHour, 0, 0, 0);
-		return date.toLocaleTimeString([], {
-			hour: "numeric",
-			minute: "2-digit",
-		});
-	}
-
-	// Convert a local hour (0-23) to UTC hour
-	function localHourToUtc(localHour: number): number {
-		const date = new Date();
-		date.setHours(localHour, 0, 0, 0);
-		return date.getUTCHours();
-	}
-
-	// Convert UTC hour to local hour for the select value
-	function utcHourToLocalHour(utcHour: number): number {
-		const date = new Date();
-		date.setUTCHours(utcHour, 0, 0, 0);
-		return date.getHours();
-	}
-
-	// Generate hour options (0-23) displayed in local time, stored as UTC
-	const hourOptions = Array.from({ length: 24 }, (_, i) => ({
-		localHour: i,
-		utcHour: localHourToUtc(i),
-		label: utcHourToLocalLabel(localHourToUtc(i)),
-	}));
 
 	function formatBuildTime(iso: string): string {
 		if (!iso) return "";
@@ -93,33 +59,14 @@
 	async function loadProfile() {
 		try {
 			const response = await fetch("/api/profile");
-			if (response.ok) {
-				const profile = await response.json();
-				updateCheckHour = profile.update_check_hour ?? 8;
+			if (!response.ok) {
+				console.error("Failed to load profile:", response.statusText);
 			}
 		} catch (error) {
 			console.error("Failed to load profile:", error);
 		}
 	}
 
-	async function saveField(field: string, value: string | number | null) {
-		try {
-			const response = await fetch("/api/profile", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ [field]: value }),
-			});
-
-			if (!response.ok) {
-				throw new Error(`Failed to save ${field}`);
-			}
-
-			invalidate("/api/profile");
-		} catch (error) {
-			console.error(`Failed to save ${field}:`, error);
-			throw error;
-		}
-	}
 </script>
 
 <Page>
@@ -161,41 +108,6 @@
 								<span class="info-value">{version}</span>
 							</div>
 						{/if}
-					</div>
-				</section>
-
-				<!-- Maintenance -->
-				<section>
-					<h2 class="section-title">Maintenance</h2>
-					<div class="fields">
-						<div class="field">
-							<label for="updateCheckHour"
-								>Maintenance hour</label
-							>
-							<select
-								id="updateCheckHour"
-								class="update-select"
-								value={utcHourToLocalHour(updateCheckHour)}
-								onchange={(e) => {
-									const localHour = parseInt(
-										e.currentTarget.value,
-									);
-									const utcHour = localHourToUtc(localHour);
-									updateCheckHour = utcHour;
-									saveField("update_check_hour", utcHour);
-								}}
-							>
-								{#each hourOptions as opt}
-									<option value={opt.localHour}
-										>{opt.label}</option
-									>
-								{/each}
-							</select>
-							<span class="field-hint">
-								Virtues applies updates and generates daily
-								summaries during this hour.
-							</span>
-						</div>
 					</div>
 				</section>
 
@@ -307,24 +219,4 @@
 		color: var(--foreground-subtle);
 	}
 
-	.update-select {
-		appearance: none;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		padding: 8px 12px;
-		font-size: 13px;
-		color: var(--foreground);
-		cursor: pointer;
-		max-width: 200px;
-		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
-		background-repeat: no-repeat;
-		background-position: right 10px center;
-		padding-right: 28px;
-	}
-
-	.update-select:focus {
-		outline: none;
-		border-color: var(--primary);
-	}
 </style>

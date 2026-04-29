@@ -33,6 +33,7 @@
 //! }
 //! ```
 
+pub mod action_runner;
 pub mod executor;
 pub mod prompt;
 pub mod protocol;

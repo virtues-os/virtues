@@ -214,12 +214,10 @@
 		let sumEntropy = 0, countEntropy = 0;
 
 		for (const event of sorted) {
-			if (event.w6hActivation) {
-				sumActivation += event.w6hActivation.reduce((s, v) => s + v, 0) / 7;
+			if (event.noveltyZ !== null) {
+				sumActivation += event.noveltyZ;
 				countActivation++;
-			}
-			if (event.entropy != null) {
-				sumEntropy += event.entropy;
+				sumEntropy += event.noveltyZ;
 				countEntropy++;
 			}
 		}
@@ -252,17 +250,16 @@
 			// Enforce strictly monotonic X
 			if (x <= prevX) x = prevX + 0.01;
 
-			// Y: deviation from day mean activation, clamped to box
+			// Y: deviation from day mean novelty, clamped to box
 			let y = 0;
-			if (event.w6hActivation) {
-				const mean = event.w6hActivation.reduce((s, v) => s + v, 0) / 7;
-				y = Math.max(-halfH, Math.min(halfH, (mean - dayMeanActivation) * Y_SCALE));
+			if (event.noveltyZ !== null) {
+				y = Math.max(-halfH, Math.min(halfH, (event.noveltyZ - dayMeanActivation) * Y_SCALE));
 			}
 
-			// Z: deviation from day mean entropy, clamped to box
+			// Z: same as Y for now (was entropy, now unified with novelty)
 			let z = 0;
-			if (event.entropy != null) {
-				z = Math.max(-halfD, Math.min(halfD, (event.entropy - dayMeanEntropy) * Z_SCALE));
+			if (event.noveltyZ !== null) {
+				z = Math.max(-halfD, Math.min(halfD, (event.noveltyZ - dayMeanEntropy) * Z_SCALE));
 			}
 
 			// Trapezoidal area: average of |prev| and |curr| × width
@@ -755,8 +752,8 @@
 	<canvas bind:this={canvasEl}></canvas>
 	<div class="legend">
 		<div class="legend-axes">
-			<span class="legend-axis">&#8597; Activation</span>
-			<span class="legend-axis">&#8599; Semantic Entropy</span>
+			<span class="legend-axis">&#8597; Novelty</span>
+			<span class="legend-axis">&#8599; Novelty (Z)</span>
 		</div>
 		<div class="legend-metrics">
 			<span class="legend-metric">Contrast {(activationArea + entropyArea).toFixed(2)}</span>

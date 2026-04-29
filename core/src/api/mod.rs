@@ -1,26 +1,6 @@
-//! Library-level API functions for programmatic access
-//!
-//! This module provides the SDK/API layer that can be used by:
-//! - CLI applications
-//! - HTTP servers
-//! - Python wrappers and other bindings
-//!
-//! The API is organized into submodules for clarity:
-//! - `types` - Shared types
-//! - `sources` - Source CRUD operations
-//! - `oauth` - OAuth flows and authentication
-//! - `device_pairing` - Device registration and pairing
-//! - `streams` - Stream management and configuration
-//! - `jobs` - Async job tracking and management
-//! - `registry` - Catalog/registry queries
-//! - `ontologies` - Ontology table queries
+//! Library-level API functions.
 
-//! - `rate_limit` - API usage tracking and rate limiting
-//! - `models` - LLM model configurations
-//! - `agents` - AI agent configurations
-//! - `seed_testing` - Seed data pipeline validation and inspection
-//! - `metrics` - Activity metrics and job statistics
-
+pub mod action_events;
 pub mod agents;
 pub mod assistant_profile;
 pub mod auth;
@@ -30,39 +10,31 @@ pub mod chat_usage;
 pub mod chats;
 pub mod code;
 pub mod compaction;
-pub mod day_scoring;
-pub mod day_vectors;
+pub mod credentials;
+pub mod day_illustration;
 pub mod day_summary;
-pub mod device_pairing;
+pub mod developer;
 pub mod drive;
 pub mod entities;
 pub mod exa;
 pub mod feedback;
 pub mod internal;
-pub mod jobs;
 pub mod lake;
 pub mod media;
 pub mod metrics;
 pub mod models;
 pub mod namespaces;
-pub mod oauth;
-
-pub mod ontologies;
 pub mod pages;
 pub mod personas;
+pub mod projects;
 pub mod places;
-pub mod plaid;
-pub mod spaces;
-
-pub mod developer;
 pub mod profile;
 pub mod rate_limit;
-pub mod registry;
 pub mod search;
 pub mod seed_testing;
-pub mod sources;
+pub mod source_auth;
+pub mod spaces;
 pub mod storage;
-pub mod streams;
 pub mod subscription;
 pub mod system_update;
 pub mod terminal;
@@ -71,12 +43,10 @@ pub mod tools;
 pub mod types;
 pub mod unsplash;
 pub mod usage;
-pub mod validation;
 pub mod views;
 pub mod wiki;
 
 // Re-export commonly used types
-pub use streams::StreamConnection;
 pub use types::{SourceConnection, SourceConnectionStatus};
 
 // Re-export all functions for convenience
@@ -88,10 +58,8 @@ pub use assistant_profile::{
 pub use auth::{
     callback_handler,
     cleanup_auth_data,
-    // Boot seeding
     seed_owner_email,
     session_handler,
-    // Handlers (for server routing)
     signin_handler,
     signout_handler,
     update_owner_email_handler,
@@ -99,18 +67,16 @@ pub use auth::{
     CallbackParams,
     SessionResponse,
     SessionUser,
-    // Types
     SignInRequest,
     SignInResponse,
     UpdateOwnerEmailRequest,
     UpdateOwnerEmailResponse,
 };
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
-pub use device_pairing::{
-    check_pairing_status, complete_device_pairing, complete_pairing_by_source_id,
-    initiate_device_pairing, link_device_manually, list_pending_pairings, update_last_seen,
-    validate_device_token, DeviceInfo, PairingCompleted, PairingInitiated, PairingStatus,
-    PendingPairing,
+pub use credentials::{
+    check_pairing_status, list_credentials, list_pending_pairings, rename_credential,
+    revoke_credential, update_last_seen, validate_device_token, CredentialListItem, DeviceInfo,
+    PairingStatus, PendingPairing,
 };
 pub use drive::{
     check_quota as check_drive_quota,
@@ -123,7 +89,6 @@ pub use drive::{
     empty_trash as empty_drive_trash,
     get_drive_usage,
     get_file_metadata as get_drive_file,
-    // Functions
     init_drive_quota,
     is_lake_object_id,
     list_files as list_drive_files,
@@ -131,7 +96,6 @@ pub use drive::{
     move_file as move_drive_file,
     purge_file as purge_drive_file,
     purge_old_trash as purge_old_drive_trash,
-    // Quota constants
     quotas as drive_quotas,
     reconcile_folder as reconcile_drive_folder,
     reconcile_usage as reconcile_drive_usage,
@@ -140,7 +104,6 @@ pub use drive::{
     validate_drive_path,
     CreateFolderRequest as DriveCreateFolderRequest,
     DriveConfig,
-    // Types
     DriveFile,
     DriveTier,
     DriveUsage,
@@ -156,10 +119,6 @@ pub use exa::{
     search as exa_search, SearchRequest as ExaSearchRequest, SearchResponse as ExaSearchResponse,
 };
 pub use feedback::{submit_feedback, FeedbackRequest};
-pub use jobs::{
-    cancel_job, get_job_history, get_job_status, query_jobs, trigger_stream_sync,
-    CreateJobResponse, QueryJobsRequest,
-};
 pub use media::{
     get_media, is_audio_type, is_image_type, is_supported_media_type, is_video_type, upload_media,
     MediaFile, UploadMediaRequest,
@@ -170,11 +129,6 @@ pub use metrics::{
 };
 pub use models::{
     get_model, list_models, list_recommended_models, ModelInfo, RecommendedModelsResponse,
-};
-pub use oauth::{
-    create_source, handle_oauth_callback, initiate_oauth_flow, register_device,
-    CreateSourceRequest, OAuthAuthorizeRequest, OAuthAuthorizeResponse, OAuthCallbackParams,
-    RegisterDeviceRequest,
 };
 pub use unsplash::{
     search as unsplash_search, SearchRequest as UnsplashSearchRequest,
@@ -202,12 +156,12 @@ pub use namespaces::{
 };
 pub use pages::{
     create_page,
-    // Sharing
     create_page_share,
-    // Version history
     create_version,
     delete_page,
     delete_page_share,
+    get_reflections_for_date,
+    create_reflection,
     get_page,
     get_page_share,
     get_shared_page,
@@ -218,13 +172,11 @@ pub use pages::{
     update_page,
     validate_shared_file,
     CreatePageRequest,
-    // Version types
     CreateVersionRequest,
     EntitySearchResponse,
     EntitySearchResult,
     Page,
     PageListResponse,
-    // Share types
     PageShare,
     PageSummary,
     PageVersionDetail,
@@ -237,13 +189,14 @@ pub use places::{
     autocomplete, get_place_details, AutocompletePrediction, AutocompleteRequest,
     AutocompleteResponse, PlaceDetailsRequest, PlaceDetailsResponse,
 };
-pub use plaid::{
-    create_link_token, exchange_public_token, get_plaid_accounts, remove_plaid_item,
-    CreateLinkTokenRequest, CreateLinkTokenResponse, ExchangeTokenRequest, ExchangeTokenResponse,
-    PlaidAccount,
+pub use projects::{
+    add_project_item, create_project, delete_project, get_project, list_projects,
+    remove_project_item, reorder_project_items, update_project, AddProjectItemRequest,
+    CreateProjectRequest, Project, ProjectDetail, ProjectItem, ProjectListResponse, ProjectSummary,
+    ReorderProjectItemsRequest, UpdateProjectRequest,
 };
 pub use spaces::{
-    create_space, delete_space, get_space, list_spaces, save_tab_state, update_space,
+    get_space, list_spaces, update_space,
     CreateSpaceRequest, SaveTabStateRequest, Space, SpaceListResponse, SpaceSummary,
     UpdateSpaceRequest,
 };
@@ -268,22 +221,10 @@ pub use rate_limit::{
     check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
     UsageStats,
 };
-pub use registry::{
-    get_source_info, get_stream_descriptor, list_all_streams, list_available_sources,
-};
 pub use seed_testing::{
     get_data_quality_metrics, get_pipeline_status, DataQualityMetrics, PipelineStatus,
 };
-pub use sources::{
-    delete_source, get_source, get_source_status, list_sources, pause_source, resume_source,
-};
 pub use storage::{get_object_content, list_recent_objects, ObjectContent, StreamObjectSummary};
-pub use streams::{
-    bulk_update_streams, disable_stream, enable_stream, get_stream_info, list_source_streams,
-    update_stream_config, update_stream_schedule, BulkUpdateStreamsRequest,
-    BulkUpdateStreamsResponse, EnableStreamRequest, StreamUpdate, UpdateStreamConfigRequest,
-    UpdateStreamScheduleRequest,
-};
 pub use system_update::CURRENT_COMMIT;
 pub use token_estimation::{
     estimate_message_tokens, estimate_session_context, estimate_tokens, ContextEstimate,
@@ -296,77 +237,65 @@ pub use usage::{
     UsageLimitError, UsageSummary,
 };
 pub use wiki::{
-    create_citation,
     create_temporal_event,
     delete_auto_events_for_day,
-    delete_citation,
     delete_temporal_event,
-    // Act operations
     get_act,
-    // Telos operations
+    get_narrative_identity,
+    update_narrative_identity,
+    NarrativeIdentity,
+    UpdateNarrativeIdentityRequest,
     get_active_telos,
-    // Chapter operations
     get_chapter,
-    get_citations,
+    get_day_chats,
     get_day_events,
     get_day_sources,
-    // Day streams (dynamic ontology queries)
     get_day_streams,
-    // Timeline day (location chunks)
     get_timeline_day,
     get_events_by_date,
-    // Day operations
     get_or_create_day,
-    // Organization operations
     get_organization,
-    // Person operations
     get_person,
     get_telos,
-    // Place operations (wiki-specific)
+    get_thing,
     get_wiki_place,
     list_acts,
     list_chapters_for_act,
     list_days,
     list_organizations,
     list_people,
+    list_things,
     list_wiki_places,
     resolve_id,
-    update_citation,
     update_day,
     update_organization,
     update_person,
     update_temporal_event,
+    update_thing,
     update_wiki_place,
-    // Citation types and operations
-    Citation,
-    CreateCitationRequest,
     CreateTemporalEventRequest,
-    // Day sources (ontology records for a day)
     DaySource,
     DayStream,
     DayStreamsResponse,
-    // ID resolution
     IdResolution,
     StreamRecord,
-    // Temporal event types and operations
     TemporalEvent,
-    UpdateCitationRequest,
     UpdateTemporalEventRequest,
     UpdateWikiDayRequest,
     UpdateWikiOrganizationRequest,
-    // Update requests
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
+    UpdateWikiThingRequest,
     WikiAct,
     WikiChapter,
     WikiDay,
     WikiOrganization,
     WikiOrganizationListItem,
-    // Entity types
     WikiPerson,
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
-    // Narrative types
+    WikiThing,
+    WikiThingListItem,
     WikiTelos,
 };

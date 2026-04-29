@@ -13,17 +13,28 @@ import { tabRegistry, parseRoute } from './registry';
  * Types with hyphens must be checked before splitting on underscore.
  */
 const KNOWN_TYPES: TabType[] = [
-	// Hyphenated types first
+	// Hyphenated types first (checked before splitting on underscore)
+	'chat-history',
+	'narrative-identity',
 	'dog-jump',
 	// Then regular types
 	'chat',
 	'page',
+	'project',
 	'person',
 	'place',
 	'org',
+	'thing',
 	'day',
 	'year',
 	'source',
+	'action',
+	'actions',
+	'tools',
+	'ontology',
+	'wiki',
+	'entities',
+	'view',
 	'drive',
 	'trash',
 	'virtues',

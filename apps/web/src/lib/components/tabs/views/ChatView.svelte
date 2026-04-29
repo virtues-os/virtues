@@ -3,7 +3,6 @@
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import Page from "$lib/components/Page.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
-	import GettingStarted from "$lib/components/GettingStarted.svelte";
 	import {
 		getSelectedModel,
 		getDefaultModel,
@@ -19,6 +18,7 @@
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { projectsStore } from "$lib/stores/projects.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
 	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
@@ -98,6 +98,8 @@
 	// svelte-ignore state_referenced_locally
 	let previousTabRoute = $state<string>(tab.route);
 	let preferredName = $state<string | undefined>(undefined);
+	let onboardingStatus = $state<string>('active');
+	let onboardingStarted = false; // guard to prevent double-trigger
 
 	// AbortController for cancelling in-flight requests on tab switch
 	let tabSwitchAbortController: AbortController | null = null;
@@ -107,10 +109,6 @@
 		contextIndicator?: {
 			alwaysVisible?: boolean;
 			showThreshold?: number;
-		};
-		gettingStarted?: {
-			hidden?: boolean;
-			completedSteps?: string[];
 		};
 	}>({});
 
@@ -122,6 +120,26 @@
 	// Citation panel state
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
+
+	// Attached projects (context lens) — IDs are sent with each message so the agent
+	// sees the project's items as salience hints. Persisted per-tab only (ephemeral).
+	let attachedProjectIds = $state<string[]>([]);
+
+	function attachProject(projectId: string) {
+		if (!attachedProjectIds.includes(projectId)) {
+			attachedProjectIds = [...attachedProjectIds, projectId];
+		}
+	}
+
+	function detachProject(projectId: string) {
+		attachedProjectIds = attachedProjectIds.filter((id) => id !== projectId);
+	}
+
+	const attachedProjects = $derived.by(() =>
+		attachedProjectIds
+			.map((id) => projectsStore.projects.find((p) => p.id === id))
+			.filter((p): p is NonNullable<typeof p> => p !== undefined),
+	);
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -451,6 +469,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
+				getProjectIds: () => attachedProjectIds,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -599,6 +618,7 @@
 					if (response.ok) {
 						const profile = await response.json();
 						preferredName = profile.preferred_name;
+						onboardingStatus = profile.onboarding_status || 'active';
 					}
 				} catch {
 					// Non-critical, continue without preferred name
@@ -653,6 +673,12 @@
 				scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
+
+			// Auto-start onboarding for new users with no messages
+			// DISABLED for demo — onboarding was repeating the same message
+			// if (onboardingStatus === 'new' && loadedMessages.length === 0) {
+			// 	setTimeout(() => startOnboarding(), 100);
+			// }
 		})();
 
 		return () => {
@@ -782,6 +808,7 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
+
 	// Generate title after first assistant response
 	async function generateTitle() {
 		if (titleGenerated || chat.messages.length < 2) return;
@@ -813,16 +840,6 @@
 		}
 	}
 
-	// Getting Started handlers
-	function handleGettingStartedCreateChat(chatId: string) {
-		// Open the new chat in a tab and navigate to it
-		spaceStore.openTabFromRoute(`/chat/${chatId}`, {
-			forceNew: true,
-			label: "Welcome to Virtues",
-		});
-		chatSessions.refresh();
-	}
-
 	function scrollToBottom(behavior: ScrollBehavior = "smooth") {
 		if (scrollContainer) {
 			scrollContainer.scrollTo({
@@ -830,13 +847,6 @@
 				behavior,
 			});
 		}
-	}
-
-	function handleGettingStartedFocusInput(placeholder?: string) {
-		if (placeholder) {
-			input = placeholder;
-		}
-		inputFocused = true;
 	}
 
 	async function handleChatStop() {
@@ -853,6 +863,35 @@
 		} catch (e) {
 			console.error('[ChatView] Failed to cancel chat:', e);
 		}
+	}
+
+	async function startOnboarding() {
+		if (onboardingStarted || !chat) return;
+		onboardingStarted = true;
+
+		// Generate a fresh conversationId if the current one is stale (from a deleted DB)
+		if (!isNewChat(tab.route)) {
+			conversationId = `chat_${generateHex16()}`;
+		}
+
+		ensureChatInstance();
+
+		// Use the AI SDK flow: send a greeting to trigger the backend's onboarding detection.
+		// The backend sees is_new_user + appends NEW_USER_PROMPT to the system prompt.
+		// Tool calls (set_assistant_name, set_user_name) work natively through the SDK.
+		try {
+			await chat.sendMessage({ text: "👋" });
+		} catch (error) {
+			console.error('[ChatView] Onboarding error:', error);
+		}
+
+		onboardingStatus = 'active';
+
+		// Update tab route to reflect the new chat
+		const newRoute = `/chat/${conversationId}`;
+		previousTabRoute = newRoute;
+		spaceStore.updateTab(tab.id, { route: newRoute });
+		spaceStore.invalidateViewCache('chat');
 	}
 
 	async function handleChatSubmit(value: string) {
@@ -1033,7 +1072,7 @@
 											{/if}
 
 											{#each message.parts as part, partIndex (part.type === "text" ? `text-${partIndex}` : (part as any).toolCallId || `part-${partIndex}`)}
-												{#if part.type === "text"}
+												{#if part.type === "text" && part.text.trim()}
 													<div
 														class="text-base text-foreground assistant-response"
 													>
@@ -1138,6 +1177,7 @@
 								</div>
 							{/each}
 
+
 							<!-- Optimistic thinking indicator: shows immediately on submit,
 							     only until the AI SDK creates the assistant message (at text-start).
 							     Once the assistant message exists, the in-message ThinkingBlock takes over. -->
@@ -1183,6 +1223,10 @@
 							onContextClick={handleContextClick}
 							editableItems={editAllowListStore.items}
 							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
+							attachedProjects={attachedProjects}
+							allProjects={projectsStore.projects}
+							onAttachProject={attachProject}
+							onDetachProject={detachProject}
 							onPageClear={handlePageClear}
 							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}
@@ -1195,12 +1239,6 @@
 							on:stop={() => handleChatStop()}
 						/>
 
-						{#if isEmpty}
-							<GettingStarted
-								onCreateChat={handleGettingStartedCreateChat}
-								onFocusInput={handleGettingStartedFocusInput}
-							/>
-						{/if}
 					</div>
 				</div>
 			</div>
@@ -1407,4 +1445,5 @@
 			background-position: 0% center;
 		}
 	}
+
 </style>

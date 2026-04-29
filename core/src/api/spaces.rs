@@ -1,10 +1,10 @@
-//! Spaces API
+//! Workspace API (formerly multi-space)
 //!
-//! This module provides CRUD operations for spaces - the swipeable
-//! contexts that organize content (like Arc browser spaces).
+//! After collapsing the multi-space carousel, a single system workspace
+//! remains (`space_system`). This module retains get/update for theming
+//! and identity. Create/delete/list/tab-state are removed.
 
 use crate::error::{Error, Result};
-use crate::ids::{generate_id, SPACE_PREFIX};
 use crate::types::Timestamp;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -21,7 +21,7 @@ pub struct Space {
     pub icon: Option<String>,
     pub is_system: bool,
     pub sort_order: i32,
-    pub theme_id: String,                    // Required - CSS theme name
+    pub theme_id: String,
     pub accent_color: Option<String>,
     pub vectorize: bool,
     pub active_tab_state_json: Option<String>,
@@ -29,7 +29,7 @@ pub struct Space {
     pub updated_at: Timestamp,
 }
 
-/// Summary of a space (for list views)
+/// Summary of a space (for list views — kept for backwards-compat in web client)
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct SpaceSummary {
     pub id: String,
@@ -37,23 +37,23 @@ pub struct SpaceSummary {
     pub icon: Option<String>,
     pub is_system: bool,
     pub sort_order: i32,
-    pub theme_id: String,                    // Required - CSS theme name
+    pub theme_id: String,
     pub accent_color: Option<String>,
     pub vectorize: bool,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
 
-/// Request to create a space
+/// Request to create a space (kept for type compat — endpoint removed)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSpaceRequest {
     pub name: String,
     pub icon: Option<String>,
-    pub theme_id: Option<String>,            // Defaults to 'pemberley' if not provided
+    pub theme_id: Option<String>,
     pub accent_color: Option<String>,
 }
 
-/// Request to update a space
+/// Request to update the workspace
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSpaceRequest {
     pub name: Option<String>,
@@ -64,23 +64,23 @@ pub struct UpdateSpaceRequest {
     pub vectorize: Option<bool>,
 }
 
-/// Request to save tab state
+/// Request to save tab state (kept for type compat — endpoint removed)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveTabStateRequest {
     pub active_tab_state_json: String,
 }
 
-/// List response
+/// List response (kept for backwards compat — returns single system space)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpaceListResponse {
     pub spaces: Vec<SpaceSummary>,
 }
 
 // ============================================================================
-// CRUD Operations
+// Operations (kept: get, list, update — removed: create, delete, save_tab_state, touch)
 // ============================================================================
 
-/// List all spaces ordered by sort_order
+/// List all spaces (now returns only the single system workspace)
 pub async fn list_spaces(pool: &SqlitePool) -> Result<SpaceListResponse> {
     let spaces = sqlx::query_as::<_, SpaceSummary>(
         r#"
@@ -117,66 +117,19 @@ pub async fn get_space(pool: &SqlitePool, id: &str) -> Result<Space> {
     Ok(space)
 }
 
-/// Default theme for new spaces (from registry — single source of truth)
-const DEFAULT_THEME_ID: &str = virtues_registry::DEFAULT_THEME;
-
-/// Create a new space
-pub async fn create_space(pool: &SqlitePool, req: CreateSpaceRequest) -> Result<Space> {
-    let name = req.name.trim();
-    if name.is_empty() {
-        return Err(Error::InvalidInput("Space name cannot be empty".into()));
-    }
-
-    // Generate ID
-    let timestamp = chrono::Utc::now().to_rfc3339();
-    let id = generate_id(SPACE_PREFIX, &[name, &timestamp]);
-
-    // Get next sort_order
-    let max_sort_order: Option<i32> = sqlx::query_scalar(
-        r#"SELECT MAX(sort_order) FROM app_spaces"#
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get max sort_order: {}", e)))?;
-
-    let sort_order = max_sort_order.unwrap_or(0) + 1;
-
-    // Use provided theme_id or default
-    let theme_id = req.theme_id.as_deref().unwrap_or(DEFAULT_THEME_ID);
-
-    let space = sqlx::query_as::<_, Space>(
-        r#"
-        INSERT INTO app_spaces (id, name, icon, is_system, sort_order, theme_id, accent_color)
-        VALUES ($1, $2, $3, FALSE, $4, $5, $6)
-        RETURNING id, name, icon, is_system, sort_order,
-                  theme_id, accent_color, vectorize, active_tab_state_json,
-                  created_at, updated_at
-        "#,
-    )
-    .bind(&id)
-    .bind(name)
-    .bind(&req.icon)
-    .bind(sort_order)
-    .bind(theme_id)
-    .bind(&req.accent_color)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to create space: {}", e)))?;
-
-    Ok(space)
+/// Touch a space's updated_at timestamp to reflect activity.
+pub async fn touch_space(pool: &SqlitePool, space_id: &str) -> Result<()> {
+    sqlx::query(r#"UPDATE app_spaces SET updated_at = datetime('now') WHERE id = $1"#)
+        .bind(space_id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to touch space: {}", e)))?;
+    Ok(())
 }
 
-/// Update an existing space
+/// Update the workspace (theming, icon, etc.)
 pub async fn update_space(pool: &SqlitePool, id: &str, req: UpdateSpaceRequest) -> Result<Space> {
-    // Verify space exists and check if it's system
     let existing = get_space(pool, id).await?;
-
-    // System spaces can only update certain fields
-    if existing.is_system {
-        if req.name.is_some() {
-            return Err(Error::InvalidInput("Cannot rename system space".into()));
-        }
-    }
 
     let name = req.name.as_deref().unwrap_or(&existing.name);
     let icon = req.icon.as_ref().or(existing.icon.as_ref());
@@ -184,10 +137,6 @@ pub async fn update_space(pool: &SqlitePool, id: &str, req: UpdateSpaceRequest) 
     let theme_id = req.theme_id.as_deref().unwrap_or(&existing.theme_id);
     let accent_color = req.accent_color.as_ref().or(existing.accent_color.as_ref());
     let vectorize = req.vectorize.unwrap_or(existing.vectorize);
-
-    if name.trim().is_empty() {
-        return Err(Error::InvalidInput("Space name cannot be empty".into()));
-    }
 
     let space = sqlx::query_as::<_, Space>(
         r#"
@@ -211,58 +160,4 @@ pub async fn update_space(pool: &SqlitePool, id: &str, req: UpdateSpaceRequest) 
     .map_err(|e| Error::Database(format!("Failed to update space: {}", e)))?;
 
     Ok(space)
-}
-
-/// Save tab state for a space
-pub async fn save_tab_state(pool: &SqlitePool, id: &str, req: SaveTabStateRequest) -> Result<()> {
-    // Verify space exists
-    let _ = get_space(pool, id).await?;
-
-    sqlx::query(
-        r#"
-        UPDATE app_spaces
-        SET active_tab_state_json = $2
-        WHERE id = $1
-        "#,
-    )
-    .bind(id)
-    .bind(&req.active_tab_state_json)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to save tab state: {}", e)))?;
-
-    Ok(())
-}
-
-/// Delete a space by ID
-pub async fn delete_space(pool: &SqlitePool, id: &str) -> Result<()> {
-    // Verify space exists and check if it's system
-    let existing = get_space(pool, id).await?;
-
-    if existing.is_system {
-        return Err(Error::InvalidInput("Cannot delete system space".into()));
-    }
-
-    let result = sqlx::query(r#"DELETE FROM app_spaces WHERE id = $1"#)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to delete space: {}", e)))?;
-
-    if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Space not found: {}", id)));
-    }
-
-    Ok(())
-}
-
-/// Touch a space's updated_at timestamp to reflect activity.
-/// Call this when items are added/removed or views are created/deleted.
-pub async fn touch_space(pool: &SqlitePool, space_id: &str) -> Result<()> {
-    sqlx::query(r#"UPDATE app_spaces SET updated_at = datetime('now') WHERE id = $1"#)
-        .bind(space_id)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to touch space: {}", e)))?;
-    Ok(())
 }

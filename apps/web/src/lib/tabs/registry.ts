@@ -21,7 +21,8 @@ import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
 import DataSourcesView from '$lib/components/tabs/views/DataSourcesView.svelte';
 import DataSourceDetailView from '$lib/components/tabs/views/DataSourceDetailView.svelte';
 import UsageView from '$lib/components/tabs/views/UsageView.svelte';
-import JobsView from '$lib/components/tabs/views/JobsView.svelte';
+import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
+import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
 import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
@@ -39,7 +40,14 @@ import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
+import ProjectsView from '$lib/components/tabs/views/ProjectsView.svelte';
+import ProjectDetailView from '$lib/components/tabs/views/ProjectDetailView.svelte';
 import FolderView from '$lib/components/tabs/views/FolderView.svelte';
+import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
+import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
+import ToolsView from '$lib/components/tabs/views/ToolsView.svelte';
+import OntologyIndexView from '$lib/components/tabs/views/OntologyIndexView.svelte';
+import OntologyDetailView from '$lib/components/tabs/views/OntologyDetailView.svelte';
 
 export interface TabDefinition {
 	// Route matching
@@ -173,6 +181,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// ENTITIES: /entities (unified entity list)
+	// ========================================================================
+	entities: {
+		match: (path) => path === '/entities',
+		parse: () => ({
+			type: 'entities',
+			label: 'Entities',
+			icon: 'ri:group-line',
+		}),
+		serialize: () => 'entities',
+		deserialize: () => '/entities',
+		icon: 'ri:group-line',
+		defaultLabel: 'Entities',
+		component: EntitiesView,
+	},
+
+	// ========================================================================
 	// PERSON NAMESPACE: /person, /person/{id}
 	// ========================================================================
 	person: {
@@ -275,6 +300,40 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// THING NAMESPACE: /thing, /thing/{id}
+	// ========================================================================
+	thing: {
+		match: (path) => path === '/thing' || /^\/thing\/[^/]+$/.test(path),
+		parse: (path) => {
+			if (path === '/thing') {
+				return {
+					type: 'thing',
+					label: 'Things',
+					icon: 'ri:lightbulb-line',
+				};
+			}
+			const match = path.match(/^\/thing\/([^/]+)$/);
+			return {
+				type: 'thing',
+				label: 'Thing',
+				icon: 'ri:lightbulb-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => id || 'thing',
+		deserialize: (serialized) => {
+			if (serialized && serialized !== 'thing') {
+				return `/thing/${serialized}`;
+			}
+			return '/thing';
+		},
+		icon: 'ri:lightbulb-line',
+		defaultLabel: 'Things',
+		component: WikiListView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
 	// DAY NAMESPACE: /day, /day/day_{date}
 	// ========================================================================
 	day: {
@@ -353,6 +412,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// NARRATIVE IDENTITY: /narrative-identity
+	// ========================================================================
+	'narrative-identity': {
+		match: (path) => path === '/narrative-identity',
+		parse: () => ({
+			type: 'narrative-identity',
+			label: 'Narrative Identity',
+			icon: 'ri:quill-pen-line',
+		}),
+		serialize: () => 'narrative-identity',
+		deserialize: () => '/narrative-identity',
+		icon: 'ri:quill-pen-line',
+		defaultLabel: 'Narrative Identity',
+		component: NarrativeIdentityView,
+	},
+
+	// ========================================================================
 	// SOURCE NAMESPACE: /sources, /sources/source_{id}
 	// Note: /source redirects to /sources for backwards compatibility
 	// ========================================================================
@@ -392,6 +468,144 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Sources',
 		component: DataSourcesView,
 		detailComponent: DataSourceDetailView,
+	},
+
+	// ========================================================================
+	// PROJECT NAMESPACE: /projects, /projects/prj_{id}
+	// A project is a curated set of references you @-mention in chat.
+	// ========================================================================
+	project: {
+		match: (path) =>
+			path === '/projects' || path === '/project' || /^\/projects\/prj_[^/]+$/.test(path),
+		parse: (path) => {
+			// List view (redirect /project to /projects)
+			if (path === '/projects' || path === '/project') {
+				return {
+					type: 'project',
+					label: 'Projects',
+					icon: 'ri:folder-open-line',
+					normalizedRoute: '/projects',
+				};
+			}
+			// Detail view
+			const match = path.match(/^\/projects\/(prj_[^/]+)$/);
+			return {
+				type: 'project',
+				label: 'Project',
+				icon: 'ri:folder-open-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => {
+			if (id) return `prj_${id}`;
+			return 'projects';
+		},
+		deserialize: (serialized) => {
+			if (serialized.startsWith('prj_')) {
+				return `/projects/${serialized}`;
+			}
+			return '/projects';
+		},
+		icon: 'ri:folder-open-line',
+		defaultLabel: 'Projects',
+		component: ProjectsView,
+		detailComponent: ProjectDetailView,
+	},
+
+	// ========================================================================
+	// TOOLS: /tools
+	// ========================================================================
+	tools: {
+		match: (path) => path === '/tools',
+		parse: () => ({
+			type: 'tools',
+			label: 'Tools',
+			icon: 'ri:tools-line',
+		}),
+		serialize: () => 'tools',
+		deserialize: () => '/tools',
+		icon: 'ri:tools-line',
+		defaultLabel: 'Tools',
+		component: ToolsView,
+	},
+
+	// ========================================================================
+	// ACTIONS: /actions
+	// ========================================================================
+	actions: {
+		match: (path) => path === '/actions',
+		parse: () => ({
+			type: 'actions',
+			label: 'Actions',
+			icon: 'ri:flashlight-line',
+		}),
+		serialize: () => 'actions',
+		deserialize: () => '/actions',
+		icon: 'ri:flashlight-line',
+		defaultLabel: 'Actions',
+		component: ActionsView,
+	},
+
+	// ========================================================================
+	// ACTION DETAIL: /action/action_{id}
+	// Singular namespace — no list view; actions list lives under `actions`.
+	// ========================================================================
+	action: {
+		match: (path) => /^\/action\/action_[^/]+$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/action\/(action_[^/]+)$/);
+			return {
+				type: 'action',
+				label: 'Action',
+				icon: 'ri:flashlight-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `action_${id}` : 'action'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('action_')) return `/action/${serialized}`;
+			return '/actions';
+		},
+		icon: 'ri:flashlight-line',
+		defaultLabel: 'Action',
+		component: ActionDetailView,
+		detailComponent: ActionDetailView,
+	},
+
+	// ========================================================================
+	// ONTOLOGY NAMESPACE: /ontologies, /ontologies/{name}
+	// ========================================================================
+	ontology: {
+		match: (path) => path === '/ontologies' || /^\/ontologies\/[a-z_]+$/.test(path),
+		parse: (path) => {
+			if (path === '/ontologies') {
+				return {
+					type: 'ontology',
+					label: 'Ontologies',
+					icon: 'ri:table-line',
+				};
+			}
+			const match = path.match(/^\/ontologies\/([a-z_]+)$/);
+			const name = match?.[1] || '';
+			const displayName = name
+				.replace(/_/g, ' ')
+				.replace(/\b\w/g, (c) => c.toUpperCase());
+			return {
+				type: 'ontology',
+				label: displayName,
+				icon: 'ri:table-line',
+				entityId: name,
+			};
+		},
+		serialize: (id) => (id ? `ontology_${id}` : 'ontologies'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('ontology_')) return `/ontologies/${serialized.slice(9)}`;
+			return '/ontologies';
+		},
+		icon: 'ri:table-line',
+		defaultLabel: 'Ontologies',
+		component: OntologyIndexView,
+		detailComponent: OntologyDetailView,
 	},
 
 	// ========================================================================
@@ -461,7 +675,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				billing: { label: 'Billing', icon: 'ri:bank-card-line' },
 				changelog: { label: "What's New", icon: 'ri:megaphone-line' },
 				usage: { label: 'Usage', icon: 'ri:bar-chart-line' },
-				jobs: { label: 'Jobs', icon: 'ri:refresh-line' },
 				lake: { label: 'Lake', icon: 'ri:database-2-line' },
 				sql: { label: 'SQL', icon: 'ri:database-2-line' },
 				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
@@ -572,7 +785,6 @@ export function getVirtuesComponent(page: string): Component<any> {
 		billing: BillingView,
 		changelog: ChangelogView,
 		usage: UsageView,
-		jobs: JobsView,
 		lake: DeveloperLakeView,
 		sql: DeveloperSqlView,
 		terminal: DeveloperTerminalView,
@@ -606,6 +818,11 @@ export function parseRoute(route: string): ParsedRoute {
 	const orderedTypes: TabType[] = [
 		// Specific patterns first
 		'source', // Source list and detail views
+		'project', // Project list and detail views
+		'tools', // Tools management page
+		'actions', // Actions list page (must come before singular 'action')
+		'action', // Action detail page
+		'ontology', // Ontology data browsing
 		'view', // View/folder detail pages
 		'virtues', // Has /virtues/* pattern
 		'drive', // Has /drive/* pattern
@@ -615,11 +832,14 @@ export function parseRoute(route: string): ParsedRoute {
 		'chat', // Also matches /
 		'page',
 		'wiki', // Wiki overview page
+		'entities', // Unified entity list
 		'person',
 		'place',
 		'org',
+		'thing',
 		'day',
 		'year',
+		'narrative-identity',
 		// Easter eggs last
 		'conway',
 		'dog-jump',

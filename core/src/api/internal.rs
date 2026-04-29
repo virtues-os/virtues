@@ -93,7 +93,6 @@ pub async fn hydrate_profile(pool: &SqlitePool, request: HydrateRequest) -> Resu
             full_name = COALESCE($2, full_name),
             preferred_name = COALESCE($3, preferred_name),
             server_status = 'ready',
-            onboarding_status = 'complete',
             updated_at = datetime('now')
         WHERE id = '00000000-0000-0000-0000-000000000001'
         "#,
@@ -148,7 +147,6 @@ pub async fn mark_server_ready(pool: &SqlitePool) -> Result<()> {
         UPDATE app_user_profile 
         SET 
             server_status = 'ready',
-            onboarding_status = 'complete',
             updated_at = datetime('now')
         WHERE id = '00000000-0000-0000-0000-000000000001'
         "#

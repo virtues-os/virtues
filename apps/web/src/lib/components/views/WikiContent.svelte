@@ -5,6 +5,7 @@
 		getPersonById,
 		getPlaceById,
 		getOrganizationById,
+		getThingById,
 		getDayByDate,
 		getActById,
 		getChapterById,
@@ -14,6 +15,7 @@
 		apiToPersonPage,
 		apiToPlacePage,
 		apiToOrganizationPage,
+		apiToThingPage,
 		apiToDayPage,
 		apiToActPage,
 		apiToChapterPage,
@@ -26,6 +28,7 @@
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
+		ThingPage,
 	} from "$lib/components/wiki";
 	import {
 		isDayPage,
@@ -33,6 +36,7 @@
 		isPersonPage,
 		isPlacePage,
 		isOrganizationPage,
+		isThingPage,
 	} from "$lib/wiki/types";
 	import type { WikiPage as WikiPageType } from "$lib/wiki/types";
 
@@ -152,6 +156,17 @@
 					break;
 				}
 
+				case "thing": {
+					const thing = await getThingById(entityId);
+					if (thing) {
+						wikiPage = apiToThingPage(thing);
+						updateLabel(thing.name);
+					} else {
+						error = `Thing "${entityId}" not found`;
+					}
+					break;
+				}
+
 				case "act": {
 					const act = await getActById(entityId);
 					if (act) {
@@ -256,6 +271,8 @@
 			<PlacePage page={wikiPage} />
 		{:else if isOrganizationPage(wikiPage)}
 			<OrganizationPage page={wikiPage} />
+		{:else if isThingPage(wikiPage)}
+			<ThingPage page={wikiPage} />
 		{:else}
 			<WikiPage page={wikiPage} />
 		{/if}

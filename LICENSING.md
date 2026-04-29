@@ -60,7 +60,7 @@ The following directories fall under the default BSL 1.1 license:
 | `apps/web/` | Web application (SvelteKit) |
 | `apps/tollbooth/` | AI inference proxy |
 | `apps/oauth-proxy/` | OAuth proxy service |
-| `deploy/` | Deployment and infrastructure configuration |
+| `deploy/` | Sandbox runtime configuration |
 
 ## How License Resolution Works
 

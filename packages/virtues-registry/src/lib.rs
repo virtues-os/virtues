@@ -20,6 +20,7 @@
 //! - **Built-in tools** (this registry): web_search, query_ontology, semantic_search
 //! - **MCP tools** (SQLite `app_mcp_tools`): dynamically discovered from connected MCP servers
 
+pub mod action_templates;
 pub mod agents;
 pub mod assistant;
 pub mod models;
@@ -33,7 +34,7 @@ pub mod tools;
 pub use agents::{default_agents, AgentConfig};
 pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
 pub use models::{default_models, ModelConfig};
-pub use ontologies::{registered_ontologies, ContextWeights, EmbeddingConfig, OntologyDescriptor};
+pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
 pub use sources::{
     get_connection_limit, get_source, is_multi_instance, registered_sources, AuthType,
     ConnectionLimits, ConnectionPolicy, OAuthConfig, SourceDescriptor, SourceTier,
@@ -41,3 +42,4 @@ pub use sources::{
 pub use streams::{registered_streams, StreamDescriptor};
 pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use tools::{default_tools, ToolConfig};
+pub use action_templates::{registered_action_templates, get_action_template, ActionTemplate, TemplateCategory};

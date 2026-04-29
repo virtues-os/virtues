@@ -14,29 +14,6 @@
 import type { WikiPageBase, LinkedPage, Citation, AuthorType, SectionAuthorType } from "./base";
 
 // =============================================================================
-// CONTEXT VECTOR (Day completeness)
-// =============================================================================
-
-/**
- * 7-dimension context vector for measuring day completeness.
- * Each dimension is a 0-1 score representing data coverage.
- */
-export interface ContextVector {
-	who: number; // Self-awareness — is the person's own state tracked?
-	whom: number; // Relational — who else was involved?
-	what: number; // Events & content — what happened?
-	when: number; // Temporal coverage — how much of 24h is observed?
-	where: number; // Spatial — do we know locations?
-	why: number; // Intent/motivation — do we know purpose?
-	how: number; // Means/method/process
-}
-
-export function computeCompleteness(cv: ContextVector): number {
-	const values = [cv.who, cv.whom, cv.what, cv.when, cv.where, cv.why, cv.how];
-	return values.reduce((sum, v) => sum + v, 0) / values.length;
-}
-
-// =============================================================================
 // DAY EVENT (Layer 2: Timeline)
 // =============================================================================
 
@@ -63,14 +40,29 @@ export interface DayEvent {
 	userLocation?: string; // Override auto-detected place
 	userNotes?: string; // Brief annotation
 
-	// W6H activation vector (7 dimensions: who, whom, what, when, where, why, how)
-	w6hActivation: [number, number, number, number, number, number, number] | null;
+	// Dayline: Novelty (Novel ↑ / Routine ↓)
+	noveltyZ: number | null; // z-scored novelty vs 12-week baseline
+	// Dayline: Autonomic (Stress ↑ / Recovery ↓)
+	autonomicZ: number | null; // z-scored HR/HRV vs embedding-similar past events
+	avgHr: number | null; // average heart rate during event
+	hrZ: number | null; // HR z-score (raw, before context gating)
+	hrvZ: number | null; // HRV z-score (raw, when available)
 
-	// Entropy scores
-	/** Semantic distinctness: 1 - cosine_sim(this_event, day_centroid). How different from day average. */
-	entropy: number | null;
-	/** Shannon entropy of W6H activation vector. Internal complexity/richness. */
-	w6hEntropy: number | null;
+	// Dayline: Event structure
+	topics: string[]; // Activity contexts (e.g., "code review", "grocery run")
+	eventSummary: string | null; // 1-3 factual sentences (embedded for novelty)
+	agentAction: "NEW" | "CONTINUE" | "REVISE" | "NO_DATA" | null;
+
+	// Dayline: Classification
+	isSleep: boolean;
+	userHidden: boolean; // Soft delete
+	userCreated: boolean; // User-created, never modified by recompute
+
+	// Entity/topic novelty
+	entities: string[]; // Wiki entity IDs (person_demo_maya, place_demo_office, etc.)
+	topicNovelty: Record<string, number> | null; // Per-topic z-scores
+	entityNovelty: Record<string, number> | null; // Per-entity z-scores
+	entityTimestamps: Record<string, string> | null; // entity_id → earliest ISO timestamp within event
 
 	// Tracking
 	isUserAdded: boolean; // Manually created by user (never auto-update)
@@ -207,15 +199,6 @@ export interface DayPage extends WikiPageBase {
 	// LAYER 1: Data (always additive, no conflict)
 	// ─────────────────────────────────────────────────────────────
 
-	/** W5H completeness scores */
-	contextVector: ContextVector;
-
-	/** Chaos/order score (0 = ordered/routine, 1 = chaotic/novel). Null if not yet computed. */
-	chaosScore: number | null;
-
-	/** How many prior days contributed to entropy calibration. Null = never computed, 0 = baseline. */
-	entropyCalibrationDays: number | null;
-
 	/** Entities mentioned this day (people, places, organizations, things) */
 	linkedEntities: LinkedEntities;
 
@@ -238,4 +221,71 @@ export interface DayPage extends WikiPageBase {
 
 	/** Section-level tracking for granular authorship */
 	autobiographySections?: AutobiographySection[];
+
+	/** One-line literary subtitle for the day (Austen register, generated alongside autobiography) */
+	epigraph?: string;
+
+	/** Whether this day has a generated illustration BLOB (served via /api/wiki/day/:date/illustration) */
+	hasIllustration: boolean;
+
+	// ─────────────────────────────────────────────────────────────
+	// Data Quality (W6H journalist assessment, nightly)
+	// ─────────────────────────────────────────────────────────────
+
+	/** W6H data quality assessment — 1-5 per dimension, overall score, and note */
+	dataQuality?: DataQuality;
+
+	/** Count of entities first referenced on this day */
+	newEntityCount: number;
+	/** Count of topics first seen on this day */
+	newTopicCount: number;
+
+	// ─────────────────────────────────────────────────────────────
+	// Readiness (morning autonomic state, 0-100)
+	// ─────────────────────────────────────────────────────────────
+
+	/** Morning readiness score (0-100) from overnight HRV, RHR, sleep */
+	readinessScore: number | null;
+	/** Component breakdown */
+	readinessDetails: ReadinessDetails | null;
+
+	// ─────────────────────────────────────────────────────────────
+	// Sleep cycles (computed at query time from ontology data)
+	// ─────────────────────────────────────────────────────────────
+
+	/** Scored sleep cycles derived from sleep stages + heart rate data */
+	sleepCycles: ScoredSleepCycle[];
+}
+
+/** A scored sleep cycle, derived at query time from sleep stages + HR data */
+export interface ScoredSleepCycle {
+	startTime: Date;
+	endTime: Date;
+	dominantStage: string; // "deep", "core", "rem"
+	avgHr: number | null;
+	autonomicZ: number | null;
+}
+
+/** Readiness score component breakdown (each 0-100) */
+export interface ReadinessDetails {
+	hrv: number;
+	rhr: number;
+	sleep_duration: number;
+	deep_rem: number;
+	consistency: number;
+}
+
+/** LLM-assessed data quality using the W6H journalist framework */
+export interface DataQuality {
+	coverage: {
+		who: number;
+		whom: number;
+		what: number;
+		when: number;
+		where: number;
+		why: number;
+		how: number;
+	};
+	overall: number;
+	note: string;
 }

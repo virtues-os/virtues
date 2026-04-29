@@ -18,9 +18,6 @@
 
 import {
 	listSpaces,
-	createSpace as apiCreateSpace,
-	updateSpace as apiUpdateSpace,
-	deleteSpace as apiDeleteSpace,
 	listViews,
 	createView as apiCreateView,
 	deleteView as apiDeleteView,
@@ -45,6 +42,7 @@ import {
 } from '$lib/tabs/types';
 import { parseRoute } from '$lib/tabs/registry';
 import { pushState, replaceState } from '$app/navigation';
+import { LEGACY_ID_MAP } from '$lib/sidebar/sections';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -111,22 +109,16 @@ export function getRouteFromEntityId(entityId: string): string {
 // ============================================================================
 
 const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
-const TAB_STORAGE_VERSION = 8; // Increment for section merge (016_merge_system_sections)
-const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace';
+const TAB_STORAGE_VERSION = 9; // System sections moved from DB to frontend constants
+const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace'; // Legacy — only used by migration cleanup
 const EXPANDED_STORAGE_KEY = 'virtues-expanded-views';
-
-// Initialize activeSpaceId synchronously from localStorage to prevent flicker
-const initialSpaceId =
-	typeof window !== 'undefined'
-		? localStorage.getItem(WORKSPACE_STORAGE_KEY) ?? 'space_system'
-		: 'space_system';
 
 class SpaceStore {
 	// ============================================================================
-	// Space State
+	// Space State (single workspace — always space_system)
 	// ============================================================================
 	spaces = $state<SpaceSummary[]>([]);
-	activeSpaceId = $state<string>(initialSpaceId);
+	activeSpaceId = $state<string>('space_system');
 
 	// Views for each workspace
 	views = $state<Map<string, ViewSummary[]>>(new Map());
@@ -191,9 +183,12 @@ class SpaceStore {
 	// ============================================================================
 	// Other State
 	// ============================================================================
+	// Swipe progress — kept as no-op to avoid breaking UnifiedSidebar touch handlers.
+	// With a single space there's nothing to swipe to, so this never changes.
 	swipeProgress = $state(0);
 
 	viewCache = $state<Map<string, ViewEntity[]>>(new Map());
+	smartSectionCache = $state<Map<string, ViewEntity[]>>(new Map());
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
 	spaceItems = $state<Map<string, SpaceItemEntity[]>>(new Map()); // Root-level items per workspace
 	registry = $state<Map<string, EntityMetadata>>(new Map());
@@ -228,15 +223,8 @@ class SpaceStore {
 
 		try {
 			await this.loadSpaces();
-
-			// Validate saved workspace exists, fall back to space_system if not
-			if (!this.spaces.find((w) => w.id === this.activeSpaceId)) {
-				this.activeSpaceId = 'space_system';
-				localStorage.setItem(WORKSPACE_STORAGE_KEY, 'space_system');
-			}
-
 			await this.loadAllViews();
-			await this.loadAllSpaceItems(); // Load root items for all spaces (prevents CLS on switch)
+			await this.loadAllSpaceItems();
 			this.restoreExpandedState();
 			this.restoreTabState();
 
@@ -353,15 +341,19 @@ class SpaceStore {
 		}
 	}
 
-	async createSpace(name: string, icon?: string, themeId?: string, accentColor?: string): Promise<Space | null> {
-		try {
-			const space = await apiCreateSpace(name, icon, themeId, accentColor);
-			await this.loadSpaces();
-			return space;
-		} catch (e) {
-			console.error('[SpaceStore] Failed to create workspace:', e);
-			return null;
-		}
+	// Multi-space carousel collapsed — stubs kept to avoid breaking dead-code references.
+	// These will be fully removed in a dead-code cleanup pass.
+	async switchSpace(_spaceId: string, _usePush: boolean = false): Promise<void> {
+		// No-op: single workspace model
+	}
+
+	navigateSpace(_direction: 'prev' | 'next', _usePush: boolean = false): void {
+		// No-op: single workspace model
+	}
+
+	async createSpace(_name: string): Promise<null> {
+		console.warn('[SpaceStore] createSpace is disabled — single workspace model');
+		return null;
 	}
 
 	async updateSpace(
@@ -369,6 +361,7 @@ class SpaceStore {
 		updates: { name?: string; icon?: string; accent_color?: string }
 	): Promise<void> {
 		try {
+			const { updateSpace: apiUpdateSpace } = await import('$lib/api/client');
 			await apiUpdateSpace(id, updates);
 			await this.loadSpaces();
 		} catch (e) {
@@ -376,72 +369,8 @@ class SpaceStore {
 		}
 	}
 
-	async deleteSpace(id: string): Promise<void> {
-		const space = this.spaces.find((w) => w.id === id);
-		if (space?.is_system) {
-			console.warn('[SpaceStore] Cannot delete system workspace');
-			return;
-		}
-
-		try {
-			if (this.activeSpaceId === id) {
-				await this.switchSpace('space_system', true);
-			}
-
-			await apiDeleteSpace(id);
-			await this.loadSpaces();
-		} catch (e) {
-			console.error('[SpaceStore] Failed to delete workspace:', e);
-		}
-	}
-
-	async switchSpace(spaceId: string, usePush: boolean = false): Promise<void> {
-		if (spaceId === this.activeSpaceId) return;
-
-		this.persistTabState();
-		this.activeSpaceId = spaceId;
-
-		// Persist active workspace to localStorage
-		localStorage.setItem(WORKSPACE_STORAGE_KEY, spaceId);
-
-		// Skip URL sync during tab restoration to prevent double-sync
-		// (openDefaultTab -> openTab -> syncActiveToUrl would push when we want replace)
-		this._skipUrlSync = true;
-		try {
-			this.restoreTabState();
-		} finally {
-			this._skipUrlSync = false;
-		}
-
-		this.viewCache = new Map();
-
-		if (!this.views.has(spaceId)) {
-			await this.loadViews(spaceId);
-		}
-
-		// Load workspace items if not cached
-		if (!this.spaceItems.has(spaceId)) {
-			await this.loadSpaceItems(spaceId);
-		}
-
-		// Sync URL to reflect new workspace's active tab
-		// usePush=false (replaceState) for swipes to avoid history pollution
-		// usePush=true (pushState) for explicit clicks to enable back navigation
-		this.syncActiveToUrl(usePush);
-	}
-
-	navigateSpace(direction: 'prev' | 'next', usePush: boolean = false): void {
-		const currentIndex = this.spaces.findIndex((w) => w.id === this.activeSpaceId);
-		if (currentIndex === -1) return;
-
-		let newIndex: number;
-		if (direction === 'prev') {
-			newIndex = currentIndex > 0 ? currentIndex - 1 : this.spaces.length - 1;
-		} else {
-			newIndex = currentIndex < this.spaces.length - 1 ? currentIndex + 1 : 0;
-		}
-
-		this.switchSpace(this.spaces[newIndex].id, usePush);
+	async deleteSpace(_id: string): Promise<void> {
+		console.warn('[SpaceStore] deleteSpace is disabled — single workspace model');
 	}
 
 	// ============================================================================
@@ -512,18 +441,19 @@ class SpaceStore {
 		try {
 			const stored = localStorage.getItem(EXPANDED_STORAGE_KEY);
 			if (stored) {
-				this.expandedViewIds = new Set(JSON.parse(stored));
+				const ids: string[] = JSON.parse(stored);
+				// Migrate legacy DB view IDs to new constant IDs
+				const migrated = ids.map((id: string) => LEGACY_ID_MAP[id] ?? id).filter(Boolean);
+				this.expandedViewIds = new Set(migrated);
+				// Persist migrated IDs if any changed
+				if (migrated.some((id: string, i: number) => id !== ids[i])) {
+					localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(migrated));
+				}
 				return;
 			}
 		} catch {}
-		// First run defaults
-		this.expandedViewIds = new Set([
-			'view_sys_sec_chats',
-			'view_sys_sec_pages',
-			'view_sys_sec_wiki',
-			'view_sys_sec_data',
-			'view_sys_sec_developer',
-		]);
+		// First run defaults — system sections are all flat links now, nothing to expand
+		this.expandedViewIds = new Set();
 	}
 
 
@@ -614,23 +544,23 @@ class SpaceStore {
 		if (!namespace) {
 			// Clear entire cache
 			this.viewCache = new Map();
+			this.smartSectionCache = new Map();
 			this.viewCacheVersion++;
 			return;
 		}
 
-		// Map namespace to known system section IDs
-		const namespaceToViewId: Record<string, string> = {
-			chat: 'view_sys_sec_chats',
-			page: 'view_sys_sec_pages',
-		};
+		// System sections are flat links now — no smart section cache to invalidate.
+		// User-created smart views still bump via viewCacheVersion.
+		this.viewCacheVersion++;
+	}
 
-		const viewId = namespaceToViewId[namespace];
-		if (viewId) {
-			const newCache = new Map(this.viewCache);
-			newCache.delete(viewId);
-			this.viewCache = newCache;
-			this.viewCacheVersion++;
-		}
+	/**
+	 * Update the smart section cache (called by SystemSection component)
+	 */
+	updateSmartSectionCache(sectionId: string, entities: ViewEntity[]): void {
+		const newCache = new Map(this.smartSectionCache);
+		newCache.set(sectionId, entities);
+		this.smartSectionCache = newCache;
 	}
 
 	/**
@@ -766,7 +696,8 @@ class SpaceStore {
 	// ============================================================================
 
 	private getTabStorageKey(): string {
-		return `${TAB_STORAGE_KEY_PREFIX}-${this.activeSpaceId}`;
+		// Single global key — multi-space carousel removed.
+		return TAB_STORAGE_KEY_PREFIX;
 	}
 
 	private persistTabState(): void {
@@ -791,6 +722,12 @@ class SpaceStore {
 		const storageKey = this.getTabStorageKey();
 
 		try {
+			// One-time migration: if the global key doesn't exist but a per-space
+			// key does, adopt the most recent one and clean up the rest.
+			if (!localStorage.getItem(storageKey)) {
+				this.migratePerSpaceTabKeys(storageKey);
+			}
+
 			const stored = localStorage.getItem(storageKey);
 			if (stored) {
 				const data = JSON.parse(stored);
@@ -833,6 +770,55 @@ class SpaceStore {
 	private openDefaultTab(): void {
 		// Always open a new chat when there are no tabs
 		this.openTab({ type: 'chat', label: 'New Chat', route: '/chat', icon: 'ri:chat-1-line' });
+	}
+
+	/**
+	 * One-time migration: adopt the most recent per-space tab key and
+	 * clean up all old per-space keys. Only runs once (when the global
+	 * key doesn't exist yet).
+	 */
+	private migratePerSpaceTabKeys(globalKey: string): void {
+		const prefix = `${TAB_STORAGE_KEY_PREFIX}-`;
+		let bestKey: string | null = null;
+		let bestVersion = -1;
+
+		for (let i = 0; i < localStorage.length; i++) {
+			const key = localStorage.key(i);
+			if (!key || !key.startsWith(prefix)) continue;
+
+			try {
+				const data = JSON.parse(localStorage.getItem(key) || '');
+				const version = data.version ?? 0;
+				if (version > bestVersion) {
+					bestVersion = version;
+					bestKey = key;
+				}
+			} catch {
+				// skip malformed entries
+			}
+		}
+
+		if (bestKey) {
+			const data = localStorage.getItem(bestKey);
+			if (data) {
+				localStorage.setItem(globalKey, data);
+			}
+		}
+
+		// Clean up all per-space keys
+		const toRemove: string[] = [];
+		for (let i = 0; i < localStorage.length; i++) {
+			const key = localStorage.key(i);
+			if (key && key.startsWith(prefix)) {
+				toRemove.push(key);
+			}
+		}
+		for (const key of toRemove) {
+			localStorage.removeItem(key);
+		}
+
+		// Also clean up the workspace selector key
+		localStorage.removeItem(WORKSPACE_STORAGE_KEY);
 	}
 
 	// ============================================================================
@@ -1310,31 +1296,40 @@ class SpaceStore {
 		this.persistTabState();
 	}
 
-	openChatContext(chatId: string, currentPaneId: 'left' | 'right' | null): string {
-		const targetPaneId = currentPaneId === 'right' ? 'left' : 'right';
-		const entityId = chatId.startsWith('chat_') ? chatId : `chat_${chatId}`;
-		const route = `/chat/${entityId}?view=context`;
-
-		// Check if context view is already open for this chat
-		const existing = this.findTab((t) => t.route === route);
+	/**
+	 * Open a tab in the opposite pane — auto-enables split, dedupes by route.
+	 *
+	 * Generic helper used by `openChatContext` and anywhere else that needs
+	 * the "click something, see its detail beside the list" pattern.
+	 * Returns the tab id (new or existing).
+	 */
+	openAside(input: Omit<Tab, 'id' | 'createdAt'>): string {
+		// Dedupe: if a tab for this route is already open anywhere, activate it.
+		const existing = this.findTab((t) => t.route === input.route);
 		if (existing) {
 			this.setActiveTab(existing.tab.id);
 			return existing.tab.id;
 		}
 
+		// Target the *other* pane from the currently active one.
+		const targetPaneId: 'left' | 'right' =
+			this.activePaneId === 'right' ? 'left' : 'right';
+
 		if (!this.isSplit) {
 			this.enableSplit();
 		}
 
-		return this.openTab(
-			{
-				type: 'chat',
-				label: 'Context',
-				route,
-				icon: 'ri:information-line'
-			},
-			targetPaneId
-		);
+		return this.openTab(input, targetPaneId);
+	}
+
+	openChatContext(chatId: string, _currentPaneId: 'left' | 'right' | null): string {
+		const entityId = chatId.startsWith('chat_') ? chatId : `chat_${chatId}`;
+		return this.openAside({
+			type: 'chat',
+			label: 'Context',
+			route: `/chat/${entityId}?view=context`,
+			icon: 'ri:information-line'
+		});
 	}
 
 	// ============================================================================

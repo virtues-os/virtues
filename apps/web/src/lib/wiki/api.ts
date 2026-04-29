@@ -65,20 +65,48 @@ export interface WikiOrganizationApi {
 	updated_at: string;
 }
 
+export interface WikiThingApi {
+	id: string;
+	name: string;
+	category: string | null;
+	description: string | null;
+	content: string | null;
+	cover_image: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
 export interface WikiDayApi {
 	id: string;
 	date: string; // ISO date string
 	start_timezone: string | null;
 	end_timezone: string | null;
 	autobiography: string | null;
-	autobiography_sections: unknown | null;
+	autobiography_sections: Array<{ id: string; heading: string; content: string; authored_by: string; last_edited_at: string }> | null;
+	epigraph: string | null;
+	has_illustration: boolean;
 	last_edited_by: string | null;
 	cover_image: string | null;
 	act_id: string | null;
 	chapter_id: string | null;
-	context_vector: string | null;
-	chaos_score: number | null;
-	entropy_calibration_days: number | null;
+	morning_baseline: number | null;
+	battery_curve: string | null;
+	data_quality: {
+		coverage: { who: number; whom: number; what: number; when: number; where: number; why: number; how: number };
+		overall: number;
+		note: string;
+	} | null;
+	new_entity_count: number;
+	new_topic_count: number;
+	readiness_score: number | null;
+	readiness_details: { hrv: number; rhr: number; sleep_duration: number; deep_rem: number; consistency: number } | null;
+	sleep_cycles: Array<{
+		start_time: string;
+		end_time: string;
+		dominant_stage: string;
+		avg_hr: number | null;
+		autonomic_z: number | null;
+	}>;
 	created_at: string;
 	updated_at: string;
 }
@@ -157,6 +185,13 @@ export interface WikiOrganizationListItem {
 	canonical_name: string;
 	organization_type: string | null;
 	relationship_type: string | null;
+}
+
+export interface WikiThingListItem {
+	id: string;
+	name: string;
+	category: string | null;
+	description: string | null;
 }
 
 // ============================================================================
@@ -265,6 +300,37 @@ export async function updateOrganization(
 	fetchFn: FetchFn = fetch
 ): Promise<WikiOrganizationApi | null> {
 	const res = await fetchFn(`/api/wiki/organization/${id}`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(data),
+	});
+	if (!res.ok) return null;
+	return res.json();
+}
+
+// --- Thing ---
+
+export async function getThingById(
+	id: string,
+	fetchFn: FetchFn = fetch
+): Promise<WikiThingApi | null> {
+	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}`);
+	if (!res.ok) return null;
+	return res.json();
+}
+
+export async function listThings(fetchFn: FetchFn = fetch): Promise<WikiThingListItem[]> {
+	const res = await fetchFn("/api/wiki/things");
+	if (!res.ok) return [];
+	return res.json();
+}
+
+export async function updateThing(
+	id: string,
+	data: Partial<WikiThingApi>,
+	fetchFn: FetchFn = fetch
+): Promise<WikiThingApi | null> {
+	const res = await fetchFn(`/api/wiki/thing/${id}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),
@@ -418,20 +484,32 @@ export interface TemporalEventApi {
 	user_label: string | null;
 	user_location: string | null;
 	user_notes: string | null;
-	source_ontologies: unknown | null;
+	source_ontologies: string[] | null;
 	is_unknown: boolean | null;
 	is_transit: boolean | null;
 	is_user_added: boolean | null;
 	is_user_edited: boolean | null;
-	w6h_activation: [number, number, number, number, number, number, number] | null;
-	entropy: number | null;
-	w6h_entropy: number | null;
+	// Dayline fields
+	novelty_z: number | null;
+	topics: string[] | null;
+	event_summary: string | null;
+	agent_action: string | null;
+	is_sleep: boolean | null;
+	user_hidden: boolean | null;
+	user_created: boolean | null;
+	// Autonomic scoring
+	avg_hr: number | null;
+	autonomic_z: number | null;
+	hr_z: number | null;
+	hrv_z: number | null;
+	// Entity/topic novelty
+	entities: string[] | null;
+	topic_novelty: Record<string, number> | null;
+	entity_novelty: Record<string, number> | null;
+	entity_timestamps: Record<string, string> | null;
 	created_at: string;
 	updated_at: string;
 }
-
-/** W6H dimension labels in order */
-export const W6H_LABELS = ["who", "whom", "what", "when", "where", "why", "how"] as const;
 
 export interface CreateTemporalEventRequest {
 	day_id: string;
@@ -588,22 +666,6 @@ export async function deleteTemporalEvent(
 	return res.ok;
 }
 
-/**
- * Delete all auto-generated events for a day (for regeneration).
- * @param dayId - The UUID of the day
- */
-export async function deleteAutoEventsForDay(
-	dayId: string,
-	fetchFn: FetchFn = fetch
-): Promise<number> {
-	const res = await fetchFn(`/api/wiki/day/${dayId}/auto-events`, {
-		method: "DELETE",
-	});
-	if (!res.ok) return 0;
-	const data = await res.json();
-	return data.deleted ?? 0;
-}
-
 // ============================================================================
 // Day Sources Types (Ontology records for a day)
 // ============================================================================
@@ -631,31 +693,75 @@ export async function getDaySources(
 }
 
 // ============================================================================
-// Day Vector Projection Types
+// Timeline Day View (chunked location/transit/missing-data stream)
 // ============================================================================
 
-export interface W6HProjectionApi {
-	name: string;
-	point: [number, number];
-	magnitude: number;
-	completeness: number;
+export interface TimelineDayLocationChunk {
+	type: "location";
+	start_time: string;
+	end_time: string;
+	place_name: string | null;
+	latitude: number;
+	longitude: number;
+	place_id: string | null;
+	duration_minutes: number | null;
+	place_category: string | null;
 }
 
-export interface DayVectorProjectionApi {
+export type TimelineDayChunk =
+	| TimelineDayLocationChunk
+	| { type: "transit" }
+	| { type: "missing_data" };
+
+export interface TimelineDayPoint {
+	latitude: number;
+	longitude: number;
+	timestamp: string;
+}
+
+export interface TimelineDayView {
 	date: string;
-	aggregate: [number, number];
-	dimensions: W6HProjectionApi[];
+	chunks: TimelineDayChunk[];
+	points: TimelineDayPoint[];
+}
+
+// ============================================================================
+// Day Chats (in-app Virtues + external AI conversations)
+// ============================================================================
+
+export interface DayChatApi {
+	id: string;
+	source: "virtues" | "external";
+	provider: string | null;
+	title: string;
+	message_count: number;
+	started_at: string;
 }
 
 /**
- * Get 2D vector projection of W6H embeddings for a day.
- * Returns null if the day has no embeddings.
+ * Get all AI chats (in-app Virtues + external imported) that started on a day.
+ * In-app chats are navigable; external chats are display-only.
+ * @param date - The date in YYYY-MM-DD format
  */
-export async function getDayVectors(
+export async function getDayChats(
 	date: string,
-	fetchFn: FetchFn = fetch
-): Promise<DayVectorProjectionApi | null> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/vectors`);
+	fetchFn: FetchFn = fetch,
+): Promise<DayChatApi[]> {
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/chats`);
+	if (!res.ok) return [];
+	return res.json();
+}
+
+/**
+ * Get the chunked timeline view for a day (location stops, transit, gaps).
+ * @param date - The date in YYYY-MM-DD format
+ */
+export async function getDayTimeline(
+	date: string,
+	fetchFn: FetchFn = fetch,
+): Promise<TimelineDayView | null> {
+	const res = await fetchFn(`/api/timeline/day/${encodeURIComponent(date)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
+

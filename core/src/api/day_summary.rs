@@ -2,8 +2,7 @@
 //!
 //! Gathers a day's structured data (sources, health aggregates, messages),
 //! builds a text prompt, calls an LLM via Tollbooth, and saves the result
-//! as the day's autobiography. Also computes the 7-dimension context vector
-//! (who, whom, what, when, where, why, how) from ontology data presence.
+//! as the day's autobiography with structured timeline events.
 
 use chrono::{NaiveDate, TimeZone};
 use chrono_tz::Tz;
@@ -19,21 +18,92 @@ use virtues_registry::ontologies::registered_ontologies;
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = r#"You are writing a brief first-person diary entry for a personal journal. Write 2-5 sentences that capture what mattered about this day — not a log of every event, but the through-line or shape of the day. Prioritize the most meaningful events and interactions over comprehensive coverage. Be direct and concrete, never poetic or flowery. If the data is sparse, write less — even a single sentence is fine. Never infer emotions, motivations, or details not present in the data.
+const SYSTEM_PROMPT: &str = r#"You are writing a brief second-person autobiography for a personal day page. Your job is to surface the meaning layer — what connected, what was unusual, what the cross-domain data reveals — not to log what happened when (the event timeline already does that).
 
-After the diary entry, on a new line, output a JSON block with the day's events as a perfect 24-hour calendar. Use this exact format:
+LENGTH — scale to data density:
+- Sparse day (a handful of data points, a few hours of coverage): 1-3 sentences. Often a single sentence is the right answer.
+- Moderate day (data across most of the waking hours, a few distinct activities): 3-6 sentences.
+- Rich day (continuous coverage, many distinct activities, multiple ontologies firing): up to 180 words.
+- Length follows evidence. Padding a sparse day with prose is the most common failure here — don't.
+
+GUIDELINES:
+- Lead with a pattern or insight, not a timestamp. "The bike ride downtown was the calmest part of the day — resting heart rate held at 58, which hasn't happened on a weekday morning in three weeks."
+- Weave health/location/duration data into narrative context. Don't report metrics in isolation — connect them to what was happening.
+- Reference specific events, people, and places by name so the text stays grounded.
+- Plain text only — no markdown, no formatting, no bold, no italic.
+- Second person ("you"), past tense. Tone: warm but precise, like a perceptive friend reflecting the day back. Never clinical, never saccharine.
+- Never infer emotions, motivations, activities, or details that aren't in the source data. If the sources show heart rate and a few messages, write about heart rate and those messages — not about "an extended social outing" or "a productive morning" you imagined to fill space.
+- Absence of data is not data. If the morning has no sources, do not write about the morning.
+
+After the diary, output a single-line EPIGRAPH — a literary subtitle for the day, in the voice of an observing third-person narrator (Jane Austen, George Eliot, middle Dickens register). This sits at the top of the day page as a chapter-heading flourish.
+
+EPIGRAPH rules:
+- 5-14 words. Sentence case. No ending punctuation. No quotation marks.
+- Draw concrete imagery from the day's actual events — a specific noun, place, or beat from the data.
+- Prefer parallelism, juxtaposition, or a small observed aphorism.
+- Gently ironic, implicit, observed from outside. Never saccharine, never explicit.
+- Never use "I", "me", "today", "the day was…". Never use first-person constructions.
+- Never a summary or list. It should feel like a line you'd remember.
+
+Good epigraphs:
+- sunlight on old tile has a way of proposing things
+- a morning led by questions, an afternoon led by a house
+- three cups of coffee, and then the hard conversation
+- a text at lunch, and the afternoon had other plans
+- the design review gave way to a backyard bigger than its photos
+- some afternoons arrive with questions of their own
+
+Bad epigraphs (do NOT produce anything like these):
+- "A productive Friday" (cliche)
+- "Today I worked and then saw a house" (explicit, first-person)
+- "A day of mixed emotions" (abstract, saccharine)
+- "Work in the morning, house viewing in the afternoon" (a summary, not an epigraph)
+
+After the epigraph, assess the DATA QUALITY of the source material using the W6H framework (Who, Whom, What, When, Where, Why, How). Think like a journalist: how well does today's data answer each dimension?
+
+Score each 1-5:
+- 1 = no signal (dimension completely absent from sources)
+- 2 = trace (a hint, but not enough to narrate)
+- 3 = routine (typical weekday coverage)
+- 4 = good (multiple corroborating sources)
+- 5 = unusually rich (deep, multi-faceted coverage)
+
+The "overall" score is your holistic judgment — NOT an average. A day with 5/5 Where but 1/1 everything else is still a 2.
+The "note" is one sentence: what's strong, what's missing.
+
+After data quality, output a JSON block with the day's events as a perfect 24-hour calendar. Use this exact output format:
+
+[diary]
+---EPIGRAPH---
+[one-line epigraph]
+---DATA_QUALITY---
+{"coverage":{"who":3,"whom":2,"what":4,"when":5,"where":4,"why":1,"how":2},"overall":3,"note":"One sentence about coverage."}
 ---EVENTS---
-[{"start": "HH:MM", "end": "HH:MM", "label": "Brief description"}]
+[{"start": "HH:MM", "end": "HH:MM", "label": "Brief label", "summary": "1-3 factual sentences about what the source data shows."}]
 
-Rules:
+WHAT AN EVENT IS:
+An event is a contiguous block of time that the source data lets you classify. There are exactly two valid classifications:
+
+1. **A definitively understood block** — the sources for this time window evidence a specific, nameable activity. The `label` is a short noun phrase (2-5 words) naming what the data shows. The `summary` is 1-3 plain factual sentences grounded in the actual data points (who/where/what was logged, durations, message counts, heart rate during the block, etc.). No inference, no mood, no motivation.
+
+2. **Unknown** — the sources for this time window do not support a specific classification. The `label` is exactly "Unknown" and the `summary` is omitted (or empty). Do not invent a label like "Morning routine", "Rest", "Quiet time", "Sleep" to fill an unknown block.
+
+Every event you emit must fall into one of these two buckets. There is no third "probably this" category.
+
+SALIENCE FLOOR — what actually deserves to be an event:
+An event must represent meaningful continuous activity, not scattered pings. Specifically:
+- An event should cover a recognisable block — a calendar meeting, a workout, a commute leg, a sleep cycle, a phone call, a meal, an extended conversation — or a continuous stretch of activity (roughly ≥15 minutes of correlated source data: a voice recording, sustained app usage, a location dwell, a real back-and-forth messaging thread, etc.).
+- A handful of sparse data points is NOT an event. A few text messages spread over an hour, one AI chat query, an isolated web visit, a single transaction, a lone notification — these are signals that exist *within* Unknown blocks. They should NOT be promoted to their own labeled event.
+- When in doubt, prefer Unknown. A day with one or two clear events and the rest Unknown is more truthful than a day with five speculative event labels stretched over thin data. Truthful sparseness beats pleasant fabrication.
+
+EVENTS rules:
 - Events MUST cover the full 24 hours: first event starts at "00:00", last event ends at "24:00". No gaps, no overlaps.
 - Use 24-hour time format (HH:MM). Events are contiguous — each event's end time equals the next event's start time.
-- Label events based ONLY on data present in the sources. Do NOT infer activities not evidenced by the data.
-- "Sleep" is valid ONLY when sleep tracking data (e.g., Apple Health, Oura) is present in the sources. Do not infer sleep from absence of data. Do not guess wake-up times — if sleep data ends at 06:30 but the next data point is at 09:00, end the sleep event at 06:30 and mark 06:30-09:00 as "Unknown".
-- Use "Unknown" for any time period where the data is sparse or absent. It is perfectly fine to have multiple "Unknown" segments.
-- Aim for 6-16 events depending on how much data exists. A sparse day might have 6 events (mostly "Unknown"). A rich day might have 12-16.
-- Do not pad or fabricate events to reach a minimum count. If the data only supports 4 labeled events plus "Unknown" gaps, that is correct.
-- Good labels: "Morning routine", "Work session", "Lunch with Sarah", "Evening walk", "Reading", "Commute", "Sleep" (when sleep data exists). Bad labels: "Sleep" (no sleep data), "Relaxing at home" (inferred)."#;
+- A label like "Morning routine", "Wake up", "Sleep", "Commute", "Work", "Relaxing", "Dinner" is only valid if the sources within that exact window evidence it (a sleep tracker logged a sleep cycle there, a calendar event covers it, location/transit data shows the commute, etc.). Otherwise the block is "Unknown".
+- "Sleep" specifically requires sleep-tracking data (Apple Health, Oura, etc.) inside the window. Never infer sleep from absence of other data, and never guess wake-up times — clip the sleep event at the last sleep data point and mark the rest as "Unknown".
+- It is perfectly fine — and common — for a sparse day to be mostly "Unknown" with only 1-3 understood events. That is the right answer.
+- Event count scales with evidence. A rich day might have 10-16 events; a sparse day might have 3-5 events. Do not pad to reach a minimum.
+- The `summary` field is the single most useful thing about an event. For understood events, it must reference the actual data points: "Three iMessages with Sarah about dinner plans, sent between 12:34 and 12:51. Heart rate stayed in the mid-70s." Not: "A pleasant exchange about dinner.""#;
 
 /// Max characters per prompt section before truncation
 const MAX_SECTION_CHARS: usize = 1500;
@@ -82,7 +152,6 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<WikiDay> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
     let sources = get_day_sources(pool, date).await?;
-    let _day = get_or_create_day(pool, date).await?;
 
     // 2. Compute date boundaries using profile timezone
     let timezone = super::profile::get_timezone(pool).await.unwrap_or(None);
@@ -104,11 +173,18 @@ pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<
     // 5. Assemble prompt from all sections
     let day_of_week = date.format("%A").to_string();
     let date_display = date.format("%B %e, %Y").to_string();
+    let tz_for_display: Option<Tz> = timezone.as_deref().and_then(|s| s.parse().ok());
 
-    let mut prompt = format!("Date: {}, {}\n", day_of_week, date_display);
+    let tz_label = timezone.as_deref().unwrap_or("UTC");
+    let mut prompt = format!(
+        "Date: {}, {} ({} local time)\n\
+         All timestamps in the source data below are in the user's local timezone ({}). \
+         Emit event start/end times in the same local timezone.\n",
+        day_of_week, date_display, tz_label, tz_label
+    );
 
     // Group sources by type and build sections
-    let grouped = group_sources_for_prompt(&sources);
+    let grouped = group_sources_for_prompt(&sources, tz_for_display.as_ref());
     for section in grouped {
         append_section(&mut prompt, &section);
     }
@@ -163,56 +239,30 @@ pub async fn generate_day_summary(pool: &SqlitePool, date: NaiveDate) -> Result<
         "Generating daily summary"
     );
 
-    // 6. Compute 7-dim context vector from ontology presence (already fetched in step 2b)
-    let context_vector = compute_context_vector(&ontology_presence);
-    let context_vector_json = serde_json::json!({
-        "who": context_vector[0],
-        "whom": context_vector[1],
-        "what": context_vector[2],
-        "when": context_vector[3],
-        "where": context_vector[4],
-        "why": context_vector[5],
-        "how": context_vector[6],
-    });
-
-    // 7. Call Tollbooth
+    // 6. Call Tollbooth
     let raw_response = call_tollbooth(pool, &prompt).await?;
 
-    // 8. Parse response: extract diary text and structured events
-    let (summary_text, event_json) = parse_tollbooth_response(&raw_response);
+    // 7. Parse response: extract diary text, epigraph, data quality, and structured events
+    let parsed = parse_tollbooth_response(&raw_response);
 
-    // 9. Store structured events + compute per-event W6H activation + embeddings + entropy
-    //    Must happen BEFORE chaos scoring — chaos now aggregates event embeddings.
+    // 8. Store structured events (event creation + location extraction)
     let day_stub = get_or_create_day(pool, date).await?;
-    let event_embeddings = if let Some(events) = event_json {
-        store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events, &start_str, &end_str).await
-    } else {
-        Vec::new()
-    };
+    if let Some(events) = parsed.events {
+        store_structured_events(pool, &day_stub, date, timezone.as_deref(), &events).await;
+    }
 
-    // 10. Generate chaos score from aggregated event embeddings
-    let chaos_result = super::day_scoring::generate_embeddings_and_score(
-        pool, date, &context_vector, &event_embeddings,
-    )
-    .await
-    .unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "Chaos scoring failed, skipping");
-        super::day_scoring::ChaosScoreResult { score: None, calibration_days: 0 }
-    });
-
-    // 11. Save to wiki_days
+    // 9. Save autobiography + epigraph + data quality to wiki_days
     let day = update_day(
         pool,
         date,
         UpdateWikiDayRequest {
-            autobiography: Some(summary_text),
+            autobiography: Some(parsed.diary),
             autobiography_sections: None,
+            epigraph: parsed.epigraph,
             last_edited_by: Some("ai".to_string()),
             cover_image: None,
-            context_vector: Some(context_vector_json),
-            chaos_score: chaos_result.score,
-            entropy_calibration_days: Some(chaos_result.calibration_days),
             start_timezone: timezone.clone(),
+            data_quality: parsed.data_quality,
             snapshot: None,
         },
     )
@@ -229,8 +279,12 @@ struct PromptSection {
     body: String,
 }
 
-/// Group DaySources by type into prompt sections
-fn group_sources_for_prompt(sources: &[DaySource]) -> Vec<PromptSection> {
+/// Group DaySources by type into prompt sections.
+///
+/// `tz` is the user's profile timezone — source timestamps are stored in UTC
+/// but must be rendered in local time so the LLM emits matching local HH:MM
+/// values (which `parse_hhmm_to_utc` will then re-localise on the way back in).
+fn group_sources_for_prompt(sources: &[DaySource], tz: Option<&Tz>) -> Vec<PromptSection> {
     use std::collections::BTreeMap;
 
     // Group by source_type, preserve order
@@ -248,7 +302,10 @@ fn group_sources_for_prompt(sources: &[DaySource]) -> Vec<PromptSection> {
         let mut char_count = 0;
 
         for item in &items {
-            let time = item.timestamp.format("%H:%M").to_string();
+            let time = match tz {
+                Some(tz) => item.timestamp.with_timezone(tz).format("%H:%M").to_string(),
+                None => item.timestamp.format("%H:%M").to_string(),
+            };
             let line = match &item.preview {
                 Some(preview) => format!("- {} {} — {}", time, item.label, preview),
                 None => format!("- {} {}", time, item.label),
@@ -826,41 +883,6 @@ async fn detect_ontology_presence(
     presence
 }
 
-/// Compute the 7-dimension context vector from ontology presence.
-/// Each dimension = sum(weights of present ontologies) / sum(weights of all ontologies).
-/// Dimensions: [who, whom, what, when, where, why, how]
-fn compute_context_vector(ontology_presence: &[(String, bool)]) -> [f32; 7] {
-    let ontologies = registered_ontologies();
-    let mut total_weights = [0.0f32; 7];
-    let mut present_weights = [0.0f32; 7];
-
-    for ont in &ontologies {
-        for dim in 0..7 {
-            total_weights[dim] += ont.context_weights[dim];
-        }
-
-        // Check if this ontology has data
-        let has_data = ontology_presence
-            .iter()
-            .any(|(name, present)| name == ont.name && *present);
-
-        if has_data {
-            for dim in 0..7 {
-                present_weights[dim] += ont.context_weights[dim];
-            }
-        }
-    }
-
-    let mut vector = [0.0f32; 7];
-    for dim in 0..7 {
-        if total_weights[dim] > 0.0 {
-            vector[dim] = present_weights[dim] / total_weights[dim];
-        }
-    }
-
-    vector
-}
-
 // ── Tollbooth call ───────────────────────────────────────────────────────────
 
 /// Call Tollbooth for the summary generation
@@ -928,7 +950,7 @@ async fn call_tollbooth(pool: &SqlitePool, user_prompt: &str) -> Result<String> 
     Ok(summary)
 }
 
-// ── Structured event parsing + W6H activation ───────────────────────────────
+// ── Structured event parsing ─────────────────────────────────────────────────
 
 /// LLM event parsed from Tollbooth response
 #[derive(Debug, serde::Deserialize)]
@@ -936,91 +958,126 @@ struct LlmEvent {
     start: String,
     end: String,
     label: String,
+    /// 1-3 sentence factual description grounded in the source data. Optional
+    /// because the model may omit it for Unknown blocks.
+    #[serde(default)]
+    summary: Option<String>,
 }
 
-/// Split Tollbooth response into diary text and optional events JSON.
-/// Handles markdown code fences (```json ... ```) that LLMs sometimes wrap around JSON.
-fn parse_tollbooth_response(response: &str) -> (String, Option<Vec<LlmEvent>>) {
-    if let Some(idx) = response.find("---EVENTS---") {
-        let diary = response[..idx].trim().to_string();
+/// Parsed day summary from LLM response
+struct ParsedDaySummary {
+    diary: String,
+    epigraph: Option<String>,
+    data_quality: Option<String>,
+    events: Option<Vec<LlmEvent>>,
+}
+
+/// Split Tollbooth response into diary text, epigraph, data quality, and optional events JSON.
+/// Expected format:
+///   [diary text]
+///   ---EPIGRAPH---
+///   [one-line epigraph]
+///   ---DATA_QUALITY---
+///   {"coverage":{...},"overall":3,"note":"..."}
+///   ---EVENTS---
+///   [JSON events]
+///
+/// All markers except the diary are optional. Handles markdown code fences around JSON.
+fn parse_tollbooth_response(response: &str) -> ParsedDaySummary {
+    // 1. Split off events JSON first (it's always at the end)
+    let (before_events, events) = if let Some(idx) = response.find("---EVENTS---") {
+        let before = &response[..idx];
         let mut events_str = response[idx + "---EVENTS---".len()..].trim();
-        // Strip markdown code fences if present
         events_str = events_str
             .trim_start_matches("```json")
             .trim_start_matches("```")
             .trim_end_matches("```")
             .trim();
-        let events: Option<Vec<LlmEvent>> = serde_json::from_str(events_str)
+        let parsed: Option<Vec<LlmEvent>> = serde_json::from_str(events_str)
             .map_err(|e| {
                 tracing::warn!(error = %e, raw = events_str, "Failed to parse structured events from LLM");
                 e
             })
             .ok();
-        (diary, events)
+        (before, parsed)
     } else {
-        (response.trim().to_string(), None)
+        (response, None)
+    };
+
+    // 2. Split off data_quality from the remaining text
+    let (before_quality, data_quality) = if let Some(idx) = before_events.find("---DATA_QUALITY---")
+    {
+        let before = &before_events[..idx];
+        let mut dq_str = before_events[idx + "---DATA_QUALITY---".len()..].trim();
+        dq_str = dq_str
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+        // Validate it's parseable JSON, then store as raw string
+        let validated: Option<String> = serde_json::from_str::<serde_json::Value>(dq_str)
+            .map_err(|e| {
+                tracing::warn!(error = %e, raw = dq_str, "Failed to parse data_quality from LLM");
+                e
+            })
+            .ok()
+            .map(|v| v.to_string());
+        (before, validated)
+    } else {
+        (before_events, None)
+    };
+
+    // 3. Split off epigraph from the remaining text
+    let (diary, epigraph) = if let Some(idx) = before_quality.find("---EPIGRAPH---") {
+        let d = before_quality[..idx].trim().to_string();
+        let e_raw = before_quality[idx + "---EPIGRAPH---".len()..].trim();
+        // Epigraph is a single line — take only the first non-empty line
+        let e = e_raw
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| l.trim_matches(['"', '\'', '—', '–']).trim().to_string())
+            .filter(|l| !l.is_empty());
+        (d, e)
+    } else {
+        (before_quality.trim().to_string(), None)
+    };
+
+    ParsedDaySummary {
+        diary,
+        epigraph,
+        data_quality,
+        events,
     }
 }
 
-/// Store LLM-identified events, compute W6H activation, embed, and compute entropy.
+/// Store LLM-identified events as wiki_events rows.
 ///
-/// Three-pass approach:
-///   Pass 1: Create events in DB, compute W6H activation, collect ontology text per event
-///   Pass 2: Batch embed all event texts in a single ONNX call
-///   Pass 3: Compute entropy scores (embedding novelty + Shannon W6H), store everything
-///
-/// Returns `Vec<(embedding, duration_minutes)>` for events that were successfully
-/// embedded. The caller uses this to compute a duration-weighted day centroid for
-/// cross-day chaos scoring.
+/// Creates events in DB with location extraction. Embedding and novelty scoring
+/// are handled separately by the dayline novelty pipeline (Phase 1).
 async fn store_structured_events(
     pool: &SqlitePool,
     day: &WikiDay,
     date: NaiveDate,
     timezone: Option<&str>,
     events: &[LlmEvent],
-    _start_str: &str,
-    _end_str: &str,
-) -> Vec<(Vec<f32>, f32)> {
-    use super::day_scoring::{
-        collect_ontology_texts, compute_w6h_entropy, cosine_similarity, embedding_to_bytes,
-    };
-
+) {
     // Clear previous auto events
     if let Err(e) = delete_auto_events_for_day(pool, day.id.clone()).await {
         tracing::warn!(error = %e, "Failed to delete existing auto events");
-        return Vec::new();
+        return;
     }
 
     let tz: Option<Tz> = timezone.and_then(|s| s.parse().ok());
-    let date_str = date.to_string();
 
-    // ── Backfill gaps to ensure perfect 24h coverage (00:00–24:00) ───────
-
+    // Backfill gaps to ensure perfect 24h coverage (00:00–24:00)
     let all_events = backfill_24h_events(events, date, tz.as_ref());
 
-    // ── Pass 1: Create events, compute W6H, collect text ─────────────────
-
-    struct EventWork {
-        event_id: String,
-        w6h: [f32; 7],
-        text: String,
-        duration_minutes: f32,
-    }
-
-    let mut work: Vec<EventWork> = Vec::new();
+    let mut created_count = 0;
 
     for event in &all_events {
         let start_rfc = event.start_utc.to_rfc3339();
         let end_rfc = event.end_utc.to_rfc3339();
-
-        // Collect ontology texts for this event's time range (needed for embedding + source tracking)
-        let ontology_texts = collect_ontology_texts(pool, &start_rfc, &end_rfc, &date_str).await;
-
-        // Extract source ontology names for this event
-        let source_names: Vec<String> = ontology_texts
-            .iter()
-            .map(|ot| ot.ontology_name.clone())
-            .collect();
 
         // Extract auto_location from location_visit data (longest visit in time range)
         let auto_location = extract_event_location(pool, &start_rfc, &end_rfc).await;
@@ -1037,170 +1094,29 @@ async fn store_structured_events(
                 user_label: None,
                 user_location: None,
                 user_notes: None,
-                source_ontologies: if source_names.is_empty() {
-                    None
-                } else {
-                    Some(serde_json::json!(source_names))
-                },
+                source_ontologies: None,
                 is_unknown: Some(event.is_unknown),
                 is_transit: Some(false),
                 is_user_added: Some(false),
+                event_summary: event.summary.clone(),
             },
         )
         .await;
 
-        let created_event = match created {
-            Ok(e) => e,
+        match created {
+            Ok(_) => created_count += 1,
             Err(e) => {
                 tracing::warn!(error = %e, label = event.label, "Failed to create temporal event");
-                continue;
             }
-        };
-
-        // Compute W6H activation for this event's time range
-        let w6h = compute_event_w6h(pool, &start_rfc, &end_rfc).await;
-
-        // Build text for embedding (cap at 2000 chars)
-        let combined_text: String = ontology_texts
-            .iter()
-            .map(|ot| ot.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let text = if combined_text.len() > 2000 {
-            combined_text[..2000].to_string()
-        } else {
-            combined_text
-        };
-
-        let duration_minutes = (event.end_utc - event.start_utc).num_minutes().max(1) as f32;
-
-        work.push(EventWork {
-            event_id: created_event.id,
-            w6h,
-            text,
-            duration_minutes,
-        });
-    }
-
-    // ── Pass 2: Batch embed all event texts ──────────────────────────────
-
-    // Collect non-empty texts and their indices
-    let texts_with_idx: Vec<(usize, String)> = work
-        .iter()
-        .enumerate()
-        .filter(|(_, w)| !w.text.trim().is_empty())
-        .map(|(i, w)| (i, w.text.clone()))
-        .collect();
-
-    let mut embeddings: Vec<Option<Vec<f32>>> = vec![None; work.len()];
-
-    if !texts_with_idx.is_empty() {
-        let batch_texts: Vec<String> = texts_with_idx.iter().map(|(_, t)| t.clone()).collect();
-        let batch_indices: Vec<usize> = texts_with_idx.iter().map(|(i, _)| *i).collect();
-
-        match crate::search::embedder::get_embedder().await {
-            Ok(embedder) => match embedder.embed_batch_async(batch_texts).await {
-                Ok(batch_results) => {
-                    for (result_idx, &work_idx) in batch_indices.iter().enumerate() {
-                        if result_idx < batch_results.len() {
-                            embeddings[work_idx] = Some(batch_results[result_idx].clone());
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Batch embedding failed, proceeding with Shannon-only entropy");
-                }
-            },
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to load embedder, proceeding with Shannon-only entropy");
-            }
-        }
-    }
-
-    // ── Compute day centroid from available embeddings ─────────────────
-    let day_centroid: Option<Vec<f32>> = {
-        let embedded: Vec<(&Vec<f32>, f32)> = work
-            .iter()
-            .enumerate()
-            .filter_map(|(i, w)| embeddings[i].as_ref().map(|e| (e, w.duration_minutes)))
-            .collect();
-
-        if embedded.is_empty() {
-            None
-        } else {
-            let dim = embedded[0].0.len();
-            let mut weighted_sum = vec![0.0f64; dim];
-            let mut total_weight = 0.0f64;
-
-            for (emb, duration) in &embedded {
-                let w = *duration as f64;
-                total_weight += w;
-                for (j, &val) in emb.iter().enumerate() {
-                    if j < dim {
-                        weighted_sum[j] += val as f64 * w;
-                    }
-                }
-            }
-
-            let centroid: Vec<f32> = weighted_sum.iter().map(|v| (v / total_weight) as f32).collect();
-            let norm: f32 = centroid.iter().map(|v| v * v).sum::<f32>().sqrt();
-            if norm > 0.0 {
-                Some(centroid.iter().map(|v| v / norm).collect())
-            } else {
-                None
-            }
-        }
-    };
-
-    // ── Pass 3: Compute entropy + store everything ───────────────────────
-
-    let mut event_embeddings: Vec<(Vec<f32>, f32)> = Vec::new();
-
-    for (i, item) in work.iter().enumerate() {
-        let w6h_json = serde_json::to_string(&item.w6h).unwrap_or_default();
-        let w6h_entropy = compute_w6h_entropy(&item.w6h);
-
-        let embedding_ref = embeddings[i].as_ref();
-
-        // Semantic distinctness: 1 - cosine_sim(this, day_centroid). Falls back to Shannon when embedding or centroid unavailable.
-        let entropy = match (embedding_ref, day_centroid.as_ref()) {
-            (Some(curr), Some(centroid)) => {
-                (1.0 - cosine_similarity(curr, centroid) as f64).clamp(0.0, 1.0)
-            }
-            _ => w6h_entropy,
-        };
-
-        // Store embedding bytes (or NULL)
-        let embedding_bytes = embedding_ref.map(|e| embedding_to_bytes(e));
-
-        if let Err(e) = sqlx::query(
-            "UPDATE wiki_events SET w6h_activation = $1, embedding = $2, entropy = $3, w6h_entropy = $4 WHERE id = $5",
-        )
-        .bind(&w6h_json)
-        .bind(&embedding_bytes)
-        .bind(entropy)
-        .bind(w6h_entropy)
-        .bind(&item.event_id)
-        .execute(pool)
-        .await
-        {
-            tracing::warn!(error = %e, event_id = item.event_id, "Failed to store event data");
-        }
-
-        // Track for day centroid computation (used by caller for chaos scoring)
-        if let Some(emb) = embedding_ref {
-            event_embeddings.push((emb.clone(), item.duration_minutes));
         }
     }
 
     tracing::info!(
         date = %date,
         event_count = all_events.len(),
-        embedded_count = event_embeddings.len(),
-        "Stored structured events with W6H activation and entropy"
+        created_count,
+        "Stored structured events"
     );
-
-    event_embeddings
 }
 
 /// Extract the primary location for an event's time range from location_visit data.
@@ -1228,6 +1144,7 @@ struct ResolvedEvent {
     start_utc: chrono::DateTime<chrono::Utc>,
     end_utc: chrono::DateTime<chrono::Utc>,
     label: String,
+    summary: Option<String>,
     is_unknown: bool,
 }
 
@@ -1251,11 +1168,15 @@ fn backfill_24h_events(
             let start = parse_hhmm_to_utc(&e.start, date, tz)?;
             let end = parse_hhmm_to_utc(&e.end, date, tz)?;
             if end <= start { return None; } // skip invalid
+            // Treat a literal "Unknown" label as an unknown block even when the
+            // LLM emits it explicitly — keeps downstream classification honest.
+            let is_unknown = e.label.eq_ignore_ascii_case("unknown");
             Some(ResolvedEvent {
                 start_utc: start.max(day_start),
                 end_utc: end.min(day_end),
                 label: e.label.clone(),
-                is_unknown: false,
+                summary: e.summary.clone().filter(|s| !s.trim().is_empty()),
+                is_unknown,
             })
         })
         .collect();
@@ -1288,6 +1209,7 @@ fn backfill_24h_events(
                 start_utc: cursor,
                 end_utc: event.start_utc,
                 label: "Unknown".to_string(),
+                summary: None,
                 is_unknown: true,
             });
         }
@@ -1301,11 +1223,24 @@ fn backfill_24h_events(
             start_utc: cursor,
             end_utc: day_end,
             label: "Unknown".to_string(),
+            summary: None,
             is_unknown: true,
         });
     }
 
-    result
+    // Merge consecutive Unknown blocks into one — keeps the timeline cleaner
+    // when the LLM emits its own "Unknown" event adjacent to a backfilled gap.
+    let mut merged: Vec<ResolvedEvent> = Vec::with_capacity(result.len());
+    for ev in result {
+        if let Some(last) = merged.last_mut() {
+            if last.is_unknown && ev.is_unknown && last.end_utc == ev.start_utc {
+                last.end_utc = ev.end_utc;
+                continue;
+            }
+        }
+        merged.push(ev);
+    }
+    merged
 }
 
 /// Parse "HH:MM" string into UTC DateTime for the given date and timezone.
@@ -1346,9 +1281,3 @@ fn parse_hhmm_to_utc(
     }
 }
 
-/// Compute W6H activation for a time range by checking ontology presence.
-/// Same algorithm as compute_context_vector() but for an arbitrary time range.
-async fn compute_event_w6h(pool: &SqlitePool, start: &str, end: &str) -> [f32; 7] {
-    let presence = detect_ontology_presence(pool, start, end).await;
-    compute_context_vector(&presence)
-}

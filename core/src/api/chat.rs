@@ -140,6 +140,10 @@ pub struct ChatRequest {
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
+    /// Attached project IDs — each is expanded to its item list and inlined
+    /// into the system prompt as a salience lens for the agent.
+    #[serde(rename = "projectIds", default)]
+    pub project_ids: Vec<String>,
 }
 
 fn default_agent() -> String {
@@ -529,75 +533,22 @@ fn parse_tollbooth_error(status: u16, body: &str) -> StreamEvent {
 /// ~10K chars ≈ 2.5K tokens, leaving room for rest of context
 const MAX_PAGE_CONTENT_CHARS: usize = 10_000;
 
-/// Build dynamic telos data for the system prompt.
+/// Build narrative identity content for the system prompt.
 ///
-/// Queries the active telos, current act, and current chapter to provide
-/// the AI with the user's declared direction and current life context.
-/// Returns formatted lines for injection into TELOS_PROMPT, or empty string.
-async fn build_telos_data(pool: &SqlitePool) -> String {
-    let mut parts = Vec::new();
-
-    // Active telos
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT title, description FROM wiki_telos WHERE is_active = 1 LIMIT 1"
+/// Queries the user's narrative identity (present-orientation self-portrait) to provide
+/// Returns the user's narrative identity content (up to 800 chars), or empty string.
+async fn build_narrative_identity(pool: &SqlitePool) -> String {
+    match sqlx::query_scalar::<_, String>(
+        "SELECT content FROM wiki_narrative_identity LIMIT 1"
     )
     .fetch_one(pool)
     .await
     {
-        let mut line = format!("Active telos: {}", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(300).collect();
-            line.push_str(&format!(" — {}", truncated));
+        Ok(content) if !content.is_empty() => {
+            content.chars().take(800).collect()
         }
-        parts.push(line);
+        _ => String::new(),
     }
-
-    // Current act (open, belonging to active telos)
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
-        r#"SELECT a.title, a.description, a.themes
-         FROM wiki_acts a
-         JOIN wiki_telos t ON a.telos_id = t.id
-         WHERE t.is_active = 1 AND a.end_date IS NULL
-         ORDER BY a.start_date DESC LIMIT 1"#
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut line = format!("Current act: \"{}\"", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(200).collect();
-            line.push_str(&format!(" — {}", truncated));
-        }
-        if let Some(themes) = &row.2 {
-            line.push_str(&format!(" (themes: {})", themes));
-        }
-        parts.push(line);
-    }
-
-    // Current chapter (most recent in open act)
-    if let Ok(row) = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
-        r#"SELECT c.title, c.description, c.themes
-         FROM wiki_chapters c
-         JOIN wiki_acts a ON c.act_id = a.id
-         JOIN wiki_telos t ON a.telos_id = t.id
-         WHERE t.is_active = 1 AND a.end_date IS NULL
-         ORDER BY c.start_date DESC LIMIT 1"#
-    )
-    .fetch_one(pool)
-    .await
-    {
-        let mut line = format!("Current chapter: \"{}\"", row.0);
-        if let Some(desc) = &row.1 {
-            let truncated: String = desc.chars().take(200).collect();
-            line.push_str(&format!(" — {}", truncated));
-        }
-        if let Some(themes) = &row.2 {
-            line.push_str(&format!(" (themes: {})", themes));
-        }
-        parts.push(line);
-    }
-
-    parts.join("\n")
 }
 
 /// Build user context block for system prompt enrichment.
@@ -661,9 +612,9 @@ async fn build_user_context(pool: &SqlitePool, user_name: &str) -> Option<String
         }
     }
 
-    // 3. Connected sources — active data source names
+    // 3. Connected sources — active credential names
     if let Ok(rows) = sqlx::query_as::<_, (String,)>(
-        "SELECT name FROM elt_source_connections WHERE is_active = 1 AND is_internal = 0 ORDER BY name"
+        "SELECT name FROM credentials WHERE status = 'active' ORDER BY name"
     )
     .fetch_all(pool)
     .await
@@ -687,14 +638,17 @@ async fn build_user_context(pool: &SqlitePool, user_name: &str) -> Option<String
 
 /// Build system prompt with dynamic context and personalization.
 ///
-/// Assembles: identity → persona → telos → tools → datetime → user_context → active_page.
-/// Loads user name, assistant name, persona, and telos data from profiles.
+/// Assembles: identity → persona → narrative_identity → tools → datetime → user_context → active_page.
+/// Loads user name, assistant name, persona, and narrative identity from profiles.
+/// When `is_new_user` is true, appends the onboarding prompt for first conversations.
 async fn build_system_prompt(
     pool: &SqlitePool,
     active_page: Option<&ActivePageContext>,
     timezone: Option<&str>,
     agent_mode: &str,
     persona_id: &str,
+    is_new_user: bool,
+    project_ids: &[String],
 ) -> String {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
@@ -708,11 +662,31 @@ async fn build_system_prompt(
     // Load persona content from database (or fallback to registry default)
     let persona_content = get_persona_content(pool, persona_id).await.ok().flatten();
 
-    // Build dynamic telos data (active telos + current act/chapter)
-    let telos_data = build_telos_data(pool).await;
+    // Build narrative identity (user's present-orientation self-portrait)
+    let narrative_identity = build_narrative_identity(pool).await;
 
-    // Build personalized base prompt (identity → persona → telos → tools)
-    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &telos_data);
+    // Build personalized base prompt (identity → persona → narrative_identity → tools)
+    let mut prompt = build_personalized_prompt(&assistant_name, &user_name, persona_id, persona_content.as_deref(), agent_mode, &narrative_identity);
+
+    // Inject onboarding prompt for new users (first conversation)
+    if is_new_user {
+        prompt.push_str(crate::agent::prompt::NEW_USER_PROMPT);
+    }
+
+    // Load AI persistent memory (if any)
+    if let Ok(Some(memory)) = sqlx::query_scalar::<_, String>(
+        "SELECT memory FROM app_assistant_profile WHERE memory IS NOT NULL LIMIT 1"
+    )
+    .fetch_optional(pool)
+    .await
+    {
+        if !memory.is_empty() {
+            prompt.push_str(&format!(
+                "\n\n<memory>\nYour persistent memory (saved via update_memory tool). Reference when relevant:\n{}\n</memory>",
+                memory
+            ));
+        }
+    }
 
     // Add current date/time for temporal awareness
     let now = Utc::now();
@@ -750,6 +724,15 @@ async fn build_system_prompt(
         prompt.push_str(&user_context);
     }
 
+    // Inline attached project context blocks. Each block lists the project's
+    // items (label, url, type) as salience hints. Full content is fetched on
+    // demand via the get_project_item tool.
+    if !project_ids.is_empty() {
+        if let Some(block) = build_projects_context(pool, project_ids).await {
+            prompt.push_str(&block);
+        }
+    }
+
     if let Some(ctx) = active_page {
         if let Some(page_id) = &ctx.page_id {
             let title = ctx.page_title.as_deref().unwrap_or("Untitled");
@@ -785,6 +768,101 @@ async fn build_system_prompt(
     }
 
     prompt
+}
+
+/// Maximum items to inline per project before truncating.
+/// Projects with more items still work — the agent can page through via the
+/// get_project_item tool — but the metadata block stays bounded.
+const MAX_PROJECT_ITEMS_INLINED: usize = 100;
+
+/// Build a context block for all attached projects. Returns None if no
+/// projects are found (silently ignores missing/invalid IDs).
+async fn build_projects_context(pool: &SqlitePool, project_ids: &[String]) -> Option<String> {
+    let mut out = String::new();
+    let mut any_rendered = false;
+
+    for project_id in project_ids {
+        let detail = match crate::api::get_project(pool, project_id).await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("[chat] failed to load attached project {}: {}", project_id, e);
+                continue;
+            }
+        };
+
+        any_rendered = true;
+
+        let description_attr = detail
+            .project
+            .description
+            .as_deref()
+            .map(|d| format!(" description=\"{}\"", escape_attr(d)))
+            .unwrap_or_default();
+
+        out.push_str(&format!(
+            "\n\n<attached_project id=\"{}\" name=\"{}\"{}>",
+            detail.project.id,
+            escape_attr(&detail.project.name),
+            description_attr,
+        ));
+
+        let total = detail.items.len();
+        let inlined: Vec<_> = detail.items.iter().take(MAX_PROJECT_ITEMS_INLINED).collect();
+
+        for item in &inlined {
+            let name = item.name.as_deref().unwrap_or(&item.url);
+            let desc_attr = item.description.as_deref()
+                .map(|d| format!(" description=\"{}\"", escape_attr(d)))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "\n  <item url=\"{}\" name=\"{}\"{}/>",
+                escape_attr(&item.url),
+                escape_attr(name),
+                desc_attr,
+            ));
+        }
+
+        if total > MAX_PROJECT_ITEMS_INLINED {
+            out.push_str(&format!(
+                "\n  <!-- {} more items not shown; use get_project_item to page through -->",
+                total - MAX_PROJECT_ITEMS_INLINED
+            ));
+        }
+
+        out.push_str("\n</attached_project>");
+    }
+
+    if !any_rendered {
+        return None;
+    }
+
+    // Preamble explaining what this block means to the model.
+    let preamble = "\n\n<attached_projects_preamble>\nThe user has attached the following project(s) as a context lens. Treat the listed items as high-salience: they are the user's actively curated focus. You may fetch an item's full content on demand with the get_project_item tool.\n</attached_projects_preamble>";
+
+    Some(format!("{}{}", preamble, out))
+}
+
+/// Classify a project item URL to a human-readable type label.
+fn item_type_label(url: &str) -> &'static str {
+    if url.starts_with("/page/") { "page" }
+    else if url.starts_with("/chat/") { "chat" }
+    else if url.starts_with("/person/") { "person" }
+    else if url.starts_with("/place/") { "place" }
+    else if url.starts_with("/org/") { "organization" }
+    else if url.starts_with("/thing/") { "thing" }
+    else if url.starts_with("/day/") { "day" }
+    else if url.starts_with("/drive/") { "file" }
+    else if url.starts_with("/source/") || url.starts_with("/sources/") { "source" }
+    else if url.starts_with("http") { "link" }
+    else { "reference" }
+}
+
+/// Minimal XML attribute escaping for the inlined context block.
+fn escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// Tollbooth configuration validated at handler entry
@@ -876,29 +954,48 @@ pub async fn chat_handler(
         .clone()
         .unwrap_or_else(|| format!("msg_{}", generate_id()));
 
+    // Check onboarding status early — needed for synthetic message injection and tool filtering
+    let _onboarding_status = sqlx::query_scalar::<_, String>(
+        "SELECT onboarding_status FROM app_user_profile LIMIT 1"
+    )
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| "active".to_string());
+
+    // DISABLED for demo — onboarding was repeating the same message
+    let is_new_user = false; // onboarding_status == "new";
+    let is_onboarding = false; // onboarding_status == "new" || onboarding_status == "onboarding";
+
     // Ensure chat exists - use INSERT OR IGNORE to handle race conditions
     let chat_id_str = request.chat_id.clone();
-    let title = request
-        .messages
-        .iter()
-        .find(|m| m.role == "user")
-        .and_then(|m| {
-            m.content.clone().or_else(|| {
-                m.parts.as_ref().and_then(|p| {
-                    p.iter().find_map(|p| match p {
-                        UIPart::Text { text } => Some(text.clone()),
-                        _ => None,
+    let title = if is_new_user {
+        // Onboarding: first conversation, use a friendly default title
+        "Welcome".to_string()
+    } else {
+        let raw_title = request
+            .messages
+            .iter()
+            .find(|m| m.role == "user")
+            .and_then(|m| {
+                m.content.clone().or_else(|| {
+                    m.parts.as_ref().and_then(|p| {
+                        p.iter().find_map(|p| match p {
+                            UIPart::Text { text } => Some(text.clone()),
+                            _ => None,
+                        })
                     })
                 })
             })
-        })
-        .unwrap_or_else(|| "New conversation".to_string());
+            .unwrap_or_else(|| "New conversation".to_string());
 
-    let title = if title.chars().count() > 50 {
-        let t: String = title.chars().take(47).collect();
-        format!("{}...", t)
-    } else {
-        title
+        if raw_title.chars().count() > 50 {
+            let t: String = raw_title.chars().take(47).collect();
+            format!("{}...", t)
+        } else {
+            raw_title
+        }
     };
 
     // Use INSERT OR IGNORE to handle concurrent requests for same chat
@@ -930,9 +1027,9 @@ pub async fn chat_handler(
         }
     }
 
-    // Save the user message to the chat
-    // Find the last user message from the request
+    // Save the last user message to the chat
     if let Some(last_user_msg) = request.messages.iter().rev().find(|m| m.role == "user") {
+        // Normal flow: save the last user message from the request
         let user_content = last_user_msg.content.clone().unwrap_or_else(|| {
             last_user_msg
                 .parts
@@ -1080,7 +1177,16 @@ pub async fn chat_handler(
         .collect();
 
     // Build system prompt with active page context, timezone, personalization, and agent mode
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona).await;
+    // is_onboarding keeps the onboarding prompt active until set_user_name completes
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, &request.project_ids).await;
+
+    // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
+    // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.
+    if is_new_user {
+        let _ = sqlx::query("UPDATE app_user_profile SET onboarding_status = 'onboarding' WHERE onboarding_status = 'new'")
+            .execute(&pool)
+            .await;
+    }
 
     // Build context using compaction summary if available
     let api_messages = build_context_for_llm(
@@ -1090,17 +1196,27 @@ pub async fn chat_handler(
         Some(&system_prompt),
     );
 
-    // Create the streaming response with agent loop for tool execution
-    let stream = create_agent_stream(
-        pool,
-        yjs_state,
-        cancel_state,
-        tollbooth_config,
-        request,
-        api_messages,
-        msg_id,
-        compaction_needed,
-    );
+    // For brand-new users, skip the LLM and emit a preloaded opening message
+    let stream = if is_new_user {
+        create_preloaded_onboarding_stream(
+            pool,
+            request.chat_id.clone(),
+            msg_id,
+            request.agent_id.clone(),
+        )
+    } else {
+        create_agent_stream(
+            pool,
+            yjs_state,
+            cancel_state,
+            tollbooth_config,
+            request,
+            api_messages,
+            msg_id,
+            compaction_needed,
+            is_onboarding,
+        )
+    };
 
     // AI SDK v6 requires this header for UI Message Stream Protocol
     let mut response = Sse::new(stream)
@@ -1496,6 +1612,58 @@ fn _create_chat_stream_legacy(
     })
 }
 
+/// Create a preloaded SSE stream for the onboarding opening message.
+/// Skips the LLM entirely — emits a hardcoded message, saves it to the DB.
+fn create_preloaded_onboarding_stream(
+    pool: SqlitePool,
+    chat_id: String,
+    msg_id: String,
+    agent_id: String,
+) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
+    use crate::agent::prompt::ONBOARDING_OPENING_MESSAGE;
+
+    Box::pin(async_stream::stream! {
+        // TextStart
+        let start_event = StreamEvent::TextStart { id: msg_id.clone() };
+        yield Ok(SseEvent::default().data(serialize_event(&start_event)));
+
+        // TextDelta — emit the full preloaded message
+        let event = StreamEvent::TextDelta {
+            id: msg_id.clone(),
+            delta: ONBOARDING_OPENING_MESSAGE.to_string(),
+        };
+        yield Ok(SseEvent::default().data(serialize_event(&event)));
+
+        // TextEnd
+        let end_event = StreamEvent::TextEnd { id: msg_id.clone() };
+        yield Ok(SseEvent::default().data(serialize_event(&end_event)));
+
+        // [DONE]
+        yield Ok(SseEvent::default().data("[DONE]"));
+
+        // Save assistant message to chat
+        let assistant_message = ChatMessage {
+            id: None,
+            role: "assistant".to_string(),
+            content: ONBOARDING_OPENING_MESSAGE.to_string(),
+            timestamp: Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: Some(agent_id),
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            thought_signature: None,
+            parts: None,
+        };
+
+        if let Err(e) = append_message(&pool, chat_id, assistant_message).await {
+            tracing::error!("Failed to save preloaded onboarding message: {}", e);
+        }
+    })
+}
+
 /// Create the SSE stream using the AgentLoop for tool execution
 fn create_agent_stream(
     pool: SqlitePool,
@@ -1506,6 +1674,7 @@ fn create_agent_stream(
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     compaction_needed: bool,
+    is_onboarding: bool,
 ) -> Pin<Box<dyn Stream<Item = Result<SseEvent, Infallible>> + Send>> {
     let model = request.model.clone();
     let chat_id = request.chat_id.clone();
@@ -1571,10 +1740,15 @@ fn create_agent_stream(
             user_id: None,
             space_id: request.space_id.clone(),
             chat_id: Some(request.chat_id.clone()),
+            action_id: None,
         };
 
-        // Get tool definitions based on agent mode
-        let tools = crate::tools::get_tools_for_agent_mode(&request.agent_mode);
+        // Get tool definitions — onboarding restricts to naming/memory tools only
+        let tools = if is_onboarding {
+            crate::tools::get_tools_for_onboarding()
+        } else {
+            crate::tools::get_tools_for_agent_mode(&request.agent_mode)
+        };
 
         // Send text-start event
         let start_event = StreamEvent::TextStart { id: msg_id.clone() };

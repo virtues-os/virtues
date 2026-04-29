@@ -38,44 +38,6 @@ pub enum Commands {
         port: u16,
     },
 
-    /// Browse available sources and streams (catalog)
-    Catalog {
-        #[command(subcommand)]
-        action: Option<CatalogCommands>,
-    },
-
-    /// Manage data sources
-    Source {
-        #[command(subcommand)]
-        action: SourceCommands,
-    },
-
-    /// Manage streams for a source
-    Stream {
-        #[command(subcommand)]
-        action: StreamCommands,
-    },
-
-    /// Add a new source (OAuth or device)
-    Add {
-        /// Source type (google, notion, ios, mac, etc.)
-        source_type: String,
-
-        /// Device ID (required for device sources like ios, mac)
-        #[arg(long)]
-        device_id: Option<String>,
-
-        /// Device name (required for device sources)
-        #[arg(long)]
-        name: Option<String>,
-    },
-
-    /// Sync all streams for a source
-    Sync {
-        /// Source ID (UUID)
-        source_id: String,
-    },
-
     /// Seed the database with demo data (people, places, events, etc.)
     Seed,
 
@@ -84,141 +46,59 @@ pub enum Commands {
 
     /// Pre-download ML models (embedding, etc.) for offline/Docker use
     WarmModels,
-}
 
-#[derive(Subcommand)]
-pub enum CatalogCommands {
-    /// List all available sources
-    Sources,
+    /// Compute novelty scores for all days with events
+    ComputeNovelty,
 
-    /// Show details about an available source
-    Source {
-        /// Source name (e.g., google, notion)
+    /// Compute autonomic z-scores for all days with avg_hr data
+    ComputeAutonomic,
+
+    /// Pair an iOS device manually (dev shortcut — bypasses web UI auth).
+    ///
+    /// Calls `link_device_manually()`, which writes a `credentials` row
+    /// (Vault) and fans out the per-device iOS `app_actions`. Idempotent.
+    PairIos {
+        /// Device UUID from the iOS app's Settings → Device Identity
+        device_id: String,
+
+        /// Friendly name for the device
+        #[arg(long, default_value = "iPhone")]
         name: String,
     },
 
-    /// List all available streams across all sources
-    Streams,
-}
+    /// Diagnose token encryption: pull stored device tokens, try to decrypt
+    /// them with the current `VIRTUES_ENCRYPTION_KEY`, and report what happens
+    /// for each. Pass an optional bearer token to compare against the
+    /// decrypted plaintext.
+    VerifyTokens {
+        /// Optional bearer token (raw, no "Bearer " prefix) to match against
+        bearer: Option<String>,
+    },
 
-#[derive(Subcommand)]
-pub enum SourceCommands {
-    /// List all configured sources
-    List {
-        /// Show only pending device pairings
+    /// Generate the day summary (autobiography + 24h event timeline) for a date.
+    ///
+    /// Calls `api::day_summary::generate_day_summary`, which gathers the day's
+    /// ontology data, prompts the user's chat model via Tollbooth, and writes
+    /// the results to `wiki_days` (autobiography/epigraph/data_quality) and
+    /// `wiki_events` (clearing existing auto events first; manual events are
+    /// preserved). Gaps in the LLM-emitted timeline are backfilled as "Unknown"
+    /// to guarantee 00:00–24:00 coverage.
+    DaySummary {
+        /// Date to summarize (YYYY-MM-DD). Defaults to today in the user's
+        /// profile timezone (or local time if no timezone is set).
         #[arg(long)]
-        pending: bool,
+        date: Option<String>,
     },
 
-    /// Show details about a source
-    Show {
-        /// Source ID (UUID)
-        id: String,
-    },
-
-    /// Get source status with sync statistics
-    Status {
-        /// Source ID (UUID)
-        id: String,
-    },
-
-    /// Delete a source
-    Delete {
-        /// Source ID (UUID)
-        id: String,
-
-        /// Skip confirmation prompt
-        #[arg(long)]
-        yes: bool,
-    },
-
-    /// Show sync history for a source
-    History {
-        /// Source ID (UUID)
-        id: String,
-
-        /// Number of recent syncs to show
-        #[arg(long, default_value = "10")]
-        limit: i64,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum StreamCommands {
-    /// List all streams for a source
-    List {
-        /// Source ID (UUID)
-        source_id: String,
-    },
-
-    /// Show details about a specific stream
-    Show {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., calendar, gmail)
-        stream_name: String,
-    },
-
-    /// Enable a stream
-    Enable {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., calendar, gmail)
-        stream_name: String,
-    },
-
-    /// Disable a stream
-    Disable {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., calendar, gmail)
-        stream_name: String,
-    },
-
-    /// Set cron schedule for a stream
-    Schedule {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., calendar, gmail)
-        stream_name: String,
-
-        /// Cron expression in 6-field format: sec min hour day month dow (e.g., "0 0 */6 * * *")
-        #[arg(long)]
-        cron: Option<String>,
-    },
-
-    /// Show sync history for a specific stream
-    History {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., calendar, gmail)
-        stream_name: String,
-
-        /// Number of recent syncs to show
-        #[arg(long, default_value = "10")]
-        limit: i64,
-    },
-
-    /// Trigger a manual sync for a specific stream
-    Sync {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., calendar, gmail)
-        stream_name: String,
-    },
-
-    /// Trigger a transform job for a specific stream
-    Transform {
-        /// Source ID (UUID)
-        source_id: String,
-
-        /// Stream name (e.g., stream_ios_microphone, stream_google_gmail)
-        stream_name: String,
+    /// Run entity resolution (places + people) over the last N hours.
+    ///
+    /// This is the bridge while the legacy transform-chaining pipeline still
+    /// owns clustering. The new actions path (ios_location, etc.) writes
+    /// `data_location_point` rows but doesn't chain into place resolution,
+    /// so visits don't get created. Use this to manually backfill.
+    ResolveEntities {
+        /// Lookback window in hours (default: 24)
+        #[arg(long, default_value_t = 24)]
+        hours: i64,
     },
 }

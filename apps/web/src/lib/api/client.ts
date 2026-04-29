@@ -89,54 +89,374 @@ export async function syncStream(
 	return res.json();
 }
 
-// Jobs
-export interface Job {
+// ============================================================================
+// Actions — new schema (post cutover + PR 2 endpoints)
+// ============================================================================
+
+export type ActionTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook';
+
+export interface ActionRun {
 	id: string;
-	job_type: 'sync' | 'transform';
-	status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-	source_id?: string;
-	source_name?: string; // Enriched in page load, not from API
-	stream_name?: string;
-	sync_mode?: 'full_refresh' | 'incremental' | 'backfill';
-	transform_id?: string;
+	action_id: string | null;
+	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped';
 	started_at: string;
-	completed_at?: string;
+	completed_at: string | null;
 	records_processed: number;
-	error_message?: string;
-	error_class?: string;
-	metadata: Record<string, unknown> | null;
+	error: string | null;
+	trigger: ActionTrigger;
+	parent_run_id: string | null;
+	transform_stage: string | null;
+	result_summary: string | null;
+	created_at: string;
+}
+
+export interface ActionLastRun {
+	status: string;
+	started_at: string | null;
+	completed_at?: string | null;
+	records_processed: number | null;
+	error: string | null;
+	summary?: string | null;
+}
+
+export interface Action {
+	id: string;
+	owner: 'system' | 'user';
+	name: string;
+	agent: string | null;
+	cron_schedule: string | null;
+	enabled: boolean;
+	config: Record<string, unknown>;
+	condition: string | null;
+	triggers: ActionTrigger[];
+	memory: string | null;
+	function_name: string | null;
+	credential_id: string | null;
+	is_system: boolean;
 	created_at: string;
 	updated_at: string;
+	last_run: ActionLastRun | null;
 }
 
-export async function getJobStatus(jobId: string): Promise<Job> {
-	const res = await fetch(`${API_BASE}/jobs/${jobId}`);
-	if (!res.ok) throw new Error(`Failed to get job status: ${res.statusText}`);
+export interface ActionDetail extends Action {
+	recent_runs?: ActionRun[];
+}
+
+export async function listActions(): Promise<Action[]> {
+	const res = await fetch(`${API_BASE}/actions`);
+	if (!res.ok) throw new Error(`Failed to list actions: ${res.statusText}`);
 	return res.json();
 }
 
-export async function queryJobs(params: {
-	source_id?: string;
-	status?: string[]; // e.g., ['succeeded', 'failed']
-	limit?: number;
-}): Promise<Job[]> {
-	const queryParams = new URLSearchParams();
-	if (params.source_id) queryParams.set('source_id', params.source_id);
-	if (params.status && params.status.length > 0) {
-		queryParams.set('status', params.status.join(','));
-	}
-	if (params.limit) queryParams.set('limit', params.limit.toString());
-
-	const res = await fetch(`${API_BASE}/jobs?${queryParams}`);
-	if (!res.ok) throw new Error(`Failed to query jobs: ${res.statusText}`);
+export async function getAction(id: string): Promise<Action> {
+	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
 	return res.json();
 }
 
-export async function cancelJob(jobId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
-		method: 'POST'
+export interface CreateActionRequest {
+	name: string;
+	agent?: string;
+	cron_schedule?: string;
+	triggers?: ActionTrigger[];
+	config?: Record<string, unknown>;
+}
+
+export async function createAction(body: CreateActionRequest): Promise<Action> {
+	const res = await fetch(`${API_BASE}/actions`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
 	});
-	if (!res.ok) throw new Error(`Failed to cancel job: ${res.statusText}`);
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to create action: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export interface PatchActionBody {
+	name?: string;
+	agent?: string | null;
+	cron_schedule?: string | null;
+	enabled?: boolean;
+	config?: Record<string, unknown>;
+	condition?: string | null;
+	triggers?: ActionTrigger[];
+	memory?: string | null;
+}
+
+export async function patchAction(id: string, patch: PatchActionBody): Promise<Action> {
+	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(patch)
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to update action: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export async function deleteAction(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`, {
+		method: 'DELETE'
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to delete action: ${res.statusText}`);
+	}
+}
+
+export interface TriggerActionResponse {
+	run_id: string | null;
+	action_id: string;
+	status: string;
+	summary: string;
+	error: string | null;
+}
+
+export async function runAction(
+	id: string,
+	payload?: Record<string, unknown>
+): Promise<TriggerActionResponse> {
+	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/run`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload ? { payload } : {})
+	});
+	if (!res.ok && res.status !== 500) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to run action: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export async function listActionRuns(
+	id: string,
+	opts?: { limit?: number; status?: string }
+): Promise<ActionRun[]> {
+	const params = new URLSearchParams();
+	if (opts?.limit != null) params.set('limit', String(opts.limit));
+	if (opts?.status) params.set('status', opts.status);
+	const qs = params.toString();
+	const res = await fetch(
+		`${API_BASE}/actions/${encodeURIComponent(id)}/runs${qs ? `?${qs}` : ''}`
+	);
+	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
+	return res.json();
+}
+
+export async function listRuns(opts?: {
+	limit?: number;
+	status?: string;
+	action_id?: string;
+}): Promise<ActionRun[]> {
+	const params = new URLSearchParams();
+	if (opts?.limit != null) params.set('limit', String(opts.limit));
+	if (opts?.status) params.set('status', opts.status);
+	if (opts?.action_id) params.set('action_id', opts.action_id);
+	const qs = params.toString();
+	const res = await fetch(`${API_BASE}/runs${qs ? `?${qs}` : ''}`);
+	if (!res.ok) throw new Error(`Failed to list runs: ${res.statusText}`);
+	return res.json();
+}
+
+/** Get a single action run by ID (used for polling sync job status) */
+export async function getJobStatus(
+	jobId: string
+): Promise<{ id: string; status: string; records_processed: number; error: string | null }> {
+	const res = await fetch(`${API_BASE}/actions/runs/${jobId}`);
+	if (!res.ok) throw new Error(`Failed to get run status: ${res.statusText}`);
+	return res.json();
+}
+
+// ============================================================================
+// Credentials
+// ============================================================================
+
+export interface DeviceInfo {
+	device_id: string;
+	device_name: string;
+	device_model: string;
+	os_version: string;
+	app_version: string | null;
+}
+
+export interface Credential {
+	id: string;
+	provider: string;
+	name: string;
+	auth_type: string;
+	is_active: boolean;
+	device_info: DeviceInfo | null;
+	last_seen_at: string | null;
+	created_at: string;
+	action_count: number;
+}
+
+export async function listCredentials(): Promise<Credential[]> {
+	const res = await fetch(`${API_BASE}/credentials`);
+	if (!res.ok) throw new Error(`Failed to list credentials: ${res.statusText}`);
+	return res.json();
+}
+
+export async function renameCredential(id: string, name: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/credentials/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to rename credential: ${res.statusText}`);
+	}
+}
+
+export async function revokeCredential(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/credentials/${encodeURIComponent(id)}`, {
+		method: 'DELETE'
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to revoke credential: ${res.statusText}`);
+	}
+}
+
+// Source catalog
+//
+// One tile per [[source]] in actions/templates.toml. Drives the Sources tab grid.
+// `auth_kind` tells the UI which connect flow to dispatch on click.
+export type SourceAuthKind = 'self_issued_bearer' | 'via_proxy' | 'api_key';
+
+
+export interface SourceCatalogItem {
+	id: string;
+	name: string;
+	icon: string | null;
+	description: string | null;
+	auth_kind: SourceAuthKind;
+	credential_count: number;
+}
+
+/**
+ * Fetch the source catalog (one tile per `[[source]]` in templates.toml).
+ *
+ * Note: this is named `listSourceCatalog` (not `listSources`) because the
+ * legacy `listSources()` at the top of this file still exists for dead
+ * endpoints awaiting cleanup. Both eventually collapse to one name.
+ */
+export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
+	const res = await fetch(`${API_BASE}/sources`);
+	if (!res.ok) throw new Error(`Failed to list sources: ${res.statusText}`);
+	return res.json();
+}
+
+// Backwards-compat aliases (deleted in Phase 6 cleanup).
+export type ConnectorAuthKind = SourceAuthKind;
+export type ConnectorCatalogItem = SourceCatalogItem;
+export const listConnectors = listSourceCatalog;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source-connect flows (drive the 5 thin handlers in core/src/api/source_auth.rs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PairInitiateResponse {
+	credential_id: string;
+	qr_payload: string;
+}
+
+/** POST /api/pairing/initiate — mint a pending credential for a self_issued_bearer source. */
+export async function pairInitiate(
+	source_id: string,
+	name: string
+): Promise<PairInitiateResponse> {
+	const res = await fetch(`${API_BASE}/pairing/initiate`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ source_id, name })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `pair_initiate failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export interface PairCompleteResponse {
+	credential_id: string;
+	action_ids: Record<string, string>;
+}
+
+/** POST /api/pairing/complete/:credential_id — finalize self_issued_bearer + return fan-out. */
+export async function pairComplete(
+	credential_id: string,
+	token: string,
+	device_info: Record<string, unknown> = {}
+): Promise<PairCompleteResponse> {
+	const res = await fetch(
+		`${API_BASE}/pairing/complete/${encodeURIComponent(credential_id)}`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token, device_info })
+		}
+	);
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `pair_complete failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export interface OauthStartResponse {
+	redirect_url: string;
+}
+
+/** POST /api/connect/:source_id/start — sign state, return proxy redirect URL. */
+export async function oauthStart(
+	source_id: string,
+	opts: { existing_credential_id?: string; return_url?: string } = {}
+): Promise<OauthStartResponse> {
+	const res = await fetch(
+		`${API_BASE}/connect/${encodeURIComponent(source_id)}/start`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(opts)
+		}
+	);
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `oauth_start failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export interface ApiKeyCompleteResponse {
+	credential_id: string;
+}
+
+/** POST /api/connect/:source_id/complete — encrypt + store a pasted token. */
+export async function apikeyComplete(
+	source_id: string,
+	name: string,
+	fields: Record<string, string>
+): Promise<ApiKeyCompleteResponse> {
+	const res = await fetch(
+		`${API_BASE}/connect/${encodeURIComponent(source_id)}/complete`,
+		{
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ name, fields })
+		}
+	);
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `apikey_complete failed: ${res.statusText}`);
+	}
+	return res.json();
 }
 
 // OAuth
@@ -175,76 +495,53 @@ import type {
 } from '$lib/types/device-pairing';
 
 /**
- * Initiate device pairing - generates a 6-character pairing code
- * @param deviceType - Type of device (e.g., "ios", "mac")
- * @param name - Display name for the device
- * @returns Pairing code, source ID, and expiration time
+ * Initiate device pairing — wraps the Phase 6+ `/api/pairing/initiate` endpoint.
+ *
+ * The legacy 6-char pairing code is gone; instead the new endpoint returns
+ * a `credential_id` + `qr_payload`. We adapt to the legacy `PairingInitResponse`
+ * shape (with `source_id` populated from `credential_id`) so the modal that
+ * still reads this type keeps working without a rewrite.
+ *
+ * @param deviceType - Source id (e.g., "ios", "mac"). Becomes the `source_id`
+ *   on the credentials row.
+ * @param name - Display name for the credential.
  */
 export async function initiatePairing(
 	deviceType: string,
 	name: string
 ): Promise<PairingInitResponse> {
-	const request: InitiatePairingRequest = {
-		device_type: deviceType,
-		name
+	const { credential_id } = await pairInitiate(deviceType, name);
+	return {
+		source_id: credential_id,
+		code: '',
+		expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
 	};
-
-	const res = await fetch(`${API_BASE}/devices/pairing/initiate`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request)
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to initiate pairing: ${res.statusText}`);
-	}
-
-	return res.json();
 }
 
 /**
- * Complete device pairing (typically called by device, not web UI)
- * @param code - 6-character pairing code
- * @param deviceInfo - Device information (ID, name, model, OS version)
- * @returns Device token and available streams
- */
-export async function completePairing(
-	code: string,
-	deviceInfo: CompletePairingRequest['device_info']
-): Promise<PairingCompleteResponse> {
-	const request: CompletePairingRequest = {
-		code,
-		device_info: deviceInfo
-	};
-
-	const res = await fetch(`${API_BASE}/devices/pairing/complete`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request)
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to complete pairing: ${res.statusText}`);
-	}
-
-	return res.json();
-}
-
-/**
- * Check the status of a device pairing
- * @param sourceId - Source ID from initiatePairing
- * @returns Current pairing status (pending, active, or revoked)
+ * Check pairing status by polling the credential row.
+ *
+ * The legacy `GET /api/devices/pairing/:source_id` endpoint is gone.
+ * We poll the credentials list and look up the row by id.
  */
 export async function getPairingStatus(sourceId: string): Promise<PairingStatus> {
-	const res = await fetch(`${API_BASE}/devices/pairing/${sourceId}`);
-
-	if (!res.ok) {
-		throw new Error(`Failed to get pairing status: ${res.statusText}`);
+	const list = await listCredentials();
+	const row = list.find((c) => c.id === sourceId);
+	if (!row) {
+		return { status: 'pending' };
 	}
-
-	return res.json();
+	if (row.is_active) {
+		return {
+			status: 'active',
+			device_info: row.device_info ?? {
+				device_id: '',
+				device_name: row.name,
+				device_model: '',
+				os_version: ''
+			}
+		};
+	}
+	return { status: 'pending' };
 }
 
 /**
@@ -798,23 +1095,7 @@ export async function getSpace(id: string): Promise<Space> {
 	return res.json();
 }
 
-/**
- * Create a new space
- */
-export async function createSpace(
-	name: string,
-	icon?: string,
-	theme_id?: string,
-	accent_color?: string
-): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, icon, theme_id, accent_color })
-	});
-	if (!res.ok) throw new Error(`Failed to create space: ${res.statusText}`);
-	return res.json();
-}
+// createSpace removed — single workspace model
 
 /**
  * Update an existing space
@@ -838,25 +1119,7 @@ export async function updateSpace(
 	return res.json();
 }
 
-/**
- * Delete a space by ID
- */
-export async function deleteSpace(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete space: ${res.statusText}`);
-}
-
-/**
- * Save tab state for a space
- */
-export async function saveSpaceTabState(id: string, tabStateJson: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${id}/tabs`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ active_tab_state_json: tabStateJson })
-	});
-	if (!res.ok) throw new Error(`Failed to save tab state: ${res.statusText}`);
-}
+// deleteSpace + saveSpaceTabState removed — single workspace model
 
 // =============================================================================
 // Views API (replaces Explorer Nodes)
@@ -1314,6 +1577,207 @@ export async function deletePageShare(pageId: string): Promise<void> {
 export async function getSharedPage(token: string): Promise<SharedPage> {
 	const res = await fetch(`${API_BASE}/s/${token}`);
 	if (!res.ok) throw new Error(`Page not found`);
+	return res.json();
+}
+
+// ============================================================================
+// Reflections API (pages linked to a day)
+// ============================================================================
+
+/** Get all reflections for a date. */
+export async function getReflectionsForDate(date: string): Promise<Page[]> {
+	const res = await fetch(`${API_BASE}/pages/reflections/${date}`);
+	if (!res.ok) throw new Error(`Failed to get reflections: ${res.statusText}`);
+	return res.json();
+}
+
+/** Create a new reflection page for a date. */
+export async function createReflection(date: string): Promise<Page> {
+	const res = await fetch(`${API_BASE}/pages/reflections/${date}`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Failed to create reflection: ${res.statusText}`);
+	return res.json();
+}
+
+// ============================================================================
+// Projects API
+// ============================================================================
+
+export interface Project {
+	id: string;
+	name: string;
+	icon: string | null;
+	description: string | null;
+	sort_order: number;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface ProjectSummary extends Project {
+	item_count: number;
+}
+
+export interface ProjectItem {
+	id: string;
+	project_id: string;
+	url: string;
+	name: string | null;
+	description: string | null;
+	sort_order: number;
+	added_at: string;
+}
+
+export interface ProjectDetail extends Project {
+	items: ProjectItem[];
+}
+
+export interface ProjectListResponse {
+	projects: ProjectSummary[];
+}
+
+export async function listProjects(): Promise<ProjectListResponse> {
+	const res = await fetch(`${API_BASE}/projects`);
+	if (!res.ok) throw new Error(`Failed to list projects: ${res.statusText}`);
+	return res.json();
+}
+
+export async function getProject(id: string): Promise<ProjectDetail> {
+	const res = await fetch(`${API_BASE}/projects/${id}`);
+	if (!res.ok) throw new Error(`Failed to get project: ${res.statusText}`);
+	return res.json();
+}
+
+export async function createProject(
+	name: string,
+	options?: { icon?: string | null; description?: string | null },
+): Promise<Project> {
+	const res = await fetch(`${API_BASE}/projects`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name, icon: options?.icon ?? null, description: options?.description ?? null }),
+	});
+	if (!res.ok) throw new Error(`Failed to create project: ${res.statusText}`);
+	return res.json();
+}
+
+export async function updateProject(
+	id: string,
+	updates: {
+		name?: string;
+		icon?: string | null;
+		description?: string | null;
+		sort_order?: number;
+	},
+): Promise<Project> {
+	const res = await fetch(`${API_BASE}/projects/${id}`, {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(updates),
+	});
+	if (!res.ok) throw new Error(`Failed to update project: ${res.statusText}`);
+	return res.json();
+}
+
+export async function deleteProject(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete project: ${res.statusText}`);
+}
+
+export async function addProjectItem(
+	projectId: string,
+	url: string,
+	options?: { name?: string | null; description?: string | null },
+): Promise<ProjectItem> {
+	const res = await fetch(`${API_BASE}/projects/${projectId}/items`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url, name: options?.name ?? null, description: options?.description ?? null }),
+	});
+	if (!res.ok) throw new Error(`Failed to add project item: ${res.statusText}`);
+	return res.json();
+}
+
+export async function removeProjectItem(projectId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/projects/${projectId}/items`, {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ url }),
+	});
+	if (!res.ok) throw new Error(`Failed to remove project item: ${res.statusText}`);
+}
+
+export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/projects/${projectId}/items/reorder`, {
+		method: 'PUT',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ urls }),
+	});
+	if (!res.ok) throw new Error(`Failed to reorder project items: ${res.statusText}`);
+}
+
+// ============================================================================
+// Ontologies API
+// ============================================================================
+
+export interface OntologyColumnInfo {
+	name: string;
+	data_type: string;
+	is_nullable: boolean;
+}
+
+export interface OntologyDataResponse {
+	table_name: string;
+	display_name: string;
+	domain: string;
+	columns: OntologyColumnInfo[];
+	key_columns: string[];
+	timestamp_column: string;
+	rows: Record<string, unknown>[];
+	total_count: number;
+	limit: number;
+	offset: number;
+}
+
+export interface OntologyOverview {
+	name: string;
+	domain: string;
+	record_count: number;
+	sample_record: Record<string, unknown> | null;
+}
+
+export async function listAvailableOntologies(): Promise<string[]> {
+	const res = await fetch(`${API_BASE}/ontologies/available`);
+	if (!res.ok) throw new Error(`Failed to list ontologies: ${res.statusText}`);
+	return res.json();
+}
+
+export async function getOntologiesOverview(): Promise<OntologyOverview[]> {
+	const res = await fetch(`${API_BASE}/ontologies/overview`);
+	if (!res.ok) throw new Error(`Failed to get ontologies overview: ${res.statusText}`);
+	return res.json();
+}
+
+export async function queryOntologyData(
+	tableName: string,
+	params?: {
+		limit?: number;
+		offset?: number;
+		sort?: string;
+		dir?: string;
+		date?: string;
+		search?: string;
+	},
+): Promise<OntologyDataResponse> {
+	const searchParams = new URLSearchParams();
+	if (params?.limit != null) searchParams.set('limit', String(params.limit));
+	if (params?.offset != null) searchParams.set('offset', String(params.offset));
+	if (params?.sort) searchParams.set('sort', params.sort);
+	if (params?.dir) searchParams.set('dir', params.dir);
+	if (params?.date) searchParams.set('date', params.date);
+	if (params?.search) searchParams.set('search', params.search);
+
+	const qs = searchParams.toString();
+	const res = await fetch(`${API_BASE}/ontologies/${tableName}/data${qs ? `?${qs}` : ''}`);
+	if (!res.ok) throw new Error(`Failed to query ontology data: ${res.statusText}`);
 	return res.json();
 }
 

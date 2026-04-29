@@ -1,6 +1,6 @@
 //! Activity Metrics API
 //!
-//! Provides aggregated job metrics with time window comparisons for the Activity dashboard.
+//! Provides aggregated run metrics with time window comparisons for the Activity dashboard.
 
 use crate::database::Database;
 use crate::Result;
@@ -82,20 +82,19 @@ pub struct RecentError {
 
 /// Get comprehensive activity metrics
 pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
-    // Summary query
     let summary_row = sqlx::query(
         r#"
         SELECT
             COUNT(*) as total,
-            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as succeeded,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as succeeded,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
             SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-            SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END) as active,
+            SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as active,
             CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as total_records,
             AVG(CASE WHEN completed_at IS NOT NULL
                 THEN (julianday(completed_at) - julianday(started_at)) * 86400
                 ELSE NULL END) as avg_duration
-        FROM elt_jobs
+        FROM app_action_runs
         "#,
     )
     .fetch_one(db.pool())
@@ -122,20 +121,21 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
         avg_duration_seconds: summary_row.try_get("avg_duration").ok(),
     };
 
-    // Job type breakdown
+    // Task type breakdown (sync, agent, function) via app_actions join
     let job_type_rows = sqlx::query(
         r#"
         SELECT
-            job_type,
+            COALESCE(t.action_type, 'transform') as action_type,
             COUNT(*) as total,
-            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as succeeded,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-            AVG(CASE WHEN completed_at IS NOT NULL
-                THEN (julianday(completed_at) - julianday(started_at)) * 86400
+            SUM(CASE WHEN r.status = 'success' THEN 1 ELSE 0 END) as succeeded,
+            SUM(CASE WHEN r.status = 'error' THEN 1 ELSE 0 END) as failed,
+            AVG(CASE WHEN r.completed_at IS NOT NULL
+                THEN (julianday(r.completed_at) - julianday(r.started_at)) * 86400
                 ELSE NULL END) as avg_duration,
-            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as total_records
-        FROM elt_jobs
-        GROUP BY job_type
+            CAST(COALESCE(SUM(r.records_processed), 0) AS INTEGER) as total_records
+        FROM app_action_runs r
+        LEFT JOIN app_actions t ON r.action_id = t.id
+        GROUP BY COALESCE(t.action_type, 'transform')
         ORDER BY total DESC
         "#,
     )
@@ -145,7 +145,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     let by_job_type: Vec<JobTypeStats> = job_type_rows
         .iter()
         .map(|row| JobTypeStats {
-            job_type: row.try_get("job_type").unwrap_or_default(),
+            job_type: row.try_get("action_type").unwrap_or_default(),
             total: row.try_get("total").unwrap_or(0),
             succeeded: row.try_get("succeeded").unwrap_or(0),
             failed: row.try_get("failed").unwrap_or(0),
@@ -160,10 +160,12 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     // Recent errors (last 10)
     let error_rows = sqlx::query(
         r#"
-        SELECT id, job_type, stream_name, error_message, error_class, completed_at
-        FROM elt_jobs
-        WHERE status = 'failed' AND error_message IS NOT NULL
-        ORDER BY completed_at DESC NULLS LAST
+        SELECT r.id, COALESCE(t.action_type, 'transform') as action_type,
+               r.transform_stage, r.error, r.completed_at
+        FROM app_action_runs r
+        LEFT JOIN app_actions t ON r.action_id = t.id
+        WHERE r.status = 'error' AND r.error IS NOT NULL
+        ORDER BY r.completed_at DESC NULLS LAST
         LIMIT 10
         "#,
     )
@@ -173,14 +175,11 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     let recent_errors: Vec<RecentError> = error_rows
         .iter()
         .map(|row| RecentError {
-            job_id: row
-                .try_get::<uuid::Uuid, _>("id")
-                .map(|u| u.to_string())
-                .unwrap_or_default(),
-            job_type: row.try_get("job_type").unwrap_or_default(),
-            stream_name: row.try_get("stream_name").ok(),
-            error_message: row.try_get("error_message").unwrap_or_default(),
-            error_class: row.try_get("error_class").ok(),
+            job_id: row.try_get::<String, _>("id").unwrap_or_default(),
+            job_type: row.try_get("action_type").unwrap_or_default(),
+            stream_name: row.try_get("transform_stage").ok(),
+            error_message: row.try_get("error").unwrap_or_default(),
+            error_class: None,
             failed_at: row.try_get("completed_at").unwrap_or_else(|_| Utc::now()),
         })
         .collect();
@@ -188,7 +187,7 @@ pub async fn get_activity_metrics(db: &Database) -> Result<ActivityMetrics> {
     Ok(ActivityMetrics {
         summary,
         by_job_type,
-        by_stream: vec![], // Can add stream breakdown if needed
+        by_stream: vec![],
         time_windows,
         recent_errors,
     })
@@ -208,10 +207,10 @@ async fn get_period_stats(db: &Database, since: DateTime<Utc>) -> Result<PeriodS
     let row = sqlx::query(
         r#"
         SELECT
-            SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) as completed,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
             CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records
-        FROM elt_jobs
+        FROM app_action_runs
         WHERE created_at >= $1
         "#,
     )

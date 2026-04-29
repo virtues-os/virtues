@@ -11,7 +11,9 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
+	import { projectsStore } from "$lib/stores/projects.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
+	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
@@ -35,23 +37,8 @@
 	// Track initialization state
 	let initialized = $state(false);
 
-	// Global keyboard shortcut handler for workspace switching (⌘1-9)
-	function handleGlobalKeydown(e: KeyboardEvent) {
-		// ⌘1-9 for workspace switching
-		if (e.metaKey && e.key >= "1" && e.key <= "9") {
-			e.preventDefault();
-			const index = parseInt(e.key) - 1;
-			const spaces = spaceStore.spaces;
-			if (index < spaces.length) {
-				spaceStore.switchSpace(spaces[index].id, true);
-			}
-		}
-	}
-
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
-		// Register global keyboard shortcuts
-		window.addEventListener("keydown", handleGlobalKeydown);
 		// Global dragover handler: Allow drops on document by preventing default
 		// This is a fallback to ensure drops are never blocked by missing handlers
 		document.addEventListener("dragover", (e) => {
@@ -61,8 +48,14 @@
 			}
 		});
 
+		// Collapse sidebar for new users (first-time onboarding)
+		if (data?.onboardingStatus === 'new') {
+			sidebarState.collapsed = true;
+		}
+
 		// Load global data
 		chatSessions.load();
+		projectsStore.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
@@ -178,10 +171,7 @@
 		spaceStore.destroyUrlSync();
 		subscriptionStore.stop();
 
-		// Clean up global keyboard shortcut listener
-		if (typeof window !== "undefined") {
-			window.removeEventListener("keydown", handleGlobalKeydown);
-		}
+		// (workspace switching keyboard shortcuts removed — single workspace now)
 	});
 
 	// Trial countdown toasts (day 5, 2, 1, 0)

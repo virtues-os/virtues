@@ -1,7 +1,7 @@
 //! Seed Testing API
 //!
 //! Provides endpoints to inspect the results of the Monday in Rome seed data,
-//! allowing validation of the full pipeline: Archive → Transform → Entity Resolution
+//! allowing validation of the full pipeline: Sync → Transform → Entity Resolution
 
 use crate::database::Database;
 use virtues_registry::ontologies::registered_ontologies;
@@ -13,21 +13,21 @@ use sqlx::Row;
 /// Pipeline status overview showing all stages
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PipelineStatus {
-    pub archive_jobs: ArchiveJobsStatus,
-    pub transform_jobs: TransformJobsStatus,
+    pub sync_runs: SyncRunsStatus,
+    pub transform_runs: TransformRunsStatus,
     pub location_clustering: LocationClusteringStatus,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ArchiveJobsStatus {
+pub struct SyncRunsStatus {
     pub total: i64,
     pub completed: i64,
     pub failed: i64,
-    pub records_archived: i64,
+    pub records_synced: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TransformJobsStatus {
+pub struct TransformRunsStatus {
     pub total: i64,
     pub completed: i64,
     pub records_processed: i64,
@@ -51,51 +51,51 @@ pub struct DataQualityMetrics {
 
 /// Get pipeline status for all stages
 pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
-    // Archive jobs status
-    let archive_row = sqlx::query(
+    // Sync runs status (runs with a action_id, no parent_run_id)
+    let sync_row = sqlx::query(
         r#"
         SELECT
             COUNT(*) as total,
-            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
-            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_archived
-        FROM elt_jobs
-        WHERE job_type = 'archive'
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) as failed,
+            CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_synced
+        FROM app_action_runs
+        WHERE action_id IS NOT NULL AND parent_run_id IS NULL
         "#,
     )
     .fetch_one(db.pool())
     .await?;
 
-    let archive_jobs = ArchiveJobsStatus {
-        total: archive_row.try_get("total")?,
-        completed: archive_row.try_get("completed")?,
-        failed: archive_row.try_get("failed")?,
-        records_archived: archive_row.try_get("records_archived")?,
+    let sync_runs = SyncRunsStatus {
+        total: sync_row.try_get("total")?,
+        completed: sync_row.try_get("completed")?,
+        failed: sync_row.try_get("failed")?,
+        records_synced: sync_row.try_get("records_synced")?,
     };
 
-    // Transform jobs status
+    // Transform runs status (runs with parent_run_id set)
     let transform_row = sqlx::query(
         r#"
         SELECT
             COUNT(*) as total,
-            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as completed,
             CAST(COALESCE(SUM(records_processed), 0) AS INTEGER) as records_processed
-        FROM elt_jobs
-        WHERE job_type = 'transform'
+        FROM app_action_runs
+        WHERE parent_run_id IS NOT NULL
         "#,
     )
     .fetch_one(db.pool())
     .await?;
 
-    // Count unique ontology tables populated (rough estimate from jobs metadata)
+    // Count unique transform stages
     let ontology_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT json_extract(metadata, '$.stream_name')) FROM elt_jobs WHERE job_type = 'transform' AND status = 'completed'"
+        "SELECT COUNT(DISTINCT transform_stage) FROM app_action_runs WHERE parent_run_id IS NOT NULL AND status = 'success'"
     )
     .fetch_one(db.pool())
     .await
     .unwrap_or(0);
 
-    let transform_jobs = TransformJobsStatus {
+    let transform_runs = TransformRunsStatus {
         total: transform_row.try_get("total")?,
         completed: transform_row.try_get("completed")?,
         records_processed: transform_row.try_get("records_processed")?,
@@ -120,8 +120,8 @@ pub async fn get_pipeline_status(db: &Database) -> Result<PipelineStatus> {
     };
 
     Ok(PipelineStatus {
-        archive_jobs,
-        transform_jobs,
+        sync_runs,
+        transform_runs,
         location_clustering,
     })
 }

@@ -25,9 +25,12 @@ pub async fn execute_sql(
     _pool: &sqlx::SqlitePool,
     request: ExecuteSqlRequest,
 ) -> Result<SqlQueryResult> {
-    // Get the database URL from environment (same as main pool)
+    // Get the database URL from environment (already normalized to absolute by main.rs).
+    // The fallback is intentionally relative for the rare case where this is called
+    // outside the main process — main.rs normalizes the env var at startup, so by
+    // the time this runs as part of the server, DATABASE_URL is absolute.
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite:/data/virtues.db".to_string());
+        .unwrap_or_else(|_| "sqlite:./data/virtues.db".to_string());
     
     // Parse the URL and create read-only options
     let base_options = SqliteConnectOptions::from_str(&database_url)

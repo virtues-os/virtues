@@ -283,4 +283,8 @@ struct PairingCompleteRequest: Codable {
 struct PairingCompleteResponse: Codable {
     let sourceId: String
     let deviceToken: String
+    /// Backend `function_name → action_id` map the device persists and uses
+    /// when posting each stream flush to `POST /webhook/{action_id}`.
+    /// Optional for forward-compat with older server builds.
+    let actionIds: [String: String]?
 }
