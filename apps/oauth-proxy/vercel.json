@@ -1,10 +1,5 @@
 {
   "version": 2,
-  "git": {
-    "deploymentEnabled": {
-      "traffic": false
-    }
-  },
   "builds": [
     {
       "src": "api/index.ts",
