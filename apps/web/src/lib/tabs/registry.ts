@@ -22,6 +22,7 @@ import DataSourcesView from '$lib/components/tabs/views/DataSourcesView.svelte';
 import DataSourceDetailView from '$lib/components/tabs/views/DataSourceDetailView.svelte';
 import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
+import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
 import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
@@ -39,6 +40,8 @@ import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
+import ProjectsView from '$lib/components/tabs/views/ProjectsView.svelte';
+import ProjectDetailView from '$lib/components/tabs/views/ProjectDetailView.svelte';
 import FolderView from '$lib/components/tabs/views/FolderView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
@@ -468,6 +471,48 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// PROJECT NAMESPACE: /projects, /projects/prj_{id}
+	// A project is a curated set of references you @-mention in chat.
+	// ========================================================================
+	project: {
+		match: (path) =>
+			path === '/projects' || path === '/project' || /^\/projects\/prj_[^/]+$/.test(path),
+		parse: (path) => {
+			// List view (redirect /project to /projects)
+			if (path === '/projects' || path === '/project') {
+				return {
+					type: 'project',
+					label: 'Projects',
+					icon: 'ri:folder-open-line',
+					normalizedRoute: '/projects',
+				};
+			}
+			// Detail view
+			const match = path.match(/^\/projects\/(prj_[^/]+)$/);
+			return {
+				type: 'project',
+				label: 'Project',
+				icon: 'ri:folder-open-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => {
+			if (id) return `prj_${id}`;
+			return 'projects';
+		},
+		deserialize: (serialized) => {
+			if (serialized.startsWith('prj_')) {
+				return `/projects/${serialized}`;
+			}
+			return '/projects';
+		},
+		icon: 'ri:folder-open-line',
+		defaultLabel: 'Projects',
+		component: ProjectsView,
+		detailComponent: ProjectDetailView,
+	},
+
+	// ========================================================================
 	// TOOLS: /tools
 	// ========================================================================
 	tools: {
@@ -499,6 +544,32 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'ri:flashlight-line',
 		defaultLabel: 'Actions',
 		component: ActionsView,
+	},
+
+	// ========================================================================
+	// ACTION DETAIL: /action/action_{id}
+	// Singular namespace — no list view; actions list lives under `actions`.
+	// ========================================================================
+	action: {
+		match: (path) => /^\/action\/action_[^/]+$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/action\/(action_[^/]+)$/);
+			return {
+				type: 'action',
+				label: 'Action',
+				icon: 'ri:flashlight-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? `action_${id}` : 'action'),
+		deserialize: (serialized) => {
+			if (serialized.startsWith('action_')) return `/action/${serialized}`;
+			return '/actions';
+		},
+		icon: 'ri:flashlight-line',
+		defaultLabel: 'Action',
+		component: ActionDetailView,
+		detailComponent: ActionDetailView,
 	},
 
 	// ========================================================================
@@ -747,8 +818,10 @@ export function parseRoute(route: string): ParsedRoute {
 	const orderedTypes: TabType[] = [
 		// Specific patterns first
 		'source', // Source list and detail views
+		'project', // Project list and detail views
 		'tools', // Tools management page
-		'actions', // Actions list page
+		'actions', // Actions list page (must come before singular 'action')
+		'action', // Action detail page
 		'ontology', // Ontology data browsing
 		'view', // View/folder detail pages
 		'virtues', // Has /virtues/* pattern

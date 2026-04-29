@@ -7,7 +7,7 @@
 mod transform;
 
 use anyhow::Result;
-use virtues_action_helpers::{connect_from_env, output, read_input};
+use virtues_helpers::{connect_from_env, output, read_input};
 
 #[tokio::main]
 async fn main() -> Result<()> {

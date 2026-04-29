@@ -23,8 +23,10 @@ export type TabType =
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
+	| 'project' // Projects: /projects, /projects/prj_{id}
 	| 'tools' // Tools management: /tools
 	| 'actions' // Actions list: /actions
+	| 'action' // Action detail: /action/action_{id}
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}

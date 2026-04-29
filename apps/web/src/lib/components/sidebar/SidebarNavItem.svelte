@@ -31,9 +31,22 @@
 		isSystemItem?: boolean;
 		/** Workspace accent color — shows as a small dot before the icon */
 		accentColor?: string | null;
+		/** When provided, renders a hover-revealed quick-add (+) button */
+		onQuickAdd?: (e: MouseEvent) => void;
+		/** Tooltip for the quick-add button */
+		quickAddTitle?: string;
 	}
 
-	let { item, collapsed = false, indent = 0, inFolderContext, isSystemItem = false, accentColor = null }: Props = $props();
+	let {
+		item,
+		collapsed = false,
+		indent = 0,
+		inFolderContext,
+		isSystemItem = false,
+		accentColor = null,
+		onQuickAdd,
+		quickAddTitle,
+	}: Props = $props();
 
 	// Indent class for nested items
 	const indentClass = $derived(indent === 1 ? 'sidebar-interactive--indent-1' : indent >= 2 ? 'sidebar-interactive--indent-2' : '');
@@ -302,6 +315,21 @@
 			{#if item.href}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<div class="sidebar-item-actions" onclick={handleContextMenu} role="presentation">
+					{#if onQuickAdd}
+						<button
+							class="sidebar-item-action"
+							title={quickAddTitle ?? 'New'}
+							onclick={(e) => {
+								e.preventDefault();
+								e.stopPropagation();
+								onQuickAdd(e);
+							}}
+						>
+							<svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+								<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+							</svg>
+						</button>
+					{/if}
 					<button class="sidebar-item-action" title="More options">
 						<Icon icon="ri:more-line" width="14" />
 					</button>

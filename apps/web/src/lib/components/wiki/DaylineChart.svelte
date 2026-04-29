@@ -14,6 +14,9 @@
 	import { browser } from "$app/environment";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 	import type { DayEvent, ScoredSleepCycle } from "$lib/wiki/types";
+	import type { TimelineDayLocationChunk } from "$lib/wiki/api";
+	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
+	import DayLocationTimeline from "$lib/components/timeline/DayLocationTimeline.svelte";
 
 	interface Props {
 		events: DayEvent[];
@@ -21,9 +24,22 @@
 		pageDate?: Date;
 		readinessScore?: number | null;
 		sleepCycles?: ScoredSleepCycle[];
+		// Location data
+		movementStops?: TimelineDayLocationChunk[];
+		movementTrack?: { lat: number; lng: number; timeMs: number }[];
+		dedupedMarkers?: { lat: number; lng: number; label: string; timeMs: number; placeId: string | null }[];
+		dayDateSlug?: string;
+		hasLocationData?: boolean;
 	}
 
-	let { events, timezone, pageDate, readinessScore, sleepCycles = [] }: Props = $props();
+	let {
+		events, timezone, pageDate, readinessScore, sleepCycles = [],
+		movementStops = [], movementTrack = [], dedupedMarkers = [],
+		dayDateSlug = "", hasLocationData = false,
+	}: Props = $props();
+
+	// Shared hover state for location timeline ↔ map sync
+	let movementHoverTimeMs = $state<number | null>(null);
 
 	// ── Live clock (updates every second for the "now" marker) ──
 	let nowTime = $state(new Date());
@@ -583,17 +599,18 @@
 	});
 
 	// ── Active metric pill ──────────────────────────────────────
-	type MetricView = "dayline" | "sleep" | "autonomic" | "dimensions";
+	type MetricView = "dayline" | "location" | "sleep" | "autonomic" | "dimensions";
 	let activeMetric = $state<MetricView>("dayline");
 
 	const hasSleepData = $derived(() => sleepCycles.length > 0);
 
-	const metrics: { id: MetricView; label: string; ready: boolean }[] = [
+	const metrics = $derived<{ id: MetricView; label: string; ready: boolean }[]>([
 		{ id: "dayline", label: "Dayline", ready: true },
+		{ id: "location", label: "Location", ready: hasLocationData },
 		{ id: "sleep", label: "Sleep", ready: true },
 		{ id: "autonomic", label: "Autonomic", ready: false },
 		{ id: "dimensions", label: "Dimensions", ready: false },
-	];
+	]);
 </script>
 
 <div class="dayline-container">
@@ -1050,6 +1067,29 @@
 			{/if}
 		{/if}
 	</svg>
+	{:else if activeMetric === "location"}
+	<!-- Location view: timeline + map -->
+	{#if hasLocationData}
+		<div class="location-view">
+			{#if movementStops.length > 0}
+				<DayLocationTimeline
+					visits={movementStops}
+					dayDate={dayDateSlug}
+					bind:hoverTimeMs={movementHoverTimeMs}
+				/>
+			{/if}
+			<MovementMap
+				track={movementTrack}
+				stops={dedupedMarkers}
+				height={240}
+				hoverTimeMs={movementHoverTimeMs}
+			/>
+		</div>
+	{:else}
+		<div class="sleep-empty">
+			<p class="empty-placeholder">No location data for this day</p>
+		</div>
+	{/if}
 	{:else if activeMetric === "sleep"}
 	<!-- Sleep architecture view (from scored sleep cycles, not wiki_events) -->
 	{#if sleepCycles.length > 0}
@@ -1298,5 +1338,14 @@
 
 	.crosshair-score.autonomic-legend {
 		fill: var(--color-foreground-muted, #888);
+	}
+
+	/* ── Location view ─────────────────────────────────────── */
+
+	.location-view {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding-top: 0.5rem;
 	}
 </style>

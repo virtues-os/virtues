@@ -3,32 +3,32 @@
 //! High-performance data pipeline for personal data collection, storage, and analysis.
 
 pub mod action_runner;
+pub mod action_templates;
 pub mod agent;
 pub mod api;
 pub mod cli;
 pub mod client;
+pub mod credentials;
+pub mod crypto;
 pub mod database;
 pub mod dayline;
 pub mod entity_resolution;
-pub mod tools;
 pub mod error;
 pub mod geo;
 pub mod http_client;
 pub mod ids;
-pub mod pipeline;
 pub mod llm;
 pub mod mcp;
 pub mod middleware;
 pub mod observability;
-pub mod registry;
 pub mod scheduler;
 pub mod search;
 pub mod seeding;
 pub mod server;
 pub mod setup;
-pub mod sources;
 pub mod storage;
 pub mod tollbooth;
+pub mod tools;
 pub mod types;
 
 // Re-export main types
@@ -36,69 +36,22 @@ pub use client::{Virtues, VirtuesBuilder};
 pub use error::{Error, Result};
 pub use types::Timestamp;
 
-// Re-export OAuth types
-pub use sources::base::TokenManager;
-
 // Re-export Scheduler
 pub use scheduler::Scheduler;
-
-// Re-export sync types
-pub use sources::base::SyncMode;
 
 // Re-export tools
 pub use tools::{get_tool_definitions_for_llm, ToolContext, ToolError, ToolExecutor, ToolResult};
 
 // Re-export library API functions
 pub use api::{
-    // Device pairing
+    // Credential management (post-Phase-6: pair flows live in source_auth.rs)
     check_pairing_status,
-    complete_device_pairing,
-    complete_pairing_by_source_id,
-    create_source,
-    delete_source,
-    disable_stream,
-    enable_stream,
-    get_source,
-    get_source_info,
-    get_source_status,
-    get_stream_descriptor,
-    get_stream_info,
-    handle_oauth_callback,
-    initiate_device_pairing,
-    // OAuth & source registration
-    initiate_oauth_flow,
-    list_all_streams,
-
-    // Registry/catalog
-    list_available_sources,
     list_pending_pairings,
-    // Stream management
-    list_source_streams,
-    // Generic source management
-    list_sources,
-    register_device,
-
     update_last_seen,
-    update_stream_config,
-    update_stream_schedule,
     validate_device_token,
-    CreateSourceRequest,
     DeviceInfo,
-    EnableStreamRequest,
-    OAuthAuthorizeResponse,
-    OAuthCallbackParams,
-    PairingCompleted,
-    PairingInitiated,
     PairingStatus,
     PendingPairing,
-    RegisterDeviceRequest,
-
-    // Types
-    SourceConnection,
-    SourceConnectionStatus,
-    StreamConnection,
-    UpdateStreamConfigRequest,
-    UpdateStreamScheduleRequest,
 };
 
 // Version information

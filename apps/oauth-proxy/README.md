@@ -1,15 +1,15 @@
-# Ariata OAuth Proxy
+# Virtues OAuth Proxy
 
 Unified OAuth proxy service for multiple providers (Google, Notion, Microsoft, etc.). This service handles OAuth flows for various providers without storing user data.
 
 ## Overview
 
-The auth proxy acts as a bridge between self-hosted Ariata instances and OAuth providers like Google, Microsoft, and GitHub. It handles the complex OAuth flows while keeping user data sovereignty intact.
+The auth proxy acts as a bridge between self-hosted Virtues instances and OAuth providers like Google, Microsoft, and GitHub. It handles the complex OAuth flows while keeping user data sovereignty intact.
 
 ## Architecture
 
 ```
-Self-hosted Ariata → auth.ariata.com → OAuth Provider → auth.ariata.com → Self-hosted Ariata
+Self-hosted Virtues → auth.virtues.com → OAuth Provider → auth.virtues.com → Self-hosted Virtues
 ```
 
 **Key principles:**
@@ -28,7 +28,7 @@ Self-hosted Ariata → auth.ariata.com → OAuth Provider → auth.ariata.com �
 ## API Endpoints
 
 ### Google OAuth
-- `GET /google/auth?return_url=<user_instance_url>` - Initiate Google OAuth flow
+- `GET /google/start?return_url=<user_instance_url>` - Initiate Google OAuth flow
 - `GET /google/callback` - Handle Google OAuth callback
 
 ### Health Check
@@ -45,7 +45,7 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 PORT=3000
 NODE_ENV=development
 ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
-GOOGLE_REDIRECT_URI=https://auth.ariata.com/google/callback
+GOOGLE_REDIRECT_URI=https://auth.virtues.com/google/callback
 ```
 
 ## Development
@@ -72,8 +72,8 @@ vercel --prod
 ### Docker
 ```bash
 # Build and run with Docker
-docker build -t ariata-oauth-proxy .
-docker run -p 3000:3000 --env-file .env ariata-oauth-proxy
+docker build -t virtues-oauth-proxy .
+docker run -p 3000:3000 --env-file .env virtues-oauth-proxy
 ```
 
 ## Security Features
@@ -84,11 +84,11 @@ docker run -p 3000:3000 --env-file .env ariata-oauth-proxy
 - **CORS**: Configurable allowed origins
 - **Helmet**: Security headers
 
-## Usage from Self-hosted Ariata
+## Usage from Self-hosted Virtues
 
 ```typescript
 // Redirect user to OAuth proxy
-const authUrl = `https://auth.ariata.com/google/auth?return_url=${encodeURIComponent(callbackUrl)}`;
+const authUrl = `https://auth.virtues.com/google/start?return_url=${encodeURIComponent(callbackUrl)}`;
 window.location.href = authUrl;
 
 // Handle callback in your instance

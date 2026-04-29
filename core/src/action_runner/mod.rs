@@ -1,27 +1,38 @@
-//! Action runner: spawn action binaries as subprocesses and route stdin/stdout JSON.
+//! Unified action runner.
 //!
-//! This is the new execution layer for actions migrated to the actions/ crate.
-//! It coexists with the legacy scheduler dispatch in `scheduler/mod.rs` — only
-//! actions with `function_name` set use this path.
+//! Single entry point for every action execution — cron, manual, webhook, api,
+//! or tool-call. Dispatches to a subprocess binary, an LLM agent loop, or both
+//! based on which fields are populated on the action row.
 //!
-//! ## Contract
+//! ## Dispatch flow
 //!
-//! Subprocesses receive a single JSON object on stdin:
+//! 1. Fetch action. Not found / disabled → return `NotFound`.
+//! 2. Validate `trigger` is in `action.triggers`. Otherwise → `Forbidden`.
+//! 3. Evaluate `condition` SQL expression if set. Falsy → record `skipped` run.
+//! 4. Concurrency gate (skip if previous run still active, unless parallel).
+//! 5. Create `running` run row.
+//! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
+//!    (if `credential_id` set). Subprocess receives plaintext JSON.
+//! 7. **Subprocess phase**: if `function_name` set, spawn binary, pipe stdin
+//!    JSON, read stdout JSON, save returned config back to `app_actions.config`.
+//! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
+//!    subprocess result as context.
+//! 9. Complete run row with final status + result summary.
+//!
+//! ## Subprocess contract
+//!
+//! Stdin (one JSON object):
 //! ```json
 //! { "config": { ... }, "credentials": { ... } | null, "payload": [...] | null }
 //! ```
 //!
-//! And write a single JSON object to stdout:
+//! Stdout (one JSON object):
 //! ```json
 //! { "result": "summary string", "config": { ... } }
 //! ```
 //!
-//! - Exit 0 → success. Runner saves returned config back to `app_actions.config`
-//!   and records a `success` row in `app_action_runs`.
-//! - Exit non-zero → failure. Runner records a `failed` row with stderr as the
-//!   error message. Config is NOT updated.
+//! Exit 0 = success. Exit non-0 = failure; stderr becomes the run error.
 
-use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -29,100 +40,376 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::error::{Error, Result};
+use crate::scheduler::actions::{self, Action};
+use crate::server::yjs::YjsState;
 
-/// JSON object piped to the subprocess via stdin.
-#[derive(Debug, Serialize)]
-pub struct ActionInput<'a> {
-    pub config: &'a serde_json::Value,
-    pub credentials: Option<serde_json::Value>,
-    pub payload: Option<&'a serde_json::Value>,
+/// Dependencies threaded into the runner. Cheap to clone; holds references.
+#[derive(Clone)]
+pub struct RunnerDeps {
+    pub db: SqlitePool,
+    pub yjs: YjsState,
 }
 
-/// JSON object received from the subprocess on stdout.
-#[derive(Debug, Deserialize)]
-pub struct ActionOutput {
-    pub result: String,
-    pub config: serde_json::Value,
-}
+// Subprocess contract types live in `virtues_helpers::contract`. Re-export so
+// existing call sites (`action_runner::ActionInput`) keep working.
+pub use virtues_helpers::contract::{ActionInput, ActionOutput};
 
-/// Result of running an action subprocess.
+/// Outcome of a single action run.
+#[derive(Debug)]
 pub struct ActionRunResult {
+    pub run_id: Option<String>,
     pub status: ActionRunStatus,
     pub summary: String,
-    pub stderr: String,
+    pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionRunStatus {
     Success,
     Failed,
+    Skipped,
     NotFound,
+    Forbidden,
 }
 
-/// Look up an action row by function_name and credential_id, then spawn it as a subprocess.
-///
-/// Returns `None` if no matching action exists. Returns `Some(result)` for any
-/// action that was looked up, even if the subprocess failed.
-pub async fn run_push_action(
-    db: &SqlitePool,
-    function_name: &str,
-    credential_id: &str,
-    payload: &serde_json::Value,
-) -> Result<Option<ActionRunResult>> {
-    // 1. Look up the action row
-    let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        r#"SELECT id, config, credential_id
-           FROM app_actions
-           WHERE function_name = $1
-             AND credential_id = $2
-             AND enabled = 1
-           LIMIT 1"#,
+impl ActionRunResult {
+    fn not_found() -> Self {
+        Self {
+            run_id: None,
+            status: ActionRunStatus::NotFound,
+            summary: String::new(),
+            error: None,
+        }
+    }
+
+    fn forbidden(msg: impl Into<String>) -> Self {
+        Self {
+            run_id: None,
+            status: ActionRunStatus::Forbidden,
+            summary: String::new(),
+            error: Some(msg.into()),
+        }
+    }
+}
+
+/// Run an action end-to-end. The single dispatch entry point.
+pub async fn run_action(
+    deps: &RunnerDeps,
+    action_id: &str,
+    trigger: &str,
+    payload: Option<&serde_json::Value>,
+) -> Result<ActionRunResult> {
+    // 1. Fetch action
+    let action = match actions::get_action(&deps.db, action_id).await {
+        Ok(a) if a.enabled => a,
+        Ok(_) => {
+            tracing::warn!(action_id, "action is disabled, ignoring run request");
+            return Ok(ActionRunResult::not_found());
+        }
+        Err(e) => {
+            tracing::warn!(action_id, error = %e, "action not found");
+            return Ok(ActionRunResult::not_found());
+        }
+    };
+
+    // 2. Triggers validation
+    if !action.triggers.iter().any(|t| t == trigger) {
+        tracing::warn!(
+            action_id,
+            trigger,
+            allowed = ?action.triggers,
+            "trigger not allowed for this action"
+        );
+        return Ok(ActionRunResult::forbidden(format!(
+            "trigger '{}' not in allowed list {:?}",
+            trigger, action.triggers
+        )));
+    }
+
+    // 2b. Webhook invariant: every webhook-triggered dispatch must resolve to
+    // an action with a credential_id. Reconcile validates this at startup;
+    // this is the defensive belt-and-suspenders check.
+    if trigger == "webhook" && action.credential_id.is_none() {
+        tracing::error!(
+            action_id,
+            "webhook trigger on action with no credential_id — rejected"
+        );
+        return Ok(ActionRunResult::forbidden(
+            "webhook trigger requires credential_id".to_string(),
+        ));
+    }
+
+    // 3. Condition (SQL expression gate). Evaluate BEFORE creating a run row
+    //    so noisy gates (e.g., "hourly cron that only fires once a day")
+    //    don't spam `app_action_runs` with 23 skipped rows per day.
+    //
+    //    DEPRECATED FORMAT — raw SQL is fragile (limited expressiveness for
+    //    timezone math, injection-by-design if untrusted). A named-evaluator
+    //    registry is planned; see action_runner audit notes.
+    if let Some(condition) = &action.condition {
+        if !condition.trim().is_empty() {
+            match eval_condition(&deps.db, condition).await {
+                Ok(false) => {
+                    tracing::debug!(action_id, "condition falsy, skipping silently");
+                    return Ok(ActionRunResult {
+                        run_id: None,
+                        status: ActionRunStatus::Skipped,
+                        summary: "condition evaluated false".to_string(),
+                        error: None,
+                    });
+                }
+                Ok(true) => {}
+                Err(e) => {
+                    // Record evaluation errors — they are bugs, not noise.
+                    tracing::error!(action_id, error = %e, "condition evaluation failed");
+                    let run =
+                        actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+                    let msg = format!("condition evaluation error: {e}");
+                    actions::complete_run(
+                        &deps.db, &run.id, "error", 0, Some(&msg), None,
+                    )
+                    .await?;
+                    return Ok(ActionRunResult {
+                        run_id: Some(run.id),
+                        status: ActionRunStatus::Failed,
+                        summary: String::new(),
+                        error: Some(msg),
+                    });
+                }
+            }
+        }
+    }
+
+    // 4. Concurrency gate — skip if a previous run is still active. No run
+    //    row created for concurrency skips either (same noise logic as #3).
+    if actions::has_active_run(&deps.db, &action.id)
+        .await
+        .unwrap_or(false)
+    {
+        tracing::info!(action_id, "previous run still active; skipping");
+        return Ok(ActionRunResult {
+            run_id: None,
+            status: ActionRunStatus::Skipped,
+            summary: "previous run still active".to_string(),
+            error: None,
+        });
+    }
+
+    // 5. Create run row (status='running')
+    let run = actions::create_run(&deps.db, Some(&action.id), trigger).await?;
+
+    // 6. Resolve credentials. Hard-fail if a credential_id is set but fetch
+    //    errors — a subprocess running without credentials it was expecting
+    //    to receive would silently produce bad data.
+    let credentials = if let Some(cred_id) = &action.credential_id {
+        match load_credentials(&deps.db, cred_id).await {
+            Ok(c) => Some(c),
+            Err(e) => {
+                let msg = format!("failed to load credential {cred_id}: {e}");
+                tracing::error!(action_id, error = %msg, "credential load failed");
+                actions::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None).await?;
+                return Ok(ActionRunResult {
+                    run_id: Some(run.id),
+                    status: ActionRunStatus::Failed,
+                    summary: String::new(),
+                    error: Some(msg),
+                });
+            }
+        }
+    } else {
+        None
+    };
+
+    // 7. Subprocess phase
+    let mut subprocess_summary: Option<String> = None;
+    if let Some(fn_name) = &action.function_name {
+        match run_subprocess(&deps.db, &action, fn_name, credentials.clone(), payload).await {
+            Ok(summary) => {
+                subprocess_summary = Some(summary);
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                tracing::error!(action_id, error = %msg, "subprocess phase failed");
+                actions::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None).await?;
+                return Ok(ActionRunResult {
+                    run_id: Some(run.id),
+                    status: ActionRunStatus::Failed,
+                    summary: String::new(),
+                    error: Some(msg),
+                });
+            }
+        }
+    }
+
+    // 8. Agent phase
+    if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
+        let ctx = subprocess_summary.as_deref();
+        match crate::agent::action_runner::run_agent_loop(
+            &deps.db,
+            &deps.yjs,
+            &action,
+            prompt,
+            ctx,
+        )
+        .await
+        {
+            Ok(agent_result) => {
+                let steps = agent_result.steps as i64;
+                let summary = agent_result
+                    .message
+                    .clone()
+                    .or(subprocess_summary.clone())
+                    .unwrap_or_default();
+                actions::complete_run(
+                    &deps.db,
+                    &run.id,
+                    "success",
+                    steps,
+                    None,
+                    Some(&summary),
+                )
+                .await?;
+                return Ok(ActionRunResult {
+                    run_id: Some(run.id),
+                    status: ActionRunStatus::Success,
+                    summary,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                tracing::error!(action_id, error = %msg, "agent phase failed");
+                actions::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None).await?;
+                return Ok(ActionRunResult {
+                    run_id: Some(run.id),
+                    status: ActionRunStatus::Failed,
+                    summary: String::new(),
+                    error: Some(msg),
+                });
+            }
+        }
+    }
+
+    // 9. Complete run
+    let summary = subprocess_summary.unwrap_or_default();
+    actions::complete_run(
+        &deps.db,
+        &run.id,
+        "success",
+        0,
+        None,
+        Some(&summary),
     )
-    .bind(function_name)
+    .await?;
+    Ok(ActionRunResult {
+        run_id: Some(run.id),
+        status: ActionRunStatus::Success,
+        summary,
+        error: None,
+    })
+}
+
+// ============================================================================
+// Condition evaluation
+// ============================================================================
+
+/// Evaluate a SQL condition expression. Returns true if the expression is
+/// truthy, false otherwise. A truthy result is any non-zero, non-empty,
+/// non-null value.
+async fn eval_condition(db: &SqlitePool, condition: &str) -> Result<bool> {
+    let sql = format!("SELECT ({}) AS result", condition);
+    let result: Option<i64> = sqlx::query_scalar(&sql)
+        .fetch_optional(db)
+        .await
+        .map_err(|e| Error::Database(format!("condition sql failed: {e}")))?;
+    Ok(result.map(|v| v != 0).unwrap_or(false))
+}
+
+// ============================================================================
+// Credentials
+// ============================================================================
+
+/// Load a credential and hand the subprocess a fully-decrypted view.
+///
+/// The returned JSON shape matches the connectors charter: subprocess sees
+/// plaintext `secrets` (shape per the connector manifest) plus identity and
+/// metadata. The master encryption key never crosses the subprocess boundary.
+///
+/// ```json
+/// {
+///   "id": "cred_...",
+///   "source_id": "ios",
+///   "secrets": { "token": "<plaintext>" },
+///   "metadata": { "device_id": "...", ... }
+/// }
+/// ```
+async fn load_credentials(db: &SqlitePool, credential_id: &str) -> Result<serde_json::Value> {
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        r#"SELECT source_id, secrets_ciphertext, metadata
+             FROM credentials
+            WHERE id = ? AND status = 'active'"#,
+    )
     .bind(credential_id)
     .fetch_optional(db)
     .await
-    .map_err(|e| Error::Database(format!("failed to look up action: {e}")))?;
+    .map_err(|e| Error::Database(format!("failed to load credential: {e}")))?;
 
-    let Some((action_id, config_str, _cred_id)) = row else {
-        tracing::warn!(
-            function_name = %function_name,
-            credential_id = %credential_id,
-            "no action row found for ingest payload"
-        );
-        return Ok(None);
+    let Some((source_id, secrets_ciphertext, metadata_raw)) = row else {
+        return Err(Error::NotFound(format!(
+            "credential not found or not active: {credential_id}"
+        )));
     };
 
-    let config: serde_json::Value = config_str
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    // TODO: call ensure_fresh(credential) here once OAuth connectors land.
+    // For self_issued_bearer (iOS) there's nothing to refresh.
 
-    // 2. Resolve credentials (for now, pass nothing for device credentials —
-    //    iOS actions don't need OAuth tokens. The credential_id is enough.)
-    let credentials = None;
+    let encryptor = crate::crypto::TokenEncryptor::from_env()?;
+    let secrets_plaintext = encryptor.decrypt(&secrets_ciphertext).map_err(|e| {
+        Error::Other(format!(
+            "failed to decrypt credential {credential_id}: {e}"
+        ))
+    })?;
+    let secrets: serde_json::Value = serde_json::from_str(&secrets_plaintext)
+        .unwrap_or_else(|_| serde_json::json!({}));
 
-    // 3. Resolve binary path
+    let metadata: serde_json::Value =
+        serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+
+    Ok(serde_json::json!({
+        "id": credential_id,
+        "source_id": source_id,
+        "secrets": secrets,
+        "metadata": metadata,
+    }))
+}
+
+// ============================================================================
+// Subprocess phase
+// ============================================================================
+
+async fn run_subprocess(
+    db: &SqlitePool,
+    action: &Action,
+    function_name: &str,
+    credentials: Option<serde_json::Value>,
+    payload: Option<&serde_json::Value>,
+) -> Result<String> {
     let binary_path = resolve_binary_path(function_name)?;
     if !binary_path.exists() {
-        let err = format!("action binary not found: {}", binary_path.display());
-        record_failed_run(db, &action_id, function_name, &err).await?;
-        return Ok(Some(ActionRunResult {
-            status: ActionRunStatus::Failed,
-            summary: String::new(),
-            stderr: err,
-        }));
+        return Err(Error::Other(format!(
+            "action binary not found: {}",
+            binary_path.display()
+        )));
     }
 
-    // 4. Build stdin JSON
     let input = ActionInput {
-        config: &config,
+        config: action.config.clone(),
         credentials,
-        payload: Some(payload),
+        payload: payload.cloned(),
     };
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
-    // 5. Spawn subprocess with DATABASE_URL inherited from parent env
     let mut child = Command::new(&binary_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -130,7 +417,6 @@ pub async fn run_push_action(
         .spawn()
         .map_err(|e| Error::Other(format!("failed to spawn action binary: {e}")))?;
 
-    // 6. Write stdin and close it
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(&stdin_bytes)
@@ -138,7 +424,6 @@ pub async fn run_push_action(
             .map_err(|e| Error::Other(format!("failed to write stdin: {e}")))?;
     }
 
-    // 7. Wait for process and collect output
     let output = child
         .wait_with_output()
         .await
@@ -148,190 +433,45 @@ pub async fn run_push_action(
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
-        let err = if stderr.is_empty() {
+        return Err(Error::Other(if stderr.is_empty() {
             format!("subprocess exited with status {}", output.status)
         } else {
-            stderr.clone()
-        };
-        record_failed_run(db, &action_id, function_name, &err).await?;
-        return Ok(Some(ActionRunResult {
-            status: ActionRunStatus::Failed,
-            summary: String::new(),
-            stderr,
+            stderr
         }));
     }
 
-    // 8. Parse stdout JSON
-    let action_output: ActionOutput = match serde_json::from_str(&stdout) {
-        Ok(o) => o,
-        Err(e) => {
-            let err = format!("failed to parse subprocess stdout JSON: {e}. raw: {}", &stdout[..stdout.len().min(500)]);
-            record_failed_run(db, &action_id, function_name, &err).await?;
-            return Ok(Some(ActionRunResult {
-                status: ActionRunStatus::Failed,
-                summary: String::new(),
-                stderr,
-            }));
-        }
-    };
+    let action_output: ActionOutput = serde_json::from_str(&stdout).map_err(|e| {
+        Error::Other(format!(
+            "failed to parse subprocess stdout JSON: {e}. raw: {}",
+            &stdout[..stdout.len().min(500)]
+        ))
+    })?;
 
-    // 9. Save returned config back to app_actions
+    // Persist returned config back to the action row
     let config_json = serde_json::to_string(&action_output.config)
         .map_err(|e| Error::Other(format!("failed to serialize returned config: {e}")))?;
-    sqlx::query("UPDATE app_actions SET config = $1, updated_at = datetime('now') WHERE id = $2")
+    sqlx::query("UPDATE app_actions SET config = ?, updated_at = datetime('now') WHERE id = ?")
         .bind(&config_json)
-        .bind(&action_id)
+        .bind(&action.id)
         .execute(db)
         .await
         .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
 
-    // 10. Record successful run
-    record_success_run(db, &action_id, function_name, &action_output.result).await?;
-
-    Ok(Some(ActionRunResult {
-        status: ActionRunStatus::Success,
-        summary: action_output.result,
-        stderr,
-    }))
-}
-
-/// Run a cron action — an action with `credential_id IS NULL` that isn't tied
-/// to any specific credential. Examples: `ios_microphone_transcribe`, future
-/// background drainers, system maintenance jobs.
-///
-/// The contract is the same as `run_push_action` except payload is always
-/// null. Returns `Ok(None)` if no row exists.
-pub async fn run_cron_action(
-    db: &SqlitePool,
-    function_name: &str,
-) -> Result<Option<ActionRunResult>> {
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        r#"SELECT id, config
-           FROM app_actions
-           WHERE function_name = $1
-             AND credential_id IS NULL
-             AND enabled = 1
-           LIMIT 1"#,
-    )
-    .bind(function_name)
-    .fetch_optional(db)
-    .await
-    .map_err(|e| Error::Database(format!("failed to look up cron action: {e}")))?;
-
-    let Some((action_id, config_str)) = row else {
-        return Ok(None);
-    };
-
-    let config: serde_json::Value = config_str
-        .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    let binary_path = resolve_binary_path(function_name)?;
-    if !binary_path.exists() {
-        let err = format!("action binary not found: {}", binary_path.display());
-        record_failed_run(db, &action_id, function_name, &err).await?;
-        return Ok(Some(ActionRunResult {
-            status: ActionRunStatus::Failed,
-            summary: String::new(),
-            stderr: err,
-        }));
-    }
-
-    let input = ActionInput {
-        config: &config,
-        credentials: None,
-        payload: None,
-    };
-    let stdin_bytes = serde_json::to_vec(&input)
-        .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
-
-    let mut child = Command::new(&binary_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| Error::Other(format!("failed to spawn cron action binary: {e}")))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(&stdin_bytes)
-            .await
-            .map_err(|e| Error::Other(format!("failed to write stdin: {e}")))?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| Error::Other(format!("failed to wait for cron subprocess: {e}")))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() {
-        let err = if stderr.is_empty() {
-            format!("subprocess exited with status {}", output.status)
-        } else {
-            stderr.clone()
-        };
-        record_failed_run(db, &action_id, function_name, &err).await?;
-        return Ok(Some(ActionRunResult {
-            status: ActionRunStatus::Failed,
-            summary: String::new(),
-            stderr,
-        }));
-    }
-
-    let action_output: ActionOutput = match serde_json::from_str(&stdout) {
-        Ok(o) => o,
-        Err(e) => {
-            let err = format!(
-                "failed to parse cron subprocess stdout JSON: {e}. raw: {}",
-                &stdout[..stdout.len().min(500)]
-            );
-            record_failed_run(db, &action_id, function_name, &err).await?;
-            return Ok(Some(ActionRunResult {
-                status: ActionRunStatus::Failed,
-                summary: String::new(),
-                stderr,
-            }));
-        }
-    };
-
-    let config_json = serde_json::to_string(&action_output.config)
-        .map_err(|e| Error::Other(format!("failed to serialize returned config: {e}")))?;
-    sqlx::query("UPDATE app_actions SET config = $1, updated_at = datetime('now') WHERE id = $2")
-        .bind(&config_json)
-        .bind(&action_id)
-        .execute(db)
-        .await
-        .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
-
-    record_success_run(db, &action_id, function_name, &action_output.result).await?;
-
-    Ok(Some(ActionRunResult {
-        status: ActionRunStatus::Success,
-        summary: action_output.result,
-        stderr,
-    }))
+    Ok(action_output.result)
 }
 
 /// Resolve a function_name to a binary path.
 ///
-/// Convention: `actions/target/{debug,release}/{function_name}`
-/// — checks release first, falls back to debug for development.
+/// Convention: `target/{debug,release}/{function_name}` walking up from cwd.
+/// Override via `VIRTUES_ACTIONS_BIN_DIR` env var for production deployments.
 fn resolve_binary_path(function_name: &str) -> Result<PathBuf> {
-    // Allow override via env var for production deployments
     if let Ok(actions_dir) = std::env::var("VIRTUES_ACTIONS_BIN_DIR") {
         return Ok(PathBuf::from(actions_dir).join(function_name));
     }
 
-    // Workspace target dir is ${REPO_ROOT}/target
-    // We're typically run from the repo root or from core/, so we walk up.
     let cwd = std::env::current_dir()
         .map_err(|e| Error::Other(format!("failed to get cwd: {e}")))?;
 
-    // Try cwd/target/release first
     for ancestor in cwd.ancestors() {
         let release = ancestor.join("target").join("release").join(function_name);
         if release.exists() {
@@ -343,65 +483,5 @@ fn resolve_binary_path(function_name: &str) -> Result<PathBuf> {
         }
     }
 
-    // Fallback: relative to cwd
     Ok(PathBuf::from("target/debug").join(function_name))
-}
-
-async fn record_success_run(
-    db: &SqlitePool,
-    action_id: &str,
-    function_name: &str,
-    summary: &str,
-) -> Result<()> {
-    record_run(db, action_id, function_name, "success", Some(summary), None).await
-}
-
-async fn record_failed_run(
-    db: &SqlitePool,
-    action_id: &str,
-    function_name: &str,
-    error: &str,
-) -> Result<()> {
-    record_run(db, action_id, function_name, "error", None, Some(error)).await
-}
-
-async fn record_run(
-    db: &SqlitePool,
-    action_id: &str,
-    function_name: &str,
-    status: &str,
-    summary: Option<&str>,
-    error: Option<&str>,
-) -> Result<()> {
-    let run_id = format!(
-        "run_{}_{}",
-        function_name,
-        chrono::Utc::now().timestamp_micros()
-    );
-    // Cron actions don't have a credential, so we infer trigger from the
-    // function_name suffix. This is a heuristic — fine for now since the only
-    // cron action is the transcription resolver. When the scheduler refactor
-    // happens, this goes away (the trigger comes from the dispatch site).
-    let trigger = if function_name.ends_with("_resolution") {
-        "cron"
-    } else {
-        "push"
-    };
-    let _ = sqlx::query(
-        r#"INSERT INTO app_action_runs (id, action_id, status, started_at, completed_at, result_summary, error, trigger)
-           VALUES ($1, $2, $3, datetime('now'), datetime('now'), $4, $5, $6)"#,
-    )
-    .bind(&run_id)
-    .bind(action_id)
-    .bind(status)
-    .bind(summary)
-    .bind(error)
-    .bind(trigger)
-    .execute(db)
-    .await
-    .map_err(|e| {
-        tracing::warn!(error = %e, "failed to record action run");
-        e
-    });
-    Ok(())
 }

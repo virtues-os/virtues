@@ -253,10 +253,6 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             return false
         }
 
-        guard let ingestURL = configProvider.ingestURL else {
-            return false
-        }
-        
         await MainActor.run {
             self.isUploading = true
         }
@@ -287,9 +283,31 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         // Track if any uploads succeeded
         var anyUploadSucceeded = false
 
-        // Process each stream group as a batch
+        // Process each stream group as a batch. Each stream now has its own
+        // webhook URL keyed by the backend action_id that was returned at
+        // pair time.
+        var refetchAttempted = false
         for (streamName, events) in groupedEvents {
-            let success = await uploadBatchedEvents(streamName: streamName, events: events, to: ingestURL)
+            var webhookURL = configProvider.webhookURL(forStream: streamName)
+
+            if webhookURL == nil && !refetchAttempted {
+                // First missing action_id in this batch: try a one-shot
+                // refetch from /api/devices/action-ids. This covers devices
+                // whose Keychain entry predates the webhook unification.
+                refetchAttempted = true
+                if await refetchActionIds() {
+                    webhookURL = configProvider.webhookURL(forStream: streamName)
+                }
+            }
+
+            guard let url = webhookURL else {
+                #if DEBUG
+                print("⚠️ No action_id for stream \(streamName); skipping batch")
+                #endif
+                continue
+            }
+
+            let success = await uploadBatchedEvents(streamName: streamName, events: events, to: url)
 
             // Record upload result for adaptive batching
             networkMonitor.recordUploadResult(success: success)
@@ -376,6 +394,45 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             storageProvider.incrementRetry(id: event.id)
         }
         return false
+    }
+
+    /// Fetch the latest `function_name → action_id` map from
+    /// `GET /api/devices/action-ids` and persist it via `DeviceManager`.
+    /// Returns true on success.
+    ///
+    /// Called lazily from the upload loop when a stream has no known
+    /// action_id — typically a device whose Keychain entry predates the
+    /// webhook unification, or one where a new iOS stream was added to
+    /// `templates.toml` after the device was paired.
+    private func refetchActionIds() async -> Bool {
+        guard let url = configProvider.actionIdsFetchURL else { return false }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(configProvider.deviceToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 30
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                return false
+            }
+            struct ActionIdsResponse: Decodable {
+                let credential_id: String
+                let action_ids: [String: String]
+            }
+            let decoded = try JSONDecoder().decode(ActionIdsResponse.self, from: data)
+            DeviceManager.shared.updateActionIds(decoded.action_ids)
+            // Give the @Published update a beat to propagate so the next
+            // `configProvider.webhookURL(...)` call sees it.
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            return true
+        } catch {
+            #if DEBUG
+            print("⚠️ refetchActionIds failed: \(error)")
+            #endif
+            return false
+        }
     }
 
     /// Generic upload method that works with any stream processor

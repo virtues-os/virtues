@@ -91,7 +91,10 @@ pub fn normalize_database_url() -> Result<String> {
 /// This must be called before any SQLite connections are created.
 /// The extension is registered via `sqlite3_auto_extension` so every
 /// connection automatically gets vec0 virtual table support.
-fn register_sqlite_vec_extension() {
+///
+/// Idempotent — guarded by `Once`. Safe to call from action binaries
+/// before opening their own pool.
+pub fn register_sqlite_vec_extension() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         unsafe {
@@ -171,6 +174,11 @@ impl Database {
 
         // Run migrations
         self.run_migrations().await?;
+
+        // Post-migration hooks: anything that needs Rust-side state (e.g. the
+        // master encryption key) to finish what a SQL migration started.
+        // Idempotent — safe to run on every startup.
+        crate::credentials::migrate::run(&self.pool).await?;
 
         Ok(())
     }

@@ -22,8 +22,17 @@ protocol ConfigurationProvider {
     /// The device token for authentication
     var deviceToken: String { get }
 
-    /// The full ingest URL for uploads
-    var ingestURL: URL? { get }
+    /// Backend function_name → action_id map. Empty for devices that haven't
+    /// been paired (or re-paired) since the webhook unification.
+    var actionIds: [String: String] { get }
+
+    /// Get the webhook URL for a given stream name. Returns nil if no
+    /// action_id is known for that stream (caller should refetch via
+    /// `GET /api/devices/action-ids`).
+    func webhookURL(forStream streamName: String) -> URL?
+
+    /// URL for refetching the action_ids map.
+    var actionIdsFetchURL: URL? { get }
 }
 
 /// Provides observable configuration updates for SwiftUI views
@@ -47,7 +56,15 @@ extension DeviceManager: ObservableConfigurationProvider {
         configuration.apiEndpoint
     }
 
-    var ingestURL: URL? {
-        configuration.ingestURL
+    var actionIds: [String: String] {
+        configuration.actionIds
+    }
+
+    func webhookURL(forStream streamName: String) -> URL? {
+        configuration.webhookURL(forStream: streamName)
+    }
+
+    var actionIdsFetchURL: URL? {
+        configuration.actionIdsFetchURL
     }
 }

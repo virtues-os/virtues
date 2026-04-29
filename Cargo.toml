@@ -1,9 +1,9 @@
 [workspace]
 members = [
     "core",
+    "crates/virtues-helpers",
     "packages/virtues-registry",
     "actions",
-    "actions/helpers",
     "apps/tollbooth",
 ]
 resolver = "2"
@@ -13,7 +13,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
 license = "MIT"
-repository = "https://github.com/ariata-os/ariata"
+repository = "https://github.com/virtues-os/virtues"
 
 [profile.release]
 opt-level = 3

@@ -18,7 +18,7 @@
 mod transform;
 
 use anyhow::Result;
-use virtues_action_helpers::{connect_from_env, output, read_input};
+use virtues_helpers::{connect_from_env, output, read_input};
 
 /// Maximum recordings to process per cron tick. Keeps each run bounded so a
 /// huge backlog doesn't hold a single Gemini connection open for minutes.

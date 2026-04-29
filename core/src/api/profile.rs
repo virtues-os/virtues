@@ -28,7 +28,6 @@ pub struct UpdateProfileRequest {
     pub onboarding_status: Option<String>,
     // Preferences
     pub theme: Option<String>,
-    pub update_check_hour: Option<i32>,
     pub timezone: Option<String>,
     // Discovery context
     pub crux: Option<String>,
@@ -97,9 +96,6 @@ pub async fn update_profile(db: &SqlitePool, request: UpdateProfileRequest) -> R
     if request.theme.is_some() {
         set_clauses.push("theme = ?");
     }
-    if request.update_check_hour.is_some() {
-        set_clauses.push("update_check_hour = ?");
-    }
     if request.timezone.is_some() {
         set_clauses.push("timezone = ?");
     }
@@ -167,9 +163,6 @@ pub async fn update_profile(db: &SqlitePool, request: UpdateProfileRequest) -> R
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.theme {
-        query_builder = query_builder.bind(v);
-    }
-    if let Some(v) = request.update_check_hour {
         query_builder = query_builder.bind(v);
     }
     if let Some(ref v) = request.timezone {

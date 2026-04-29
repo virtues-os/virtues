@@ -330,7 +330,7 @@ struct SettingsView: View {
 
         Task {
             do {
-                let _ = try await NetworkManager.shared.completePairing(
+                let response = try await NetworkManager.shared.completePairing(
                     endpoint: endpoint,
                     sourceId: sourceId,
                     deviceId: DeviceManager.shared.deviceId
@@ -338,6 +338,9 @@ struct SettingsView: View {
 
                 await MainActor.run {
                     deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    if let actionIds = response.actionIds {
+                        deviceManager.updateActionIds(actionIds)
+                    }
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured
                     isCompletingPairing = false

@@ -1,4 +1,4 @@
-# Cargo configuration for the ariata core crate
+# Cargo configuration for the virtues core crate
 
 [env]
 # Use SQLx offline mode by default for faster builds

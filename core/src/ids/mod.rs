@@ -78,6 +78,10 @@ pub const PAGE_PREFIX: &str = "page";
 pub const PAGE_VERSION_PREFIX: &str = "ver";
 pub const PAGE_SHARE_PREFIX: &str = "share";
 
+// Projects Layer (Curated reference bundles used as chat context)
+pub const PROJECT_PREFIX: &str = "prj";
+pub const PROJECT_ITEM_PREFIX: &str = "prji";
+
 // Space Layer (Organization system)
 pub const SPACE_PREFIX: &str = "space";
 pub const WORKSPACE_PREFIX: &str = "ws";  // Deprecated: use SPACE_PREFIX

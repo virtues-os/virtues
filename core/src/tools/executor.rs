@@ -98,6 +98,7 @@ pub struct ToolExecutor {
     semantic_search: SemanticSearchTool,
     sql_query: SqlQueryTool,
     page_editor: PageEditorTool,
+    yjs_state: Option<YjsState>,
 }
 
 impl ToolExecutor {
@@ -112,10 +113,12 @@ impl ToolExecutor {
             _pool: pool,
             tollbooth_url,
             _tollbooth_secret: tollbooth_secret,
+            yjs_state: None,
         }
     }
 
     /// Create a new tool executor with YjsState for real-time page editing
+    /// and action dispatch (required by the `run_action` tool).
     pub fn new_with_yjs(
         pool: SqlitePool,
         tollbooth_url: String,
@@ -127,10 +130,11 @@ impl ToolExecutor {
             web_search: WebSearchTool::new(tollbooth_url.clone(), tollbooth_secret.clone()),
             semantic_search: SemanticSearchTool::new(pool.clone()),
             sql_query: SqlQueryTool::new(pool.clone()),
-            page_editor: PageEditorTool::new(pool.clone(), Some(yjs_state)),
+            page_editor: PageEditorTool::new(pool.clone(), Some(yjs_state.clone())),
             _pool: pool,
             tollbooth_url,
             _tollbooth_secret: tollbooth_secret,
+            yjs_state: Some(yjs_state),
         }
     }
 
@@ -174,8 +178,23 @@ impl ToolExecutor {
             "setup_action" => super::action_setup::execute(&self._pool, arguments, context).await,
             // Action memory (persistent scratchpad for actions across runs)
             "update_action_memory" => self.execute_update_action_memory(arguments, context).await,
+            // Action management — list / get / edit / delete / run
+            "list_actions" => super::action_management::list_actions(&self._pool, arguments).await,
+            "get_action" => super::action_management::get_action(&self._pool, arguments).await,
+            "edit_action" => super::action_management::edit_action(&self._pool, arguments).await,
+            "delete_action" => super::action_management::delete_action(&self._pool, arguments).await,
+            "run_action" => {
+                let yjs = self.yjs_state.as_ref().ok_or_else(|| {
+                    ToolError::ExecutionFailed(
+                        "run_action tool requires YjsState — executor constructed without it".into(),
+                    )
+                })?;
+                super::action_management::run_action(&self._pool, yjs, arguments, context).await
+            }
             // Dayline event CRUD (used by hourly/EOD actions)
             "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
+            // Project item fetch (for attached project context lens)
+            "get_project_item" => self.execute_get_project_item(arguments).await,
             _ => Err(ToolError::UnknownTool(tool_name.to_string())),
         }
     }
@@ -354,9 +373,130 @@ impl ToolExecutor {
         })))
     }
 
+    /// Fetch the full content of a project-referenced entity (page, chat, person, etc.)
+    async fn execute_get_project_item(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let item_url = arguments
+            .get("item_url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| ToolError::InvalidParameters("item_url is required".into()))?;
+
+        let pool = self._pool.as_ref();
+
+        if let Some(page_id) = item_url.strip_prefix("/page/") {
+            match crate::api::get_page(pool, page_id).await {
+                Ok(page) => Ok(ToolResult::success(serde_json::json!({
+                    "type": "page",
+                    "id": page.id,
+                    "title": page.title,
+                    "content": page.content,
+                    "tags": page.tags,
+                    "updated_at": page.updated_at,
+                }))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch page: {}", e))),
+            }
+        } else if let Some(chat_id) = item_url.strip_prefix("/chat/") {
+            match crate::api::get_chat(pool, chat_id.to_string()).await {
+                Ok(chat_detail) => {
+                    let messages: Vec<serde_json::Value> = chat_detail.messages
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .rev()
+                        .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
+                        .collect();
+                    Ok(ToolResult::success(serde_json::json!({
+                        "type": "chat",
+                        "id": chat_detail.conversation.conversation_id,
+                        "title": chat_detail.conversation.title,
+                        "recent_messages": messages,
+                    })))
+                }
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch chat: {}", e))),
+            }
+        } else if let Some(person_id) = item_url.strip_prefix("/person/") {
+            match crate::api::get_person(pool, person_id.to_string()).await {
+                Ok(person) => Ok(ToolResult::success(serde_json::json!({
+                    "type": "person",
+                    "id": person.id,
+                    "name": person.canonical_name,
+                    "content": person.content,
+                }))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch person: {}", e))),
+            }
+        } else if let Some(place_id) = item_url.strip_prefix("/place/") {
+            match crate::api::get_wiki_place(pool, place_id.to_string()).await {
+                Ok(place) => Ok(ToolResult::success(serde_json::json!({
+                    "type": "place",
+                    "id": place.id,
+                    "name": place.name,
+                    "content": place.content,
+                    "address": place.address,
+                }))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch place: {}", e))),
+            }
+        } else if let Some(org_id) = item_url.strip_prefix("/org/") {
+            match crate::api::get_organization(pool, org_id.to_string()).await {
+                Ok(org) => Ok(ToolResult::success(serde_json::json!({
+                    "type": "organization",
+                    "id": org.id,
+                    "name": org.canonical_name,
+                    "content": org.content,
+                }))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
+            }
+        } else if let Some(thing_id) = item_url.strip_prefix("/thing/") {
+            match crate::api::get_thing(pool, thing_id.to_string()).await {
+                Ok(thing) => Ok(ToolResult::success(serde_json::json!({
+                    "type": "thing",
+                    "id": thing.id,
+                    "name": thing.name,
+                    "description": thing.description,
+                    "content": thing.content,
+                }))),
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch thing: {}", e))),
+            }
+        } else if item_url.starts_with("http://") || item_url.starts_with("https://") {
+            // External URL — content lives outside Virtues. Return guidance to use web tools.
+            Ok(ToolResult::success(serde_json::json!({
+                "type": "external_url",
+                "url": item_url,
+                "note": "This is an external URL. Use the web_search tool or visit the URL directly to fetch its content."
+            })))
+        } else {
+            Ok(ToolResult::error(format!(
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /person/, /place/, /org/, /thing/, or https://",
+                item_url
+            )))
+        }
+    }
+
     /// Get the list of available tool names
     pub fn available_tools(&self) -> Vec<&'static str> {
-        vec!["think", "update_memory", "set_user_name", "set_assistant_name", "web_search", "semantic_search", "sql_query", "code_interpreter", "create_page", "get_page_content", "edit_page", "setup_action", "update_action_memory", "dayline_event"]
+        vec![
+            "think",
+            "update_memory",
+            "set_user_name",
+            "set_assistant_name",
+            "web_search",
+            "semantic_search",
+            "sql_query",
+            "code_interpreter",
+            "create_page",
+            "get_page_content",
+            "edit_page",
+            "setup_action",
+            "update_action_memory",
+            "list_actions",
+            "get_action",
+            "edit_action",
+            "delete_action",
+            "run_action",
+            "dayline_event",
+            "get_project_item",
+        ]
     }
 
     /// Check if a tool is available

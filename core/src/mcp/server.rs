@@ -65,7 +65,7 @@ impl ServerHandler for VirtuesMcpServer {
                 name: "virtues".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 title: Some("Virtues Personal Data Warehouse".to_string()),
-                website_url: Some("https://github.com/ariata-os/ariata".to_string()),
+                website_url: Some("https://github.com/virtues-os/virtues".to_string()),
                 icons: None,
             },
             instructions: Some(

@@ -72,7 +72,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
         }
 
         Commands::VerifyTokens { bearer } => {
-            use crate::sources::base::TokenEncryptor;
+            use crate::crypto::TokenEncryptor;
             println!("Loading encryptor from VIRTUES_ENCRYPTION_KEY...");
             let encryptor = match TokenEncryptor::from_env() {
                 Ok(e) => {
@@ -86,38 +86,49 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             };
             println!();
 
-            let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
-                "SELECT id, device_id, device_token FROM elt_source_connections WHERE source='ios'",
+            let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
+                r#"SELECT id, status, secret_lookup_hash, secrets_ciphertext
+                     FROM credentials WHERE source_id = 'ios'"#,
             )
             .fetch_all(virtues.database.pool())
             .await?;
 
-            println!("Found {} iOS row(s) in elt_source_connections:", rows.len());
-            for (id, device_id, encrypted_token) in &rows {
+            let bearer_hash = bearer
+                .as_deref()
+                .map(|b| encryptor.lookup_hash(b))
+                .transpose()?;
+
+            println!("Found {} iOS row(s) in credentials:", rows.len());
+            for (id, status, lookup_hash, secrets_ciphertext) in &rows {
                 println!();
                 println!("  id={id}");
-                println!("  device_id={device_id}");
-                let Some(enc) = encrypted_token else {
-                    println!("  device_token: NULL");
-                    continue;
-                };
-                println!("  encrypted_token (len={}): {}...", enc.len(), &enc[..enc.len().min(20)]);
-                match encryptor.decrypt(enc) {
-                    Ok(plaintext) => {
-                        println!("  ✓ DECRYPT OK → '{plaintext}'");
-                        if let Some(bearer) = &bearer {
-                            if &plaintext == bearer {
-                                println!("  ✓ MATCHES bearer");
+                println!("  status={status}");
+                match lookup_hash {
+                    Some(h) => {
+                        let prefix = &h[..h.len().min(16)];
+                        println!("  secret_lookup_hash: {prefix}…");
+                        if let Some(ref bh) = bearer_hash {
+                            if h == bh {
+                                println!("  ✓ MATCHES bearer hash");
                             } else {
-                                println!("  ✗ does NOT match bearer ('{bearer}')");
-                                println!("    plaintext bytes: {:?}", plaintext.as_bytes());
-                                println!("    bearer bytes:    {:?}", bearer.as_bytes());
+                                println!("  ✗ does NOT match bearer hash");
                             }
                         }
                     }
-                    Err(e) => {
-                        println!("  ✗ DECRYPT FAILED: {e}");
+                    None => {
+                        println!("  secret_lookup_hash: NULL (pending or revoked)");
                     }
+                }
+                match encryptor.decrypt(secrets_ciphertext) {
+                    Ok(plaintext) => {
+                        let preview = if plaintext.len() > 60 {
+                            format!("{}…", &plaintext[..60])
+                        } else {
+                            plaintext
+                        };
+                        println!("  ✓ DECRYPT OK → {preview}");
+                    }
+                    Err(e) => println!("  ✗ DECRYPT FAILED: {e}"),
                 }
             }
         }
@@ -128,27 +139,29 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             virtues.database.initialize().await?;
 
             println!("Pairing iOS device {device_id} as '{name}'...");
-            let completed = crate::api::link_device_manually(
-                virtues.database.pool(),
+            let pool = virtues.database.pool();
+            let credential_id =
+                virtues_helpers::auth::mint_pending_credential(pool, "ios", &name).await?;
+            virtues_helpers::auth::finalize_self_issued_bearer(
+                pool,
+                &credential_id,
                 &device_id,
-                &name,
-                "ios",
+                &serde_json::json!({}),
             )
             .await?;
+            crate::action_templates::reconcile_templates(pool).await?;
 
             println!();
             println!("✅ Paired");
-            println!("   source_id (= credential_id):  {}", completed.source_id);
-            println!("   device_token:                 {}", completed.device_token);
+            println!("   credential_id:  {credential_id}");
+            println!("   device_token:   {device_id}");
             println!();
-            println!("Verify the rows:");
+            println!("Verify:");
             println!(
-                "  sqlite3 core/data/virtues.db \"SELECT id, provider FROM action_credentials WHERE id='{}';\"",
-                completed.source_id
+                "  sqlite3 ./data/virtues.db \"SELECT id, source_id, status FROM credentials WHERE id='{credential_id}';\""
             );
             println!(
-                "  sqlite3 core/data/virtues.db \"SELECT function_name, credential_id FROM app_actions WHERE credential_id='{}';\"",
-                completed.source_id
+                "  sqlite3 ./data/virtues.db \"SELECT function_name, credential_id FROM app_actions WHERE credential_id='{credential_id}';\""
             );
         }
 
