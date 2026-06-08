@@ -65,13 +65,7 @@ jobs:
       - name: Build virtues binary
         env:
           SQLX_OFFLINE: 'true'
-          # ort-sys writes ONNX Runtime to $HOME/.cache/ort.pyke.io/. Inside
-          # the cross container HOME is unset → path resolves to /.cache/
-          # and the write fails. Pin HOME to a writable tmpfs path; Cross.toml
-          # passes this through to the container.
-          HOME: /tmp
         run: |
-          mkdir -p /tmp/.cache
           cross build --release -p virtues --target ${{ matrix.target }}
 
       - name: Package tarball
