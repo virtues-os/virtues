@@ -6,12 +6,14 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
+	import BoxSetupNudge from "$lib/components/BoxSetupNudge.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import { projectsStore } from "$lib/stores/projects.svelte";
+	import { thingsStore } from "$lib/stores/things.svelte";
+	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { onMount, onDestroy } from "svelte";
@@ -55,7 +57,8 @@
 
 		// Load global data
 		chatSessions.load();
-		projectsStore.load();
+		thingsStore.load('project');
+		pinsStore.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
@@ -154,7 +157,7 @@
 					toast.error("Session expired", {
 						description: "Please log in again.",
 					});
-					goto("/login");
+					goto("/pair");
 				}
 			};
 
@@ -281,10 +284,13 @@
 	</main>
 </div>
 
-<!-- Server Provisioning Overlay (shown while Tollbooth is hydrating) -->
+<!-- Server Provisioning Overlay (shown while virtues-api is hydrating) -->
 {#if data?.serverStatus && data.serverStatus !== "ready"}
 	<ServerProvisioning initialStatus={data.serverStatus} />
 {/if}
+
+<!-- First-run setup nudge (subscription / pairing) — non-blocking -->
+<BoxSetupNudge />
 
 <!-- Global Icon Picker Modal -->
 <Modal open={iconPickerStore.open} onClose={() => iconPickerStore.hide()} title="Change Icon" width="md">

@@ -1,0 +1,126 @@
+name: Release Linux binaries
+
+# Triggered on tag push (e.g. `v0.1.0`) or manual dispatch. Builds the
+# `virtues` binary for x86_64 + aarch64 Linux via `cross`, packages each
+# as a tarball, and attaches them to the GitHub Release for that tag.
+#
+# Tarball naming intentionally matches what `scripts/install.sh` expects:
+#
+#     virtues-<tag>-<arch>-linux.tar.gz
+#
+# where <arch> is `x86_64` or `aarch64` (the uname -m strings on Jetson +
+# typical x86_64 servers). The install script downloads the matching one
+# based on the target machine's architecture.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # upload release assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      # Sqlx queries are checked at compile-time against a recorded schema
+      # under .sqlx/ — offline mode avoids needing a live DB in CI.
+      - name: Build virtues binary
+        env:
+          SQLX_OFFLINE: 'true'
+        run: |
+          cross build --release -p virtues --target ${{ matrix.target }}
+
+      - name: Package tarball
+        id: tarball
+        run: |
+          mkdir -p dist
+          BIN_PATH="target/${{ matrix.target }}/release/virtues"
+          test -x "$BIN_PATH" || (echo "binary not built" >&2 && exit 1)
+          TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
+          # Tar with just the binary inside (matches install.sh expectation).
+          tar -czf "dist/${TAR_NAME}" -C "$(dirname "$BIN_PATH")" virtues
+          # Surface output for the upload step.
+          echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
+          echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
+          # Also produce a SHA256 so the install script (or paranoid users)
+          # can verify the download.
+          (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: |
+            dist/${{ steps.tarball.outputs.name }}
+            dist/${{ steps.tarball.outputs.name }}.sha256
+          fail_on_unmatched_files: true
+          # Don't auto-publish: lets the release page collect both arches
+          # before going live. The release shows up as draft after the
+          # first job and ships once you manually publish (or call it as
+          # `prerelease: false, draft: false` once both are uploaded).
+          draft: true
+
+  # After both arches built + uploaded, flip the draft release to live.
+  # Keeping this as a separate job so a single-arch failure doesn't ship
+  # a half-baked release.
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve version tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Flip draft → published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ steps.tag.outputs.version }}" \
+            --draft=false \
+            --prerelease=false

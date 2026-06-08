@@ -262,27 +262,25 @@
 
 	function statusDot(status: string): string {
 		switch (status) {
-			case 'connected': return 'bg-green-500';
-			case 'connecting': return 'bg-yellow-500 animate-pulse';
-			case 'error': return 'bg-red-500';
+			case 'connected': return 'bg-success';
+			case 'connecting': return 'bg-warning animate-pulse';
+			case 'error': return 'bg-error';
 			default: return 'bg-neutral-400';
 		}
 	}
 </script>
 
-<Page>
+<Page
+	title="Tools"
+	description="Manage built-in tools and connect external MCP servers."
+	maxWidth="narrow"
+>
 	{#if loading}
 		<div class="flex items-center justify-center h-32">
-			<div class="text-sm text-neutral-500">Loading tools...</div>
+			<div class="text-sm text-foreground-muted">Loading tools...</div>
 		</div>
 	{:else}
-		<div class="max-w-2xl mx-auto space-y-8">
-			<div>
-				<h1 class="text-xl font-semibold">Tools</h1>
-				<p class="text-sm text-neutral-500 mt-1">
-					Manage built-in tools and connect external MCP servers.
-				</p>
-			</div>
+		<div class="space-y-8">
 
 			<!-- Built-in Virtues tools -->
 			<div class="space-y-2">
@@ -303,7 +301,7 @@
 								</div>
 							</div>
 							<button
-								class="relative w-9 h-5 rounded-full transition-colors shrink-0 {tool.enabled ? 'bg-blue-600' : 'bg-neutral-700'}"
+								class="relative w-9 h-5 rounded-full transition-colors shrink-0 {tool.enabled ? 'bg-primary' : 'bg-surface-elevated'}"
 								onclick={() => toggleBuiltinTool(tool.id, tool.enabled)}
 								aria-label="Toggle {tool.name}"
 							>
@@ -349,7 +347,7 @@
 								</button>
 							{/if}
 							<button
-								class="text-xs text-red-500/60 hover:text-red-400 px-2 py-1"
+								class="text-xs text-error/60 hover:text-error px-2 py-1"
 								onclick={(e) => { e.stopPropagation(); deleteServer(server.id); }}
 							>
 								Delete
@@ -364,7 +362,7 @@
 					</div>
 
 					{#if server.last_error}
-						<div class="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">
+						<div class="text-xs text-error bg-error/10 px-3 py-2 rounded-lg">
 							{server.last_error}
 						</div>
 					{/if}
@@ -380,7 +378,7 @@
 										{/if}
 									</div>
 									<button
-										class="relative w-9 h-5 rounded-full transition-colors shrink-0 {tool.enabled ? 'bg-blue-600' : 'bg-neutral-700'}"
+										class="relative w-9 h-5 rounded-full transition-colors shrink-0 {tool.enabled ? 'bg-primary' : 'bg-surface-elevated'}"
 										onclick={() => toggleMcpTool(tool.id, server.id)}
 										aria-label="Toggle {tool.tool_name}"
 									>
@@ -449,7 +447,7 @@
 											<div class="text-xs text-neutral-500 truncate">{entry.description}</div>
 										</div>
 										<button
-											class="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 shrink-0"
+											class="text-xs text-primary hover:text-primary/80 px-2 py-1 shrink-0"
 											onclick={() => addFromCatalog(entry)}
 										>
 											Add
@@ -494,7 +492,7 @@
 							class="w-full bg-neutral-900 border border-neutral-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-neutral-500"
 						/>
 						<button
-							class="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium disabled:opacity-50"
+							class="w-full px-3 py-2 bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium disabled:opacity-50"
 							onclick={addServer}
 							disabled={addLoading || !addName || !addUrl}
 						>

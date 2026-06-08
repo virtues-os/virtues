@@ -1,0 +1,9 @@
+name = "Strava Activities"
+description = "Sync runs, rides, swims, and other workouts from a connected Strava account."
+owner = "system"
+runtime = "function"
+command = ["strava_activities_sync"]
+triggers = ["cron", "manual"]
+default_cron = "0 */30 * * * *"
+per_credential = true
+source = { id = "strava" }

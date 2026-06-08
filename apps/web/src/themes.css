@@ -1158,3 +1158,24 @@
 .input-manuscript::placeholder {
 	color: var(--foreground-subtle);
 }
+/* ──────────────────────────────────────────────────────────────────────────
+ * Illustration auto-invert
+ *
+ * Authored illustrations (template card hero, day-page header) ship as
+ * black-line transparent PNGs. Components apply
+ *   filter: var(--illustration-filter, none);
+ * Light themes leave it as the default `none`. Dark themes set `invert(1)`
+ * here so the same asset reads as white-line on dark surface.
+ * ────────────────────────────────────────────────────────────────────────── */
+[data-theme="lothlorien"],
+[data-theme="baker-street"],
+[data-theme="narnia"],
+[data-theme="canterbury"],
+[data-theme="borghese"],
+[data-theme="gatsby"],
+[data-theme="lyceum"],
+[data-theme="asgard"],
+[data-theme="agora"],
+[data-theme="shire"] {
+	--illustration-filter: invert(1);
+}

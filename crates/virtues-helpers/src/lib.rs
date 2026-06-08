@@ -11,7 +11,6 @@
 //! virtues_helpers::dedup        SQL builders for batch ON CONFLICT inserts
 //! virtues_helpers::ids          deterministic ID generation, prefix constants
 //! virtues_helpers::ios          iOS-specific timestamp / stream constants
-//! virtues_helpers::entity       (stub) future entity resolution helpers
 //! ```
 //!
 //! Hot-path shortcuts (used by every action binary) are re-exported at
@@ -31,11 +30,11 @@ pub mod contract;
 pub mod crypto;
 pub mod db;
 pub mod dedup;
-pub mod entity;
+pub mod error;
 pub mod ids;
 pub mod input;
 pub mod ios;
-pub mod oauth;
+pub mod transport;
 
 // Hot-path re-exports (used by every action subprocess binary).
 pub use contract::{ActionInput, ActionOutput};

@@ -8,14 +8,14 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// Treat any non-OK response as unauthenticated
 		if (!sessionResponse.ok) {
-			throw redirect(303, '/login');
+			throw redirect(303, '/pair');
 		}
 
 		const sessionData = await sessionResponse.json();
 
 		// Redirect to login if not authenticated
 		if (!sessionData.user) {
-			throw redirect(303, '/login');
+			throw redirect(303, '/pair');
 		}
 
 		// Skip profile check for OAuth callback (it handles its own redirect)
@@ -58,6 +58,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		}
 		// Network errors or JSON parse errors - redirect to login
 		console.error('[Layout] Auth check failed:', error);
-		throw redirect(303, '/login');
+		throw redirect(303, '/pair');
 	}
 };

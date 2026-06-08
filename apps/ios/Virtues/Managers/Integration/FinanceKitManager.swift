@@ -10,7 +10,11 @@ import FinanceKit
 import Combine
 
 class FinanceKitManager: ObservableObject {
-    static let shared = FinanceKitManager()
+    static let shared = FinanceKitManager(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        dataUploader: BatchUploadCoordinator.shared
+    )
     
     private let financeStore = FinanceStore.shared
     
@@ -52,16 +56,7 @@ class FinanceKitManager: ObservableObject {
         // Register with centralized health check coordinator
         HealthCheckCoordinator.shared.register(self)
     }
-    
-    /// Legacy singleton initializer - uses default dependencies
-    private convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            dataUploader: BatchUploadCoordinator.shared
-        )
-    }
-    
+
     // MARK: - Monitoring Control
     
     func startMonitoring() {

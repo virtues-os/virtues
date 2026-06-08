@@ -20,6 +20,7 @@
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
+	import PinnedSection from "./PinnedSection.svelte";
 	import { SYSTEM_SECTIONS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 	import EntityPicker, { type EntityResult } from "$lib/components/EntityPicker.svelte";
@@ -777,6 +778,9 @@
 			{:else}
 				{@const contentItems = workspaceContentByWorkspace.get(spaceStore.activeSpaceId) || []}
 				{@const wsAccentColor = spaceStore.activeSpace?.accent_color || null}
+
+				<!-- Pinned (user-curated; renders nothing when empty) -->
+				<PinnedSection collapsed={isCollapsed} />
 
 				<!-- System sections (from constants) -->
 				{#each SYSTEM_SECTIONS as section (section.id)}

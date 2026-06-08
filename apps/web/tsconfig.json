@@ -10,7 +10,28 @@
 		"sourceMap": true,
 		"strict": true,
 		"moduleResolution": "bundler"
-	}
+	},
+	// `include` overrides (not merges with) the inherited list from
+	// .svelte-kit/tsconfig.json, so we restate the SvelteKit defaults and
+	// append the view-runtime action UIs at <repo>/actions/<name>/ui/*.svelte.
+	// Those files import host primitives via $lib and use Svelte 5 runes
+	// ($props/$state/$effect); listing them here lets the language server
+	// resolve them correctly.
+	"include": [
+		".svelte-kit/ambient.d.ts",
+		".svelte-kit/non-ambient.d.ts",
+		".svelte-kit/types/**/$types.d.ts",
+		"vite.config.js",
+		"vite.config.ts",
+		"src/**/*.js",
+		"src/**/*.ts",
+		"src/**/*.svelte",
+		"tests/**/*.js",
+		"tests/**/*.ts",
+		"tests/**/*.svelte",
+		"../../actions/*/ui/**/*.svelte",
+		"../../actions/*/ui/**/*.ts"
+	]
 	// Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias
 	// except $lib which is handled by https://svelte.dev/docs/kit/configuration#files
 	//

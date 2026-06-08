@@ -6,96 +6,111 @@ authors.workspace = true
 license.workspace = true
 description = "Virtues action binaries: one subprocess per data source stream"
 
+# Shared boilerplate for the binaries below (tracing init, http client,
+# ActionInput accessors, fetch_json). Bins reference it as `virtues_actions::`.
+[lib]
+path = "src/lib.rs"
+
 # ── iOS action binaries ─────────────────────────────────────────────────────
 
 [[bin]]
 name = "ios_healthkit"
-path = "src/bin/ios_healthkit/main.rs"
+path = "ios_healthkit/main.rs"
 
 [[bin]]
 name = "ios_location"
-path = "src/bin/ios_location/main.rs"
+path = "ios_location/main.rs"
 
 [[bin]]
 name = "ios_eventkit"
-path = "src/bin/ios_eventkit/main.rs"
+path = "ios_eventkit/main.rs"
 
 [[bin]]
 name = "ios_financekit"
-path = "src/bin/ios_financekit/main.rs"
+path = "ios_financekit/main.rs"
 
 [[bin]]
 name = "ios_contacts"
-path = "src/bin/ios_contacts/main.rs"
+path = "ios_contacts/main.rs"
 
 [[bin]]
 name = "ios_microphone"
-path = "src/bin/ios_microphone/main.rs"
+path = "ios_microphone/main.rs"
 
 [[bin]]
 name = "transcription_resolution"
-path = "src/bin/transcription_resolution/main.rs"
+path = "transcription_resolution/main.rs"
 
 [[bin]]
 name = "day_summary_eod"
-path = "src/bin/day_summary_eod/main.rs"
+path = "day_summary_eod/main.rs"
 
 [[bin]]
 name = "embedding_index"
-path = "src/bin/embedding_index/main.rs"
+path = "embedding_index/main.rs"
 
 [[bin]]
 name = "credential_refresh"
-path = "src/bin/credential_refresh/main.rs"
+path = "credential_refresh/main.rs"
+
+[[bin]]
+name = "virtues_api_renew"
+path = "virtues_api_renew/main.rs"
 
 # ── Mac stream (self_issued_bearer like iOS) ────────────────────────────────
 
 [[bin]]
 name = "mac_activity"
-path = "src/bin/mac_activity/main.rs"
+path = "mac_activity/main.rs"
 
 # ── Google syncs (via_proxy) ────────────────────────────────────────────────
 
 [[bin]]
 name = "google_calendar_sync"
-path = "src/bin/google_calendar_sync/main.rs"
+path = "google_calendar_sync/main.rs"
 
 [[bin]]
 name = "google_gmail_sync"
-path = "src/bin/google_gmail_sync/main.rs"
+path = "google_gmail_sync/main.rs"
 
 # ── Notion / Strava (via_proxy) ─────────────────────────────────────────────
 
 [[bin]]
 name = "notion_pages_sync"
-path = "src/bin/notion_pages_sync/main.rs"
+path = "notion_pages_sync/main.rs"
 
 [[bin]]
 name = "strava_activities_sync"
-path = "src/bin/strava_activities_sync/main.rs"
+path = "strava_activities_sync/main.rs"
 
 # ── Plaid streams (via_proxy with Hosted Link) ──────────────────────────────
 
 [[bin]]
 name = "plaid_accounts_sync"
-path = "src/bin/plaid_accounts_sync/main.rs"
+path = "plaid_accounts_sync/main.rs"
 
 [[bin]]
 name = "plaid_transactions_sync"
-path = "src/bin/plaid_transactions_sync/main.rs"
+path = "plaid_transactions_sync/main.rs"
 
 [[bin]]
 name = "plaid_investments_sync"
-path = "src/bin/plaid_investments_sync/main.rs"
+path = "plaid_investments_sync/main.rs"
 
 [[bin]]
 name = "plaid_liabilities_sync"
-path = "src/bin/plaid_liabilities_sync/main.rs"
+path = "plaid_liabilities_sync/main.rs"
+
+# ── Example app-runtime action ──────────────────────────────────────────────
+
+[[bin]]
+name = "echo_app"
+path = "echo_app/main.rs"
 
 [dependencies]
-virtues = { path = "../core" }
+virtues = { path = "../virtues-core" }
 virtues-helpers = { path = "../crates/virtues-helpers" }
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.40", features = ["full"] }
@@ -106,7 +121,8 @@ thiserror = "1.0"
 uuid = { version = "1.10", features = ["v4", "v5", "serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 base64 = "0.22"
 urlencoding = "2.1"
-# aws-sdk-s3 and aws-config: added when ios_microphone is ported
+# axum: for `app`-runtime example (echo_app) and any other long-running HTTP app actions
+axum = { version = "0.7", features = ["json"] }

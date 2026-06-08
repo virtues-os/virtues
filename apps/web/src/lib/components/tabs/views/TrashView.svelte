@@ -148,7 +148,7 @@
 
 	// Get icon color for file type
 	function getFileIconColor(file: DriveFile): string {
-		if (file.is_folder) return "text-yellow-500";
+		if (file.is_folder) return "text-warning";
 
 		const ext = file.filename.split(".").pop()?.toLowerCase();
 		const mime = file.mime_type?.toLowerCase() || "";
@@ -157,23 +157,23 @@
 			mime.startsWith("image/") ||
 			["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext || "")
 		) {
-			return "text-purple-500";
+			return "text-foreground-muted";
 		}
 		if (
 			mime.startsWith("video/") ||
 			["mp4", "mov", "avi", "mkv", "webm"].includes(ext || "")
 		) {
-			return "text-red-500";
+			return "text-error";
 		}
 		if (
 			mime.startsWith("audio/") ||
 			["mp3", "wav", "ogg", "m4a", "flac"].includes(ext || "")
 		) {
-			return "text-pink-500";
+			return "text-foreground-muted";
 		}
-		if (["pdf"].includes(ext || "")) return "text-red-600";
-		if (["doc", "docx"].includes(ext || "")) return "text-blue-600";
-		if (["xls", "xlsx"].includes(ext || "")) return "text-green-600";
+		if (["pdf"].includes(ext || "")) return "text-error";
+		if (["doc", "docx"].includes(ext || "")) return "text-primary";
+		if (["xls", "xlsx"].includes(ext || "")) return "text-success";
 
 		return "text-foreground-subtle";
 	}
@@ -238,25 +238,20 @@
 	}
 </script>
 
-<Page>
-	<div class="max-w-7xl">
-		<!-- Header -->
-		<div class="mb-6">
-			<div class="flex items-center gap-2 mb-2">
-				<button
-					class="text-foreground-muted hover:text-foreground transition-colors"
-					onclick={navigateToDrive}
-				>
-					<Icon icon="ri:arrow-left-line" class="text-lg" />
-				</button>
-				<h1 class="text-3xl font-serif font-medium text-foreground">
-					Trash
-				</h1>
-			</div>
-			<p class="text-foreground-muted">
-				Items in Trash are automatically deleted after 30 days
-			</p>
-		</div>
+<Page
+	title="Trash"
+	description="Items in Trash are automatically deleted after 30 days"
+	maxWidth="full"
+>
+	{#snippet actions()}
+		<button
+			class="text-foreground-muted hover:text-foreground transition-colors p-1"
+			onclick={navigateToDrive}
+			aria-label="Back to Drive"
+		>
+			<Icon icon="ri:arrow-left-line" class="text-lg" />
+		</button>
+	{/snippet}
 
 		<!-- Toolbar -->
 		<div class="flex items-center justify-between mb-4">
@@ -266,7 +261,7 @@
 			</span>
 			{#if trashFiles.length > 0}
 				<button
-					class="flex items-center gap-2 px-3 py-1.5 text-sm text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+					class="flex items-center gap-2 px-3 py-1.5 text-sm text-error hover:bg-error/10 rounded-lg transition-colors"
 					onclick={() => (showEmptyTrashModal = true)}
 				>
 					<Icon icon="ri:delete-bin-line" />
@@ -278,9 +273,9 @@
 		<!-- Error Message -->
 		{#if error}
 			<div
-				class="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4"
+				class="bg-error/10 border border-error/20 rounded-lg p-4 mb-4"
 			>
-				<p class="text-sm text-red-600 dark:text-red-400">{error}</p>
+				<p class="text-sm text-error">{error}</p>
 			</div>
 		{/if}
 
@@ -379,9 +374,9 @@
 								<td class="px-4 py-3 text-right">
 									<span
 										class="text-xs px-2 py-1 rounded-full {isCritical
-											? 'bg-red-500/10 text-red-600 dark:text-red-400'
+											? 'bg-error/10 text-error'
 											: isWarning
-												? 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400'
+												? 'bg-warning/10 text-warning'
 												: 'text-foreground-muted'}"
 									>
 										{daysRemaining}
@@ -404,7 +399,7 @@
 											/>
 										</button>
 										<button
-											class="p-1 text-foreground-subtle hover:text-red-500 transition-colors"
+											class="p-1 text-foreground-subtle hover:text-error transition-colors"
 											onclick={() => (fileToPurge = file)}
 											aria-label="Delete forever {file.filename}"
 											title="Delete forever"
@@ -419,7 +414,6 @@
 				</table>
 			{/if}
 		</div>
-	</div>
 </Page>
 
 <!-- Toast Notification -->
@@ -478,7 +472,7 @@
 			This includes all contents inside the folder.
 		{/if}
 	</p>
-	<p class="text-red-500 font-medium mt-2">This action cannot be undone.</p>
+	<p class="text-error font-medium mt-2">This action cannot be undone.</p>
 	{#snippet footer()}
 		<button
 			class="modal-btn modal-btn-secondary"
@@ -487,7 +481,7 @@
 			Cancel
 		</button>
 		<button
-			class="modal-btn bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
+			class="modal-btn bg-error text-white hover:bg-error disabled:opacity-50"
 			onclick={handlePurge}
 			disabled={purging}
 		>
@@ -508,7 +502,7 @@
 		{trashFiles.length === 1 ? "item" : "items"} in Trash will be permanently
 		deleted.
 	</p>
-	<p class="text-red-500 font-medium mt-2">This action cannot be undone.</p>
+	<p class="text-error font-medium mt-2">This action cannot be undone.</p>
 	{#snippet footer()}
 		<button
 			class="modal-btn modal-btn-secondary"
@@ -517,7 +511,7 @@
 			Cancel
 		</button>
 		<button
-			class="modal-btn bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
+			class="modal-btn bg-error text-white hover:bg-error disabled:opacity-50"
 			onclick={handleEmptyTrash}
 			disabled={emptyingTrash}
 		>

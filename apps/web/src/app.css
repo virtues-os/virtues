@@ -267,6 +267,51 @@ h6 {
 }
 
 /* ===================================
+   BADGE STYLES (semantic, theme-aware)
+   =================================== */
+
+.badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.125rem 0.5rem;
+	font-size: 0.75rem;
+	font-weight: 500;
+	border-radius: 9999px;
+	white-space: nowrap;
+	text-transform: capitalize;
+}
+
+.badge-muted {
+	background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+	color: var(--color-foreground-muted);
+}
+
+.badge-success {
+	background: var(--color-success-subtle);
+	color: var(--color-success);
+}
+
+.badge-error {
+	background: var(--color-error-subtle);
+	color: var(--color-error);
+}
+
+.badge-warning {
+	background: var(--color-warning-subtle);
+	color: var(--color-warning);
+}
+
+.badge-info {
+	background: var(--color-info-subtle);
+	color: var(--color-info);
+}
+
+.badge-primary {
+	background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	color: var(--color-primary);
+}
+
+/* ===================================
    TOAST STYLES (svelte-sonner)
    =================================== */
 

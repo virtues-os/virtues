@@ -1,0 +1,10 @@
+name = "Echo App"
+description = "Demonstrates the service runtime — a long-running Rust axum server supervised by core. Exposes /hello via the proxy at /service/<id>/hello."
+owner = "system"
+runtime = "service"
+command = ["echo_app"]
+triggers = ["manual"]
+default_enabled = true
+
+[config.service]
+health_path = "/__health"

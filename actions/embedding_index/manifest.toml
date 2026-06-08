@@ -1,0 +1,7 @@
+name = "Embedding Indexer"
+description = "Sweep new wiki/page rows and write vector embeddings for semantic search."
+owner = "system"
+runtime = "function"
+command = ["embedding_index"]
+triggers = ["cron"]
+default_cron = "0 */15 * * * *"

@@ -1,0 +1,8 @@
+name = "iOS HealthKit"
+description = "Ingest HealthKit metrics (heart rate, HRV, steps, sleep, workouts) from a paired iPhone."
+owner = "system"
+runtime = "function"
+command = ["ios_healthkit"]
+triggers = ["webhook"]
+per_credential = true
+source = { id = "ios" }

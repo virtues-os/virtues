@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE wiki_places\n        SET\n            name = COALESCE($2, name),\n            category = COALESCE($3, category),\n            address = COALESCE($4, address),\n            latitude = COALESCE($5, latitude),\n            longitude = COALESCE($6, longitude),\n            metadata = $7,\n            updated_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Float8",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0f7e84f0ca8c5a93ac347e3f5295e4fc380c1342f7977f8905c285289bea7f64"
+}

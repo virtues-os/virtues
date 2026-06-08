@@ -6,7 +6,7 @@
 	 */
 	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
-	import { Button, Input } from "$lib";
+	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
 	import QRCode from "qrcode";
@@ -30,18 +30,17 @@
 	let qrDataUrl = $state<string>("");
 	let qrSourceId = $state<string>("");
 	let isGeneratingQR = $state(false);
-	let showManualEntry = $state(false);
-
-	// iOS manual fallback state
-	let deviceId = $state("");
-	let isLinking = $state(false);
-
 	// Shared polling state (used by both iOS QR and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
 	let isInitiating = $state(false);
 	let isPolling = $state(false);
 	let hasTimedOut = $state(false);
 	let timeRemaining = $state(600);
+	/** True once the credential has been finalized as `active` server-side.
+	 *  Distinguishes "modal closing because we paired" from "modal closing
+	 *  because the user cancelled mid-flow". The latter triggers a hard-delete
+	 *  of the still-pending credential row. */
+	let pairingSucceeded = $state(false);
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -129,49 +128,6 @@
 		initiateQRPairing();
 	}
 
-	// --- iOS Manual Fallback ---
-
-	let isValidId = $derived(
-		/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-			deviceId.trim(),
-		),
-	);
-
-	async function handleiOSLink() {
-		if (!isValidId) {
-			error = "Please enter a valid Device ID (UUID)";
-			return;
-		}
-
-		isLinking = true;
-		error = null;
-
-		try {
-			const res = await fetch("/api/devices/pairing/link", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					device_id: deviceId.trim(),
-					name: displayName || "My Device",
-					device_type: deviceType,
-				}),
-			});
-
-			if (!res.ok) {
-				const data = await res.json();
-				throw new Error(data.error || "Linking failed");
-			}
-
-			const data = await res.json();
-			onSuccess(data.source_id);
-			onClose();
-		} catch (err) {
-			error = err instanceof Error ? err.message : "Linking failed";
-		} finally {
-			isLinking = false;
-		}
-	}
-
 	// --- Mac Flow ---
 
 	async function initiateMacPairing() {
@@ -198,15 +154,6 @@
 		}
 	}
 
-	async function copyCode() {
-		if (!pairingData) return;
-		try {
-			await navigator.clipboard.writeText(pairingData.code);
-		} catch (err) {
-			console.error("Failed to copy code:", err);
-		}
-	}
-
 	function retryMacPairing() {
 		hasTimedOut = false;
 		pairingData = null;
@@ -227,6 +174,7 @@
 			if (status.status === "active") {
 				stopPolling();
 				stopTimer();
+				pairingSucceeded = true;
 				onSuccess(sourceId);
 				onClose();
 			} else if (status.status === "revoked") {
@@ -257,15 +205,8 @@
 	function startTimer() {
 		if (timerInterval) return;
 
-		// For Mac flow, use server-provided expiry; for iOS QR, use client-side 10min
-		if (deviceType === "mac" && pairingData?.expires_at) {
-			const expiresAt = new Date(pairingData.expires_at);
-			const now = new Date();
-			const secondsRemaining = Math.floor(
-				(expiresAt.getTime() - now.getTime()) / 1000,
-			);
-			timeRemaining = Math.max(0, secondsRemaining);
-		}
+		// Client-side 10 minute timer (server enforces actual expiry)
+		timeRemaining = 600;
 
 		timerInterval = setInterval(() => {
 			timeRemaining--;
@@ -293,8 +234,25 @@
 	function handleClose() {
 		stopPolling();
 		stopTimer();
+
+		// Cancel mid-flow: hard-delete the pending credential the server minted
+		// at pair_initiate, otherwise it sits in the DB as a stale `pending`
+		// row and surfaces in the credentials list. Backend's smart DELETE
+		// dispatches by status, so this is a no-op for already-active rows.
+		const pendingId = pairingData?.source_id || qrSourceId;
+		if (pendingId && !pairingSucceeded) {
+			void api.revokeCredential(pendingId).catch(() => {
+				/* benign — row may have been finalized in a race */
+			});
+		}
+
 		onClose();
 	}
+
+	// Reset success flag whenever the modal re-opens for a fresh pair.
+	$effect(() => {
+		if (open) pairingSucceeded = false;
+	});
 
 	onDestroy(() => {
 		stopPolling();
@@ -360,55 +318,6 @@
 					</div>
 				{/if}
 
-				<!-- Manual entry fallback (collapsed) -->
-				<details bind:open={showManualEntry}>
-					<summary class="text-sm text-foreground-muted cursor-pointer hover:text-foreground select-none py-1">
-						Enter manually
-					</summary>
-
-					<div class="mt-4 space-y-4 pt-4 border-t border-border">
-						<div>
-							<p class="text-xs text-foreground-subtle mb-2">Server endpoint:</p>
-							<div class="flex items-center gap-2 bg-surface p-2 rounded border border-border">
-								<code class="text-xs font-mono text-foreground break-all flex-1">
-									{isLoadingEndpoint ? "Loading..." : apiEndpoint}
-								</code>
-								<button
-									class="text-xs text-primary hover:underline whitespace-nowrap"
-									onclick={copyEndpoint}
-									type="button"
-								>
-									Copy
-								</button>
-							</div>
-						</div>
-
-						<div>
-							<label for="device-id" class="block text-sm text-foreground-muted mb-2">
-								Device ID (UUID)
-							</label>
-							<Input
-								id="device-id"
-								type="text"
-								bind:value={deviceId}
-								placeholder="e.g. 123e4567-e89b-..."
-								class="font-mono"
-								disabled={isLinking}
-							/>
-						</div>
-
-						<div class="flex justify-end gap-3">
-							<Button
-								variant="primary"
-								onclick={handleiOSLink}
-								disabled={!isValidId || isLinking}
-							>
-								{isLinking ? "Linking..." : "Link Device"}
-							</Button>
-						</div>
-					</div>
-				</details>
-
 				<!-- Cancel -->
 				<div class="flex justify-end pt-2 border-t border-border">
 					<Button variant="ghost" onclick={handleClose}>Cancel</Button>
@@ -440,20 +349,14 @@
 				<div class="space-y-6">
 					<div>
 						<p class="text-sm text-foreground-muted mb-4">
-							Enter this code in the Virtues Mac app:
+							Enter this device ID in the Virtues Mac app:
 						</p>
-						<div class="font-mono text-3xl font-medium tracking-widest text-foreground py-4">
-							{pairingData.code}
+						<div class="font-mono text-xl font-medium tracking-wide text-foreground py-4 break-all">
+							{pairingData.source_id}
 						</div>
 						<p class="text-xs text-foreground-subtle mb-2">
-							Code expires in {formatTime(timeRemaining)}
+							Expires in {formatTime(timeRemaining)}
 						</p>
-						<button
-							class="text-sm text-foreground-muted hover:text-foreground underline"
-							onclick={copyCode}
-						>
-							Copy code
-						</button>
 					</div>
 
 					<div class="pt-4 border-t border-border">

@@ -70,7 +70,6 @@
                 { route: '/virtues/changelog', label: "What's New", icon: 'ri:megaphone-line' },
                 { route: '/virtues/usage', label: 'Usage', icon: 'ri:bar-chart-line' },
                 { route: '/virtues/jobs', label: 'Jobs', icon: 'ri:refresh-line' },
-                { route: '/virtues/feedback', label: 'Feedback', icon: 'ri:feedback-line' },
                 { route: '/virtues/lake', label: 'Lake', icon: 'ri:database-2-line' },
                 { route: '/virtues/sql', label: 'SQL Viewer', icon: 'ri:database-line' },
                 { route: '/virtues/terminal', label: 'Terminal', icon: 'ri:terminal-box-line' },
@@ -464,7 +463,7 @@
                     </tr>
                     <tr>
                         <td><strong>Namespace</strong></td>
-                        <td>First path segment. Determines storage backend: <code>chat</code> &rarr; SQLite, <code>drive</code> &rarr; filesystem, <code>virtues</code> &rarr; app route</td>
+                        <td>First path segment. Determines storage backend: <code>chat</code> &rarr; Postgres, <code>drive</code> &rarr; filesystem, <code>virtues</code> &rarr; app route</td>
                     </tr>
                     <tr>
                         <td><strong>Entity</strong></td>
@@ -503,7 +502,7 @@
  └─┬─┘ └────────┬────────┘           └──┬──┘└─────┬──────┘
    │            │                       │         │
 namespace    path within             namespace  entity_id
-(filesystem)                         (sqlite)
+(filesystem)                         (postgres)
 
 /lake/sources/gmail/2024/inbox       /virtues/sitemap
  └┬─┘ └──────────┬──────────┘         └──┬───┘ └──┬──┘
@@ -568,12 +567,12 @@ namespace     S3 key path             namespace  subpath
                     <tr>
                         <td><code>/person/person_abc</code></td>
                         <td>Record</td>
-                        <td>SQLite lookup</td>
+                        <td>Postgres lookup</td>
                     </tr>
                     <tr>
                         <td><code>/page/page_xyz</code></td>
                         <td>Record</td>
-                        <td>SQLite lookup</td>
+                        <td>Postgres lookup</td>
                     </tr>
                     <tr>
                         <td><code>/wiki</code></td>
@@ -588,7 +587,7 @@ namespace     S3 key path             namespace  subpath
                     <tr>
                         <td><code>/view/view_abc</code></td>
                         <td>Folder</td>
-                        <td>SQLite lookup</td>
+                        <td>Postgres lookup</td>
                     </tr>
                     <tr>
                         <td><code>https://arxiv.org</code></td>
@@ -690,7 +689,7 @@ Rendered:
                 </thead>
                 <tbody>
                     <tr>
-                        <td><code>sqlite</code></td>
+                        <td><code>postgres</code></td>
                         <td>person, place, org, day, year, page, chat, source, view</td>
                         <td>Entity namespaces with full-text search</td>
                     </tr>

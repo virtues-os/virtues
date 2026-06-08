@@ -10,7 +10,7 @@
 
 <script lang="ts" generics="T">
 	import Icon from '$lib/components/Icon.svelte';
-	import { useClickOutside } from '$lib/floating';
+	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type { FilterDef, FilterOption, FilterValue } from './types';
 	import { describeFilter, isFilterActive } from './types';
 
@@ -40,8 +40,6 @@
 	$effect(() => {
 		if (autoOpen) void ensureAsyncLoaded();
 	});
-	let chipEl = $state<HTMLElement | null>(null);
-	let popoverEl = $state<HTMLElement | null>(null);
 	// svelte-ignore state_referenced_locally
 	let asyncOptions = $state<FilterOption[]>(loadedOptions ?? []);
 	let asyncLoading = $state(false);
@@ -70,12 +68,6 @@
 		wasOpen = open;
 	});
 
-	useClickOutside(
-		() => [chipEl, popoverEl],
-		() => (open = false),
-		() => open
-	);
-
 	async function ensureAsyncLoaded() {
 		if (def.kind !== 'async') return;
 		if (asyncOptions.length > 0 || asyncLoading) return;
@@ -85,11 +77,6 @@
 		} finally {
 			asyncLoading = false;
 		}
-	}
-
-	function toggle() {
-		open = !open;
-		if (open) void ensureAsyncLoaded();
 	}
 
 	function pickEnum(opt: FilterOption) {
@@ -121,92 +108,98 @@
 	}
 </script>
 
-<span class="filter-chip" class:active bind:this={chipEl}>
-	<button
-		type="button"
-		class="chip-body"
-		class:active
-		onclick={toggle}
-		aria-haspopup="listbox"
-		aria-expanded={open}
-	>
-		<span class="chip-label">{labelText}</span>
-	</button>
+<span class="filter-chip" class:active>
+	<Popover bind:open placement="bottom-start" offset={4}>
+		{#snippet trigger({ toggle: triggerToggle })}
+			<button
+				type="button"
+				class="chip-body"
+				class:active
+				onclick={() => {
+					triggerToggle();
+					if (!open) void ensureAsyncLoaded();
+				}}
+				aria-haspopup="listbox"
+				aria-expanded={open}
+			>
+				<span class="chip-label">{labelText}</span>
+			</button>
+		{/snippet}
+		{#snippet children()}
+			<div class="popover" role="listbox">
+				{#if def.kind === 'async' && def.searchable}
+					<div class="popover-search">
+						<Icon icon="ri:search-line" width="14" />
+						<input
+							type="text"
+							bind:value={asyncQuery}
+							placeholder={def.placeholder ?? 'Search…'}
+						/>
+					</div>
+				{/if}
+
+				{#if def.kind === 'async' && asyncLoading}
+					<div class="popover-state">Loading…</div>
+				{:else if def.kind === 'async' && asyncOptions.length === 0}
+					<div class="popover-state">No options</div>
+				{:else if def.kind === 'enum'}
+					{#each def.options as opt}
+						<button
+							type="button"
+							class="popover-row"
+							class:selected={value === opt.value}
+							onclick={() => pickEnum(opt)}
+						>
+							{#if opt.badgeColor}
+								<span class="dot {badgeFor(opt)}"></span>
+							{/if}
+							<span>{opt.label}</span>
+							{#if value === opt.value}
+								<Icon icon="ri:check-line" width="14" />
+							{/if}
+						</button>
+					{/each}
+				{:else if def.kind === 'multi'}
+					{#each def.options as opt}
+						<button
+							type="button"
+							class="popover-row"
+							class:selected={isMultiChecked(opt)}
+							onclick={() => toggleMulti(opt)}
+						>
+							<span class="checkbox" class:checked={isMultiChecked(opt)}>
+								{#if isMultiChecked(opt)}
+									<Icon icon="ri:check-line" width="12" />
+								{/if}
+							</span>
+							{#if opt.badgeColor}
+								<span class="dot {badgeFor(opt)}"></span>
+							{/if}
+							<span>{opt.label}</span>
+						</button>
+					{/each}
+				{:else if def.kind === 'async'}
+					{#each visibleAsyncOptions as opt}
+						<button
+							type="button"
+							class="popover-row"
+							class:selected={value === opt.value}
+							onclick={() => pickEnum(opt)}
+						>
+							<span>{opt.label}</span>
+							{#if value === opt.value}
+								<Icon icon="ri:check-line" width="14" />
+							{/if}
+						</button>
+					{/each}
+				{/if}
+			</div>
+		{/snippet}
+	</Popover>
 	{#if active && removable}
 		<button type="button" class="chip-clear" onclick={onClear} aria-label="Remove filter">
 			<Icon icon="ri:close-line" width="12" />
 		</button>
-	{/if}
-
-	{#if open}
-		<div class="popover" bind:this={popoverEl} role="listbox">
-			{#if def.kind === 'async' && def.searchable}
-				<div class="popover-search">
-					<Icon icon="ri:search-line" width="14" />
-					<input
-						type="text"
-						bind:value={asyncQuery}
-						placeholder={def.placeholder ?? 'Search…'}
-					/>
-				</div>
-			{/if}
-
-			{#if def.kind === 'async' && asyncLoading}
-				<div class="popover-state">Loading…</div>
-			{:else if def.kind === 'async' && asyncOptions.length === 0}
-				<div class="popover-state">No options</div>
-			{:else if def.kind === 'enum'}
-				{#each def.options as opt}
-					<button
-						type="button"
-						class="popover-row"
-						class:selected={value === opt.value}
-						onclick={() => pickEnum(opt)}
-					>
-						{#if opt.badgeColor}
-							<span class="dot {badgeFor(opt)}"></span>
-						{/if}
-						<span>{opt.label}</span>
-						{#if value === opt.value}
-							<Icon icon="ri:check-line" width="14" />
-						{/if}
-					</button>
-				{/each}
-			{:else if def.kind === 'multi'}
-				{#each def.options as opt}
-					<button
-						type="button"
-						class="popover-row"
-						class:selected={isMultiChecked(opt)}
-						onclick={() => toggleMulti(opt)}
-					>
-						<span class="checkbox" class:checked={isMultiChecked(opt)}>
-							{#if isMultiChecked(opt)}
-								<Icon icon="ri:check-line" width="12" />
-							{/if}
-						</span>
-						{#if opt.badgeColor}
-							<span class="dot {badgeFor(opt)}"></span>
-						{/if}
-						<span>{opt.label}</span>
-					</button>
-				{/each}
-			{:else if def.kind === 'async'}
-				{#each visibleAsyncOptions as opt}
-					<button
-						type="button"
-						class="popover-row"
-						class:selected={value === opt.value}
-						onclick={() => pickEnum(opt)}
-					>
-						<span>{opt.label}</span>
-						{#if value === opt.value}
-							<Icon icon="ri:check-line" width="14" />
-						{/if}
-					</button>
-				{/each}
-			{/if}
-		</div>
 	{/if}
 </span>
 
@@ -280,12 +273,8 @@
 		outline-offset: 2px;
 	}
 
-	/* Popover */
+	/* Popover (positioning handled by the floating primitive) */
 	.popover {
-		position: absolute;
-		top: calc(100% + 4px);
-		left: 0;
-		z-index: 50;
 		min-width: 200px;
 		max-width: 320px;
 		max-height: 280px;
@@ -385,12 +374,10 @@
 		flex-shrink: 0;
 	}
 
-	.dot.badge-gray { background: color-mix(in srgb, var(--color-foreground) 30%, transparent); }
-	.dot.badge-blue { background: #2563eb; }
-	.dot.badge-green { background: #16a34a; }
-	.dot.badge-purple { background: #7c3aed; }
-	.dot.badge-orange { background: #ea580c; }
-	.dot.badge-pink { background: #db2777; }
-	.dot.badge-red { background: #dc2626; }
-	.dot.badge-yellow { background: #d97706; }
+	.dot.badge-muted { background: color-mix(in srgb, var(--color-foreground) 30%, transparent); }
+	.dot.badge-success { background: var(--color-success); }
+	.dot.badge-error { background: var(--color-error); }
+	.dot.badge-warning { background: var(--color-warning); }
+	.dot.badge-info { background: var(--color-info); }
+	.dot.badge-primary { background: var(--color-primary); }
 </style>

@@ -7,16 +7,9 @@
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 </script>
 
-<Page>
-	<div class="max-w-3xl">
-		<div class="mb-8">
-			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">Assistant</h1>
-			<p class="text-foreground-muted">Configure AI models and behavior</p>
-		</div>
-
-		<div class="space-y-6">
-			<ModelSettings />
-			<PersonaSettings />
-		</div>
+<Page title="Assistant" description="Configure AI models and behavior" maxWidth="prose">
+	<div class="space-y-6">
+		<ModelSettings />
+		<PersonaSettings />
 	</div>
 </Page>

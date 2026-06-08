@@ -10,7 +10,7 @@ export type SampleLocationPoint = {
 
 /**
  * Temporary sample location track, copied (downsampled) from:
- * `core/seeds/monday_in_rome/location.csv`.
+ * `virtues-core/seeds/monday_in_rome/location.csv`.
  *
  * Intended for UI/dev preview until we wire real per-day device location tracks.
  */

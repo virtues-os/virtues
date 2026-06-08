@@ -18,11 +18,12 @@ import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
 import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
-import DataSourcesView from '$lib/components/tabs/views/DataSourcesView.svelte';
-import DataSourceDetailView from '$lib/components/tabs/views/DataSourceDetailView.svelte';
+import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
+import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
 import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
 import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
+import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
@@ -31,17 +32,18 @@ import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte
 import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 import DeveloperSitemapView from '$lib/components/tabs/views/DeveloperSitemapView.svelte';
 import DeveloperLakeView from '$lib/components/tabs/views/DeveloperLakeView.svelte';
-// AddSourceView removed - source connection now handled via modals in DataSourcesView
 import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 import ChangelogView from '$lib/components/tabs/views/ChangelogView.svelte';
-import FeedbackView from '$lib/components/tabs/views/FeedbackView.svelte';
+import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
+import ActivityView from '$lib/components/tabs/views/ActivityView.svelte';
+import ByoKeyView from '$lib/components/tabs/views/ByoKeyView.svelte';
 import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 import ConwayView from '$lib/components/tabs/views/ConwayView.svelte';
 import DogJumpView from '$lib/components/tabs/views/DogJumpView.svelte';
 import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
-import ProjectsView from '$lib/components/tabs/views/ProjectsView.svelte';
-import ProjectDetailView from '$lib/components/tabs/views/ProjectDetailView.svelte';
+import ThingsView from '$lib/components/tabs/views/ThingsView.svelte';
+import ThingDetailView from '$lib/components/tabs/views/ThingDetailView.svelte';
 import FolderView from '$lib/components/tabs/views/FolderView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
@@ -300,16 +302,24 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// THING NAMESPACE: /thing, /thing/{id}
+	// THING NAMESPACE: /things (list), /thing/thg_{id} (detail)
+	//
+	// A "thing" is a folder you can re-enter — projects, pets, goals, topics.
+	// Sidebar "Things" links to `/things`. The DB has a `category` column for
+	// future use but it is not surfaced in v1 UX.
 	// ========================================================================
 	thing: {
-		match: (path) => path === '/thing' || /^\/thing\/[^/]+$/.test(path),
+		match: (path) =>
+			path === '/things' ||
+			path === '/thing' ||
+			/^\/thing\/[^/]+$/.test(path),
 		parse: (path) => {
-			if (path === '/thing') {
+			if (path === '/things' || path === '/thing') {
 				return {
 					type: 'thing',
 					label: 'Things',
 					icon: 'ri:lightbulb-line',
+					normalizedRoute: '/things',
 				};
 			}
 			const match = path.match(/^\/thing\/([^/]+)$/);
@@ -320,17 +330,17 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				entityId: match?.[1],
 			};
 		},
-		serialize: (id) => id || 'thing',
+		serialize: (id) => id || 'things',
 		deserialize: (serialized) => {
-			if (serialized && serialized !== 'thing') {
+			if (serialized && serialized !== 'things' && serialized !== 'thing') {
 				return `/thing/${serialized}`;
 			}
-			return '/thing';
+			return '/things';
 		},
 		icon: 'ri:lightbulb-line',
 		defaultLabel: 'Things',
-		component: WikiListView,
-		detailComponent: WikiDetailView,
+		component: ThingsView,
+		detailComponent: ThingDetailView,
 	},
 
 	// ========================================================================
@@ -429,14 +439,16 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// SOURCE NAMESPACE: /sources, /sources/source_{id}
-	// Note: /source redirects to /sources for backwards compatibility
+	// SOURCE NAMESPACE: /sources, /sources/<credential_id>
+	//   - `/sources` (and `/source` legacy alias) → list of credentials
+	//   - `/sources/<id>` → CredentialDetailView for one credential
+	// "Source" in the URL is user-facing vocabulary; under the hood each row
+	// is a credential (one connection to a provider).
 	// ========================================================================
 	source: {
 		match: (path) =>
-			path === '/sources' || path === '/source' || /^\/sources\/source_[^/]+$/.test(path),
+			path === '/sources' || path === '/source' || /^\/sources\/[^/]+$/.test(path),
 		parse: (path) => {
-			// List view (redirect /source to /sources)
 			if (path === '/sources' || path === '/source') {
 				return {
 					type: 'source',
@@ -445,71 +457,20 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 					normalizedRoute: '/sources',
 				};
 			}
-			// Detail view
-			const match = path.match(/^\/sources\/(source_[^/]+)$/);
+			const m = path.match(/^\/sources\/([^/]+)$/);
 			return {
 				type: 'source',
 				label: 'Source',
 				icon: 'ri:database-2-line',
-				entityId: match?.[1],
+				entityId: m?.[1],
 			};
 		},
-		serialize: (id) => {
-			if (id) return `source_${id}`;
-			return 'sources';
-		},
-		deserialize: (serialized) => {
-			if (serialized.startsWith('source_')) {
-				return `/sources/${serialized}`;
-			}
-			return '/sources';
-		},
+		serialize: (id) => (id ? id : 'sources'),
+		deserialize: (serialized) => (serialized === 'sources' ? '/sources' : `/sources/${serialized}`),
 		icon: 'ri:database-2-line',
 		defaultLabel: 'Sources',
-		component: DataSourcesView,
-		detailComponent: DataSourceDetailView,
-	},
-
-	// ========================================================================
-	// PROJECT NAMESPACE: /projects, /projects/prj_{id}
-	// A project is a curated set of references you @-mention in chat.
-	// ========================================================================
-	project: {
-		match: (path) =>
-			path === '/projects' || path === '/project' || /^\/projects\/prj_[^/]+$/.test(path),
-		parse: (path) => {
-			// List view (redirect /project to /projects)
-			if (path === '/projects' || path === '/project') {
-				return {
-					type: 'project',
-					label: 'Projects',
-					icon: 'ri:folder-open-line',
-					normalizedRoute: '/projects',
-				};
-			}
-			// Detail view
-			const match = path.match(/^\/projects\/(prj_[^/]+)$/);
-			return {
-				type: 'project',
-				label: 'Project',
-				icon: 'ri:folder-open-line',
-				entityId: match?.[1],
-			};
-		},
-		serialize: (id) => {
-			if (id) return `prj_${id}`;
-			return 'projects';
-		},
-		deserialize: (serialized) => {
-			if (serialized.startsWith('prj_')) {
-				return `/projects/${serialized}`;
-			}
-			return '/projects';
-		},
-		icon: 'ri:folder-open-line',
-		defaultLabel: 'Projects',
-		component: ProjectsView,
-		detailComponent: ProjectDetailView,
+		component: ConnectionsPanel,
+		detailComponent: CredentialDetailView,
 	},
 
 	// ========================================================================
@@ -530,10 +491,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// ACTIONS: /actions
+	// ACTIONS: /actions, /actions/{actions|templates|history}
 	// ========================================================================
 	actions: {
-		match: (path) => path === '/actions',
+		match: (path) =>
+			path === '/actions' || /^\/actions\/(actions|templates|history)$/.test(path),
 		parse: () => ({
 			type: 'actions',
 			label: 'Actions',
@@ -570,6 +532,25 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Action',
 		component: ActionDetailView,
 		detailComponent: ActionDetailView,
+	},
+
+	// ========================================================================
+	// DEVELOPERS: /developers
+	// Tab group containing SQL, Terminal, and Lake sub-views (selected via #hash).
+	// ========================================================================
+	developers: {
+		match: (path) =>
+			path === '/developers' || /^\/developers\/(sql|terminal|lake)$/.test(path),
+		parse: () => ({
+			type: 'developers',
+			label: 'Developers',
+			icon: 'ri:code-s-slash-line',
+		}),
+		serialize: () => 'developers',
+		deserialize: () => '/developers',
+		icon: 'ri:code-s-slash-line',
+		defaultLabel: 'Developers',
+		component: DevelopersView,
 	},
 
 	// ========================================================================
@@ -662,7 +643,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 
 	// ========================================================================
 	// VIRTUES NAMESPACE: /virtues/{page}
-	// System pages: account, assistant, usage, jobs, sql, terminal, sitemap, feedback
+	// System pages: account, assistant, usage, jobs, sql, terminal, sitemap
 	// ========================================================================
 	virtues: {
 		match: (path) => path.startsWith('/virtues/'),
@@ -671,15 +652,17 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 
 			const pageConfig: Record<string, { label: string; icon: string }> = {
 				account: { label: 'Account', icon: 'ri:user-settings-line' },
+				devices: { label: 'Devices', icon: 'ri:device-line' },
+				activity: { label: 'Activity', icon: 'ri:history-line' },
 				assistant: { label: 'Assistant', icon: 'ri:robot-line' },
 				billing: { label: 'Billing', icon: 'ri:bank-card-line' },
+				'byo-key': { label: 'AI Provider Key', icon: 'ri:key-line' },
 				changelog: { label: "What's New", icon: 'ri:megaphone-line' },
 				usage: { label: 'Usage', icon: 'ri:bar-chart-line' },
 				lake: { label: 'Lake', icon: 'ri:database-2-line' },
 				sql: { label: 'SQL', icon: 'ri:database-2-line' },
 				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
 				sitemap: { label: 'Sitemap', icon: 'ri:road-map-line' },
-				feedback: { label: 'Feedback', icon: 'ri:feedback-line' },
 				system: { label: 'System', icon: 'ri:computer-line' },
 			};
 
@@ -781,7 +764,10 @@ export function getComponent(type: TabType, hasEntityId: boolean): Component<any
 export function getVirtuesComponent(page: string): Component<any> {
 	const componentMap: Record<string, Component<any>> = {
 		account: ProfileView,
+		devices: DevicesView,
+		activity: ActivityView,
 		assistant: AssistantView,
+		'byo-key': ByoKeyView,
 		billing: BillingView,
 		changelog: ChangelogView,
 		usage: UsageView,
@@ -789,21 +775,11 @@ export function getVirtuesComponent(page: string): Component<any> {
 		sql: DeveloperSqlView,
 		terminal: DeveloperTerminalView,
 		sitemap: DeveloperSitemapView,
-		feedback: FeedbackView,
 		system: SystemInfoView,
 	};
 	return componentMap[page] || ProfileView;
 }
 
-/**
- * Get the component for source pages.
- * Note: Add flow is now handled via modals in DataSourcesView.
- */
-// biome-ignore lint/suspicious/noExplicitAny: Component props vary
-export function getSourceComponent(hasEntityId: boolean): Component<any> {
-	if (hasEntityId) return DataSourceDetailView;
-	return DataSourcesView;
-}
 
 /**
  * Parse a route string into tab metadata using the registry.
@@ -818,10 +794,10 @@ export function parseRoute(route: string): ParsedRoute {
 	const orderedTypes: TabType[] = [
 		// Specific patterns first
 		'source', // Source list and detail views
-		'project', // Project list and detail views
 		'tools', // Tools management page
 		'actions', // Actions list page (must come before singular 'action')
 		'action', // Action detail page
+		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
 		'view', // View/folder detail pages
 		'virtues', // Has /virtues/* pattern

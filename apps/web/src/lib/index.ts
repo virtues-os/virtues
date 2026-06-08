@@ -1,4 +1,5 @@
 export { default as Page } from "./components/Page.svelte"
+export { default as PageHeading } from "./components/PageHeading.svelte"
 export { default as Button } from "./components/Button.svelte"
 export { default as Badge } from "./components/Badge.svelte"
 export { default as Input } from "./components/Input.svelte"
@@ -7,6 +8,10 @@ export { default as DevicePairing } from "./components/DevicePairing.svelte"
 export { default as Markdown } from "./components/Markdown.svelte"
 export { default as CitedMarkdown } from "./components/CitedMarkdown.svelte"
 export { default as ThinkingBlock } from "./components/ThinkingBlock.svelte"
+export { default as EmptyState } from "./components/EmptyState.svelte"
+export { default as LoadingState } from "./components/LoadingState.svelte"
+export { default as ErrorState } from "./components/ErrorState.svelte"
+export { default as SudoModal } from "./components/SudoModal.svelte"
 
 // Citation components
 export { InlineCitation, CitationTooltip, CitationPanel, SourcesFooter } from "./components/citations"

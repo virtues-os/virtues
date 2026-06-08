@@ -1,0 +1,84 @@
+[package]
+name = "virtues-api"
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "Anonymous-bearer entitlement gate fronting OAuth, lite utilities, and AI for Virtues."
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+keywords = ["api-proxy", "rate-limiting", "budget", "entitlement"]
+
+[[bin]]
+name = "virtues-api"
+path = "src/main.rs"
+
+[dependencies]
+# Shared registry
+virtues-registry = { path = "../../crates/virtues-registry" }
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# HTTP Server
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# HTTP Client (for proxying)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Streaming support
+futures = "0.3"
+async-stream = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+# Bytes (for request/response bodies)
+bytes = "1.5"
+
+
+# Concurrent HashMap for budget tracking
+dashmap = "6.0"
+
+# Database (entitlement schema for WS-6b; existing RAM-budget paths still
+# run while migration proceeds)
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "tls-rustls-ring", "chrono", "uuid", "macros"] }
+
+# Bearer-token hashing (one-way fingerprint into the entitlement table).
+# This is data fingerprinting, not crypto — Lint 3 only forbids HMAC primitives
+# outside `crates/virtues-helpers/src/crypto/`.
+sha2 = "0.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Shared crypto (the OAuth-proxy exchange-token signing lives in crypto/, the
+# Lint-3 home for HMAC) + base64 for OAuth state encoding.
+virtues-helpers = { path = "../../crates/virtues-helpers" }
+base64 = "0.22"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Environment
+dotenvy = "0.15"
+
+# Atomics for lock-free budget updates
+portable-atomic = { version = "1.6", features = ["float"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

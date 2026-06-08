@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            COALESCE(request_count, 0) as \"request_count!: i32\",\n            COALESCE(token_count, 0) as \"token_count!: i32\"\n        FROM app_api_usage\n        WHERE endpoint = $1 AND day_bucket = $2\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "request_count!: i32",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "token_count!: i32",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Date"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "ab59971c8ac3798e425cc87f3b80c4150c759f75a208e56ea69faeae0ee04058"
+}
