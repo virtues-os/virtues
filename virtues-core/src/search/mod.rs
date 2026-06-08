@@ -1,26 +1,23 @@
-//! Semantic search module
+//! Semantic search module.
 //!
-//! Provides vector-based semantic search over user data using:
-//! - ORT + tokenizers (embeddinggemma-300m, int8/fp16 per accelerator) for local embedding
-//! - ORT + tokenizers (jina-reranker-v2-base-multilingual) for reranking
-//! - pgvector (`search_vectors.embedding vector(768)` + HNSW cosine index)
-//!   for ANN retrieval
+//! v0.1.0 routes all local ML through a separate Ollama daemon (see
+//! `embedder.rs`). The previous ORT-in-process stack — accelerator
+//! detection, model cache, ONNX session construction, cross-encoder
+//! reranker — was removed because ORT 1.24's prebuilt binaries require
+//! glibc 2.38+ which Jetson JetPack 6.x doesn't ship. Ollama owns its
+//! own GPU/CPU detection and model pulls, so this module is now a thin
+//! Rust shim over its HTTP API.
 //!
 //! # Architecture
 //!
-//! - `accelerator.rs` - Hardware detection + the EP/precision policy (the brain)
-//! - `model_cache.rs` - First-boot HF download + on-disk cache (precision-aware)
-//! - `ort_runtime.rs` - Shared ONNX Runtime session construction (EP selection)
-//! - `embedder.rs`    - Embedder trait + LocalEmbedder
-//! - `indexer.rs`     - Background job for embedding new records
-//! - `query.rs`       - Vector search engine (query embedding + pgvector lookup)
-//! - `reranker.rs`    - Cross-encoder reranker
+//! - `embedder.rs` - Ollama HTTP client (text → 768-dim vector)
+//! - `indexer.rs`  - Background job that embeds new records
+//! - `query.rs`    - Vector search (query embedding + pgvector ANN lookup)
+//! - `reranker.rs` - v0.1.0 stub; search auto-falls-back to bi-encoder cosine
 
-pub mod accelerator;
 pub mod embedder;
 pub mod indexer;
 pub mod model_cache;
-pub mod ort_runtime;
 pub mod query;
 pub mod reranker;
 
