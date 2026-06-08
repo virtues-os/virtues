@@ -1,8 +1,18 @@
 name: Release Linux binaries
 
 # Triggered on tag push (e.g. `v0.1.0`) or manual dispatch. Builds the
-# `virtues` binary for x86_64 + aarch64 Linux via `cross`, packages each
-# as a tarball, and attaches them to the GitHub Release for that tag.
+# `virtues` binary for x86_64 + aarch64 Linux NATIVELY on GitHub-hosted
+# Ubuntu 22.04 runners (the aarch64 runner is the free Linux ARM64 runner
+# GitHub launched in 2025 for public repos), packages each as a tarball,
+# and attaches them to the GitHub Release for that tag.
+#
+# Native builds intentionally — `cross` with ORT 1.24 hits an unsolvable
+# C++ ABI mismatch (the prebuilt onnxruntime.so needs glibc 2.32+ /
+# GCC 11+ symbols that the default cross-rs images, frozen on Ubuntu
+# 20.04 / GCC 9, don't provide). Native Ubuntu 22.04 has both arches'
+# toolchains modern enough for ORT 1.24's prebuilt libs to link cleanly,
+# matches JetPack 6 / Debian 13 targets, and produces a single static-ish
+# binary so install.sh's flow stays one-curl.
 #
 # Tarball naming intentionally matches what `scripts/install.sh` expects:
 #
@@ -29,15 +39,17 @@ permissions:
 jobs:
   build:
     name: Build ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -55,10 +67,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        uses: taiki-e/install-action@v2
+      # Cache cargo registry + target dir — saves ~3-5 min on subsequent runs
+      # when only the source changes.
+      - uses: Swatinem/rust-cache@v2
         with:
-          tool: cross
+          shared-key: release-${{ matrix.arch }}
 
       # Sqlx queries are checked at compile-time against a recorded schema
       # under .sqlx/ — offline mode avoids needing a live DB in CI.
@@ -66,7 +79,7 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cross build --release -p virtues --target ${{ matrix.target }}
+          cargo build --release -p virtues --bin virtues --target ${{ matrix.target }}
 
       - name: Package tarball
         id: tarball
@@ -104,7 +117,7 @@ jobs:
   publish:
     name: Publish release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
