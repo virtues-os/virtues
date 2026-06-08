@@ -113,6 +113,25 @@ detect_distro() {
             fi
             ;;
     esac
+
+    # Glibc gate. The release binaries link ONNX Runtime 1.24 (for local
+    # embeddings/reranking), whose prebuilt manylinux blobs reference glibc
+    # 2.38+ symbols (__isoc23_strtoll etc., added in glibc 2.38 / Aug 2023).
+    # We build on Ubuntu 24.04 (glibc 2.39); the binary won't load on older
+    # glibc. Most supported targets are fine (Debian 13 = 2.40, Ubuntu 24.04
+    # = 2.39, Fedora 40 = 2.39). The notable exception is Jetson JetPack
+    # 6.0/6.1 which ships glibc 2.35 — upgrade to JetPack 6.2+.
+    GLIBC_VERSION=$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    if [ -n "$GLIBC_VERSION" ]; then
+        GLIBC_MAJOR=${GLIBC_VERSION%.*}
+        GLIBC_MINOR=${GLIBC_VERSION#*.}
+        if [ "$GLIBC_MAJOR" -lt 2 ] 2>/dev/null || \
+           { [ "$GLIBC_MAJOR" = "2" ] && [ "$GLIBC_MINOR" -lt 38 ] 2>/dev/null; }; then
+            die "glibc $GLIBC_VERSION is too old. Virtues v1 requires glibc 2.38 or later.
+On Jetson JetPack 6.0/6.1 (glibc 2.35), upgrade to JetPack 6.2+."
+        fi
+        say "glibc $GLIBC_VERSION detected — OK"
+    fi
 }
 
 add_pgdg_repo() {
