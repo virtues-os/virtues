@@ -102,16 +102,11 @@
 	}
 </script>
 
-<Page>
-	<div class="max-w-2xl">
-		<div class="mb-8">
-			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
-				Chat History
-			</h1>
-			<p class="text-foreground-muted">
-				{sessions.length} conversation{sessions.length !== 1 ? "s" : ""}
-			</p>
-		</div>
+<Page
+	title="Chat History"
+	description={`${sessions.length} conversation${sessions.length !== 1 ? 's' : ''}`}
+	maxWidth="narrow"
+>
 
 		{#if loading}
 			<div class="flex items-center justify-center h-full">
@@ -168,5 +163,4 @@
 				{/each}
 			</div>
 		{/if}
-	</div>
 </Page>

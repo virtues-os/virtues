@@ -11,7 +11,11 @@ import AVFAudio
 import UIKit
 
 class AudioManager: NSObject, ObservableObject {
-    static let shared = AudioManager()
+    static let shared = AudioManager(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        dataUploader: BatchUploadCoordinator.shared
+    )
 
     // MARK: - Constants
     private let chunkDurationSeconds = 300.0  // 5 minutes per chunk
@@ -58,15 +62,6 @@ class AudioManager: NSObject, ObservableObject {
         HealthCheckCoordinator.shared.register(self)
     }
 
-    /// Legacy singleton initializer - uses default dependencies
-    private override convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            dataUploader: BatchUploadCoordinator.shared
-        )
-    }
-    
     deinit {
         NotificationCenter.default.removeObserver(self)
         HealthCheckCoordinator.shared.unregister(self)

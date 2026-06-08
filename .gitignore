@@ -1,13 +1,29 @@
+# Stray per-member Cargo.lock — the workspace root lock is canonical.
+/virtues-core/Cargo.lock
+
 # Environment variables
 .env
 .env.local
 .env.*.local
-services/auth-proxy/.env
-apps/google-auth-proxy/.env
 
 # Keep .env.example files
 !.env.example
 !**/.env.example
+
+# Backup / temp files (e.g. .env backups from `virtues init`, IDE .swp)
+*.backup
+*.bak
+*.bak.*
+*.swp
+*.orig
+*.rej
+
+# SvelteKit build output (per-package generated)
+.svelte-kit/
+
+# NB: do NOT add `.sqlx/` — the CI release pipeline builds with
+# SQLX_OFFLINE=true and requires the cache to be committed. Refresh via
+# `cargo sqlx prepare --workspace` against a live local Postgres.
 
 # Apple certificates and signing
 *.p12
@@ -100,20 +116,13 @@ wheels/
 *.egg
 
 # Other
-/apps/oauth-proxy/.pnpm-store
 /target/
-.fastembed_cache/
-data/*
-core/data/
-core/data/*
+.data/
 tmp/*
 
-# oauth-proxy dist/ (Vercel compiles TypeScript natively, no dist/ needed)
 /.pnpm-store
 /apps/web/.pnpm-store
-/apps/tollbooth/target
-/apps/oauth-proxy/dist
 /apps/mac/.build
-/packages/virtues-registry/target
-/core/core/
-/core/.sqlx
+/crates/virtues-registry/target
+/virtues-core/core/
+/virtues-core/.sqlx

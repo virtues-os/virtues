@@ -260,6 +260,60 @@ impl TokenEncryptor {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Standalone AES-256-GCM under an explicit key (not the env master key)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// AES-256-GCM seal of raw bytes under an explicit 32-byte key — NOT the env
+/// master key. Layout: `nonce(12) || ciphertext || tag(16)`, matching
+/// `TokenEncryptor::encrypt`. Used by the blind rendezvous, where the key K
+/// lives only on the box + its paired devices and is never an environment
+/// secret. A fresh random nonce per call is safe: the box is the sole writer
+/// and publishes rarely.
+pub fn seal_aes_256_gcm(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
+    let unbound = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| CryptoError::InvalidKey("failed to create AES key".to_string()))?;
+    let sealing = LessSafeKey::new(unbound);
+
+    let mut nonce_bytes = [0u8; NONCE_LENGTH];
+    SystemRandom::new()
+        .fill(&mut nonce_bytes)
+        .map_err(|_| CryptoError::EncryptionFailed)?;
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+
+    let mut in_out = plaintext.to_vec();
+    in_out.reserve(AES_256_GCM.tag_len());
+    sealing
+        .seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
+        .map_err(|_| CryptoError::EncryptionFailed)?;
+
+    let mut out = nonce_bytes.to_vec();
+    out.extend_from_slice(&in_out);
+    Ok(out)
+}
+
+/// Inverse of [`seal_aes_256_gcm`]. Returns the plaintext, or
+/// `DecryptionFailed` on a wrong key / tampered data / too-short input.
+pub fn open_aes_256_gcm(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
+    if data.len() < NONCE_LENGTH + AES_256_GCM.tag_len() {
+        return Err(CryptoError::DecryptionFailed);
+    }
+    let unbound = UnboundKey::new(&AES_256_GCM, key)
+        .map_err(|_| CryptoError::InvalidKey("failed to create AES key".to_string()))?;
+    let opening = LessSafeKey::new(unbound);
+
+    let (nonce_bytes, encrypted) = data.split_at(NONCE_LENGTH);
+    let mut nonce_array = [0u8; NONCE_LENGTH];
+    nonce_array.copy_from_slice(nonce_bytes);
+    let nonce = Nonce::assume_unique_for_key(nonce_array);
+
+    let mut in_out = encrypted.to_vec();
+    let plaintext = opening
+        .open_in_place(nonce, Aad::empty(), &mut in_out)
+        .map_err(|_| CryptoError::DecryptionFailed)?;
+    Ok(plaintext.to_vec())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // OAuth state claims
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -294,6 +348,216 @@ impl OauthStateClaims {
             nonce: hex::encode(nonce_bytes),
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// OAuth proxy exchange tokens
+// ─────────────────────────────────────────────────────────────────────────
+//
+// After a provider callback (Google/Notion/Strava/Plaid), the OAuth proxy
+// signs the normalized `{secrets, metadata, expires_in, scopes}` payload as a
+// short-lived HMAC token and redirects the browser back with
+// `?exchange_token=...`. The home server then POSTs to
+// `{proxy}/{source}/exchange/{token}` to pull the payload server-side. Keyed by
+// an explicit `secret` (OAUTH_PROXY_EXCHANGE_SECRET): the proxy signs *and*
+// verifies its own tokens, so it's self-consistent — no master-key dependency,
+// which is why these are standalone fns rather than `TokenEncryptor` methods.
+
+const EXCHANGE_TOKEN_TTL_SECS: i64 = 5 * 60;
+
+/// Claims carried in an OAuth-proxy exchange token. `secrets`/`metadata` are
+/// opaque provider payloads; `iat`/`exp` bound the 5-minute lifetime.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExchangeTokenClaims {
+    pub source_id: String,
+    pub secrets: serde_json::Value,
+    #[serde(default)]
+    pub metadata: serde_json::Value,
+    pub expires_in: Option<i64>,
+    pub scopes: Option<Vec<String>>,
+    pub iat: i64,
+    pub exp: i64,
+}
+
+/// Sign an exchange token (HMAC-SHA256 over base64url(claims); 5-min TTL).
+/// `secret` must be at least 32 chars.
+pub fn sign_exchange_token(
+    secret: &str,
+    source_id: &str,
+    secrets: serde_json::Value,
+    metadata: serde_json::Value,
+    expires_in: Option<i64>,
+    scopes: Option<Vec<String>>,
+) -> Result<String> {
+    if secret.len() < 32 {
+        return Err(CryptoError::InvalidKey(
+            "exchange secret must be >= 32 chars".into(),
+        ));
+    }
+    let now = chrono::Utc::now().timestamp();
+    let claims = ExchangeTokenClaims {
+        source_id: source_id.to_string(),
+        secrets,
+        metadata,
+        expires_in,
+        scopes,
+        iat: now,
+        exp: now + EXCHANGE_TOKEN_TTL_SECS,
+    };
+    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes())
+        .map_err(|_| CryptoError::Hmac("exchange hmac key".into()))?;
+    mac.update(body.as_bytes());
+    let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+    Ok(format!("{body}.{sig}"))
+}
+
+/// Verify an exchange token: HMAC (constant-time) + expiry + source match.
+pub fn verify_exchange_token(
+    secret: &str,
+    token: &str,
+    expected_source_id: &str,
+) -> Result<ExchangeTokenClaims> {
+    let (body, sig_b64) = token
+        .split_once('.')
+        .ok_or_else(|| CryptoError::InvalidStateToken("malformed exchange_token".into()))?;
+
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes())
+        .map_err(|_| CryptoError::Hmac("exchange hmac key".into()))?;
+    mac.update(body.as_bytes());
+    let expected = mac.finalize().into_bytes();
+    let provided = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(sig_b64)
+        .map_err(|_| CryptoError::InvalidStateToken("malformed exchange signature".into()))?;
+    if provided.len() != expected.len()
+        || provided
+            .iter()
+            .zip(expected.iter())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            != 0
+    {
+        return Err(CryptoError::InvalidStateToken(
+            "exchange_token signature mismatch".into(),
+        ));
+    }
+
+    let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(body)
+        .map_err(|_| CryptoError::InvalidStateToken("malformed exchange body".into()))?;
+    let claims: ExchangeTokenClaims = serde_json::from_slice(&raw)
+        .map_err(|_| CryptoError::InvalidStateToken("invalid exchange claims".into()))?;
+
+    if claims.exp < chrono::Utc::now().timestamp() {
+        return Err(CryptoError::StateTokenExpired);
+    }
+    if claims.source_id != expected_source_id {
+        return Err(CryptoError::InvalidStateToken(format!(
+            "exchange_token source mismatch: token={} expected={expected_source_id}",
+            claims.source_id
+        )));
+    }
+    Ok(claims)
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Stripe webhook signature verification
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Stripe sends a `Stripe-Signature` header on every webhook delivery:
+//
+//     Stripe-Signature: t=1614266341,v1=68fbc40b3b6fcf1a9b1f1...
+//
+// Verification:
+//   1. Parse the header — extract `t` (unix timestamp) and `v1` (signature).
+//   2. Build `signed_payload = "<t>.<raw_body>"`.
+//   3. Compute HMAC-SHA256 with the webhook secret.
+//   4. Compare against `v1` in constant time.
+//   5. Reject if the timestamp is outside `tolerance_seconds` of now.
+//
+// Spec: https://docs.stripe.com/webhooks/signatures
+
+/// Errors from Stripe webhook signature verification.
+#[derive(Debug, Error)]
+pub enum StripeWebhookError {
+    #[error("missing or malformed Stripe-Signature header")]
+    MalformedHeader,
+    #[error("signature timestamp outside tolerance ({0}s)")]
+    TimestampOutsideTolerance(i64),
+    #[error("signature mismatch")]
+    SignatureMismatch,
+}
+
+/// Verify a Stripe webhook delivery.
+///
+/// - `payload`: the **raw** request body bytes (any reformatting breaks the HMAC)
+/// - `signature_header`: the value of the `Stripe-Signature` HTTP header
+/// - `secret`: the webhook signing secret (`whsec_...`) configured for this endpoint
+/// - `tolerance_seconds`: how stale a delivery may be (Stripe recommends 300)
+///
+/// Returns `Ok(())` if the signature is valid; an error variant otherwise.
+pub fn verify_stripe_signature(
+    payload: &[u8],
+    signature_header: &str,
+    secret: &str,
+    tolerance_seconds: i64,
+) -> std::result::Result<(), StripeWebhookError> {
+    // Parse `t=<ts>,v1=<sig>[,v1=<sig>...]`. Multiple v1 entries can occur during
+    // signing-secret rotation — any one matching is acceptable.
+    let mut timestamp: Option<i64> = None;
+    let mut sigs: Vec<&str> = Vec::new();
+    for part in signature_header.split(',') {
+        let mut kv = part.splitn(2, '=');
+        match (kv.next(), kv.next()) {
+            (Some("t"), Some(v)) => {
+                timestamp = v.parse::<i64>().ok();
+            }
+            (Some("v1"), Some(v)) => {
+                sigs.push(v);
+            }
+            _ => {}
+        }
+    }
+
+    let timestamp = timestamp.ok_or(StripeWebhookError::MalformedHeader)?;
+    if sigs.is_empty() {
+        return Err(StripeWebhookError::MalformedHeader);
+    }
+
+    // Tolerance check (replay protection).
+    let now = chrono::Utc::now().timestamp();
+    if (now - timestamp).abs() > tolerance_seconds {
+        return Err(StripeWebhookError::TimestampOutsideTolerance(
+            tolerance_seconds,
+        ));
+    }
+
+    // Compute expected signature.
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|_| StripeWebhookError::MalformedHeader)?;
+    mac.update(format!("{}.", timestamp).as_bytes());
+    mac.update(payload);
+    let expected = mac.finalize().into_bytes();
+    let expected_hex = hex::encode(expected);
+
+    // Constant-time compare against each provided signature.
+    for sig in &sigs {
+        if constant_time_eq(expected_hex.as_bytes(), sig.as_bytes()) {
+            return Ok(());
+        }
+    }
+    Err(StripeWebhookError::SignatureMismatch)
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -365,6 +629,51 @@ mod tests {
         assert_ne!(ciphertext, plaintext);
         let decrypted = enc.decrypt(&ciphertext).unwrap();
         assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn exchange_token_round_trip() {
+        let secret = "0123456789abcdef0123456789abcdef"; // 32 chars
+        let tok = sign_exchange_token(
+            secret,
+            "google",
+            serde_json::json!({ "access_token": "x", "refresh_token": "r" }),
+            serde_json::json!({ "granted_scopes": "a b" }),
+            Some(3600),
+            Some(vec!["a".to_string(), "b".to_string()]),
+        )
+        .unwrap();
+
+        let claims = verify_exchange_token(secret, &tok, "google").unwrap();
+        assert_eq!(claims.source_id, "google");
+        assert_eq!(claims.secrets["access_token"], "x");
+        assert_eq!(claims.expires_in, Some(3600));
+
+        // wrong expected source → reject
+        assert!(verify_exchange_token(secret, &tok, "notion").is_err());
+        // tampered signature → reject
+        let (body, _) = tok.split_once('.').unwrap();
+        assert!(verify_exchange_token(secret, &format!("{body}.AAAA"), "google").is_err());
+        // wrong secret → reject
+        assert!(verify_exchange_token("ffffffffffffffffffffffffffffffff", &tok, "google").is_err());
+        // too-short secret on sign → error
+        assert!(sign_exchange_token("short", "google", serde_json::json!({}), serde_json::json!({}), None, None).is_err());
+    }
+
+    #[test]
+    fn aes_256_gcm_explicit_key_round_trip() {
+        let key = [7u8; 32];
+        let msg = b"rendezvous endpoint blob";
+        let sealed = seal_aes_256_gcm(&key, msg).unwrap();
+        assert_ne!(sealed.as_slice(), msg);
+        let opened = open_aes_256_gcm(&key, &sealed).unwrap();
+        assert_eq!(opened.as_slice(), msg);
+    }
+
+    #[test]
+    fn aes_256_gcm_wrong_key_fails() {
+        let sealed = seal_aes_256_gcm(&[1u8; 32], b"secret").unwrap();
+        assert!(open_aes_256_gcm(&[2u8; 32], &sealed).is_err());
     }
 
     #[test]

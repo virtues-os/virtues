@@ -19,13 +19,14 @@ base64 = "0.22"
 hex = "0.4"
 
 # DB
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "json", "macros", "uuid"] }
 
 # HTTP
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 # Async + utilities
 tokio = { version = "1.40", features = ["full"] }
+async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.10", features = ["v4", "serde"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -33,6 +34,12 @@ serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
+
+[features]
+# Enables the dev-local transport profile (loopback HTTP, no WG, no TLS,
+# no pairing). Compile-time only — never present in release binaries.
+# See `src/transport/mod.rs`.
+dev-transport = []
 
 [dev-dependencies]
 serial_test = "3.1"

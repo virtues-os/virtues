@@ -1,0 +1,35 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            t.id,\n            t.merchant_name,\n            t.merchant_category\n        FROM data_financial_transaction t\n        WHERE t.timestamp >= $1\n          AND t.timestamp < $2\n          AND t.merchant_name IS NOT NULL\n          AND t.merchant_name != ''\n          AND NOT EXISTS (\n              SELECT 1 FROM wiki_entity_refs er\n              WHERE er.source_table = 'data_financial_transaction'\n                AND er.source_id = t.id\n                AND er.role = 'merchant'\n          )\n        ORDER BY t.timestamp ASC\n        LIMIT 500\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "merchant_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "merchant_category",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "eaa226a6191d4b72a47e2643d5616754dd01086ce79d761992b0a1e65bf0afb8"
+}

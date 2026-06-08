@@ -1,0 +1,1171 @@
+//! Built-in tool registry
+//!
+//! This module defines BUILT-IN tools that are part of Virtues core.
+//! These are executed as native Rust functions via the ToolExecutor.
+//!
+//! MCP tools (user-connected) are stored in the Postgres `app_mcp_tools` table
+//! and executed via the MCP protocol.
+//!
+//! # Tool Types
+//!
+//! - `builtin` - Native Rust implementation (web_search, sql_query, create_page, get_page_content, edit_page)
+//! - `mcp` - MCP protocol (user-connected servers, stored in Postgres)
+
+use serde::{Deserialize, Serialize};
+
+/// Tool type - distinguishes built-in vs MCP tools
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolType {
+    /// Built-in tool - native Rust implementation
+    Builtin,
+    /// MCP tool - executed via MCP protocol
+    Mcp,
+}
+
+/// Tool category for UI grouping
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolCategory {
+    Search,
+    Data,
+    Edit,
+}
+
+/// Built-in tool configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ToolConfig {
+    /// Unique tool identifier
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Short description for UI
+    pub description: String,
+    /// Detailed description for LLM (helps model decide when to use)
+    pub llm_description: String,
+    /// JSON Schema for parameters
+    pub parameters: serde_json::Value,
+    /// Tool type (builtin for registry tools)
+    pub tool_type: ToolType,
+    /// Category for grouping in UI
+    pub category: ToolCategory,
+    /// Iconify icon name
+    pub icon: String,
+    /// Display order in UI
+    pub display_order: i32,
+    /// Whether this tool is system-only (not shown to users in regular chats).
+    /// System tools are only available to action runners and internal callers.
+    pub is_system: bool,
+}
+
+/// Get default built-in tool configurations
+///
+/// These are the core tools that ship with Virtues:
+/// - web_search: Search the web using Exa AI
+/// - sql_query: Read-only SQL queries against user data
+/// - code_interpreter: Execute Python code for calculations and analysis
+/// - create_page: Create a new page with content
+/// - get_page_content: Read current page content
+/// - edit_page: Apply edits using find/replace
+/// - update_memory: Persist notes across conversations
+/// - set_user_name: Set user's preferred name
+/// - set_assistant_name: Set AI assistant's name
+pub fn default_tools() -> Vec<ToolConfig> {
+    vec![
+        think_tool(),
+        update_memory_tool(),
+        set_user_name_tool(),
+        set_assistant_name_tool(),
+        web_search_tool(),
+        semantic_search_tool(),
+        sql_query_tool(),
+        code_interpreter_tool(),
+        create_page_tool(),
+        get_page_content_tool(),
+        edit_page_tool(),
+        setup_action_tool(),
+        update_action_memory_tool(),
+        list_actions_tool(),
+        get_action_tool(),
+        edit_action_tool(),
+        delete_action_tool(),
+        run_action_tool(),
+        dayline_event_tool(),
+        get_project_item_tool(),
+    ]
+}
+
+/// Think tool - structured reasoning scratchpad
+fn think_tool() -> ToolConfig {
+    ToolConfig {
+        id: "think".to_string(),
+        name: "Think".to_string(),
+        description: "Plan your approach before acting".to_string(),
+        llm_description: r#"Use this tool to think through complex problems step-by-step before taking action.
+
+When to use:
+- Before multi-step tasks: Plan which tools to call and in what order
+- When the question is ambiguous: Break down what the user is really asking
+- For data analysis: Decide which tables to query and how to join results
+- When combining sources: Plan how to merge SQL results with web search
+
+Example thought for "How did my spending compare to last month?":
+"I need to:
+1. Query data_financial_transaction for this month's total spending by category
+2. Query the same for last month
+3. Compare the two and highlight significant changes
+Let me start with this month's data."
+
+This tool has no side effects - it just helps you organize your reasoning.
+The user can see your thoughts, so be clear and concise."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["thought"],
+            "properties": {
+                "thought": {
+                    "type": "string",
+                    "description": "Your step-by-step reasoning or plan"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:lightbulb-line".to_string(),
+        display_order: 0,
+        is_system: false,
+    }
+}
+
+/// Update Memory tool — persist notes across conversations
+fn update_memory_tool() -> ToolConfig {
+    ToolConfig {
+        id: "update_memory".to_string(),
+        name: "Memory".to_string(),
+        description: "Save notes that persist across conversations".to_string(),
+        llm_description: r#"Save or update your persistent memory — notes that carry across every conversation.
+
+Use this tool to remember:
+- The user's name, preferences, and goals
+- What role they want you to play (coach, tracker, observer, etc.)
+- Important context they've shared (habits, routines, projects)
+- Decisions made or plans agreed upon
+
+Your memory is plain text (max 2000 chars). Each call REPLACES the full content, so always include everything you want to keep. Read your current memory from the system prompt before updating.
+
+Guidelines:
+- Write in concise bullet points, not prose
+- Organize by topic (identity, goals, preferences, context)
+- Don't store sensitive data (passwords, keys, SSNs)
+- Update incrementally — add new info, keep existing info that's still relevant
+- If memory is getting long, summarize older items"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["content"],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The full memory content (replaces existing). Max 2000 characters."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:brain-line".to_string(),
+        display_order: 1,
+        is_system: false,
+    }
+}
+
+/// Set User Name tool — update user's preferred name
+fn set_user_name_tool() -> ToolConfig {
+    ToolConfig {
+        id: "set_user_name".to_string(),
+        name: "Set User Name".to_string(),
+        description: "Set the user's preferred name".to_string(),
+        llm_description: r#"Set the user's preferred name. Use this when the user tells you their name or asks to change how you address them.
+
+This updates the user's profile so their name persists across all future conversations."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The user's preferred name"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:user-line".to_string(),
+        display_order: 2,
+        is_system: false,
+    }
+}
+
+/// Set Assistant Name tool — update the AI's name
+fn set_assistant_name_tool() -> ToolConfig {
+    ToolConfig {
+        id: "set_assistant_name".to_string(),
+        name: "Set Assistant Name".to_string(),
+        description: "Set the AI assistant's name".to_string(),
+        llm_description: r#"Set your own name. Use this when the user picks or types a name for you during onboarding, or asks to rename you later.
+
+This updates your name across all future conversations."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "The new name for the AI assistant"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:robot-line".to_string(),
+        display_order: 3,
+        is_system: false,
+    }
+}
+
+/// Web Search tool (Exa AI)
+fn web_search_tool() -> ToolConfig {
+    ToolConfig {
+        id: "web_search".to_string(),
+        name: "Web Search".to_string(),
+        description: "Search the web for current information".to_string(),
+        llm_description: r#"Search the web for current information using Exa AI.
+
+Use this tool when:
+- User asks about recent events, news, or current information
+- You need factual information you're uncertain about
+- User explicitly asks to search or look something up
+- Information might have changed since your training cutoff
+
+Do NOT use when:
+- User is asking about their personal data (use sql_query instead)
+- The question is purely conversational or opinion-based
+
+Returns: Relevant web pages with titles, URLs, summaries, and text excerpts."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query - be specific and include relevant context"
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of results (1-10)",
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 10
+                },
+                "search_type": {
+                    "type": "string",
+                    "enum": ["auto", "keyword", "neural"],
+                    "description": "Search type: 'auto' (recommended), 'keyword' for exact matches, 'neural' for semantic",
+                    "default": "auto"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Search,
+        icon: "ri:search-line".to_string(),
+        display_order: 1,
+        is_system: false,
+    }
+}
+
+/// Semantic Search tool — meaning-based retrieval across user data
+fn semantic_search_tool() -> ToolConfig {
+    ToolConfig {
+        id: "semantic_search".to_string(),
+        name: "Semantic Search".to_string(),
+        description: "Search personal data by meaning".to_string(),
+        llm_description: r#"Search the user's personal data using natural language meaning (vector similarity).
+
+Use this tool when:
+- Finding content by topic or meaning: "emails about the project review"
+- Searching across multiple data types at once (emails, messages, calendar, documents)
+- The user's question is vague or conceptual rather than precise
+
+Do NOT use when:
+- You need exact counts, aggregates, or analytics (use sql_query)
+- You need to filter by specific dates, amounts, or structured fields (use sql_query)
+- You're looking for external/web information (use web_search)
+
+Think of it this way:
+- semantic_search = "find things ABOUT X" (meaning-based)
+- sql_query = "count/sum/filter X" (structure-based)
+
+Searchable domains: email, message, calendar, document, ai_conversation, transaction, bookmark
+
+Returns ranked results with title, preview, author, timestamp, and a similarity score.
+Use sql_query with the returned record_ids to get full details."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["query"],
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query describing what you're looking for"
+                },
+                "domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional filter: only search these domains (e.g., ['email', 'calendar'])"
+                },
+                "date_after": {
+                    "type": "string",
+                    "description": "Only return results after this date (ISO 8601, e.g., '2026-01-01')"
+                },
+                "date_before": {
+                    "type": "string",
+                    "description": "Only return results before this date (ISO 8601)"
+                },
+                "num_results": {
+                    "type": "integer",
+                    "description": "Number of results (1-50, default 10)",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 50
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Search,
+        icon: "ri:mind-map".to_string(),
+        display_order: 2,
+        is_system: false,
+    }
+}
+
+/// SQL Query tool (read-only data access)
+fn sql_query_tool() -> ToolConfig {
+    ToolConfig {
+        id: "sql_query".to_string(),
+        name: "Query Data".to_string(),
+        description: "Query user's personal data with SQL".to_string(),
+        llm_description: r#"Execute read-only SQL queries against the user's personal data.
+
+Operations:
+- 'list_tables': Get all tables with row counts
+- 'get_schema': Get detailed columns for specific table(s)
+- 'query': Execute a SELECT query (read-only, max 200 rows)
+
+================================================================================
+DATA TABLES (raw ontology from connected sources)
+================================================================================
+
+HEALTH
+  data_health_heart_rate     BPM measurements from wearables
+  data_health_hrv            Heart rate variability (ms)
+  data_health_steps          Step counts
+  data_health_sleep          Sleep sessions with duration & quality
+  data_health_workout        Exercise sessions (type, duration, calories)
+
+LOCATION  
+  data_location_point        Raw GPS coordinates (high volume)
+  data_location_visit        Place visits with arrival/departure times
+
+COMMUNICATION
+  data_communication_email          Email messages (subject, body, from/to)
+  data_communication_message        Chat messages (iMessage, SMS, etc.)
+  data_communication_transcription  Voice/audio transcriptions
+
+CALENDAR
+  data_calendar_event        Events with attendees, location, times
+
+FINANCIAL (amounts stored in cents - divide by 100 for dollars)
+  data_financial_account      Bank/credit/investment accounts
+  data_financial_transaction  Purchases, transfers, payments
+  data_financial_asset        Investment holdings (stocks, crypto)
+  data_financial_liability    Loans, mortgages, debt
+
+ACTIVITY
+  data_activity_app_usage     Desktop/mobile app usage sessions
+  data_activity_listening     Music/audio listening history (Spotify)
+  data_activity_web_browsing  Web browsing history
+
+CONTENT
+  data_content_document     Saved documents and notes
+  data_content_conversation AI chat history (search artifact)
+  data_content_bookmark     Saved/curated items (GitHub stars, bookmarks)
+
+================================================================================
+WIKI TABLES (entity resolution + temporal context)
+================================================================================
+
+ENTITIES (resolved nouns in user's life)
+  wiki_people       People with names, emails, relationship info
+  wiki_places       Places with name, address, coordinates, visit stats
+  wiki_orgs         Organizations with type, role, interaction history
+
+TEMPORAL (daily/yearly context)
+  wiki_days         Day summaries with autobiography, context vector
+  wiki_years        Year summaries with highlights, themes
+  wiki_events       Timeline events within a day
+
+REFERENCES
+  entity_references Junction table linking entities to ontology records
+
+================================================================================
+NARRATIVE TABLES (life story structure — wiki_* prefix)
+================================================================================
+  wiki_telos     User's life purpose/direction
+  wiki_acts      Major life periods (multi-year)
+  wiki_chapters  Chapters within acts (months/seasons)
+
+================================================================================
+QUERY TIPS
+================================================================================
+- Use 'get_schema' to see columns before writing queries
+- Date filter: WHERE timestamp > datetime('now', '-7 days')
+- Financial: amount/100.0 for dollars
+- JOIN data tables to wiki_* for resolved names
+- Always LIMIT results (max 200)
+
+================================================================================
+EXAMPLE QUERIES
+================================================================================
+
+-- Spending by category this month
+SELECT category, SUM(amount)/100.0 as dollars, COUNT(*) as txns
+FROM data_financial_transaction
+WHERE timestamp >= date('now', 'start of month')
+GROUP BY category ORDER BY dollars DESC
+
+-- Most contacted people this week
+SELECT wp.name, COUNT(*) as messages
+FROM data_communication_message m
+JOIN wiki_people wp ON m.sender_url = wp.url OR m.recipient_url = wp.url
+WHERE m.timestamp > datetime('now', '-7 days')
+GROUP BY wp.name ORDER BY messages DESC LIMIT 10
+
+-- Sleep patterns last 2 weeks
+SELECT date(timestamp) as day, duration_hours, quality
+FROM data_health_sleep
+WHERE timestamp > datetime('now', '-14 days')
+ORDER BY timestamp DESC
+
+-- Calendar events today
+SELECT title, start_time, end_time, location
+FROM data_calendar_event
+WHERE date(start_time) = date('now')
+ORDER BY start_time"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["operation"],
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["query", "list_tables", "get_schema"],
+                    "description": "Operation to perform"
+                },
+                "sql": {
+                    "type": "string",
+                    "description": "SQL query (required for 'query' operation). SELECT only, read-only."
+                },
+                "tables": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Table name(s) to get schema for (required for 'get_schema' operation)"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max rows to return (default 50, max 200)",
+                    "default": 50,
+                    "maximum": 200
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:database-2-line".to_string(),
+        display_order: 3,
+        is_system: false,
+    }
+}
+
+/// Code Interpreter tool - execute Python code in a sandbox
+fn code_interpreter_tool() -> ToolConfig {
+    ToolConfig {
+        id: "code_interpreter".to_string(),
+        name: "Python".to_string(),
+        description: "Execute Python code for calculations and data analysis".to_string(),
+        llm_description: r#"Execute Python code in a secure sandboxed environment.
+
+Use this tool when you need to:
+- Perform calculations, math, statistics, or numerical analysis
+- Process, transform, or analyze data (CSV, JSON, etc.)
+- Financial calculations (loans, mortgages, investments, IRR, NPV)
+- Generate charts and visualizations
+- Work with dates, times, or complex logic
+
+Available packages:
+- Python 3.12 standard library (math, statistics, datetime, json, csv, re, decimal, etc.)
+- numpy - numerical computing, arrays, linear algebra
+- numpy-financial - financial functions: pmt, fv, pv, irr, npv, nper, rate
+- pandas - data analysis, DataFrames, CSV/JSON loading
+- matplotlib - charts and visualizations (use plt.savefig('/tmp/chart.png'))
+- scipy - scientific computing, statistics, optimization
+- requests - HTTP client
+- python-dateutil - date parsing
+- pytz - timezones
+
+The code runs in an isolated sandbox with:
+- No filesystem access (except /tmp for temporary files)
+- No network access
+- 60 second timeout (max 120 seconds)
+
+IMPORTANT: Use print() to output your results. The stdout will be returned to you.
+
+Example - financial calculation (mortgage payment):
+{
+  "code": "import numpy_financial as npf\nloan = 400000\nrate = 0.065 / 12  # 6.5% annual -> monthly\nmonths = 30 * 12\npayment = npf.pmt(rate, months, -loan)\nprint(f'Monthly payment: ${payment:,.2f}')"
+}
+
+Example - data analysis with pandas:
+{
+  "code": "import pandas as pd\ndata = {'month': ['Jan', 'Feb', 'Mar'], 'sales': [100, 150, 120]}\ndf = pd.DataFrame(data)\nprint(f'Total: ${df.sales.sum()}')\nprint(f'Average: ${df.sales.mean():.2f}')\nprint(f'Best month: {df.loc[df.sales.idxmax(), \"month\"]}')"
+}
+
+Example - statistics with numpy:
+{
+  "code": "import numpy as np\ndata = [23, 45, 67, 32, 89, 54, 38]\nprint(f'Mean: {np.mean(data):.1f}')\nprint(f'Std Dev: {np.std(data):.1f}')\nprint(f'Correlation example: {np.corrcoef([1,2,3,4], [2,4,5,8])[0,1]:.3f}')"
+}"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["code"],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Python code to execute. Use print() to output results."
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Execution timeout in seconds (default: 60, max: 120)",
+                    "default": 60,
+                    "minimum": 5,
+                    "maximum": 120
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:code-s-slash-line".to_string(),
+        display_order: 4,
+        is_system: false,
+    }
+}
+
+/// Create Page tool - creates a new page with optional initial content
+fn create_page_tool() -> ToolConfig {
+    ToolConfig {
+        id: "create_page".to_string(),
+        name: "Create Page".to_string(),
+        description: "Create a new page with content".to_string(),
+        llm_description: r#"Create a new page with a title and optional initial content.
+
+Use this tool when:
+- User asks you to create a new page, document, or note
+- User wants to start a new document from scratch
+- You need to save information to a new page
+
+Content supports markdown (headers, bold, lists, code blocks, etc.) and is rendered as rich text.
+
+Example:
+{
+  "title": "Meeting Notes - January 29",
+  "content": "Meeting Notes content here..."
+}"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["title"],
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Title for the new page"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Initial content for the page (markdown supported). Applied directly without review."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:file-add-line".to_string(),
+        display_order: 5,
+        is_system: false,
+    }
+}
+
+/// Get Page Content tool - reads current content of a page
+fn get_page_content_tool() -> ToolConfig {
+    ToolConfig {
+        id: "get_page_content".to_string(),
+        name: "Get Page Content".to_string(),
+        description: "Read the current content of a page".to_string(),
+        llm_description: r#"Read the current content of a page before editing.
+
+Use this tool when:
+- You need to see what's currently in a page before making edits
+- User asks about the contents of their document
+- You need context about the page to make good edits
+
+ALWAYS call this before using edit_page so you know what text to find.
+
+IMPORTANT - Extracting page_id:
+When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
+extract the ID from the link: page_abc123 (everything after "entity:").
+You MUST pass this page_id parameter when the user references a specific page.
+
+Returns the page title, content, and content length."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["page_id"],
+            "properties": {
+                "page_id": {
+                    "type": "string",
+                    "description": "Page ID to read. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:file-text-line".to_string(),
+        display_order: 6,
+        is_system: false,
+    }
+}
+
+/// Edit Page tool - applies edits using simple find/replace
+fn edit_page_tool() -> ToolConfig {
+    ToolConfig {
+        id: "edit_page".to_string(),
+        name: "Edit Page".to_string(),
+        description: "Edit a page using find/replace".to_string(),
+        llm_description: r#"Edit an existing page by finding text and replacing it. Can also rename the page title.
+
+Use this tool when:
+- User asks you to modify, update, or change their document
+- User says "help me with this", "can you improve", "fix this"
+- User asks to rename or change the title of a page
+- You need to make changes to existing content
+
+IMPORTANT: Call get_page_content FIRST to see the current document!
+
+IMPORTANT - Extracting page_id:
+When user mentions a page using entity syntax like [Page Name](entity:page_abc123),
+extract the ID from the link: page_abc123 (everything after "entity:").
+You MUST pass this page_id parameter when the user references a specific page.
+
+How it works:
+1. Provide 'page_id' - extracted from the entity link
+2. Provide 'find' - the exact text to locate in the document
+3. Provide 'replace' - the new text you want instead
+4. Optionally provide 'title' - new title for the page
+
+Changes are applied immediately via real-time sync.
+The 'find' text matches against the page's plain text (formatting stripped). Use 'replace' with markdown to set formatting.
+
+Example - changing a word:
+{
+  "page_id": "page_abc123",
+  "find": "The quick brown fox",
+  "replace": "The fast brown fox"
+}
+
+Example - renaming a page (use empty find/replace if only changing title):
+{
+  "page_id": "page_abc123",
+  "title": "New Page Title",
+  "find": "",
+  "replace": ""
+}
+
+Example - full document rewrite (find empty string):
+{
+  "page_id": "page_abc123",
+  "find": "",
+  "replace": "Entirely new document content here"
+}
+
+Tips:
+- Use enough context in 'find' to uniquely identify the location
+- Keep 'find' as short as possible while still being unique
+- For large changes, prefer fewer comprehensive edits over many small ones"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["page_id", "find", "replace"],
+            "properties": {
+                "page_id": {
+                    "type": "string",
+                    "description": "Page ID to edit. Extract from entity links: [Name](entity:page_xxx) -> page_xxx"
+                },
+                "title": {
+                    "type": "string",
+                    "description": "New title for the page. Only provide when renaming."
+                },
+                "find": {
+                    "type": "string",
+                    "description": "Text to find in the document. Use empty string for full document replacement or title-only changes."
+                },
+                "replace": {
+                    "type": "string",
+                    "description": "Replacement text. Supports markdown (headers, bold, lists, etc.) which is rendered as rich text."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:edit-line".to_string(),
+        display_order: 7,
+        is_system: false,
+    }
+}
+
+/// Setup Action tool — turn current chat into a scheduled action
+fn setup_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "setup_action".to_string(),
+        name: "Setup Action".to_string(),
+        description: "Create a scheduled action".to_string(),
+        llm_description: r#"Turn the current chat into an action that runs on a schedule or as an API endpoint.
+
+Use this tool when:
+- User asks to set up a recurring task (e.g. "check Hacker News every hour")
+- User wants an automated action that runs periodically
+- User wants to create a webhook/endpoint that triggers an AI task
+
+Parameters:
+- name: Short descriptive name for the action (e.g. "HN Highlights")
+- instruction: What the action should do each time it runs. Be specific and detailed.
+- cron_schedule: Cron expression for when to run (6-field: sec min hour day month dow). Examples:
+  - "0 0 * * * *" = every hour
+  - "0 0 9 * * *" = daily at 9am UTC
+  - "0 */30 * * * *" = every 30 minutes
+  - "0 0 9 * * 1-5" = weekday mornings at 9am UTC
+- endpoint: Set to true to also expose as a triggerable API endpoint
+- activation_code: Optional Python code that runs before each invocation (e.g. to fetch data). The code is dry-run tested before saving.
+
+The action will post its results back into this chat each time it runs."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "instruction"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Short name for the action (e.g. 'HN Highlights', 'Daily Digest')"
+                },
+                "instruction": {
+                    "type": "string",
+                    "description": "Detailed instruction for what the action should do each run"
+                },
+                "cron_schedule": {
+                    "type": "string",
+                    "description": "Cron schedule (6-field: sec min hour day month dow). E.g. '0 0 * * * *' for hourly"
+                },
+                "endpoint": {
+                    "type": "boolean",
+                    "description": "Whether to also expose as a triggerable API endpoint",
+                    "default": false
+                },
+                "activation_code": {
+                    "type": "string",
+                    "description": "Optional Python code to run before each invocation (e.g. fetch external data)"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:robot-2-line".to_string(),
+        display_order: 8,
+        is_system: false,
+    }
+}
+
+/// List actions — lightweight catalog for chat-driven discovery
+fn list_actions_tool() -> ToolConfig {
+    ToolConfig {
+        id: "list_actions".to_string(),
+        name: "List Actions".to_string(),
+        description: "List scheduled actions".to_string(),
+        llm_description: r#"List the user's scheduled actions (both system and user-owned). Returns id, name, owner, enabled, cron_schedule, triggers, and last_run for each.
+
+Use this when:
+- User asks "what automations do I have?"
+- You need to find an action by name before editing/running it
+- Before suggesting a new action, to check whether something similar already exists
+
+Optional filters:
+- owner: "system" or "user" (system = built-in, user = user-created)
+- enabled: true/false
+- trigger: "cron" | "manual" | "tool" | "api" | "webhook"
+"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "owner": { "type": "string", "enum": ["system", "user"] },
+                "enabled": { "type": "boolean" },
+                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook"] }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:list-check".to_string(),
+        display_order: 10,
+        is_system: false,
+    }
+}
+
+/// Get a single action's full details + recent runs
+fn get_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "get_action".to_string(),
+        name: "Get Action".to_string(),
+        description: "Fetch a single action".to_string(),
+        llm_description: r#"Fetch a single action by id, including its full configuration (agent, cron_schedule, triggers, condition, memory, config) and its last 10 runs with status + summary.
+
+Use this when:
+- User asks "what does this action do?"
+- You need to read the current agent prompt before suggesting an edit
+- You're debugging why an action is failing and need recent run errors
+"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string", "description": "The action id (e.g. 'action_user_weekly_planner')" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:file-search-line".to_string(),
+        display_order: 11,
+        is_system: false,
+    }
+}
+
+/// Edit an existing action — partial update with system-owner guard
+fn edit_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "edit_action".to_string(),
+        name: "Edit Action".to_string(),
+        description: "Update an action's configuration".to_string(),
+        llm_description: r#"Update one or more fields on an existing action. Send only the fields you want to change as a `patch` object.
+
+Editable fields:
+- name (user rows only)
+- agent (user rows only; the LLM prompt)
+- cron_schedule (nullable — set to null to remove)
+- enabled (bool)
+- config (object — full replace)
+- condition (nullable SQL expression; user rows only)
+- triggers (array of cron|manual|tool|api|webhook; user rows only)
+- memory (nullable markdown scratchpad)
+
+System-owned rows (built-in pipelines like day_summary_eod) only accept: enabled, cron_schedule, config, memory. Attempting to edit other fields on a system row will error with a clear message.
+
+Use this when the user asks to:
+- Change an action's prompt
+- Reschedule it
+- Disable/enable it
+- Update its memory"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id", "patch"],
+            "properties": {
+                "id": { "type": "string" },
+                "patch": {
+                    "type": "object",
+                    "description": "Fields to update. Unknown fields are rejected.",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "agent": { "type": ["string", "null"] },
+                        "cron_schedule": { "type": ["string", "null"] },
+                        "enabled": { "type": "boolean" },
+                        "config": { "type": "object" },
+                        "condition": { "type": ["string", "null"] },
+                        "triggers": { "type": "array", "items": { "type": "string" } },
+                        "memory": { "type": ["string", "null"] }
+                    }
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:edit-2-line".to_string(),
+        display_order: 12,
+        is_system: false,
+    }
+}
+
+/// Delete a user-owned action
+fn delete_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "delete_action".to_string(),
+        name: "Delete Action".to_string(),
+        description: "Delete a user-owned action".to_string(),
+        llm_description: r#"Delete an action by id. Only user-owned actions can be deleted — system rows (built-in pipelines like day_summary_eod, embedding_index, trash_purge) are protected and will return an error. Tell the user to disable them instead.
+
+This is destructive. Confirm with the user before calling unless the request is explicit ("delete the weekly planner action")."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:delete-bin-line".to_string(),
+        display_order: 13,
+        is_system: false,
+    }
+}
+
+/// Manually run an action
+fn run_action_tool() -> ToolConfig {
+    ToolConfig {
+        id: "run_action".to_string(),
+        name: "Run Action".to_string(),
+        description: "Trigger an action to run now".to_string(),
+        llm_description: r#"Manually dispatch an action to run immediately. The action must have `tool` in its triggers list.
+
+Returns a run_id and final status (success / skipped / error / forbidden / not_found). For agent actions, `summary` contains the LLM's final message; for subprocess actions, it's the binary's result string.
+
+Optional parameters:
+- payload: arbitrary JSON forwarded to the action as context
+- date: YYYY-MM-DD override for date-scoped actions (e.g. day_summary_eod). Merged into the action's config.date.
+
+Use when the user asks to "run it now" or "re-run yesterday's summary"."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string" },
+                "payload": { "description": "Arbitrary JSON forwarded to the action as context" },
+                "date": { "type": "string", "description": "YYYY-MM-DD override for date-scoped actions" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:play-circle-line".to_string(),
+        display_order: 14,
+        is_system: false,
+    }
+}
+
+/// Update action memory — persistent markdown scratchpad for actions
+fn update_action_memory_tool() -> ToolConfig {
+    ToolConfig {
+        id: "update_action_memory".to_string(),
+        name: "Update Action Memory".to_string(),
+        description: "Update this action's persistent memory".to_string(),
+        llm_description: r#"Save persistent memory that will be available on your next run.
+Use this to remember facts, preferences, or state across runs. The content is markdown.
+This tool is only available when running as an action."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["content"],
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Markdown content to save as this action's memory. Replaces previous memory entirely."
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:brain-line".to_string(),
+        display_order: 9,
+        is_system: true,
+    }
+}
+
+/// Dayline event tool — structured event CRUD for hourly/EOD actions
+fn dayline_event_tool() -> ToolConfig {
+    ToolConfig {
+        id: "dayline_event".to_string(),
+        name: "Dayline Event".to_string(),
+        description: "Create or update dayline timeline events".to_string(),
+        llm_description: r#"Create, continue, revise, or mark timeline events for the Dayline.
+
+Actions:
+- NEW: Create a new event. Requires: event_summary, start_time, end_time. Optional: topics, auto_label, source_ontologies.
+- CONTINUE: Extend the current event. Requires: event_id, end_time. Optional: event_summary (updated), topics.
+- REVISE: Modify a previous event (merge, split, update). Requires: event_id. Optional: event_summary, start_time, end_time, auto_label, topics.
+- NO_DATA: Mark this time period as unknown. Requires: start_time, end_time.
+
+Event summaries should be 1-3 factual sentences. Be specific: name people, places, apps, projects. Include all data sources, even minor ones."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["NEW", "CONTINUE", "REVISE", "NO_DATA"],
+                    "description": "The action to perform"
+                },
+                "event_id": {
+                    "type": "string",
+                    "description": "ID of existing event (for CONTINUE, REVISE)"
+                },
+                "event_summary": {
+                    "type": "string",
+                    "description": "1-3 factual sentences describing the event"
+                },
+                "topics": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Activity contexts (e.g., 'code review', 'commute', 'exercise')"
+                },
+                "start_time": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp for event start"
+                },
+                "end_time": {
+                    "type": "string",
+                    "description": "ISO 8601 timestamp for event end"
+                },
+                "auto_label": {
+                    "type": "string",
+                    "description": "Short label (e.g., 'Work session', 'Lunch')"
+                },
+                "source_ontologies": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Ontology record IDs that informed this event"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:timeline-line".to_string(),
+        display_order: 9,
+        is_system: true,
+    }
+}
+
+/// Get Project Item tool - fetches the full content of a reference in an attached project.
+fn get_project_item_tool() -> ToolConfig {
+    ToolConfig {
+        id: "get_project_item".to_string(),
+        name: "Get Project Item".to_string(),
+        description: "Read the full content of a reference inside an attached project".to_string(),
+        llm_description: r#"Fetch the full content of an item referenced in an attached project.
+
+Use this when:
+- An attached_project lists items and you need to read one's full content
+- The user asks about a specific item in their project
+- You need deeper context beyond the labels shown in the attached_project block
+
+The item_url comes from the url attribute in the <item> tags of the attached project context.
+Returns the entity's content (page text, chat messages, person details, etc.)."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["item_url"],
+            "properties": {
+                "item_url": {
+                    "type": "string",
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /person/person_xxx, /chat/chat_xxx"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:folder-open-line".to_string(),
+        display_order: 5,
+        is_system: false,
+    }
+}
+
+/// Get default enabled tools configuration (for assistant profile)
+pub fn default_enabled_tools() -> serde_json::Value {
+    serde_json::json!({
+        "think": true,
+        "update_memory": true,
+        "set_user_name": true,
+        "set_assistant_name": true,
+        "web_search": true,
+        "semantic_search": true,
+        "sql_query": true,
+        "code_interpreter": true,
+        "create_page": true,
+        "get_page_content": true,
+        "edit_page": true,
+        "setup_action": true,
+        "get_project_item": true
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_tools() {
+        let tools = default_tools();
+        assert_eq!(tools.len(), 14, "Should have 14 tools");
+
+        // Verify all tools have required fields
+        for tool in &tools {
+            assert!(!tool.id.is_empty());
+            assert!(!tool.name.is_empty());
+            assert!(!tool.llm_description.is_empty(), "LLM description is required");
+            assert!(tool.parameters.is_object(), "Parameters must be JSON object");
+            assert_eq!(tool.tool_type, ToolType::Builtin, "Registry tools should be builtin type");
+        }
+
+        // Verify specific tools exist
+        let ids: Vec<&str> = tools.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"think"));
+        assert!(ids.contains(&"update_memory"));
+        assert!(ids.contains(&"set_user_name"));
+        assert!(ids.contains(&"set_assistant_name"));
+        assert!(ids.contains(&"web_search"));
+        assert!(ids.contains(&"semantic_search"));
+        assert!(ids.contains(&"sql_query"));
+        assert!(ids.contains(&"code_interpreter"));
+        assert!(ids.contains(&"create_page"));
+        assert!(ids.contains(&"get_page_content"));
+        assert!(ids.contains(&"edit_page"));
+        assert!(ids.contains(&"setup_action"));
+        assert!(ids.contains(&"dayline_event"));
+    }
+
+    #[test]
+    fn test_default_enabled_tools() {
+        let enabled = default_enabled_tools();
+        assert!(enabled.is_object());
+        assert_eq!(enabled.get("think"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("update_memory"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("set_user_name"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("set_assistant_name"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("code_interpreter"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("create_page"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("get_page_content"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("edit_page"), Some(&serde_json::json!(true)));
+    }
+
+    #[test]
+    fn test_tool_parameters_have_type() {
+        for tool in default_tools() {
+            assert_eq!(
+                tool.parameters.get("type"),
+                Some(&serde_json::json!("object")),
+                "Tool {} parameters should have type: object",
+                tool.id
+            );
+        }
+    }
+}

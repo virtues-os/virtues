@@ -323,24 +323,28 @@ struct SettingsView: View {
         .navigationViewStyle(StackNavigationViewStyle())
     }
     
-    private func handleQRScanResult(endpoint: String, sourceId: String) {
+    /// QR carries a `/pair#t=<token>` URL produced by `virtues link` on the
+    /// box or the "+ Add device" modal in `/virtues/devices`. The scanner
+    /// extracts `(endpoint, token)`; we POST to `/api/pair/consume` with
+    /// `kind = "mobile_app"`, persist the server-issued bearer into the
+    /// Keychain (done inside `consumePairToken`), and persist the endpoint
+    /// + action_ids into `DeviceConfiguration`.
+    private func handleQRScanResult(endpoint: String, pairToken: String) {
         showQRScanner = false
         isCompletingPairing = true
         pairingError = nil
 
         Task {
             do {
-                let response = try await NetworkManager.shared.completePairing(
+                let response = try await NetworkManager.shared.consumePairToken(
                     endpoint: endpoint,
-                    sourceId: sourceId,
+                    pairToken: pairToken,
                     deviceId: DeviceManager.shared.deviceId
                 )
 
                 await MainActor.run {
                     deviceManager.updateConfiguration(apiEndpoint: endpoint)
-                    if let actionIds = response.actionIds {
-                        deviceManager.updateActionIds(actionIds)
-                    }
+                    deviceManager.updateActionIds(response.actionIds)
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured
                     isCompletingPairing = false

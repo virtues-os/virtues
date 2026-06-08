@@ -5,7 +5,7 @@
 		GETTING_STARTED_STEPS,
 		type GettingStartedStep,
 	} from "$lib/config/getting-started";
-	import { createChat, listSources } from "$lib/api/client";
+	import { createChat, listCredentials } from "$lib/api/client";
 	import { spaceStore } from "$lib/stores/space.svelte";
 
 	interface Props {
@@ -50,14 +50,16 @@
 
 	async function loadAutoCompleteData() {
 		try {
-			// Check sources
-			const sources = await listSources();
-			sourcesConnected = sources.some(
-				(s: any) => s.auth_type !== "device" && s.auth_type !== "none",
+			// Check credentials. In the post-migration model, "device-paired"
+			// means a self_issued_bearer credential (ios/mac); anything else
+			// (oauth/api_key) counts as a connected source.
+			const creds = await listCredentials();
+			const active = creds.filter((c) => c.is_active);
+			devicePaired = active.some(
+				(c) => c.provider === "ios" || c.provider === "mac",
 			);
-			devicePaired = sources.some(
-				(s: any) =>
-					s.auth_type === "device" && s.pairing_status === "active",
+			sourcesConnected = active.some(
+				(c) => c.provider !== "ios" && c.provider !== "mac",
 			);
 
 			// Check chats

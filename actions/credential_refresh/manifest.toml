@@ -1,0 +1,7 @@
+name = "Credential Refresh"
+description = "Sweep via_proxy credentials whose access tokens are nearing expiry and refresh them."
+owner = "system"
+runtime = "function"
+command = ["credential_refresh"]
+triggers = ["cron", "manual"]
+default_cron = "0 */15 * * * *"

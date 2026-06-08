@@ -58,12 +58,12 @@
 		return `${mins}:${secs.toString().padStart(2, "0")}`;
 	}
 
-	async function copyCode() {
+	async function copySourceId() {
 		if (!pairingData) return;
 		try {
-			await navigator.clipboard.writeText(pairingData.code);
+			await navigator.clipboard.writeText(pairingData.source_id);
 		} catch (err) {
-			console.error("Failed to copy code:", err);
+			console.error("Failed to copy device ID:", err);
 		}
 	}
 
@@ -114,13 +114,8 @@
 	function startTimer() {
 		if (timerInterval || !pairingData) return;
 
-		const expiresAt = new Date(pairingData.expires_at);
-		const now = new Date();
-		const secondsRemaining = Math.floor(
-			(expiresAt.getTime() - now.getTime()) / 1000,
-		);
-
-		timeRemaining = Math.max(0, secondsRemaining);
+		// Client-side 10 minute timer (server enforces actual expiry)
+		timeRemaining = 600;
 
 		timerInterval = setInterval(() => {
 			timeRemaining--;
@@ -203,13 +198,13 @@
 		</div>
 	{:else if pairingData}
 		<div class="code-display">
-			<p class="instruction">Enter this code in the Virtues app:</p>
+			<p class="instruction">Enter this device ID in the Virtues app:</p>
 
-			<div class="pairing-code">{pairingData.code}</div>
+			<div class="pairing-code">{pairingData.source_id}</div>
 
-			<p class="expiry">Code expires in {formatTime(timeRemaining)}</p>
+			<p class="expiry">Expires in {formatTime(timeRemaining)}</p>
 
-			<button class="copy-btn" onclick={copyCode}>Copy code</button>
+			<button class="copy-btn" onclick={copySourceId}>Copy device ID</button>
 		</div>
 
 		<div class="endpoint-section">
@@ -289,11 +284,12 @@
 
 	.pairing-code {
 		font-family: var(--font-mono);
-		font-size: 32px;
+		font-size: 18px;
 		font-weight: 500;
-		letter-spacing: 0.1em;
+		letter-spacing: 0.02em;
 		color: var(--foreground);
 		padding: 24px 0;
+		word-break: break-all;
 	}
 
 	.expiry {

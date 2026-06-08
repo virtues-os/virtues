@@ -1,0 +1,12 @@
+name = "Hello World"
+description = "Demonstrates the view runtime — a pure-frontend applet that overrides TemplateCard / ActionDetailView via apps/web/src/lib/applets/hello_world/."
+owner = "user"
+runtime = "view"
+triggers = []
+default_enabled = true
+
+# Drives the applet registry lookup at:
+#   apps/web/src/lib/applets/<name>/Card.svelte
+#   apps/web/src/lib/applets/<name>/Detail.svelte
+[config.view]
+name = "hello_world"

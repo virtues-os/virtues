@@ -30,7 +30,7 @@
 		icon?: string;
 	}
 
-	interface AttachedProjectSummary {
+	interface AttachedThingSummary {
 		id: string;
 		name: string;
 		icon: string | null;
@@ -53,10 +53,10 @@
 		onContextClick = (() => {}) as () => void,
 		pageBinding = undefined as PageBinding | undefined,
 		editableItems = [] as EditableItem[],
-		attachedProjects = [] as AttachedProjectSummary[],
-		allProjects = [] as AttachedProjectSummary[],
-		onAttachProject = ((_id: string) => {}) as (id: string) => void,
-		onDetachProject = ((_id: string) => {}) as (id: string) => void,
+		attachedThings = [] as AttachedThingSummary[],
+		allThings = [] as AttachedThingSummary[],
+		onAttachThing = ((_id: string) => {}) as (id: string) => void,
+		onDetachThing = ((_id: string) => {}) as (id: string) => void,
 		onRemoveItem = ((_type: string, _id: string) => {}) as (type: string, id: string) => void,
 		onSelectEntities = undefined as ((entities: EntityResult[]) => void) | undefined,
 	}: {
@@ -75,10 +75,10 @@
 		onContextClick?: () => void;
 		pageBinding?: PageBinding;
 		editableItems?: EditableItem[];
-		attachedProjects?: AttachedProjectSummary[];
-		allProjects?: AttachedProjectSummary[];
-		onAttachProject?: (id: string) => void;
-		onDetachProject?: (id: string) => void;
+		attachedThings?: AttachedThingSummary[];
+		allThings?: AttachedThingSummary[];
+		onAttachThing?: (id: string) => void;
+		onDetachThing?: (id: string) => void;
 		onRemoveItem?: (type: string, id: string) => void;
 		onSelectEntities?: (entities: EntityResult[]) => void;
 	} = $props();
@@ -105,11 +105,11 @@
 	// Store entity references by ID for expansion on submit
 	let entityMentions = $state<Map<string, EntityResult>>(new Map());
 
-	// Project picker dropdown
+	// Thing picker dropdown
 	let showProjectPicker = $state(false);
-	const unattachedProjects = $derived.by(() => {
-		const attachedIds = new Set(attachedProjects.map((p) => p.id));
-		return allProjects.filter((p) => !attachedIds.has(p.id));
+	const unattachedThings = $derived.by(() => {
+		const attachedIds = new Set(attachedThings.map((p) => p.id));
+		return allThings.filter((p) => !attachedIds.has(p.id));
 	});
 
 	function toggleProjectPicker() {
@@ -117,10 +117,20 @@
 	}
 
 	function pickProject(id: string) {
-		onAttachProject(id);
+		onAttachThing(id);
 		showProjectPicker = false;
 	}
 
+
+	// Merge the optional single page binding into the editable-items list.
+	// pageBinding only contributes when the list doesn't already cover it.
+	const effectiveEditableItems = $derived.by(() => {
+		if (editableItems.length > 0) return editableItems;
+		if (pageBinding) {
+			return [{ type: 'page' as const, id: pageBinding.pageId, title: pageBinding.pageTitle }];
+		}
+		return [];
+	});
 
 	// Derive placeholder based on toolbar visibility
 	const placeholderText = $derived(showToolbar ? "What can I do for you?" : "Message...");
@@ -402,17 +412,17 @@
 	>
 		<label for="chat-input" class="sr-only">Message</label>
 
-		{#if attachedProjects.length > 0}
+		{#if attachedThings.length > 0}
 			<div class="project-chip-bar">
-				{#each attachedProjects as project (project.id)}
+				{#each attachedThings as project (project.id)}
 					<div class="project-chip">
 						<Icon icon={project.icon || 'ri:folder-open-line'} width="12" />
 						<span class="project-chip-name">{project.name}</span>
 						<button
 							type="button"
 							class="project-chip-remove"
-							title="Detach project"
-							onclick={() => onDetachProject(project.id)}
+							title="Detach thing"
+							onclick={() => onDetachThing(project.id)}
 						>
 							<Icon icon="ri:close-line" width="12" />
 						</button>
@@ -490,8 +500,7 @@
 				</div>
 				<div>
 					<PageEditIndicator
-						items={editableItems}
-						boundPage={pageBinding ? { id: pageBinding.pageId, title: pageBinding.pageTitle } : null}
+						items={effectiveEditableItems}
 						onRemoveItem={onRemoveItem}
 						onSelectEntities={onSelectEntities}
 						visible={canEdit}
@@ -509,13 +518,13 @@
 					<button
 						type="button"
 						class="project-picker-btn"
-						title="Attach a project as context"
+						title="Attach a thing as context"
 						onclick={toggleProjectPicker}
 						aria-haspopup="menu"
 						aria-expanded={showProjectPicker}
 					>
 						<Icon icon="ri:folder-open-line" width="12" />
-						<span>Project</span>
+						<span>Thing</span>
 					</button>
 					{#if showProjectPicker}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -526,14 +535,14 @@
 							role="presentation"
 						></div>
 						<div class="project-picker-menu" role="menu">
-							{#if allProjects.length === 0}
+							{#if allThings.length === 0}
 								<div class="project-picker-empty">
-									No projects yet. Create one in the Projects sidebar.
+									No things yet. Create one in the Things sidebar.
 								</div>
-							{:else if unattachedProjects.length === 0}
-								<div class="project-picker-empty">All projects attached.</div>
+							{:else if unattachedThings.length === 0}
+								<div class="project-picker-empty">All things attached.</div>
 							{:else}
-								{#each unattachedProjects as project (project.id)}
+								{#each unattachedThings as project (project.id)}
 									<button
 										type="button"
 										class="project-picker-item"

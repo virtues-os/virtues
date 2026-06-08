@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, name, latitude, longitude, radius_m\n        FROM wiki_places\n        WHERE latitude IS NOT NULL\n          AND longitude IS NOT NULL\n          AND latitude BETWEEN $1 AND $2\n          AND longitude BETWEEN $3 AND $4\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "latitude",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 3,
+        "name": "longitude",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "radius_m",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "688991bc82bb37c29652e05a577dc530f13f22276607d6fa89db9ca4f4005a62"
+}

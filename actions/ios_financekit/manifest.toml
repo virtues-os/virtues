@@ -1,0 +1,8 @@
+name = "iOS FinanceKit"
+description = "Ingest accounts and transactions from a paired iPhone via Apple FinanceKit."
+owner = "system"
+runtime = "function"
+command = ["ios_financekit"]
+triggers = ["webhook"]
+per_credential = true
+source = { id = "ios" }

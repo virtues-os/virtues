@@ -11,7 +11,11 @@ import Combine
 import UIKit
 
 class LocationManager: NSObject, ObservableObject {
-    static let shared = LocationManager()
+    static let shared = LocationManager(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        dataUploader: BatchUploadCoordinator.shared
+    )
 
     // MARK: - Constants
     private let samplingIntervalSeconds = 15.0  // Battery optimization: ~10-15% savings vs 10s
@@ -62,15 +66,6 @@ class LocationManager: NSObject, ObservableObject {
 
         // Register with centralized health check coordinator
         HealthCheckCoordinator.shared.register(self)
-    }
-
-    /// Legacy singleton initializer - uses default dependencies
-    private override convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            dataUploader: BatchUploadCoordinator.shared
-        )
     }
 
     deinit {

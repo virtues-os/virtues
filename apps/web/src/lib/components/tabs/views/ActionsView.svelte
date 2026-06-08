@@ -1,35 +1,33 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { animate } from 'motion';
+	import type { Tab } from '$lib/tabs/types';
 	import ActionsPanel from '$lib/components/actions/ActionsPanel.svelte';
 	import TemplatesPanel from '$lib/components/actions/TemplatesPanel.svelte';
-	import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
 	import HistoryPanel from '$lib/components/actions/HistoryPanel.svelte';
+	import { spaceStore } from '$lib/stores/space.svelte';
 
-	type SubTab = 'actions' | 'templates' | 'sources' | 'history';
+	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	function parseHash(): SubTab {
-		if (typeof window === 'undefined') return 'actions';
-		const h = window.location.hash.replace(/^#/, '');
-		if (h === 'actions' || h === 'templates' || h === 'sources' || h === 'history') return h;
+	type SubTab = 'actions' | 'templates' | 'history';
+
+	function parseSubTab(route: string): SubTab {
+		const m = route.match(/^\/actions\/(actions|templates|history)$/);
+		if (m) return m[1] as SubTab;
 		return 'actions';
 	}
 
-	let subTab = $state<SubTab>(parseHash());
+	const subTab = $derived<SubTab>(parseSubTab(tab.route));
 
-	function switchTo(tab: SubTab) {
-		subTab = tab;
-		if (typeof window !== 'undefined') {
-			const url = new URL(window.location.href);
-			url.hash = tab;
-			window.history.replaceState({}, '', url.toString());
-		}
+	function switchTo(next: SubTab) {
+		const route = next === 'actions' ? '/actions' : `/actions/${next}`;
+		if (tab.route === route) return;
+		spaceStore.updateTab(tab.id, { route });
 	}
 
 	const tabs: { id: SubTab; label: string }[] = [
 		{ id: 'actions', label: 'Actions' },
 		{ id: 'templates', label: 'Templates' },
-		{ id: 'sources', label: 'Sources' },
 		{ id: 'history', label: 'History' }
 	];
 
@@ -39,7 +37,6 @@
 	let btnRefs = $state<Record<SubTab, HTMLButtonElement | null>>({
 		actions: null,
 		templates: null,
-		sources: null,
 		history: null
 	});
 	let hasMounted = $state(false);
@@ -109,8 +106,6 @@
 			<ActionsPanel />
 		{:else if subTab === 'templates'}
 			<TemplatesPanel />
-		{:else if subTab === 'sources'}
-			<ConnectionsPanel />
 		{:else if subTab === 'history'}
 			<HistoryPanel />
 		{/if}

@@ -9,6 +9,7 @@
 	import { onMount } from 'svelte';
 	import { getOntologiesOverview, type OntologyOverview } from '$lib/api/client';
 	import { spaceStore } from '$lib/stores/space.svelte';
+	import { Page, EmptyState, LoadingState, ErrorState } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 
 	let ontologies = $state<OntologyOverview[]>([]);
@@ -63,27 +64,13 @@
 	});
 </script>
 
-<div class="ontology-index">
-	<header class="index-header">
-		<h1 class="index-title">Ontologies</h1>
-		<p class="index-subtitle">Browse your data by type</p>
-	</header>
-
+<Page title="Ontologies" description="Browse your data by type" maxWidth="prose">
 	{#if loading}
-		<div class="loading-state">
-			<Icon icon="ri:loader-4-line" width="24" />
-			<span>Loading ontologies...</span>
-		</div>
+		<LoadingState message="Loading ontologies..." />
 	{:else if error}
-		<div class="error-state">
-			<Icon icon="ri:error-warning-line" width="24" />
-			<span>{error}</span>
-		</div>
+		<ErrorState message={error} />
 	{:else if ontologies.length === 0}
-		<div class="empty-state">
-			<Icon icon="ri:database-2-line" width="32" />
-			<p>No data sources connected yet.</p>
-		</div>
+		<EmptyState icon="ri:database-2-line" message="No data sources connected yet." />
 	{:else}
 		{#each grouped as [domain, items]}
 			<div class="domain-group">
@@ -106,33 +93,9 @@
 			</div>
 		{/each}
 	{/if}
-</div>
+</Page>
 
 <style>
-	.ontology-index {
-		max-width: 48rem;
-		margin: 0 auto;
-		padding: 2rem;
-	}
-
-	.index-header {
-		margin-bottom: 2rem;
-	}
-
-	.index-title {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: 1.75rem;
-		font-weight: 400;
-		color: var(--color-foreground);
-		margin: 0 0 0.25rem;
-	}
-
-	.index-subtitle {
-		font-size: 0.875rem;
-		color: var(--color-foreground-muted);
-		margin: 0;
-	}
-
 	.domain-group {
 		margin-bottom: 2rem;
 	}

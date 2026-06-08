@@ -31,7 +31,7 @@ interface CreateChatConfig {
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
     getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
-    getProjectIds?: () => string[]; // Getter for attached project IDs (for @project context lens)
+    getThingIds?: () => string[]; // Getter for attached thing IDs (for @project context lens)
 }
 
 class ChatInstanceStore {
@@ -44,7 +44,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getSpaceId, getActivePageContext, getPersona, getAgentMode, getProjectIds } = config;
+        const { conversationId, getModel, getSpaceId, getActivePageContext, getPersona, getAgentMode, getThingIds } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -67,7 +67,7 @@ class ChatInstanceStore {
                     const activePage = getActivePageContext?.();
                     const persona = getPersona?.() || 'default';
                     const agentMode = getAgentMode?.() || 'agent';
-                    const projectIds = getProjectIds?.() ?? [];
+                    const thingIds = getThingIds?.() ?? [];
                     const entry = this.instances.get(conversationId);
                     const thoughtSignature = entry?.lastThoughtSignature;
 
@@ -85,8 +85,8 @@ class ChatInstanceStore {
                             ...(spaceId && { spaceId }),
                             // Include active page context if a page is bound
                             ...(activePage && { activePage }),
-                            // Include attached project IDs (salience lens for the agent)
-                            ...(projectIds.length > 0 && { projectIds }),
+                            // Include attached thing IDs (salience lens for the agent)
+                            ...(thingIds.length > 0 && { thingIds }),
                             // Include thought signature if available
                             ...(thoughtSignature && { thoughtSignature })
                         }
@@ -141,7 +141,7 @@ class ChatInstanceStore {
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
 
-                // Detect subscription_expired from Tollbooth 402 response
+                // Detect subscription_expired from virtues-api 402 response
                 if (error.message?.includes('subscription_expired')) {
                     subscriptionStore.check();
                 }

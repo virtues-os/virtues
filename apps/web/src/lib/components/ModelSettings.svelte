@@ -139,7 +139,7 @@
 			Loading models...
 		</div>
 	{:else if error}
-		<div class="text-center py-6 text-sm text-red-500">{error}</div>
+		<div class="text-center py-6 text-sm text-error">{error}</div>
 	{:else}
 		<div class="grid grid-cols-2 gap-4 p-4">
 			{#each SLOTS as slot}

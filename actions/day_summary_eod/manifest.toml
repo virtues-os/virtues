@@ -1,0 +1,7 @@
+name = "Day Summary (End of Day)"
+description = "Resolves sleep, scores novelty/autonomic/topic/entity, and writes the daily autobiography. Runs hourly; the binary self-gates to the user's local maintenance hour."
+owner = "system"
+runtime = "function"
+command = ["day_summary_eod"]
+triggers = ["cron", "manual", "tool"]
+default_cron = "0 0 * * * *"

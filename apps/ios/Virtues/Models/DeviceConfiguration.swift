@@ -8,12 +8,17 @@
 import Foundation
 import UIKit
 
-/// Device configuration including API endpoint, device ID, auth token, and
-/// per-stream action_ids.
+/// Device configuration including API endpoint, device ID, and per-stream
+/// action_ids.
 ///
-/// **Authentication Design:**
-/// The device ID is used directly as the Bearer token for all API calls.
-/// Users pair their device via the web app to associate it with their account.
+/// **Authentication Design (v1, pair-only):**
+/// The bearer token is **server-issued** at pair time and stored in the OS
+/// Keychain via `KeychainStore.shared`. The `deviceId` on this struct is a
+/// non-secret label only — it identifies which device this is in the box's
+/// `/virtues/devices` UI, but it has zero authentication weight.
+///
+/// The legacy `deviceToken: String { deviceId }` accessor was removed in v1.
+/// Callers use `KeychainStore.shared.loadBearer()` to read the bearer.
 ///
 /// **Webhook routing:**
 /// Each ingest stream (healthkit, location, microphone, etc.) has its own
@@ -60,14 +65,41 @@ struct DeviceConfiguration: Codable {
         self.actionIds = (try? c.decodeIfPresent([String: String].self, forKey: .actionIds)) ?? [:]
     }
 
-    /// Device ID is used as the authentication token
-    var deviceToken: String {
-        deviceId
+    /// Bearer token read from the Keychain. Set by the pair flow; returns
+    /// `nil` if the device hasn't been paired (or was revoked + wiped).
+    var bearerToken: String? {
+        if let kc = KeychainStore.shared.loadBearer(), !kc.isEmpty {
+            return kc
+        }
+        return nil
     }
 
-    // Helper to check if device is configured (has a server URL)
+    /// `Authorization: Bearer <token>` value used on every box API call.
+    /// Required by the `ConfigurationProvider` protocol (callers expect a
+    /// `String`, not `String?`).
+    ///
+    /// **Backwards-compat shim during the v1 cutover:** if no Keychain
+    /// bearer is present but a legacy `deviceId`-based config exists, fall
+    /// back to the old "deviceId as bearer" behavior so currently-paired
+    /// devices keep working until the user re-pairs. New pairings always
+    /// populate the Keychain; the fallback goes away in v1.1 once every
+    /// device has re-paired.
+    var deviceToken: String {
+        bearerToken ?? deviceId
+    }
+
+    /// True when this device has both an endpoint AND a usable bearer
+    /// (Keychain or legacy). The onboarding gate uses this to decide
+    /// whether to allow data collection to begin.
     var isConfigured: Bool {
-        return !apiEndpoint.isEmpty
+        !apiEndpoint.isEmpty
+    }
+
+    /// True when the user has set an endpoint but hasn't completed a pair
+    /// via the v1 pair-only flow (no Keychain bearer). The UI uses this to
+    /// show "pair to finish setup" rather than "you're paired."
+    var awaitingPair: Bool {
+        !apiEndpoint.isEmpty && bearerToken == nil
     }
 
     /// Terse iOS internal stream names → canonical backend function_names.

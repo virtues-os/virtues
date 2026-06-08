@@ -151,13 +151,6 @@ class PagesStore {
 	}
 
 	/**
-	 * Rename a page (deprecated - use savePage instead)
-	 */
-	async renamePage(pageId: string, newTitle: string): Promise<void> {
-		await this.savePage(pageId, { title: newTitle });
-	}
-
-	/**
 	 * Save page content and metadata. Handles all side effects:
 	 * - API call
 	 * - Optimistic local update (registry)

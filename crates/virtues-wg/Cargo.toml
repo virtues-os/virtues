@@ -1,0 +1,29 @@
+[package]
+name = "virtues-wg"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Minimal WireGuard engine for the Virtues box: kernel wg0 lifecycle (defguard_wireguard_rs), peer reconcile from the DB, ULA addressing, and sealed box-secret storage. Built to run as a small, privileged standalone daemon (virtues-wireguard) so the main app stays rootless."
+
+[lib]
+name = "virtues_wg"
+path = "src/lib.rs"
+
+[dependencies]
+virtues-helpers = { path = "../virtues-helpers" }
+
+anyhow = "1"
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "chrono", "json", "uuid"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+ring = "0.17"
+tracing = "0.1"
+# Async runtime for the standalone daemon binary.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+# Kernel WireGuard engine — Linux-only (netlink). Cfg'd out on the macOS dev
+# host; the daemon + this dep build + run on the Linux box / OrbStack.
+[target.'cfg(target_os = "linux")'.dependencies]
+defguard_wireguard_rs = "0.9"

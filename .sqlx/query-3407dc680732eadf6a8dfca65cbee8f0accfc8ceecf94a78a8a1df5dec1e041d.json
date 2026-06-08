@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO wiki_places (\n            id,\n            name,\n            category,\n            address,\n            latitude,\n            longitude,\n            radius_m,\n            metadata\n        ) VALUES (\n            $1, $2, $3, $4, $5, $6, 50.0, $7\n        )\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Float8",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3407dc680732eadf6a8dfca65cbee8f0accfc8ceecf94a78a8a1df5dec1e041d"
+}
