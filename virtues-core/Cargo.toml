@@ -94,7 +94,13 @@ axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
 # Box serves HTTPS on :443 with a per-box CA-signed leaf (virtues.local).
 # Using rustls (no OpenSSL) + tokio-rustls for the listener.
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+# Use the no-provider variant + an explicit `rustls` dep below with the
+# `ring` provider. The default `tls-rustls` pulls `aws-lc-rs` →
+# `aws-lc-sys`, which the GCC 11 in our cross containers refuses to build
+# (see GCC bug 95189). Ring also avoids needing to install a default
+# CryptoProvider at runtime startup.
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 tokio-rustls = "0.26"
 mime_guess = "2.0"
 tower = "0.4"
@@ -109,7 +115,7 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # OAuth
 oauth2 = "4.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "stream"] }
 
 # Financial integrations
 plaid = "9.0.1"
@@ -231,7 +237,13 @@ chrono = "0.4"
 
 [dev-dependencies]
 # Testing
-testcontainers = "0.21"
+#
+# testcontainers was here for integration-test Docker spin-ups but was
+# never actually `use`d. Removed because its bollard→hyper-rustls path
+# force-activates `rustls/aws_lc_rs` via cargo feature unification,
+# dragging aws-lc-sys into the release build (which can't compile under
+# the GCC 11 in our cross images — GCC bug 95189). Re-add via a separate
+# integration-tests crate if you need it back.
 dotenv = "0.15"
 serial_test = "3.1"
 

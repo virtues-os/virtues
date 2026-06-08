@@ -8,6 +8,16 @@ use virtues::VirtuesBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Install the ring CryptoProvider as the process-wide default.
+    // We use rustls with `default-features = false, features = ["ring"]` to
+    // avoid aws-lc-rs (and aws-lc-sys, which doesn't cross-compile under
+    // GCC 11). Rustls 0.23 requires the provider to be installed once at
+    // startup before any TLS work; otherwise the axum-server TLS task
+    // panics on first connection.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls ring CryptoProvider");
+
     // Load environment variables from .env file
     // Try current directory first, then parent directory (for running from core/)
     if dotenv::dotenv().is_err() {
