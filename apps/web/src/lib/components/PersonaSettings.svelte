@@ -131,7 +131,7 @@
 	{#if personaStore.loading && !personaStore.initialized}
 		<div class="text-center py-6 text-sm text-foreground-muted">Loading personas...</div>
 	{:else if personaStore.error}
-		<div class="text-center py-6 text-sm text-red-500">{personaStore.error}</div>
+		<div class="text-center py-6 text-sm text-error">{personaStore.error}</div>
 	{:else}
 		<div class="flex flex-col divide-y divide-border">
 			{#each personaStore.personas as persona (persona.id)}
@@ -224,7 +224,7 @@
 		<div class="flex items-center justify-between w-full">
 			{#if editingPersona}
 				<button
-					class="modal-btn border border-red-500 text-red-500 hover:bg-red-500 hover:text-white"
+					class="modal-btn border border-error text-error hover:bg-error hover:text-surface"
 					onclick={handleDelete}
 				>
 					{editingPersona.is_system ? 'Hide' : 'Delete'}

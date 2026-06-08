@@ -180,7 +180,7 @@
 				column.getValue = makeTruncatedGetter(col.name, 80);
 			} else if (isBool && format === 'badge') {
 				column.getValue = makeBooleanGetter(col.name);
-				column.badgeColors = { 'yes': 'badge-green', 'no': 'badge-gray' };
+				column.badgeColors = { 'yes': 'badge-success', 'no': 'badge-muted' };
 			}
 
 			return column;

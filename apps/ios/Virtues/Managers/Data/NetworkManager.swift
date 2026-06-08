@@ -135,21 +135,34 @@ class NetworkManager: ObservableObject {
         }
     }
     
-    // MARK: - QR Pairing
+    // MARK: - Pairing (v1: unified pair-only)
 
-    /// Complete QR-based pairing: sends device identity to the server using the
-    /// source_id obtained from the scanned QR code.
-    func completePairing(
+    /// Complete pairing via the unified v1 pair-only flow.
+    /// `POST {endpoint}/api/pair/consume` with `kind = "mobile_app"`. The
+    /// server creates the `app_device` row, mints a server-issued bearer
+    /// (returned ONCE in the response), and runs the action fan-out so the
+    /// device knows the `function_name → action_id` map.
+    ///
+    /// On success the bearer is written to the Keychain via
+    /// `KeychainStore.shared.saveBearer(...)`. The caller is responsible for
+    /// persisting `actionIds` + `apiEndpoint` into `DeviceConfiguration`.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Box root URL (e.g. `https://virtues.local`). Trailing
+    ///     `/` or `/api` is tolerated and stripped.
+    ///   - pairToken: The 24-byte hex token from the QR / `/pair#t=...` URL.
+    ///   - deviceId: A device-local label (UUID) for the Devices page — NOT
+    ///     used as a credential.
+    /// - Returns: `(credentialId, actionIds)` for the caller to persist.
+    func consumePairToken(
         endpoint: String,
-        sourceId: String,
+        pairToken: String,
         deviceId: String
-    ) async throws -> PairingCompleteResponse {
-        // Build URL: {endpoint}/api/devices/pairing/{sourceId}/complete
+    ) async throws -> PairConsumeResponse {
         let baseURL = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
-        // Strip /api suffix if present so we can build the canonical path
         let root = baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
 
-        guard let url = URL(string: "\(root)/api/devices/pairing/\(sourceId)/complete") else {
+        guard let url = URL(string: "\(root)/api/pair/consume") else {
             throw NetworkError.invalidURL
         }
 
@@ -171,7 +184,13 @@ class NetworkManager: ObservableObject {
             app_version: appVersion
         )
 
-        let body = PairingCompleteRequest(device_id: deviceId, device_info: deviceInfo)
+        let body = PairConsumeRequest(
+            token: pairToken,
+            kind: "mobile_app",
+            label: deviceName,
+            device_info: deviceInfo,
+            wg_public_key: nil      // v1.1 will generate + send the WG pubkey here.
+        )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
 
@@ -185,17 +204,24 @@ class NetworkManager: ObservableObject {
         case 200...299:
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
-            return try decoder.decode(PairingCompleteResponse.self, from: data)
+            let parsed = try decoder.decode(PairConsumeResponse.self, from: data)
+            // Park the bearer in the Keychain immediately — it's returned
+            // exactly once by the server and we never want it to live in
+            // process memory longer than this function.
+            if let bearer = parsed.bearer, !bearer.isEmpty {
+                try? KeychainStore.shared.saveBearer(bearer)
+            }
+            return parsed
+        case 401:
+            throw NetworkError.badRequest(message: "Pair token is invalid, expired, or already used. Get a fresh one from `virtues link` on the box.")
         case 400:
             let message: String
             if let errorResponse = try? JSONDecoder().decode(ErrorResponse.self, from: data) {
                 message = errorResponse.error
             } else {
-                message = "Pairing session expired or already claimed"
+                message = "Pair request was malformed"
             }
             throw NetworkError.badRequest(message: message)
-        case 404:
-            throw NetworkError.badRequest(message: "Pairing session not found. The QR code may be invalid.")
         case 500...599:
             throw NetworkError.serverError(httpResponse.statusCode)
         default:
@@ -239,23 +265,18 @@ class NetworkManager: ObservableObject {
 
 // MARK: - Request/Response Models
 
+/// Response from `POST /webhook/{action_id}` per
+/// `virtues-core/src/server/webhook.rs::WebhookResponse`. The action runs async on
+/// the server; `runId` is the row id in `app_action_runs` (null when status
+/// is "skipped" or similar) and `status` is the dispatch outcome.
+/// All fields are optional so the device tolerates server-side shape drift.
 struct UploadResponse: Codable {
-    let accepted: Int
-    let rejected: Int
-    let nextCheckpoint: String?
-    let activityId: String
-    
-    // Optional legacy fields to prevent decoding errors if server sends them
-    let success: Bool?
-    let message: String?
-    
+    let runId: String?
+    let status: String?
+
     private enum CodingKeys: String, CodingKey {
-        case accepted
-        case rejected
-        case nextCheckpoint = "next_checkpoint"
-        case activityId = "activity_id"
-        case success
-        case message
+        case runId = "run_id"
+        case status
     }
 }
 
@@ -265,8 +286,11 @@ struct ErrorResponse: Codable {
     let message: String? // Added to match backend
 }
 
-// MARK: - QR Pairing Models
+// MARK: - Pair-only flow models (v1)
 
+/// Device-info JSON the box stores under `app_device.device_info` so the
+/// `/virtues/devices` page can render a recognizable label. Plaintext,
+/// non-secret context — never used for authentication.
 struct PairingDeviceInfo: Codable {
     let device_id: String
     let device_name: String
@@ -275,16 +299,36 @@ struct PairingDeviceInfo: Codable {
     let app_version: String?
 }
 
-struct PairingCompleteRequest: Codable {
-    let device_id: String
+/// `POST /api/pair/consume` body — see `virtues-core/src/api/pair.rs`
+/// `ConsumeRequest`.
+struct PairConsumeRequest: Codable {
+    /// The pair token, 24 random bytes hex-encoded, lifted from the
+    /// `/pair#t=...` fragment or `virtues://pair?t=...` deep link.
+    let token: String
+    /// "mobile_app" for the iOS app.
+    let kind: String
+    /// Optional human label shown on the box's Devices page. Defaults to
+    /// the device's name (`UIDevice.current.name`) when nil.
+    let label: String?
     let device_info: PairingDeviceInfo
+    /// Reserved for v1.1 — the iOS app will generate a WireGuard keypair
+    /// on-device and send the pubkey here so the box can hand back a
+    /// PairingBundle for tunnel setup.
+    let wg_public_key: String?
 }
 
-struct PairingCompleteResponse: Codable {
-    let sourceId: String
-    let deviceToken: String
+/// `POST /api/pair/consume` response — see `virtues-core/src/api/pair.rs`
+/// `ConsumeResponse`. `actionIds` and `bearer` are the fields that matter
+/// to the iOS app today; `bundle` is the future WG provisioning blob.
+struct PairConsumeResponse: Codable {
+    let deviceId: String
+    let redirect: String
+    /// Returned exactly once. Caller stores in Keychain; the in-memory
+    /// copy on this struct should be discarded immediately after.
+    let bearer: String?
     /// Backend `function_name → action_id` map the device persists and uses
     /// when posting each stream flush to `POST /webhook/{action_id}`.
-    /// Optional for forward-compat with older server builds.
-    let actionIds: [String: String]?
+    let actionIds: [String: String]
+    // `bundle` (WG provisioning) is deliberately omitted from the iOS-side
+    // type for v1 — the app doesn't yet drive a tunnel. Wire in v1.1.
 }

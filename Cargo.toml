@@ -1,10 +1,12 @@
 [workspace]
 members = [
-    "core",
+    "virtues-core",
     "crates/virtues-helpers",
-    "packages/virtues-registry",
+    "crates/virtues-wg",
+    "crates/virtues-registry",
     "actions",
-    "apps/tollbooth",
+    "services/virtues-api",
+    "services/atlas",
 ]
 resolver = "2"
 

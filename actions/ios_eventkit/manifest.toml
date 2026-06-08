@@ -1,0 +1,8 @@
+name = "iOS EventKit"
+description = "Ingest calendar events and reminders from a paired iPhone."
+owner = "system"
+runtime = "function"
+command = ["ios_eventkit"]
+triggers = ["webhook"]
+per_credential = true
+source = { id = "ios" }

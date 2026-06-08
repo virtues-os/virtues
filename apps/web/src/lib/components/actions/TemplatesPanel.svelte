@@ -1,14 +1,13 @@
 <script lang="ts">
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
-	import { listActions, listActionRuns, type Action, type ActionRun } from '$lib/api/client';
+	import { listActions, type Action } from '$lib/api/client';
 	import { describeSchedule, relativeTime } from '$lib/actions/palette';
 	import { descriptionFor } from '$lib/actions/descriptions';
-	import ActionCard from './ActionCard.svelte';
+	import TemplateCard from './TemplateCard.svelte';
+	import { loadCard } from '$lib/action-views';
 
 	let actions = $state<Action[]>([]);
-	let pulseByAction = $state<Record<string, ActionRun[]>>({});
-	let lastSuccessByAction = $state<Record<string, ActionRun | null>>({});
 	let loading = $state(true);
 	let err = $state<string | null>(null);
 
@@ -17,25 +16,6 @@
 		err = null;
 		try {
 			actions = await listActions();
-			void Promise.all(
-				actions
-					.filter((a) => a.owner === 'user')
-					.map(async (a) => {
-						try {
-							const [runs, successRuns] = await Promise.all([
-								listActionRuns(a.id, { limit: 10 }),
-								listActionRuns(a.id, { limit: 1, status: 'success' })
-							]);
-							pulseByAction = { ...pulseByAction, [a.id]: runs };
-							lastSuccessByAction = {
-								...lastSuccessByAction,
-								[a.id]: successRuns[0] ?? null
-							};
-						} catch {
-							// decorative
-						}
-					})
-			);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -47,6 +27,9 @@
 		void load();
 	});
 
+	// Templates are user-owned actions — the customizable blueprints the user
+	// has defined (or seeded copies thereof). System-managed fan-out actions
+	// live in ActionsPanel, not here.
 	const templates = $derived(actions.filter((a) => a.owner === 'user'));
 
 	function openCard(a: Action) {
@@ -58,6 +41,8 @@
 		});
 	}
 
+	// Columns drive table view + search index. The grid uses the TemplateCard
+	// snippet, but search still scans these columns.
 	const columns: Column<Action>[] = [
 		{ key: 'name', label: 'Name', width: '30%', minWidth: '140px' },
 		{
@@ -73,7 +58,7 @@
 		{
 			key: 'id',
 			label: 'Last run',
-			getValue: (a) => a.last_run?.started_at ? relativeTime(a.last_run.started_at) : '—'
+			getValue: (a) => (a.last_run?.started_at ? relativeTime(a.last_run.started_at) : '—')
 		}
 	];
 </script>
@@ -83,7 +68,8 @@
 		<div>
 			<h2>Templates</h2>
 			<p class="subtitle">
-				Customizable blueprints seeded for you. Tune the prompt, schedule, or memory.
+				Starting points. Each template is a recipe — pick one, make it yours,
+				and it becomes an action that runs.
 			</p>
 		</div>
 	</header>
@@ -91,25 +77,33 @@
 	<UniversalDataGrid
 		items={templates}
 		{columns}
-	entityType="templates"
-	defaultViewMode="grid"
-	gridMinWidth="340px"
-	{loading}
-	error={err}
-	emptyIcon="ri:stack-line"
-	emptyMessage="No templates available."
-	searchPlaceholder="Search templates…"
-	pageSize={50}
-	onItemClick={openCard}
->
-	{#snippet card(action)}
-		<ActionCard
-			{action}
-			lastRun={action.last_run}
-			lastSuccess={lastSuccessByAction[action.id] ?? null}
-			pulseRuns={pulseByAction[action.id] ?? []}
-		/>
-	{/snippet}
+		entityType="templates"
+		defaultViewMode="grid"
+		gridMinWidth="280px"
+		{loading}
+		error={err}
+		emptyIcon="ri:stack-line"
+		emptyMessage="No templates yet."
+		searchPlaceholder="Search templates…"
+		pageSize={50}
+		onItemClick={openCard}
+	>
+		{#snippet card(action)}
+			{@const viewName =
+				typeof action.config?.view === 'object' &&
+				action.config.view !== null &&
+				typeof (action.config.view as { name?: unknown }).name === 'string'
+					? ((action.config.view as { name: string }).name)
+					: null}
+			{@const CustomCard = loadCard(viewName)}
+			{#if CustomCard}
+				<!-- view-runtime override: action declared `config.view.name` and a
+				     matching Card.svelte exists in `actions/<name>/ui/`. -->
+				<CustomCard {action} onclick={openCard} />
+			{:else}
+				<TemplateCard {action} onclick={openCard} />
+			{/if}
+		{/snippet}
 	</UniversalDataGrid>
 </section>
 

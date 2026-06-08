@@ -160,7 +160,7 @@
                         </p>
                         <p class="mt-2">
                             If you need to add, modify, or transform data, we
-                            recommend setting up your own SQLite database via
+                            recommend setting up your own database via
                             the <strong>Terminal</strong> tab.
                         </p>
                     </div>

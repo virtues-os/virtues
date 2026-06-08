@@ -80,12 +80,12 @@ export const SYSTEM_SECTIONS: SystemSection[] = [
 		href: '/drive',
 	},
 	{
-		id: 'sys_projects',
-		name: 'Projects',
+		id: 'sys_things',
+		name: 'Things',
 		icon: 'ri:folder-open-line',
 		type: 'link',
 		sortOrder: 360,
-		href: '/projects',
+		href: '/things',
 	},
 	{
 		id: 'sys_actions',
@@ -95,14 +95,6 @@ export const SYSTEM_SECTIONS: SystemSection[] = [
 		sortOrder: 450,
 		href: '/actions',
 		groupBreak: true,
-	},
-	{
-		id: 'sys_applets',
-		name: 'Applets',
-		icon: 'ri:apps-line',
-		type: 'link',
-		sortOrder: 500,
-		href: '/applets',
 	},
 ];
 
@@ -116,5 +108,5 @@ export const LEGACY_ID_MAP: Record<string, string> = {
 	'view_sys_sec_developer': '',
 	'sys_chats': 'sys_chat',
 	'sys_files': 'sys_drive',
-	'sys_apps': 'sys_applets',
+	'sys_projects': 'sys_things',
 };

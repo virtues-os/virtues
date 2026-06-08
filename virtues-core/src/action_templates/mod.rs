@@ -1,0 +1,779 @@
+//! Action template loader, source catalog, and reconciler.
+//!
+//! Two on-disk inputs:
+//!
+//! 1. `actions/sources.toml` — the source catalog. Holds only `[[source]]`
+//!    entries (one tile per provider on the Sources UI). Read once on first
+//!    access; baked into the binary at compile time as a fallback for the
+//!    case where the file is missing at runtime.
+//!
+//! 2. `actions/<name>/manifest.toml` — one per action. Each is a flat TOML
+//!    document with the action's declarative metadata (name, runtime,
+//!    command, triggers, default_cron, etc.). Globbed at parse time;
+//!    folder name becomes the action's `id_prefix` if not explicitly set.
+//!
+//! On startup, `reconcile_templates`:
+//!   - Loads sources from sources.toml into a static catalog (lookup by `id`).
+//!   - Globs `actions/*/manifest.toml`, parses each, and upserts into
+//!     `app_actions`. Manifest-managed fields (name, owner, agent, runtime,
+//!     command, triggers, condition, source) are overwritten
+//!     on every system reconcile. User-managed runtime state (enabled,
+//!     cron_schedule, config, memory) is preserved.
+//!   - Per-credential manifests fan out one row per matching `credentials`
+//!     row, exactly as before.
+
+use std::sync::{OnceLock, RwLock};
+
+use crate::error::{Error, Result};
+use serde::Deserialize;
+use sqlx::PgPool;
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOML schema
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One `[[source]]` entry in `actions/sources.toml`. Catalog tile.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Source {
+    /// Stable id used as `credentials.source_id` and as `[[action]].source.id`.
+    pub id: String,
+    pub display_name: String,
+    pub icon: String,
+    pub description: String,
+    pub auth: SourceAuth,
+}
+
+/// How a source authenticates. Matches the three auth kinds in the charter.
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SourceAuth {
+    /// Server mints a bearer (iOS-style). Webhook router validates HMAC lookup.
+    SelfIssuedBearer,
+    /// Browser redirect through the OAuth proxy (the `oauth` routes in
+    /// `services/virtues-api`). Covers OAuth and Plaid Link.
+    ViaProxy { start_path: String },
+    /// User pastes one or more strings (MCP tokens, BYO API keys).
+    ApiKey { fields: Vec<String> },
+}
+
+impl SourceAuth {
+    /// Stable wire string for API responses + frontend dispatch.
+    /// `self_issued_bearer` | `via_proxy` | `api_key`.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::SelfIssuedBearer => "self_issued_bearer",
+            Self::ViaProxy { .. } => "via_proxy",
+            Self::ApiKey { .. } => "api_key",
+        }
+    }
+}
+
+/// One per-action `manifest.toml` (or a `[[action]]` row if we ever resurrect
+/// a central registry). `id_prefix` is optional in the manifest — derived
+/// from the folder name as `action_<folder>` when absent.
+#[derive(Debug, Deserialize, Clone)]
+struct Template {
+    /// Stable id prefix. For non-per-credential entries this becomes the
+    /// final action id. For per-credential entries the materialized id is
+    /// `{id_prefix}_{credential_id}`. When omitted in `manifest.toml` the
+    /// loader derives it from the folder name.
+    #[serde(default)]
+    id_prefix: Option<String>,
+    name: String,
+    owner: String,
+    #[serde(default)]
+    triggers: Vec<String>,
+    #[serde(default)]
+    default_cron: Option<String>,
+    #[serde(default = "default_true")]
+    default_enabled: bool,
+    #[serde(default)]
+    condition: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    per_credential: bool,
+    /// Reference to a `[[source]]` entry in this same file. Required when
+    /// `per_credential = true` — fan-out matches credentials by `source_id`.
+    /// Absent for credential-less templates (housekeeping).
+    #[serde(default)]
+    source: Option<SourceRef>,
+    /// Runtime contract — how the action executes.
+    ///
+    /// - `function` (default) — fork-per-trigger CLI; reads `ActionInput` JSON
+    ///   from stdin, writes `ActionOutput` JSON to stdout, exits.
+    /// - `service` — long-running supervised HTTP server; core proxies external
+    ///   HTTP at `/service/<id>/*` and dispatches triggers via `POST /__trigger`.
+    /// - `view` — pure Svelte component; never invoked server-side. The
+    ///   runner skips `view` actions; the scheduler refuses to enqueue them.
+    #[serde(default = "default_runtime")]
+    runtime: String,
+    /// Argv to spawn (JSON array in SQL). A bare `command[0]` resolves to a
+    /// Cargo-built action binary; anything else (`python3 main.py`, `./x`) runs
+    /// via PATH. Used by both `function` and `service` runtimes; unset for `view`.
+    #[serde(default)]
+    command: Option<Vec<String>>,
+    /// Free-form config that flows from manifest into `app_actions.config`.
+    /// Notable use: `[config.view] name = "<applet>"` for view-runtime
+    /// actions, which the frontend reads to dispatch the custom Card /
+    /// Detail components from `apps/web/src/lib/applets/<applet>/`.
+    ///
+    /// For system-owned actions, reconcile **overwrites** this field on every
+    /// startup (the manifest is canonical). For user-owned actions, it's only
+    /// seeded once via `ON CONFLICT DO NOTHING`; subsequent edits via the UI win.
+    #[serde(default)]
+    config: Option<toml::Value>,
+    /// Manifest folder relative to the actions root. Populated by the loader
+    /// from the on-disk path, never read from TOML — a file can't know its own
+    /// location. Examples: `morning_brief`, `team-pack/actions/foo`.
+    #[serde(skip)]
+    dir: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct SourceRef {
+    id: String,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+struct ParsedTemplates {
+    #[serde(default)]
+    source: Vec<Source>,
+    #[serde(default)]
+    action: Vec<Template>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_runtime() -> String {
+    "function".to_string()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Catalog loader
+//
+// Two inputs:
+//   - sources.toml — single file, holds only [[source]] rows. Baked at compile
+//     time as a fallback so the binary is self-contained when shipped without
+//     the actions tree. The dev-loop source of truth is the on-disk file;
+//     `cargo build` re-bakes it on every recompile.
+//   - actions/<name>/manifest.toml — globbed at first access. Each is a
+//     standalone Template document. Folder name supplies `id_prefix` when the
+//     manifest doesn't set it explicitly.
+//
+// The loader runs once via OnceLock; subsequent calls hit the cache.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compile-time fallback for the source catalog — used when `actions/sources.toml`
+/// can't be read at runtime (binary shipped without the tree, tests, etc.).
+const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
+
+/// Absolute path to the on-disk `actions/` root. Resolved against
+/// `CARGO_MANIFEST_DIR` so `cargo run` works regardless of the user's CWD.
+/// Importers (`/api/admin/actions/import-git`) clone into this same directory
+/// so the standard scanner picks the new folder up — there is no separate
+/// "imported actions" location.
+pub fn actions_root() -> std::path::PathBuf {
+    let core_manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    core_manifest.join(ACTIONS_DIR_FROM_CORE)
+}
+
+/// The actions directory, relative to the repo root. Resolved against
+/// `CARGO_MANIFEST_DIR`'s parent at runtime so `cargo run` works regardless
+/// of the user's CWD.
+const ACTIONS_DIR_FROM_CORE: &str = "../actions";
+
+/// Cached merged catalog. Initialized lazily on first access; the inner
+/// `RwLock` allows `reload_catalog()` to replace the contents in-place when
+/// `/api/admin/reconcile` fires after a manifest edit.
+static CATALOG: OnceLock<RwLock<ParsedTemplates>> = OnceLock::new();
+
+fn catalog_lock() -> &'static RwLock<ParsedTemplates> {
+    CATALOG.get_or_init(|| RwLock::new(load_catalog()))
+}
+
+/// Force a re-read of `actions/sources.toml` and every
+/// `actions/*/manifest.toml`. Subsequent `lookup_source` /
+/// `list_sources_sorted` / `reconcile_templates` calls see the new data.
+///
+/// Called by the `/api/admin/reconcile` handler after a user (or LLM) edits
+/// a manifest on disk.
+pub fn reload_catalog() {
+    let fresh = load_catalog();
+    let lock = catalog_lock();
+    let mut guard = lock.write().expect("catalog rwlock poisoned");
+    *guard = fresh;
+}
+
+/// Read and parse a single `manifest.toml`. Returns None on read errors (which
+/// we log) and panics on parse errors (which are author bugs that must surface
+/// loudly).
+///
+/// `dir` is the manifest's folder relative to the actions root and is the
+/// **identity** of the action — `id_prefix` is derived from it as
+/// `action_<dir>` with `/` rewritten to `__`. This is what keeps built-ins
+/// from colliding with imports: built-ins have flat dirs (`morning_brief`),
+/// imports always live under a slug (`team-pack/morning_brief`), and
+/// from-chat user actions live under `user/` — so their derived ids never
+/// clash unless a user explicitly hand-edits a built-in's path.
+///
+/// A manifest may still set `id_prefix` explicitly (legacy escape hatch); we
+/// honor it, but the dir-derived form is the new default.
+fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template> {
+    let text = match std::fs::read_to_string(manifest_path) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(
+                path = %manifest_path.display(),
+                error = %e,
+                "failed to read action manifest; skipping"
+            );
+            return None;
+        }
+    };
+    let mut tmpl: Template = match toml::from_str(&text) {
+        Ok(t) => t,
+        Err(e) => panic!("failed to parse {}: {e}", manifest_path.display()),
+    };
+    if tmpl.id_prefix.is_none() {
+        tmpl.id_prefix = Some(format!("action_{}", dir.replace('/', "__")));
+    }
+    tmpl.dir = dir.to_string();
+    Some(tmpl)
+}
+
+fn load_catalog() -> ParsedTemplates {
+    let actions_dir = actions_root();
+
+    // 1. Sources — prefer on-disk; fall back to baked.
+    let sources_path = actions_dir.join("sources.toml");
+    let sources_doc: ParsedTemplates = match std::fs::read_to_string(&sources_path) {
+        Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
+            panic!("failed to parse {}: {e}", sources_path.display())
+        }),
+        Err(_) => toml::from_str(SOURCES_TOML)
+            .unwrap_or_else(|e| panic!("failed to parse baked sources.toml: {e}")),
+    };
+
+    // 2. Per-folder manifests. The scanner rule is intentionally flat:
+    //
+    //    - A subdir of `actions/` with a `manifest.toml` IS an action.
+    //      `dir = <folder>` (e.g. `morning_brief`).
+    //
+    //    - A subdir of `actions/` WITHOUT a `manifest.toml` is treated as a
+    //      namespace folder (a Git pack, `user/` for from-chat actions, etc).
+    //      We descend one level and pick up any `<folder>/<child>/manifest.toml`.
+    //      `dir = <folder>/<child>` (e.g. `team-pack/morning_brief`).
+    //
+    // No nested `actions/` is required inside a pack repo — the pack's own
+    // top-level folders ARE its action folders. This keeps imported repos
+    // shallow (`actions/team-pack/foo/bin/run`, not
+    // `actions/team-pack/actions/foo/bin/run`).
+    //
+    // Reserved namespaces:
+    //    - `user/`  — from-chat–authored actions live here.
+    //    - any imported slug (e.g. `team-pack/`) — owned by that import.
+    //
+    // The `dir` recorded on each Template is the folder path relative to the
+    // actions root; reconcile writes it onto every `app_actions` row, and
+    // `id_prefix` defaults to `action_<dir-with-/-as-__>` so different
+    // namespaces never collide.
+    let mut actions: Vec<Template> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&actions_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let folder_name = match path.file_name().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+
+            // Single action at top level.
+            let direct_manifest = path.join("manifest.toml");
+            if direct_manifest.exists() {
+                if let Some(t) = parse_template(&direct_manifest, &folder_name) {
+                    actions.push(t);
+                }
+                continue;
+            }
+
+            // Namespace folder — descend one level.
+            let inner_entries = match std::fs::read_dir(&path) {
+                Ok(it) => it,
+                Err(_) => continue,
+            };
+            for inner in inner_entries.flatten() {
+                let inner_path = inner.path();
+                if !inner_path.is_dir() {
+                    continue;
+                }
+                let inner_name = match inner_path.file_name().and_then(|s| s.to_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                };
+                let inner_manifest = inner_path.join("manifest.toml");
+                if !inner_manifest.exists() {
+                    continue;
+                }
+                let dir = format!("{folder_name}/{inner_name}");
+                if let Some(t) = parse_template(&inner_manifest, &dir) {
+                    actions.push(t);
+                }
+            }
+        }
+    }
+
+    // Reject duplicate id_prefixes loudly but without crashing the process.
+    // The dir-based id derivation makes natural collisions almost impossible
+    // — to land here someone has either hand-set `id_prefix = "..."` to the
+    // same value in two manifests, or hand-edited `actions/<built-in>/` to
+    // shadow a shipped action. Either way: surface, drop the offender, keep
+    // the first occurrence, and let the rest of the catalog load.
+    let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut deduped: Vec<Template> = Vec::with_capacity(actions.len());
+    for t in actions {
+        let id = match t.id_prefix.as_deref() {
+            Some(s) => s.to_string(),
+            None => {
+                tracing::error!(dir = %t.dir, "manifest missing id_prefix; skipping");
+                continue;
+            }
+        };
+        if let Some(first_dir) = seen.get(&id) {
+            tracing::error!(
+                id_prefix = %id,
+                first_dir = %first_dir,
+                colliding_dir = %t.dir,
+                "two manifests claim the same id_prefix; keeping the first, dropping this one. \
+                 Rename `id_prefix` in one of the manifests, or change the folder so the dir-derived id differs."
+            );
+            continue;
+        }
+        seen.insert(id, t.dir.clone());
+        deduped.push(t);
+    }
+
+    ParsedTemplates {
+        source: sources_doc.source,
+        action: deduped,
+    }
+}
+
+/// Look up a `[[source]]` entry by its id. Returns an owned clone so the
+/// catalog rwlock isn't held across the caller's await points.
+pub fn lookup_source(id: &str) -> Option<Source> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard.source.iter().find(|s| s.id == id).cloned()
+}
+
+/// All `[[source]]` entries sorted by `display_name`. Used by the catalog API
+/// for stable UI ordering. Returns owned clones (same lock-release rationale).
+pub fn list_sources_sorted() -> Vec<Source> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut sorted: Vec<Source> = guard.source.iter().cloned().collect();
+    sorted.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    sorted
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reconciliation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Reconcile `app_actions` rows against the on-disk catalog.
+///
+/// Snapshots the catalog under a brief read lock, releases the lock, then
+/// performs SQL writes against the snapshot. This avoids holding the
+/// rwlock across `await` points.
+///
+/// Returns the number of rows upserted.
+pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
+    let templates: ParsedTemplates = {
+        let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+        guard.clone()
+    };
+
+    // GC pass: delete fan-out action rows whose credential is no longer
+    // active. The revoke_credential endpoint handles this inline, but any
+    // state drift (direct SQL, import, bug) leaves orphans. We nullify
+    // run FKs first so history is preserved under `action_id = NULL`.
+    let pruned = sqlx::query(
+        r#"UPDATE app_action_runs SET action_id = NULL
+           WHERE action_id IN (
+               SELECT id FROM app_actions
+               WHERE credential_id IS NOT NULL
+                 AND credential_id NOT IN (
+                     SELECT id FROM credentials WHERE status = 'active'
+                 )
+           )"#,
+    )
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    let deleted = sqlx::query(
+        r#"DELETE FROM app_actions
+           WHERE credential_id IS NOT NULL
+             AND credential_id NOT IN (
+                 SELECT id FROM credentials WHERE status = 'active'
+             )"#,
+    )
+    .execute(db)
+    .await?
+    .rows_affected();
+
+    if deleted > 0 {
+        tracing::info!(
+            deleted,
+            runs_nullified = pruned,
+            "reconcile GC: removed fan-out actions for inactive credentials"
+        );
+    }
+
+    let mut upserted = 0usize;
+
+    for template in &templates.action {
+        // The loader fills `id_prefix` from the folder name when missing, so
+        // by this point it's always Some. Defensive check for non-globbed
+        // sources (tests, future inline registries).
+        let id_prefix = match template.id_prefix.as_deref() {
+            Some(s) => s,
+            None => {
+                tracing::warn!("template missing id_prefix; skipping");
+                continue;
+            }
+        };
+
+        // `view` actions are pure-frontend and never invoked server-side, so
+        // an empty `triggers` list is the canonical shape. For everything else,
+        // empty triggers means the action can never fire — fail reconcile so
+        // a manifest typo surfaces immediately rather than silently dropping
+        // the action from the catalog.
+        if template.triggers.is_empty() && template.runtime != "view" {
+            return Err(Error::Other(format!(
+                "template {} has empty triggers list (runtime={}); non-view actions require at least one trigger",
+                id_prefix, template.runtime
+            )));
+        }
+
+        // Webhook invariant: any action accepting webhook posts MUST have a
+        // credential_id so bearer auth can resolve to an identity. The only
+        // way a template gets a credential_id today is via per_credential
+        // fan-out; a non-per-credential webhook template would be
+        // unauthenticated.
+        if template.triggers.iter().any(|t| t == "webhook") && !template.per_credential {
+            return Err(Error::Other(format!(
+                "template {} has 'webhook' trigger but per_credential=false — webhook actions must have a credential",
+                id_prefix
+            )));
+        }
+
+        if template.per_credential {
+            let source_id = template
+                .source
+                .as_ref()
+                .map(|s| s.id.as_str())
+                .ok_or_else(|| {
+                    Error::Other(format!(
+                        "template {} has per_credential = true but no source block",
+                        id_prefix
+                    ))
+                })?;
+
+            // Validate the source reference resolves to a [[source]] entry.
+            if lookup_source(source_id).is_none() {
+                return Err(Error::Other(format!(
+                    "template {} references unknown source '{}' — add a [[source]] block to sources.toml",
+                    id_prefix, source_id
+                )));
+            }
+
+            let credential_ids: Vec<(String,)> = sqlx::query_as(
+                "SELECT id FROM credentials WHERE source_id = $1 AND status = 'active'",
+            )
+            .bind(source_id)
+            .fetch_all(db)
+            .await?;
+
+            for (cred_id,) in credential_ids {
+                let action_id = format!("{}_{}", id_prefix, cred_id);
+                upsert_row(db, template, &action_id, Some(&cred_id)).await?;
+                upserted += 1;
+            }
+        } else {
+            upsert_row(db, template, id_prefix, None).await?;
+            upserted += 1;
+        }
+    }
+
+    tracing::info!(count = upserted, "reconciled action templates");
+    Ok(upserted)
+}
+
+async fn upsert_row(
+    db: &PgPool,
+    template: &Template,
+    action_id: &str,
+    credential_id: Option<&str>,
+) -> Result<()> {
+    let triggers_json = serde_json::to_string(&template.triggers)
+        .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
+
+    // Validate runtime up front so a bad value doesn't slip into SQL.
+    match template.runtime.as_str() {
+        "function" | "service" | "view" => {}
+        other => {
+            return Err(Error::Other(format!(
+                "template {} has invalid runtime '{}' (must be function, service, or view)",
+                action_id, other
+            )));
+        }
+    }
+
+    // Optional polyglot command stored as JSON. Reconcile rewrites the
+    // declarative `command` field on every system upsert (matches the rest of
+    // the manifest-managed fields).
+    let command_json = match &template.command {
+        Some(cmd) => Some(
+            serde_json::to_string(cmd)
+                .map_err(|e| Error::Other(format!("failed to serialize command: {e}")))?,
+        ),
+        None => None,
+    };
+
+    // Manifest-supplied config (e.g. `[config.view]` for view-runtime
+    // actions). Convert TOML → JSON via serde round-trip. Empty manifest
+    // config defaults to `{}` so we don't blow away user-customized config
+    // on system reconcile of a manifest with no [config] block.
+    let config_json: String = match &template.config {
+        Some(cfg) => serde_json::to_string(cfg)
+            .map_err(|e| Error::Other(format!("failed to serialize config: {e}")))?,
+        None => "{}".to_string(),
+    };
+
+    // Owner determines reconcile semantics:
+    //
+    //   system: UPSERT with overwrite of template-managed fields (name, owner,
+    //           agent, condition, triggers, credential_id, runtime, command).
+    //           Preserves user-managed runtime state
+    //           (cron_schedule, enabled, config, memory).
+    //
+    //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
+    //           the template is added; after that the row is fully owned by
+    //           the user and reconcile is a no-op.
+    let sql = if template.owner == "user" {
+        r#"
+        INSERT INTO app_actions (
+            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            triggers, credential_id, runtime, command, dir
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        ON CONFLICT(id) DO UPDATE SET
+            dir            = EXCLUDED.dir,
+            updated_at     = now()
+        "#
+    } else {
+        r#"
+        INSERT INTO app_actions (
+            id, name, owner, agent, cron_schedule, enabled, config, condition,
+            triggers, credential_id, runtime, command, dir
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        ON CONFLICT(id) DO UPDATE SET
+            name           = EXCLUDED.name,
+            owner          = EXCLUDED.owner,
+            agent          = EXCLUDED.agent,
+            config         = EXCLUDED.config,
+            condition      = EXCLUDED.condition,
+            triggers       = EXCLUDED.triggers,
+            credential_id  = EXCLUDED.credential_id,
+            runtime        = EXCLUDED.runtime,
+            command        = EXCLUDED.command,
+            dir            = EXCLUDED.dir,
+            updated_at     = now()
+        "#
+    };
+
+    sqlx::query(sql)
+        .bind(action_id)
+        .bind(&template.name)
+        .bind(&template.owner)
+        .bind(&template.agent)
+        .bind(&template.default_cron)
+        .bind(template.default_enabled)
+        .bind(&config_json)
+        .bind(&template.condition)
+        .bind(&triggers_json)
+        .bind(credential_id)
+        .bind(&template.runtime)
+        .bind(&command_json)
+        .bind(&template.dir)
+        .execute(db)
+        .await?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Golden test: the baked templates.toml must parse cleanly with the
+    /// current struct shape. If this fails, a TOML edit broke schema compat.
+    #[test]
+    fn baked_templates_parse() {
+        // Force initialization. Panics if any manifest is malformed.
+        // Bind the guard so clippy doesn't flag the held-lock.
+        let _guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    }
+
+    #[test]
+    fn ios_source_present() {
+        let ios = lookup_source("ios").expect("ios source must exist in templates.toml");
+        assert_eq!(ios.display_name, "iPhone");
+        assert!(matches!(ios.auth, SourceAuth::SelfIssuedBearer));
+        assert_eq!(ios.auth.kind_str(), "self_issued_bearer");
+    }
+
+    #[test]
+    fn source_ids_unique() {
+        let snapshot: ParsedTemplates = {
+            let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+            guard.clone()
+        };
+        let mut seen = std::collections::HashSet::new();
+        for s in &snapshot.source {
+            assert!(
+                seen.insert(s.id.clone()),
+                "duplicate source id in sources.toml: {}",
+                s.id
+            );
+        }
+    }
+
+    #[test]
+    fn list_sorted_is_stable() {
+        let sources = list_sources_sorted();
+        let names: Vec<&str> = sources.iter().map(|s| s.display_name.as_str()).collect();
+        let mut expected = names.clone();
+        expected.sort();
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn every_per_credential_action_references_known_source() {
+        let snapshot: ParsedTemplates = {
+            let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+            guard.clone()
+        };
+        for tmpl in &snapshot.action {
+            if tmpl.per_credential {
+                let id = tmpl.id_prefix.as_deref().unwrap_or("?");
+                let src = tmpl
+                    .source
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("{} per_credential needs source", id));
+                assert!(
+                    lookup_source(&src.id).is_some(),
+                    "{} references unknown source '{}'",
+                    id,
+                    src.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_manifest_uses_legacy_connector_field() {
+        // The legacy `connector = { id = "..." }` field is not in the Template
+        // struct anymore. If a manifest still uses it, deserialization with
+        // serde's default `deny_unknown_fields = false` will silently ignore
+        // it and `per_credential` validation will fail. This test scans every
+        // per-folder manifest + sources.toml for the offending substring.
+        let core_manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let actions_dir = core_manifest.join(ACTIONS_DIR_FROM_CORE);
+
+        // Sources file
+        if let Ok(text) = std::fs::read_to_string(actions_dir.join("sources.toml")) {
+            assert!(
+                !text.contains("connector = {"),
+                "sources.toml still references legacy `connector = {{ id = ... }}` field"
+            );
+        }
+
+        // Per-action manifests
+        if let Ok(entries) = std::fs::read_dir(&actions_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let manifest = path.join("manifest.toml");
+                if !manifest.exists() {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&manifest).unwrap_or_default();
+                assert!(
+                    !text.contains("connector = {"),
+                    "{} still references legacy `connector = {{ id = ... }}` field",
+                    manifest.display()
+                );
+            }
+        }
+    }
+
+    /// Reconcile must be idempotent: a second back-to-back call against the
+    /// same DB and templates produces zero `app_actions` row diffs.
+    ///
+    /// This is the precondition for triggering reconcile from auth handlers
+    /// (Phase 3 + Phase 4). If reconcile churns rows, every double-callback
+    /// or refresh sweep would mutate state needlessly and break the
+    /// dual-path verification window in Phase 6.
+    // Requires a live Postgres: `#[sqlx::test]` provisions a scratch DB and
+    // applies `core/migrations` automatically, so this runs against the real
+    // schema. Set DATABASE_URL when running. `triggers` is JSONB, so we cast it
+    // to text for a stable string snapshot comparison.
+    #[sqlx::test]
+    async fn reconcile_is_idempotent(pool: sqlx::PgPool) {
+        // Seed an active iOS credential so per_credential templates fan out.
+        sqlx::query(
+            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+             VALUES ($1, 'ios', 'test ios', 'active', 'x')",
+        )
+        .bind("cred_test_ios")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // First reconcile: populates rows.
+        let first = reconcile_templates(&pool).await.expect("first reconcile");
+        assert!(first > 0, "first reconcile should populate some rows");
+
+        let snapshot_before: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        // Second reconcile: must produce identical row set.
+        let second = reconcile_templates(&pool).await.expect("second reconcile");
+        assert_eq!(
+            second, first,
+            "second reconcile upsert count must match first (idempotent)"
+        );
+
+        let snapshot_after: Vec<(String, String, String, String, Option<String>)> = sqlx::query_as(
+            "SELECT id, name, owner, triggers::text, credential_id FROM app_actions ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot_before, snapshot_after,
+            "row set must be byte-identical across back-to-back reconciles"
+        );
+    }
+}

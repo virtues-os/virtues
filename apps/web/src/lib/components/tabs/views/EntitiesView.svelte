@@ -9,6 +9,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { Tab } from '$lib/tabs/types';
+	import { Page } from '$lib';
 	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
 	import Icon from '$lib/components/Icon.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
@@ -142,9 +143,8 @@
 	}
 </script>
 
-<div class="entities-view">
-	<header class="page-header">
-		<h1>Entities</h1>
+<Page title="Entities" maxWidth="prose">
+	{#snippet actions()}
 		<nav class="filter-tabs">
 			{#each filters as filter}
 				<button
@@ -156,7 +156,7 @@
 				</button>
 			{/each}
 		</nav>
-	</header>
+	{/snippet}
 
 	<div class="entities-content">
 		{#if activeFilter === 'overview'}
@@ -233,7 +233,7 @@
 			<ThingTable />
 		{/if}
 	</div>
-</div>
+</Page>
 
 <style>
 	.entities-view {

@@ -2,6 +2,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
+	import LogsPanel from '$lib/components/actions/LogsPanel.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
@@ -11,9 +12,11 @@
 		patchAction,
 		deleteAction,
 		runAction,
+		listSystemApps,
 		type Action,
 		type ActionRun,
-		type PatchActionBody
+		type PatchActionBody,
+		type RunningApp
 	} from '$lib/api/client';
 	import { relativeTime, describeSchedule } from '$lib/actions/palette';
 
@@ -26,6 +29,33 @@
 	let loading = $state(false);
 	let saving = $state(false);
 	let err = $state<string | null>(null);
+	let appState = $state<RunningApp | null>(null);
+
+	$effect(() => {
+		if (action?.runtime !== 'service' || !action?.id) return;
+		const id = action.id;
+		const fetch = async () => {
+			try {
+				const apps = await listSystemApps();
+				appState = apps.find((a) => a.action_id === id) ?? null;
+			} catch {
+				// non-fatal — supervisor probe is optional context
+			}
+		};
+		void fetch();
+		const t = setInterval(fetch, 2000);
+		return () => clearInterval(t);
+	});
+
+	function appStatusVariant(s: RunningApp['status']): string {
+		switch (s) {
+			case 'Running': return 'badge-success';
+			case 'Starting': return 'badge-info';
+			case 'Backoff': return 'badge-warning';
+			case 'Crashed': return 'badge-error';
+			case 'Stopping': return 'badge-muted';
+		}
+	}
 
 	let edit = $state<{ name: string; agent: string; cron_schedule: string; memory: string }>({
 		name: '',
@@ -295,6 +325,26 @@
 				{/if}
 			</aside>
 		</div>
+
+		<!-- Logs panel — only meaningful for `app`-runtime actions, which
+		     have long-lived stdout/stderr captured in the supervisor's per-app
+		     ring buffer. `function` runs surface their output via runs above;
+		     `view` runtimes have no server-side execution. -->
+		{#if action.runtime === 'service'}
+			<div class="app-meta">
+				{#if appState}
+					<span class="meta-badge {appStatusVariant(appState.status)}">{appState.status}</span>
+					<span class="meta-item"><span class="meta-label">port</span> <span class="mono">{appState.port}</span></span>
+					<span class="meta-item"><span class="meta-label">pid</span> <span class="mono">{appState.pid ?? '—'}</span></span>
+					<span class="meta-item"><span class="meta-label">restarts</span> <span class="mono">{appState.restart_count}</span></span>
+				{:else}
+					<span class="meta-item dim">app not currently supervised</span>
+				{/if}
+			</div>
+			<div class="logs-section">
+				<LogsPanel actionId={action.id} />
+			</div>
+		{/if}
 	{/if}
 </div>
 
@@ -375,6 +425,47 @@
 		.body {
 			grid-template-columns: 1fr;
 		}
+	}
+
+	.logs-section {
+		padding: 0 2rem 2rem;
+		max-width: 1400px;
+		width: 100%;
+		margin: 0 auto;
+	}
+	.app-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.875rem;
+		padding: 0 2rem 0.75rem;
+		max-width: 1400px;
+		width: 100%;
+		margin: 0 auto;
+		font-size: 0.75rem;
+		flex-wrap: wrap;
+	}
+	.meta-badge {
+		display: inline-block;
+		padding: 0.0625rem 0.375rem;
+		border-radius: 4px;
+		font-size: 0.6875rem;
+		font-weight: 500;
+	}
+	/* meta-badge inherits the global .badge-* color from app.css */
+	.meta-item {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+	}
+	.meta-label {
+		color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.meta-item .mono {
+		font-family: var(--font-mono, ui-monospace, monospace);
+	}
+	.meta-item.dim {
+		color: var(--color-foreground-subtle, #9ca3af);
+		font-style: italic;
 	}
 
 	.col {

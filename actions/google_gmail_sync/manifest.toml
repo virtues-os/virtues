@@ -1,0 +1,9 @@
+name = "Google Mail"
+description = "Sync emails from a connected Gmail account."
+owner = "system"
+runtime = "function"
+command = ["google_gmail_sync"]
+triggers = ["cron", "manual"]
+default_cron = "0 */15 * * * *"
+per_credential = true
+source = { id = "google" }

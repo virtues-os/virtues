@@ -10,7 +10,11 @@ import Contacts
 import Combine
 
 class ContactsManager: ObservableObject, HealthCheckable {
-    static let shared = ContactsManager()
+    static let shared = ContactsManager(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        dataUploader: BatchUploadCoordinator.shared
+    )
 
     private let contactStore = CNContactStore()
 
@@ -148,15 +152,6 @@ class ContactsManager: ObservableObject, HealthCheckable {
 
     private func loadEnabledState() {
         isEnabled = UserDefaults.standard.bool(forKey: isEnabledKey)
-    }
-
-    /// Legacy singleton initializer - uses default dependencies
-    private convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            dataUploader: BatchUploadCoordinator.shared
-        )
     }
 
     // MARK: - Authorization

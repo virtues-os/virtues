@@ -1,0 +1,21 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!--
+  Advertise this Virtues box on the LAN via mDNS / Bonjour.
+  Discoverable by Mac (Bonjour), iOS (Bonjour), Linux (Avahi), Windows 10+.
+
+  When hostname is set to "virtues" (recommended by install.sh), the box
+  is reachable at:    https://virtues.local
+
+  Service type _https._tcp on port 443 makes it appear in Bonjour Browser,
+  AirDrop-style network pickers, and `dns-sd -B _https._tcp` listings.
+-->
+<service-group>
+  <name replace-wildcards="yes">Virtues on %h</name>
+  <service>
+    <type>_https._tcp</type>
+    <port>443</port>
+    <txt-record>path=/</txt-record>
+    <txt-record>service=virtues</txt-record>
+  </service>
+</service-group>

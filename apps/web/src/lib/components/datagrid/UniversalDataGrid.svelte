@@ -33,7 +33,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
-	import { useClickOutside } from '$lib/floating';
+	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type { FilterDef, FilterOption, FilterValue } from './types';
 	import { applyFilter, isFilterActive } from './types';
 
@@ -64,6 +64,7 @@
 		 *  filtered client-side via def.predicate (or equality on def.field). */
 		filters?: FilterDef<T>[];
 		onItemClick?: (item: T) => void;
+		onItemContextMenu?: (item: T, e: MouseEvent) => void;
 		onRefresh?: () => void;
 		onRetry?: () => void;
 		// Custom renderers — receive RowMeta for stagger / index-aware rendering.
@@ -90,6 +91,7 @@
 		sortable = true,
 		filters,
 		onItemClick,
+		onItemContextMenu,
 		onRefresh,
 		onRetry,
 		tableRow,
@@ -117,17 +119,10 @@
 		filtersInitialized = true;
 	});
 
-	// Add-filter popover state (lives in toolbar, not in the chip rail)
+	// Add-filter popover state (lives in toolbar, not in the chip rail).
+	// Positioning + click-outside handled by the Popover primitive.
 	let addOpen = $state(false);
-	let addBtnEl = $state<HTMLElement | null>(null);
-	let addPopoverEl = $state<HTMLElement | null>(null);
 	let justAddedId = $state<string | null>(null);
-
-	useClickOutside(
-		() => [addBtnEl, addPopoverEl],
-		() => (addOpen = false),
-		() => addOpen
-	);
 
 	const availableFilters = $derived.by(() => {
 		if (!filters) return [];
@@ -283,9 +278,22 @@
 
 	// ────────────────────────────────────────────────────────────────────────
 	// View mode + density (persisted per entityType)
+	//
+	// Initialize directly from prefs / defaultViewMode so there's no first-paint
+	// flash from 'table' to the actual mode. Reading reactive props at $state
+	// init time captures the initial value, which is fine — the $effect below
+	// re-syncs on subsequent prop changes.
 	// ────────────────────────────────────────────────────────────────────────
-	let viewMode = $state<ViewMode>('table');
-	let density = $state<Density>('comfortable');
+	// svelte-ignore state_referenced_locally
+	let viewMode = $state<ViewMode>(
+		dataGridPrefs.hasViewMode(entityType)
+			? dataGridPrefs.getViewMode(entityType)
+			: defaultViewMode
+	);
+	// svelte-ignore state_referenced_locally
+	let density = $state<Density>(
+		dataGridPrefs.hasDensity(entityType) ? dataGridPrefs.getDensity(entityType) : 'comfortable'
+	);
 
 	$effect(() => {
 		viewMode = dataGridPrefs.hasViewMode(entityType)
@@ -367,8 +375,8 @@
 	}
 
 	function getBadgeClass(value: string, col: Column<T>): string {
-		if (!col.badgeColors) return 'badge-gray';
-		return col.badgeColors[value.toLowerCase()] || 'badge-gray';
+		if (!col.badgeColors) return 'badge-muted';
+		return col.badgeColors[value.toLowerCase()] || 'badge-muted';
 	}
 
 	function staggerMs(rowIndex: number, colIndex: number): number {
@@ -414,30 +422,33 @@
 				{/if}
 				{#if filters && filters.length > 0 && availableFilters.length > 0}
 					<div class="filter-add">
-						<button
-							class="ctrl-btn"
-							class:has-active={activeFilterCount > 0}
-							bind:this={addBtnEl}
-							onclick={() => (addOpen = !addOpen)}
-							aria-haspopup="menu"
-							aria-expanded={addOpen}
-							aria-label="Add filter"
-							title="Add filter"
-						>
-							<Icon icon="ri:filter-3-line" width="16" />
-							{#if activeFilterCount > 0}
-								<span class="filter-badge" aria-hidden="true">{activeFilterCount}</span>
-							{/if}
-						</button>
-						{#if addOpen}
-							<div class="add-popover" role="menu" bind:this={addPopoverEl}>
-								{#each availableFilters as def (def.id)}
-									<button type="button" class="add-row" onclick={() => pickAddFilter(def)}>
-										{def.label}
-									</button>
-								{/each}
-							</div>
-						{/if}
+						<Popover bind:open={addOpen} placement="bottom-end" offset={4}>
+							{#snippet trigger({ toggle: triggerToggle })}
+								<button
+									class="ctrl-btn"
+									class:has-active={activeFilterCount > 0}
+									onclick={triggerToggle}
+									aria-haspopup="menu"
+									aria-expanded={addOpen}
+									aria-label="Add filter"
+									title="Add filter"
+								>
+									<Icon icon="ri:filter-3-line" width="16" />
+									{#if activeFilterCount > 0}
+										<span class="filter-badge" aria-hidden="true">{activeFilterCount}</span>
+									{/if}
+								</button>
+							{/snippet}
+							{#snippet children()}
+								<div class="add-popover" role="menu">
+									{#each availableFilters as def (def.id)}
+										<button type="button" class="add-row" onclick={() => pickAddFilter(def)}>
+											{def.label}
+										</button>
+									{/each}
+								</div>
+							{/snippet}
+						</Popover>
 					</div>
 				{/if}
 				<button
@@ -546,6 +557,7 @@
 								class:animate-in={animateMount && !!tableRow}
 								style:--stagger="{staggerMs(i, 0)}ms"
 								onclick={() => handleRowClick(item)}
+								oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
 								onkeydown={(e) => handleKeyDown(e, item)}
 								tabindex="0"
 								role="button"
@@ -608,6 +620,7 @@
 						class:animate-in={animateMount}
 						style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
 						onclick={() => handleRowClick(item)}
+						oncontextmenu={onItemContextMenu ? (e) => onItemContextMenu(item, e) : undefined}
 						onkeydown={(e) => handleKeyDown(e, item)}
 						aria-label={`Open ${getItemLabel(item)}`}
 					>
@@ -706,7 +719,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: 8px;
 		outline: none;
 		transition: border-color 0.25s ease, box-shadow 0.25s ease;
 	}
@@ -762,7 +775,7 @@
 		color: var(--color-primary);
 		background: transparent;
 		border: 1px solid var(--color-primary);
-		border-radius: 6px;
+		border-radius: 8px;
 		cursor: pointer;
 	}
 
@@ -780,7 +793,7 @@
 		height: 32px;
 		background: var(--color-background-secondary);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: 8px;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		transition: all 0.15s ease;
@@ -828,10 +841,6 @@
 	}
 
 	.add-popover {
-		position: absolute;
-		top: calc(100% + 4px);
-		right: 0;
-		z-index: 50;
 		min-width: 180px;
 		display: flex;
 		flex-direction: column;
@@ -886,7 +895,7 @@
 		color: var(--color-primary);
 		background: transparent;
 		border: 1px solid var(--color-primary);
-		border-radius: 6px;
+		border-radius: 8px;
 		cursor: pointer;
 	}
 
@@ -1104,30 +1113,8 @@
 
 	/* ============================================
 	   SHARED STYLES
+	   Badge classes are defined globally in app.css
 	   ============================================ */
-	.badge {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.125rem 0.5rem;
-		font-size: 0.75rem;
-		font-weight: 500;
-		border-radius: 9999px;
-		white-space: nowrap;
-		text-transform: capitalize;
-	}
-
-	.badge-gray {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
-		color: var(--color-foreground-muted);
-	}
-
-	.badge-blue { background: color-mix(in srgb, #3b82f6 15%, transparent); color: #2563eb; }
-	.badge-green { background: color-mix(in srgb, #22c55e 15%, transparent); color: #16a34a; }
-	.badge-purple { background: color-mix(in srgb, #8b5cf6 15%, transparent); color: #7c3aed; }
-	.badge-orange { background: color-mix(in srgb, #f97316 15%, transparent); color: #ea580c; }
-	.badge-pink { background: color-mix(in srgb, #ec4899 15%, transparent); color: #db2777; }
-	.badge-red { background: color-mix(in srgb, #ef4444 15%, transparent); color: #dc2626; }
-	.badge-yellow { background: color-mix(in srgb, #f59e0b 15%, transparent); color: #d97706; }
 
 	.empty-cell {
 		color: var(--color-foreground-subtle);
@@ -1172,7 +1159,7 @@
 		color: var(--color-foreground-muted);
 		background: none;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: 8px;
 		cursor: pointer;
 		transition: all 0.1s ease;
 	}

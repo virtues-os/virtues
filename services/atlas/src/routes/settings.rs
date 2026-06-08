@@ -1,0 +1,169 @@
+//! User-tunable settings (v3, locked 2026-06-05).
+//!
+//! `GET /settings`  → current caps + auto-topup toggle
+//! `PUT /settings`  → update caps + auto-topup toggle
+//!
+//! Both bearer-authed via the box's `billing_token`. iOS Settings is the
+//! primary consumer — pulls current state on open, writes back on change.
+//!
+//! Spend caps are atlas-side because:
+//!   1. atlas owns the customer record + Stripe relationship
+//!   2. monthly cap enforcement requires the customer ledger which lives
+//!      here
+//!   3. daily cap mirror lets virtues-api enforce locally without an
+//!      atlas round-trip on every call (future: virtues-api caches it)
+//!
+//! ## Bounds
+//!
+//! - `monthly_cap_micros`: $100 (10_000_000_0) ≤ x ≤ $1000 (1_000_000_000)
+//! - `daily_cap_micros`:  $5  (5_000_000)     ≤ x ≤ $200 (200_000_000)
+//! - `auto_topup_enabled`: bool
+
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Json},
+    routing::{get, put},
+    Router,
+};
+use serde::Deserialize;
+use serde_json::json;
+use sha2::{Digest, Sha256};
+
+use crate::routes::AppState;
+
+const MONTHLY_CAP_MIN: i64 = 100_000_000; // $100
+const MONTHLY_CAP_MAX: i64 = 1_000_000_000; // $1000
+const DAILY_CAP_MIN: i64 = 5_000_000; // $5
+const DAILY_CAP_MAX: i64 = 200_000_000; // $200
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/settings", get(get_settings))
+        .route("/settings", put(put_settings))
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthBody {
+    billing_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SettingsUpdate {
+    billing_token: String,
+    monthly_cap_micros: Option<i64>,
+    daily_cap_micros: Option<i64>,
+    auto_topup_enabled: Option<bool>,
+}
+
+async fn get_settings(
+    State(state): State<AppState>,
+    Json(body): Json<AuthBody>,
+) -> axum::response::Response {
+    let token_hash = sha256(body.billing_token.as_bytes());
+
+    let row: Option<(i64, i64, bool, i64, i64)> = sqlx::query_as(
+        r#"
+        SELECT monthly_cap_micros, daily_cap_micros, auto_topup_enabled,
+               monthly_charges_micros, COALESCE(EXTRACT(EPOCH FROM month_reset_at)::bigint, 0)
+        FROM customers
+        WHERE billing_token_hash = $1
+        "#,
+    )
+    .bind(&token_hash[..])
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    let Some((monthly_cap, daily_cap, auto_topup, charges, reset_epoch)) = row else {
+        return err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_billing_token",
+            "unknown billing token",
+        );
+    };
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "monthly_cap_micros": monthly_cap,
+            "daily_cap_micros": daily_cap,
+            "auto_topup_enabled": auto_topup,
+            "monthly_charges_micros": charges,
+            "month_reset_epoch": reset_epoch,
+        })),
+    )
+        .into_response()
+}
+
+async fn put_settings(
+    State(state): State<AppState>,
+    Json(body): Json<SettingsUpdate>,
+) -> axum::response::Response {
+    // Validate any provided values.
+    if let Some(mc) = body.monthly_cap_micros {
+        if !(MONTHLY_CAP_MIN..=MONTHLY_CAP_MAX).contains(&mc) {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "monthly_cap_out_of_range",
+                &format!("monthly_cap_micros must be {MONTHLY_CAP_MIN}..={MONTHLY_CAP_MAX}"),
+            );
+        }
+    }
+    if let Some(dc) = body.daily_cap_micros {
+        if !(DAILY_CAP_MIN..=DAILY_CAP_MAX).contains(&dc) {
+            return err(
+                StatusCode::BAD_REQUEST,
+                "daily_cap_out_of_range",
+                &format!("daily_cap_micros must be {DAILY_CAP_MIN}..={DAILY_CAP_MAX}"),
+            );
+        }
+    }
+
+    let token_hash = sha256(body.billing_token.as_bytes());
+
+    // Partial update: only touch fields the client sent.
+    let result = sqlx::query(
+        r#"
+        UPDATE customers
+        SET monthly_cap_micros   = COALESCE($2, monthly_cap_micros),
+            daily_cap_micros     = COALESCE($3, daily_cap_micros),
+            auto_topup_enabled   = COALESCE($4, auto_topup_enabled)
+        WHERE billing_token_hash = $1
+        "#,
+    )
+    .bind(&token_hash[..])
+    .bind(body.monthly_cap_micros)
+    .bind(body.daily_cap_micros)
+    .bind(body.auto_topup_enabled)
+    .execute(&state.pool)
+    .await;
+
+    match result {
+        Ok(r) if r.rows_affected() == 0 => err(
+            StatusCode::UNAUTHORIZED,
+            "invalid_billing_token",
+            "unknown billing token",
+        ),
+        Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(e) => {
+            tracing::warn!("settings update failed: {e:#}");
+            err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "update failed")
+        }
+    }
+}
+
+fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
+    (
+        status,
+        Json(json!({ "error": { "code": code, "message": message } })),
+    )
+        .into_response()
+}
+
+fn sha256(data: &[u8]) -> Vec<u8> {
+    let mut h = Sha256::new();
+    h.update(data);
+    h.finalize().to_vec()
+}

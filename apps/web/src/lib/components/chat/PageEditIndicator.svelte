@@ -17,8 +17,6 @@
 	interface Props {
 		/** List of resources the AI can edit */
 		items?: EditableItem[];
-		/** @deprecated Use items instead - Single bound page for backward compatibility */
-		boundPage?: { id: string; title: string } | null;
 		/** Called when a specific item is removed */
 		onRemoveItem?: (type: string, id: string) => void;
 		/** Called when entities are selected from picker */
@@ -27,22 +25,13 @@
 		visible?: boolean;
 	}
 
-	let { items = [], boundPage, onRemoveItem, onSelectEntities, visible = true }: Props = $props();
+	let { items = [], onRemoveItem, onSelectEntities, visible = true }: Props = $props();
 
 	let expanded = $state(false);
 	let showPicker = $state(false);
 	let containerEl: HTMLDivElement | null = $state(null);
 
-	// Convert single boundPage to items array for backward compatibility
-	const effectiveItems = $derived(() => {
-		if (items && items.length > 0) {
-			return items;
-		}
-		if (boundPage) {
-			return [{ type: 'page' as const, id: boundPage.id, title: boundPage.title }];
-		}
-		return [];
-	});
+	const effectiveItems = $derived(() => items);
 
 	function getIconForType(type: string): string {
 		switch (type) {

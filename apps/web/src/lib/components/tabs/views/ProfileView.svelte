@@ -98,16 +98,11 @@
 	}
 </script>
 
-<Page>
-	<div class="max-w-3xl">
-		<div class="mb-8">
-			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
-				Profile
-			</h1>
-			<p class="text-foreground-muted">
-				Your personal information and preferences
-			</p>
-		</div>
+<Page
+	title="Profile"
+	description="Your personal information and preferences"
+	maxWidth="prose"
+>
 
 		{#if loading}
 			<div class="flex items-center justify-center h-64">
@@ -289,7 +284,6 @@
 				</section>
 			</div>
 		{/if}
-	</div>
 </Page>
 
 <style>

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM app_auth_verification_token WHERE expires < now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "77920065443e53361801b58ce2e74dd2f9d019e03f0196d68e76d2669223dfdc"
+}

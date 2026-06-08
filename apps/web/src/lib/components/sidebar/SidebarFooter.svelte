@@ -41,14 +41,14 @@
 			const response = await fetch("/auth/signout", { method: "POST" });
 			if (response.ok) {
 				spaceStore.closeAllTabs();
-				await goto("/login");
+				await goto("/pair");
 			} else {
 				console.error("[Logout] Failed to sign out:", response.status);
-				await goto("/login");
+				await goto("/pair");
 			}
 		} catch (error) {
 			console.error("[Logout] Error:", error);
-			await goto("/login");
+			await goto("/pair");
 		}
 	}
 
@@ -56,14 +56,14 @@
 		{ id: 'settings-sources', type: 'link', label: 'Sources', icon: 'ri:plug-line', href: '/sources' },
 		{ id: 'settings-tools', type: 'link', label: 'Tools', icon: 'ri:tools-line', href: '/tools' },
 		{ id: 'settings-profile', type: 'link', label: 'Profile', icon: 'ri:user-3-line', href: '/virtues/account' },
+		{ id: 'settings-devices', type: 'link', label: 'Devices', icon: 'ri:device-line', href: '/virtues/devices' },
+		{ id: 'settings-activity', type: 'link', label: 'Activity', icon: 'ri:history-line', href: '/virtues/activity' },
 		{ id: 'settings-assistant', type: 'link', label: 'Assistant', icon: 'ri:robot-line', href: '/virtues/assistant' },
 		{ id: 'settings-billing', type: 'link', label: 'Billing', icon: 'ri:bank-card-line', href: '/virtues/billing' },
+		{ id: 'settings-byo-key', type: 'link', label: 'AI Provider Key', icon: 'ri:key-line', href: '/virtues/byo-key' },
 		{ id: 'settings-system', type: 'link', label: 'System', icon: 'ri:computer-line', href: '/virtues/system' },
-		{ id: 'settings-feedback', type: 'link', label: 'Feedback', icon: 'ri:feedback-line', href: '/virtues/feedback' },
-		{ id: 'dev-sql', type: 'link', label: 'SQL', icon: 'ri:database-2-line', href: '/virtues/sql' },
-		{ id: 'dev-terminal', type: 'link', label: 'Terminal', icon: 'ri:terminal-box-line', href: '/virtues/terminal' },
+		{ id: 'settings-developers', type: 'link', label: 'Developers', icon: 'ri:code-s-slash-line', href: '/developers' },
 		{ id: 'dev-sitemap', type: 'link', label: 'Sitemap', icon: 'ri:road-map-line', href: '/virtues/sitemap' },
-		{ id: 'dev-lake', type: 'link', label: 'Lake', icon: 'ri:database-2-line', href: '/virtues/lake' },
 	];
 
 	const signOutItem: SidebarNavItemData = {

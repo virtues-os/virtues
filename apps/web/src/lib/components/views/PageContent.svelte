@@ -536,7 +536,7 @@
 	}
 </script>
 
-<Page className="p-0">
+<Page padding="none" scrollable={false}>
 	{#if loading}
 		<div class="flex items-center justify-center h-full">
 			<Icon icon="ri:loader-4-line" width="20" class="spin" />

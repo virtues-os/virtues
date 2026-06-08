@@ -53,7 +53,7 @@ The iOS app is designed to maintain continuous data collection even through syst
 
 ### Overview
 
-The iOS app underwent a comprehensive architectural refactoring in January 2025 to improve reliability, testability, and maintainability while maintaining 100% backward compatibility.
+The iOS app underwent a comprehensive architectural refactoring in January 2025 to improve reliability, testability, and maintainability.
 
 ### Key Improvements
 
@@ -114,8 +114,7 @@ The iOS app underwent a comprehensive architectural refactoring in January 2025 
 - `ConfigurationProvider` - Device configuration access
 - `StorageProvider` - SQLite operations
 - `DataUploader` - Upload coordination
-- All managers accept dependencies via constructor
-- Legacy singletons remain for backward compatibility
+- All managers accept dependencies via constructor (the single supported initializer)
 
 **Location**: `Core/Protocols/`
 
@@ -141,7 +140,7 @@ AudioManager(
 - ✅ 100% unit testable with mocked dependencies
 - ✅ 45+ singleton references eliminated
 - ✅ Clearer dependencies and data flow
-- ✅ Zero breaking changes (singletons still work)
+- ✅ Constructor injection is the single way to create managers
 
 #### 4. Centralized Health Monitoring
 
@@ -294,21 +293,17 @@ func testAudioManagerSavesData() {
 
 ### Migration Notes
 
-**No Breaking Changes**: All existing code continues to work via legacy singleton pattern.
-
-**For New Code**: Use dependency injection:
+**Construct managers via dependency injection** — this is the only supported way:
 
 ```swift
-// Legacy (still works)
-let audioManager = AudioManager.shared
-
-// New (preferred for testability)
 let audioManager = AudioManager(
     configProvider: configProvider,
     storageProvider: storageProvider,
     dataUploader: dataUploader
 )
 ```
+
+The app-wide `.shared` instances are themselves built with this initializer (see each manager's `static let shared`). It is the only initializer each manager exposes.
 
 **Health Check Coordinator**: Automatically starts when managers initialize. No manual setup required.
 
@@ -734,6 +729,6 @@ Required in Info.plist:
 
 Background task identifiers:
 
-- `com.ariata.ios.refresh`
-- `com.ariata.ios.processing`
-- `com.ariata.ios.sync`
+- `com.virtues.ios.refresh`
+- `com.virtues.ios.processing`
+- `com.virtues.ios.sync`

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
 	import { spaceStore } from '$lib/stores/space.svelte';
+	import { Page } from '$lib';
 	import { ActivityHeatmap } from '$lib/components/wiki';
 	import { onMount } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -99,13 +100,7 @@
 	] as const;
 </script>
 
-<div class="wiki-scroll-container">
-<div class="wiki-page">
-	<header class="page-header">
-		<h1>Wiki</h1>
-		<p class="page-subtitle">Your personal knowledge base</p>
-	</header>
-
+<Page title="Wiki" description="Your personal knowledge base" maxWidth="prose">
 	<!-- Today context -->
 	<div class="today-context">
 		<p>
@@ -204,8 +199,7 @@
 			</div>
 		</div>
 	</section>
-</div>
-</div>
+</Page>
 
 <style>
 	.wiki-scroll-container {

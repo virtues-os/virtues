@@ -20,6 +20,9 @@ node_modules/
 build/
 dist/
 
+# Runtime state (.sqlx kept — sqlx::query! offline cache, copied by Dockerfile)
+.data/
+
 # Logs
 *.log
 

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import { spaceStore } from "$lib/stores/space.svelte";
-	import Page from "$lib/components/Page.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import {
 		getSelectedModel,
@@ -18,7 +17,7 @@
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
-	import { projectsStore } from "$lib/stores/projects.svelte";
+	import { thingsStore } from "$lib/stores/things.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
 	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
@@ -121,23 +120,23 @@
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// Attached projects (context lens) — IDs are sent with each message so the agent
+	// Attached things (context lens) — IDs are sent with each message so the agent
 	// sees the project's items as salience hints. Persisted per-tab only (ephemeral).
-	let attachedProjectIds = $state<string[]>([]);
+	let attachedThingIds = $state<string[]>([]);
 
-	function attachProject(projectId: string) {
-		if (!attachedProjectIds.includes(projectId)) {
-			attachedProjectIds = [...attachedProjectIds, projectId];
+	function attachThing(thingId: string) {
+		if (!attachedThingIds.includes(thingId)) {
+			attachedThingIds = [...attachedThingIds, thingId];
 		}
 	}
 
-	function detachProject(projectId: string) {
-		attachedProjectIds = attachedProjectIds.filter((id) => id !== projectId);
+	function detachThing(thingId: string) {
+		attachedThingIds = attachedThingIds.filter((id) => id !== thingId);
 	}
 
-	const attachedProjects = $derived.by(() =>
-		attachedProjectIds
-			.map((id) => projectsStore.projects.find((p) => p.id === id))
+	const attachedThings = $derived.by(() =>
+		attachedThingIds
+			.map((id) => thingsStore.things.find((p) => p.id === id))
 			.filter((p): p is NonNullable<typeof p> => p !== undefined),
 	);
 
@@ -469,7 +468,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
-				getProjectIds: () => attachedProjectIds,
+				getThingIds: () => attachedThingIds,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -972,7 +971,7 @@
 {:else if isContextView}
 	<ContextViewPanel {conversationId} {active} onCompacted={handleCompacted} />
 {:else}
-	<Page scrollable={false} className="h-full p-0!">
+	<div class="chat-root">
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area">
@@ -1223,10 +1222,10 @@
 							onContextClick={handleContextClick}
 							editableItems={editAllowListStore.items}
 							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
-							attachedProjects={attachedProjects}
-							allProjects={projectsStore.projects}
-							onAttachProject={attachProject}
-							onDetachProject={detachProject}
+							attachedThings={attachedThings}
+							allThings={thingsStore.things}
+							onAttachThing={attachThing}
+							onDetachThing={detachThing}
 							onPageClear={handlePageClear}
 							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}
@@ -1243,7 +1242,7 @@
 				</div>
 			</div>
 		</div>
-	</Page>
+	</div>
 
 	<CitationPanel
 		citation={selectedCitation}
@@ -1273,6 +1272,12 @@
 		to {
 			transform: rotate(360deg);
 		}
+	}
+
+	.chat-root {
+		height: 100%;
+		width: 100%;
+		display: flex;
 	}
 
 	.chat-container {

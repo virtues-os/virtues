@@ -74,17 +74,11 @@
 	}
 </script>
 
-<Page>
-	<div class="mx-auto max-w-2xl py-12">
-		<h1 class="text-3xl font-serif font-medium text-foreground mb-3">
-			Narrative Identity
-		</h1>
-		<p class="text-foreground-muted leading-relaxed" style="font-size: 16px; margin-top: 4px; margin-bottom: 40px;">
-			Who you are right now — what you believe, what you're working on
-			in yourself, what direction you're facing. Your assistant reads
-			this before every conversation. It shapes understanding silently —
-			never repeated back, never used to lecture you.
-		</p>
+<Page
+	title="Narrative Identity"
+	description="Who you are right now — what you believe, what you're working on in yourself, what direction you're facing. Your assistant reads this before every conversation. It shapes understanding silently — never repeated back, never used to lecture you."
+	maxWidth="narrow"
+>
 
 		{#if loading}
 			<div class="flex items-center justify-center text-foreground-muted" style="padding: 64px 0;">
@@ -144,5 +138,4 @@
 				{/if}
 			</div>
 		{/if}
-	</div>
 </Page>

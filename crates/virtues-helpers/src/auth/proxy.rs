@@ -1,19 +1,36 @@
-//! HTTP calls to `apps/oauth-proxy` for token exchange and refresh.
+//! HTTP calls to the OAuth proxy (the `oauth` routes in `services/virtues-api`,
+//! WS-4 — formerly the standalone Node `apps/oauth-proxy`) for token exchange
+//! and refresh.
 //!
 //! The proxy is the only component that holds third-party OAuth client_id /
 //! client_secret. Self-hosted Virtues never sees provider secrets — it only
 //! sees the proxy's normalized `{secrets, metadata, expires_in, scopes}`
 //! response.
 //!
-//! Proxy URL: hardcoded to `https://auth.virtues.com` for v1. Self-hosted
-//! proxy override (`VIRTUES_OAUTH_PROXY_URL`) is a deferred feature.
+//! Proxy URL: defaults to `https://auth.virtues.com`. Override with the
+//! `VIRTUES_OAUTH_PROXY_URL` env var to point at virtues-api (or self-host).
 
 use serde::{Deserialize, Serialize};
 
 use crate::auth::error::{AuthError, Result};
 
-/// First-party proxy URL. v1: hardcoded.
-const PROXY_URL: &str = "https://auth.virtues.com";
+const DEFAULT_PROXY_URL: &str = "https://auth.virtues.com";
+
+/// Resolve the OAuth proxy base URL. Reads `VIRTUES_OAUTH_PROXY_URL` if set
+/// (with any trailing slash trimmed), otherwise falls back to the first-party
+/// proxy at `https://auth.virtues.com`.
+///
+/// Both the core HTTP handlers (`oauth_start` building the redirect URL) and
+/// the helpers crate (`proxy_exchange` / `proxy_refresh` doing the
+/// server-to-server callback POST) call this — keep it here so the two paths
+/// can never drift to different domains.
+pub fn proxy_url() -> String {
+    let raw = std::env::var("VIRTUES_OAUTH_PROXY_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_PROXY_URL.to_string());
+    raw.trim_end_matches('/').to_string()
+}
 
 /// Normalized response from the proxy after a successful exchange or refresh.
 /// Same shape for both calls — the proxy abstracts away provider differences.
@@ -49,7 +66,7 @@ pub async fn proxy_exchange(
     source_id: &str,
     exchange_token: &str,
 ) -> Result<ProxyExchangeResponse> {
-    let url = format!("{PROXY_URL}/{source_id}/exchange/{exchange_token}");
+    let url = format!("{}/{source_id}/exchange/{exchange_token}", proxy_url());
     let resp = reqwest::Client::new()
         .post(&url)
         .send()
@@ -80,7 +97,7 @@ pub async fn proxy_refresh(
     source_id: &str,
     refresh_token: &str,
 ) -> Result<ProxyExchangeResponse> {
-    let url = format!("{PROXY_URL}/{source_id}/refresh");
+    let url = format!("{}/{source_id}/refresh", proxy_url());
     let resp = reqwest::Client::new()
         .post(&url)
         .json(&serde_json::json!({ "refresh_token": refresh_token }))

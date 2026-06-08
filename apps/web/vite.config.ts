@@ -13,6 +13,12 @@ export default defineConfig(({ mode }) => {
 			'__BUILD_COMMIT__': JSON.stringify(process.env.GIT_COMMIT || 'dev'),
 		},
 		server: {
+			fs: {
+				// Allow Vite to serve files from the repo root, not just apps/web/.
+				// View-runtime action UIs live at actions/<name>/ui/ and are
+				// imported via `import.meta.glob` from $lib/action-views.
+				allow: ['../..']
+			},
 			proxy: {
 				// Proxy all API and auth calls to Rust backend
 				'/api': {
@@ -20,6 +26,13 @@ export default defineConfig(({ mode }) => {
 					changeOrigin: true
 				},
 				'/auth': {
+					target: env.BACKEND_URL || 'http://localhost:8000',
+					changeOrigin: true
+				},
+				// OAuth proxy redirects browser here after the dance — Rust handler
+				// verifies signed state, fetches secrets via /exchange, then 302s
+				// back to /sources?connected=...
+				'/oauth': {
 					target: env.BACKEND_URL || 'http://localhost:8000',
 					changeOrigin: true
 				},

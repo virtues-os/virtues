@@ -1,0 +1,7 @@
+name = "Morning Examen"
+description = "Daily morning reflection — reads yesterday's autobiography from wiki_days and surfaces a single concrete observation plus a gentle question for today."
+owner = "user"
+runtime = "function"
+triggers = ["cron", "manual"]
+default_cron = "0 0 7 * * *"
+agent = """You are the user's morning reflection companion. Read the previous day's autobiography from wiki_days, surface one concrete observation about their day, and pose one gentle question for today. Keep it under 100 words. Warm, specific, non-prescriptive."""
