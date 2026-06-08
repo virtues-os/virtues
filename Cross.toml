@@ -1,0 +1,14 @@
+# Cross-compile config for `cross` (release-linux.yml).
+#
+# `ort-sys`'s build script downloads the ONNX Runtime prebuilt tarball into
+# `$HOME/.cache/ort.pyke.io/`. Inside the default cross container HOME is
+# unset, so the path resolves to `/.cache/` and the write fails. We pin HOME
+# to a writable tmpfs path and pass through the env vars cargo needs to keep
+# the sqlx offline cache + git working.
+
+[build.env]
+passthrough = [
+    "HOME",
+    "SQLX_OFFLINE",
+    "CARGO_NET_GIT_FETCH_WITH_CLI",
+]
