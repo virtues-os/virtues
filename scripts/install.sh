@@ -114,24 +114,9 @@ detect_distro() {
             ;;
     esac
 
-    # Glibc gate. The release binaries link ONNX Runtime 1.24 (for local
-    # embeddings/reranking), whose prebuilt manylinux blobs reference glibc
-    # 2.38+ symbols (__isoc23_strtoll etc., added in glibc 2.38 / Aug 2023).
-    # We build on Ubuntu 24.04 (glibc 2.39); the binary won't load on older
-    # glibc. Most supported targets are fine (Debian 13 = 2.40, Ubuntu 24.04
-    # = 2.39, Fedora 40 = 2.39). The notable exception is Jetson JetPack
-    # 6.0/6.1 which ships glibc 2.35 — upgrade to JetPack 6.2+.
-    GLIBC_VERSION=$(ldd --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
-    if [ -n "$GLIBC_VERSION" ]; then
-        GLIBC_MAJOR=${GLIBC_VERSION%.*}
-        GLIBC_MINOR=${GLIBC_VERSION#*.}
-        if [ "$GLIBC_MAJOR" -lt 2 ] 2>/dev/null || \
-           { [ "$GLIBC_MAJOR" = "2" ] && [ "$GLIBC_MINOR" -lt 38 ] 2>/dev/null; }; then
-            die "glibc $GLIBC_VERSION is too old. Virtues v1 requires glibc 2.38 or later.
-On Jetson JetPack 6.0/6.1 (glibc 2.35), upgrade to JetPack 6.2+."
-        fi
-        say "glibc $GLIBC_VERSION detected — OK"
-    fi
+    # No glibc gate any more — v0.1.0 routes all local ML through Ollama
+    # (separate daemon, see `ensure_ollama` below). The virtues binary
+    # itself only needs glibc 2.31+ (covered by every supported distro).
 }
 
 add_pgdg_repo() {
@@ -178,6 +163,32 @@ install_deps() {
     systemctl enable --now postgresql
     systemctl enable --now avahi-daemon
     say "Postgres + WireGuard + Avahi (mDNS) installed."
+}
+
+# Ensure Ollama is installed + running. Ollama owns local embeddings (and
+# eventually reranking + on-box chat) in v0.1.0; the virtues binary calls
+# its HTTP API at localhost:11434. The official installer detects GPU/CPU
+# and configures the systemd unit; if it's already installed we no-op.
+ensure_ollama() {
+    header "🦙  Installing Ollama (local inference daemon)…"
+    if command -v ollama >/dev/null 2>&1; then
+        say "Ollama already installed: $(ollama --version 2>/dev/null | head -1)"
+    else
+        # Official install script — detects glibc, CUDA, ROCm, arch, etc.
+        # We pipe through `sh` rather than running it in this shell so
+        # the installer's set -e doesn't kill our outer script.
+        curl -fsSL https://ollama.com/install.sh | sh \
+            || die "Ollama install failed. Install manually from https://ollama.com and re-run."
+        say "Ollama installed: $(ollama --version 2>/dev/null | head -1)"
+    fi
+    systemctl enable --now ollama 2>/dev/null || true
+
+    # Pull the default embedding model so the first query doesn't pay
+    # download latency. Operators can swap the model via VIRTUES_EMBED_MODEL.
+    EMBED_MODEL="${VIRTUES_EMBED_MODEL:-nomic-embed-text}"
+    say "Pulling embedding model: $EMBED_MODEL (one-time, ~275 MB)…"
+    ollama pull "$EMBED_MODEL" \
+        || warn "ollama pull $EMBED_MODEL failed; first embed request will retry."
 }
 
 # Make this box discoverable on the LAN as `virtues.local`.
@@ -451,6 +462,7 @@ install_box_id() {
 trap 'send_install_beacon failed "$FAILED_STEP"' ERR
 
 FAILED_STEP=install_deps;        install_deps
+FAILED_STEP=ensure_ollama;       ensure_ollama
 FAILED_STEP=configure_mdns;      configure_mdns
 FAILED_STEP=create_user;         create_user
 FAILED_STEP=provision_db;        provision_db
