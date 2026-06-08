@@ -173,14 +173,25 @@ schemars = "1.0"
 geo = "0.28"  # Geospatial calculations (Haversine distance)
 
 # Embeddings (Ollama client)
-ollama-rs = { version = "0.2", features = ["stream"] }
+# Disable defaults to drop reqwest's `default-tls` (native-tls) — use rustls
+# instead so cross-compile doesn't need OpenSSL.
+ollama-rs = { version = "0.2", default-features = false, features = ["stream", "rustls"] }
 futures = "0.3"
 
 # Local embeddings/reranking: direct ORT + tokenizers (replaces fastembed for NPU access).
 # Pin minor versions — ort 2.x is still pre-stable; tokenizers/hf-hub move quickly.
-ort = { version = "=2.0.0-rc.12", features = ["download-binaries"] }
+# default features include `tls-native` (ureq + openssl-sys via ort-sys's
+# build script), which breaks cross-compile for aarch64. Disable defaults
+# and re-enable everything except tls-native; swap to tls-rustls.
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "std", "ndarray", "tracing", "download-binaries",
+    "copy-dylibs", "api-24", "tls-rustls",
+] }
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
-hf-hub = { version = "0.3", default-features = false, features = ["tokio", "online"] }
+# hf-hub 0.3.x hard-codes native-tls in `online`; 0.4+ exposes rustls. Use
+# the `tokio` feature path with rustls so cross-compile (aarch64) doesn't
+# need OpenSSL on the runner.
+hf-hub = { version = "0.4", default-features = false, features = ["tokio", "rustls-tls"] }
 ndarray = "0.17"
 directories = "5"
 # fastembed was removed in favor of direct ort+tokenizers (search stack migration).
