@@ -10,7 +10,11 @@ import EventKit
 import Combine
 
 class EventKitManager: ObservableObject {
-    static let shared = EventKitManager()
+    static let shared = EventKitManager(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        dataUploader: BatchUploadCoordinator.shared
+    )
 
     private let eventStore = EKEventStore()
 
@@ -41,15 +45,6 @@ class EventKitManager: ObservableObject {
 
         // Register with centralized health check coordinator
         HealthCheckCoordinator.shared.register(self)
-    }
-
-    /// Legacy singleton initializer - uses default dependencies
-    private convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            dataUploader: BatchUploadCoordinator.shared
-        )
     }
 
     // MARK: - Monitoring Control

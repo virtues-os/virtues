@@ -1,0 +1,9 @@
+name = "Notion Pages"
+description = "Sync pages and databases from a connected Notion workspace."
+owner = "system"
+runtime = "function"
+command = ["notion_pages_sync"]
+triggers = ["cron", "manual"]
+default_cron = "0 */30 * * * *"
+per_credential = true
+source = { id = "notion" }

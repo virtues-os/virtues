@@ -16,6 +16,7 @@
 	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
 	import { updatePage, updateChat } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -176,6 +177,29 @@
 							console.error("[WindowTabBar] Failed to change icon:", err);
 						}
 					});
+				},
+			});
+		}
+
+		// Pin / Unpin to sidebar (any tab with a route)
+		if (tab.route) {
+			const route = tab.route;
+			const existing = pinsStore.getByUrl(route);
+			items.push({
+				id: "pin-sidebar",
+				label: existing ? "Unpin from Sidebar" : "Pin to Sidebar",
+				icon: existing ? "ri:pushpin-fill" : "ri:pushpin-line",
+				dividerBefore: true,
+				action: async () => {
+					try {
+						if (existing) {
+							await pinsStore.remove(existing.id);
+						} else {
+							await pinsStore.add(route, tab.label, tab.icon ?? null);
+						}
+					} catch (err) {
+						console.error("[WindowTabBar] Failed to toggle pin:", err);
+					}
 				},
 			});
 		}

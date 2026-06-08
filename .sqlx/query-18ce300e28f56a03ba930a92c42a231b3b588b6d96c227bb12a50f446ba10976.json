@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE app_user_profile \n        SET \n            owner_email = $1,\n            full_name = COALESCE($2, full_name),\n            preferred_name = COALESCE($3, preferred_name),\n            server_status = 'ready',\n            updated_at = now()\n        WHERE id = '00000000-0000-0000-0000-000000000001'\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "18ce300e28f56a03ba930a92c42a231b3b588b6d96c227bb12a50f446ba10976"
+}

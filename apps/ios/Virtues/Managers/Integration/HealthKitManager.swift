@@ -10,7 +10,11 @@ import HealthKit
 import Combine
 
 class HealthKitManager: ObservableObject {
-    static let shared = HealthKitManager()
+    static let shared = HealthKitManager(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        dataUploader: BatchUploadCoordinator.shared
+    )
 
     private let healthStore = HKHealthStore()
 
@@ -68,15 +72,6 @@ class HealthKitManager: ObservableObject {
         HealthCheckCoordinator.shared.register(self)
     }
 
-    /// Legacy singleton initializer - uses default dependencies
-    private convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            dataUploader: BatchUploadCoordinator.shared
-        )
-    }
-    
     // MARK: - Monitoring Control
     
     func startMonitoring() {

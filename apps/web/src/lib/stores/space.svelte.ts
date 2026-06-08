@@ -883,6 +883,11 @@ class SpaceStore {
 			}
 
 			if (result) {
+				// If the existing list-view tab has a sibling sub-route (e.g. /actions/templates
+				// vs. /actions), refresh its route so URL/state reflect the requested sub-tab.
+				if (result.tab.route !== effectiveRoute) {
+					this.updateTab(result.tab.id, { route: effectiveRoute });
+				}
 				this.setActiveTab(result.tab.id);
 				return result.tab.id;
 			}

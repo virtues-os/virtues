@@ -70,11 +70,11 @@
 			label: 'Status',
 			format: 'badge',
 			badgeColors: {
-				success: 'badge-green',
-				error: 'badge-red',
-				skipped: 'badge-gray',
-				running: 'badge-yellow',
-				cancelled: 'badge-gray'
+				success: 'badge-success',
+				error: 'badge-error',
+				skipped: 'badge-muted',
+				running: 'badge-warning',
+				cancelled: 'badge-muted'
 			}
 		},
 		{
@@ -91,10 +91,10 @@
 			label: 'Status',
 			field: 'status',
 			options: [
-				{ value: 'success', label: 'Success', badgeColor: 'badge-green' },
-				{ value: 'error', label: 'Error', badgeColor: 'badge-red' },
-				{ value: 'running', label: 'Running', badgeColor: 'badge-yellow' },
-				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-gray' }
+				{ value: 'success', label: 'Success', badgeColor: 'badge-success' },
+				{ value: 'error', label: 'Error', badgeColor: 'badge-error' },
+				{ value: 'running', label: 'Running', badgeColor: 'badge-warning' },
+				{ value: 'skipped', label: 'Skipped', badgeColor: 'badge-muted' }
 			]
 		},
 		{
@@ -116,7 +116,10 @@
 	<header class="section-header">
 		<div>
 			<h2>History</h2>
-			<p class="subtitle">Every run across all actions, filtered by status and time.</p>
+			<p class="subtitle">
+				Every run, success or failure. Click one for details — output, errors,
+				duration.
+			</p>
 		</div>
 	</header>
 

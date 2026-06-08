@@ -175,36 +175,8 @@
 		return "ri:file-fill";
 	}
 
-	// Get icon color for file type
-	function getFileIconColor(file: DriveFile): string {
-		if (file.is_folder) return "text-yellow-500";
-
-		const ext = file.filename.split(".").pop()?.toLowerCase();
-		const mime = file.mime_type?.toLowerCase() || "";
-
-		if (
-			mime.startsWith("image/") ||
-			["jpg", "jpeg", "png", "gif", "webp", "svg"].includes(ext || "")
-		) {
-			return "text-purple-500";
-		}
-		if (
-			mime.startsWith("video/") ||
-			["mp4", "mov", "avi", "mkv", "webm"].includes(ext || "")
-		) {
-			return "text-red-500";
-		}
-		if (
-			mime.startsWith("audio/") ||
-			["mp3", "wav", "ogg", "m4a", "flac"].includes(ext || "")
-		) {
-			return "text-pink-500";
-		}
-		if (["pdf"].includes(ext || "")) return "text-red-600";
-		if (["doc", "docx"].includes(ext || "")) return "text-blue-600";
-		if (["xls", "xlsx"].includes(ext || "")) return "text-green-600";
-
-		return "text-foreground-subtle";
+	function getFileIconColor(_file: DriveFile): string {
+		return "text-foreground-muted";
 	}
 
 	// Navigate to folder
@@ -458,15 +430,7 @@
 	}
 </script>
 
-<Page>
-	<div class="max-w-7xl">
-		<!-- Header -->
-		<div class="mb-6">
-			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
-				Drive
-			</h1>
-			<p class="text-foreground-muted">Your personal file storage</p>
-		</div>
+<Page title="Drive" description="Your personal file storage" maxWidth="full">
 
 		<!-- Usage Bar -->
 		{#if usage}
@@ -495,7 +459,7 @@
 				<div class="h-3 bg-border rounded-full overflow-hidden flex">
 					{#if drivePercent > 0}
 						<div
-							class="h-full bg-blue-500 transition-all duration-300"
+							class="h-full bg-primary transition-all duration-300"
 							style="width: {Math.min(
 								drivePercent,
 								100 - dataLakePercent,
@@ -504,7 +468,7 @@
 					{/if}
 					{#if dataLakePercent > 0}
 						<div
-							class="h-full bg-purple-500 transition-all duration-300"
+							class="h-full bg-secondary transition-all duration-300"
 							style="width: {Math.min(
 								dataLakePercent,
 								100 - drivePercent,
@@ -517,14 +481,14 @@
 					class="flex flex-wrap gap-4 mt-3 text-xs text-foreground-muted"
 				>
 					<span class="flex items-center gap-1.5">
-						<span class="w-2.5 h-2.5 bg-blue-500 rounded-sm"></span>
+						<span class="w-2.5 h-2.5 bg-primary rounded-sm"></span>
 						Drive ({formatBytes(usage.drive_bytes)})
 					</span>
 					<a
 						href="/virtues/lake"
 						class="flex items-center gap-1.5 hover:text-foreground transition-colors"
 					>
-						<span class="w-2.5 h-2.5 bg-purple-500 rounded-sm"
+						<span class="w-2.5 h-2.5 bg-secondary rounded-sm"
 						></span>
 						Lake ({formatBytes(usage.data_lake_bytes)})
 					</a>
@@ -608,31 +572,31 @@
 		<!-- Error Message -->
 		{#if error}
 			<div
-				class="bg-red-500/10 border border-red-500/20 rounded-lg p-4 mb-4"
+				class="bg-error/10 border border-error/20 rounded-lg p-4 mb-4"
 			>
-				<p class="text-sm text-red-600 dark:text-red-400">{error}</p>
+				<p class="text-sm text-error">{error}</p>
 			</div>
 		{/if}
 
 		<!-- Upload Progress -->
 		{#if uploading}
 			<div
-				class="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-4"
+				class="bg-primary/10 border border-primary/20 rounded-lg p-4 mb-4"
 			>
 				<div class="flex items-center gap-3">
 					<Icon
 						icon="ri:loader-4-line"
-						class="animate-spin text-blue-500"
+						class="animate-spin text-primary"
 					/>
 					<div class="flex-1">
 						<div class="text-sm text-foreground mb-1">
 							Uploading...
 						</div>
 						<div
-							class="h-1.5 bg-blue-500/20 rounded-full overflow-hidden"
+							class="h-1.5 bg-primary/20 rounded-full overflow-hidden"
 						>
 							<div
-								class="h-full bg-blue-500 rounded-full transition-all duration-150"
+								class="h-full bg-primary rounded-full transition-all duration-150"
 								style="width: {uploadProgress}%"
 							></div>
 						</div>
@@ -648,7 +612,7 @@
 		<div
 			class="border rounded-lg overflow-hidden transition-colors"
 			class:border-border={!dragOver}
-			class:border-blue-500={dragOver}
+			class:border-primary={dragOver}
 			style:background-color={dragOver
 				? "rgba(59, 130, 246, 0.05)"
 				: undefined}
@@ -730,7 +694,7 @@
 												type="text"
 												bind:value={renameValue}
 												use:autofocus
-												class="text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:border-blue-500 w-full max-w-xs"
+												class="text-sm text-foreground bg-transparent border border-border rounded px-1.5 py-0.5 outline-none focus:border-primary w-full max-w-xs"
 												onclick={(e) =>
 													e.stopPropagation()}
 												onkeydown={(e) => {
@@ -781,7 +745,6 @@
 				</table>
 			{/if}
 		</div>
-	</div>
 </Page>
 
 <!-- Toast Notification -->
@@ -858,7 +821,7 @@
 			Cancel
 		</button>
 		<button
-			class="modal-btn bg-red-500 text-white hover:bg-red-600 disabled:opacity-50"
+			class="modal-btn bg-error text-white hover:bg-error disabled:opacity-50"
 			onclick={handleDelete}
 			disabled={deleting}
 		>

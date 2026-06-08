@@ -1,0 +1,16 @@
+# Cloudflare Pages: set Content-Type so curl renders the script without
+# guessing. The default would be text/html which makes piping to `sh` fail
+# silently on some platforms.
+/install.sh
+  Content-Type: text/x-shellscript; charset=utf-8
+  Cache-Control: public, max-age=300
+
+/virtues.avahi.service
+  Content-Type: application/xml; charset=utf-8
+  Cache-Control: public, max-age=300
+
+# CORS for /ca-cert downloads from a different origin (e.g. fetched by the
+# web UI). Not strictly needed today but cheap to leave in.
+/*
+  Access-Control-Allow-Origin: *
+  X-Content-Type-Options: nosniff

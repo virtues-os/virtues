@@ -6,60 +6,59 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { projectsStore } from '$lib/stores/projects.svelte';
+import { thingsStore } from '$lib/stores/things.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
- * Get "Add to Project" menu items. Shows all projects as a submenu; if no
- * projects exist yet, offers "New Project…" that creates one and adds the
- * URL to it immediately.
+ * Get "Add to Thing" menu items — a submenu of all things plus a
+ * "New Thing…" action that creates one and pins this URL immediately.
  * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
  * @param name - Optional display name for the item
  */
-export function getAddToProjectMenuItems(
+export function getAddToThingMenuItems(
 	url: string,
 	name?: string | null,
 ): ContextMenuItem[] {
-	const projects = projectsStore.projects;
+	const things = thingsStore.things;
 
-	const submenu: ContextMenuItem[] = projects.map((p) => ({
-		id: `project-${p.id}`,
-		label: p.name,
-		icon: p.icon || 'ri:folder-open-line',
+	const submenu: ContextMenuItem[] = things.map((t) => ({
+		id: `thing-${t.id}`,
+		label: t.name,
+		icon: t.icon || 'ri:folder-open-line',
 		action: async () => {
 			try {
-				await projectsStore.addItem(p.id, url, { name });
-				toast(`Added to ${p.name}`);
+				await thingsStore.addPin(t.id, url, { name });
+				toast(`Added to ${t.name}`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to project:', e);
-				toast.error('Failed to add to project');
+				console.error('[contextMenuItems] Failed to add to thing:', e);
+				toast.error('Failed to add to thing');
 			}
 		},
 	}));
 
 	submenu.push({
-		id: 'new-project-with-item',
-		label: projects.length > 0 ? 'New Project…' : 'Create First Project…',
+		id: 'new-thing-with-item',
+		label: things.length > 0 ? 'New Thing…' : 'Create First Thing…',
 		icon: 'ri:add-line',
-		dividerBefore: projects.length > 0,
+		dividerBefore: things.length > 0,
 		action: async () => {
-			const projectName = prompt('Project name:');
-			if (!projectName || !projectName.trim()) return;
+			const thingName = prompt('Thing name:');
+			if (!thingName || !thingName.trim()) return;
 			try {
-				const project = await projectsStore.create(projectName.trim());
-				await projectsStore.addItem(project.id, url, { name });
-				toast(`Created "${project.name}" and added item`);
+				const thing = await thingsStore.create(thingName.trim());
+				await thingsStore.addPin(thing.id, url, { name });
+				toast(`Created "${thing.name}" and added item`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to create project:', e);
-				toast.error('Failed to create project');
+				console.error('[contextMenuItems] Failed to create thing:', e);
+				toast.error('Failed to create thing');
 			}
 		},
 	});
 
 	return [
 		{
-			id: 'add-to-project',
-			label: 'Add to Project',
+			id: 'add-to-thing',
+			label: 'Add to Thing',
 			icon: 'ri:folder-add-line',
 			dividerBefore: true,
 			submenu,
@@ -68,17 +67,14 @@ export function getAddToProjectMenuItems(
 }
 
 /**
- * Get organization-related menu items (Add to Project).
+ * Get organization-related menu items (Add to Thing).
  * Used by tab context menus. "Move to Workspace" removed — single workspace.
- * @param url - The URL of the item (e.g., '/page/page_xyz')
- * @param label - Optional cached label for the item
- * @param icon - Optional cached icon for the item
  */
 export function getWorkspaceMenuItems(
 	url: string,
 	name?: string | null,
 ): ContextMenuItem[] {
-	return getAddToProjectMenuItems(url, name);
+	return getAddToThingMenuItems(url, name);
 }
 
 /**

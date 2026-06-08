@@ -2,22 +2,28 @@
 //  QRScannerView.swift
 //  Virtues
 //
-//  QR code scanner for device pairing. Scans a QR code containing
-//  the server endpoint and pairing session ID, enabling zero-typing setup.
+//  QR code scanner for the v1 pair-only flow. Accepts QRs produced by
+//  `virtues link` on the box CLI or the "+ Add device" modal in the web
+//  Devices page. Both shapes encode a `/pair#t=<token>` URL (or its
+//  `virtues://pair?t=<token>` deep-link cousin); the scanner extracts the
+//  token + endpoint and hands them to the caller to POST against
+//  `/api/pair/consume`.
+//
+//  Legacy `{"e":..., "s":...}` JSON QRs from pre-v1 pairings are
+//  recognized AS legacy and rejected with a clear message — the backend
+//  endpoint they targeted (`/api/pairing/complete`) was removed in v1, so
+//  there's nothing the app can do with them except tell the user to scan
+//  a fresh QR.
 //
 
 import SwiftUI
 import AVFoundation
 
-/// Payload encoded in the Virtues pairing QR code
-struct QRPairingPayload: Codable {
-    let e: String  // server endpoint URL
-    let s: String  // source_id (pairing session)
-}
-
 /// SwiftUI view that presents a full-screen camera QR scanner
 struct QRScannerView: View {
-    let onScanned: (String, String) -> Void  // (endpoint, sourceId)
+    /// Called when a v1 pair-flow QR is successfully decoded. Hands the
+    /// caller `(endpoint, pairToken)` ready for `consumePairToken(...)`.
+    let onScanned: (String, String) -> Void
     let onCancel: () -> Void
 
     @State private var cameraPermissionGranted = false
@@ -180,25 +186,89 @@ struct QRScannerView: View {
     }
 
     private func handleScannedCode(_ code: String) {
-        // Try to parse as Virtues pairing payload
-        guard let data = code.data(using: .utf8),
-              let payload = try? JSONDecoder().decode(QRPairingPayload.self, from: data),
-              !payload.e.isEmpty,
-              !payload.s.isEmpty,
-              URL(string: payload.e) != nil else {
-            // Not a valid Virtues QR code
-            invalidQRMessage = "Not a Virtues pairing code"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                invalidQRMessage = nil
+        guard let parsed = QRScannerView.parsePairURL(code) else {
+            // Detect legacy `{"e":..., "s":...}` payloads so we can show a
+            // useful error rather than a generic "invalid code" toast.
+            if let data = code.data(using: .utf8),
+               (try? JSONSerialization.jsonObject(with: data)) is [String: Any] {
+                showInvalid(
+                    "This QR is from an older Virtues version. " +
+                    "Scan a fresh QR from /virtues/devices on your box."
+                )
+            } else {
+                showInvalid("Not a Virtues pair URL")
             }
             return
         }
 
-        // Haptic feedback on successful scan
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
 
-        onScanned(payload.e, payload.s)
+        onScanned(parsed.endpoint, parsed.token)
+    }
+
+    private func showInvalid(_ message: String) {
+        invalidQRMessage = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+            invalidQRMessage = nil
+        }
+    }
+
+    /// Extract `(endpoint, token)` from one of the accepted v1 pair URL
+    /// shapes. Returns `nil` for anything else; the caller decides how to
+    /// surface the failure to the user.
+    ///
+    /// Accepted forms:
+    ///   - `https://virtues.local/pair#t=<token>`         (browser-friendly URL the box prints)
+    ///   - `https://<box-ip>/pair#t=<token>`              (IP fallback for clients without mDNS)
+    ///   - `virtues://pair?t=<token>&e=<endpoint>`        (iOS deep-link with explicit endpoint)
+    static func parsePairURL(_ raw: String) -> (endpoint: String, token: String)? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed) else { return nil }
+
+        // virtues://pair?t=...&e=...  — explicit-endpoint deep link
+        if url.scheme == "virtues", url.host == "pair",
+           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let items = components.queryItems {
+            let token = items.first(where: { $0.name == "t" })?.value ?? ""
+            let endpoint = items.first(where: { $0.name == "e" })?.value ?? ""
+            if !token.isEmpty, !endpoint.isEmpty {
+                return (endpoint, token)
+            }
+            return nil
+        }
+
+        // https://<box>/pair#t=<token>  — what `virtues link` prints
+        guard let scheme = url.scheme,
+              scheme == "http" || scheme == "https",
+              url.path == "/pair",
+              let host = url.host else {
+            return nil
+        }
+        // The token lives in the fragment as `t=<token>` (URLs sent to
+        // browsers; fragments never leave the client).
+        guard let fragment = url.fragment else { return nil }
+        let token = extractFragmentValue(named: "t", from: fragment)
+        guard let token, !token.isEmpty else { return nil }
+
+        // Endpoint is the URL's origin (scheme://host[:port]).
+        var endpoint = "\(scheme)://\(host)"
+        if let port = url.port {
+            endpoint += ":\(port)"
+        }
+        return (endpoint, token)
+    }
+
+    private static func extractFragmentValue(named name: String, from fragment: String) -> String? {
+        // Fragments aren't standard query strings, but they typically look
+        // like `t=abc` or `t=abc&kind=foo`. Parse defensively.
+        for pair in fragment.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1).map(String.init)
+            if parts.count == 2, parts[0] == name {
+                return parts[1].removingPercentEncoding ?? parts[1]
+            }
+        }
+        return nil
     }
 }
 

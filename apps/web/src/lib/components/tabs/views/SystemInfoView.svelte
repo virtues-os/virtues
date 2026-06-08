@@ -69,16 +69,11 @@
 
 </script>
 
-<Page>
-	<div class="max-w-3xl">
-		<div class="mb-8">
-			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
-				System
-			</h1>
-			<p class="text-foreground-muted">
-				Server version, status, and update preferences
-			</p>
-		</div>
+<Page
+	title="System"
+	description="Server version, status, and update preferences"
+	maxWidth="prose"
+>
 
 		{#if loading}
 			<div class="flex items-center justify-center h-64">
@@ -145,7 +140,6 @@
 				</section>
 			</div>
 		{/if}
-	</div>
 </Page>
 
 <style>

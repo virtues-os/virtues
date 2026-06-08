@@ -9,7 +9,7 @@
 
 // All supported tab types - consolidated namespace-based types
 export type TabType =
-	// Entity namespaces (SQLite backend)
+	// Entity namespaces (Postgres backend)
 	| 'chat' // Chat conversations: /, /chat, /chat/chat_{id}
 	| 'chat-history' // Chat history list: /chat-history
 	| 'page' // User documents: /page, /page/page_{id}
@@ -18,15 +18,15 @@ export type TabType =
 	| 'person' // Wiki people: /person, /person/person_{id}
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
-	| 'thing' // Wiki things: /thing, /thing/thing_{id}
+	| 'thing' // Wiki things (projects, pets, goals, ...): /things, /thing/thg_{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'source' // Data sources: /source, /source/source_{id}
-	| 'project' // Projects: /projects, /projects/prj_{id}
 	| 'tools' // Tools management: /tools
 	| 'actions' // Actions list: /actions
 	| 'action' // Action detail: /action/action_{id}
+	| 'developers' // Developers tools (SQL/Terminal/Lake): /developers
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}
@@ -34,7 +34,7 @@ export type TabType =
 	// View namespace
 	| 'view' // Folder/view pages: /view/view_{id}
 	// System namespace
-	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap|feedback}
+	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap}
 	// Easter eggs
 	| 'conway'
 	| 'dog-jump';

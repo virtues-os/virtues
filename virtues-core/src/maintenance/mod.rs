@@ -1,0 +1,7 @@
+//! Periodic in-process maintenance tasks.
+//!
+//! Lives inside the main `virtues` daemon — not the action runner, not a
+//! separate service. Each task is a tokio interval loop that runs alongside
+//! the HTTP server and shuts down with it.
+
+pub mod sweeper;

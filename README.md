@@ -4,9 +4,11 @@
 
 A private intelligence that connects your digital life — health, finance, location, conversations — into a coherent, queryable picture of who you are. Self-hosted or cloud.
 
-> **Status**: Public beta. Actively developed. Expect rough edges.
+> **Status**: v1 — single-user, **pair-only auth** (no passwords, no email, no
+> magic links). The only way in is to walk to the box. LAN-first; remote access
+> via WireGuard is a planned v1.1 layer. Expect rough edges.
 
-[![License: MIT + ELv2](https://img.shields.io/badge/License-MIT%20%2B%20ELv2-blue.svg)](LICENSE)
+[![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
 
 ## What It Does
@@ -18,7 +20,7 @@ Virtues replaces a fragmented app ecosystem with a single, unified system:
 - **Write** an autobiography that maintains itself — daily summaries, narrative arcs, temporal navigation
 - **Query** your life with an AI that has real context — not a chatbot guessing, but an agent with access to your actual data via SQL, web search, and code execution
 
-All of it runs on a single Rust server with a SQLite database and S3 storage. Your data stays on your infrastructure.
+All of it runs on a single Rust server with a Postgres database and S3 storage. Your data stays on your infrastructure.
 
 ## Architecture
 
@@ -36,18 +38,18 @@ All of it runs on a single Rust server with a SQLite database and S3 storage. Yo
 │  │ Ingest   │  │ Transform │  │ Wiki &   │  │ AI Agent  │  │
 │  │ Engine   │  │ Pipeline  │  │ Entities │  │ + Tools   │  │
 │  └──────────┘  └───────────┘  └──────────┘  └───────────┘  │
-│  Storage: SQLite (metadata + ontologies) · S3 (raw streams) │
+│  Storage: Postgres (metadata + ontologies) · S3 (raw streams)│
 └──────────────────────┬──────────────────────────────────────┘
                        ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  Tollbooth (Rust sidecar · port 9002)                       │
+│  virtues-api (Rust sidecar · port 9002)                       │
 │  API proxy with per-user budget enforcement                 │
 │  Routes to 100+ LLM providers via Vercel AI Gateway         │
 │  Holds all external API keys (AI, Exa, Plaid, Google, etc.) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **Tollbooth** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
+**Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
 ## Data Sources
 
@@ -61,7 +63,7 @@ All of it runs on a single Rust server with a SQLite database and S3 storage. Yo
 | iOS | HealthKit, Location, Microphone, Contacts, FinanceKit, EventKit | Device |
 | macOS | Apps, Browser, iMessage | Device |
 
-Extensible: implement the `Stream` trait in `core/src/sources/{provider}/` to add new sources.
+Extensible: add a new source as an action in `actions/<name>/` with a `manifest.toml` — see [`actions/AUTHORING.md`](actions/AUTHORING.md).
 
 ## Overview
 
@@ -83,7 +85,56 @@ Extensible: implement the `Stream` trait in `core/src/sources/{provider}/` to ad
 
 **Developer Tools** — SQL console, lake browser, job inspector, sitemap viewer.
 
-## Quick Start
+## Install (Linux home server)
+
+### Requirements
+
+| | |
+|---|---|
+| **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+. Debian 13 and Ubuntu 26.04+ ship Postgres 18 natively; on Ubuntu 24.04/25.04 the installer adds the [PGDG repo](https://www.postgresql.org/download/linux/) automatically. x86_64 or aarch64. |
+| **Hardware** | 8 GB RAM, an SSD. GPU optional. |
+| **Network** | Standard residential ISP. v1 is LAN-first: the box web UI is at `https://virtues.local` on your home network. Connecting external sources (Google, Notion, etc.) requires you to be on the LAN at the moment of connect. Remote access ships in v1.1. |
+| **Mac / Windows** | Not supported as host — Virtues needs root, native Postgres, and full SSD ownership. Use a Linux box. |
+
+### Install in one command
+
+```bash
+curl -sSL https://get.virtues.com | sudo sh
+```
+
+That:
+- Downloads the latest `virtues` binary into `/usr/local/bin/`
+- Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
+- Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
+- Mints a per-box CA + leaf TLS cert and enables the `virtues.service` systemd unit
+- Prints a one-time URL — open it in your desktop browser to land in a logged-in session
+
+```bash
+sudo systemctl enable --now virtues
+sudo -u virtues virtues link   # prints the one-time login URL + CA trust recipe
+```
+
+After that you're in the web UI on `https://virtues.local`. Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
+
+| Command | What it does |
+|---|---|
+| `virtues link` | Print a one-time URL to log in to the web UI + per-OS CA trust recipe |
+| `virtues sudo` | Approve a pending sensitive action from a paired browser |
+| `virtues status` | Health dashboard (identity / inference / subscription / devices) |
+| `virtues status --json` | Machine-readable status snapshot for support tickets |
+| `virtues subscribe` | Connect this box to your Virtues subscription via Stripe |
+| `virtues setup` | First-boot bringup (migrate + identity + warm models) — usually run by the installer, not by hand |
+| `virtues doctor` | Hardware + inference resolution report |
+| `virtues backup` / `virtues restore` | Snapshot + restore the box state |
+| `virtues upgrade` | Self-update from the latest GitHub Release |
+
+**When something breaks:** see [docs/recovery.md](docs/recovery.md) — covers
+unreachable-box, lost-session, last-device-revoked, Postgres won't start,
+restore from backup, BYO key reset, and more.
+
+## Development
+
+For contributors working on the codebase itself (not for running Virtues in production):
 
 ### Prerequisites
 
@@ -104,7 +155,7 @@ cp .env.example .env
 
 ```bash
 # Terminal 1: Start Core server
-cd core && cargo run -- server
+cd virtues-core && cargo run -- server
 
 # Terminal 2: Build and serve web UI (production mode)
 cd apps/web && pnpm install && pnpm build
@@ -115,52 +166,53 @@ cd apps/web && pnpm dev
 
 Access: `http://localhost:8000` (Core serves the built web UI) or `http://localhost:5173` (dev server with hot reload).
 
-### Tollbooth (required for AI features)
+### virtues-api (required for AI features)
 
 ```bash
-# Terminal 3: Start Tollbooth sidecar
-cd apps/tollbooth && cargo run
+# Terminal 3: Start virtues-api sidecar
+cd services/virtues-api && cargo run
 ```
 
-Tollbooth runs on port 9002. Core connects to it via `TOLLBOOTH_URL=http://localhost:9002`. See `.env.example` for required API keys (`AI_GATEWAY_API_KEY`, `TOLLBOOTH_INTERNAL_SECRET`).
+virtues-api runs on port 9002. Core connects to it via `VIRTUES_API_URL=http://localhost:9002`. See `.env.example` for required API keys (`AI_GATEWAY_API_KEY`, `VIRTUES_API_INTERNAL_SECRET`).
 
-## Deployment
-
-**Self-hosted**: Run Core + Tollbooth on any machine. SQLite for the database, local filesystem or S3 for storage. Single binary, no external dependencies beyond what you choose to connect.
+## Cloud sidecar
 
 **Cloud (managed)**: Virtues Cloud provisions a dedicated, isolated instance for each user — your own server, your own database, your own encryption keys. No shared infrastructure, no pooled data. Managed by [Atlas](https://github.com/virtues-os/atlas), our open-source orchestration layer.
 
 ## iOS App
 
-The iOS companion app streams real-time sensor data to your Virtues instance:
-
-```bash
-# Expose your local server via HTTPS for iOS development
-cd core && cargo run -- tunnel
-```
-
-The tunnel command starts a Cloudflare quick tunnel and auto-sets `BACKEND_URL` to the generated HTTPS URL. Requires `brew install cloudflared`. See `apps/ios/` for the Xcode project.
+The iOS companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [docs/auth-model.md](docs/auth-model.md) for the pairing model. Source: `apps/ios/`.
 
 ## Project Structure
 
 ```
 virtues/
-├── core/                    # Rust backend (API server, ingestion, AI agent, wiki)
+├── virtues-core/            # The heart: Rust daemon (crate `virtues`) — API, ingestion, agent, wiki, dayline
 │   ├── src/
 │   │   ├── agent/           # AI agent loop, prompts, tool execution
 │   │   ├── api/             # HTTP route handlers
-│   │   ├── sources/         # Data source implementations (Google, iOS, Plaid, etc.)
+│   │   ├── action_runner/   # Spawns & supervises action subprocesses
 │   │   ├── entity_resolution/  # People, places extraction from raw data
+│   │   ├── dayline/         # Day-page scoring + autobiography
 │   │   ├── storage/         # S3 and local filesystem abstraction
 │   │   └── tools/           # AI tool implementations (SQL, search, code, pages)
-│   └── migrations/          # SQLite schema migrations
-├── apps/
-│   ├── web/                 # SvelteKit web UI
-│   ├── tollbooth/           # Rust API proxy sidecar
-│   └── ios/                 # iOS companion app (Swift)
-├── packages/
-│   └── virtues-registry/    # Shared Rust crate (models, sources, tools, personas)
-└── deploy/                  # Sandbox runtime config
+│   └── migrations/          # Postgres schema migrations
+├── actions/                 # Extension system: ingestion + behavior as supervised subprocesses (functions/services/views)
+├── crates/                  # Shared Rust libraries
+│   ├── virtues-helpers/     # Shared helpers for action authors (auth, db, crypto, wire contract)
+│   ├── virtues-wg/          # WireGuard engine (privileged daemon)
+│   └── virtues-registry/    # Static config: models, sources, tools, personas, ontologies
+├── services/                # Backend Rust services (the metered cloud edge)
+│   ├── virtues-api/         # API proxy: LLM/web/bank/oauth gateway + per-user budgets
+│   └── atlas/               # Identity, billing (Stripe), entitlement issuance
+├── apps/                    # Client applications
+│   ├── web/                 # SvelteKit web UI (also a Tauri desktop build)
+│   ├── ios/                 # iOS companion app (Swift)
+│   └── mac/                 # macOS collector (Swift)
+├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
+├── scripts/                 # install.sh + release artifacts (get.virtues.com)
+├── docs/                    # Architecture + concept docs (flat)
+└── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
 
 ## Database Schema
@@ -215,7 +267,7 @@ When "Generate Summary" is triggered on a DayPage, the system:
 1. Gathers structured day sources (calendar, locations, transactions, messages, etc.)
 2. Adds supplemental data: full transcription text, app usage, web browsing, knowledge documents, AI conversations
 3. Builds a text prompt with all sections, truncated to fit token limits
-4. Calls an LLM via Tollbooth to generate a first-person daily narrative
+4. Calls an LLM via virtues-api to generate a first-person daily narrative
 5. Computes the 7-dim context vector from ontology data presence
 6. Generates per-domain embeddings and computes the chaos/order score
 7. Saves everything (autobiography, context vector, chaos score) to the wiki_days record
@@ -227,7 +279,7 @@ The chaos score measures how **novel** or **routine** a day is compared to your 
 **Algorithm:**
 
 1. The day's data is grouped into 7 embedding domains: communication, calendar, health, location, financial, activity, content
-2. Each domain's text content is embedded via Tollbooth `/v1/embeddings` (text-embedding-3-small)
+2. Each domain's text content is embedded via virtues-api `/v1/embeddings` (text-embedding-3-small)
 3. Each domain's embedding is compared to its **30-day exponentially-decayed centroid** via cosine similarity (decay rate: `exp(-0.1 * days_ago)`)
 4. Per-domain chaos: `domain_chaos = 1 - similarity`
 5. Domain chaos is **distributed across 7 dimensions** via the domain's ontology context weights
@@ -250,7 +302,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 | activity | activity_app_usage, activity_web_browsing |
 | content | content_document, content_conversation, content_bookmark |
 
-## Features (last updated: Feb 12)
+## Features
 
 **Spaces & Workspaces** — Arc-browser-style multi-space system. Each space has its own tabs, theme, and accent color. Swipeable sidebar carousel for switching between spaces. Organize your life into contexts — work, health, finance — each with its own look and layout.
 
@@ -288,7 +340,12 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 ## License
 
-MIT (core components) + Elastic License v2 (enterprise features). Self-host freely. See [LICENSE](LICENSE) for details.
+Virtues uses a hybrid model:
+
+- **Server, web app, and infrastructure** — [Business Source License 1.1](LICENSE) (BUSL-1.1): source-available, free to self-host for personal or internal organizational use, **not** for offering a hosted service or commercial hardware product. Each file converts to Apache 2.0 four years after release.
+- **Native apps and the data model** — MIT (see the `LICENSE` file in those directories, e.g. `apps/ios/`, `apps/mac/`).
+
+The repository default is BUSL-1.1 unless a directory contains its own `LICENSE` stating otherwise.
 
 ---
 

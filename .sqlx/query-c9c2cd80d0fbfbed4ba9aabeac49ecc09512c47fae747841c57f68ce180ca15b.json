@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO wiki_entity_refs (id, entity_type, entity_id, source_table, source_id, role, timestamp)\n        SELECT $1, 'person', $2, 'data_communication_email', $3, 'sender', timestamp\n        FROM data_communication_email WHERE id = $3\n        ON CONFLICT (entity_id, source_table, source_id, role) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c9c2cd80d0fbfbed4ba9aabeac49ecc09512c47fae747841c57f68ce180ca15b"
+}

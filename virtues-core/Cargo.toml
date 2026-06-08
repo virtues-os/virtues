@@ -1,0 +1,229 @@
+[package]
+name = "virtues"
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "Open source personal data ecosystem - High-performance Rust core"
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+keywords = ["etl", "data-pipeline", "personal-data", "timeseries"]
+categories = ["database", "data-structures"]
+build = "build.rs"
+default-run = "virtues"
+
+[lib]
+name = "virtues"
+path = "src/lib.rs"
+
+[[bin]]
+name = "virtues"
+path = "src/main.rs"
+
+[[bin]]
+name = "virtues-mcp-server"
+path = "src/bin/mcp-server.rs"
+
+[[bin]]
+name = "virtues-prod-seed"
+path = "src/bin/prod_seed.rs"
+
+
+[features]
+# Forwards the dev-local transport profile in `virtues-helpers`.
+# Enable for local development (`cargo run --features dev-transport`);
+# never enable in release builds.
+dev-transport = ["virtues-helpers/dev-transport"]
+
+# Accelerator execution providers for the ORT inference stack. OFF by default:
+# the portable DIY/CPU image links neither, so it builds anywhere and runs int8
+# on CPU. The Jetson/NVIDIA appliance image is built with `--features cuda`
+# (and `tensorrt` once validated), linking the matching native EP libraries.
+# The ONNX graph itself is portable; this only governs which EP is linked +
+# which quantization the resolver prefers (see core/src/search/accelerator.rs).
+cuda = ["ort/cuda"]
+tensorrt = ["ort/tensorrt", "cuda"]
+
+[dependencies]
+# Shared registry
+virtues-registry = { path = "../crates/virtues-registry" }
+
+# Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
+virtues-helpers = { path = "../crates/virtues-helpers" }
+# Minimal WireGuard engine (kernel wg0, ULA, sealed box-secrets). Re-exported
+# via core::wireguard; also the basis of the standalone virtues-wireguard daemon.
+virtues-wg = { path = "../crates/virtues-wg" }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+# QR rendering for `virtues claim` (subscribe-from-phone path) + pair-only
+# auth "+ Add device" modal (SVG output, in-process so tokens never leak to a
+# third-party QR generator).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+async-trait = "0.1"
+
+# Database
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate", "chrono", "json", "macros", "uuid", "rust_decimal"] }
+
+# Vector search (pgvector extension — Rust bindings round-trip vector(N) via sqlx)
+pgvector = { version = "0.4", features = ["sqlx"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging & Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.28"
+opentelemetry = { version = "0.27", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp = { version = "0.27", features = ["metrics", "grpc-tonic"] }
+
+# HTTP Server
+axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+# Box serves HTTPS on :443 with a per-box CA-signed leaf (virtues.local).
+# Using rustls (no OpenSSL) + tokio-rustls for the listener.
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+tokio-rustls = "0.26"
+mime_guess = "2.0"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+async-stream = "0.3"
+tokio-stream = "0.1"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# OAuth
+oauth2 = "4.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Financial integrations
+plaid = "9.0.1"
+
+# Image processing (day illustration alpha-keying + cropping)
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Environment
+dotenv = "0.15"
+
+# Scheduler
+tokio-cron-scheduler = "0.13"
+
+# Encryption for credentials
+ring = "0.17"
+base64 = "0.22"
+hex = "0.4"
+
+# Per-server CA + virtues.internal leaf (TLS context 1, WS-2).
+# x509-parser: reload a stored CA from PEM to sign leaves after a restart.
+rcgen = { version = "0.13", features = ["x509-parser"] }
+
+ # HMAC signing for OAuth state tokens
+hmac = "0.12"
+sha2 = "0.10"
+
+# `virtues backup` / `virtues restore` — single self-contained tarball
+# containing pg_dump + lake archives + env. `tar` reads/writes streaming
+# archives; `flate2` is the gzip layer.
+tar = "0.4"
+flate2 = "1.0"
+
+# Unicode text segmentation for slug generation
+unicode-segmentation = "1.11"
+
+# Random generation (for OAuth state + BOCPD)
+rand = { version = "0.9", features = ["small_rng"] }
+fake = { version = "2.9", features = ["derive", "chrono", "uuid"] }
+
+# URL encoding and validation
+urlencoding = "2.1"
+url = "2.5"
+
+# HTML escaping for XSS prevention
+html-escape = "0.2"
+
+# Regular expressions
+regex = "1.0"
+
+# Static initialization
+lazy_static = "1.5"
+
+# Time handling for cookies
+time = "0.3"
+
+# MCP Server
+rmcp = { version = "0.8.5", features = ["server", "transport-io", "transport-streamable-http-server"] }
+schemars = "1.0"
+
+# Geospatial/clustering
+geo = "0.28"  # Geospatial calculations (Haversine distance)
+
+# Embeddings (Ollama client)
+ollama-rs = { version = "0.2", features = ["stream"] }
+futures = "0.3"
+
+# Local embeddings/reranking: direct ORT + tokenizers (replaces fastembed for NPU access).
+# Pin minor versions — ort 2.x is still pre-stable; tokenizers/hf-hub move quickly.
+ort = { version = "=2.0.0-rc.12", features = ["download-binaries"] }
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+hf-hub = { version = "0.3", default-features = false, features = ["tokio", "online"] }
+ndarray = "0.17"
+directories = "5"
+# fastembed was removed in favor of direct ort+tokenizers (search stack migration).
+
+# Changepoint detection
+changepoint = "0.15"  # Bayesian Online Changepoint Detection
+rv = "0.19"  # Probability distributions for changepoint priors
+
+# Self-registering transforms
+inventory = "0.3"
+
+# Interactive CLI setup
+dialoguer = "0.11"
+console = "0.15"
+indicatif = "0.17"
+
+# Sandboxing
+tempfile = "3.12"
+
+# SSH
+russh = "0.48"
+russh-keys = "0.48"
+
+# Yjs/CRDT support
+yrs = "0.18"
+y-sync = "0.4"
+moka = { version = "0.12", features = ["sync"] }
+similar = "2.7.0"
+
+# Markdown parsing for AI editing
+pulldown-cmark = { version = "0.10", default-features = false, features = ["simd"] }
+
+bytes = "1.7"
+
+[build-dependencies]
+chrono = "0.4"
+
+[dev-dependencies]
+# Testing
+testcontainers = "0.21"
+dotenv = "0.15"
+serial_test = "3.1"
+
+# Async testing
+tokio-test = "0.4"
+

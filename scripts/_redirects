@@ -1,0 +1,11 @@
+# Cloudflare Pages routing for get.virtues.com.
+#
+# When you connect this repo to Cloudflare Pages with build output = `scripts/`,
+# anyone hitting https://get.virtues.com/ gets the install script directly:
+#
+#     $ curl -sSL https://get.virtues.com | sudo sh
+#
+# Also serves the install script at `/install.sh` explicitly (200 = no
+# external redirect, just rewrites the response).
+/                /install.sh   200
+/install         /install.sh   200

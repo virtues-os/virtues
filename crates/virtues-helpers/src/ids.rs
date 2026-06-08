@@ -1,6 +1,6 @@
 //! Deterministic ID generation.
 //!
-//! Matches the format used by `core/src/ids`: `{prefix}_{hex16}` where the hex is
+//! Matches the format used by `virtues-core/src/ids`: `{prefix}_{hex16}` where the hex is
 //! the first 8 bytes of a SHA-256 hash over the pipe-separated components.
 //!
 //! The same input always produces the same ID, enabling idempotent upserts.

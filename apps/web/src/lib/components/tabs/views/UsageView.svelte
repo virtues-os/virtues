@@ -95,16 +95,11 @@
 	};
 </script>
 
-<Page>
-	<div class="max-w-7xl">
-		<div class="mb-8">
-			<h1 class="text-3xl font-serif font-medium text-foreground mb-2">
-				Usage
-			</h1>
-			<p class="text-foreground-muted">
-				Monitor API usage, rate limits, and estimated costs
-			</p>
-		</div>
+<Page
+	title="Usage"
+	description="Monitor API usage, rate limits, and estimated costs"
+	maxWidth="full"
+>
 
 		{#if loading}
 			<div class="flex items-center justify-center h-full">
@@ -321,5 +316,4 @@
 				</div>
 			</div>
 		{/if}
-	</div>
 </Page>

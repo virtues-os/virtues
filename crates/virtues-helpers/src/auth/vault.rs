@@ -1,22 +1,36 @@
 //! Vault writes — credential row mint, finalize, status transitions, fan-out lookup.
 //!
 //! Encryption flows through `crate::crypto`. Schema details live in
-//! `core/migrations/055_credentials_create.sql` and `ACTIONS.md` § Schema.
+//! `virtues-core/migrations/0004_credentials_and_actions.sql`.
 //!
-//! All writes target the `credentials` table. The `secrets_ciphertext` column
-//! holds AES-256-GCM JSON; `secret_lookup_hash` holds an HMAC of the
-//! plaintext (for self-issued-bearer flows only); `metadata` is plaintext
-//! non-secret context.
+//! All writes target the `credentials` table. `secrets_ciphertext` holds
+//! AES-256-GCM JSON; `secret_lookup_hash` holds an HMAC of the plaintext
+//! (self-issued-bearer flows only); `metadata` is JSONB non-secret context.
 
 use std::collections::HashMap;
 
+use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use ring::rand::{SecureRandom, SystemRandom};
 use serde_json::json;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::auth::error::{AuthError, Result};
 use crate::crypto::TokenEncryptor;
+
+/// Mint a fresh random 32-byte bearer, base64url-encoded (no padding). The
+/// *server* issues the device's bearer at pairing so no stable device
+/// identifier (e.g. a UUID) is ever used as a credential — the no-stable-bearer
+/// rule. RNG failure is catastrophic and treated as infallible, matching
+/// `crypto::OauthStateClaims::new`.
+pub fn generate_bearer() -> String {
+    let mut bytes = [0u8; 32];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .expect("SystemRandom should always produce bytes");
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
 
 /// Credential lifecycle state. Mirrors `credentials.status` in the schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,15 +54,10 @@ impl CredentialStatus {
     }
 }
 
-/// Mint a pending credential row. Used by:
-/// - `pair_initiate` core handler (iOS-style flows)
-/// - `oauth_start` core handler when `existing_credential_id` is `None`
-///
-/// The row is `status='pending'`, with empty encrypted secrets (`{}`). The
-/// caller is expected to flip it to `active` via `finalize_credential` or
-/// `finalize_self_issued_bearer` after the user completes the flow.
+/// Mint a pending credential row. The row is `status='pending'`, with empty
+/// encrypted secrets (`{}`). Caller flips to `active` via finalize_*.
 pub async fn mint_pending_credential(
-    db: &SqlitePool,
+    db: &PgPool,
     source_id: &str,
     name: &str,
 ) -> Result<String> {
@@ -63,7 +72,7 @@ pub async fn mint_pending_credential(
     sqlx::query(
         r#"INSERT INTO credentials
               (id, source_id, name, status, secrets_ciphertext, metadata)
-           VALUES (?, ?, ?, 'pending', ?, '{}')"#,
+           VALUES ($1, $2, $3, 'pending', $4, '{}'::jsonb)"#,
     )
     .bind(&id)
     .bind(source_id)
@@ -75,18 +84,11 @@ pub async fn mint_pending_credential(
     Ok(id)
 }
 
-/// Finalize a `via_proxy` credential — encrypts the secrets payload, stores
-/// metadata + scopes + expiry, transitions `pending → active`.
-///
-/// **Idempotency**: only updates rows currently `status = 'pending'`. A
-/// second callback for the same `credential_id` no-ops, which dedups
-/// double-callbacks (the proxy may retry on network flake).
-///
-/// `expires_in` is seconds from now; `next_refresh_at` is computed as
-/// `now + expires_in - 60s` (safety margin). The `credential_refresh` cron
-/// sweeps `WHERE next_refresh_at < now()`.
+/// Finalize a `via_proxy` credential — encrypts secrets, stores metadata +
+/// scopes + expiry, transitions `pending → active`. Idempotent on second
+/// callback (no-ops if already active).
 pub async fn finalize_credential(
-    db: &SqlitePool,
+    db: &PgPool,
     credential_id: &str,
     secrets: &serde_json::Value,
     metadata: &serde_json::Value,
@@ -96,45 +98,43 @@ pub async fn finalize_credential(
     let encryptor = TokenEncryptor::from_env()?;
     let secrets_str = serde_json::to_string(secrets)?;
     let secrets_ct = encryptor.encrypt(&secrets_str)?;
-    let metadata_str = serde_json::to_string(metadata)?;
-    let scopes_json = scopes
-        .map(|s| serde_json::to_string(s))
-        .transpose()
-        .map_err(AuthError::Serde)?;
+    let metadata_json = metadata.clone();
+    let scopes_json = scopes.map(|s| serde_json::to_value(s)).transpose()?;
 
-    let (expires_at, next_refresh_at): (Option<String>, Option<String>) = match expires_in {
-        Some(secs) => {
-            let exp: DateTime<Utc> = Utc::now() + Duration::seconds(secs);
-            let refresh: DateTime<Utc> = exp - Duration::seconds(60);
-            (Some(exp.to_rfc3339()), Some(refresh.to_rfc3339()))
-        }
-        None => (None, None),
-    };
+    let (expires_at, next_refresh_at): (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+        match expires_in {
+            Some(secs) => {
+                let exp = Utc::now() + Duration::seconds(secs);
+                let refresh = exp - Duration::seconds(60);
+                (Some(exp), Some(refresh))
+            }
+            None => (None, None),
+        };
 
     let result = sqlx::query(
         r#"UPDATE credentials
               SET status = 'active',
                   status_reason = NULL,
-                  secrets_ciphertext = ?,
-                  metadata = ?,
-                  scopes = ?,
-                  expires_at = ?,
-                  next_refresh_at = ?,
-                  last_seen_at = datetime('now')
-            WHERE id = ? AND status = 'pending'"#,
+                  secrets_ciphertext = $1,
+                  metadata = $2,
+                  scopes = $3,
+                  expires_at = $4,
+                  next_refresh_at = $5,
+                  last_seen_at = now()
+            WHERE id = $6 AND status = 'pending'"#,
     )
     .bind(&secrets_ct)
-    .bind(&metadata_str)
+    .bind(&metadata_json)
     .bind(&scopes_json)
-    .bind(&expires_at)
-    .bind(&next_refresh_at)
+    .bind(expires_at)
+    .bind(next_refresh_at)
     .bind(credential_id)
     .execute(db)
     .await?;
 
     if result.rows_affected() == 0 {
         let current: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM credentials WHERE id = ?")
+            sqlx::query_as("SELECT status FROM credentials WHERE id = $1")
                 .bind(credential_id)
                 .fetch_optional(db)
                 .await?;
@@ -158,13 +158,11 @@ pub async fn finalize_credential(
     Ok(())
 }
 
-/// Atomic finalize for `self_issued_bearer` flows: encrypts the bearer token
-/// as `{"token": "..."}`, computes the HMAC lookup hash for O(1) webhook
-/// authentication, stores metadata, and flips status to `active`.
-///
-/// Same idempotency semantics as `finalize_credential`.
+/// Atomic finalize for `self_issued_bearer` flows: encrypts the bearer as
+/// `{"token": "..."}`, computes HMAC lookup hash for O(1) webhook auth,
+/// flips status to `active`. Same idempotency as `finalize_credential`.
 pub async fn finalize_self_issued_bearer(
-    db: &SqlitePool,
+    db: &PgPool,
     credential_id: &str,
     plaintext_token: &str,
     metadata: &serde_json::Value,
@@ -177,28 +175,28 @@ pub async fn finalize_self_issued_bearer(
     let secrets_payload = json!({ "token": plaintext_token }).to_string();
     let secrets_ct = encryptor.encrypt(&secrets_payload)?;
     let lookup_hash = encryptor.lookup_hash(plaintext_token)?;
-    let metadata_str = serde_json::to_string(metadata)?;
+    let metadata_json = metadata.clone();
 
     let result = sqlx::query(
         r#"UPDATE credentials
               SET status = 'active',
                   status_reason = NULL,
-                  secrets_ciphertext = ?,
-                  secret_lookup_hash = ?,
-                  metadata = ?,
-                  last_seen_at = datetime('now')
-            WHERE id = ? AND status = 'pending'"#,
+                  secrets_ciphertext = $1,
+                  secret_lookup_hash = $2,
+                  metadata = $3,
+                  last_seen_at = now()
+            WHERE id = $4 AND status = 'pending'"#,
     )
     .bind(&secrets_ct)
     .bind(&lookup_hash)
-    .bind(&metadata_str)
+    .bind(&metadata_json)
     .bind(credential_id)
     .execute(db)
     .await?;
 
     if result.rows_affected() == 0 {
         let current: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM credentials WHERE id = ?")
+            sqlx::query_as("SELECT status FROM credentials WHERE id = $1")
                 .bind(credential_id)
                 .fetch_optional(db)
                 .await?;
@@ -221,12 +219,8 @@ pub async fn finalize_self_issued_bearer(
 
 /// Mint + finalize in one call for `api_key` flows. The user pasted a token;
 /// nothing to dedupe via pending state.
-///
-/// `fields` is the JSON object the form collected (`{"token": "..."}` for
-/// single-field connectors, `{"key1": "...", "key2": "..."}` for multi).
-/// Stored as the encrypted secrets payload verbatim.
 pub async fn finalize_apikey_credential(
-    db: &SqlitePool,
+    db: &PgPool,
     source_id: &str,
     name: &str,
     fields: &serde_json::Value,
@@ -243,7 +237,7 @@ pub async fn finalize_apikey_credential(
     sqlx::query(
         r#"INSERT INTO credentials
               (id, source_id, name, status, secrets_ciphertext, metadata)
-           VALUES (?, ?, ?, 'active', ?, '{}')"#,
+           VALUES ($1, $2, $3, 'active', $4, '{}'::jsonb)"#,
     )
     .bind(&id)
     .bind(source_id)
@@ -255,15 +249,9 @@ pub async fn finalize_apikey_credential(
     Ok(id)
 }
 
-/// Update an active credential's secrets after a successful refresh. Used by
-/// the `credential_refresh` cron action. Re-encrypts the new secrets payload
-/// and recomputes `next_refresh_at` from `expires_in` (60s safety margin).
-///
-/// Unlike `finalize_credential`, this targets rows already in `status='active'` —
-/// it's the post-handshake refresh path, not the initial connect path.
-/// `metadata` and `scopes` are preserved unless the proxy returns new values.
+/// Update an active credential's secrets after a successful refresh.
 pub async fn update_credential_secrets(
-    db: &SqlitePool,
+    db: &PgPool,
     credential_id: &str,
     secrets: &serde_json::Value,
     expires_in: Option<i64>,
@@ -272,28 +260,29 @@ pub async fn update_credential_secrets(
     let secrets_str = serde_json::to_string(secrets)?;
     let secrets_ct = encryptor.encrypt(&secrets_str)?;
 
-    let (expires_at, next_refresh_at): (Option<String>, Option<String>) = match expires_in {
-        Some(secs) => {
-            let exp: DateTime<Utc> = Utc::now() + Duration::seconds(secs);
-            let refresh: DateTime<Utc> = exp - Duration::seconds(60);
-            (Some(exp.to_rfc3339()), Some(refresh.to_rfc3339()))
-        }
-        None => (None, None),
-    };
+    let (expires_at, next_refresh_at): (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+        match expires_in {
+            Some(secs) => {
+                let exp = Utc::now() + Duration::seconds(secs);
+                let refresh = exp - Duration::seconds(60);
+                (Some(exp), Some(refresh))
+            }
+            None => (None, None),
+        };
 
     let result = sqlx::query(
         r#"UPDATE credentials
-              SET secrets_ciphertext = ?,
-                  expires_at = ?,
-                  next_refresh_at = ?,
+              SET secrets_ciphertext = $1,
+                  expires_at = $2,
+                  next_refresh_at = $3,
                   status = 'active',
                   status_reason = NULL,
-                  updated_at = datetime('now')
-            WHERE id = ?"#,
+                  updated_at = now()
+            WHERE id = $4"#,
     )
     .bind(&secrets_ct)
-    .bind(&expires_at)
-    .bind(&next_refresh_at)
+    .bind(expires_at)
+    .bind(next_refresh_at)
     .bind(credential_id)
     .execute(db)
     .await?;
@@ -304,15 +293,13 @@ pub async fn update_credential_secrets(
     Ok(())
 }
 
-/// Decrypt the secrets payload of a credential row. Used by `credential_refresh`
-/// to extract the `refresh_token` before calling `proxy_refresh`. Returns the
-/// decoded JSON value.
+/// Decrypt the secrets payload of a credential row.
 pub async fn read_credential_secrets(
-    db: &SqlitePool,
+    db: &PgPool,
     credential_id: &str,
 ) -> Result<serde_json::Value> {
     let row: Option<(String,)> =
-        sqlx::query_as("SELECT secrets_ciphertext FROM credentials WHERE id = ?")
+        sqlx::query_as("SELECT secrets_ciphertext FROM credentials WHERE id = $1")
             .bind(credential_id)
             .fetch_optional(db)
             .await?;
@@ -322,22 +309,19 @@ pub async fn read_credential_secrets(
     Ok(serde_json::from_str(&plaintext)?)
 }
 
-/// Mark a credential's status without touching its secret payload. Used for
-/// `revoked` (user clicked Reconnect / Disconnect), `reauth_required`
-/// (proxy webhook signaled provider-side invalidation), and `error`
-/// (transient provider failures).
+/// Mark a credential's status without touching its secret payload.
 pub async fn mark_credential_status(
-    db: &SqlitePool,
+    db: &PgPool,
     credential_id: &str,
     status: CredentialStatus,
     reason: Option<&str>,
 ) -> Result<()> {
     let result = sqlx::query(
         r#"UPDATE credentials
-              SET status = ?,
-                  status_reason = ?,
-                  updated_at = datetime('now')
-            WHERE id = ?"#,
+              SET status = $1,
+                  status_reason = $2,
+                  updated_at = now()
+            WHERE id = $3"#,
     )
     .bind(status.as_str())
     .bind(reason)
@@ -351,28 +335,24 @@ pub async fn mark_credential_status(
     Ok(())
 }
 
-/// Return the per-credential fan-out map: `function_name → app_actions.id`
-/// for every action row keyed to this credential.
-///
-/// Used by `pair_complete` to send the iOS app its routing table:
-/// `{"ios_healthkit": "<action_id>", "ios_location": "<action_id>", ...}`.
-/// The device stores this alongside its `device_token` and routes each
-/// stream flush to `POST /webhook/{action_id}`.
-///
-/// Generic over source kind — drops the legacy `LIKE 'ios_%'` filter.
-/// Any per-credential fan-out (custom IoT, future Mac, etc.) returns its
-/// full action set here.
+/// Return the per-credential fan-out map: `binary-name → app_actions.id` for
+/// every action row keyed to this credential. The key is `command[0]` (the
+/// action's program name, e.g. `ios_healthkit`), which the device uses to
+/// route each stream flush to `POST /webhook/{action_id}`.
 pub async fn fanout_action_ids(
-    db: &SqlitePool,
+    db: &PgPool,
     credential_id: &str,
 ) -> Result<HashMap<String, String>> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        r#"SELECT function_name, id FROM app_actions
-           WHERE credential_id = ? AND function_name IS NOT NULL"#,
+    let rows: Vec<(Option<String>, String)> = sqlx::query_as(
+        r#"SELECT command::jsonb->>0, id FROM app_actions
+           WHERE credential_id = $1 AND command IS NOT NULL"#,
     )
     .bind(credential_id)
     .fetch_all(db)
     .await?;
 
-    Ok(rows.into_iter().collect())
+    Ok(rows
+        .into_iter()
+        .filter_map(|(key, id)| key.map(|k| (k, id)))
+        .collect())
 }

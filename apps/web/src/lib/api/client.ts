@@ -9,86 +9,6 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 const API_BASE = '/api';
 
-// Sources
-export async function listSources() {
-	const res = await fetch(`${API_BASE}/sources`);
-	if (!res.ok) throw new Error(`Failed to list sources: ${res.statusText}`);
-	return res.json();
-}
-
-export async function getSource(sourceId: string) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}`);
-	if (!res.ok) throw new Error(`Failed to get source: ${res.statusText}`);
-	return res.json();
-}
-
-export async function pauseSource(sourceId: string) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/pause`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`Failed to pause source: ${res.statusText}`);
-	return res.json();
-}
-
-export async function resumeSource(sourceId: string) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/resume`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`Failed to resume source: ${res.statusText}`);
-	return res.json();
-}
-
-export async function deleteSource(sourceId: string) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}`, {
-		method: 'DELETE'
-	});
-	if (!res.ok) throw new Error(`Failed to delete source: ${res.statusText}`);
-}
-
-// Streams
-export async function listStreams(sourceId: string) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams`);
-	if (!res.ok) throw new Error(`Failed to list streams: ${res.statusText}`);
-	return res.json();
-}
-
-export async function enableStream(
-	sourceId: string,
-	streamName: string,
-	request: Record<string, unknown> = {}
-) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams/${streamName}/enable`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request)
-	});
-	if (!res.ok) throw new Error(`Failed to enable stream: ${res.statusText}`);
-}
-
-export async function disableStream(sourceId: string, streamName: string) {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams/${streamName}/disable`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`Failed to disable stream: ${res.statusText}`);
-}
-
-export async function syncStream(
-	sourceId: string,
-	streamName: string,
-	request: Record<string, unknown> = {}
-): Promise<{ job_id: string; status: string; started_at: string }> {
-	const res = await fetch(`${API_BASE}/sources/${sourceId}/streams/${streamName}/sync`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(request)
-	});
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to sync stream: ${res.statusText}`);
-	}
-	return res.json();
-}
-
 // ============================================================================
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
@@ -119,6 +39,18 @@ export interface ActionLastRun {
 	summary?: string | null;
 }
 
+/**
+ * Three-runtime model — see ARCHITECTURE.md.
+ *
+ * - `function`: fork-per-trigger CLI; the default. Server forks the binary
+ *   on every trigger, pipes ActionInput/Output JSON.
+ * - `app`: long-running supervised HTTP server. Core proxies `/service/<id>/*`
+ *   to it; cron/webhook triggers become `POST /__trigger`.
+ * - `view`: pure Svelte component, never invoked server-side. Lives at
+ *   `apps/web/src/lib/applets/<name>/`.
+ */
+export type ActionRuntime = 'function' | 'service' | 'view';
+
 export interface Action {
 	id: string;
 	owner: 'system' | 'user';
@@ -132,6 +64,11 @@ export interface Action {
 	memory: string | null;
 	function_name: string | null;
 	credential_id: string | null;
+	runtime: ActionRuntime;
+	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
+	 *  binary by `function_name`. Null when the action uses the function_name
+	 *  shortcut. */
+	command: string[] | null;
 	is_system: boolean;
 	created_at: string;
 	updated_at: string;
@@ -151,6 +88,136 @@ export async function listActions(): Promise<Action[]> {
 export async function getAction(id: string): Promise<Action> {
 	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`Failed to get action: ${res.statusText}`);
+	return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sidebar pins
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Pin {
+	id: string;
+	url: string;
+	label: string | null;
+	icon: string | null;
+	sort_order: number;
+	pinned_at: string;
+}
+
+export async function listPins(): Promise<Pin[]> {
+	const res = await fetch(`${API_BASE}/pins`);
+	if (!res.ok) throw new Error(`Failed to list pins: ${res.statusText}`);
+	return res.json();
+}
+
+export async function createPin(req: {
+	url: string;
+	label?: string | null;
+	icon?: string | null;
+}): Promise<Pin> {
+	const res = await fetch(`${API_BASE}/pins`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(req)
+	});
+	if (!res.ok) throw new Error(`Failed to pin: ${res.statusText}`);
+	return res.json();
+}
+
+export async function updatePin(
+	id: string,
+	req: { label?: string | null; icon?: string | null; sort_order?: number }
+): Promise<Pin> {
+	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, {
+		method: 'PATCH',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(req)
+	});
+	if (!res.ok) throw new Error(`Failed to update pin: ${res.statusText}`);
+	return res.json();
+}
+
+export async function deletePin(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/pins/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete pin: ${res.statusText}`);
+}
+
+export async function reorderPins(urls: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/pins/reorder`, {
+		method: 'PUT',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ urls })
+	});
+	if (!res.ok) throw new Error(`Failed to reorder pins: ${res.statusText}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System (operator surface for app-runtime actions — `/actions#system`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AppStatus = 'Starting' | 'Running' | 'Backoff' | 'Crashed' | 'Stopping';
+
+export interface RunningApp {
+	action_id: string;
+	port: number;
+	pid: number | null;
+	status: AppStatus;
+	started_at: string | null;
+	restart_count: number;
+}
+
+export type LogStream = 'stdout' | 'stderr';
+
+export interface LogLine {
+	stream: LogStream;
+	line: string;
+	at: string;
+}
+
+/** GET /api/system/apps — snapshot of supervised app-runtime children. */
+export async function listSystemApps(): Promise<RunningApp[]> {
+	const res = await fetch(`${API_BASE}/system/apps`);
+	if (!res.ok) throw new Error(`Failed to list system apps: ${res.statusText}`);
+	return res.json();
+}
+
+/** GET /api/actions/:id/logs — captured stdout/stderr ring buffer for an app. */
+export async function getActionLogs(id: string): Promise<LogLine[]> {
+	const res = await fetch(`${API_BASE}/actions/${encodeURIComponent(id)}/logs`);
+	if (!res.ok) throw new Error(`Failed to get action logs: ${res.statusText}`);
+	return res.json();
+}
+
+/** POST /api/admin/reconcile — picks up new manifests + diffs running apps. */
+export async function adminReconcile(): Promise<{
+	upserted: number;
+	added: string[];
+	removed: string[];
+	restarted: string[];
+}> {
+	const res = await fetch(`${API_BASE}/admin/reconcile`, { method: 'POST' });
+	if (!res.ok) throw new Error(`Reconcile failed: ${res.statusText}`);
+	return res.json();
+}
+
+/**
+ * POST /api/admin/actions/import-git — clones a repo into `actions/<slug>/`
+ * and runs the standard scanner. Any folder under the slug containing a
+ * `manifest.toml` becomes an action. Returns added/updated/removed ids.
+ */
+export async function importActionsFromGit(body: {
+	url: string;
+	ref?: string;
+}): Promise<{ added: string[]; updated: string[]; removed: string[] }> {
+	const res = await fetch(`${API_BASE}/admin/actions/import-git`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => res.statusText);
+		throw new Error(text || `Import failed: ${res.statusText}`);
+	}
 	return res.json();
 }
 
@@ -284,11 +351,14 @@ export interface DeviceInfo {
 	app_version: string | null;
 }
 
+export type CredentialStatus = 'pending' | 'active' | 'revoked';
+
 export interface Credential {
 	id: string;
 	provider: string;
 	name: string;
 	auth_type: string;
+	status: CredentialStatus;
 	is_active: boolean;
 	device_info: DeviceInfo | null;
 	last_seen_at: string | null;
@@ -342,10 +412,6 @@ export interface SourceCatalogItem {
 
 /**
  * Fetch the source catalog (one tile per `[[source]]` in templates.toml).
- *
- * Note: this is named `listSourceCatalog` (not `listSources`) because the
- * legacy `listSources()` at the top of this file still exists for dead
- * endpoints awaiting cleanup. Both eventually collapse to one name.
  */
 export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
 	const res = await fetch(`${API_BASE}/sources`);
@@ -353,13 +419,9 @@ export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
 	return res.json();
 }
 
-// Backwards-compat aliases (deleted in Phase 6 cleanup).
-export type ConnectorAuthKind = SourceAuthKind;
-export type ConnectorCatalogItem = SourceCatalogItem;
-export const listConnectors = listSourceCatalog;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Source-connect flows (drive the 5 thin handlers in core/src/api/source_auth.rs)
+// Source-connect flows (drive the 5 thin handlers in virtues-core/src/api/source_auth.rs)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PairInitiateResponse {
@@ -367,21 +429,25 @@ export interface PairInitiateResponse {
 	qr_payload: string;
 }
 
-/** POST /api/pairing/initiate — mint a pending credential for a self_issued_bearer source. */
+/**
+ * **DEPRECATED IN v1.** The legacy `/api/pairing/initiate` and
+ * `/api/pairing/complete/:credential_id` endpoints were removed when iOS
+ * migrated to the unified pair-only flow. Pair iOS / Mac / sensor devices
+ * via Settings → Devices → "Add device" instead — that mints a pair token
+ * the device redeems against `/api/pair/consume`.
+ *
+ * These stubs remain so old call sites (DevicePairModal.svelte, the
+ * Sources-tab "Pair iOS" button) throw a clear error instead of silently
+ * hitting a 404. Delete callers in v1.1 and remove these exports.
+ */
+const LEGACY_PAIRING_REMOVED =
+	'This pairing flow was removed in v1. Pair the device from Settings → Devices → "Add device".';
+
 export async function pairInitiate(
-	source_id: string,
-	name: string
+	_source_id: string,
+	_name: string
 ): Promise<PairInitiateResponse> {
-	const res = await fetch(`${API_BASE}/pairing/initiate`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ source_id, name })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `pair_initiate failed: ${res.statusText}`);
-	}
-	return res.json();
+	throw new Error(LEGACY_PAIRING_REMOVED);
 }
 
 export interface PairCompleteResponse {
@@ -389,25 +455,12 @@ export interface PairCompleteResponse {
 	action_ids: Record<string, string>;
 }
 
-/** POST /api/pairing/complete/:credential_id — finalize self_issued_bearer + return fan-out. */
 export async function pairComplete(
-	credential_id: string,
-	token: string,
-	device_info: Record<string, unknown> = {}
+	_credential_id: string,
+	_token: string,
+	_device_info: Record<string, unknown> = {}
 ): Promise<PairCompleteResponse> {
-	const res = await fetch(
-		`${API_BASE}/pairing/complete/${encodeURIComponent(credential_id)}`,
-		{
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ token, device_info })
-		}
-	);
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `pair_complete failed: ${res.statusText}`);
-	}
-	return res.json();
+	throw new Error(LEGACY_PAIRING_REMOVED);
 }
 
 export interface OauthStartResponse {
@@ -459,37 +512,9 @@ export async function apikeyComplete(
 	return res.json();
 }
 
-// OAuth
-/**
- * Initiate OAuth authorization flow
- *
- * @param provider - OAuth provider name (e.g., "google", "notion")
- * @param returnUrl - Full URL where user should be redirected after OAuth completes.
- *   This is validated against an allowlist on the backend. Examples:
- *   - `http://localhost:5173/data/sources/add` (web dev)
- *   - `https://app.virtues.com/data/sources/add` (web prod)
- *   - `virtues://oauth/callback` (iOS app)
- *   - `/data/sources/add` (relative path)
- *
- * The backend stores this in a signed state token and redirects the user here
- * after OAuth completes, appending `?source_id=xxx&connected=true`.
- */
-export async function initiateOAuth(provider: string, returnUrl?: string) {
-	const params = new URLSearchParams();
-	if (returnUrl) params.set('state', returnUrl);
-
-	const url = `${API_BASE}/sources/${provider}/authorize${params.toString() ? `?${params}` : ''}`;
-	const res = await fetch(url, { method: 'POST' });
-	if (!res.ok) throw new Error(`Failed to initiate OAuth: ${res.statusText}`);
-	return res.json() as Promise<{ authorization_url: string; state: string }>;
-}
-
 // Device Pairing
 import type {
-	InitiatePairingRequest,
 	PairingInitResponse,
-	CompletePairingRequest,
-	PairingCompleteResponse,
 	PairingStatus,
 	PendingPairing
 } from '$lib/types/device-pairing';
@@ -497,10 +522,9 @@ import type {
 /**
  * Initiate device pairing — wraps the Phase 6+ `/api/pairing/initiate` endpoint.
  *
- * The legacy 6-char pairing code is gone; instead the new endpoint returns
- * a `credential_id` + `qr_payload`. We adapt to the legacy `PairingInitResponse`
- * shape (with `source_id` populated from `credential_id`) so the modal that
- * still reads this type keeps working without a rewrite.
+ * The new endpoint returns a `credential_id` + `qr_payload`. We adapt to the
+ * `PairingInitResponse` shape (with `source_id` populated from `credential_id`)
+ * so the modal that reads this type keeps working without a rewrite.
  *
  * @param deviceType - Source id (e.g., "ios", "mac"). Becomes the `source_id`
  *   on the credentials row.
@@ -512,9 +536,7 @@ export async function initiatePairing(
 ): Promise<PairingInitResponse> {
 	const { credential_id } = await pairInitiate(deviceType, name);
 	return {
-		source_id: credential_id,
-		code: '',
-		expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+		source_id: credential_id
 	};
 }
 
@@ -553,79 +575,6 @@ export async function listPendingPairings(): Promise<{ pairings: PendingPairing[
 
 	if (!res.ok) {
 		throw new Error(`Failed to list pending pairings: ${res.statusText}`);
-	}
-
-	return res.json();
-}
-
-// Plaid Link
-export interface PlaidLinkTokenResponse {
-	link_token: string;
-	expiration: string;
-}
-
-export interface PlaidExchangeTokenRequest {
-	public_token: string;
-	institution_id?: string;
-	institution_name?: string;
-}
-
-export interface ConnectedAccountSummary {
-	account_id: string;
-	name: string;
-	/** Plaid's standardized account type: depository, credit, loan, investment, brokerage, other */
-	account_type: string;
-	/** More specific subtype: checking, savings, credit card, mortgage, 401k, etc. */
-	subtype?: string;
-	/** Last 4 digits of account number */
-	mask?: string;
-}
-
-export interface PlaidExchangeTokenResponse {
-	source_id: string;
-	item_id: string;
-	institution_name?: string;
-	/** Summary of connected accounts for display */
-	connected_accounts: ConnectedAccountSummary[];
-}
-
-/**
- * Create a Plaid Link token for initializing Plaid Link SDK
- * @returns Link token and expiration time
- */
-export async function createPlaidLinkToken(): Promise<PlaidLinkTokenResponse> {
-	const res = await fetch(`${API_BASE}/plaid/link-token`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({})
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to create Plaid link token: ${res.statusText}`);
-	}
-
-	return res.json();
-}
-
-/**
- * Exchange a Plaid public token for an access token
- * Called after user completes Plaid Link flow
- * @param params - Public token and optional institution info
- * @returns Source ID and Item ID
- */
-export async function exchangePlaidToken(
-	params: PlaidExchangeTokenRequest
-): Promise<PlaidExchangeTokenResponse> {
-	const res = await fetch(`${API_BASE}/plaid/exchange-token`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(params)
-	});
-
-	if (!res.ok) {
-		const error = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(error.error || `Failed to exchange Plaid token: ${res.statusText}`);
 	}
 
 	return res.json();
@@ -1599,26 +1548,46 @@ export async function createReflection(date: string): Promise<Page> {
 }
 
 // ============================================================================
-// Projects API
+// Things API
+//
+// A "thing" is a folder you can re-enter — a project, pet, goal, topic,
+// anything you want to keep loosely organized. A Thing has a list of
+// pinned URLs it accumulates over time. The `current_status*` fields back
+// the catch-up memo at the top of the detail view. The `category` column
+// exists on the row but is not surfaced in v1 UX.
 // ============================================================================
 
-export interface Project {
+export interface Thing {
 	id: string;
 	name: string;
+	category: string | null;
 	icon: string | null;
 	description: string | null;
-	sort_order: number;
+	cover_image: string | null;
+	current_status: string | null;
+	current_status_at: string | null;
+	current_status_edited_by: 'ai' | 'human';
 	created_at: string;
 	updated_at: string;
 }
 
-export interface ProjectSummary extends Project {
-	item_count: number;
+export interface ThingSummary {
+	id: string;
+	name: string;
+	category: string | null;
+	icon: string | null;
+	description: string | null;
+	cover_image: string | null;
+	current_status: string | null;
+	current_status_at: string | null;
+	pin_count: number;
+	created_at: string;
+	updated_at: string;
 }
 
-export interface ProjectItem {
+export interface ThingPin {
 	id: string;
-	project_id: string;
+	thing_id: string;
 	url: string;
 	name: string | null;
 	description: string | null;
@@ -1626,92 +1595,109 @@ export interface ProjectItem {
 	added_at: string;
 }
 
-export interface ProjectDetail extends Project {
-	items: ProjectItem[];
+export interface ThingDetail extends Thing {
+	pins: ThingPin[];
 }
 
-export interface ProjectListResponse {
-	projects: ProjectSummary[];
+export interface ThingListResponse {
+	things: ThingSummary[];
 }
 
-export async function listProjects(): Promise<ProjectListResponse> {
-	const res = await fetch(`${API_BASE}/projects`);
-	if (!res.ok) throw new Error(`Failed to list projects: ${res.statusText}`);
+export async function listThings(category?: string): Promise<ThingListResponse> {
+	const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+	const res = await fetch(`${API_BASE}/things${qs}`);
+	if (!res.ok) throw new Error(`Failed to list things: ${res.statusText}`);
 	return res.json();
 }
 
-export async function getProject(id: string): Promise<ProjectDetail> {
-	const res = await fetch(`${API_BASE}/projects/${id}`);
-	if (!res.ok) throw new Error(`Failed to get project: ${res.statusText}`);
+export async function getThing(id: string): Promise<ThingDetail> {
+	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`Failed to get thing: ${res.statusText}`);
 	return res.json();
 }
 
-export async function createProject(
+export async function createThing(
 	name: string,
-	options?: { icon?: string | null; description?: string | null },
-): Promise<Project> {
-	const res = await fetch(`${API_BASE}/projects`, {
+	options?: {
+		category?: string | null;
+		icon?: string | null;
+		description?: string | null;
+	}
+): Promise<Thing> {
+	const res = await fetch(`${API_BASE}/things`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ name, icon: options?.icon ?? null, description: options?.description ?? null }),
+		body: JSON.stringify({
+			name,
+			category: options?.category ?? null,
+			icon: options?.icon ?? null,
+			description: options?.description ?? null
+		})
 	});
-	if (!res.ok) throw new Error(`Failed to create project: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to create thing: ${res.statusText}`);
 	return res.json();
 }
 
-export async function updateProject(
+export async function updateThing(
 	id: string,
 	updates: {
 		name?: string;
+		category?: string | null;
 		icon?: string | null;
 		description?: string | null;
-		sort_order?: number;
-	},
-): Promise<Project> {
-	const res = await fetch(`${API_BASE}/projects/${id}`, {
+	}
+): Promise<Thing> {
+	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`, {
 		method: 'PATCH',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates),
+		body: JSON.stringify(updates)
 	});
-	if (!res.ok) throw new Error(`Failed to update project: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to update thing: ${res.statusText}`);
 	return res.json();
 }
 
-export async function deleteProject(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete project: ${res.statusText}`);
+export async function deleteThing(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete thing: ${res.statusText}`);
 }
 
-export async function addProjectItem(
-	projectId: string,
+export async function addThingPin(
+	thingId: string,
 	url: string,
-	options?: { name?: string | null; description?: string | null },
-): Promise<ProjectItem> {
-	const res = await fetch(`${API_BASE}/projects/${projectId}/items`, {
+	options?: { name?: string | null; description?: string | null }
+): Promise<ThingPin> {
+	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(thingId)}/pins`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url, name: options?.name ?? null, description: options?.description ?? null }),
+		body: JSON.stringify({
+			url,
+			name: options?.name ?? null,
+			description: options?.description ?? null
+		})
 	});
-	if (!res.ok) throw new Error(`Failed to add project item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to add thing pin: ${res.statusText}`);
 	return res.json();
 }
 
-export async function removeProjectItem(projectId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${projectId}/items`, {
+export async function removeThingPin(thingId: string, url: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(thingId)}/pins`, {
 		method: 'DELETE',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url }),
+		body: JSON.stringify({ url })
 	});
-	if (!res.ok) throw new Error(`Failed to remove project item: ${res.statusText}`);
+	if (!res.ok) throw new Error(`Failed to remove thing pin: ${res.statusText}`);
 }
 
-export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/projects/${projectId}/items/reorder`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ urls }),
-	});
-	if (!res.ok) throw new Error(`Failed to reorder project items: ${res.statusText}`);
+export async function reorderThingPins(thingId: string, urls: string[]): Promise<void> {
+	const res = await fetch(
+		`${API_BASE}/things/${encodeURIComponent(thingId)}/pins/reorder`,
+		{
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ urls })
+		}
+	);
+	if (!res.ok) throw new Error(`Failed to reorder thing pins: ${res.statusText}`);
 }
 
 // ============================================================================

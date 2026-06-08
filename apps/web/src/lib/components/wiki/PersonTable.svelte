@@ -16,16 +16,15 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	// Relationship badge colors
 	const relationshipColors: Record<string, string> = {
-		"self": "badge-purple",
-		"friend": "badge-blue",
-		"family": "badge-pink",
-		"colleague": "badge-green",
-		"mentor": "badge-orange",
-		"acquaintance": "badge-gray",
-		"partner": "badge-pink",
-		"client": "badge-blue",
+		"self": "badge-muted",
+		"friend": "badge-muted",
+		"family": "badge-muted",
+		"colleague": "badge-muted",
+		"mentor": "badge-muted",
+		"acquaintance": "badge-muted",
+		"partner": "badge-muted",
+		"client": "badge-muted",
 	};
 
 	// Column definitions
@@ -94,8 +93,8 @@
 	}
 
 	function getRelationshipClass(rel?: string | null): string {
-		if (!rel) return "badge-gray";
-		return relationshipColors[rel.toLowerCase()] || "badge-gray";
+		if (!rel) return "badge-muted";
+		return relationshipColors[rel.toLowerCase()] || "badge-muted";
 	}
 
 	function handleItemClick(person: WikiPersonListItem) {
@@ -229,48 +228,6 @@
 		font-size: 0.9375rem;
 		color: var(--color-foreground);
 		line-height: 1.3;
-	}
-
-	/* Badges */
-	.badge {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.125rem 0.5rem;
-		font-size: 0.75rem;
-		font-weight: 500;
-		border-radius: 9999px;
-		white-space: nowrap;
-		text-transform: capitalize;
-	}
-
-	.badge-gray {
-		background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
-		color: var(--color-foreground-muted);
-	}
-
-	.badge-blue {
-		background: color-mix(in srgb, #3b82f6 15%, transparent);
-		color: #2563eb;
-	}
-
-	.badge-green {
-		background: color-mix(in srgb, #22c55e 15%, transparent);
-		color: #16a34a;
-	}
-
-	.badge-purple {
-		background: color-mix(in srgb, #8b5cf6 15%, transparent);
-		color: #7c3aed;
-	}
-
-	.badge-pink {
-		background: color-mix(in srgb, #ec4899 15%, transparent);
-		color: #db2777;
-	}
-
-	.badge-orange {
-		background: color-mix(in srgb, #f97316 15%, transparent);
-		color: #ea580c;
 	}
 
 	.date-text {

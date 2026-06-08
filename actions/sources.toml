@@ -1,0 +1,50 @@
+# Source catalog.
+#
+# This file holds only `[[source]]` rows — the catalog of providers a user can
+# connect (one tile per source on the Sources page). Action definitions
+# moved to per-folder manifests at `actions/<name>/manifest.toml` (see
+# ARCHITECTURE.md). On startup, `core::action_templates::reconcile_templates`
+# globs every per-folder manifest, merges with the source catalog, and upserts
+# into `app_actions`.
+
+[[source]]
+id = "ios"
+display_name = "iPhone"
+icon = "ri:smartphone-line"
+description = "Pair an iPhone to ingest HealthKit, Location, EventKit, FinanceKit, Contacts, and Microphone streams."
+auth = { kind = "self_issued_bearer" }
+
+[[source]]
+id = "mac"
+display_name = "Mac"
+icon = "ri:macbook-line"
+description = "Pair a Mac to ingest app usage, browser activity, and iMessage history."
+auth = { kind = "self_issued_bearer" }
+
+[[source]]
+id = "google"
+display_name = "Google"
+icon = "ri:google-fill"
+description = "Calendar, Mail, and Drive — read-only sync of your Google account."
+auth = { kind = "via_proxy", start_path = "/google/start" }
+
+[[source]]
+id = "notion"
+display_name = "Notion"
+icon = "ri:notion-fill"
+description = "Sync pages and databases from your Notion workspace."
+auth = { kind = "via_proxy", start_path = "/notion/start" }
+
+[[source]]
+id = "strava"
+display_name = "Strava"
+icon = "ri:run-line"
+description = "Sync your activities (runs, rides, swims) from Strava."
+auth = { kind = "via_proxy", start_path = "/strava/start" }
+
+[[source]]
+id = "plaid"
+display_name = "Plaid"
+icon = "ri:bank-card-line"
+description = "Connect bank accounts via Plaid Hosted Link to sync transactions, balances, investments, and liabilities."
+auth = { kind = "via_proxy", start_path = "/plaid/start" }

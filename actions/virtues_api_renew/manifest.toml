@@ -1,0 +1,6 @@
+name = "Virtues API Renewal"
+description = "Refreshes this server's Virtues API access. Reads your billing token, asks Atlas for a one-time monthly voucher, and redeems it for a fresh usage bearer. Atlas never sees the bearer; the API never sees you — the link between the two lives only here, on your server. Open the source to verify exactly what leaves this box."
+owner = "system"
+runtime = "function"
+command = ["virtues_api_renew"]
+triggers = ["manual", "tool"]

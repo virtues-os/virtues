@@ -10,7 +10,11 @@ import BackgroundTasks
 import Combine
 
 class BatchUploadCoordinator: ObservableObject, HealthCheckable {
-    static let shared = BatchUploadCoordinator()
+    static let shared = BatchUploadCoordinator(
+        configProvider: DeviceManager.shared,
+        storageProvider: SQLiteManager.shared,
+        networkManager: NetworkManager.shared
+    )
     
     @Published var isUploading = false
     @Published var lastUploadDate: Date?
@@ -84,15 +88,6 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         setupNetworkChangeObserver()
     }
 
-    /// Legacy singleton initializer - uses default dependencies
-    private convenience init() {
-        self.init(
-            configProvider: DeviceManager.shared,
-            storageProvider: SQLiteManager.shared,
-            networkManager: NetworkManager.shared
-        )
-    }
-    
     // MARK: - Timer Management
     
     func startPeriodicUploads() {

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
+	import Popover from "$lib/floating/primitives/Popover.svelte";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
 
 	interface Props {
@@ -43,42 +43,17 @@
 		return d;
 	});
 
-	// Calendar popover state
+	// Calendar popover state — positioning + click-outside + ESC handled
+	// by the Popover primitive.
 	let calendarOpen = $state(false);
 	let calendarMonth = $state(pageDate.getMonth());
 	let calendarYear = $state(pageDate.getFullYear());
-	let popoverEl = $state<HTMLDivElement | null>(null);
-	let calendarBtnEl = $state<HTMLButtonElement | null>(null);
 
 	// Reset calendar view when current date slug changes
 	$effect(() => {
 		currentDateSlug; // track
 		calendarMonth = pageDate.getMonth();
 		calendarYear = pageDate.getFullYear();
-	});
-
-	function toggleCalendar() {
-		calendarOpen = !calendarOpen;
-	}
-
-	function closeCalendar() {
-		calendarOpen = false;
-	}
-
-	// Close on click outside (exclude the toggle button itself)
-	function handleWindowClick(e: MouseEvent) {
-		const target = e.target as Node;
-		if (calendarBtnEl?.contains(target)) return;
-		if (popoverEl && !popoverEl.contains(target)) {
-			closeCalendar();
-		}
-	}
-
-	$effect(() => {
-		if (calendarOpen) {
-			window.addEventListener("click", handleWindowClick, true);
-			return () => window.removeEventListener("click", handleWindowClick, true);
-		}
 	});
 
 	// Calendar grid computation
@@ -124,7 +99,7 @@
 
 	function selectCalendarDay(date: Date) {
 		onNavigateDay(date);
-		closeCalendar();
+		calendarOpen = false;
 	}
 
 	const isNotToday = $derived(currentDateSlug !== todaySlug);
@@ -142,19 +117,19 @@
 			<Icon icon="ri:arrow-left-s-line" width="16" />
 		</button>
 
-		<div class="calendar-anchor">
-			<button
-				class="nav-btn calendar-btn"
-				bind:this={calendarBtnEl}
-				onclick={toggleCalendar}
-				type="button"
-				aria-label="Open date picker"
-			>
-				<Icon icon="ri:calendar-line" width="15" />
-			</button>
-
-			{#if calendarOpen}
-				<div class="calendar-popover" bind:this={popoverEl} transition:fade={{ duration: 100 }}>
+		<Popover bind:open={calendarOpen} placement="bottom-start" offset={4}>
+			{#snippet trigger({ toggle })}
+				<button
+					class="nav-btn calendar-btn"
+					onclick={toggle}
+					type="button"
+					aria-label="Open date picker"
+				>
+					<Icon icon="ri:calendar-line" width="15" />
+				</button>
+			{/snippet}
+			{#snippet children()}
+				<div class="calendar-popover">
 					<div class="cal-header">
 						<button class="cal-nav" onclick={prevMonth} type="button" aria-label="Previous month">
 							<Icon icon="ri:arrow-left-s-line" width="14" />
@@ -190,8 +165,8 @@
 						{/each}
 					</div>
 				</div>
-			{/if}
-		</div>
+			{/snippet}
+		</Popover>
 
 		{#if isNotToday}
 			<button
@@ -307,16 +282,8 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* Calendar popover anchor */
-	.calendar-anchor {
-		position: relative;
-	}
-
+	/* Calendar popover (positioning handled by the floating primitive) */
 	.calendar-popover {
-		position: absolute;
-		top: calc(100% + 4px);
-		left: -4px;
-		z-index: 100;
 		background: var(--color-background);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;

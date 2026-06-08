@@ -1,0 +1,7 @@
+name = "Transcription Resolution"
+description = "Resolve pending audio transcriptions; calls the transcription provider and writes results."
+owner = "system"
+runtime = "function"
+command = ["transcription_resolution"]
+triggers = ["cron", "manual"]
+default_cron = "0 */2 * * * *"
