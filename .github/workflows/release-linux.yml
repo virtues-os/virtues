@@ -2,17 +2,24 @@ name: Release Linux binaries
 
 # Triggered on tag push (e.g. `v0.1.0`) or manual dispatch. Builds the
 # `virtues` binary for x86_64 + aarch64 Linux NATIVELY on GitHub-hosted
-# Ubuntu 22.04 runners (the aarch64 runner is the free Linux ARM64 runner
+# Ubuntu 24.04 runners (the arm64 runner is the free Linux ARM64 runner
 # GitHub launched in 2025 for public repos), packages each as a tarball,
 # and attaches them to the GitHub Release for that tag.
 #
-# Native builds intentionally — `cross` with ORT 1.24 hits an unsolvable
-# C++ ABI mismatch (the prebuilt onnxruntime.so needs glibc 2.32+ /
-# GCC 11+ symbols that the default cross-rs images, frozen on Ubuntu
-# 20.04 / GCC 9, don't provide). Native Ubuntu 22.04 has both arches'
-# toolchains modern enough for ORT 1.24's prebuilt libs to link cleanly,
-# matches JetPack 6 / Debian 13 targets, and produces a single static-ish
-# binary so install.sh's flow stays one-curl.
+# Why Ubuntu 24.04 specifically: ORT 1.24's prebuilt manylinux blobs
+# reference glibc 2.38+ symbols (__isoc23_strtoll etc., added Aug 2023).
+# Ubuntu 24.04 ships glibc 2.39, so the build env matches the runtime
+# ABI. Earlier attempts (cross-rs on 20.04 / native ubuntu-22.04 with
+# glibc 2.35) all failed at link time on these symbols.
+#
+# Target compatibility (resulting binary requires glibc 2.38+):
+#   - Debian 13 trixie (glibc 2.40)         OK
+#   - Ubuntu 24.04 (glibc 2.39)             OK
+#   - Fedora 40+ (glibc 2.39)               OK
+#   - Jetson JetPack 6.2+ (glibc 2.38+)     OK
+#   - Jetson JetPack 6.0/6.1 (glibc 2.35)   NOT SUPPORTED — upgrade JetPack
+#
+# Single static-ish binary keeps install.sh's flow one-curl.
 #
 # Tarball naming intentionally matches what `scripts/install.sh` expects:
 #
@@ -46,10 +53,10 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
