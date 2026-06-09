@@ -125,31 +125,6 @@ pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
     handle_status(virtues).await
 }
 
-/// `virtues setup` — the quick DIY onboarding runner: migrations + identity +
-/// pre-fetch the inference models, then print the status dashboard with the
-/// next step. Idempotent; equivalent to `bringup` + `warm-models` + `status`
-/// in one command (the "CLI-first and quick" self-host path).
-pub async fn handle_setup(virtues: &Virtues) -> Result<()> {
-    let pool = virtues.database.pool();
-
-    println!("running migrations…");
-    virtues.database.initialize().await?;
-
-    println!("ensuring box identity…");
-    ca::ensure_ca(pool).await?;
-    pairing::ensure_rendezvous_identity(pool).await?;
-    #[cfg(target_os = "linux")]
-    crate::wireguard::reconcile::ensure_server_keypair(pool).await?;
-
-    println!("warming inference models (first run downloads ~hundreds of MB)…");
-    let embedder = crate::search::get_embedder().await?;
-    println!("  embedder ready (dim={})", embedder.dimension());
-    let _ = crate::search::get_reranker().await?;
-    println!("  reranker ready");
-
-    handle_status(virtues).await
-}
-
 /// `virtues subscribe` — connect this box to a paid Virtues subscription via the
 /// device-authorization flow.
 ///

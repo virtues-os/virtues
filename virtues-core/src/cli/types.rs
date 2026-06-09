@@ -152,11 +152,6 @@ pub enum Commands {
     /// identity exists. Idempotent; the appliance runs this headless, DIY too.
     Bringup,
 
-    /// Quick DIY onboarding: migrations + identity + pre-fetch inference models,
-    /// then print the status dashboard with your next step. (`bringup` +
-    /// `warm-models` + `status` in one.)
-    Setup,
-
     /// Connect this box to a paid Virtues subscription (device-authorization
     /// flow). Prints a QR + URL and waits for you to complete checkout on a
     /// phone or browser; the box never holds a Stripe key.

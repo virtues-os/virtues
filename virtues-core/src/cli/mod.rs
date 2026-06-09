@@ -114,24 +114,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .map_err(|e| e.to_string())?;
         }
 
-        Commands::Setup => {
-            // Deprecated. `virtues init` is now the canonical first-boot
-            // command — it does config + migrations + account prompt in
-            // a single recommended/advanced flow. Print a redirect notice
-            // and exit. We'll remove this command entirely in v0.2.
-            println!();
-            println!("  ⚠  `virtues setup` is deprecated — use `virtues init` instead.");
-            println!();
-            println!("     `virtues init` is the first-boot command now. It asks");
-            println!("     once whether you want Recommended (zero questions) or");
-            println!("     Advanced (override defaults), runs migrations, shows");
-            println!("     the privacy summary, and prompts you to log in or");
-            println!("     create a Virtues account.");
-            println!();
-            println!("     Run:  sudo -u virtues virtues init");
-            println!();
-            return Ok(());
-        }
 
         Commands::Subscribe => {
             // Idempotent — sqlx::migrate skips applied steps. Without this,
