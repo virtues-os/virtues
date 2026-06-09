@@ -60,6 +60,13 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the ring CryptoProvider as the process-wide default. Without this,
+    // `reqwest::Client` panics at first use ("No provider set") because rustls 0.23
+    // requires the provider installed before any TLS work. Mirrors atlas + virtues-core.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls ring CryptoProvider");
+
     // Initialize tracing
     tracing_subscriber::registry()
         .with(
