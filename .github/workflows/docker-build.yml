@@ -1,4 +1,14 @@
-name: Build
+name: Build cloud sidecar images
+
+# Builds + pushes the cloud sidecar Docker images (currently just
+# virtues-api) to GHCR on every push to main/staging. The home box itself
+# ships as a native binary via release-linux.yml, not as an image — the
+# old virtues-core Dockerfile was deleted in the Ollama migration cleanup.
+#
+# The atlas image is built + pushed via `make deploy-atlas` from the
+# operator's laptop (Stripe webhook secrets aren't appropriate for CI).
+# If we ever move atlas to CI, add a build-atlas job here mirroring
+# build-virtues-api.
 
 on:
   push:
@@ -12,62 +22,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  CORE_IMAGE: ghcr.io/virtues-os/virtues-core
   VIRTUES_API_IMAGE: ghcr.io/virtues-os/virtues-api
 
 jobs:
-  # ==========================================================================
-  # Build unified image (Rust backend + SvelteKit static frontend)
-  # Tagged :latest on main, :staging on staging, plus SHA for traceability
-  # ==========================================================================
-  build-core:
-    runs-on: fast-runner
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.CORE_IMAGE }}
-          tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-            type=raw,value=staging,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/staging' }}
-            type=sha,prefix=,format=long
-            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
-
-      - name: Build and push core
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./virtues-core/Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GIT_COMMIT=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ==========================================================================
-  # Build virtues-api AI proxy image
-  # Same tagging logic as build-core
-  # ==========================================================================
   build-virtues-api:
-    runs-on: fast-runner
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       packages: write
@@ -106,13 +65,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ==========================================================================
-  # Notify Atlas of new image version
-  # Atlas routes updates to the correct servers based on environment
-  # ==========================================================================
+  # Notify Atlas of new image version so it can roll the deployment.
   register-version:
-    needs: [build-core, build-virtues-api]
-    runs-on: ubuntu-latest
+    needs: [build-virtues-api]
+    runs-on: ubuntu-22.04
     if: github.event_name == 'push'
     steps:
       - name: Notify Atlas of new version
