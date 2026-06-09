@@ -619,18 +619,16 @@ print_next_steps() {
 
          sudo systemctl enable --now virtues
 
-    2. Get the URL to log in (mints a one-time setup token):
+    2. Run the first-boot setup — one prompt (Recommended vs Advanced),
+       then attach your Virtues account (or log in to an existing one):
 
-         sudo -u virtues virtues link
+         sudo -u virtues virtues init
 
-    3. Check status from CLI (or just open https://virtues.local in a browser):
+    3. After init prints a pair URL, open it in your browser to log in.
+       Check status anytime with:
 
          sudo systemctl status virtues
          virtues status
-
-  Optional, when you want chat / remote access:
-
-         sudo -u virtues virtues subscribe
 
   Docs: https://virtues.com/docs
   Issues: https://github.com/virtues/virtues/issues

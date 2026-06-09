@@ -75,47 +75,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Power users still have `virtues subscribe` / `virtues migrate` separately
     // when they want granular control.
     if matches!(cli.command, Some(Commands::Init)) {
-        let config = virtues::setup::run_init().await?;
+        use dialoguer::{theme::ColorfulTheme, Select};
 
-        // Save configuration
-        virtues::setup::save_config(&config)?;
+        // First-boot mode selector. 99.99% of users want Recommended
+        // (zero config questions — install.sh already wrote the env file
+        // with sane defaults). Advanced is the override-everything wizard
+        // for the rare operator running a custom deployment.
+        let mode_idx = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("How do you want to set up?")
+            .items(&[
+                "Recommended — takes care of everything (what you want)",
+                "Advanced — override defaults (DB URL, storage, encryption key, …)",
+            ])
+            .default(0)
+            .interact()
+            .unwrap_or(0);
+
+        let config = if mode_idx == 0 {
+            // Recommended: zero questions. Pull DATABASE_URL from the
+            // environment (install.sh wrote /var/lib/virtues/virtues.env;
+            // the systemd unit + this binary both load it). Fall back to
+            // the production peer-auth URL if env is unset.
+            virtues::setup::recommended_config()?
+        } else {
+            // Advanced: full interactive wizard.
+            let cfg = virtues::setup::run_init().await?;
+            virtues::setup::save_config(&cfg)?;
+            cfg
+        };
 
         // Migrations are functionally required before the subscribe step
-        // (box vault stores billing_token in `box_secrets`). If the user
-        // declined run_migrations we still run them here unless they're
-        // explicitly skipping subscribe too.
+        // (box vault stores billing_token in `box_secrets`). Idempotent —
+        // safe to re-run on every `virtues init` invocation.
         println!();
         println!("📊 Running migrations...");
         let db = virtues::database::Database::new(&config.database_url)?;
         db.initialize().await?;
         println!("✅ Migrations complete");
 
-        // Privacy framing before the account prompt. Two reasons this matters
-        // here, not in a settings page later:
-        //   1. The user is *deciding* whether to attach a Virtues account.
-        //      That's the moment they need the trust pitch — not after.
-        //   2. Atlas/virtues-api isn't optional infrastructure; OAuth
-        //      providers genuinely require a hosted HTTPS callback. Hiding
-        //      that fact behind a "Skip" button would be dishonest.
+        // Privacy framing before the account prompt. The user is *deciding*
+        // whether to attach a Virtues account — they need the trust pitch
+        // now, not buried in a Settings page later.
         print_account_intro();
 
-        // Subscribe step — prompt before launching the browser/QR flow so
-        // CI/dev users can decline. They can run `virtues subscribe` later.
+        // Account selector. Replaces the old binary Confirm.
         //
-        // v0.1.1 will replace this binary Confirm with a Select of
-        // [Log in to existing account] / [Create new account]. For now the
-        // intro text already lists both options and this prompt covers the
-        // "create new" branch; login lands when the atlas /init/login
-        // endpoint backed by Stripe Customer Portal magic link ships.
-        let do_subscribe = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("Create new account + subscribe now? ($20/mo, $15 wallet)")
-            .default(true)
+        // [1] Log in: lands when atlas /init/login (Stripe Customer Portal
+        //     magic link → mint billing_token for verified customer) ships.
+        //     Until then, the option exists in the UI for honesty + sets
+        //     expectations.
+        // [2] Create new: existing device-authorization → Stripe Checkout
+        //     flow that's been working since v0.1.0.
+        let account_idx = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Account")
+            .items(&[
+                "Log in to existing Virtues account",
+                "Create a new Virtues account ($20/mo, $15 wallet)",
+            ])
+            .default(1)
             .interact()
-            .unwrap_or(true);
+            .unwrap_or(1);
 
-        if do_subscribe {
-            // Build a minimal Virtues client just for the subscribe step —
-            // the wizard already ran migrations so the schema is ready.
+        if account_idx == 0 {
+            println!();
+            println!("  Log-in flow lands in v0.1.1 (atlas /init/login + Stripe");
+            println!("  Customer Portal magic link). For now, create a new account");
+            println!("  here, or hold off and re-run `virtues init` after the");
+            println!("  next release.");
+        } else {
             use virtues::VirtuesBuilder;
             let virtues = VirtuesBuilder::new()
                 .database(&config.database_url)
@@ -128,9 +155,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  ⚠  subscribe step did not finish: {e}");
                 println!("     Run `virtues subscribe` later when you're ready.");
             }
-        } else {
-            println!();
-            println!("  Skipped subscribe. Run `virtues subscribe` when you're ready.");
         }
 
         // Mint a CLI-origin pair token and print the URL.  The fragment-token

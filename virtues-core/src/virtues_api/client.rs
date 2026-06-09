@@ -494,7 +494,18 @@ impl BearerClient {
 
     /// Return a usable bearer: the current one if still valid, otherwise
     /// renew. Renewal requires a previously-claimed billing token.
+    ///
+    /// Dev override: when `VIRTUES_API_BEARER` is set we present it verbatim
+    /// and skip the vault/renew path entirely. This pairs with the gated
+    /// seed in virtues-api (`ENVIRONMENT=dev`), which funds an entitlement
+    /// keyed by `sha256(VIRTUES_API_BEARER)` — so a local virtues-api accepts
+    /// our calls without a real subscription. Unset in prod → no effect.
     async fn ensure_bearer(&self) -> Result<String> {
+        if let Ok(bearer) = std::env::var("VIRTUES_API_BEARER") {
+            if !bearer.is_empty() {
+                return Ok(bearer);
+            }
+        }
         match renew::current_bearer(&self.pool).await? {
             Some((bearer, Some(exp))) if exp > Utc::now() => Ok(bearer),
             _ => {

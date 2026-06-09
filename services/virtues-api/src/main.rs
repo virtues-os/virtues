@@ -17,6 +17,7 @@ mod blocklist;
 mod atlas_hydrator;
 mod config;
 mod db;
+mod dev_seed;
 mod entitlement;
 mod providers;
 mod proxy;
@@ -154,6 +155,16 @@ async fn main() -> Result<()> {
     // Background housekeeping: reclaim expired entitlements + dead vouchers.
     if let Some(pool) = db.as_ref() {
         sweeper::spawn(pool.clone());
+    }
+
+    // Dev-only: fund a known bearer so a local standalone virtues-api accepts
+    // calls without the Atlas voucher/redeem path. Gated to ENVIRONMENT=dev +
+    // no-Atlas so it can never fire in production.
+    if let Some(pool) = db.as_ref() {
+        let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
+        if is_dev && !config.has_atlas() {
+            dev_seed::seed_dev_entitlement(pool).await?;
+        }
     }
 
     // Build shared state
