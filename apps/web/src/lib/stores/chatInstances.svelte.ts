@@ -20,6 +20,8 @@ interface ChatInstanceEntry {
 
 /** Live status of one Deep Research subagent, from transient `data-subagent` events. */
 export interface SubagentStatus {
+    /** Unique per-dispatch id; with subagentId it namespaces workers across dispatch rounds. */
+    dispatchId: number;
     subagentId: number;
     title: string;
     model: string;
@@ -54,17 +56,23 @@ class ChatInstanceStore {
         return this.subagents.get(conversationId) ?? [];
     }
 
+    /** Clear the live subagent panel for a conversation (called at the start of each turn). */
+    clearSubagents(conversationId: string) {
+        if (this.subagents.has(conversationId)) this.subagents.set(conversationId, []);
+    }
+
     /** Upsert one subagent's status from a `data-subagent` event. */
     private applySubagent(conversationId: string, s: SubagentStatus) {
-        // subagent 0 going "thinking" marks the start of a fresh dispatch → reset the list.
-        const existing =
-            s.subagentId === 0 && s.status === 'thinking'
-                ? []
-                : (this.subagents.get(conversationId) ?? []).slice();
-        const idx = existing.findIndex((e) => e.subagentId === s.subagentId);
+        // Workers are keyed by (dispatchId, subagentId) so parallel ordering and multiple dispatch
+        // rounds in one turn never collide. The list is cleared per turn (clearSubagents on send),
+        // so within a turn we simply accumulate/update.
+        const existing = (this.subagents.get(conversationId) ?? []).slice();
+        const idx = existing.findIndex(
+            (e) => e.dispatchId === s.dispatchId && e.subagentId === s.subagentId
+        );
         if (idx >= 0) existing[idx] = s;
         else existing.push(s);
-        existing.sort((a, b) => a.subagentId - b.subagentId);
+        existing.sort((a, b) => a.dispatchId - b.dispatchId || a.subagentId - b.subagentId);
         this.subagents.set(conversationId, existing);
     }
 
@@ -234,6 +242,7 @@ class ChatInstanceStore {
                 // Double check refCount didn't go back up
                 if (entry.refCount <= 0) {
                     this.instances.delete(conversationId);
+                    this.subagents.delete(conversationId);
                 }
             }, 1000);
         }

@@ -32,6 +32,8 @@ impl SubagentStatus {
 /// `subagent_tx` side-channel on [`ToolContext`].
 #[derive(Debug, Clone)]
 pub struct SubagentUpdate {
+    /// Unique per-dispatch id, so multiple dispatch rounds in one turn don't collide in the panel.
+    pub dispatch_id: u64,
     pub id: usize,
     pub title: String,
     pub model: String,
@@ -55,6 +57,12 @@ pub struct ToolContext {
     /// Side-channel for streaming Deep Research subagent status to the live panel.
     /// Set by the chat handler; `None` for headless/action runs.
     pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
+    /// Cancellation token for the turn, so long-running tools (Deep Research workers) can be
+    /// stopped when the user cancels or disconnects.
+    pub cancel_token: Option<tokio_util::sync::CancellationToken>,
+    /// Shared per-turn budget of subagent workers, so a Deep Research turn can't fan out without
+    /// bound across repeated dispatches. `None` = unbounded (non-chat callers).
+    pub worker_budget: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Default for ToolContext {
@@ -66,6 +74,8 @@ impl Default for ToolContext {
             chat_id: None,
             action_id: None,
             subagent_tx: None,
+            cancel_token: None,
+            worker_budget: None,
         }
     }
 }
@@ -252,12 +262,7 @@ impl ToolExecutor {
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
-                crate::agent::subagent::dispatch(
-                    self._pool.clone(),
-                    arguments,
-                    context.subagent_tx.clone(),
-                )
-                .await
+                crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
             }
             // Page editing tools - all routed to PageEditorTool
             "create_page" => self.page_editor.create_page(arguments).await,

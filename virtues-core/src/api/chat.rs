@@ -307,6 +307,8 @@ pub enum StreamEvent {
     // Deep Research subagent status (data event for the live panel)
     #[serde(rename = "subagent-status")]
     SubagentStatus {
+        #[serde(rename = "dispatchId")]
+        dispatch_id: u64,
         #[serde(rename = "subagentId")]
         subagent_id: u32,
         title: String,
@@ -368,6 +370,8 @@ struct ThoughtSignatureData {
 /// Subagent status payload for AI SDK v6 data event (live Deep Research panel)
 #[derive(Debug, Serialize)]
 struct SubagentStatusData {
+    #[serde(rename = "dispatchId")]
+    dispatch_id: u64,
     #[serde(rename = "subagentId")]
     subagent_id: u32,
     title: String,
@@ -481,11 +485,12 @@ fn serialize_event(event: &StreamEvent) -> String {
             })
         }
         // Wrap subagent status in AI SDK v6 data event format (transient — live panel only)
-        StreamEvent::SubagentStatus { subagent_id, title, model, status, tokens } => {
+        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => {
             let wrapper = DataEvent {
                 event_type: "data-subagent".to_string(),
                 id: None,
                 data: SubagentStatusData {
+                    dispatch_id: *dispatch_id,
                     subagent_id: *subagent_id,
                     title: title.clone(),
                     model: model.clone(),
@@ -1285,6 +1290,10 @@ fn create_agent_stream(
         let (subagent_tx, mut subagent_rx) =
             tokio::sync::mpsc::channel::<crate::tools::SubagentUpdate>(64);
 
+        // Per-turn budget of Deep Research workers, shared across repeated dispatches so the
+        // orchestrator can't fan out without bound over its 50-step loop.
+        let worker_budget = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(12));
+
         // Build tool context from request
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
@@ -1293,6 +1302,8 @@ fn create_agent_stream(
             chat_id: Some(request.chat_id.clone()),
             action_id: None,
             subagent_tx: Some(subagent_tx),
+            cancel_token: Some(cancel_token.clone()),
+            worker_budget: Some(worker_budget),
         };
 
         // Get tool definitions — onboarding restricts to naming/memory tools only.
@@ -1340,6 +1351,7 @@ fn create_agent_stream(
             // Live subagent status — drained even while dispatch_subagents is still executing.
             Some(update) = subagent_rx.recv() => {
                 let ev = StreamEvent::SubagentStatus {
+                    dispatch_id: update.dispatch_id,
                     subagent_id: update.id as u32,
                     title: update.title,
                     model: update.model,
@@ -1429,6 +1441,13 @@ fn create_agent_stream(
                     if let Some(tc) = all_tool_calls.iter_mut().find(|tc| tc.tool_call_id.as_deref() == Some(&id)) {
                         tc.result = Some(result.clone());
                     }
+                    // Bill nested Deep Research worker tokens to this chat's usage. The dispatch
+                    // result carries aggregate worker token counts that the orchestrator's own
+                    // Usage events don't include.
+                    if let Some(usage) = result.get("usage") {
+                        total_input_tokens += usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        total_output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                    }
                     // AI SDK v6: tool-output-available event
                     let event = StreamEvent::ToolOutputAvailable {
                         tool_call_id: id,
@@ -1465,6 +1484,7 @@ fn create_agent_stream(
         // Drain any subagent updates buffered after the agent loop ended.
         while let Ok(update) = subagent_rx.try_recv() {
             let ev = StreamEvent::SubagentStatus {
+                dispatch_id: update.dispatch_id,
                 subagent_id: update.id as u32,
                 title: update.title,
                 model: update.model,

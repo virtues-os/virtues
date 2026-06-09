@@ -904,6 +904,9 @@
 		}
 		input = "";
 
+		// New turn → clear any leftover Deep Research panel from the previous turn.
+		chatInstances.clearSubagents(conversationId);
+
 		// Optimistic: show thinking indicator immediately (before network round-trip)
 		isAwaitingResponse = true;
 		await tick(); // Flush DOM so the indicator renders before the network call

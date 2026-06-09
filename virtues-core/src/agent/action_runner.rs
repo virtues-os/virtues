@@ -57,7 +57,7 @@ pub async fn run_agent_loop(
     let llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt));
 
     // 4. Get tools and model
-    let tools = crate::tools::get_all_tool_definitions_for_llm();
+    let tools = crate::tools::get_tools_for_action();
     let model = if let Some(m) = &model_override {
         m.clone()
     } else {
@@ -69,12 +69,10 @@ pub async fn run_agent_loop(
 
     // 5. Create and run AgentLoop (egress via BearerClient — no api config needed)
     let tool_context = crate::tools::ToolContext {
-        page_id: None,
         user_id: Some("system".to_string()),
-        space_id: None,
         chat_id: chat_id.clone(),
         action_id: Some(action_id.to_string()),
-        subagent_tx: None,
+        ..Default::default()
     };
 
     let agent_loop = crate::agent::AgentLoop::new_with_yjs(pool.clone(), yjs_state.clone());

@@ -2,7 +2,7 @@
 //!
 //! The orchestrator (Deep Research mode) calls `dispatch_subagents` with a list of independent
 //! missions. Each mission runs as its own **read-only** nested agent loop, in parallel, and returns
-//! a compressed findings summary plus the sources it touched (for citations). Workers do not get the
+//! a compressed findings summary plus (bounded) sources for citations. Workers do not get the
 //! `dispatch_subagents` tool, so there is no recursion.
 //!
 //! Each worker runs inside its own `tokio::spawn` with an **owned** `AgentLoop`, so the loop's
@@ -10,17 +10,19 @@
 //! parent's future to be non-`Send`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use chrono::Utc;
 use futures::StreamExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-
 use tokio::sync::mpsc::Sender;
+use tokio_util::sync::CancellationToken;
 
 use crate::agent::{AgentConfig, AgentEvent, AgentLoop};
 use crate::api::compaction::build_context_for_llm;
-use crate::tools::{SubagentStatus, SubagentUpdate, ToolError, ToolResult};
+use crate::tools::{SubagentStatus, SubagentUpdate, ToolContext, ToolError, ToolResult};
 
 /// Hard cap on workers per dispatch (matches the tool schema's maxItems).
 const MAX_MISSIONS: usize = 5;
@@ -28,6 +30,14 @@ const MAX_MISSIONS: usize = 5;
 const WORKER_MAX_STEPS: u32 = 12;
 /// Tool names whose results are worth surfacing as citations in the final answer.
 const CITABLE_TOOLS: &[&str] = &["web_search", "semantic_search", "sql_query"];
+/// Per-source caps so the (raw) tool payloads handed back to the orchestrator stay bounded.
+const MAX_SOURCE_ROWS: usize = 12;
+const MAX_SOURCE_WEB_RESULTS: usize = 5;
+const MAX_SOURCE_TEXT: usize = 600;
+
+/// Monotonic dispatch counter so each `dispatch_subagents` call gets a unique id. The live panel
+/// keys workers by `(dispatch_id, worker_id)` so multiple dispatch rounds in one turn don't collide.
+static DISPATCH_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// One worker's result, collected back at the orchestrator.
 struct MissionResult {
@@ -35,17 +45,16 @@ struct MissionResult {
     model: String,
     findings: String,
     sources: Vec<Value>,
-    tokens: u32,
+    input_tokens: u32,
+    output_tokens: u32,
     ok: bool,
 }
 
 /// Execute the `dispatch_subagents` tool: fan out missions in parallel, collect findings + sources.
-///
-/// `tx` is an optional side-channel that streams each worker's live status to the panel.
 pub async fn dispatch(
     pool: Arc<PgPool>,
     arguments: Value,
-    tx: Option<Sender<SubagentUpdate>>,
+    context: &ToolContext,
 ) -> Result<ToolResult, ToolError> {
     let missions = arguments
         .get("missions")
@@ -69,13 +78,13 @@ pub async fn dispatch(
         .await
         .unwrap_or_else(|_| default_tier_model("strong"));
 
+    let dispatch_id = DISPATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tx = context.subagent_tx.clone();
+    let cancel = context.cancel_token.clone();
+    let mut budget_exhausted = false;
+
     let mut handles = Vec::new();
-    for (id, mission) in missions.iter().take(MAX_MISSIONS).enumerate() {
-        let title = mission
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Research")
-            .to_string();
+    for mission in missions.iter().take(MAX_MISSIONS) {
         let objective = mission
             .get("objective")
             .and_then(|v| v.as_str())
@@ -84,20 +93,56 @@ pub async fn dispatch(
         if objective.trim().is_empty() {
             continue;
         }
+
+        // Reserve a slot from the shared per-turn worker budget, if one is set. Once the turn's
+        // budget is spent, stop fanning out (the orchestrator can't run unbounded workers).
+        if let Some(b) = &context.worker_budget {
+            if b.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |c| c.checked_sub(1))
+                .is_err()
+            {
+                budget_exhausted = true;
+                break;
+            }
+        }
+
+        let title = mission
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Research")
+            .to_string();
         let model = match mission.get("model").and_then(|v| v.as_str()) {
             Some("fast") => fast.clone(),
             Some("strong") => strong.clone(),
             _ => balanced.clone(),
         };
 
+        let worker_id = handles.len();
         let pool = pool.clone();
         let tx = tx.clone();
+        let cancel = cancel.clone();
         handles.push(tokio::spawn(async move {
-            run_one_worker(pool, id, model, title, objective, tx).await
+            run_one_worker(
+                pool,
+                dispatch_id,
+                worker_id,
+                model,
+                title,
+                objective,
+                tx,
+                cancel,
+            )
+            .await
         }));
     }
 
     if handles.is_empty() {
+        if budget_exhausted {
+            // Carry the note in `data` (not `error`): the orchestrator reads the serialized data.
+            return Ok(ToolResult::success(json!({
+                "missions": [],
+                "note": "This research turn has reached its worker budget. Synthesize from the findings you already have."
+            })));
+        }
         return Err(ToolError::InvalidParameters(
             "no mission had a non-empty objective".into(),
         ));
@@ -106,42 +151,71 @@ pub async fn dispatch(
     let joined = futures::future::join_all(handles).await;
 
     let mut out_missions = Vec::new();
+    let mut ok_count = 0usize;
+    let mut total_input: u32 = 0;
+    let mut total_output: u32 = 0;
     for result in joined {
         match result {
-            Ok(m) => out_missions.push(json!({
-                "title": m.title,
-                "model": m.model,
-                "findings": m.findings,
-                "sources": m.sources,
-                "tokens": m.tokens,
-                "ok": m.ok,
-            })),
+            Ok(m) => {
+                if m.ok {
+                    ok_count += 1;
+                }
+                total_input = total_input.saturating_add(m.input_tokens);
+                total_output = total_output.saturating_add(m.output_tokens);
+                out_missions.push(json!({
+                    "title": m.title,
+                    "model": m.model,
+                    "findings": m.findings,
+                    "sources": m.sources,
+                    "ok": m.ok,
+                }));
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "Subagent task panicked");
             }
         }
     }
 
-    Ok(ToolResult::success(json!({ "missions": out_missions })))
+    // Survivor guard: if every worker failed or returned nothing, tell the orchestrator plainly
+    // (in `data`, so it's read) rather than handing it a hollow success to confabulate from.
+    let note = if ok_count == 0 {
+        Some(format!(
+            "All {} research workers failed or returned no findings. Try fewer workers with simpler, self-contained objectives — or answer from what you already know.",
+            out_missions.len()
+        ))
+    } else {
+        None
+    };
+
+    Ok(ToolResult::success(json!({
+        "missions": out_missions,
+        "note": note,
+        // Aggregate worker token usage so the chat handler can bill it (the gateway already
+        // charged per call; this keeps the app's own accounting honest).
+        "usage": { "input_tokens": total_input, "output_tokens": total_output },
+    })))
 }
 
 /// Run one worker mission to completion in an isolated read-only agent loop.
+#[allow(clippy::too_many_arguments)]
 async fn run_one_worker(
     pool: Arc<PgPool>,
-    id: usize,
+    dispatch_id: u64,
+    worker_id: usize,
     model: String,
     title: String,
     objective: String,
     tx: Option<Sender<SubagentUpdate>>,
+    cancel: Option<CancellationToken>,
 ) -> MissionResult {
     // Announce the worker as thinking so the panel shows it immediately.
-    emit(&tx, id, &title, &model, SubagentStatus::Thinking, 0).await;
+    emit(&tx, dispatch_id, worker_id, &title, &model, SubagentStatus::Thinking, 0).await;
 
     let system_prompt = build_worker_prompt(&objective);
     let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt));
     let tools = crate::tools::get_tools_for_subagent();
 
-    let context = crate::tools::ToolContext {
+    let context = ToolContext {
         user_id: Some("subagent".to_string()),
         // Workers don't re-emit panel updates or spawn sub-workers.
         ..Default::default()
@@ -152,10 +226,12 @@ async fn run_one_worker(
         ..Default::default()
     });
 
-    let mut stream = agent_loop.run(model.clone(), messages, tools, context, None, None);
+    // Pass the turn's cancel token so a stopped/disconnected chat actually halts the worker.
+    let mut stream = agent_loop.run(model.clone(), messages, tools, context, None, cancel);
 
     let mut findings = String::new();
-    let mut tokens: u32 = 0;
+    let mut input_tokens: u32 = 0;
+    let mut output_tokens: u32 = 0;
     let mut had_error = false;
     // id → (tool_name, args) captured from the call lifecycle, completed into a source on result.
     let mut pending: HashMap<String, (String, Value)> = HashMap::new();
@@ -178,13 +254,16 @@ async fn run_one_worker(
                         sources.push(json!({
                             "tool_name": tool_name,
                             "args": args,
-                            "data": result,
+                            // Bound the payload: the orchestrator only needs findings; full rows/
+                            // results would bloat its context (and cost) on every subsequent step.
+                            "data": truncate_source_data(tool_name, result),
                         }));
                     }
                 }
             }
-            AgentEvent::Usage { completion_tokens, .. } => {
-                tokens = tokens.saturating_add(completion_tokens);
+            AgentEvent::Usage { prompt_tokens, completion_tokens, .. } => {
+                input_tokens = input_tokens.saturating_add(prompt_tokens);
+                output_tokens = output_tokens.saturating_add(completion_tokens);
             }
             AgentEvent::Error { message, .. } => {
                 tracing::warn!(title = %title, error = %message, "Subagent worker error");
@@ -200,22 +279,25 @@ async fn run_one_worker(
     } else {
         SubagentStatus::Failed
     };
-    emit(&tx, id, &title, &model, status, tokens).await;
+    emit(&tx, dispatch_id, worker_id, &title, &model, status, output_tokens).await;
 
     MissionResult {
         title,
         model,
         findings,
         sources,
-        tokens,
+        input_tokens,
+        output_tokens,
         ok,
     }
 }
 
 /// Send a status update on the side-channel if present (best-effort — never blocks the worker).
+#[allow(clippy::too_many_arguments)]
 async fn emit(
     tx: &Option<Sender<SubagentUpdate>>,
-    id: usize,
+    dispatch_id: u64,
+    worker_id: usize,
     title: &str,
     model: &str,
     status: SubagentStatus,
@@ -224,7 +306,8 @@ async fn emit(
     if let Some(tx) = tx {
         let _ = tx
             .send(SubagentUpdate {
-                id,
+                dispatch_id,
+                id: worker_id,
                 title: title.to_string(),
                 model: model.to_string(),
                 status,
@@ -234,10 +317,45 @@ async fn emit(
     }
 }
 
+/// Bound a tool result before it's handed back to the orchestrator: keep the citation-relevant
+/// shape (the query, a preview of rows/results) but drop the long tail of data.
+fn truncate_source_data(tool_name: &str, mut data: Value) -> Value {
+    if let Some(obj) = data.as_object_mut() {
+        // SQL / semantic results: keep the first N rows + a total count.
+        if let Some(rows) = obj.get("rows").and_then(|r| r.as_array()) {
+            let total = rows.len();
+            if total > MAX_SOURCE_ROWS {
+                let kept: Vec<Value> = rows.iter().take(MAX_SOURCE_ROWS).cloned().collect();
+                obj.insert("rows".into(), Value::Array(kept));
+                obj.insert("row_count".into(), json!(total));
+                obj.insert("truncated".into(), json!(true));
+            }
+        }
+        // web_search: cap result count and trim the heavy full-text field to a snippet.
+        if let Some(results) = obj.get_mut("results").and_then(|r| r.as_array_mut()) {
+            results.truncate(MAX_SOURCE_WEB_RESULTS);
+            for r in results.iter_mut() {
+                if let Some(ro) = r.as_object_mut() {
+                    if let Some(text) = ro.get("text").and_then(|t| t.as_str()) {
+                        if text.len() > MAX_SOURCE_TEXT {
+                            let snippet: String = text.chars().take(MAX_SOURCE_TEXT).collect();
+                            ro.insert("text".into(), json!(snippet));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let _ = tool_name; // (reserved for tool-specific shaping if needed later)
+    data
+}
+
 /// System prompt for a single read-only research worker.
 fn build_worker_prompt(objective: &str) -> String {
+    let datetime = Utc::now().format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string();
     format!(
         "You are a focused research worker with ONE objective. Pursue it, then report back.\n\n\
+         Current date/time: {datetime}\n\n\
          <objective>\n{objective}\n</objective>\n\n\
          Rules:\n\
          - You are READ-ONLY: use sql_query, semantic_search, web_search, code_interpreter, and think. \
