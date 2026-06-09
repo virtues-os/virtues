@@ -22,7 +22,7 @@ static ADDITION_RE: OnceLock<Regex> = OnceLock::new();
 static DELETION_RE: OnceLock<Regex> = OnceLock::new();
 
 use super::executor::{ToolContext, ToolError, ToolResult};
-use crate::api::{chat_permissions, pages};
+use crate::api::pages;
 use crate::ids;
 use crate::server::yjs::YjsState;
 
@@ -236,28 +236,9 @@ impl PageEditorTool {
             }
         };
 
-        // Check edit permission if chat_id is available
-        if let Some(ref chat_id) = context.chat_id {
-            let has_perm = chat_permissions::has_permission(self.pool.as_ref(), chat_id, &page_id)
-                .await
-                .unwrap_or(false);
-
-            if !has_perm {
-                // Get page title for the permission prompt
-                let page_title = pages::get_page(self.pool.as_ref(), &page_id)
-                    .await
-                    .map(|p| p.title)
-                    .unwrap_or_else(|_| "Unknown".to_string());
-
-                return Ok(ToolResult::success(serde_json::json!({
-                    "permission_needed": true,
-                    "entity_id": page_id,
-                    "entity_type": "page",
-                    "entity_title": page_title,
-                    "message": "Waiting for the user to grant edit permission.",
-                })));
-            }
-        }
+        // Editing a page is reversible (Yjs keeps history) and local, so it runs freely — no
+        // permission prompt. Write-permission gating lives in the executor and applies only to
+        // destructive/outbound tools (run_action, delete_action).
 
         // Strip CriticMarkup markers from replace text
         let replace_content = Self::strip_critic_markup(&args.replace);

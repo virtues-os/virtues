@@ -16,7 +16,7 @@ import { type YjsDocument } from '$lib/yjs';
 /**
  * Resource types that can be edited
  */
-export type EditableResourceType = 'page' | 'folder' | 'wiki_entry';
+export type EditableResourceType = 'page' | 'folder' | 'wiki_entry' | 'action';
 
 /**
  * An item on the edit allow list

@@ -166,6 +166,57 @@ impl ToolExecutor {
         Ok(Self::new(pool))
     }
 
+    /// Tools that require an explicit "I allow" from the user before running, because they
+    /// destroy something or take a real-world / outbound action. Everything else runs freely
+    /// (reversible, local). The free/gated split is the whole permission model.
+    const PERMISSION_REQUIRED: &'static [&'static str] = &["run_action", "delete_action"];
+
+    /// If `tool_name` is gated and the user hasn't granted it for this chat, return a
+    /// `permission_needed` result (the frontend then shows an inline allow/deny prompt and
+    /// regenerates on approval). Returns `None` when the tool may run.
+    async fn check_tool_permission(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        context: &ToolContext,
+    ) -> Result<Option<ToolResult>, ToolError> {
+        if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
+            return Ok(None);
+        }
+        // Headless/action runs (no chat) aren't gated.
+        let Some(chat_id) = context.chat_id.as_deref() else {
+            return Ok(None);
+        };
+        // The gated action tools all identify their target via `id`. If absent, let the tool
+        // surface its own validation error.
+        let Some(action_id) = arguments.get("id").and_then(|v| v.as_str()) else {
+            return Ok(None);
+        };
+
+        let granted =
+            crate::api::chat_permissions::has_permission(self._pool.as_ref(), chat_id, action_id)
+                .await
+                .unwrap_or(false);
+        if granted {
+            return Ok(None);
+        }
+
+        let title = crate::scheduler::actions::get_action(self._pool.as_ref(), action_id)
+            .await
+            .map(|a| a.name)
+            .unwrap_or_else(|_| "this action".to_string());
+
+        let verb = if tool_name == "delete_action" { "delete" } else { "run" };
+
+        Ok(Some(ToolResult::success(serde_json::json!({
+            "permission_needed": true,
+            "entity_id": action_id,
+            "entity_type": "action",
+            "entity_title": title,
+            "message": format!("AI wants to {verb} \"{title}\""),
+        }))))
+    }
+
     /// Execute a tool by name with given arguments
     pub async fn execute(
         &self,
@@ -174,6 +225,12 @@ impl ToolExecutor {
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
         tracing::info!(tool = tool_name, "Executing tool");
+
+        // Tool-based write permissions: destructive/outbound tools require an explicit
+        // "I allow" from the user before they run (see PERMISSION_REQUIRED).
+        if let Some(prompt) = self.check_tool_permission(tool_name, &arguments, context).await? {
+            return Ok(prompt);
+        }
 
         match tool_name {
             "think" => {
