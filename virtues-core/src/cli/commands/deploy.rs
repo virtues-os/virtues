@@ -125,31 +125,6 @@ pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
     handle_status(virtues).await
 }
 
-/// `virtues setup` — the quick DIY onboarding runner: migrations + identity +
-/// pre-fetch the inference models, then print the status dashboard with the
-/// next step. Idempotent; equivalent to `bringup` + `warm-models` + `status`
-/// in one command (the "CLI-first and quick" self-host path).
-pub async fn handle_setup(virtues: &Virtues) -> Result<()> {
-    let pool = virtues.database.pool();
-
-    println!("running migrations…");
-    virtues.database.initialize().await?;
-
-    println!("ensuring box identity…");
-    ca::ensure_ca(pool).await?;
-    pairing::ensure_rendezvous_identity(pool).await?;
-    #[cfg(target_os = "linux")]
-    crate::wireguard::reconcile::ensure_server_keypair(pool).await?;
-
-    println!("warming inference models (first run downloads ~hundreds of MB)…");
-    let embedder = crate::search::get_embedder().await?;
-    println!("  embedder ready (dim={})", embedder.dimension());
-    let _ = crate::search::get_reranker().await?;
-    println!("  reranker ready");
-
-    handle_status(virtues).await
-}
-
 /// `virtues subscribe` — connect this box to a paid Virtues subscription via the
 /// device-authorization flow.
 ///
@@ -228,6 +203,105 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
             }
             Ok(LinkStatus::None) => {
                 println!("  no link in flight — run `virtues subscribe` again.");
+                return Ok(());
+            }
+            Ok(LinkStatus::Pending) => { /* keep waiting */ }
+            Err(e) => tracing::warn!("poll error (will retry): {e}"),
+        }
+    }
+}
+
+/// Magic-link login for `[1] Log in to existing Virtues account`.
+///
+/// Pairs with `handle_subscribe`: both mint a device_code via `link::start`
+/// and both poll `link::poll` until ready. The login path differs in how
+/// the device_link gets flipped to ready:
+///   - subscribe: user completes Stripe Checkout → atlas finalizes
+///   - login:     user clicks magic link in email → atlas finalizes
+/// Same poll loop afterward; same eager renew for the first voucher.
+pub async fn handle_login(virtues: &Virtues) -> Result<()> {
+    use crate::virtues_api::link::{self, LinkStatus, LoginStart};
+
+    let pool = virtues.database.pool();
+    let atlas_url =
+        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+    let api_url =
+        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+    let http = crate::http_client::virtues_api_client();
+
+    // Start a device_link so the atlas /init/login call has something to
+    // bind to. The subscribe path uses this same start; the login path
+    // never shows the user the user_code/QR — they get an email instead.
+    let _start = link::start(pool, &http, &atlas_url).await?;
+
+    // Prompt for email.
+    let email: String = dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Email on your Virtues subscription")
+        .validate_with(|s: &String| -> std::result::Result<(), &str> {
+            if s.contains('@') && s.contains('.') {
+                Ok(())
+            } else {
+                Err("that doesn't look like an email")
+            }
+        })
+        .interact_text()
+        .map_err(|e| anyhow::anyhow!("prompt failed: {e}"))?;
+
+    println!();
+    match link::login(pool, &http, &atlas_url, &email).await? {
+        LoginStart::Sent => {
+            println!("  📧 Sent — check {email} for the magic link.");
+            println!("     (15 min, single-use. Click the link, then this CLI continues.)");
+        }
+        LoginStart::NoAccount => {
+            println!(
+                "  No Virtues subscription found on {email}. Re-run `virtues init`"
+            );
+            println!("  and pick [2] Create new account instead.");
+            return Ok(());
+        }
+        LoginStart::RateLimited => {
+            println!(
+                "  Too many login attempts for {email} in the last hour."
+            );
+            println!("  Try again later, or use [2] Create new if you don't have an account.");
+            return Ok(());
+        }
+    }
+
+    println!();
+    println!("  Waiting for you to click the link… (Ctrl-C to cancel)");
+
+    // Same poll loop as handle_subscribe. The device_link flips to ready
+    // when the user clicks the email magic link → atlas marks it ready
+    // → next poll picks up the billing_token.
+    let interval = std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15 * 60);
+    loop {
+        tokio::time::sleep(interval).await;
+        if std::time::Instant::now() > deadline {
+            println!("  link expired — run `virtues login` again.");
+            return Ok(());
+        }
+        match link::poll(pool, &http, &atlas_url, &api_url).await {
+            Ok(LinkStatus::Ready) => {
+                println!();
+                println!("  ✅ logged in — subscription attached.");
+                match crate::virtues_api::renew::renew(pool, &http, &atlas_url, &api_url).await {
+                    Ok(_) => println!("  ✅ wallet credited — AI ready."),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "post-login renew failed");
+                        println!("  ⚠  wallet not yet credited (network blip?). It'll retry shortly.");
+                    }
+                }
+                return handle_status(virtues).await;
+            }
+            Ok(LinkStatus::Expired) => {
+                println!("  link expired or denied — run `virtues login` again.");
+                return Ok(());
+            }
+            Ok(LinkStatus::None) => {
+                println!("  no link in flight — run `virtues login` again.");
                 return Ok(());
             }
             Ok(LinkStatus::Pending) => { /* keep waiting */ }

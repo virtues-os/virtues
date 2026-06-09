@@ -139,6 +139,71 @@ pub async fn poll(
     }
 }
 
+/// Outcome of a `login_start` attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoginStart {
+    /// Magic link was emailed; the box should keep polling /init/poll
+    /// (same loop as Stripe Checkout flow — the device_link flips to
+    /// `ready` once the user clicks the link).
+    Sent,
+    /// No Virtues subscription found for this email. Box should surface
+    /// "no account — subscribe?" CTA to the user.
+    NoAccount,
+    /// Too many recent attempts from this email — wait an hour.
+    RateLimited,
+}
+
+/// Initiate the magic-link login for an existing Virtues subscription.
+///
+/// Flow (mirrors `start` for the create-new case, just hits a different
+/// atlas endpoint):
+///   1. Read the in-flight device_code (must have called `start` first).
+///   2. POST {device_code, email} to atlas /init/login.
+///   3. Atlas resolves the customer + sends a magic link via Resend.
+///   4. Box waits for the user to click; `poll` picks up status='ready'.
+pub async fn login(
+    db: &PgPool,
+    http: &reqwest::Client,
+    atlas_url: &str,
+    email: &str,
+) -> Result<LoginStart> {
+    let Some((device_code, _meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
+        return Err(anyhow!(
+            "no in-flight link — call `link::start` first to mint a device_code"
+        ));
+    };
+
+    let resp = http
+        .post(format!("{}/init/login", atlas_url.trim_end_matches('/')))
+        .json(&serde_json::json!({ "device_code": device_code, "email": email }))
+        .send()
+        .await
+        .context("POST /init/login")?;
+
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().await.context("/init/login non-JSON response")?;
+    if !status.is_success() {
+        // Atlas-side error codes we care about:
+        //   rate_limited       — RateLimited
+        //   no_device_link     — caller restarted state; surface as error
+        //   email_send_failed  — error
+        if v["error"]["code"].as_str() == Some("rate_limited") {
+            return Ok(LoginStart::RateLimited);
+        }
+        return Err(anyhow!(
+            "login start failed: {status} — {}",
+            v["error"]["message"].as_str().unwrap_or("unknown")
+        ));
+    }
+
+    match v["status"].as_str().unwrap_or("") {
+        "sent" => Ok(LoginStart::Sent),
+        "no_account" => Ok(LoginStart::NoAccount),
+        other => Err(anyhow!("unexpected login status: {other}")),
+    }
+}
+
 async fn clear_inflight(db: &PgPool) {
     if let Err(e) = sqlx::query("DELETE FROM box_secrets WHERE key = $1")
         .bind(INFLIGHT_KEY)

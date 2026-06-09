@@ -114,11 +114,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .map_err(|e| e.to_string())?;
         }
 
-        Commands::Setup => {
-            commands::deploy::handle_setup(&virtues)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
 
         Commands::Subscribe => {
             // Idempotent — sqlx::migrate skips applied steps. Without this,

@@ -25,7 +25,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # HTTP Client (for proxying)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "stream"] }
 
 # Streaming support
 futures = "0.3"
