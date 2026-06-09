@@ -74,6 +74,7 @@ pub async fn run_agent_loop(
         space_id: None,
         chat_id: chat_id.clone(),
         action_id: Some(action_id.to_string()),
+        subagent_tx: None,
     };
 
     let agent_loop = crate::agent::AgentLoop::new_with_yjs(pool.clone(), yjs_state.clone());

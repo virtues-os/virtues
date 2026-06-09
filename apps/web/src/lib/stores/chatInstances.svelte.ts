@@ -18,6 +18,15 @@ interface ChatInstanceEntry {
     lastThoughtSignature?: string;
 }
 
+/** Live status of one Deep Research subagent, from transient `data-subagent` events. */
+export interface SubagentStatus {
+    subagentId: number;
+    title: string;
+    model: string;
+    status: 'thinking' | 'done' | 'failed';
+    tokens: number;
+}
+
 interface ActivePageContext {
     page_id: string;
     page_title?: string;
@@ -36,6 +45,28 @@ interface CreateChatConfig {
 
 class ChatInstanceStore {
     private instances = $state(new Map<string, ChatInstanceEntry>());
+    // Live Deep Research subagent state, keyed by conversationId. Ephemeral — rebuilt each turn
+    // from transient `data-subagent` events.
+    private subagents = $state(new Map<string, SubagentStatus[]>());
+
+    /** Current Deep Research subagents for a conversation (empty if none active). */
+    getSubagents(conversationId: string): SubagentStatus[] {
+        return this.subagents.get(conversationId) ?? [];
+    }
+
+    /** Upsert one subagent's status from a `data-subagent` event. */
+    private applySubagent(conversationId: string, s: SubagentStatus) {
+        // subagent 0 going "thinking" marks the start of a fresh dispatch → reset the list.
+        const existing =
+            s.subagentId === 0 && s.status === 'thinking'
+                ? []
+                : (this.subagents.get(conversationId) ?? []).slice();
+        const idx = existing.findIndex((e) => e.subagentId === s.subagentId);
+        if (idx >= 0) existing[idx] = s;
+        else existing.push(s);
+        existing.sort((a, b) => a.subagentId - b.subagentId);
+        this.subagents.set(conversationId, existing);
+    }
 
     /**
      * Get an existing Chat instance or create a new one.
@@ -111,6 +142,10 @@ class ChatInstanceStore {
                     if (entry) {
                         entry.lastThoughtSignature = (dataPart.data as { signature: string }).signature;
                     }
+                }
+                // Handle Deep Research subagent events (transient - drives the live panel)
+                else if (dataPart.type === 'data-subagent') {
+                    this.applySubagent(conversationId, dataPart.data as SubagentStatus);
                 }
                 // Handle checkpoint events from auto-compaction (non-transient - persists in messages)
                 else if (dataPart.type === 'data-checkpoint') {

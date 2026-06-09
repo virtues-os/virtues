@@ -304,6 +304,17 @@ pub enum StreamEvent {
         signature: String,
     },
 
+    // Deep Research subagent status (data event for the live panel)
+    #[serde(rename = "subagent-status")]
+    SubagentStatus {
+        #[serde(rename = "subagentId")]
+        subagent_id: u32,
+        title: String,
+        model: String,
+        status: String,
+        tokens: u32,
+    },
+
     // Checkpoint event emitted after auto-compaction
     #[serde(rename = "checkpoint")]
     Checkpoint {
@@ -352,6 +363,18 @@ struct CheckpointData {
 #[derive(Debug, Serialize)]
 struct ThoughtSignatureData {
     signature: String,
+}
+
+/// Subagent status payload for AI SDK v6 data event (live Deep Research panel)
+#[derive(Debug, Serialize)]
+struct SubagentStatusData {
+    #[serde(rename = "subagentId")]
+    subagent_id: u32,
+    title: String,
+    model: String,
+    /// "thinking" | "done" | "failed"
+    status: String,
+    tokens: u32,
 }
 
 /// Chat error response
@@ -454,6 +477,25 @@ fn serialize_event(event: &StreamEvent) -> String {
             };
             serde_json::to_string(&wrapper).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize thought-signature event: {}", e);
+                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+            })
+        }
+        // Wrap subagent status in AI SDK v6 data event format (transient — live panel only)
+        StreamEvent::SubagentStatus { subagent_id, title, model, status, tokens } => {
+            let wrapper = DataEvent {
+                event_type: "data-subagent".to_string(),
+                id: None,
+                data: SubagentStatusData {
+                    subagent_id: *subagent_id,
+                    title: title.clone(),
+                    model: model.clone(),
+                    status: status.clone(),
+                    tokens: *tokens,
+                },
+                transient: true,
+            };
+            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize subagent event: {}", e);
                 r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
             })
         }
@@ -1237,6 +1279,12 @@ fn create_agent_stream(
             parallel_tools: true,
         });
 
+        // Side-channel for live Deep Research subagent status. The dispatch_subagents tool sends
+        // worker updates on `subagent_tx`; the select! loop below drains `subagent_rx` and streams
+        // them to the panel while the tool is still executing.
+        let (subagent_tx, mut subagent_rx) =
+            tokio::sync::mpsc::channel::<crate::tools::SubagentUpdate>(64);
+
         // Build tool context from request
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
@@ -1244,6 +1292,7 @@ fn create_agent_stream(
             space_id: request.space_id.clone(),
             chat_id: Some(request.chat_id.clone()),
             action_id: None,
+            subagent_tx: Some(subagent_tx),
         };
 
         // Get tool definitions — onboarding restricts to naming/memory tools only.
@@ -1285,8 +1334,26 @@ fn create_agent_stream(
             Some(cancel_token),
         );
 
-        while let Some(event) = agent_stream.next().await {
-            match event {
+        loop {
+          tokio::select! {
+            biased;
+            // Live subagent status — drained even while dispatch_subagents is still executing.
+            Some(update) = subagent_rx.recv() => {
+                let ev = StreamEvent::SubagentStatus {
+                    subagent_id: update.id as u32,
+                    title: update.title,
+                    model: update.model,
+                    status: update.status.as_str().to_string(),
+                    tokens: update.tokens,
+                };
+                yield Ok(SseEvent::default().data(serialize_event(&ev)));
+            }
+            maybe_event = agent_stream.next() => {
+              let event = match maybe_event {
+                  Some(e) => e,
+                  None => break,
+              };
+              match event {
                 AgentEvent::TextDelta { content } => {
                     // End reasoning if we were in it
                     if in_reasoning {
@@ -1390,7 +1457,21 @@ fn create_agent_stream(
                 AgentEvent::StepComplete { .. } |
                 AgentEvent::MessageId { .. } |
                 AgentEvent::Done { .. } => {}
+              }
             }
+          }
+        }
+
+        // Drain any subagent updates buffered after the agent loop ended.
+        while let Ok(update) = subagent_rx.try_recv() {
+            let ev = StreamEvent::SubagentStatus {
+                subagent_id: update.id as u32,
+                title: update.title,
+                model: update.model,
+                status: update.status.as_str().to_string(),
+                tokens: update.tokens,
+            };
+            yield Ok(SseEvent::default().data(serialize_event(&ev)));
         }
 
         // End reasoning if we were in it

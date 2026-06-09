@@ -32,7 +32,9 @@ pub mod action_setup;
 pub mod action_management;
 pub mod dayline_events;
 
-pub use executor::{ToolExecutor, ToolContext, ToolResult, ToolError};
+pub use executor::{
+    SubagentStatus, SubagentUpdate, ToolContext, ToolError, ToolExecutor, ToolResult,
+};
 pub use web_search::WebSearchTool;
 pub use sql_query::SqlQueryTool;
 pub use page_editor::PageEditorTool;

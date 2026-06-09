@@ -14,6 +14,7 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
@@ -1054,6 +1055,18 @@
 											{@const hasThinkingContent =
 												messageReasoning ||
 												messageToolParts.length > 0}
+
+											{@const subagents =
+												isLastMessage
+													? chatInstances.getSubagents(
+															conversationId,
+														)
+													: []}
+											{#if subagents.length > 0}
+												<SubagentPanel
+													{subagents}
+												/>
+											{/if}
 
 											{#if hasThinkingContent || (isStreaming && isLastMessage)}
 												<ThinkingBlock
