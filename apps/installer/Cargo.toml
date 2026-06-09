@@ -1,0 +1,48 @@
+[package]
+name = "virtues-installer"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+description = "Single-binary installer that bootstraps a Virtues home box."
+
+[[bin]]
+name = "virtues-installer"
+path = "src/main.rs"
+
+[dependencies]
+# TUI / prompts — clack-style rail-connected flow (Astro's @clack/prompts
+# style, ported to Rust). One drop-in replacement for dialoguer Select +
+# Confirm + Input that visually shows the install as a connected sequence
+# rather than a stream of disjoint dialog boxes.
+cliclack = "0.3"
+console = "0.15"
+indicatif = "0.17"
+
+# CLI arg parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Async runtime — we shell out to apt/dnf/ollama/systemctl and want to
+# stream their output through indicatif progress widgets cleanly.
+tokio = { version = "1.40", features = ["full"] }
+
+# Error handling
+anyhow = "1.0"
+
+# Cross-platform tempdir + path utilities for the binary verify step
+tempfile = "3.10"
+
+# SHA256 verification of downloaded binaries (defense-in-depth alongside
+# HTTPS; protects against a single-shot tampered release asset).
+sha2 = "0.10"
+hex = "0.4"
+
+# `geteuid` for the root check without pulling the whole nix crate.
+libc = "0.2"
+
+# `which` for "is `ollama` on PATH" checks before we shell out.
+which = "6.0"
+
+# Minimal HTTP for fetching SHA256 sidecars. rustls so we don't drag in
+# openssl on cross-compile (matches the rest of the workspace).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider"] }
