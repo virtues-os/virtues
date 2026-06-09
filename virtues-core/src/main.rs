@@ -93,32 +93,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if matches!(cli.command, Some(Commands::Init)) {
         use dialoguer::{theme::ColorfulTheme, Select};
 
-        // First-boot mode selector. 99.99% of users want Recommended
-        // (zero config questions — install.sh already wrote the env file
-        // with sane defaults). Advanced is the override-everything wizard
-        // for the rare operator running a custom deployment.
-        let mode_idx = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("How do you want to set up?")
-            .items(&[
-                "Recommended — takes care of everything (what you want)",
-                "Advanced — override defaults (DB URL, storage, encryption key, …)",
-            ])
-            .default(0)
-            .interact()
-            .unwrap_or(0);
-
-        let config = if mode_idx == 0 {
-            // Recommended: zero questions. Pull DATABASE_URL from the
-            // environment (install.sh wrote /var/lib/virtues/virtues.env;
-            // the systemd unit + this binary both load it). Fall back to
-            // the production peer-auth URL if env is unset.
-            virtues::setup::recommended_config()?
-        } else {
-            // Advanced: full interactive wizard.
-            let cfg = virtues::setup::run_init().await?;
-            virtues::setup::save_config(&cfg)?;
-            cfg
-        };
+        // The Recommended/Advanced choice lives ONE level up — in the
+        // installer (apps/installer/) — where it actually means something
+        // (apt installs, install prefix, data dir, download base, etc.).
+        // Asking again here was a UX bug: virtues init has nothing
+        // meaningful to expose as "Advanced" because the env file
+        // install.sh wrote already has all the runtime config. The only
+        // decision that matters here is the account branch.
+        //
+        // Use recommended_config() directly — it reads DATABASE_URL,
+        // VIRTUES_ENCRYPTION_KEY, STATIC_DIR, STORAGE_PATH, etc. from the
+        // process env (systemd EnvironmentFile + dotenv both populate
+        // them). Operators who need to override can edit
+        // /var/lib/virtues/virtues.env before running this; no second
+        // wizard required.
+        let config = virtues::setup::recommended_config()?;
 
         // Migrations are functionally required before the subscribe step
         // (box vault stores billing_token in `box_secrets`). Idempotent —
