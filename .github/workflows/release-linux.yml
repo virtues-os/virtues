@@ -80,20 +80,40 @@ jobs:
         run: |
           cargo build --release -p virtues --bin virtues --target ${{ matrix.target }}
 
+      # Node is needed only to BUILD the SvelteKit app (adapter-static
+      # produces pure HTML/JS/CSS; no Node at runtime on the box).
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Build web UI (SvelteKit static)
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          # SvelteKit static adapter writes to ./build at the repo root.
+          test -d build || (echo "web build did not produce ./build" >&2 && exit 1)
+
       - name: Package tarball
         id: tarball
         run: |
-          mkdir -p dist
+          mkdir -p dist staging
           BIN_PATH="target/${{ matrix.target }}/release/virtues"
           test -x "$BIN_PATH" || (echo "binary not built" >&2 && exit 1)
+          # Layout inside the tarball:
+          #   virtues             (the binary, install.sh moves to /usr/local/bin/)
+          #   web/                (SvelteKit static build; install.sh moves to
+          #                        /usr/local/share/virtues/web/)
+          cp "$BIN_PATH" staging/virtues
+          cp -r build staging/web
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          # Tar with just the binary inside (matches install.sh expectation).
-          tar -czf "dist/${TAR_NAME}" -C "$(dirname "$BIN_PATH")" virtues
-          # Surface output for the upload step.
+          tar -czf "dist/${TAR_NAME}" -C staging virtues web
           echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
-          # Also produce a SHA256 so the install script (or paranoid users)
-          # can verify the download.
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
       - name: Upload to GitHub Release

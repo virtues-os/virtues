@@ -460,6 +460,7 @@ write_env_file() {
 DATABASE_URL=postgres:///virtues
 VIRTUES_ENCRYPTION_KEY=$enc_key
 ENVIRONMENT=production
+STATIC_DIR=$INSTALL_PREFIX/share/virtues/web
 EOF
     chown virtues:virtues "$env_file"
     chmod 0600 "$env_file"
@@ -519,9 +520,20 @@ download_binary() {
         fi
     fi
 
+    # New tarball layout (v0.1.0-staging.2+): contains both `virtues`
+    # (binary) and `web/` (SvelteKit static build). Older layouts had
+    # just the binary at the root — we handle both for re-runs.
     step "Extracting + installing to $INSTALL_PREFIX/bin/virtues" \
-        bash -c "tar -xzf '$tmpdir/$tarball' -C '$tmpdir' \
-                 && install -m 0755 '$tmpdir/virtues' '$INSTALL_PREFIX/bin/virtues'"
+        bash -c "
+          set -e
+          tar -xzf '$tmpdir/$tarball' -C '$tmpdir'
+          install -m 0755 '$tmpdir/virtues' '$INSTALL_PREFIX/bin/virtues'
+          if [ -d '$tmpdir/web' ]; then
+              install -d '$INSTALL_PREFIX/share/virtues'
+              rm -rf '$INSTALL_PREFIX/share/virtues/web'
+              cp -r '$tmpdir/web' '$INSTALL_PREFIX/share/virtues/web'
+          fi
+        "
 }
 
 install_systemd_unit() {
