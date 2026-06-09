@@ -101,10 +101,12 @@ detect_distro() {
             ;;
         ubuntu)
             case "$DISTRO_VERSION" in
+                # Ubuntu 22.04 LTS (jammy) is Jetson JetPack 6.x's base — supported via PGDG.
+                22.04) USE_PGDG=1; say "Ubuntu 22.04 LTS detected (likely Jetson JetPack 6.x) — will add PGDG repo for Postgres 18." ;;
                 24.04) USE_PGDG=1; say "Ubuntu 24.04 LTS detected — will add PGDG repo for Postgres 18." ;;
                 25.04|25.10) USE_PGDG=1; say "Ubuntu $DISTRO_VERSION detected — will add PGDG repo for Postgres 18." ;;
                 26.04|26.10|2[6-9].*|[3-9][0-9].*) : ;;  # ships PG18 natively
-                *) die "Ubuntu $DISTRO_VERSION is not supported. Virtues v1 requires Ubuntu 24.04 LTS or later." ;;
+                *) die "Ubuntu $DISTRO_VERSION is not supported. Virtues v1 requires Ubuntu 22.04 LTS or later." ;;
             esac
             ;;
         fedora)
