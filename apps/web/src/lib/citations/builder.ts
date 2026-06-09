@@ -167,6 +167,64 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 
 	let index = 1;
 
+	// Push a citation, assigning it the current running index.
+	const pushCitation = (c: Omit<Citation, 'id'>) => {
+		const citation = { ...c, id: String(index) } as Citation;
+		citations.push(citation);
+		byId.set(citation.id, citation);
+		byToolCallId.set(citation.tool_call_id, citation);
+		index++;
+	};
+
+	// Build a citation for a single tool result (used for direct tool calls and for the
+	// sources surfaced by Deep Research subagents).
+	const citationForSource = (
+		toolName: string,
+		input: unknown,
+		output: unknown,
+		toolCallId: string
+	) => {
+		// web_search expands into one citation per result.
+		if (toolName === 'web_search' && output) {
+			const results = (output as Record<string, unknown>).results as
+				| Array<{ position: number; title: string; url: string; summary?: string; text?: string }>
+				| undefined;
+			if (results && results.length > 0) {
+				for (const result of results) {
+					pushCitation({
+						tool_call_id: `${toolCallId}-${result.position}`,
+						tool_name: 'web_search',
+						source_type: 'web_search',
+						icon: 'ri:global-line',
+						label: result.title?.slice(0, 40) || 'Web Result',
+						color: 'text-blue-500',
+						preview: result.summary || result.text?.slice(0, 100) || result.title || 'Web search result',
+						data: result,
+						args: input as Record<string, unknown> | undefined,
+						url: result.url,
+						title: result.title,
+						timestamp: new Date().toISOString()
+					});
+				}
+				return;
+			}
+		}
+
+		const display = getDisplayInfo(toolName, input as Record<string, unknown> | undefined);
+		pushCitation({
+			tool_call_id: toolCallId,
+			tool_name: toolName,
+			source_type: inferSourceType(toolName),
+			icon: display.icon,
+			label: display.label,
+			color: display.color,
+			preview: buildPreview(toolName, output),
+			data: output,
+			args: input as Record<string, unknown> | undefined,
+			timestamp: new Date().toISOString()
+		});
+	};
+
 	for (const part of toolCallParts) {
 		try {
 			// Only include completed tool calls
@@ -177,6 +235,27 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 
 			// Validate required fields
 			if (!toolName || !part.toolCallId) {
+				continue;
+			}
+
+			// Deep Research: surface each subagent's underlying sources as citations, so a
+			// worker's sql_query / web_search becomes a clickable reference in the report.
+			if (toolName === 'dispatch_subagents' && part.output) {
+				const missions = (part.output as Record<string, unknown>).missions as
+					| Array<{ sources?: Array<{ tool_name: string; args?: unknown; data?: unknown }> }>
+					| undefined;
+				if (missions) {
+					missions.forEach((mission, mi) => {
+						(mission.sources ?? []).forEach((src, si) => {
+							citationForSource(
+								src.tool_name,
+								src.args,
+								src.data,
+								`${part.toolCallId}-m${mi}-s${si}`
+							);
+						});
+					});
+				}
 				continue;
 			}
 
