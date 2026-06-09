@@ -5,7 +5,7 @@
 # Cloud services (atlas / virtues-api) deploy as Docker images to ECR.
 
 .DEFAULT_GOAL := help
-.PHONY: help init dev dev-core dev-web dev-link dev-reset db db-stop \
+.PHONY: help init dev dev-core dev-api dev-web dev-link dev-reset db db-stop \
         deploy-atlas deploy-virtues-api _ecr-push
 
 AWS_REGION ?= us-east-1
@@ -15,6 +15,15 @@ AWS_REGION ?= us-east-1
 VIRTUES_API_URL ?= https://api.virtues.com
 VIRTUES_ATLAS_URL ?= https://atlas.virtues.com
 DEV_WEB_PORT ?= 5173
+
+# Local virtues-api (`make dev-api`): its own logical db + a known dev bearer.
+# The bearer is funded by the gated seed in virtues-api (ENVIRONMENT=dev), and
+# virtues-core presents it via VIRTUES_API_BEARER — but only when pointing at a
+# LOCAL api. Against prod we must use the real vault bearer, so DEV_API_BEARER
+# stays empty there (the client override no-ops on an empty value).
+VIRTUES_API_DATABASE_URL ?= postgres://virtues:virtues@localhost:5432/virtues_api
+VIRTUES_API_BEARER ?= dev-local-bearer
+DEV_API_BEARER := $(if $(filter http://localhost%,$(VIRTUES_API_URL)),$(VIRTUES_API_BEARER),)
 
 # Brew Postgres binaries (formula installs to opt/postgresql@17/bin).
 PG_BIN ?= $(shell brew --prefix postgresql@17 2>/dev/null)/bin
@@ -50,28 +59,43 @@ db: ## Ensure brew postgres@17 is installed + running, db exists with pgvector
 	@brew services list | grep -q "postgresql@17.*started" || { echo "→ starting postgresql@17"; brew services start postgresql@17 >/dev/null; sleep 2; }
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || { echo "→ creating db 'virtues'"; $(PG_BIN)/createdb virtues; }
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
+	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_api'" | grep -q 1 || { echo "→ creating db 'virtues_api' (local virtues-api entitlements)"; $(PG_BIN)/createdb virtues_api; }
 	@$(PG_BIN)/psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues'" | grep -q 1 || { echo "→ creating role 'virtues' (password 'virtues' for .env compat)"; $(PG_BIN)/psql -d postgres -c "CREATE ROLE virtues WITH LOGIN SUPERUSER PASSWORD 'virtues'" >/dev/null; }
-	@echo "✓ postgres ready on :5432, db 'virtues' with pgvector + role 'virtues'"
+	@echo "✓ postgres ready on :5432, dbs 'virtues' (pgvector) + 'virtues_api', role 'virtues'"
 
 db-stop: ## Stop the brew postgres service (preserves data)
 	@brew services stop postgresql@17
 
 dev: db ## Start postgres + print next steps
 	@echo ""
-	@echo "Open two terminal tabs and run:"
-	@echo "  tab 1:  make dev-core"
+	@echo "Open terminal tabs and run:"
+	@echo "  tab 1:  make dev-core           # points at PROD api by default"
 	@echo "  tab 2:  make dev-web"
 	@echo ""
 	@echo "Then 'make dev-link' to get a login URL."
+	@echo ""
+	@echo "To exercise a LOCAL virtues-api instead (no real sub, seeded wallet):"
+	@echo "  tab 0:  make dev-api"
+	@echo "  tab 1:  make dev-core VIRTUES_API_URL=http://localhost:9002"
 
 dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seeds)
 	ENVIRONMENT=dev \
 	DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
 	VIRTUES_API_URL=$(VIRTUES_API_URL) \
+	VIRTUES_API_BEARER=$(DEV_API_BEARER) \
 	VIRTUES_ATLAS_URL=$(VIRTUES_ATLAS_URL) \
 	VIRTUES_HTTPS_PORT=0 \
 	VIRTUES_WEB_PORT=$(DEV_WEB_PORT) \
 	cargo run -p virtues
+
+dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
+	@echo "→ local virtues-api on :9002. Point dev-core at it with:"
+	@echo "    make dev-core VIRTUES_API_URL=http://localhost:9002"
+	@echo "  Real upstream spend applies (fake wallet, $$20/day + $$5/call caps)."
+	ENVIRONMENT=dev \
+	VIRTUES_API_DATABASE_URL=$(VIRTUES_API_DATABASE_URL) \
+	VIRTUES_API_BEARER=$(VIRTUES_API_BEARER) \
+	cargo run -p virtues-api
 
 dev-web: ## Run the SvelteKit dev server on :$(DEV_WEB_PORT)
 	cd apps/web && pnpm dev --port $(DEV_WEB_PORT)
@@ -84,12 +108,14 @@ dev-link: ## Print a login URL for the local dev stack (no prompts, no .env writ
 	VIRTUES_WEB_PORT=$(DEV_WEB_PORT) \
 	cargo run -p virtues -- link
 
-dev-reset: ## Drop + recreate the dev db (DESTRUCTIVE, dev only)
-	@echo "→ dropping db 'virtues' (DESTRUCTIVE)"
+dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
+	@echo "→ dropping dbs 'virtues' + 'virtues_api' (DESTRUCTIVE)"
 	@$(PG_BIN)/dropdb --if-exists virtues
+	@$(PG_BIN)/dropdb --if-exists virtues_api
 	@$(PG_BIN)/createdb virtues
+	@$(PG_BIN)/createdb virtues_api
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
-	@echo "✓ fresh db. Run 'make dev-core' to migrate + seed."
+	@echo "✓ fresh dbs. Run 'make dev-core' (+ 'make dev-api') to migrate + seed."
 
 # ── Cloud-service deploy (Virtues-operated; not part of self-host) ───────────
 # Build + push services/{atlas,virtues-api} images to ECR :latest. Rolling the
