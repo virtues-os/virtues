@@ -13,9 +13,10 @@
 //!
 //! ## Model
 //!
-//! Default: `nomic-embed-text` (768-dim, fast, multilingual). Override via
-//! `VIRTUES_EMBED_MODEL`. Whatever model you pick must produce 768-dim
-//! vectors — the `wiki_embeddings.embedding` column is `vector(768)`.
+//! Default: `bge-m3` (1024-dim, multilingual, 8K-token context, dense+sparse
+//! hybrid — top of MTEB for personal-data heterogeneous corpora). Override
+//! via `VIRTUES_EMBED_MODEL`. Whatever model you pick must produce 1024-dim
+//! vectors — the `search_vectors.embedding` column is `vector(1024)`.
 
 use anyhow::{anyhow, Context, Result};
 use ollama_rs::generation::embeddings::request::GenerateEmbeddingsRequest;
@@ -23,8 +24,8 @@ use ollama_rs::Ollama;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-const EMBED_DIM: usize = 768;
-const DEFAULT_MODEL: &str = "nomic-embed-text";
+const EMBED_DIM: usize = 1024;
+const DEFAULT_MODEL: &str = "bge-m3";
 const DEFAULT_HOST: &str = "http://localhost";
 const DEFAULT_PORT: u16 = 11434;
 
@@ -95,7 +96,7 @@ impl Embedder for LocalEmbedder {
 fn validate_dim(v: &[f32]) -> Result<()> {
     if v.len() != EMBED_DIM {
         return Err(anyhow!(
-            "embedding dim {} != expected {EMBED_DIM} — check VIRTUES_EMBED_MODEL is a 768-dim model",
+            "embedding dim {} != expected {EMBED_DIM} — check VIRTUES_EMBED_MODEL is a 1024-dim model",
             v.len()
         ));
     }

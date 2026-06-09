@@ -35,10 +35,12 @@ CREATE TABLE search_embedding_progress (
     last_run_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 768-dim vectors from nomic-embed-text-v1.5. Cosine distance.
+-- 1024-dim vectors from bge-m3 (default embed model via Ollama). Cosine distance.
+-- Override via VIRTUES_EMBED_MODEL — if the operator picks a different
+-- model with a different dim, that's caught by validate_dim in embedder.rs.
 CREATE TABLE search_vectors (
     embedding_id  TEXT PRIMARY KEY REFERENCES search_embeddings(id) ON DELETE CASCADE,
-    embedding     vector(768) NOT NULL
+    embedding     vector(1024) NOT NULL
 );
 CREATE INDEX search_vectors_hnsw
     ON search_vectors
@@ -47,6 +49,6 @@ CREATE INDEX search_vectors_hnsw
 -- Topic→embedding cache (used by novelty scoring; not part of ANN search).
 CREATE TABLE search_topic_cache (
     topic       TEXT PRIMARY KEY,
-    embedding   vector(768) NOT NULL,
+    embedding   vector(1024) NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

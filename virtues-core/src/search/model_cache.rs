@@ -51,7 +51,7 @@ pub struct ResolutionReport {
 /// startup path and in `virtues doctor`'s extended runtime checks.
 pub fn resolution_report() -> ResolutionReport {
     let embed_model = std::env::var("VIRTUES_EMBED_MODEL")
-        .unwrap_or_else(|_| "nomic-embed-text".to_string());
+        .unwrap_or_else(|_| "bge-m3".to_string());
 
     // We can't introspect the Ollama daemon's GPU vs CPU choice from
     // outside the daemon — it picks per-call. Surface "ollama" as the
