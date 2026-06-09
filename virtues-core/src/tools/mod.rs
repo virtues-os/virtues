@@ -135,19 +135,20 @@ pub fn get_tools_for_onboarding() -> Vec<serde_json::Value> {
 ///
 /// Agent modes:
 /// - "chat": All tools (smart default; write/act tools confirm before running)
-/// - "deep_research": Read-only research tools (search + data) plus `dispatch_subagents`,
-///   the orchestrator's fan-out tool. No direct edit/act tools.
+/// - "deep_research": Read-only research tools (search + data) plus `dispatch_subagents`
+///   (fan-out) and `create_page` (to write the final report). No other edit/act tools.
 pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
     use virtues_registry::tools::ToolCategory;
 
     match agent_mode {
         "deep_research" => {
-            // Read-only research tools (search + data). `dispatch_subagents` is itself a
-            // Data-category tool, so it's included here automatically once registered.
+            // Read-only research tools (search + data) + create_page for the report artifact.
+            // `dispatch_subagents` is a Data-category tool, so it's included automatically.
             virtues_registry::tools::default_tools()
                 .into_iter()
                 .filter(|tool| {
                     matches!(tool.category, ToolCategory::Search | ToolCategory::Data)
+                        || tool.id == "create_page"
                 })
                 .map(|tool| {
                     serde_json::json!({
