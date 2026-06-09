@@ -79,6 +79,69 @@ run() {
     fi
 }
 
+# Where verbose command output lands so the user-facing log stays tidy.
+# Each `step` invocation appends; on failure we print the tail.
+INSTALL_LOG="${INSTALL_LOG:-/tmp/virtues-install.log}"
+: > "$INSTALL_LOG" 2>/dev/null || true
+
+# Run a step quietly: animate a spinner while the command runs, redirect
+# stdout+stderr to $INSTALL_LOG, and print ✓/✖ when done. On failure,
+# tail the last 30 log lines so the user has context without scrolling
+# 200 lines of apt output.
+#
+# Usage:
+#     step "Installing Postgres 18" apt-get install -y -qq postgresql-18
+#     step "Pulling embedding model" ollama pull bge-m3
+#
+# For pipelines or shell-redirected commands, wrap in `bash -c`:
+#     step "Installing Ollama" bash -c 'curl -fsSL https://ollama.com/install.sh | sh'
+step() {
+    local title="$1"; shift
+    if [ "$DRY_RUN" = "1" ]; then
+        printf "  ${C_DIM}[dry-run]${C_RESET} %s\n" "$title"
+        return 0
+    fi
+
+    # Without a TTY, fall back to a one-line "..." → ✓ pattern (no spinner
+    # frames). Keeps journal / CI output readable.
+    if [ ! -t 1 ]; then
+        printf "  · %s ... " "$title"
+        if "$@" >>"$INSTALL_LOG" 2>&1; then
+            printf "ok\n"
+            return 0
+        else
+            local code=$?
+            printf "FAILED (exit %d)\n" "$code"
+            printf "\n  Last log lines (full log: %s):\n" "$INSTALL_LOG" >&2
+            tail -30 "$INSTALL_LOG" | sed 's/^/    /' >&2
+            return $code
+        fi
+    fi
+
+    # Interactive: animated spinner.
+    local frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    printf "  ${C_DIM}⠋${C_RESET} %s" "$title"
+    ( "$@" >>"$INSTALL_LOG" 2>&1 ) &
+    local pid=$!
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        i=$(( (i + 1) % 10 ))
+        printf "\r  ${C_DIM}%s${C_RESET} %s" "${frames:$i:1}" "$title"
+        sleep 0.1
+    done
+    wait "$pid"
+    local code=$?
+    if [ "$code" -eq 0 ]; then
+        printf "\r  ${C_GREEN}✓${C_RESET} %s\n" "$title"
+        return 0
+    else
+        printf "\r  ${C_RED}✖${C_RESET} %s (exit %d)\n" "$title" "$code"
+        printf "\n  Last log lines (full log: %s):\n" "$INSTALL_LOG" >&2
+        tail -30 "$INSTALL_LOG" | sed 's/^/    /' >&2
+        return $code
+    fi
+}
+
 require_root() {
     if [ "$(id -u)" -ne 0 ]; then
         die "must be run as root. Try: curl -sSL https://get.virtues.com | sudo sh"
@@ -214,48 +277,54 @@ preflight_checks() {
 
 add_pgdg_repo() {
     [ "$USE_PGDG" = "1" ] || return 0
-    header "🔧  Adding PGDG repo (Postgres 18 isn't in your distro's default repos)…"
-    apt-get install -y -qq curl ca-certificates lsb-release gnupg
+    header "🔧  Adding PGDG repo (Postgres 18 isn't in your distro's default repos)"
+    step "Installing apt key tooling (curl, lsb-release, gnupg)" \
+        apt-get install -y -qq curl ca-certificates lsb-release gnupg
     install -d /usr/share/postgresql-common/pgdg
-    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    step "Fetching PGDG signing key" \
+        curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
         -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
     local codename
     codename="$(lsb_release -cs)"
     echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
         > /etc/apt/sources.list.d/pgdg.list
-    apt-get update -qq
+    step "Refreshing apt index with PGDG repo" apt-get update -qq
 }
 
 install_deps() {
-    header "📦  Installing system dependencies (Postgres, WireGuard, Avahi)…"
+    header "📦  Installing system dependencies"
     case "$PKG" in
         apt)
             export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            # Postgres 18 ships in Debian 13 (trixie) and Ubuntu 26.04+
-            # natively. For Ubuntu 24.04/25.04 we add the PGDG repo first.
+            step "Refreshing apt index" apt-get update -qq
             add_pgdg_repo
-            apt-get install -y -qq \
-                postgresql-18 postgresql-18-pgvector \
-                wireguard wireguard-tools \
-                avahi-daemon avahi-utils libnss-mdns \
-                ca-certificates curl
+            step "Installing Postgres 18 + pgvector" \
+                apt-get install -y -qq postgresql-18 postgresql-18-pgvector
+            step "Installing WireGuard" \
+                apt-get install -y -qq wireguard wireguard-tools
+            step "Installing Avahi (mDNS)" \
+                apt-get install -y -qq avahi-daemon avahi-utils libnss-mdns
+            step "Installing ca-certificates + curl" \
+                apt-get install -y -qq ca-certificates curl
             ;;
         dnf)
-            dnf install -y -q \
-                postgresql-server postgresql-contrib pgvector \
-                wireguard-tools \
-                avahi nss-mdns \
-                ca-certificates curl
+            step "Installing Postgres + pgvector" \
+                dnf install -y -q postgresql-server postgresql-contrib pgvector
+            step "Installing WireGuard tooling" \
+                dnf install -y -q wireguard-tools
+            step "Installing Avahi (mDNS)" \
+                dnf install -y -q avahi nss-mdns
+            step "Installing ca-certificates + curl" \
+                dnf install -y -q ca-certificates curl
             # Fedora's postgresql-setup --initdb is required before first start.
             if [ ! -d /var/lib/pgsql/data/base ]; then
-                postgresql-setup --initdb
+                step "Initializing Fedora Postgres cluster" \
+                    postgresql-setup --initdb
             fi
             ;;
     esac
-    systemctl enable --now postgresql
-    systemctl enable --now avahi-daemon
-    say "Postgres + WireGuard + Avahi (mDNS) installed."
+    step "Enabling postgresql service" systemctl enable --now postgresql
+    step "Enabling avahi-daemon service" systemctl enable --now avahi-daemon
 }
 
 # Ensure Ollama is installed + running. Ollama owns local embeddings (and
@@ -263,24 +332,26 @@ install_deps() {
 # its HTTP API at localhost:11434. The official installer detects GPU/CPU
 # and configures the systemd unit; if it's already installed we no-op.
 ensure_ollama() {
-    header "🦙  Installing Ollama (local inference daemon)…"
+    header "🦙  Installing Ollama (local inference daemon)"
     if command -v ollama >/dev/null 2>&1; then
-        say "Ollama already installed: $(ollama --version 2>/dev/null | head -1)"
+        ok "Ollama already installed: $(ollama --version 2>/dev/null | head -1)"
     else
         # Official install script — detects glibc, CUDA, ROCm, arch, etc.
-        # We pipe through `sh` rather than running it in this shell so
-        # the installer's set -e doesn't kill our outer script.
-        curl -fsSL https://ollama.com/install.sh | sh \
+        # Wrapped in bash -c so we can pipe-then-exec without killing
+        # the outer shell on set -e.
+        step "Installing Ollama daemon" \
+            bash -c 'curl -fsSL https://ollama.com/install.sh | sh' \
             || die "Ollama install failed. Install manually from https://ollama.com and re-run."
-        say "Ollama installed: $(ollama --version 2>/dev/null | head -1)"
+        ok "Ollama installed: $(ollama --version 2>/dev/null | head -1)"
     fi
-    systemctl enable --now ollama 2>/dev/null || true
+    step "Enabling ollama service" \
+        bash -c 'systemctl enable --now ollama 2>/dev/null || true'
 
     # Pull the default embedding model so the first query doesn't pay
     # download latency. Operators can swap the model via VIRTUES_EMBED_MODEL.
     EMBED_MODEL="${VIRTUES_EMBED_MODEL:-bge-m3}"
-    say "Pulling embedding model: $EMBED_MODEL (one-time, ~1.2 GB)…"
-    ollama pull "$EMBED_MODEL" \
+    step "Pulling embedding model: $EMBED_MODEL (~1.2 GB, one-time)" \
+        ollama pull "$EMBED_MODEL" \
         || warn "ollama pull $EMBED_MODEL failed; first embed request will retry."
 }
 
@@ -292,26 +363,22 @@ ensure_ollama() {
 #   2. Service advertisement — drop an Avahi service-group file so the
 #      box appears in Bonjour Browser / `dns-sd -B _https._tcp` listings.
 configure_mdns() {
-    header "📡  Configuring mDNS (Avahi) so this box is reachable at https://virtues.local…"
+    header "📡  Configuring mDNS (virtues.local on the LAN)"
 
     local current_host
     current_host=$(hostnamectl --static 2>/dev/null || hostname)
     if [ "$current_host" = "virtues" ]; then
-        say "Hostname already 'virtues'."
+        ok "Hostname already 'virtues'"
     else
-        # Auto-set unless caller passes VIRTUES_KEEP_HOSTNAME=1 to preserve
-        # their existing hostname (in which case the box is reachable at
-        # https://<current_host>.local instead).
         if [ "${VIRTUES_KEEP_HOSTNAME:-0}" = "1" ]; then
             warn "Keeping existing hostname '$current_host' (VIRTUES_KEEP_HOSTNAME=1)."
             warn "Box will be reachable at https://${current_host}.local, not virtues.local."
         else
-            hostnamectl set-hostname virtues
-            say "Hostname set to 'virtues' (was '$current_host')."
+            step "Setting hostname → 'virtues' (was '$current_host')" \
+                hostnamectl set-hostname virtues
         fi
     fi
 
-    # Drop the service advertisement. Avahi auto-reloads /etc/avahi/services/.
     mkdir -p /etc/avahi/services
     cat > /etc/avahi/services/virtues.service <<'AVAHI'
 <?xml version="1.0" standalone='no'?>
@@ -326,31 +393,38 @@ configure_mdns() {
   </service>
 </service-group>
 AVAHI
-    systemctl reload avahi-daemon 2>/dev/null || systemctl restart avahi-daemon
-    say "Advertising _https._tcp on :443 over mDNS."
+    step "Advertising _https._tcp via avahi-daemon" \
+        bash -c 'systemctl reload avahi-daemon 2>/dev/null || systemctl restart avahi-daemon'
 }
 
 create_user() {
-    header "👤  Creating 'virtues' system user…"
+    header "👤  Creating 'virtues' system user"
     if ! id -u virtues >/dev/null 2>&1; then
-        useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin virtues
-        say "Created system user 'virtues'."
+        step "Creating system user 'virtues'" \
+            useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin virtues
     else
-        say "User 'virtues' already exists."
+        ok "User 'virtues' already exists"
     fi
-    mkdir -p "$DATA_DIR/lake" "$DATA_DIR/models" "$DATA_DIR/secrets"
-    chown -R virtues:virtues "$DATA_DIR"
-    chmod 0700 "$DATA_DIR/secrets"
+    step "Setting up $DATA_DIR (lake, models, secrets)" \
+        bash -c "mkdir -p '$DATA_DIR/lake' '$DATA_DIR/models' '$DATA_DIR/secrets' \
+                 && chown -R virtues:virtues '$DATA_DIR' \
+                 && chmod 0700 '$DATA_DIR/secrets'"
 }
 
 provision_db() {
-    header "🗄   Provisioning Postgres role + database…"
-    # Use peer-auth via the postgres OS user.
-    sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues'" | grep -q 1 || \
-        sudo -u postgres createuser --no-superuser --no-createrole --createdb virtues
-    sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" | grep -q 1 || \
-        sudo -u postgres createdb -O virtues virtues
-    say "Postgres role + 'virtues' database ready."
+    header "🗄   Provisioning Postgres role + database"
+    if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues'" 2>/dev/null | grep -q 1; then
+        ok "Postgres role 'virtues' already exists"
+    else
+        step "Creating Postgres role 'virtues'" \
+            sudo -u postgres createuser --no-superuser --no-createrole --createdb virtues
+    fi
+    if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='virtues'" 2>/dev/null | grep -q 1; then
+        ok "Postgres database 'virtues' already exists"
+    else
+        step "Creating Postgres database 'virtues'" \
+            sudo -u postgres createdb -O virtues virtues
+    fi
 }
 
 # Resolve "latest" to a concrete tag via the GitHub Releases API. Only called
@@ -383,27 +457,32 @@ download_binary() {
         base="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${VIRTUES_VERSION}"
     fi
 
-    header "⬇   Downloading virtues binary ($VIRTUES_VERSION, $PLAT_ARCH-linux)…"
+    header "⬇   Downloading virtues binary ($VIRTUES_VERSION, $PLAT_ARCH-linux)"
     local tarball="virtues-${VIRTUES_VERSION}-${PLAT_ARCH}-linux.tar.gz"
     local url="${base}/${tarball}"
     local tmpdir
     tmpdir=$(mktemp -d)
-    trap "rm -rf '$tmpdir'" EXIT
-    curl -sSLfo "$tmpdir/$tarball" "$url" || die "download failed: $url"
+    # Keep the outer EXIT trap (cleanup_on_exit); add our own tmpdir trap
+    # by stacking the cleanup into the global handler instead of overwriting.
+    VIRTUES_TMPDIR="$tmpdir"
 
-    # Verify SHA256 if the .sha256 sidecar is available (CI uploads it
-    # alongside each tarball). Best-effort: skip silently if absent.
+    step "Downloading $tarball" curl -sSLfo "$tmpdir/$tarball" "$url"
+
+    # Verify SHA256 if the .sha256 sidecar is available.
     if curl -sSLfo "$tmpdir/${tarball}.sha256" "${url}.sha256" 2>/dev/null; then
         local expected actual
         expected=$(awk '{print $1}' "$tmpdir/${tarball}.sha256")
         actual=$(sha256sum "$tmpdir/$tarball" | awk '{print $1}')
-        [ "$expected" = "$actual" ] || die "sha256 mismatch on $tarball — refusing to install"
-        say "Verified SHA256."
+        if [ "$expected" = "$actual" ]; then
+            ok "SHA256 verified"
+        else
+            die "sha256 mismatch on $tarball — refusing to install"
+        fi
     fi
 
-    tar -xzf "$tmpdir/$tarball" -C "$tmpdir"
-    install -m 0755 "$tmpdir/virtues" "$INSTALL_PREFIX/bin/virtues"
-    say "Installed $INSTALL_PREFIX/bin/virtues"
+    step "Extracting + installing to $INSTALL_PREFIX/bin/virtues" \
+        bash -c "tar -xzf '$tmpdir/$tarball' -C '$tmpdir' \
+                 && install -m 0755 '$tmpdir/virtues' '$INSTALL_PREFIX/bin/virtues'"
 }
 
 install_systemd_unit() {
@@ -509,9 +588,10 @@ post_install_health() {
     header "🩺  Post-install health check…"
     local issues=0
 
-    # Postgres reachable as the virtues user?
-    if sudo -u virtues psql -h localhost -d virtues -c 'SELECT 1' >/dev/null 2>&1; then
-        ok "Postgres reachable as 'virtues'"
+    # Postgres reachable as the virtues user? Use peer auth via the local
+    # socket — no -h so psql doesn't try TCP password auth.
+    if sudo -u virtues PGPASSWORD='' psql -d virtues -c 'SELECT 1' >/dev/null 2>&1 </dev/null; then
+        ok "Postgres reachable as 'virtues' (peer auth)"
     else
         warn "Postgres connection as 'virtues' failed."
         issues=$((issues + 1))
