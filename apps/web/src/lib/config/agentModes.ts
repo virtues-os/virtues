@@ -5,7 +5,7 @@
  * Similar to Cursor's Agent/Chat modes.
  */
 
-export type AgentModeId = 'agent' | 'chat' | 'research';
+export type AgentModeId = 'agent' | 'chat' | 'research' | 'council';
 
 export interface AgentMode {
 	id: AgentModeId;
@@ -51,6 +51,15 @@ export const AGENT_MODES: AgentMode[] = [
 		color: 'var(--color-warning)',
 		maxToolCalls: 50,
 		tools: { search: true, data: true, edit: false }
+	},
+	{
+		id: 'council',
+		name: 'Council',
+		description: 'Many minds',
+		icon: 'ri:group-line',
+		color: 'var(--color-info)',
+		maxToolCalls: 0,
+		tools: { search: false, data: false, edit: false }
 	}
 ];
 

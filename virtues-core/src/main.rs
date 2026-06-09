@@ -152,35 +152,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .interact()
             .unwrap_or(1);
 
-        // Two completely different "log ins" exist here:
-        //   - account login   = attaching the box to your Virtues account
-        //                       via atlas (Stripe Customer Portal magic
-        //                       link). Lands in v0.1.1.
+        // Two completely different "log ins":
+        //   - account login   = atlas /init/login → Resend magic link → box
+        //                       polls until the user clicks the email and
+        //                       atlas flips the device_link to ready.
         //   - box login       = your laptop browser pairing with the box
-        //                       via the URL printed at the end of this
-        //                       function. Works today.
-        //
-        // The original code printed a "coming soon" message for account
-        // login and then fell straight through to mint the pair URL,
-        // making the two look conflated. We now explicitly call out the
-        // difference so the user understands what just happened.
+        //                       via the pair URL printed at the end of
+        //                       this function. Same UI surface (the web
+        //                       app); fundamentally different semantics
+        //                       (this is "log into the box's web UI",
+        //                       not "log into Virtues account").
         if account_idx == 0 {
-            println!();
-            println!(
-                "  {} The account-login flow lands in v0.1.1 (atlas /init/login",
-                console::style("ⓘ").bold().yellow()
-            );
-            println!("    + Stripe Customer Portal magic link).");
-            println!();
-            println!("  Your box is fully set up — pair URL below logs you into the");
-            println!("  box itself. Chat + cloud sources stay disabled until the");
-            println!("  account link works in the next release. Re-run `virtues init`");
-            println!("  then to attach your account.");
-            println!();
-            println!("  In the meantime you can:");
-            println!("    • Browse the web UI, set per-source preferences, explore");
-            println!("    • Set a BYO AI key under Settings → AI Provider Key for chat");
-            println!("    • Use `virtues status` / `virtues doctor` to inspect the box");
+            // Account login via magic-link email. The function below
+            // calls /api/billing/link/login on the box, which in turn
+            // hits atlas /init/login. On success, the existing poll
+            // loop will pick up the billing_token when the user clicks
+            // the email link.
+            use virtues::VirtuesBuilder;
+            let virtues = VirtuesBuilder::new()
+                .database(&config.database_url)
+                .build()
+                .await?;
+            if let Err(e) = virtues::cli::commands::deploy::handle_login(&virtues).await {
+                println!();
+                println!("  ⚠  log-in step did not finish: {e}");
+                println!("     Run `virtues login` later when you're ready, or");
+                println!("     re-run `virtues init` and pick Create new instead.");
+            }
         } else {
             use virtues::VirtuesBuilder;
             let virtues = VirtuesBuilder::new()
