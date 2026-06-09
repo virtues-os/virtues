@@ -136,12 +136,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .interact()
             .unwrap_or(1);
 
+        // Two completely different "log ins" exist here:
+        //   - account login   = attaching the box to your Virtues account
+        //                       via atlas (Stripe Customer Portal magic
+        //                       link). Lands in v0.1.1.
+        //   - box login       = your laptop browser pairing with the box
+        //                       via the URL printed at the end of this
+        //                       function. Works today.
+        //
+        // The original code printed a "coming soon" message for account
+        // login and then fell straight through to mint the pair URL,
+        // making the two look conflated. We now explicitly call out the
+        // difference so the user understands what just happened.
         if account_idx == 0 {
             println!();
-            println!("  Log-in flow lands in v0.1.1 (atlas /init/login + Stripe");
-            println!("  Customer Portal magic link). For now, create a new account");
-            println!("  here, or hold off and re-run `virtues init` after the");
-            println!("  next release.");
+            println!(
+                "  {} The account-login flow lands in v0.1.1 (atlas /init/login",
+                console::style("ⓘ").bold().yellow()
+            );
+            println!("    + Stripe Customer Portal magic link).");
+            println!();
+            println!("  Your box is fully set up — pair URL below logs you into the");
+            println!("  box itself. Chat + cloud sources stay disabled until the");
+            println!("  account link works in the next release. Re-run `virtues init`");
+            println!("  then to attach your account.");
+            println!();
+            println!("  In the meantime you can:");
+            println!("    • Browse the web UI, set per-source preferences, explore");
+            println!("    • Set a BYO AI key under Settings → AI Provider Key for chat");
+            println!("    • Use `virtues status` / `virtues doctor` to inspect the box");
         } else {
             use virtues::VirtuesBuilder;
             let virtues = VirtuesBuilder::new()
@@ -380,66 +403,99 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Print the first-boot trust pitch shown right before the account prompt
-/// in `virtues init`. The framing is confidence-forward (this is the most
-/// private personal-data setup currently shippable, full stop) rather than
-/// apologetic — anyone offering more "purity" today is either lying or
-/// shipping something that won't connect to the user's real services.
+/// in `virtues init`.
 ///
-/// The comparison table is the load-bearing claim. Every row must remain
-/// true; if we ever add a feature that breaks one (e.g. shipping our own
-/// metadata logging), this copy needs updating in lockstep.
+/// Design notes (deliberate, not stylistic):
+///
+/// - **No named competitor comparisons.** Earlier drafts had a table
+///   ("Google reads your content; we don't") — visually punchy but legally
+///   exposed (Lanham false-advertising; trade libel; named-trademark use).
+///   The cost-to-defend a single bad-faith C&D outweighs the rhetorical
+///   win. Replaced with pure self-statements + one positive Plex analogy.
+///
+/// - **First-person, not comparative.** "What stays on your box" / "What
+///   we see" lets the reader supply their own contrast from their own
+///   life — usually more damning than ours.
+///
+/// - **Sunset commitment elevated to the closer.** The strongest trust
+///   signal isn't a state (today's privacy) but a direction (where we're
+///   going). It lands last so it's the thought the user holds when they
+///   make the [1] / [2] choice.
+///
+/// - **Every claim has to remain true.** If we add a feature that breaks
+///   one ("anything semantic about who you are stays on your box" implies
+///   no telemetry of behavior), this copy needs updating in lockstep.
 fn print_account_intro() {
     use console::style;
+    let line = style("─────────────────────────────────────────────────────────").dim();
+    let sep  = style("═════════════════════════════════════════════════════════").dim();
+
     println!();
-    println!("{}", style("─────────────────────────────────────────────────────────").dim());
+    println!("{line}");
     println!();
     println!("  {}", style("Your data lives on this Linux device. Never our cloud.").bold());
     println!();
-    println!("  Today, this is more private than anything you currently use:");
+    println!("  {}", style("What stays on your box:").bold());
+    println!("    • Every message, photo, file, calendar event, note");
+    println!("    • Every prompt you type and every response");
+    println!("    • Your encryption keys");
+    println!("    • Anything semantic about who you are");
     println!();
-    println!("                          {}  {}",
-        style("You today").dim(),
-        style("Virtues").bold().green());
-    println!("    Where data lives      Google / iCloud / Notion …   {}", style("YOUR box").green());
-    println!("    Knows your email      Yes                          {}", style("Stripe only (legal req.)").green());
-    println!("    Stores password       Yes                          {}", style("No (pair-only auth)").green());
-    println!("    Reads your content    Yes (ads, training, …)       {}", style("No (passthrough, zero retention)").green());
-    println!("    Sees who you message  Yes (graph, metadata)        {}", style("No").green());
-    println!("    Holds your enc keys   Yes                          {}", style("No (your box does)").green());
-    println!("    Logs prompts/queries  Yes                          {}", style("No (provider-side, not us)").green());
-    println!("    Can subpoena content  Yes                          {}", style("Nothing to hand over").green());
+    println!("  {}", style("What we see (the strict minimum):").bold());
+    println!("    • A Stripe customer ID  ({})",
+        style("Stripe holds your card and email").dim());
+    println!("    • Token counts on AI calls  ({})",
+        style("for billing").dim());
+    println!("    • OAuth callbacks for ~200ms  ({})",
+        style("so Google / Notion / Plaid will talk to your box at all").dim());
     println!();
-    println!("  Compared to:");
-    println!("    {}        we don't read content, train on you, or run ads",   style("Google").bold());
-    println!("    {}        we don't see metadata, contact graph, or delivery", style("Signal").bold());
-    println!("    {}     we don't see your node graph or coordinate identity", style("Tailscale").bold());
-    println!("    {}        your encryption keys never leave your box",        style("iCloud").bold());
-    println!("    {}  prompts route through a zero-retention proxy", style("ChatGPT / Claude").bold());
+    println!("  We never see content, conversations, who you talk to, or what");
+    println!("  you ask. No metadata, no contact graph, no semantic shape of");
+    println!("  your life.");
     println!();
-    println!("  {}", style("This is the strictest passthrough architecture currently").italic());
-    println!("  {}", style("shippable with today's third parties.").italic());
+    println!("{sep}");
     println!();
-    println!("  {}", style("Two things still require a Virtues account").bold());
-    println!("  — they're the smallest remaining surface, shrinking every release:");
+    println!("  {}",
+        style("Two things still require a Virtues account").bold());
+    println!("  — the smallest remaining surface, shrinking every release:");
     println!();
-    println!("    1. {}.  Google, Notion, Plaid etc. require a registered",  style("OAuth callbacks").bold());
-    println!("       HTTPS URL. virtues.com hosts it, forwards to your box in ~200ms,");
-    println!("       discards the auth code. Without this, no cloud source connects.");
+    println!("    1. {}.  Google, Notion, Plaid etc. require a registered",
+        style("OAuth callbacks").bold());
+    println!("       HTTPS URL. virtues.com hosts it, forwards to your box");
+    println!("       in ~200ms, discards the auth code.");
     println!();
-    println!("    2. {}.  Your provider key (yours or Virtues wallet)",       style("AI proxy").bold());
-    println!("       stays server-side as a short-lived bearer instead of");
-    println!("       living on every device. Calls are passthrough — providers");
-    println!("       log nothing of our traffic; we see only token counts.");
+    println!("    2. {}.  Your provider key (yours or Virtues wallet) stays",
+        style("AI proxy").bold());
+    println!("       server-side as a short-lived bearer instead of living on");
+    println!("       every device. Calls are passthrough — providers log");
+    println!("       nothing of our traffic; we see only token counts.");
     println!();
-    println!("  {}", style("Where this gets even smaller:").dim());
-    println!("    • IETF is standardizing device-bound OAuth (no hosted callback needed)");
-    println!("    • Ollama-class models are reaching assistant-grade quality");
-    println!("    • Both shrink virtues-api toward zero over time");
+    println!("{sep}");
     println!();
-    println!("    [1] {}", style("Log in to existing Virtues account").bold());
-    println!("    [2] {}", style("Create a new Virtues account ($20/mo, $15 wallet)").bold());
+    println!("  {}",
+        style("Our north star: make virtues-api extinct.").bold().green());
     println!();
-    println!("{}", style("─────────────────────────────────────────────────────────").dim());
+    println!("  Every line of code there is something we'd rather you ran at");
+    println!("  home. The roadmap is structured around shrinking this layer:");
+    println!();
+    println!("    • {}.  Edge models close the gap with cloud LLMs every",
+        style("Local inference").bold());
+    println!("      quarter. We route embeddings on-device today; chat-tier");
+    println!("      moves home as Ollama-class models reach parity.");
+    println!();
+    println!("    • {}.  IETF is standardizing flows that don't need",
+        style("Device-bound OAuth").bold());
+    println!("      a hosted callback. When providers adopt them, the");
+    println!("      callback-hosting role disappears.");
+    println!();
+    println!("    • {}.  Replaces atlas's role in box",
+        style("Self-coordinated rendezvous").bold());
+    println!("      discovery — signaling-only, then nothing.");
+    println!();
+    println!("  Every release that removes us from your data path is one we");
+    println!("  ship harder than features.");
+    println!();
+    println!("{line}");
     println!();
 }
 
