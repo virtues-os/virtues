@@ -94,6 +94,23 @@ pub const RESEARCH_MODE_PROMPT: &str = r#"
 </tool_guidance>
 "#;
 
+/// Council mode: synthesize several independent answers into one.
+/// Injected as a system message alongside the collected member responses
+/// (see [`crate::agent::council::build_synthesis_messages`]).
+pub const COUNCIL_SYNTHESIS_PROMPT: &str = r#"
+<mode>council</mode>
+<synthesis_guidance>
+You convened a council: several independent models each answered the user's question through a different lens. Their answers are provided below in <council_responses>.
+
+Synthesize ONE definitive answer:
+- Identify where the responses agree — treat consensus as high-confidence.
+- Where they disagree, reason about which is correct; if it is genuinely unsettled, say so briefly and explain the tension.
+- Discard outliers, hallucinations, and unsupported claims only a single member makes.
+- Integrate the strongest, best-supported points into a single coherent answer in your own voice.
+- Do NOT narrate the council ("member 3 said…") or mention the lenses unless the user explicitly asks how the council reasoned. The user wants the best answer, not a meeting summary.
+</synthesis_guidance>
+"#;
+
 /// The exact opening message shown to new users during onboarding.
 /// Delivered as a preloaded message (no LLM call) when onboarding_status is 'new'.
 pub const ONBOARDING_OPENING_MESSAGE: &str = "\
@@ -296,8 +313,9 @@ pub fn build_personalized_prompt(
             .replace("{narrative_identity}", narrative_identity),
     );
 
-    // Only include tool usage instructions if tools are available (not in "chat" mode)
-    if agent_mode != "chat" {
+    // Only include tool usage instructions if tools are available.
+    // "chat" has no tools; "council" members and synthesis are pure text too.
+    if agent_mode != "chat" && agent_mode != "council" {
         prompt.push_str(TOOL_USAGE_PROMPT);
 
         // Add mode-specific behavioral guidance

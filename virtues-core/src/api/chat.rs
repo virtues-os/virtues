@@ -304,6 +304,17 @@ pub enum StreamEvent {
         signature: String,
     },
 
+    // Council member status update (data event for the live deliberation panel)
+    #[serde(rename = "council-member")]
+    CouncilMember {
+        #[serde(rename = "memberId")]
+        member_id: u32,
+        model: String,
+        lens: String,
+        status: String,
+        tokens: u32,
+    },
+
     // Checkpoint event emitted after auto-compaction
     #[serde(rename = "checkpoint")]
     Checkpoint {
@@ -352,6 +363,18 @@ struct CheckpointData {
 #[derive(Debug, Serialize)]
 struct ThoughtSignatureData {
     signature: String,
+}
+
+/// Council member data payload for AI SDK v6 data event
+#[derive(Debug, Serialize)]
+struct CouncilMemberData {
+    #[serde(rename = "memberId")]
+    member_id: u32,
+    model: String,
+    lens: String,
+    /// "thinking" | "done" | "failed"
+    status: String,
+    tokens: u32,
 }
 
 /// Chat error response
@@ -454,6 +477,26 @@ fn serialize_event(event: &StreamEvent) -> String {
             };
             serde_json::to_string(&wrapper).unwrap_or_else(|e| {
                 tracing::error!("Failed to serialize thought-signature event: {}", e);
+                r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
+            })
+        }
+        // Wrap council member events in AI SDK v6 data event format (transient — the
+        // deliberation panel is ephemeral and not persisted into message parts).
+        StreamEvent::CouncilMember { member_id, model, lens, status, tokens } => {
+            let wrapper = DataEvent {
+                event_type: "data-council-member".to_string(),
+                id: None,
+                data: CouncilMemberData {
+                    member_id: *member_id,
+                    model: model.clone(),
+                    lens: lens.clone(),
+                    status: status.clone(),
+                    tokens: *tokens,
+                },
+                transient: true,
+            };
+            serde_json::to_string(&wrapper).unwrap_or_else(|e| {
+                tracing::error!("Failed to serialize council-member event: {}", e);
                 r#"{"type":"error","errorText":"Serialization error"}"#.to_string()
             })
         }
@@ -1246,11 +1289,59 @@ fn create_agent_stream(
             action_id: None,
         };
 
-        // Get tool definitions — onboarding restricts to naming/memory tools only
+        // Get tool definitions — onboarding restricts to naming/memory tools only.
+        // Council synthesis is pure text (members already deliberated), so no tools.
+        let is_council = request.agent_mode == "council" && !is_onboarding;
         let tools = if is_onboarding {
             crate::tools::get_tools_for_onboarding()
+        } else if is_council {
+            vec![]
         } else {
             crate::tools::get_tools_for_agent_mode(&request.agent_mode)
+        };
+
+        // Council mode: fan out across members first, streaming their live status to the panel,
+        // then synthesize from the collected answers. Other modes pass messages through unchanged.
+        let agent_messages = if is_council {
+            use crate::agent::council;
+
+            let (member_count, council_models) =
+                crate::api::assistant_profile::get_council_settings(&pool).await;
+            let mut rx = council::run_council(
+                pool.clone(),
+                api_messages.clone(),
+                council_models,
+                member_count,
+            );
+
+            let mut answers: Vec<String> = Vec::new();
+            while let Some(update) = rx.recv().await {
+                if let Some(answer) = &update.answer {
+                    answers.push(answer.clone());
+                }
+                let event = StreamEvent::CouncilMember {
+                    member_id: update.member_id as u32,
+                    model: update.model,
+                    lens: update.lens,
+                    status: update.status.as_str().to_string(),
+                    tokens: update.tokens,
+                };
+                yield Ok(SseEvent::default().data(serialize_event(&event)));
+            }
+
+            if answers.len() < council::MIN_SURVIVORS {
+                // Too few members survived for a meaningful synthesis — fall back to a normal
+                // single-model answer over the original conversation.
+                tracing::warn!(
+                    survivors = answers.len(),
+                    "Council had too few survivors; falling back to single model"
+                );
+                api_messages.clone()
+            } else {
+                council::build_synthesis_messages(&api_messages, &answers)
+            }
+        } else {
+            api_messages.clone()
         };
 
         // Send text-start event
@@ -1272,7 +1363,7 @@ fn create_agent_stream(
         // Run the agent loop with cancellation support
         let mut agent_stream = agent.run(
             model.clone(),
-            api_messages.clone(),
+            agent_messages,
             tools,
             context,
             request.thought_signature.clone().or_else(|| {

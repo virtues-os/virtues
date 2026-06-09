@@ -42,6 +42,12 @@ pub fn router() -> Router<AppState> {
         .route("/init/poll", post(poll))
         .route("/init", get(verify))
         .route("/init/done", get(done))
+        // ─── [1] Log in flow ──────────────────────────────────────────
+        // Box-callable login start: takes a device_code + email, looks
+        // up the matching customer, sends a magic link via Resend. The
+        // verify_login GET endpoint clicks → marks the device_link ready.
+        .route("/init/login", post(login_start))
+        .route("/init/login/verify", get(login_verify))
 }
 
 // ─── POST /init/start ───────────────────────────────────────────────────────
@@ -284,4 +290,233 @@ fn page(title: &str, body: &str) -> axum::response::Response {
 
 fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
     (status, Json(json!({ "error": { "code": code, "message": message } }))).into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// [1] Log in flow — Resend magic-link verification of an existing customer
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Pattern:
+//   box  POST /init/login {device_code, email}
+//        └→ atlas looks up customers.email → stripe_customer_id
+//           - found:   insert login_attempt(token_hash, …), send magic link via Resend
+//           - missing: return {status:"no_account"} (box surfaces "subscribe?" prompt)
+//   user opens magic link
+//        └→ GET /init/login/verify?token=…
+//           - hash + lookup login_attempt
+//           - mark used; flip the bound device_link → status='ready' with billing_token
+//           - render success HTML ("return to your terminal")
+//   box  POST /init/poll {device_code}
+//        └→ existing handler picks up status='ready' + billing_token
+//
+// Tokens are 32 random bytes; stored only as sha256. Sender rate-limit:
+// no more than 3 active attempts per email per hour (anti-spam).
+
+const LOGIN_TTL_MINUTES: i64 = 15;
+const LOGIN_FROM_DEFAULT: &str = "login@virtues.com";
+
+#[derive(Debug, Deserialize)]
+struct LoginStartBody {
+    device_code: String,
+    email: String,
+}
+
+async fn login_start(
+    State(state): State<AppState>,
+    Json(body): Json<LoginStartBody>,
+) -> axum::response::Response {
+    // Normalize the email lightly. Stripe stores them lowercased; we match.
+    let email = body.email.trim().to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        return err(StatusCode::BAD_REQUEST, "bad_email", "invalid email");
+    }
+
+    // The box must already have an active /init/start in flight.
+    let device_code_hash = sha256(body.device_code.as_bytes());
+    let device_link_exists: Option<(String,)> = sqlx::query_as(
+        "SELECT status FROM device_link WHERE device_code_hash = $1 AND expires_at > now()",
+    )
+    .bind(&device_code_hash[..])
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+    if device_link_exists.is_none() {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "no_device_link",
+            "device_code not found or expired; restart /init/start first",
+        );
+    }
+
+    // Rate limit: max 3 send attempts per email per hour.
+    let recent: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM login_attempt \
+         WHERE email = $1 AND created_at > now() - interval '1 hour'",
+    )
+    .bind(&email)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or((0,));
+    if recent.0 >= 3 {
+        return err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many login attempts for this email — try again in an hour",
+        );
+    }
+
+    // Look up the customer in atlas's local table (mirrors Stripe customers).
+    let customer: Option<(String,)> = sqlx::query_as(
+        "SELECT stripe_customer_id FROM customers WHERE email = $1 LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let Some((customer_id,)) = customer else {
+        // Don't send an email when there's no account — would be a spam
+        // vector AND wouldn't help anyway. Box surfaces "subscribe?" CTA.
+        return (
+            StatusCode::OK,
+            Json(json!({ "status": "no_account" })),
+        )
+            .into_response();
+    };
+
+    // Mint the magic-link token (32 random bytes, hex-encoded).
+    let token = random_hex(32);
+    let token_hash = sha256(token.as_bytes());
+    let expires_at = Utc::now() + Duration::minutes(LOGIN_TTL_MINUTES);
+
+    let ins = sqlx::query(
+        r#"
+        INSERT INTO login_attempt
+            (token_hash, email, customer_id, device_code_hash, expires_at)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+    )
+    .bind(&token_hash[..])
+    .bind(&email)
+    .bind(&customer_id)
+    .bind(&device_code_hash[..])
+    .bind(expires_at)
+    .execute(&state.pool)
+    .await;
+    if let Err(e) = ins {
+        tracing::warn!("login_attempt insert failed: {e:#}");
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "could not start login");
+    }
+
+    let base = state.public_url.trim_end_matches('/');
+    let link = format!("{base}/init/login/verify?token={token}");
+    let from = std::env::var("VIRTUES_LOGIN_FROM")
+        .unwrap_or_else(|_| LOGIN_FROM_DEFAULT.to_string());
+
+    match crate::email::send_login_magic_link(&state.resend_api_key, &from, &email, &link).await {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(json!({ "status": "sent" })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!("magic link send failed: {e:#}");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "email_send_failed",
+                "could not send login email",
+            )
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginVerifyQuery {
+    token: String,
+}
+
+async fn login_verify(
+    State(state): State<AppState>,
+    Query(q): Query<LoginVerifyQuery>,
+) -> axum::response::Response {
+    let token_hash = sha256(q.token.as_bytes());
+
+    // Atomic: claim the login_attempt + mark used in one shot. Concurrent
+    // clicks lose the race and see "already used".
+    let row: Option<(String, Vec<u8>, chrono::DateTime<Utc>, String)> = sqlx::query_as(
+        r#"
+        UPDATE login_attempt
+        SET status = 'used', used_at = now()
+        WHERE token_hash = $1
+          AND status = 'pending'
+          AND expires_at > now()
+        RETURNING email, device_code_hash, expires_at, customer_id
+        "#,
+    )
+    .bind(&token_hash[..])
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    let Some((_email, device_code_hash, _exp, customer_id)) = row else {
+        return page(
+            "Link expired or already used",
+            "This login link is no longer valid. Restart the flow from your box's terminal to get a fresh link.",
+        );
+    };
+
+    // Mint a fresh billing_token. The mint + customers-row update + device_link
+    // flip mirrors `finalize_paid_session`'s tail end but skips its Stripe API
+    // calls (we trust our own customers table since we looked them up by email
+    // and verified email ownership via the magic link).
+    let mut token_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut token_bytes);
+    let billing_token = hex::encode(token_bytes);
+    let new_token_hash = sha256(billing_token.as_bytes());
+
+    // Rotate the customer's billing_token_hash to the new value. Re-claim
+    // semantics: existing devices using the old token continue to work
+    // until their next renew, then re-mint against this new token.
+    let upsert = sqlx::query(
+        "UPDATE customers SET billing_token_hash = $2 WHERE stripe_customer_id = $1",
+    )
+    .bind(&customer_id)
+    .bind(&new_token_hash[..])
+    .execute(&state.pool)
+    .await;
+    if let Err(e) = upsert {
+        tracing::warn!("customers update failed: {e:#}");
+        return page(
+            "Something went wrong",
+            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
+        );
+    }
+
+    // Flip the bound device_link to ready with the billing_token so the
+    // box's existing poll handler picks it up on the next /init/poll.
+    let flip = sqlx::query(
+        "UPDATE device_link SET status = 'ready', billing_token = $2 \
+         WHERE device_code_hash = $1 AND status = 'pending'",
+    )
+    .bind(&device_code_hash[..])
+    .bind(&billing_token)
+    .execute(&state.pool)
+    .await;
+    match flip {
+        Ok(r) if r.rows_affected() == 1 => page(
+            "✓ Box attached",
+            "Your Virtues box is now attached to your subscription. Return to your terminal — the install will continue automatically.",
+        ),
+        Ok(_) => page(
+            "Link expired",
+            "The device_link this email was bound to is no longer pending. Restart from your terminal to get a fresh link.",
+        ),
+        Err(e) => {
+            tracing::warn!("device_link flip failed: {e:#}");
+            page(
+                "Something went wrong",
+                "We verified your link but couldn't attach the box. Try again, or reach out to support@virtues.com.",
+            )
+        }
+    }
 }
