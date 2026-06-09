@@ -80,6 +80,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         semantic_search_tool(),
         sql_query_tool(),
         code_interpreter_tool(),
+        dispatch_subagents_tool(),
         create_page_tool(),
         get_page_content_tool(),
         edit_page_tool(),
@@ -560,6 +561,80 @@ Example - statistics with numpy:
         icon: "ri:code-s-slash-line".to_string(),
         display_order: 4,
         is_system: false,
+    }
+}
+
+/// Dispatch Subagents tool - orchestrator fan-out for Deep Research.
+///
+/// The main (orchestrator) agent calls this to spawn independent read-only research
+/// workers in parallel. Each worker runs its own agent loop over the data + web tools,
+/// then returns a compressed findings summary plus its sources. Workers cannot dispatch
+/// further subagents (no recursion).
+fn dispatch_subagents_tool() -> ToolConfig {
+    ToolConfig {
+        id: "dispatch_subagents".to_string(),
+        name: "Dispatch Researchers".to_string(),
+        description: "Spawn parallel research workers".to_string(),
+        llm_description: r#"Spawn independent research workers that run IN PARALLEL, each chasing one line of inquiry, then return their findings for you to synthesize. This is your fan-out tool for deep research.
+
+When to use:
+- The question has several INDEPENDENT sub-questions that can be investigated separately (e.g. "query my spending trend", "check my calendar load", "find external base rates").
+- You want a skeptic: dispatch one worker whose objective is to find evidence AGAINST your leading hypothesis.
+
+How to use well:
+- Dispatch the FEWEST workers that cover the independent questions — usually 2-4, never more than 5. Don't split one question into redundant workers.
+- Each worker is READ-ONLY (sql_query, semantic_search, web_search, code_interpreter, think) and cannot dispatch further workers. Give each a self-contained objective — workers do NOT see the conversation, only their objective.
+- Tell each worker to compute real statistics with code_interpreter where relevant, cite the specific records/sources it used, and return a CONCISE findings summary (not a transcript).
+- Pick each worker's `model` by difficulty: "fast" for simple lookups, "balanced" (default) for normal research, "strong" for hard quantitative analysis.
+
+After they return, synthesize their findings yourself — weigh agreements, surface disagreements, and never assert causation from correlation.
+
+Example:
+{
+  "missions": [
+    {"title": "Spending trend", "objective": "Query data_financial_transaction for monthly spending by category over the last 6 months. Use code_interpreter to compute the trend and flag the categories that grew most. Cite the rows.", "model": "balanced"},
+    {"title": "Sleep correlation", "objective": "Pull data_health_sleep and monthly spending for the same period. Compute the correlation with code_interpreter. Report n and how weak/strong it is. Cite sources.", "model": "strong"},
+    {"title": "Counter-evidence", "objective": "Argue against the idea that spending rose due to one cause. Look for confounders (seasonality, one-off purchases, income changes) in the data. Cite what you find.", "model": "balanced"}
+  ]
+}"#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["missions"],
+            "properties": {
+                "missions": {
+                    "type": "array",
+                    "description": "1-5 independent research missions to run in parallel.",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "required": ["title", "objective"],
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "Short label shown in the live panel, e.g. 'Sleep vs spending'."
+                            },
+                            "objective": {
+                                "type": "string",
+                                "description": "Self-contained instructions: what to find, which data/web to use, what to compute, what to cite. The worker sees only this."
+                            },
+                            "model": {
+                                "type": "string",
+                                "enum": ["fast", "balanced", "strong"],
+                                "description": "Worker model tier by difficulty. Default balanced."
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:team-line".to_string(),
+        display_order: 6,
+        // Internal orchestration tool: excluded from Chat (which filters out system tools) but
+        // included in Deep Research via the Search|Data category filter.
+        is_system: true,
     }
 }
 

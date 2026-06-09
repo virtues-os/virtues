@@ -78,11 +78,12 @@ Common SQL patterns (Postgres):
 </tool_guidance>
 "#;
 
-/// Research mode: thorough exploration across sources
-pub const RESEARCH_MODE_PROMPT: &str = r#"
-<mode>research</mode>
+/// Deep Research mode: orchestrator that plans, dispatches sub-researchers, and synthesizes a
+/// cited report. (Enriched with the full Mirror contract + dispatch guidance in Phase 4.)
+pub const DEEP_RESEARCH_MODE_PROMPT: &str = r#"
+<mode>deep_research</mode>
 <tool_guidance>
-- Start with the think tool to plan your research approach
+- Start with the think tool to plan your research approach and state your brief.
 - Recommended workflow: think → semantic_search → sql_query → web_search → code_interpreter → synthesize
 - Explore thoroughly across multiple data sources before synthesizing
 - Cross-reference information for accuracy
@@ -92,23 +93,6 @@ pub const RESEARCH_MODE_PROMPT: &str = r#"
 - Use code_interpreter for: calculations, statistical analysis, data transformations
 - Gather all relevant data before writing your final response
 </tool_guidance>
-"#;
-
-/// Council mode: synthesize several independent answers into one.
-/// Injected as a system message alongside the collected member responses
-/// (see [`crate::agent::council::build_synthesis_messages`]).
-pub const COUNCIL_SYNTHESIS_PROMPT: &str = r#"
-<mode>council</mode>
-<synthesis_guidance>
-You convened a council: several independent models each answered the user's question through a different lens. Their answers are provided below in <council_responses>.
-
-Synthesize ONE definitive answer:
-- Identify where the responses agree — treat consensus as high-confidence.
-- Where they disagree, reason about which is correct; if it is genuinely unsettled, say so briefly and explain the tension.
-- Discard outliers, hallucinations, and unsupported claims only a single member makes.
-- Integrate the strongest, best-supported points into a single coherent answer in your own voice.
-- Do NOT narrate the council ("member 3 said…") or mention the lenses unless the user explicitly asks how the council reasoned. The user wants the best answer, not a meeting summary.
-</synthesis_guidance>
 "#;
 
 /// The exact opening message shown to new users during onboarding.
@@ -313,16 +297,12 @@ pub fn build_personalized_prompt(
             .replace("{narrative_identity}", narrative_identity),
     );
 
-    // Only include tool usage instructions if tools are available.
-    // "chat" has no tools; "council" members and synthesis are pure text too.
-    if agent_mode != "chat" && agent_mode != "council" {
-        prompt.push_str(TOOL_USAGE_PROMPT);
-
-        // Add mode-specific behavioral guidance
-        match agent_mode {
-            "research" => prompt.push_str(RESEARCH_MODE_PROMPT),
-            _ => prompt.push_str(AGENT_MODE_PROMPT), // "agent" or default
-        }
+    // Both modes (chat + deep_research) have tools, so always include tool-usage guidance,
+    // then layer mode-specific behavioral guidance on top.
+    prompt.push_str(TOOL_USAGE_PROMPT);
+    match agent_mode {
+        "deep_research" => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
+        _ => prompt.push_str(AGENT_MODE_PROMPT), // "chat" or default
     }
 
     prompt
@@ -350,12 +330,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_personalized_prompt_research_mode() {
-        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "research", "");
+    fn test_build_personalized_prompt_deep_research_mode() {
+        let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "deep_research", "");
 
         assert!(prompt.contains("<tool_usage>"));
-        // Research mode should include research guidance (thorough exploration)
-        assert!(prompt.contains("<mode>research</mode>"));
+        // Deep research mode should include research guidance (thorough exploration)
+        assert!(prompt.contains("<mode>deep_research</mode>"));
         assert!(prompt.contains("Start with the think tool to plan your research approach"));
     }
 
@@ -364,9 +344,10 @@ mod tests {
         let prompt = build_personalized_prompt("Ari", "Adam", "standard", None, "chat", "");
 
         assert!(prompt.contains("You are Ari, Adam's personal AI assistant"));
-        // Chat mode should NOT include tool usage
-        assert!(!prompt.contains("<tool_usage>"));
-        // But narrative identity should still be present
+        // Chat is now the smart default with tools, so tool usage IS included
+        assert!(prompt.contains("<tool_usage>"));
+        assert!(prompt.contains("<mode>assistant</mode>"));
+        // Narrative identity should still be present
         assert!(prompt.contains("<narrative_identity>"));
     }
 
