@@ -49,19 +49,41 @@ Usage:
 Flags:
   --version=vX.Y.Z   Pin a specific release (default: latest GitHub release)
   --dry-run          Print every step without modifying the system
+  --no-init          Don't auto-run `virtues init` at the end
+  -y, --yes          Assume yes to all prompts (auto-runs init non-interactively)
   --help, -h         Show this help
 HELP
             exit 0 ;;
+        --no-init) AUTO_INIT=0 ;;
+        -y|--yes) ASSUME_YES=1; AUTO_INIT=1 ;;
         *) echo "unknown flag: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
 
+# Defaults applied if flags didn't set them.
+AUTO_INIT="${AUTO_INIT:-1}"     # 1 = auto-run init if TTY, 0 = skip
+ASSUME_YES="${ASSUME_YES:-0}"   # 1 = bypass all interactive prompts
+
 # TTY-aware color: avoid ANSI gibberish in systemd / CI logs.
 if [ -t 1 ]; then
-    C_GREEN='\033[32m'; C_YELLOW='\033[33m'; C_RED='\033[31m'; C_DIM='\033[2m'; C_RESET='\033[0m'
+    C_GREEN='\033[32m'; C_YELLOW='\033[33m'; C_RED='\033[31m'
+    C_DIM='\033[2m'; C_BOLD='\033[1m'; C_RESET='\033[0m'
 else
-    C_GREEN=''; C_YELLOW=''; C_RED=''; C_DIM=''; C_RESET=''
+    C_GREEN=''; C_YELLOW=''; C_RED=''; C_DIM=''; C_BOLD=''; C_RESET=''
 fi
+
+# ∴ Virtues — print the brand-mark header once at the top. Three lines,
+# low ink, scannable in any terminal width. Skipped in non-TTY for log
+# cleanliness.
+print_brand_header() {
+    [ -t 1 ] || return 0
+    printf "\n"
+    printf "   ${C_BOLD}─────────∴─────────${C_RESET}\n"
+    printf "   ${C_BOLD}     V I R T U E S${C_RESET}\n"
+    printf "   ${C_DIM}your data. your hardware.${C_RESET}\n"
+    printf "   ${C_BOLD}───────────────────${C_RESET}\n"
+    printf "\n"
+}
 
 say()    { printf "  %s\n"   "$*"; }
 warn()   { printf "  ${C_YELLOW}⚠${C_RESET}  %s\n" "$*" >&2; }
@@ -223,7 +245,7 @@ detect_distro() {
 # apt/systemd/PG/Ollama. Catches the failures that produce ugly half-installs
 # (out of disk mid-Ollama-pull, network blocked, port already in use, etc.).
 preflight_checks() {
-    header "🩺  Pre-flight checks…"
+    header "∴  Pre-flight"
     local issues=0
 
     # Disk space: 3GB minimum for PG18 + virtues binary + bge-m3 model.
@@ -277,54 +299,49 @@ preflight_checks() {
 
 add_pgdg_repo() {
     [ "$USE_PGDG" = "1" ] || return 0
-    header "🔧  Adding PGDG repo (Postgres 18 isn't in your distro's default repos)"
-    step "Installing apt key tooling (curl, lsb-release, gnupg)" \
-        apt-get install -y -qq curl ca-certificates lsb-release gnupg
+    # No header — PGDG is a sub-step of install_deps. Steps appear inline
+    # under that single "Installing system dependencies" section so output
+    # is a single flat checklist instead of two interleaved blocks.
+    step "apt key tooling"  apt-get install -y -qq curl ca-certificates lsb-release gnupg
     install -d /usr/share/postgresql-common/pgdg
-    step "Fetching PGDG signing key" \
+    step "PGDG signing key" \
         curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
         -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
     local codename
     codename="$(lsb_release -cs)"
     echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${codename}-pgdg main" \
         > /etc/apt/sources.list.d/pgdg.list
-    step "Refreshing apt index with PGDG repo" apt-get update -qq
+    step "Refresh apt index w/ PGDG"  apt-get update -qq
 }
 
 install_deps() {
-    header "📦  Installing system dependencies"
+    header "∴  Installing system dependencies"
     case "$PKG" in
         apt)
             export DEBIAN_FRONTEND=noninteractive
-            step "Refreshing apt index" apt-get update -qq
+            step "apt index" apt-get update -qq
+            # PGDG is logically a sub-step of "installing dependencies" — it
+            # adds an apt source for one package. Folding it in here keeps
+            # the output a single flat list under one header.
             add_pgdg_repo
-            step "Installing Postgres 18 + pgvector" \
-                apt-get install -y -qq postgresql-18 postgresql-18-pgvector
-            step "Installing WireGuard" \
-                apt-get install -y -qq wireguard wireguard-tools
-            step "Installing Avahi (mDNS)" \
-                apt-get install -y -qq avahi-daemon avahi-utils libnss-mdns
-            step "Installing ca-certificates + curl" \
-                apt-get install -y -qq ca-certificates curl
+            step "Postgres 18 + pgvector"  apt-get install -y -qq postgresql-18 postgresql-18-pgvector
+            step "WireGuard"               apt-get install -y -qq wireguard wireguard-tools
+            step "Avahi (mDNS)"            apt-get install -y -qq avahi-daemon avahi-utils libnss-mdns
+            step "ca-certificates + curl"  apt-get install -y -qq ca-certificates curl
             ;;
         dnf)
-            step "Installing Postgres + pgvector" \
-                dnf install -y -q postgresql-server postgresql-contrib pgvector
-            step "Installing WireGuard tooling" \
-                dnf install -y -q wireguard-tools
-            step "Installing Avahi (mDNS)" \
-                dnf install -y -q avahi nss-mdns
-            step "Installing ca-certificates + curl" \
-                dnf install -y -q ca-certificates curl
+            step "Postgres + pgvector"     dnf install -y -q postgresql-server postgresql-contrib pgvector
+            step "WireGuard tooling"       dnf install -y -q wireguard-tools
+            step "Avahi (mDNS)"            dnf install -y -q avahi nss-mdns
+            step "ca-certificates + curl"  dnf install -y -q ca-certificates curl
             # Fedora's postgresql-setup --initdb is required before first start.
             if [ ! -d /var/lib/pgsql/data/base ]; then
-                step "Initializing Fedora Postgres cluster" \
-                    postgresql-setup --initdb
+                step "Init Postgres cluster" postgresql-setup --initdb
             fi
             ;;
     esac
-    step "Enabling postgresql service" systemctl enable --now postgresql
-    step "Enabling avahi-daemon service" systemctl enable --now avahi-daemon
+    step "Enable postgresql"  systemctl enable --now postgresql
+    step "Enable avahi-daemon" systemctl enable --now avahi-daemon
 }
 
 # Ensure Ollama is installed + running. Ollama owns local embeddings (and
@@ -332,7 +349,7 @@ install_deps() {
 # its HTTP API at localhost:11434. The official installer detects GPU/CPU
 # and configures the systemd unit; if it's already installed we no-op.
 ensure_ollama() {
-    header "🦙  Installing Ollama (local inference daemon)"
+    header "∴  Installing Ollama"
     if command -v ollama >/dev/null 2>&1; then
         ok "Ollama already installed: $(ollama --version 2>/dev/null | head -1)"
     else
@@ -363,7 +380,7 @@ ensure_ollama() {
 #   2. Service advertisement — drop an Avahi service-group file so the
 #      box appears in Bonjour Browser / `dns-sd -B _https._tcp` listings.
 configure_mdns() {
-    header "📡  Configuring mDNS (virtues.local on the LAN)"
+    header "∴  Configuring mDNS"
 
     local current_host
     current_host=$(hostnamectl --static 2>/dev/null || hostname)
@@ -398,7 +415,7 @@ AVAHI
 }
 
 create_user() {
-    header "👤  Creating 'virtues' system user"
+    header "∴  System user"
     if ! id -u virtues >/dev/null 2>&1; then
         step "Creating system user 'virtues'" \
             useradd --system --home-dir "$DATA_DIR" --shell /usr/sbin/nologin virtues
@@ -412,7 +429,7 @@ create_user() {
 }
 
 provision_db() {
-    header "🗄   Provisioning Postgres role + database"
+    header "∴  Postgres role + database"
     if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='virtues'" 2>/dev/null | grep -q 1; then
         ok "Postgres role 'virtues' already exists"
     else
@@ -435,7 +452,7 @@ provision_db() {
 # Run virtues bringup: applies migrations + ensures box identity.
 # Idempotent — safe to re-run on every install.sh invocation.
 run_bringup() {
-    header "🚀  First-boot bringup (migrations + box identity)"
+    header "∴  First-boot bringup"
     step "Loading env + running virtues bringup" \
         sudo -u virtues bash -c "set -a; . '$DATA_DIR/virtues.env'; set +a; '$INSTALL_PREFIX/bin/virtues' bringup"
 }
@@ -446,12 +463,16 @@ run_bringup() {
 # file doesn't already exist — re-running install.sh on a working box
 # must never rotate the key (would invalidate every stored credential).
 write_env_file() {
-    header "🔑  Writing /var/lib/virtues/virtues.env"
     local env_file="${DATA_DIR}/virtues.env"
+    # Idempotent — never rotate the encryption key on a re-run (would
+    # invalidate every stored credential). Header is conditional so the
+    # output describes what actually happened.
     if [ -f "$env_file" ]; then
-        ok "$env_file already exists — leaving in place"
+        header "∴  Env file"
+        ok "$env_file already configured — leaving in place"
         return 0
     fi
+    header "∴  Writing env file"
     local enc_key
     enc_key="$(openssl rand -base64 32)"
     cat > "$env_file" <<EOF
@@ -502,7 +523,7 @@ download_binary() {
         base="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${VIRTUES_VERSION}"
     fi
 
-    header "⬇   Downloading virtues binary ($VIRTUES_VERSION, $PLAT_ARCH-linux)"
+    header "∴  Downloading virtues $VIRTUES_VERSION ($PLAT_ARCH)"
     local tarball="virtues-${VIRTUES_VERSION}-${PLAT_ARCH}-linux.tar.gz"
     local url="${base}/${tarball}"
     local tmpdir
@@ -542,7 +563,7 @@ download_binary() {
 }
 
 install_systemd_unit() {
-    header "⚙   Installing systemd unit…"
+    header "∴  systemd unit"
     cat > /etc/systemd/system/virtues.service <<'UNIT'
 [Unit]
 Description=Virtues — your data, on your hardware
@@ -639,7 +660,7 @@ EOF
 # Post-install: sanity-check the things install.sh just set up so problems
 # surface here (clear context) instead of later via a broken login URL.
 post_install_health() {
-    header "🩺  Post-install health check…"
+    header "∴  Health check"
     local issues=0
 
     # Postgres reachable as the virtues user? Use peer auth via the local
@@ -689,7 +710,8 @@ require_root
 detect_platform
 detect_distro
 
-header "Welcome — installing Virtues on $DISTRO ($PLAT_ARCH)."
+print_brand_header
+header "Installing on $DISTRO ($PLAT_ARCH)"
 
 # Diagnostic beacon. If anything below fails, the trap fires an
 # `outcome=failed` beacon with the function name as `failed_step`. On
@@ -769,19 +791,39 @@ FAILED_STEP=install_systemd_unit; install_systemd_unit
 FAILED_STEP=post_install_health; post_install_health
 FAILED_STEP=""
 
-print_next_steps
-
-# Privacy note printed BEFORE the beacon goes out so users see what
-# they're sending and how to opt out before the install finishes.
-cat <<'DIAG_NOTICE'
-
-  📡  Anonymized install + crash beacons are ON by default.
-      What's sent: distro, version, architecture, install outcome.
-                   On crash: exit code + last 50 journal lines.
-                   No source data, no personal data, no chat content.
-      To disable:  add VIRTUES_DIAG=off to /etc/virtues/env, then
-                   `sudo systemctl restart virtues`.
-
-DIAG_NOTICE
+# Shorter diag notice — moved BEFORE the next-steps so users see opt-out
+# at decision time, not buried in a footer block.
+printf "\n  ${C_DIM}📡  Anonymized install + crash beacons enabled. Disable via VIRTUES_DIAG=off in /etc/virtues/env.${C_RESET}\n"
 
 send_install_beacon ok ""
+
+# Hand off to `virtues init` when the user is interactive. The </dev/tty
+# redirect is the load-bearing trick: lets the wizard read input even
+# when install.sh was invoked via `curl … | sh` (stdin is the curl pipe).
+# Suppressed by:
+#   --no-init   explicit opt-out
+#   non-TTY     CI, Ansible, scripted deploys (we print next steps + exit)
+#   /dev/tty unreadable  e.g. running under a job-runner without TTY
+should_auto_init() {
+    [ "$AUTO_INIT" = "1" ] || return 1
+    [ -t 1 ] || return 1
+    [ -r /dev/tty ] || return 1
+    return 0
+}
+
+if should_auto_init; then
+    # Make sure the service is up so init's migrations + pair-token
+    # routes have a running daemon to talk to. `enable --now` is
+    # idempotent.
+    systemctl enable --now virtues 2>/dev/null || true
+    sleep 1   # tiny pause for socket bind on slow hardware
+
+    printf "\n  ${C_GREEN}∴${C_RESET}  Install complete. Continuing to setup…\n\n"
+    # Replace this shell with `virtues init` so the wizard inherits the
+    # terminal cleanly. </dev/tty makes dialoguer/cliclack readable.
+    exec sudo -u virtues virtues init </dev/tty
+fi
+
+# Non-interactive completion (CI, --no-init, no TTY): print next steps
+# and exit normally.
+print_next_steps

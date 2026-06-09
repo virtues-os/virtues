@@ -8,35 +8,51 @@ use virtues::VirtuesBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Install the ring CryptoProvider as the process-wide default.
-    // We use rustls with `default-features = false, features = ["ring"]` to
-    // avoid aws-lc-rs (and aws-lc-sys, which doesn't cross-compile under
-    // GCC 11). Rustls 0.23 requires the provider to be installed once at
-    // startup before any TLS work; otherwise the axum-server TLS task
-    // panics on first connection.
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("install rustls ring CryptoProvider");
+    // Trivial subcommands (--version, --help) skip the heavy startup path:
+    // no tracing init, no observability, no .env loading, no rustls provider.
+    // Without this, `virtues --version` prints two lines of OTel/observability
+    // noise before the version itself — visibly broken when install.sh's
+    // post-install health check captures the output. Detect on raw argv so
+    // we don't pay clap's parse cost either.
+    //
+    // Anything matching is handled by clap below as normal; we just skip the
+    // setup that wouldn't have produced useful output for a one-shot probe.
+    let is_trivial = std::env::args()
+        .nth(1)
+        .map(|a| matches!(a.as_str(), "--version" | "-V" | "--help" | "-h"))
+        .unwrap_or(false);
 
-    // Load environment variables from .env file
-    // Try current directory first, then parent directory (for running from core/)
-    if dotenv::dotenv().is_err() {
-        let _ = dotenv::from_path("../.env");
-    }
+    if !is_trivial {
+        // Install the ring CryptoProvider as the process-wide default.
+        // We use rustls with `default-features = false, features = ["ring"]` to
+        // avoid aws-lc-rs (and aws-lc-sys, which doesn't cross-compile under
+        // GCC 11). Rustls 0.23 requires the provider to be installed once at
+        // startup before any TLS work; otherwise the axum-server TLS task
+        // panics on first connection.
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("install rustls ring CryptoProvider");
 
-    // Initialize tracing
-    // Use RUST_LOG env var, falling back to INFO if not set
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        // Load environment variables from .env file
+        // Try current directory first, then parent directory (for running from core/)
+        if dotenv::dotenv().is_err() {
+            let _ = dotenv::from_path("../.env");
+        }
 
-    tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        // Initialize tracing
+        // Use RUST_LOG env var, falling back to INFO if not set
+        let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    // Initialize observability (metrics)
-    // If OTEL_EXPORTER_OTLP_ENDPOINT is set, metrics will be exported
-    if let Err(e) =
-        virtues::observability::init(virtues::observability::ObservabilityConfig::default())
-    {
-        tracing::warn!(error = %e, "Failed to initialize observability, continuing without metrics");
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+
+        // Initialize observability (metrics)
+        // If OTEL_EXPORTER_OTLP_ENDPOINT is set, metrics will be exported
+        if let Err(e) =
+            virtues::observability::init(virtues::observability::ObservabilityConfig::default())
+        {
+            tracing::warn!(error = %e, "Failed to initialize observability, continuing without metrics");
+        }
     }
 
     let cli = Cli::parse();
