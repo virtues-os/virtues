@@ -461,6 +461,11 @@ DATABASE_URL=postgres:///virtues
 VIRTUES_ENCRYPTION_KEY=$enc_key
 ENVIRONMENT=production
 STATIC_DIR=$INSTALL_PREFIX/share/virtues/web
+# Storage backend writes ontology stream archives here. The systemd unit
+# sets WorkingDirectory=/var/lib/virtues, so without STORAGE_PATH the
+# default './data/lake' would resolve to a /data/lake subdir nobody else
+# expects. Pin it to the canonical $DATA_DIR/lake that install.sh creates.
+STORAGE_PATH=$DATA_DIR/lake
 EOF
     chown virtues:virtues "$env_file"
     chmod 0600 "$env_file"
