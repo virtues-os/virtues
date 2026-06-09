@@ -51,6 +51,15 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the ring CryptoProvider as the process-wide default. Without
+    // this, `reqwest::Client::new()` panics on first use because rustls
+    // 0.23 (transitively via reqwest's rustls-tls-no-provider feature)
+    // requires the provider to be installed before any TLS work. Mirrors
+    // the fix in virtues-core and atlas main.rs.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls ring CryptoProvider");
+
     let cli = Cli::parse();
 
     if !nix_check_root() {
