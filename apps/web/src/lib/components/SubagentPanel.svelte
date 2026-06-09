@@ -24,7 +24,7 @@
 			<span class="subagent-count">{doneCount}/{subagents.length}</span>
 		</div>
 		<div class="subagent-grid">
-			{#each subagents as s (s.subagentId)}
+			{#each subagents as s (`${s.dispatchId}:${s.subagentId}`)}
 				<div class="subagent-card" data-status={s.status}>
 					<span class="subagent-status-icon">
 						{#if s.status === 'thinking'}

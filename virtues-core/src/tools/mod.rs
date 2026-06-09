@@ -78,6 +78,26 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Tools for an autonomous **action** run: everything except `dispatch_subagents`. Deep Research
+/// fan-out is an interactive, budgeted, panel-visible capability; a headless action shouldn't be
+/// able to silently spawn workers on every run.
+pub fn get_tools_for_action() -> Vec<serde_json::Value> {
+    virtues_registry::tools::default_tools()
+        .into_iter()
+        .filter(|tool| tool.id != "dispatch_subagents")
+        .map(|tool| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": tool.id,
+                    "description": tool.llm_description,
+                    "parameters": tool.parameters,
+                }
+            })
+        })
+        .collect()
+}
+
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and
 /// crucially no `dispatch_subagents` (recursion guard).
@@ -131,37 +151,42 @@ pub fn get_tools_for_onboarding() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
+/// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
+/// genuinely read-write Data-category tools (`update_memory`, `set_user_name`, `set_assistant_name`)
+/// can't leak into a mode that's meant to be read-only.
+const DEEP_RESEARCH_TOOLS: &[&str] = &[
+    "think",
+    "web_search",
+    "semantic_search",
+    "sql_query",
+    "code_interpreter",
+    "dispatch_subagents",
+    "create_page",
+];
+
 /// Get tool definitions filtered by agent mode
 ///
 /// Agent modes:
 /// - "chat": All tools (smart default; write/act tools confirm before running)
-/// - "deep_research": Read-only research tools (search + data) plus `dispatch_subagents`
-///   (fan-out) and `create_page` (to write the final report). No other edit/act tools.
+/// - "deep_research": read-only research tools + `dispatch_subagents` (fan-out) + `create_page`
+///   (the report artifact). No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
 pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
-    use virtues_registry::tools::ToolCategory;
-
     match agent_mode {
-        "deep_research" => {
-            // Read-only research tools (search + data) + create_page for the report artifact.
-            // `dispatch_subagents` is a Data-category tool, so it's included automatically.
-            virtues_registry::tools::default_tools()
-                .into_iter()
-                .filter(|tool| {
-                    matches!(tool.category, ToolCategory::Search | ToolCategory::Data)
-                        || tool.id == "create_page"
+        "deep_research" => virtues_registry::tools::default_tools()
+            .into_iter()
+            .filter(|tool| DEEP_RESEARCH_TOOLS.contains(&tool.id.as_str()))
+            .map(|tool| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.id,
+                        "description": tool.llm_description,
+                        "parameters": tool.parameters,
+                    }
                 })
-                .map(|tool| {
-                    serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": tool.id,
-                            "description": tool.llm_description,
-                            "parameters": tool.parameters,
-                        }
-                    })
-                })
-                .collect()
-        }
+            })
+            .collect(),
         _ => {
             // "chat" mode or default: all tools
             get_tool_definitions_for_llm()
