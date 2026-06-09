@@ -155,6 +155,10 @@ impl ToolExecutor {
             "semantic_search" => self.semantic_search.execute(arguments).await,
             "sql_query" => self.sql_query.execute(arguments).await,
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
+            // Deep Research fan-out: spawn read-only research workers in parallel.
+            "dispatch_subagents" => {
+                crate::agent::subagent::dispatch(self._pool.clone(), arguments).await
+            }
             // Page editing tools - all routed to PageEditorTool
             "create_page" => self.page_editor.create_page(arguments).await,
             "get_page_content" => self.page_editor.get_page_content(arguments, context).await,

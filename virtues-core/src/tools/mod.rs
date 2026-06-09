@@ -76,6 +76,35 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
+/// (not a category filter) so workers get pure research capability — no memory/profile writes, and
+/// crucially no `dispatch_subagents` (recursion guard).
+const SUBAGENT_TOOLS: &[&str] = &[
+    "think",
+    "web_search",
+    "semantic_search",
+    "sql_query",
+    "code_interpreter",
+];
+
+/// Get tool definitions for a Deep Research subagent (worker).
+pub fn get_tools_for_subagent() -> Vec<serde_json::Value> {
+    virtues_registry::tools::default_tools()
+        .into_iter()
+        .filter(|tool| SUBAGENT_TOOLS.contains(&tool.id.as_str()))
+        .map(|tool| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": tool.id,
+                    "description": tool.llm_description,
+                    "parameters": tool.parameters,
+                }
+            })
+        })
+        .collect()
+}
+
 /// Onboarding-only tools: just naming + memory (no search, no data, no edit).
 ///
 /// Prevents the AI from running web searches, SQL queries, or other tools
@@ -103,19 +132,16 @@ pub fn get_tools_for_onboarding() -> Vec<serde_json::Value> {
 /// Get tool definitions filtered by agent mode
 ///
 /// Agent modes:
-/// - "agent": All tools (full access)
-/// - "chat": No tools (pure conversation)
-/// - "research": Read-only tools (search, data queries, but no edit)
+/// - "chat": All tools (smart default; write/act tools confirm before running)
+/// - "deep_research": Read-only research tools (search + data) plus `dispatch_subagents`,
+///   the orchestrator's fan-out tool. No direct edit/act tools.
 pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
     use virtues_registry::tools::ToolCategory;
 
     match agent_mode {
-        "chat" => {
-            // No tools in chat mode
-            vec![]
-        }
-        "research" => {
-            // Only search and data tools (no edit)
+        "deep_research" => {
+            // Read-only research tools (search + data). `dispatch_subagents` is itself a
+            // Data-category tool, so it's included here automatically once registered.
             virtues_registry::tools::default_tools()
                 .into_iter()
                 .filter(|tool| {
@@ -134,7 +160,7 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
                 .collect()
         }
         _ => {
-            // "agent" mode or default: all tools
+            // "chat" mode or default: all tools
             get_tool_definitions_for_llm()
         }
     }

@@ -46,7 +46,7 @@
 		focused = $bindable(false),
 		selectedModel = $bindable<ModelOption | undefined>(undefined),
 		selectedPersona = $bindable<string>('default'),
-		selectedAgentMode = $bindable<AgentModeId>('agent'),
+		selectedAgentMode = $bindable<AgentModeId>('chat'),
 		showToolbar = true,
 		conversationId = undefined as string | undefined,
 		contextUsage = undefined as ContextUsage | undefined,

@@ -200,43 +200,6 @@ pub async fn get_coding_model(db: &PgPool) -> Result<String> {
         ).to_string()))
 }
 
-/// Council settings: `(member_count, models)`, read from `ui_preferences.council`.
-///
-/// Defaults: 8 members, and an empty model list (meaning "all enabled registry models", resolved
-/// in [`crate::agent::council::run_council`]). Member count is clamped to a sane 2–12 range.
-/// Never fails — falls back to defaults if the profile can't be read.
-pub async fn get_council_settings(db: &PgPool) -> (usize, Vec<String>) {
-    const DEFAULT_COUNT: usize = 8;
-
-    let profile = match get_assistant_profile(db).await {
-        Ok(p) => p,
-        Err(_) => return (DEFAULT_COUNT, Vec::new()),
-    };
-
-    let council = profile
-        .ui_preferences
-        .as_ref()
-        .and_then(|p| p.get("council"));
-
-    let count = council
-        .and_then(|c| c.get("memberCount"))
-        .and_then(|v| v.as_u64())
-        .map(|n| n.clamp(2, 12) as usize)
-        .unwrap_or(DEFAULT_COUNT);
-
-    let models = council
-        .and_then(|c| c.get("models"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|m| m.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    (count, models)
-}
-
 /// Helper to get the AI persona for system prompts
 ///
 /// Returns persona if set, otherwise "capable_warm" (default)
