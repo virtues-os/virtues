@@ -10,7 +10,7 @@
 //!
 //! # Architecture
 //!
-//! - `embedder.rs` - Ollama HTTP client (text → 768-dim vector)
+//! - `embedder.rs` - Ollama HTTP client (text → 1024-dim vector via bge-m3)
 //! - `indexer.rs`  - Background job that embeds new records
 //! - `query.rs`    - Vector search (query embedding + pgvector ANN lookup)
 //! - `reranker.rs` - v0.1.0 stub; search auto-falls-back to bi-encoder cosine

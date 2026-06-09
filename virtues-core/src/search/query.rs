@@ -1,7 +1,7 @@
 //! Semantic search query engine.
 //!
 //! Embeds the query text, then searches `search_vectors` (pgvector
-//! `vector(768)` with HNSW cosine index) joined with `search_embeddings`
+//! `vector(1024)` with HNSW cosine index) joined with `search_embeddings`
 //! metadata for ranked results. Optionally reranks top candidates using a
 //! cross-encoder for higher precision.
 

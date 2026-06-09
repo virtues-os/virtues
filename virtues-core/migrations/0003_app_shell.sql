@@ -57,7 +57,7 @@ CREATE TABLE app_assistant_profile (
     lite_model_id         TEXT,
     reasoning_model_id    TEXT,
     coding_model_id       TEXT,
-    embedding_model_id    TEXT DEFAULT 'nomic-embed-text',
+    embedding_model_id    TEXT DEFAULT 'bge-m3',
     ollama_endpoint       TEXT DEFAULT 'http://localhost:11434',
     enabled_tools         JSONB NOT NULL DEFAULT
         '{"web_search": true, "virtues_query_ontology": true, "virtues_semantic_search": true}'::jsonb,

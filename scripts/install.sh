@@ -187,8 +187,8 @@ ensure_ollama() {
 
     # Pull the default embedding model so the first query doesn't pay
     # download latency. Operators can swap the model via VIRTUES_EMBED_MODEL.
-    EMBED_MODEL="${VIRTUES_EMBED_MODEL:-nomic-embed-text}"
-    say "Pulling embedding model: $EMBED_MODEL (one-time, ~275 MB)…"
+    EMBED_MODEL="${VIRTUES_EMBED_MODEL:-bge-m3}"
+    say "Pulling embedding model: $EMBED_MODEL (one-time, ~1.2 GB)…"
     ollama pull "$EMBED_MODEL" \
         || warn "ollama pull $EMBED_MODEL failed; first embed request will retry."
 }

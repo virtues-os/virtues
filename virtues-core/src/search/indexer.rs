@@ -2,7 +2,7 @@
 //!
 //! Processes records from searchable ontologies, generates embeddings via
 //! the local model, and stores them in `search_embeddings` + `search_vectors`
-//! (pgvector `vector(768)` with HNSW cosine index).
+//! (pgvector `vector(1024)` with HNSW cosine index).
 
 use anyhow::Result;
 use pgvector::Vector;
@@ -133,7 +133,7 @@ pub async fn run_embedding_job(pool: &PgPool) -> Result<u64> {
             sqlx::query(
                 "INSERT INTO search_embeddings \
                  (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, timestamp) \
-                 VALUES ($1, $2, $3, $4, 'nomic-embed-text-v1.5', 0, $5, $6, $7, $8) \
+                 VALUES ($1, $2, $3, $4, 'bge-m3', 0, $5, $6, $7, $8) \
                  ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                    text_hash = EXCLUDED.text_hash, \
                    title = EXCLUDED.title, \
