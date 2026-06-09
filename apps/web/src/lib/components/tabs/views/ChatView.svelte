@@ -166,7 +166,7 @@
 	}
 
 	function handleRemoveItem(type: string, id: string) {
-		editAllowListStore.remove(type as 'page' | 'folder' | 'wiki_entry', id);
+		editAllowListStore.remove(type as EditableResourceType, id);
 	}
 
 	function handlePageSelect(pageId: string, pageTitle: string) {
@@ -1126,19 +1126,7 @@
 												{/if}
 											{:else if part.type === "tool-edit_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
-												{#if output?.permission_needed}
-													<!-- AI needs permission to edit this entity -->
-													<PageBindingInline
-														entityId={output.entity_id}
-														entityType={output.entity_type}
-														entityTitle={output.entity_title}
-														message={output.message}
-														proposedAction={output.proposed_action}
-														permissionMode={true}
-														onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
-														onDeny={() => handlePermissionDeny()}
-													/>
-												{:else if output?.needs_binding}
+												{#if output?.needs_binding}
 													<PageBindingInline
 														entityId={output.page_id}
 														entityTitle={output.page_title}
@@ -1246,7 +1234,7 @@
 							conversationId={extractConversationId(tab.route)}
 							{contextUsage}
 							onContextClick={handleContextClick}
-							editableItems={editAllowListStore.items}
+							editableItems={editAllowListStore.items.filter((i) => i.type !== 'action')}
 							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
 							attachedThings={attachedThings}
 							allThings={thingsStore.things}

@@ -183,7 +183,12 @@ impl ToolExecutor {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
             return Ok(None);
         }
-        // Headless/action runs (no chat) aren't gated.
+        // Only interactive chat is gated. Autonomous action runs set `action_id` (and may carry a
+        // linked `chat_id`) but have no user present to approve, so they must run ungated.
+        if context.action_id.is_some() {
+            return Ok(None);
+        }
+        // Headless calls with no chat aren't gated either.
         let Some(chat_id) = context.chat_id.as_deref() else {
             return Ok(None);
         };
