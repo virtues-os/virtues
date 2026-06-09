@@ -9,7 +9,7 @@
 		onSelect?: (mode: AgentMode) => void;
 	}
 
-	let { value = $bindable<AgentModeId>('agent'), disabled = false, onSelect }: Props = $props();
+	let { value = $bindable<AgentModeId>('chat'), disabled = false, onSelect }: Props = $props();
 
 	function getModeKey(m: AgentMode) {
 		return m.id;

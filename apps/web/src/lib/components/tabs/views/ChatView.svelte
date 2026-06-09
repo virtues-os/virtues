@@ -14,7 +14,6 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
-	import CouncilPanel from "$lib/components/CouncilPanel.svelte";
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
@@ -764,7 +763,7 @@
 	>(undefined);
 
 	// Agent mode and persona selection state - used for tool filtering on backend
-	let selectedAgentMode = $state<AgentModeId>('agent');
+	let selectedAgentMode = $state<AgentModeId>('chat');
 	let selectedPersona = $state<string>('default');
 
 	// Sync selected model with store (only on initial load)
@@ -1055,18 +1054,6 @@
 											{@const hasThinkingContent =
 												messageReasoning ||
 												messageToolParts.length > 0}
-
-											{@const councilMembers =
-												isLastMessage
-													? chatInstances.getCouncilMembers(
-															conversationId,
-														)
-													: []}
-											{#if councilMembers.length > 0}
-												<CouncilPanel
-													members={councilMembers}
-												/>
-											{/if}
 
 											{#if hasThinkingContent || (isStreaming && isLastMessage)}
 												<ThinkingBlock
