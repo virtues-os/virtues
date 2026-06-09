@@ -80,6 +80,12 @@ jobs:
         run: |
           cargo build --release -p virtues --bin virtues --target ${{ matrix.target }}
 
+      - name: Build virtues-installer binary
+        env:
+          SQLX_OFFLINE: 'true'
+        run: |
+          cargo build --release -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
+
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
       # web package + lockfile live at apps/web/, not the repo root.
@@ -101,23 +107,35 @@ jobs:
           # SvelteKit static adapter writes to ./build inside apps/web/.
           test -d build || (echo "web build did not produce apps/web/build" >&2 && exit 1)
 
-      - name: Package tarball
+      - name: Package release artifacts
         id: tarball
         run: |
           mkdir -p dist staging
           BIN_PATH="target/${{ matrix.target }}/release/virtues"
-          test -x "$BIN_PATH" || (echo "binary not built" >&2 && exit 1)
-          # Layout inside the tarball:
-          #   virtues             (the binary, install.sh moves to /usr/local/bin/)
-          #   web/                (SvelteKit static build; install.sh moves to
-          #                        /usr/local/share/virtues/web/)
+          INSTALLER_PATH="target/${{ matrix.target }}/release/virtues-installer"
+          test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
+          test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
+
+          # Layout inside the main tarball:
+          #   virtues             box binary, installer moves to /usr/local/bin/
+          #   web/                SvelteKit static build, → /usr/local/share/virtues/web/
           cp "$BIN_PATH" staging/virtues
           cp -r apps/web/build staging/web
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
           tar -czf "dist/${TAR_NAME}" -C staging virtues web
+          (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
+
+          # The installer ships as a standalone binary (NOT inside the
+          # tarball). bootstrap.sh downloads it directly, verifies the
+          # SHA, then execs it. Keeping it separate lets the bootstrap
+          # avoid extracting a tarball before having any UI to show.
+          INSTALLER_NAME="virtues-installer-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
+          cp "$INSTALLER_PATH" "dist/${INSTALLER_NAME}"
+          (cd dist && sha256sum "${INSTALLER_NAME}" > "${INSTALLER_NAME}.sha256")
+
           echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
-          (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
+          echo "installer_name=${INSTALLER_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -126,6 +144,8 @@ jobs:
           files: |
             dist/${{ steps.tarball.outputs.name }}
             dist/${{ steps.tarball.outputs.name }}.sha256
+            dist/${{ steps.tarball.outputs.installer_name }}
+            dist/${{ steps.tarball.outputs.installer_name }}.sha256
           fail_on_unmatched_files: true
           # Don't auto-publish: lets the release page collect both arches
           # before going live. The release shows up as draft after the

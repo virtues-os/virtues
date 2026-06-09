@@ -5,6 +5,7 @@ members = [
     "crates/virtues-wg",
     "crates/virtues-registry",
     "actions",
+    "apps/installer",
     "services/virtues-api",
     "services/atlas",
 ]
