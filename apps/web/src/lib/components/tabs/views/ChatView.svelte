@@ -21,7 +21,7 @@
 	import { thingsStore } from "$lib/stores/things.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
-	import { editAllowListStore } from "$lib/stores/editAllowList.svelte";
+	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
 	import PageBindingInline from "$lib/components/chat/PageBindingInline.svelte";
 	import PageEditResult from "$lib/components/chat/PageEditResult.svelte";
 	import EditDiffCard from "$lib/components/chat/EditDiffCard.svelte";
@@ -188,8 +188,9 @@
 			const yjsDoc = createYjsDocument(entityId);
 			await editAllowListStore.addPage(entityId, title, yjsDoc);
 		} else {
+			// folder / action / wiki_entry — no Yjs doc, granted generically by (type, id)
 			await editAllowListStore.add({
-				type: (entityType === 'folder' ? 'folder' : 'page') as 'page' | 'folder',
+				type: entityType as EditableResourceType,
 				id: entityId,
 				title
 			});
@@ -1095,6 +1096,18 @@
 															onCitationClick={openCitationPanel}
 														/>
 													</div>
+											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
+												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
+												{@const output = (part as any).output}
+												<PageBindingInline
+													entityId={output.entity_id}
+													entityType={output.entity_type}
+													entityTitle={output.entity_title}
+													message={output.message}
+													permissionMode={true}
+													onAllow={(id, type, title) => handlePermissionAllow(id, type, title)}
+													onDeny={() => handlePermissionDeny()}
+												/>
 											{:else if part.type === "tool-create_page" && (part as any).state === "output-available"}
 												{@const output = (part as any).output}
 												{#if output?.page_id}
