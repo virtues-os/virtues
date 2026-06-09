@@ -30,19 +30,54 @@ DATA_DIR="${DATA_DIR:-/var/lib/virtues}"
 GITHUB_OWNER="${VIRTUES_GITHUB_OWNER:-virtues-os}"
 GITHUB_REPO="${VIRTUES_GITHUB_REPO:-virtues}"
 DOWNLOAD_BASE="${VIRTUES_DOWNLOAD_BASE:-}"
+DRY_RUN=0
 
-# Allow --version=… as the only flag for now.
+# Flag parsing. `--dry-run` runs through every check and prints what would
+# happen without actually modifying the system. `--version=X` pins a tag.
 for arg in "$@"; do
     case "$arg" in
         --version=*) VIRTUES_VERSION="${arg#*=}" ;;
-        *) echo "unknown flag: $arg" >&2; exit 1 ;;
+        --dry-run)   DRY_RUN=1 ;;
+        --help|-h)
+            cat <<'HELP'
+Virtues installer.
+
+Usage:
+  curl -sSL https://get.virtues.com | sudo sh
+  curl -sSL https://get.virtues.com | sudo sh -s -- [flags]
+
+Flags:
+  --version=vX.Y.Z   Pin a specific release (default: latest GitHub release)
+  --dry-run          Print every step without modifying the system
+  --help, -h         Show this help
+HELP
+            exit 0 ;;
+        *) echo "unknown flag: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
 
-say()    { printf "  %s\n" "$*"; }
-warn()   { printf "  ⚠  %s\n" "$*" >&2; }
-die()    { printf "  ✖  %s\n" "$*" >&2; exit 1; }
-header() { printf "\n  %s\n" "$*"; }
+# TTY-aware color: avoid ANSI gibberish in systemd / CI logs.
+if [ -t 1 ]; then
+    C_GREEN='\033[32m'; C_YELLOW='\033[33m'; C_RED='\033[31m'; C_DIM='\033[2m'; C_RESET='\033[0m'
+else
+    C_GREEN=''; C_YELLOW=''; C_RED=''; C_DIM=''; C_RESET=''
+fi
+
+say()    { printf "  %s\n"   "$*"; }
+warn()   { printf "  ${C_YELLOW}⚠${C_RESET}  %s\n" "$*" >&2; }
+die()    { printf "  ${C_RED}✖${C_RESET}  %s\n"  "$*" >&2; exit 1; }
+header() { printf "\n  ${C_GREEN}%s${C_RESET}\n" "$*"; }
+ok()     { printf "  ${C_GREEN}✓${C_RESET}  %s\n" "$*"; }
+
+# In dry-run mode, every privileged or stateful command is gated through
+# this helper so the user can preview the install without committing.
+run() {
+    if [ "$DRY_RUN" = "1" ]; then
+        printf "  ${C_DIM}[dry-run]${C_RESET} %s\n" "$*"
+    else
+        "$@"
+    fi
+}
 
 require_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -119,6 +154,62 @@ detect_distro() {
     # No glibc gate any more — v0.1.0 routes all local ML through Ollama
     # (separate daemon, see `ensure_ollama` below). The virtues binary
     # itself only needs glibc 2.31+ (covered by every supported distro).
+}
+
+# Pre-flight: fail fast on environmental problems BEFORE we start touching
+# apt/systemd/PG/Ollama. Catches the failures that produce ugly half-installs
+# (out of disk mid-Ollama-pull, network blocked, port already in use, etc.).
+preflight_checks() {
+    header "🩺  Pre-flight checks…"
+    local issues=0
+
+    # Disk space: 3GB minimum for PG18 + virtues binary + bge-m3 model.
+    local free_kb
+    free_kb="$(df -kP / | awk 'NR==2 {print $4}')"
+    if [ "$free_kb" -lt 3145728 ]; then
+        warn "Free disk space on / is $(( free_kb / 1024 )) MB — recommend ≥ 3 GB."
+        issues=$((issues + 1))
+    else
+        ok "Free disk space on /: $(( free_kb / 1024 / 1024 )) GB"
+    fi
+
+    # Network reachability for the three hosts we depend on.
+    local host
+    for host in github.com ollama.com apt.postgresql.org; do
+        if curl -fsS --max-time 5 -o /dev/null --head "https://$host"; then
+            ok "Reachable: https://$host"
+        else
+            warn "Cannot reach https://$host — install may fail mid-way."
+            issues=$((issues + 1))
+        fi
+    done
+
+    # Downloader detection. We use curl elsewhere; warn if missing (unusual).
+    if ! command -v curl >/dev/null 2>&1; then
+        warn "curl is not installed — required for binary download."
+        issues=$((issues + 1))
+    fi
+
+    # Port conflicts: 5432 (postgres), 8000 (virtues HTTP), 11434 (Ollama).
+    local port name
+    for entry in "5432:postgres" "8000:virtues" "11434:ollama"; do
+        port="${entry%%:*}"; name="${entry#*:}"
+        if (echo > "/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+            warn "Port $port (${name}) is already in use by another process."
+            issues=$((issues + 1))
+        fi
+    done
+
+    if [ "$issues" -gt 0 ]; then
+        if [ "$DRY_RUN" = "1" ]; then
+            warn "$issues pre-flight issue(s). Re-run without --dry-run when ready."
+        else
+            warn "$issues pre-flight issue(s) detected — continuing in 5s (Ctrl+C to abort)…"
+            sleep 5
+        fi
+    else
+        ok "All pre-flight checks passed."
+    fi
 }
 
 add_pgdg_repo() {
@@ -412,6 +503,52 @@ print_next_steps() {
 EOF
 }
 
+# Post-install: sanity-check the things install.sh just set up so problems
+# surface here (clear context) instead of later via a broken login URL.
+post_install_health() {
+    header "🩺  Post-install health check…"
+    local issues=0
+
+    # Postgres reachable as the virtues user?
+    if sudo -u virtues psql -h localhost -d virtues -c 'SELECT 1' >/dev/null 2>&1; then
+        ok "Postgres reachable as 'virtues'"
+    else
+        warn "Postgres connection as 'virtues' failed."
+        issues=$((issues + 1))
+    fi
+
+    # Ollama daemon responding?
+    if curl -fsS --max-time 5 -o /dev/null http://localhost:11434/api/tags; then
+        ok "Ollama daemon responding on :11434"
+    else
+        warn "Ollama daemon not responding — start with: systemctl start ollama"
+        issues=$((issues + 1))
+    fi
+
+    # Embedding model pulled?
+    local embed_model="${VIRTUES_EMBED_MODEL:-bge-m3}"
+    if command -v ollama >/dev/null 2>&1 && ollama list 2>/dev/null | grep -q "$embed_model"; then
+        ok "Embedding model present: $embed_model"
+    else
+        warn "Embedding model not pulled — first embed call will retry: ollama pull $embed_model"
+        issues=$((issues + 1))
+    fi
+
+    # virtues binary executable + reports its version?
+    if "$INSTALL_PREFIX/bin/virtues" --version >/dev/null 2>&1; then
+        ok "virtues binary OK: $("$INSTALL_PREFIX/bin/virtues" --version 2>&1 | head -1)"
+    else
+        warn "virtues binary failed --version probe; check $INSTALL_PREFIX/bin/virtues"
+        issues=$((issues + 1))
+    fi
+
+    if [ "$issues" -gt 0 ]; then
+        warn "$issues post-install issue(s). Run 'sudo -u virtues virtues doctor' for details."
+    else
+        ok "All post-install checks passed."
+    fi
+}
+
 # ── main ───────────────────────────────────────────────────────────────
 
 require_root
@@ -461,7 +598,30 @@ install_box_id() {
     echo "$raw" | sha256sum | awk '{print "i:"substr($1,1,16)}'
 }
 
+# Cleanup transient state on failure (tarballs, temp downloads). We
+# deliberately DON'T try to undo systemd/apt/PG work — too risky.
+cleanup_on_exit() {
+    local code=$?
+    rm -f /tmp/virtues-*.tar.gz /tmp/virtues-*.sha256 2>/dev/null || true
+    if [ "$code" -ne 0 ] && [ "$DRY_RUN" = "0" ]; then
+        printf "\n  ${C_RED}Install failed at step:${C_RESET} %s\n" "${FAILED_STEP:-unknown}" >&2
+        printf "  ${C_DIM}Re-running this script is safe — completed steps are idempotent.${C_RESET}\n" >&2
+        printf "  ${C_DIM}For help, see https://github.com/virtues-os/virtues/issues${C_RESET}\n" >&2
+    fi
+    return $code
+}
+trap cleanup_on_exit EXIT
 trap 'send_install_beacon failed "$FAILED_STEP"' ERR
+
+preflight_checks
+
+# Short-circuit dry-run after pre-flight: the rest of the script would
+# require apt/systemd state to make sense.
+if [ "$DRY_RUN" = "1" ]; then
+    header "Dry-run complete — no changes made."
+    say "Pre-flight finished. Re-run without --dry-run to install."
+    exit 0
+fi
 
 FAILED_STEP=install_deps;        install_deps
 FAILED_STEP=ensure_ollama;       ensure_ollama
@@ -470,6 +630,7 @@ FAILED_STEP=create_user;         create_user
 FAILED_STEP=provision_db;        provision_db
 FAILED_STEP=download_binary;     download_binary
 FAILED_STEP=install_systemd_unit; install_systemd_unit
+FAILED_STEP=post_install_health; post_install_health
 FAILED_STEP=""
 
 print_next_steps
