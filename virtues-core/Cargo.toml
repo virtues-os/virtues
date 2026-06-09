@@ -34,14 +34,12 @@ path = "src/bin/prod_seed.rs"
 # never enable in release builds.
 dev-transport = ["virtues-helpers/dev-transport"]
 
-# Accelerator execution providers for the ORT inference stack. OFF by default:
-# the portable DIY/CPU image links neither, so it builds anywhere and runs int8
-# on CPU. The Jetson/NVIDIA appliance image is built with `--features cuda`
-# (and `tensorrt` once validated), linking the matching native EP libraries.
-# The ONNX graph itself is portable; this only governs which EP is linked +
-# which quantization the resolver prefers (see core/src/search/accelerator.rs).
-cuda = ["ort/cuda"]
-tensorrt = ["ort/tensorrt", "cuda"]
+# Accelerator features are no-ops in v0.1.0 — Ollama owns GPU/CPU
+# detection now. Kept as named features so existing `--features cuda`
+# build invocations (e.g. the Jetson appliance image script) don't break.
+# Will be removed in v0.1.1 once consumers are updated.
+cuda = []
+tensorrt = ["cuda"]
 
 [dependencies]
 # Shared registry
@@ -94,7 +92,13 @@ axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
 # Box serves HTTPS on :443 with a per-box CA-signed leaf (virtues.local).
 # Using rustls (no OpenSSL) + tokio-rustls for the listener.
-axum-server = { version = "0.7", features = ["tls-rustls"] }
+# Use the no-provider variant + an explicit `rustls` dep below with the
+# `ring` provider. The default `tls-rustls` pulls `aws-lc-rs` →
+# `aws-lc-sys`, which the GCC 11 in our cross containers refuses to build
+# (see GCC bug 95189). Ring also avoids needing to install a default
+# CryptoProvider at runtime startup.
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
 tokio-rustls = "0.26"
 mime_guess = "2.0"
 tower = "0.4"
@@ -109,7 +113,7 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # OAuth
 oauth2 = "4.4"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "stream"] }
 
 # Financial integrations
 plaid = "9.0.1"
@@ -172,18 +176,13 @@ schemars = "1.0"
 # Geospatial/clustering
 geo = "0.28"  # Geospatial calculations (Haversine distance)
 
-# Embeddings (Ollama client)
-ollama-rs = { version = "0.2", features = ["stream"] }
+# Local inference — Ollama HTTP client. ORT 1.24's prebuilt blobs needed
+# glibc 2.38+ which Jetson JetPack 6.x doesn't ship; migrating to Ollama
+# moves model management + GPU/CPU detection out of our process and into
+# a daemon that handles it cleanly across every target. `embedder.rs`
+# is the only consumer.
+ollama-rs = { version = "0.2", default-features = false, features = ["stream", "rustls"] }
 futures = "0.3"
-
-# Local embeddings/reranking: direct ORT + tokenizers (replaces fastembed for NPU access).
-# Pin minor versions — ort 2.x is still pre-stable; tokenizers/hf-hub move quickly.
-ort = { version = "=2.0.0-rc.12", features = ["download-binaries"] }
-tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
-hf-hub = { version = "0.3", default-features = false, features = ["tokio", "online"] }
-ndarray = "0.17"
-directories = "5"
-# fastembed was removed in favor of direct ort+tokenizers (search stack migration).
 
 # Changepoint detection
 changepoint = "0.15"  # Bayesian Online Changepoint Detection
@@ -220,7 +219,13 @@ chrono = "0.4"
 
 [dev-dependencies]
 # Testing
-testcontainers = "0.21"
+#
+# testcontainers was here for integration-test Docker spin-ups but was
+# never actually `use`d. Removed because its bollard→hyper-rustls path
+# force-activates `rustls/aws_lc_rs` via cargo feature unification,
+# dragging aws-lc-sys into the release build (which can't compile under
+# the GCC 11 in our cross images — GCC bug 95189). Re-add via a separate
+# integration-tests crate if you need it back.
 dotenv = "0.15"
 serial_test = "3.1"
 

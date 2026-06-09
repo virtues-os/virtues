@@ -52,6 +52,35 @@ pub async fn run_init() -> Result<SetupConfig> {
     })
 }
 
+/// Build a SetupConfig from environment defaults — no prompts. Used by
+/// `virtues init` Recommended mode and any other zero-question caller.
+///
+/// Precedence:
+///   1. Environment variable (install.sh wrote `/var/lib/virtues/virtues.env`,
+///      systemd's EnvironmentFile + this binary's env loader populate the
+///      process env).
+///   2. Production peer-auth default (`postgres:///virtues`) when env is
+///      empty — matches what install.sh would have written.
+pub fn recommended_config() -> Result<SetupConfig> {
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres:///virtues".to_string());
+    let server_url = std::env::var("VIRTUES_SERVER_URL")
+        .unwrap_or_else(|_| "virtues.local".to_string());
+    let storage_path = std::env::var("STORAGE_PATH")
+        .unwrap_or_else(|_| "/var/lib/virtues/lake".to_string());
+    // If VIRTUES_ENCRYPTION_KEY is already in env, the binary uses it
+    // directly; we don't need to generate a new one here. Pass None so
+    // save_config (if ever called) doesn't try to rotate it.
+    let encryption_key = std::env::var("VIRTUES_ENCRYPTION_KEY").ok();
+    Ok(SetupConfig {
+        database_url,
+        server_url,
+        storage_path,
+        encryption_key,
+        run_migrations: true,
+    })
+}
+
 /// Database setup step
 async fn setup_database() -> Result<String> {
     println!("{}", style("📦 Database Configuration").bold());

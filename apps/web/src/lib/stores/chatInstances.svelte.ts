@@ -18,6 +18,15 @@ interface ChatInstanceEntry {
     lastThoughtSignature?: string;
 }
 
+/** Live status of one Council member, driven by transient `data-council-member` events. */
+export interface CouncilMemberStatus {
+    memberId: number;
+    model: string;
+    lens: string;
+    status: 'thinking' | 'done' | 'failed';
+    tokens: number;
+}
+
 interface ActivePageContext {
     page_id: string;
     page_title?: string;
@@ -36,6 +45,28 @@ interface CreateChatConfig {
 
 class ChatInstanceStore {
     private instances = $state(new Map<string, ChatInstanceEntry>());
+    // Live Council deliberation state, keyed by conversationId. Ephemeral (not persisted) —
+    // rebuilt each turn from transient `data-council-member` events.
+    private councilMembers = $state(new Map<string, CouncilMemberStatus[]>());
+
+    /** Current Council members for a conversation (empty if none / not in Council mode). */
+    getCouncilMembers(conversationId: string): CouncilMemberStatus[] {
+        return this.councilMembers.get(conversationId) ?? [];
+    }
+
+    /** Upsert one member's status from a `data-council-member` event. */
+    private applyCouncilMember(conversationId: string, m: CouncilMemberStatus) {
+        // member 0 starting "thinking" marks the start of a fresh council turn → reset the list.
+        const existing =
+            m.memberId === 0 && m.status === 'thinking'
+                ? []
+                : (this.councilMembers.get(conversationId) ?? []).slice();
+        const idx = existing.findIndex((e) => e.memberId === m.memberId);
+        if (idx >= 0) existing[idx] = m;
+        else existing.push(m);
+        existing.sort((a, b) => a.memberId - b.memberId);
+        this.councilMembers.set(conversationId, existing);
+    }
 
     /**
      * Get an existing Chat instance or create a new one.
@@ -111,6 +142,10 @@ class ChatInstanceStore {
                     if (entry) {
                         entry.lastThoughtSignature = (dataPart.data as { signature: string }).signature;
                     }
+                }
+                // Handle council member events (transient - drives the live deliberation panel)
+                else if (dataPart.type === 'data-council-member') {
+                    this.applyCouncilMember(conversationId, dataPart.data as CouncilMemberStatus);
                 }
                 // Handle checkpoint events from auto-compaction (non-transient - persists in messages)
                 else if (dataPart.type === 'data-checkpoint') {
