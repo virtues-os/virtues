@@ -16,9 +16,11 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
+use tokio::sync::mpsc::Sender;
+
 use crate::agent::{AgentConfig, AgentEvent, AgentLoop};
 use crate::api::compaction::build_context_for_llm;
-use crate::tools::{ToolError, ToolResult};
+use crate::tools::{SubagentStatus, SubagentUpdate, ToolError, ToolResult};
 
 /// Hard cap on workers per dispatch (matches the tool schema's maxItems).
 const MAX_MISSIONS: usize = 5;
@@ -38,7 +40,13 @@ struct MissionResult {
 }
 
 /// Execute the `dispatch_subagents` tool: fan out missions in parallel, collect findings + sources.
-pub async fn dispatch(pool: Arc<PgPool>, arguments: Value) -> Result<ToolResult, ToolError> {
+///
+/// `tx` is an optional side-channel that streams each worker's live status to the panel.
+pub async fn dispatch(
+    pool: Arc<PgPool>,
+    arguments: Value,
+    tx: Option<Sender<SubagentUpdate>>,
+) -> Result<ToolResult, ToolError> {
     let missions = arguments
         .get("missions")
         .and_then(|m| m.as_array())
@@ -62,7 +70,7 @@ pub async fn dispatch(pool: Arc<PgPool>, arguments: Value) -> Result<ToolResult,
         .unwrap_or_else(|_| default_tier_model("strong"));
 
     let mut handles = Vec::new();
-    for mission in missions.iter().take(MAX_MISSIONS) {
+    for (id, mission) in missions.iter().take(MAX_MISSIONS).enumerate() {
         let title = mission
             .get("title")
             .and_then(|v| v.as_str())
@@ -83,8 +91,9 @@ pub async fn dispatch(pool: Arc<PgPool>, arguments: Value) -> Result<ToolResult,
         };
 
         let pool = pool.clone();
+        let tx = tx.clone();
         handles.push(tokio::spawn(async move {
-            run_one_worker(pool, model, title, objective).await
+            run_one_worker(pool, id, model, title, objective, tx).await
         }));
     }
 
@@ -119,20 +128,23 @@ pub async fn dispatch(pool: Arc<PgPool>, arguments: Value) -> Result<ToolResult,
 /// Run one worker mission to completion in an isolated read-only agent loop.
 async fn run_one_worker(
     pool: Arc<PgPool>,
+    id: usize,
     model: String,
     title: String,
     objective: String,
+    tx: Option<Sender<SubagentUpdate>>,
 ) -> MissionResult {
+    // Announce the worker as thinking so the panel shows it immediately.
+    emit(&tx, id, &title, &model, SubagentStatus::Thinking, 0).await;
+
     let system_prompt = build_worker_prompt(&objective);
     let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt));
     let tools = crate::tools::get_tools_for_subagent();
 
     let context = crate::tools::ToolContext {
-        page_id: None,
         user_id: Some("subagent".to_string()),
-        space_id: None,
-        chat_id: None,
-        action_id: None,
+        // Workers don't re-emit panel updates or spawn sub-workers.
+        ..Default::default()
     };
 
     let agent_loop = AgentLoop::new((*pool).clone()).with_config(AgentConfig {
@@ -183,6 +195,13 @@ async fn run_one_worker(
     }
 
     let ok = !had_error && !findings.trim().is_empty();
+    let status = if ok {
+        SubagentStatus::Done
+    } else {
+        SubagentStatus::Failed
+    };
+    emit(&tx, id, &title, &model, status, tokens).await;
+
     MissionResult {
         title,
         model,
@@ -190,6 +209,28 @@ async fn run_one_worker(
         sources,
         tokens,
         ok,
+    }
+}
+
+/// Send a status update on the side-channel if present (best-effort — never blocks the worker).
+async fn emit(
+    tx: &Option<Sender<SubagentUpdate>>,
+    id: usize,
+    title: &str,
+    model: &str,
+    status: SubagentStatus,
+    tokens: u32,
+) {
+    if let Some(tx) = tx {
+        let _ = tx
+            .send(SubagentUpdate {
+                id,
+                title: title.to_string(),
+                model: model.to_string(),
+                status,
+                tokens,
+            })
+            .await;
     }
 }
 

@@ -10,6 +10,35 @@ use std::sync::Arc;
 use super::{PageEditorTool, SemanticSearchTool, SqlQueryTool, WebSearchTool};
 use crate::server::yjs::YjsState;
 
+/// Lifecycle status of a Deep Research subagent (worker), for the live panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentStatus {
+    Thinking,
+    Done,
+    Failed,
+}
+
+impl SubagentStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SubagentStatus::Thinking => "thinking",
+            SubagentStatus::Done => "done",
+            SubagentStatus::Failed => "failed",
+        }
+    }
+}
+
+/// A live update from a Deep Research worker, streamed out to the panel via the
+/// `subagent_tx` side-channel on [`ToolContext`].
+#[derive(Debug, Clone)]
+pub struct SubagentUpdate {
+    pub id: usize,
+    pub title: String,
+    pub model: String,
+    pub status: SubagentStatus,
+    pub tokens: u32,
+}
+
 /// Context provided to tools during execution
 #[derive(Debug, Clone)]
 pub struct ToolContext {
@@ -23,6 +52,9 @@ pub struct ToolContext {
     pub chat_id: Option<String>,
     /// Action ID (set when running as an action — for action memory tool)
     pub action_id: Option<String>,
+    /// Side-channel for streaming Deep Research subagent status to the live panel.
+    /// Set by the chat handler; `None` for headless/action runs.
+    pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
 }
 
 impl Default for ToolContext {
@@ -33,6 +65,7 @@ impl Default for ToolContext {
             space_id: None,
             chat_id: None,
             action_id: None,
+            subagent_tx: None,
         }
     }
 }
@@ -157,7 +190,12 @@ impl ToolExecutor {
             "code_interpreter" => self.execute_code_interpreter(arguments).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
-                crate::agent::subagent::dispatch(self._pool.clone(), arguments).await
+                crate::agent::subagent::dispatch(
+                    self._pool.clone(),
+                    arguments,
+                    context.subagent_tx.clone(),
+                )
+                .await
             }
             // Page editing tools - all routed to PageEditorTool
             "create_page" => self.page_editor.create_page(arguments).await,
