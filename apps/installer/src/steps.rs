@@ -11,7 +11,6 @@
 
 use anyhow::{anyhow, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -149,12 +148,6 @@ pub fn has(cmd: &str) -> bool {
     which::which(cmd).is_ok()
 }
 
-/// Path the virtues binary should end up at.
-pub fn install_prefix() -> &'static Path {
-    Path::new("/usr/local")
-}
-
-#[allow(dead_code)]  // wired in flow.rs (Phase 3 install impl follow-up commits)
-pub fn data_dir() -> &'static Path {
-    Path::new("/var/lib/virtues")
-}
+// Path constants live on `config::InstallConfig` now so advanced operators
+// can override via env vars at install time. The const helpers that used
+// to live here were dead code after the InstallConfig migration.

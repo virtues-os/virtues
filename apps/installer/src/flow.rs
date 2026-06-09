@@ -1,23 +1,24 @@
 //! Top-level install orchestration.
 //!
-//! Phase order (this is a literal pipeline; later phases depend on earlier
-//! phases having succeeded):
+//! Pipeline:
 //!
-//!     pre-flight  → installing  → configuring  → verifying  → handoff
+//!     pre-flight  →  installing  →  configuring  →  verifying  →  handoff
 //!
-//! Each phase prints a header (`∴ <Phase>`), runs its steps via `steps::*`,
-//! and either succeeds (continue) or returns an error (which we surface at
-//! the top level with full context).
-//!
-//! Phase-3-scope: this lays the visible flow structure. Step bodies are
-//! the same shell-outs the bash install.sh ran, ported to typed
-//! `tokio::process::Command` invocations through `steps::run_step` /
-//! `steps::run_streaming`. Real implementations land in follow-up commits
-//! as we port each section.
+//! Each phase prints `∴ <Phase>` and runs its steps. Failures bubble up
+//! with full anyhow context so the user sees what actually went wrong.
+//! Handoff `exec`s into `virtues init` so the same terminal/session
+//! becomes the wizard — no copy-paste tax for the user.
 
-use anyhow::{anyhow, Result};
-use cliclack::{intro, log, outro, select, spinner};
+use anyhow::Result;
+use cliclack::{intro, outro, select};
+use std::os::unix::process::CommandExt;
+use std::process::Command as StdCommand;
 
+use crate::brand;
+use crate::config::InstallConfig;
+use crate::download;
+use crate::install;
+use crate::preflight;
 use crate::steps;
 use crate::ui;
 
@@ -34,78 +35,102 @@ enum Mode {
     Advanced,
 }
 
-pub async fn run(cfg: Config) -> Result<()> {
+pub async fn run(cli: Config) -> Result<()> {
     // ─── Pre-flight ─────────────────────────────────────────────────────
     ui::section("Pre-flight");
     let target = steps::detect()?;
-    ui::ok(&format!("Linux {} on {}", target.arch, target.distro));
-    ui::ok(&format!("{} {}", target.distro, target.distro_version));
+    ui::ok(&format!("Linux {} · {} {}", target.arch, target.distro, target.distro_version));
+    let pf = preflight::run().await?;
+    if pf.warnings > 0 {
+        ui::warn(&format!("{} pre-flight issue(s) — continuing in 5s (Ctrl+C to abort)…", pf.warnings));
+        if !cli.dry_run && !cli.assume_yes {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    }
 
-    // ─── Mode selector (interactive only) ───────────────────────────────
-    let mode = if cfg.assume_yes {
+    // ─── Mode selector ──────────────────────────────────────────────────
+    let mode = if cli.assume_yes || !brand::is_tty() {
         Mode::Recommended
     } else {
         intro("∴ Setup")?;
-        let choice = select("How do you want to install?")
+        select("How do you want to install?")
             .item(Mode::Recommended, "Recommended", "what most people want")
-            .item(Mode::Advanced, "Advanced", "override defaults")
-            .interact()?;
-        choice
+            .item(Mode::Advanced, "Advanced", "override defaults (coming v0.1.2)")
+            .interact()?
     };
 
-    // ─── Installing ─────────────────────────────────────────────────────
-    ui::section("Installing");
+    let mut cfg = InstallConfig::recommended_defaults();
+    cfg.pinned_version = cli.version.clone();
+    // Advanced mode prompts for INSTALL_PREFIX, DATA_DIR, embed model, etc.
+    // Land that in a follow-up; for v0.1.1 Recommended path is the locked one.
+    let _ = mode;
 
-    if cfg.dry_run {
-        ui::skip("dry-run — system unchanged");
-    } else {
-        // TODO(phase-3-follow-up): port each install_deps step from
-        // scripts/install.sh into `steps::*`. For now we run a single
-        // ceremonial spinner so the visual flow is end-to-end testable.
-        let sp = spinner();
-        sp.start("System dependencies (placeholder — port from install.sh)");
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        sp.stop("System dependencies queued");
+    if cli.dry_run {
+        ui::skip("dry-run — system would be modified by the following steps");
+        ui::skip("  • System dependencies (Postgres 18, WireGuard, Avahi, Ollama)");
+        ui::skip(&format!("  • Pull embedding model ({})", cfg.embed_model));
+        ui::skip("  • Configure mDNS (hostname → virtues, _https._tcp on :443)");
+        ui::skip("  • Create system user 'virtues' + data dir");
+        ui::skip("  • Postgres role + database + pgvector extension");
+        ui::skip(&format!("  • Download virtues binary → {}", cfg.binary_path().display()));
+        ui::skip(&format!("  • Write env file at {}", cfg.env_file_path().display()));
+        ui::skip("  • Run virtues bringup (migrations + box identity)");
+        ui::skip("  • Install systemd unit");
+        return Ok(());
     }
 
-    // ─── Configuring ────────────────────────────────────────────────────
+    // ─── Installing system deps ─────────────────────────────────────────
+    ui::section("Installing system dependencies");
+    install::install_deps(&target).await?;
+
+    ui::section("Installing Ollama + embedding model");
+    install::ensure_ollama(&cfg).await?;
+
+    // ─── Configuring the box ────────────────────────────────────────────
     ui::section("Configuring");
     ui::thinking("Forging your box's identity…");
-    if cfg.dry_run {
-        ui::skip("dry-run — config unchanged");
-    } else {
-        // TODO(phase-3-follow-up): write env file, generate encryption
-        // key (only if no existing file), set hostname, drop mDNS service.
-        let sp = spinner();
-        sp.start("Box identity (placeholder)");
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        sp.stop("Box identity queued");
-    }
+    install::configure_mdns().await?;
+    install::create_user(&cfg).await?;
+    install::provision_db().await?;
+
+    // ─── Downloading the binary ─────────────────────────────────────────
+    ui::section("Downloading virtues");
+    download::download_binary(&mut cfg, target.arch).await?;
+
+    // ─── Env + bringup + systemd ────────────────────────────────────────
+    ui::section("Sealing your sovereignty");
+    install::write_env_file(&cfg).await?;
+    install::run_bringup(&cfg).await?;
+    install::install_systemd_unit(&cfg).await?;
+
+    // Start the service so init's pair-token mint sees a running daemon.
+    let mut start = tokio::process::Command::new("systemctl");
+    start.args(["enable", "--now", "virtues"]);
+    steps::run_step("Enable + start virtues service", start).await?;
 
     // ─── Verifying ──────────────────────────────────────────────────────
-    ui::section("Verifying");
-    ui::skip(
-        "Health checks (placeholder — port from install.sh post_install_health)",
-    );
+    ui::section("Health check");
+    let issues = install::health_check(&cfg).await?;
+    if issues > 0 {
+        ui::warn(&format!("{issues} post-install issue(s) — run `virtues doctor` for details"));
+    }
 
     // ─── Handoff ────────────────────────────────────────────────────────
-    if cfg.no_init {
+    if cli.no_init {
         ui::section("Done");
         ui::ok("Install complete. Run `virtues init` when you're ready.");
         return Ok(());
     }
 
-    outro(format!(
-        "{}  Install complete. Continuing to setup…",
-        crate::brand::mark()
-    ))?;
+    outro(format!("{} Install complete. Continuing to setup…", brand::mark()))?;
+    println!();
 
-    // Hand off to `virtues init`. Phase 3 will plumb this through a real
-    // exec via std::os::unix::process::CommandExt so the wizard inherits
-    // the terminal cleanly. For now we just print the command so an
-    // operator can run it manually.
-    log::info("Run: sudo -u virtues virtues init")?;
-
-    let _ = cfg.version;
-    Ok(())
+    // `exec` replaces this process with `sudo -u virtues virtues init`.
+    // dialoguer/cliclack read /dev/tty internally, so even when our parent
+    // was `curl | sh` (stdin = pipe), the wizard still reads input.
+    let err = StdCommand::new("sudo")
+        .args(["-u", "virtues", "virtues", "init"])
+        .exec();
+    // If we reach this line, exec failed.
+    Err(anyhow::anyhow!("failed to exec `virtues init`: {err}"))
 }

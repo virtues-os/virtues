@@ -2,7 +2,7 @@
 //!
 //! Architecture:
 //!
-//!   curl get.virtues.com | sh        ← CloudFront 302 → bootstrap.sh
+//!   curl get.virtues.com | sh        ← Caddy 302 → bootstrap.sh
 //!         ↓
 //!   bootstrap.sh                     ← tiny bash: detects arch, fetches us
 //!         ↓
@@ -10,7 +10,7 @@
 //!         ↓
 //!   virtues init                     ← chain-exec at the end
 //!
-//! Why a binary instead of bash polish on `install.sh`:
+//! Why a binary instead of bash:
 //!
 //!   - Real TUI (cliclack rail-connected prompts) instead of a stream of
 //!     disjoint dialog boxes.
@@ -25,36 +25,26 @@
 //! layer, not a re-implementation of apt.
 
 mod brand;
+mod config;
+mod download;
 mod flow;
+mod install;
+mod preflight;
 mod steps;
 mod ui;
 
 use anyhow::Result;
 use clap::Parser;
 
-/// Virtues installer.
-///
-/// Usage: this is normally invoked by the bootstrap.sh that
-/// `curl get.virtues.com | sh` downloads. You usually shouldn't run it
-/// by hand unless you're debugging the install path.
 #[derive(Debug, Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
-    /// Pin a specific virtues release tag (default: latest).
     #[arg(long, value_name = "vX.Y.Z")]
     version: Option<String>,
-
-    /// Print every step without modifying the system.
     #[arg(long)]
     dry_run: bool,
-
-    /// Don't chain-exec `virtues init` at the end.
     #[arg(long)]
     no_init: bool,
-
-    /// Assume yes everywhere; bypass interactive prompts. Used by
-    /// scripted/headless deploys. Forces auto-init in non-interactive
-    /// mode with recommended defaults.
     #[arg(short = 'y', long)]
     yes: bool,
 }
@@ -79,14 +69,10 @@ async fn main() -> Result<()> {
 
     match outcome {
         Ok(_) => Ok(()),
-        Err(e) => {
-            ui::die(&format!("{e:#}"));
-        }
+        Err(e) => ui::die(&format!("{e:#}")),
     }
 }
 
-/// EUID == 0 check without pulling the full nix crate.
 fn nix_check_root() -> bool {
-    // SAFETY: geteuid is a trivial syscall that always succeeds.
     unsafe { libc::geteuid() == 0 }
 }

@@ -46,3 +46,6 @@ which = "6.0"
 # Minimal HTTP for fetching SHA256 sidecars. rustls so we don't drag in
 # openssl on cross-compile (matches the rest of the workspace).
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider"] }
+
+# Reading `releases/latest` JSON for version resolution.
+serde_json = "1.0"
