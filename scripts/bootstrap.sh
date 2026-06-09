@@ -1,5 +1,6 @@
-#!/usr/bin/env bash
-# Virtues bootstrap — the tiny bash that `get.virtues.com` redirects to.
+#!/bin/sh
+# Virtues bootstrap — the tiny POSIX shell script that `get.virtues.com`
+# serves.
 #
 # What this script does:
 #   1. Verifies Linux + amd64/arm64 + we're root
@@ -9,11 +10,15 @@
 #   5. chmods + execs the installer with the user's original flags
 #
 # Everything past this script — TUI, progress, install logic — lives in
-# the installer binary. Keeping bootstrap minimal means: easy to audit
-# via `curl get.virtues.com | less`, fast to download, almost nothing to
-# go wrong before we have a real UI to show.
+# the installer binary. Keeping bootstrap minimal + POSIX means: works
+# under dash (Debian/Ubuntu's default /bin/sh when invoked via `| sh`),
+# easy to audit via `curl get.virtues.com | less`, fast to download,
+# almost nothing to go wrong before we have a real UI to show.
 
-set -euo pipefail
+# `pipefail` is bash-only; dash doesn't have it. Stick with -eu and
+# guard pipelines explicitly (the only one is the latest-tag resolve
+# which we re-check for empty output afterward).
+set -eu
 
 GITHUB_OWNER="${VIRTUES_GITHUB_OWNER:-virtues-os}"
 GITHUB_REPO="${VIRTUES_GITHUB_REPO:-virtues}"
