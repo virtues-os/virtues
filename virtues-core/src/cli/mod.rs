@@ -125,6 +125,16 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .map_err(|e| e.to_string())?;
         }
 
+        Commands::Login => {
+            // Pairs with `virtues init`'s [1] Log in branch; same idempotent
+            // migration guard as Subscribe so a standalone retry on a fresh
+            // box doesn't hit a missing-table error mid-login.
+            virtues.database.initialize().await?;
+            commands::deploy::handle_login(&virtues)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
         Commands::ResolveEntities { hours } => {
             use crate::entity_resolution::{self, TimeWindow};
             println!("Running entity resolution for last {hours} hours...");
