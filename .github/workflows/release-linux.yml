@@ -81,7 +81,8 @@ jobs:
           cargo build --release -p virtues --bin virtues --target ${{ matrix.target }}
 
       # Node is needed only to BUILD the SvelteKit app (adapter-static
-      # produces pure HTML/JS/CSS; no Node at runtime on the box).
+      # produces pure HTML/JS/CSS; no Node at runtime on the box). The
+      # web package + lockfile live at apps/web/, not the repo root.
       - uses: pnpm/action-setup@v4
         with:
           version: 9
@@ -90,13 +91,15 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
 
       - name: Build web UI (SvelteKit static)
+        working-directory: apps/web
         run: |
           pnpm install --frozen-lockfile
           pnpm build
-          # SvelteKit static adapter writes to ./build at the repo root.
-          test -d build || (echo "web build did not produce ./build" >&2 && exit 1)
+          # SvelteKit static adapter writes to ./build inside apps/web/.
+          test -d build || (echo "web build did not produce apps/web/build" >&2 && exit 1)
 
       - name: Package tarball
         id: tarball
@@ -109,7 +112,7 @@ jobs:
           #   web/                (SvelteKit static build; install.sh moves to
           #                        /usr/local/share/virtues/web/)
           cp "$BIN_PATH" staging/virtues
-          cp -r build staging/web
+          cp -r apps/web/build staging/web
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
           tar -czf "dist/${TAR_NAME}" -C staging virtues web
           echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
