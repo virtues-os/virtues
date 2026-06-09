@@ -33,8 +33,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .install_default()
             .expect("install rustls ring CryptoProvider");
 
-        // Load environment variables from .env file
-        // Try current directory first, then parent directory (for running from core/)
+        // Load env in this priority order:
+        //   1. Existing process env (set by systemd's EnvironmentFile or the
+        //      operator's `env VAR=… virtues …` invocation) — never override.
+        //   2. /var/lib/virtues/virtues.env — the canonical production env
+        //      file install.sh writes. Lets `sudo -u virtues virtues init`
+        //      work without `env $(cat /var/lib/virtues/virtues.env | xargs)`.
+        //   3. ./.env in CWD (Mac/dev convention).
+        //   4. ../.env (for running from virtues-core/ during dev).
+        let _ = dotenv::from_path("/var/lib/virtues/virtues.env");
         if dotenv::dotenv().is_err() {
             let _ = dotenv::from_path("../.env");
         }

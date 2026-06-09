@@ -162,6 +162,11 @@ pub enum Commands {
     #[command(alias = "claim")]
     Subscribe,
 
+    /// Attach this box to an existing Virtues subscription via the
+    /// magic-link login flow. Pairs with `virtues init`'s [1] Log in
+    /// branch — same code path, just standalone for retries.
+    Login,
+
     /// Pre-download ML models (embedding, etc.) for offline/Docker use
     WarmModels,
 
