@@ -22,6 +22,15 @@ mod virtues_api_client;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the ring CryptoProvider as the process-wide default. Without
+    // this, `reqwest::Client::new()` panics at first use because rustls
+    // 0.23 (used by reqwest + tokio-rustls + hyper-rustls) requires the
+    // provider to be installed before any TLS work. Mirrors what
+    // virtues-core's main.rs does for the same reason.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("install rustls ring CryptoProvider");
+
     dotenvy::dotenv().ok();
 
     tracing_subscriber::registry()
