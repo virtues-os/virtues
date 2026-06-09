@@ -90,10 +90,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db.initialize().await?;
         println!("✅ Migrations complete");
 
+        // Privacy framing before the account prompt. Two reasons this matters
+        // here, not in a settings page later:
+        //   1. The user is *deciding* whether to attach a Virtues account.
+        //      That's the moment they need the trust pitch — not after.
+        //   2. Atlas/virtues-api isn't optional infrastructure; OAuth
+        //      providers genuinely require a hosted HTTPS callback. Hiding
+        //      that fact behind a "Skip" button would be dishonest.
+        print_account_intro();
+
         // Subscribe step — prompt before launching the browser/QR flow so
         // CI/dev users can decline. They can run `virtues subscribe` later.
+        //
+        // v0.1.1 will replace this binary Confirm with a Select of
+        // [Log in to existing account] / [Create new account]. For now the
+        // intro text already lists both options and this prompt covers the
+        // "create new" branch; login lands when the atlas /init/login
+        // endpoint backed by Stripe Customer Portal magic link ships.
         let do_subscribe = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("Subscribe to Virtues now? ($20/mo)")
+            .with_prompt("Create new account + subscribe now? ($20/mo, $15 wallet)")
             .default(true)
             .interact()
             .unwrap_or(true);
@@ -338,6 +353,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     virtues::cli::run(cli, virtues).await?;
 
     Ok(())
+}
+
+/// Print the first-boot trust pitch shown right before the account prompt
+/// in `virtues init`. The framing is confidence-forward (this is the most
+/// private personal-data setup currently shippable, full stop) rather than
+/// apologetic — anyone offering more "purity" today is either lying or
+/// shipping something that won't connect to the user's real services.
+///
+/// The comparison table is the load-bearing claim. Every row must remain
+/// true; if we ever add a feature that breaks one (e.g. shipping our own
+/// metadata logging), this copy needs updating in lockstep.
+fn print_account_intro() {
+    use console::style;
+    println!();
+    println!("{}", style("─────────────────────────────────────────────────────────").dim());
+    println!();
+    println!("  {}", style("Your data lives on this Linux device. Never our cloud.").bold());
+    println!();
+    println!("  Today, this is more private than anything you currently use:");
+    println!();
+    println!("                          {}  {}",
+        style("You today").dim(),
+        style("Virtues").bold().green());
+    println!("    Where data lives      Google / iCloud / Notion …   {}", style("YOUR box").green());
+    println!("    Knows your email      Yes                          {}", style("Stripe only (legal req.)").green());
+    println!("    Stores password       Yes                          {}", style("No (pair-only auth)").green());
+    println!("    Reads your content    Yes (ads, training, …)       {}", style("No (passthrough, zero retention)").green());
+    println!("    Sees who you message  Yes (graph, metadata)        {}", style("No").green());
+    println!("    Holds your enc keys   Yes                          {}", style("No (your box does)").green());
+    println!("    Logs prompts/queries  Yes                          {}", style("No (provider-side, not us)").green());
+    println!("    Can subpoena content  Yes                          {}", style("Nothing to hand over").green());
+    println!();
+    println!("  Compared to:");
+    println!("    {}        we don't read content, train on you, or run ads",   style("Google").bold());
+    println!("    {}        we don't see metadata, contact graph, or delivery", style("Signal").bold());
+    println!("    {}     we don't see your node graph or coordinate identity", style("Tailscale").bold());
+    println!("    {}        your encryption keys never leave your box",        style("iCloud").bold());
+    println!("    {}  prompts route through a zero-retention proxy", style("ChatGPT / Claude").bold());
+    println!();
+    println!("  {}", style("This is the strictest passthrough architecture currently").italic());
+    println!("  {}", style("shippable with today's third parties.").italic());
+    println!();
+    println!("  {}", style("Two things still require a Virtues account").bold());
+    println!("  — they're the smallest remaining surface, shrinking every release:");
+    println!();
+    println!("    1. {}.  Google, Notion, Plaid etc. require a registered",  style("OAuth callbacks").bold());
+    println!("       HTTPS URL. virtues.com hosts it, forwards to your box in ~200ms,");
+    println!("       discards the auth code. Without this, no cloud source connects.");
+    println!();
+    println!("    2. {}.  Your provider key (yours or Virtues wallet)",       style("AI proxy").bold());
+    println!("       stays server-side as a short-lived bearer instead of");
+    println!("       living on every device. Calls are passthrough — providers");
+    println!("       log nothing of our traffic; we see only token counts.");
+    println!();
+    println!("  {}", style("Where this gets even smaller:").dim());
+    println!("    • IETF is standardizing device-bound OAuth (no hosted callback needed)");
+    println!("    • Ollama-class models are reaching assistant-grade quality");
+    println!("    • Both shrink virtues-api toward zero over time");
+    println!();
+    println!("    [1] {}", style("Log in to existing Virtues account").bold());
+    println!("    [2] {}", style("Create a new Virtues account ($20/mo, $15 wallet)").bold());
+    println!();
+    println!("{}", style("─────────────────────────────────────────────────────────").dim());
+    println!();
 }
 
 /// Print the inference stack's hardware-resolution plan: which accelerator is
