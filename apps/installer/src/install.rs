@@ -320,8 +320,10 @@ async fn psql_exists(sql: &str) -> Result<bool> {
 pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
     let path = cfg.env_file_path();
     if path.exists() {
-        ui::skip(&format!("Env file at {} already configured", path.display()));
-        return Ok(());
+        // Existing file — append any missing required keys without touching
+        // anything already in there. Critical: never rotate the encryption
+        // key (would invalidate every stored credential).
+        return merge_env_file(&path, cfg).await;
     }
     let key = openssl_rand_base64_32().await?;
     let now = chrono_utc_iso();
@@ -347,6 +349,64 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
         .with_context(|| format!("chmod 0600 {}", path.display()))?;
     ui::ok(&format!("Wrote {}", path.display()));
+    Ok(())
+}
+
+/// Append any missing required keys to an existing env file.
+///
+/// Never touches existing values (especially not VIRTUES_ENCRYPTION_KEY).
+/// This is how the installer keeps a re-run idempotent without leaving
+/// the user stuck on an older env file that's missing new keys we added
+/// in a later version. Today the typical case is VIRTUES_ATLAS_URL and
+/// VIRTUES_API_URL, added in v0.1.1.
+async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<()> {
+    let existing = fs::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
+
+    // Parse keys present (lines like KEY=...). Comment lines + blanks
+    // are ignored.
+    let present: std::collections::HashSet<String> = existing
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.is_empty() || l.starts_with('#') {
+                return None;
+            }
+            l.split_once('=').map(|(k, _)| k.trim().to_string())
+        })
+        .collect();
+
+    // The full list of keys this installer would write on a fresh
+    // install. Anything missing gets appended.
+    let want: &[(&str, String)] = &[
+        ("DATABASE_URL", "postgres:///virtues".to_string()),
+        ("ENVIRONMENT", "production".to_string()),
+        ("STATIC_DIR", cfg.web_dir().display().to_string()),
+        ("STORAGE_PATH", cfg.data_dir.join("lake").display().to_string()),
+        ("VIRTUES_ATLAS_URL", cfg.atlas_url.clone()),
+        ("VIRTUES_API_URL", cfg.virtues_api_url.clone()),
+    ];
+
+    let missing: Vec<&(&str, String)> = want.iter().filter(|(k, _)| !present.contains(*k)).collect();
+    if missing.is_empty() {
+        ui::skip(&format!("Env file at {} already complete", path.display()));
+        return Ok(());
+    }
+
+    let mut body = existing;
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body.push_str(&format!("\n# Added by virtues-installer on {}.\n", chrono_utc_iso()));
+    for (k, v) in &missing {
+        body.push_str(&format!("{k}={v}\n"));
+    }
+    fs::write(path, body).with_context(|| format!("writing {}", path.display()))?;
+    ui::ok(&format!(
+        "Added {} missing keys to {}",
+        missing.len(),
+        path.display()
+    ));
     Ok(())
 }
 
