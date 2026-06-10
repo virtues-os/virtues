@@ -2132,11 +2132,29 @@ pub async fn auth_signout_handler(
         .into_response()
 }
 
-/// GET /auth/session — current paired-device session (or null if not paired).
+/// GET /auth/session — current session (or null if not paired).
+///
+/// Loopback peers (localhost — the box's own browser, or dev via the vite proxy)
+/// are auto-authenticated as the owner, mirroring the `AuthUser` extractor's
+/// loopback bypass. Without this, every other endpoint auto-authenticates
+/// localhost but this probe reported `user: null`, so the web UI bounced on-box /
+/// dev browsers to `/pair`. Remote peers fall through to the cookie check.
 pub async fn auth_session_handler(
     State(state): State<AppState>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     jar: axum_extra::extract::cookie::CookieJar,
 ) -> Response {
+    if addr.ip().is_loopback() {
+        return axum::Json(crate::api::auth::SessionResponse {
+            user: Some(crate::api::auth::SessionUser {
+                id: crate::middleware::http::OWNER_USER_ID.to_string(),
+                device_id: crate::middleware::auth::CONSOLE_DEVICE_ID.to_string(),
+                device_label: crate::middleware::auth::CONSOLE_DEVICE_LABEL.to_string(),
+            }),
+            expires: None,
+        })
+        .into_response();
+    }
     crate::api::auth::session_handler(axum::extract::State(state.db.pool().clone()), jar)
         .await
         .into_response()
