@@ -8,10 +8,42 @@
 
 	let { error, onRetry }: Props = $props();
 
+	// Core embeds the upstream HTTP status as "(status NNN)" in LLM error messages
+	// (see StreamError::LlmError). Classify by the real status — not loose text-matching,
+	// which mislabels things like a 400 "invalid argument" as a rate limit.
+	const status = $derived.by(() => {
+		const m = error?.message?.match(/status (\d{3})/);
+		return m ? Number(m[1]) : undefined;
+	});
+
 	const isRateLimitError = $derived(
-		error?.message?.includes("Rate limit exceeded") ||
-		error?.message?.includes("rate limit") ||
-		error?.message?.includes("429")
+		status === 429 ||
+			// Fall back to text only when there's no status code to read.
+			(status === undefined &&
+				/rate limit|too many requests|\b429\b/i.test(error?.message ?? ""))
+	);
+
+	// Strip our "LLM error (status NNN): " wrapper and, when the remainder is the
+	// provider's JSON error, surface just its human-readable message.
+	const cleanMessage = $derived.by(() => {
+		let msg = error?.message ?? "Something went wrong. Please try again.";
+		msg = msg.replace(/^LLM error \(status \d{3}\):\s*/i, "");
+		try {
+			const j = JSON.parse(msg);
+			const inner = j?.error?.message ?? j?.message;
+			if (typeof inner === "string" && inner) return inner;
+		} catch {
+			// not JSON — leave as-is
+		}
+		return msg;
+	});
+
+	const title = $derived(
+		isRateLimitError
+			? "Rate Limit Reached"
+			: status
+				? `Request failed (HTTP ${status})`
+				: "An error occurred"
 	);
 </script>
 
@@ -29,13 +61,13 @@
 			</div>
 			<div class="error-content">
 				<div class="error-title">
-					{isRateLimitError ? "Rate Limit Reached" : "An error occurred"}
+					{title}
 				</div>
 				<div class="error-message">
 					{#if isRateLimitError}
 						You've reached your API usage limit. Please wait for the limit to reset or check your usage dashboard for details.
 					{:else}
-						{error.message || "Something went wrong. Please try again."}
+						{cleanMessage}
 					{/if}
 				</div>
 				<div class="error-actions">
