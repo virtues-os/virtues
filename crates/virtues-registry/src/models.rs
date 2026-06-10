@@ -64,24 +64,28 @@ impl ModelSlot {
 /// These are the 4 slot defaults available via Vercel AI Gateway
 pub fn default_models() -> Vec<ModelConfig> {
     vec![
-        // CHAT: Default conversational model
-        ModelConfig {
-            model_id: "google/gemini-3-flash".to_string(),
-            display_name: "Gemini 3 Flash".to_string(),
-            provider: "Google".to_string(),
-            sort_order: 1,
-            enabled: true,
-            context_window: 1000000,
-            max_output_tokens: 8192,
-            supports_tools: true,
-            is_default: true,
-            input_cost_per_1k: Some(0.0001),
-            output_cost_per_1k: Some(0.0004),
-        },
-        // LITE: Fast model for background tasks
+        // CHAT: Default conversational model.
+        // NOTE: Gemini 3 (flash/pro) is intentionally NOT a default — via the Vercel AI Gateway's
+        // OpenAI-compatible endpoint it 400s on parallel tool calls (Gemini 3 requires a
+        // thought_signature the gateway doesn't yet pass through; see vercel/ai #11590/#10344).
+        // GLM handles parallel tools cleanly. Revisit Gemini once the gateway ships the fix.
         ModelConfig {
             model_id: "zai/glm-5".to_string(),
             display_name: "GLM 5".to_string(),
+            provider: "Z.AI".to_string(),
+            sort_order: 1,
+            enabled: true,
+            context_window: 203000,
+            max_output_tokens: 131000,
+            supports_tools: true,
+            is_default: true,
+            input_cost_per_1k: Some(0.001),
+            output_cost_per_1k: Some(0.0032),
+        },
+        // LITE: Fast model for background tasks (titles, summaries)
+        ModelConfig {
+            model_id: "zai/glm-4.7-flash".to_string(),
+            display_name: "GLM 4.7 Flash".to_string(),
             provider: "Z.AI".to_string(),
             sort_order: 2,
             enabled: true,
@@ -89,22 +93,22 @@ pub fn default_models() -> Vec<ModelConfig> {
             max_output_tokens: 131000,
             supports_tools: true,
             is_default: false,
-            input_cost_per_1k: Some(0.001),
-            output_cost_per_1k: Some(0.0032),
+            input_cost_per_1k: Some(0.0003),
+            output_cost_per_1k: Some(0.001),
         },
         // REASONING: Complex analysis and thinking
         ModelConfig {
-            model_id: "google/gemini-3-pro-preview".to_string(),
-            display_name: "Gemini 3 Pro".to_string(),
-            provider: "Google".to_string(),
+            model_id: "zai/glm-5.1".to_string(),
+            display_name: "GLM 5.1".to_string(),
+            provider: "Z.AI".to_string(),
             sort_order: 3,
             enabled: true,
-            context_window: 1000000,
-            max_output_tokens: 65536,
+            context_window: 203000,
+            max_output_tokens: 131000,
             supports_tools: true,
             is_default: false,
-            input_cost_per_1k: Some(0.00125),
-            output_cost_per_1k: Some(0.005),
+            input_cost_per_1k: Some(0.0012),
+            output_cost_per_1k: Some(0.0035),
         },
         // CODING: Code generation and technical tasks
         ModelConfig {
@@ -129,9 +133,9 @@ pub fn default_models() -> Vec<ModelConfig> {
 /// Get the default model ID for a given slot
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
-        ModelSlot::Chat => "google/gemini-3-flash",
-        ModelSlot::Lite => "zai/glm-5",
-        ModelSlot::Reasoning => "google/gemini-3-pro-preview",
+        ModelSlot::Chat => "zai/glm-5",
+        ModelSlot::Lite => "zai/glm-4.7-flash",
+        ModelSlot::Reasoning => "zai/glm-5.1",
         ModelSlot::Coding => "anthropic/claude-opus-4.7",
     }
 }
