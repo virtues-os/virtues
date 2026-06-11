@@ -83,7 +83,7 @@ jobs:
         env:
           CODESIGN_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
-          cd apps/mac
+          cd apps/mac-source
 
           # Build for x86_64
           echo "Building for x86_64..."
@@ -163,7 +163,7 @@ jobs:
 
       - name: Create DMG
         run: |
-          cd apps/mac
+          cd apps/mac-source
 
           VERSION="${{ steps.version.outputs.VERSION }}"
 
@@ -194,7 +194,7 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          cd apps/mac
+          cd apps/mac-source
           VERSION="${{ steps.version.outputs.VERSION }}"
           DMG_FILE="Virtues-${VERSION}.dmg"
 
@@ -237,7 +237,7 @@ jobs:
       - name: Copy installer script
         run: |
           # Copy the installer script (updated for DMG)
-          cp apps/mac/Scripts/installer.sh installer.sh
+          cp apps/mac-source/Scripts/installer.sh installer.sh
           chmod +x installer.sh
 
       - name: Create Release
@@ -278,7 +278,7 @@ jobs:
             - macOS 11.0 or later
             - Accessibility permissions (prompted on first run)
           files: |
-            apps/mac/Virtues-${{ steps.version.outputs.VERSION }}.dmg
+            apps/mac-source/Virtues-${{ steps.version.outputs.VERSION }}.dmg
             installer.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -286,7 +286,7 @@ jobs:
       - name: Prepare latest release files
         if: success()
         run: |
-          cd apps/mac
+          cd apps/mac-source
           VERSION="${{ steps.version.outputs.VERSION }}"
 
           # Copy DMG for latest tag
@@ -304,7 +304,7 @@ jobs:
 
             For specific versions, see [all releases](https://github.com/${{ github.repository }}/releases).
           files: |
-            apps/mac/Virtues.dmg
+            apps/mac-source/Virtues.dmg
             installer.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -14,14 +14,13 @@
 
 | Symptom | Section |
 |---|---|
-| Browser shows `NET::ERR_CERT_AUTHORITY_INVALID` on `virtues.local` | [Trusting the box CA](#trusting-the-box-ca) |
-| `virtues.local` doesn't resolve (DNS NXDOMAIN) | [`.local` resolution on the client](#local-resolution-on-the-client) |
+| Browser can't reach the box from another device | [Reaching the web UI](#reaching-the-web-ui) |
 | Lost browser session, no other paired device | [Lost session / locked out](#lost-session--locked-out) |
 | Revoked your only paired device by mistake | [Lost session / locked out](#lost-session--locked-out) |
 | Forgot which BYO AI key you saved | [Reset BYO key](#reset-byo-key) |
 | `systemctl status virtues` shows the service failing | [Service won't start](#service-wont-start) |
 | Postgres won't start | [Postgres won't start](#postgres-wont-start) |
-| `curl get.virtues.com \| sudo sh` failed partway through | [`install.sh` failed mid-run](#installsh-failed-mid-run) |
+| `curl get.virtues.com \| sudo sh` failed partway through | [`tools/bootstrap.sh` failed mid-run](#toolsbootstrapsh-failed-mid-run) |
 | Want to copy your box to new hardware | [Migrating to new hardware](#migrating-to-new-hardware) |
 | Want to roll back after a bad upgrade | [Rolling back a `virtues upgrade`](#rolling-back-a-virtues-upgrade) |
 | Chat returns 402 / `insufficient_budget` | [402 on chat](#402-on-chat) |
@@ -30,74 +29,26 @@
 
 ---
 
-## Trusting the box CA
+## Reaching the web UI
 
-Virtues serves the web UI over HTTPS with a per-box self-signed CA. The
-first time a client visits `https://virtues.local`, the browser will warn
-the cert isn't trusted. **Don't click through the warning.** Run the
-right recipe for your client OS once — after that the warning is gone
-for every device on that machine.
+Virtues serves the web UI over **plain HTTP on port 8000**. There is no TLS
+on the box — see [trust model docs](architecture.md) for the rationale.
 
-The exact commands for each OS are printed at the bottom of
-`sudo -u virtues virtues link` output. The same recipes are reproduced
-here for offline reference.
+Until the Virtues client daemon ships (v0.2), the web UI is reachable from
+**a browser on the box itself**:
 
-**macOS:**
-
-```bash
-curl -k https://virtues.local/ca-cert -o virtues-ca.crt && \
-  sudo security add-trusted-cert -d -r trustRoot \
-    -k /Library/Keychains/System.keychain virtues-ca.crt
+```
+http://localhost:8000
 ```
 
-**Linux (Debian / Ubuntu):**
+Loopback is a Secure Context per W3C spec, so all modern browsers treat it
+as if it were HTTPS (cookies, Service Workers, WebAuthn, no warnings).
 
-```bash
-curl -k https://virtues.local/ca-cert | \
-  sudo tee /usr/local/share/ca-certificates/virtues.crt > /dev/null && \
-  sudo update-ca-certificates
-```
-
-**Linux (Fedora):**
-
-```bash
-curl -k https://virtues.local/ca-cert -o /tmp/virtues-ca.crt && \
-  sudo trust anchor /tmp/virtues-ca.crt
-```
-
-**Windows (PowerShell, as Administrator):**
-
-```powershell
-Invoke-WebRequest -Uri https://virtues.local/ca-cert -OutFile virtues-ca.crt
-Import-Certificate -FilePath virtues-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
-```
-
-After running, **close and reopen the browser** (most browsers cache the
-trust decision per-session).
-
----
-
-## `.local` resolution on the client
-
-`virtues.local` works natively on macOS and iOS. On Linux desktops and
-Windows you need an mDNS resolver installed.
-
-**Linux (Debian / Ubuntu / Fedora):**
-
-```bash
-sudo apt install libnss-mdns      # Debian / Ubuntu
-sudo dnf install nss-mdns         # Fedora
-```
-
-Verify with `getent hosts virtues.local` — you should see the box's IP.
-
-**Windows:** install [Bonjour Print Services for Windows](https://support.apple.com/en-us/106380)
-or run iTunes once (it bundles Bonjour). Reboot.
-
-**Quick fallback:** the `virtues link` command always prints both
-`https://virtues.local/...` and `https://<box-ip>/...`. The IP URL works
-without any mDNS setup at all. Bookmark it and you can skip the
-mDNS install.
+From other devices on the LAN, you can reach the box at `http://<box-ip>:8000`
+but the box's pair-only auth model still applies — you'll see the pairing
+prompt unless you have a session. Once the Virtues client daemon ships,
+other devices will pair via WireGuard and reach the box at `http://localhost:8000`
+on their own machine through a local proxy.
 
 ---
 
@@ -211,7 +162,7 @@ Common causes:
 
 ---
 
-## `install.sh` failed mid-run
+## `tools/bootstrap.sh` failed mid-run
 
 The installer is **idempotent** — re-running picks up where it left off
 without breaking what's already installed. If a previous run failed
@@ -234,7 +185,7 @@ Common reasons for an install to fail and recover on retry:
   automatically for Ubuntu 24.04/25.04 (where PG18 isn't in the
   default repos). For older distros, upgrade first.
 
-If install.sh has a real bug, the install beacon at the end posts the
+If the installer has a real bug, the install beacon at the end posts the
 failed step name to atlas (unless `VIRTUES_DIAG=off`). That tells us
 where it broke without a support ticket.
 
@@ -367,11 +318,43 @@ provider directly with your key, and Virtues is out of the AI path.
 
 ---
 
+## `voucher_too_soon` — stuck account (operator-only)
+
+If `virtues login` or the renew cron repeatedly returns:
+
+```
+429 Too Many Requests — {"error":{"code":"voucher_too_soon",
+  "message":"a voucher was issued recently; wait until near expiry"}}
+```
+
+The customer is locked out by atlas's 25-day anti-stacking gate. This
+should be rare after the box-side double-renew bug fix (`deploy.rs`),
+but legacy state from older boxes can still trigger it.
+
+**Atlas operator unstick** (requires Postgres access on atlas):
+
+```sql
+-- Look up the customer by Stripe ID or email
+SELECT stripe_customer_id, last_voucher_issued_at
+  FROM customers
+  WHERE stripe_customer_id = 'cus_XXXX';
+
+-- Clear the gate
+UPDATE customers
+   SET last_voucher_issued_at = NULL
+ WHERE stripe_customer_id = 'cus_XXXX';
+```
+
+Next `virtues login` / next renew cron tick will mint a fresh voucher
+cleanly. No box-side action required.
+
+---
+
 ## Source-connect requires LAN
 
 Connecting Google / Notion / Plaid / Strava / GitHub from a browser
 **requires you to be on the same home network as the box.** The OAuth
-provider redirects the final hop to `https://virtues.local/oauth/callback`,
+provider redirects the final hop to `http://localhost:8000/oauth/callback`,
 which only resolves on your home WiFi.
 
 v1 ships an intermediary "Almost done — click to continue on your home
@@ -390,7 +373,7 @@ By default, the box sends two kinds of anonymized beacons to
 `atlas.virtues.com`:
 
 - **Install beacon** (`POST /diag/install`) — fires once at the end of
-  `install.sh`. Payload: `{box_id, distro, version, arch, outcome,
+  `tools/bootstrap.sh`. Payload: `{box_id, distro, version, arch, outcome,
   failed_step}`. No personal data, no source content.
 - **Crash beacon** (`POST /diag/crash`) — fires from systemd's
   `ExecStopPost=` hook when the daemon exits abnormally (signal,
@@ -419,11 +402,11 @@ sudo systemctl restart virtues
 
 (Or `false`, `0`, `no`, `disabled` — all case-insensitive.)
 
-The install beacon respects the same flag, but install.sh reads it
+The install beacon respects the same flag, but the installer reads it
 from the env file *after* it's written, so the first install ever
 will always send one `outcome=ok` beacon before the off-switch takes
 effect. If that one is unacceptable, set the env var in your shell
-before running install.sh:
+before running the installer:
 
 ```bash
 sudo VIRTUES_DIAG=off bash -c 'curl -sSL https://get.virtues.com | sh'

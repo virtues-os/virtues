@@ -9,8 +9,7 @@ use anyhow::Result;
 
 use crate::api::box_status::BoxStatus;
 use crate::search::model_cache::{self, ModelSource};
-use crate::search::Embedder;
-use crate::wireguard::{ca, pairing};
+use crate::wireguard::pairing;
 use crate::Virtues;
 
 /// `virtues status` — a human-readable box health report and the DIY
@@ -62,11 +61,7 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("    paired (WG)          {}", s.devices.paired_wg);
     println!();
 
-    if any_download {
-        println!("  tip: run `virtues warm-models` to pre-fetch models (else they");
-        println!("       download on the first search/chat request).");
-        println!();
-    }
+    let _ = any_download; // models lazy-download on first use; no nag here
     println!("  next: {}", next_step(&s));
     println!();
     Ok(())
@@ -104,7 +99,7 @@ fn access_url() -> String {
 }
 
 /// `virtues bringup` — non-interactive first-boot: run migrations and ensure the
-/// box's identity exists (CA, rendezvous identity, WG server keypair). Idempotent,
+/// box's identity exists (rendezvous identity, WG server keypair). Idempotent,
 /// so it's safe to run on every boot. The appliance runs this headless; DIY runs
 /// it too.
 pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
@@ -114,7 +109,6 @@ pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
     virtues.database.initialize().await?;
 
     println!("ensuring box identity…");
-    ca::ensure_ca(pool).await?;
     pairing::ensure_rendezvous_identity(pool).await?;
     #[cfg(target_os = "linux")]
     crate::wireguard::reconcile::ensure_server_keypair(pool).await?;
@@ -174,27 +168,11 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url, &api_url).await {
             Ok(LinkStatus::Ready) => {
+                // link::poll mints the first voucher internally; don't double-mint
+                // here or atlas's 25-day anti-stacking gate locks the account out.
+                // Lazy renew on the first AI call handles any in-poll renew failure.
                 println!();
-                println!("  ✅ linked — subscription active.");
-                // Eagerly fetch the first voucher + credit the wallet so the
-                // user's very next chat call doesn't 402 with an empty wallet.
-                // The periodic renew cron handles every subsequent cycle; this
-                // closes the cold-start gap between "subscription created" and
-                // "wallet has money in it."
-                match crate::virtues_api::renew::renew(pool, &http, &atlas_url, &api_url).await {
-                    Ok(_) => println!("  ✅ wallet credited — AI ready."),
-                    Err(e) => {
-                        // Non-fatal — subscription is active even if the
-                        // first voucher redeem failed (network blip, atlas
-                        // restart, etc.). The renew cron will retry; tell
-                        // the user so they're not surprised by a 402 on
-                        // their first chat.
-                        tracing::warn!(error = %e, "post-subscribe renew failed");
-                        println!("  ⚠  wallet not yet credited (network issue?).");
-                        println!("     The renew cron will retry; if your first chat");
-                        println!("     returns 402, run `virtues subscribe` again or wait a minute.");
-                    }
-                }
+                println!("  Subscribed. AI ready.");
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {
@@ -250,27 +228,17 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     println!();
     match link::login(pool, &http, &atlas_url, &email).await? {
         LoginStart::Sent => {
-            println!("  📧 Sent — check {email} for the magic link.");
-            println!("     (15 min, single-use. Click the link, then this CLI continues.)");
+            println!("  Sent magic link to {email}. Waiting… (Ctrl-C to cancel)");
         }
         LoginStart::NoAccount => {
-            println!(
-                "  No Virtues subscription found on {email}. Re-run `virtues init`"
-            );
-            println!("  and pick [2] Create new account instead.");
+            println!("  No Virtues subscription on {email}. Re-run `virtues init` and pick [2] Create new.");
             return Ok(());
         }
         LoginStart::RateLimited => {
-            println!(
-                "  Too many login attempts for {email} in the last hour."
-            );
-            println!("  Try again later, or use [2] Create new if you don't have an account.");
+            println!("  Too many login attempts for {email}. Try again later.");
             return Ok(());
         }
     }
-
-    println!();
-    println!("  Waiting for you to click the link… (Ctrl-C to cancel)");
 
     // Same poll loop as handle_subscribe. The device_link flips to ready
     // when the user clicks the email magic link → atlas marks it ready
@@ -285,15 +253,10 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url, &api_url).await {
             Ok(LinkStatus::Ready) => {
+                // link::poll mints the first voucher internally; don't double-mint
+                // here or atlas's 25-day anti-stacking gate locks the account out.
                 println!();
-                println!("  ✅ logged in — subscription attached.");
-                match crate::virtues_api::renew::renew(pool, &http, &atlas_url, &api_url).await {
-                    Ok(_) => println!("  ✅ wallet credited — AI ready."),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "post-login renew failed");
-                        println!("  ⚠  wallet not yet credited (network blip?). It'll retry shortly.");
-                    }
-                }
+                println!("  Logged in. AI ready.");
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {

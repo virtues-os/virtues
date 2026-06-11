@@ -108,10 +108,12 @@ the device then pulls the full bundle over the initial LAN connection during
 
 ### Phase E — iOS client
 - `WireGuardKit` + `NEPacketTunnelProvider` target: build the tunnel from the
-  bundle. Pin the CA for `virtues.internal` (URLSession trust delegate).
-- `QRScannerView`: parse the pairing code; `DeviceConfiguration` stores WG config
-  + bearer + CA + endpoint. `NetworkManager`: dial `https://virtues.internal:PORT`
-  through the tunnel.
+  bundle. The tunnel itself provides encryption + authentication (Noise IK
+  handshake = SPKI pin); no TLS on top.
+- `QRScannerView`: parse the pairing code; `DeviceConfiguration` stores WG
+  config + bearer + endpoint. `NetworkManager`: dial
+  `http://virtues.internal:8000` through the tunnel (the WG client maps
+  `virtues.internal` to the box's WG address).
 - `SettingsView`: reachability status (tunnel up/down, last handshake age).
 - Re-pin paths: LAN mDNS auto-heal, push-over-live-tunnel, physical "show QR"
   re-pair button.

@@ -265,21 +265,3 @@ pub fn save_config(config: &SetupConfig) -> Result<()> {
     Ok(())
 }
 
-/// Display completion message with next steps
-pub fn display_completion() {
-    println!();
-    println!("{}", style("Done! Try these commands:").bold().green());
-    println!(
-        "  {} - Browse available integrations",
-        style("virtues catalog sources").cyan()
-    );
-    println!(
-        "  {} - Connect your Notion workspace",
-        style("virtues add notion").cyan()
-    );
-    println!(
-        "  {} - List connected sources",
-        style("virtues source list").cyan()
-    );
-    println!();
-}

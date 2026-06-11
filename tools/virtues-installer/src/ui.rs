@@ -39,18 +39,3 @@ pub fn die(msg: &str) -> ! {
     process::exit(1);
 }
 
-/// Themed in-progress message. Used sparingly between concrete progress to
-/// give the install a sense of intentionality. Tone is reflective, not
-/// whimsical — Claude-Code-"thinking"-style copy, not chakra/woo.
-///
-/// Locked list (sync with install flow):
-///   - "Forging your box's identity…"     CA + WG keypair generation
-///   - "Provisioning your data layer…"    Postgres role + DB + pgvector
-///   - "Establishing trust…"              systemd unit + service start
-///   - "Linking inference…"               Ollama + embedding model pull
-///   - "Sealing your sovereignty…"        final identity finalization
-///   - "Preparing your hardware…"         driver/arch detection
-pub fn thinking(msg: &str) {
-    println!();
-    println!("  {}  {}", style("⋯").dim(), style(msg).italic().dim());
-}

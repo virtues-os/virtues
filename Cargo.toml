@@ -2,12 +2,14 @@
 members = [
     "virtues-core",
     "crates/virtues-helpers",
+    "crates/virtues-protocol",
     "crates/virtues-wg",
     "crates/virtues-registry",
     "actions",
-    "apps/installer",
+    "apps/desktop",
     "services/virtues-api",
-    "services/atlas",
+    "services/virtues-atlas",
+    "tools/virtues-installer",
 ]
 resolver = "2"
 

@@ -42,23 +42,22 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to ensure server status: {}", e);
     }
 
-    // Eager identity bringup: mint the box's CA, rendezvous identity, and (on
-    // Linux) WG server keypair if absent, so a freshly-booted box reaches
-    // identity-ready without a manual `virtues bringup`. Idempotent and
-    // best-effort — a failure here must not stop the box from serving (e.g. a
-    // dev box that never uses remote access). Mirrors `handle_bringup`.
+    // Eager identity bringup: mint the box's rendezvous identity and (on Linux)
+    // WG server keypair if absent, so a freshly-booted box reaches identity-ready
+    // without a manual `virtues bringup`. Idempotent and best-effort — a failure
+    // here must not stop the box from serving. Mirrors `handle_bringup`.
     {
-        use crate::wireguard::{ca, pairing};
+        use crate::wireguard::pairing;
         let pool = client.database.pool();
-        if let Err(e) = ca::ensure_ca(pool).await {
-            tracing::warn!("identity bringup: ensure_ca failed: {e}");
-        }
         if let Err(e) = pairing::ensure_rendezvous_identity(pool).await {
             tracing::warn!("identity bringup: ensure_rendezvous_identity failed: {e}");
         }
         #[cfg(target_os = "linux")]
         if let Err(e) = crate::wireguard::reconcile::ensure_server_keypair(pool).await {
             tracing::warn!("identity bringup: ensure_server_keypair failed: {e}");
+        }
+        if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
+            tracing::warn!("identity bringup: ensure_console_device failed: {e}");
         }
     }
 
@@ -179,11 +178,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let public_routes = Router::new()
         // Health check
         .route("/health", get(health))
-        // Per-box CA root cert (PEM). Public so a first-time visitor can
-        // download + trust it before any session exists. Pairs with the
-        // HTTPS listener on :443 which serves `virtues.local` with a leaf
-        // signed by this CA.
-        .route("/ca-cert", get(ca_cert))
         // App server info (for device pairing)
         .route("/api/app/server-info", get(server_info))
         // Public, LAN-reachable box health — boot gates + inference resolution.
@@ -795,32 +789,17 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
     };
 
-    // ── HTTPS sidecar on :443 (virtues.local via mDNS) ────────────────────
-    //
-    // We keep the plain-HTTP listener as the primary serve site (for dev
-    // workflows + the dashboard CLI). In parallel, if the box has access to
-    // CAP_NET_BIND_SERVICE and the cert is available, we also bind :443 with
-    // a per-box CA-signed leaf for `virtues.local`. Browsers on the LAN go
-    // through this listener; first-time visitors download the CA root from
-    // `/ca-cert` and trust it once.
-    //
-    // The HTTPS task is spawned and detached. Both listeners serve the same
-    // `app` router so every request hits identical handlers regardless of
-    // entry point.
-    let app_for_tls = app.clone();
-    let pool_for_tls = client.database.pool().clone();
-    tokio::spawn(async move {
-        if let Err(e) = serve_https_lan(app_for_tls, pool_for_tls).await {
-            // Non-fatal: HTTPS failure (no perms, cert mint error) shouldn't
-            // take down the HTTP listener. The operator sees the warning in
-            // logs and falls back to the printed http URL.
-            tracing::warn!("HTTPS listener disabled: {e:#}");
-        }
-    });
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal)
-        .await?;
+    // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
+    // paired daemons reach the box over a WG tunnel (which provides encryption
+    // + authentication), and the box's own browser hits localhost (Secure
+    // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
+    // MEMORY.md for the architectural commitment.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal)
+    .await?;
 
     // Note: No flush needed on shutdown - StreamWriter is in-memory only now.
     // Records are written directly to filesystem during sync/ingest.
@@ -910,93 +889,3 @@ async fn server_info() -> impl IntoResponse {
     }))
 }
 
-/// Serve the same axum app over HTTPS on :443 (or `VIRTUES_HTTPS_PORT` if set,
-/// useful for dev where binding :443 needs CAP_NET_BIND_SERVICE). The cert
-/// is the per-box LAN leaf signed by the box's self-issued CA — the user
-/// installs the CA root once on their device (see `/ca-cert` route) and
-/// `https://virtues.local` then loads without browser warnings.
-///
-/// Failure here is non-fatal: HTTP on the primary port still works and the
-/// caller logs a warning. Common failure modes: no CAP_NET_BIND_SERVICE on
-/// :443, cert mint failed (no DB yet during early bring-up), or port :443
-/// already taken.
-async fn serve_https_lan(
-    app: axum::Router,
-    pool: sqlx::PgPool,
-) -> anyhow::Result<()> {
-    use anyhow::Context;
-
-    let port: u16 = std::env::var("VIRTUES_HTTPS_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(443);
-
-    // Mint or load the LAN leaf cert (signed by the per-box CA).
-    let leaf = crate::wireguard::ca::ensure_lan_leaf(&pool)
-        .await
-        .context("ensure_lan_leaf")?;
-
-    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem(
-        leaf.cert_pem.into_bytes(),
-        leaf.key_pem.into_bytes(),
-    )
-    .await
-    .context("build rustls config from per-box leaf")?;
-
-    let addr: std::net::SocketAddr = format!("0.0.0.0:{port}")
-        .parse()
-        .context("parse :{port} bind addr")?;
-    tracing::info!("HTTPS listening on https://virtues.local:{port}  (cert: per-box CA)");
-
-    axum_server::bind_rustls(addr, tls_config)
-        .serve(app.into_make_service())
-        .await
-        .context("axum_server::bind_rustls")?;
-
-    Ok(())
-}
-
-/// `GET /ca-cert` — serve the box's CA root certificate as `application/x-pem-file`.
-///
-/// The user downloads this once + installs it as a trusted root in their OS /
-/// browser. After that, `https://virtues.local` and `https://virtues.internal`
-/// load cleanly. The route lives at root, unauthenticated, because trust
-/// install necessarily happens before the user has a session.
-async fn ca_cert(
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> axum::response::Response {
-    use axum::http::{header, StatusCode};
-    use axum::response::IntoResponse;
-
-    match crate::wireguard::ca::ensure_ca(state.db.pool()).await {
-        Ok(ca) => {
-            let body = ca.cert_pem;
-            let filename = "virtues-ca.crt";
-            // `application/x-x509-ca-cert` is the type browsers + OS
-            // keychains recognize as "this is a CA certificate to trust"
-            // and surface in their import dialogs. `Content-Disposition:
-            // attachment` forces a download instead of inline rendering.
-            (
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, "application/x-x509-ca-cert".to_string()),
-                    (
-                        header::CONTENT_DISPOSITION,
-                        format!("attachment; filename=\"{filename}\""),
-                    ),
-                    (header::CACHE_CONTROL, "no-store".to_string()),
-                ],
-                body,
-            )
-                .into_response()
-        }
-        Err(e) => {
-            tracing::warn!("ca_cert: ensure_ca failed: {e:#}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "CA generation failed; check server logs.",
-            )
-                .into_response()
-        }
-    }
-}

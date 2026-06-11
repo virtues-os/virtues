@@ -10,6 +10,7 @@ mod diag;
 mod health;
 mod link;
 mod preorder;
+pub mod punch;
 mod settings;
 mod voucher;
 mod webhooks;
@@ -75,6 +76,9 @@ pub struct AppState {
     /// Staging escape hatch — surface promo-code field at Checkout AND accept
     /// `no_payment_required` in finalize. Off in prod. See `Config::allow_promotion_codes`.
     pub allow_promotion_codes: bool,
+    /// In-memory hole-punch coordinator. Ephemeral (30s TTL), no persistence,
+    /// no customer linkage — see `[[remote-access-decision]]`.
+    pub punch: punch::PunchCoordinator,
 }
 
 pub fn router() -> Router<AppState> {
@@ -88,4 +92,5 @@ pub fn router() -> Router<AppState> {
         .merge(settings::router())
         .merge(webhooks::router())
         .merge(diag::router())
+        .merge(punch::router())
 }

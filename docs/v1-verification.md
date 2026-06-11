@@ -99,17 +99,18 @@ sudo -u virtues virtues backup --output /mnt/persistent/pre-v1.tar.gz   # if app
 | Systemd unit installed | `sudo systemctl status virtues` | `loaded; enabled; active (running)` | |
 | Service didn't restart-loop | `sudo journalctl -u virtues \| grep -c "Started Virtues"` | `1` (one start, not many) | |
 | pg_isready gate ran | `sudo journalctl -u virtues \| grep "waiting for postgres"` | Either absent (PG was ready instantly) or present once with a clean `service started` line right after | |
-| mDNS broadcasting | `avahi-browse -tap _https._tcp \| grep virtues` (run from a Mac/Linux on the same LAN) | One line containing `virtues.local` | |
-| `/ca-cert` reachable | `curl -k https://virtues.local/ca-cert \| head -2` | `-----BEGIN CERTIFICATE-----` | |
+| mDNS broadcasting | `avahi-browse -tap _http._tcp \| grep virtues` (run from a Mac/Linux on the same LAN) | One line containing `virtues.local` on port 8000 | |
+| HTTP listener reachable | `curl http://localhost:8000/health` (on the Jetson) | `200 OK` | |
 | Install beacon arrived | atlas log shows `POST /diag/install … outcome=ok` from a fresh `box_id` within ~30s of install end | (check atlas SRE channel / DB) | |
 
-### First-pair from a laptop
+### First-pair from the box's own browser
+
+(Other-device pairing waits for the Virtues client daemon — v0.2.)
 
 | Step | Command | Expected | ✅ / ❌ + notes |
 |---|---|---|---|
-| `virtues link` runs | `sudo -u virtues virtues link` | Prints both `https://virtues.local/pair#t=...` AND `https://<jetson-ip>/pair#t=...`, plus the four per-OS CA-trust recipes (macOS, Debian/Ubuntu, Fedora, Windows) | |
-| Trust CA on laptop | Run the macOS / Linux / Windows recipe printed | No warning on subsequent visit; browser shows the lock icon. | |
-| Open the URL | Pasted into laptop browser | Lands in the web UI logged in, on `/onboarding` | |
+| `virtues link` runs | `sudo -u virtues virtues link` | Prints `http://localhost:8000/pair#t=...` plus a LAN fallback URL | |
+| Open the URL | Paste into Chromium on the Jetson | Lands in the web UI logged in, on `/onboarding`. No cert warning — loopback is a Secure Context | |
 | `/virtues/devices` shows the device | Navigate after onboarding | One row for the laptop, label includes OS + browser, last-seen "just now" | |
 | Activity log records the pair | `/virtues/activity` | One `paired` event, IP matches laptop | |
 
@@ -136,7 +137,7 @@ sudo -u virtues virtues backup --output /mnt/persistent/pre-v1.tar.gz   # if app
 | Step | Command | Expected | ✅ / ❌ + notes |
 |---|---|---|---|
 | Reboot | `sudo reboot` | Box comes back; `virtues.service` is `active` within 60s | |
-| Auth survives reboot | Visit `https://virtues.local/` from the laptop browser | Still logged in (cookie + device row both present) | |
+| Auth survives reboot | Visit `http://localhost:8000/` from Chromium on the Jetson | Still logged in (cookie + device row both present) | |
 | Backup | `sudo -u virtues virtues backup` | Tarball written to `/var/lib/virtues/backups/virtues-…tar.gz`; manifest.json valid JSON | |
 | Backup integrity | `tar -tzf <tarball> \| head` | Contains `manifest.json`, `db/virtues.dump`, `env/virtues.env`, `lake/…` | |
 | Status JSON | `sudo -u virtues virtues status --json \| jq .` | Valid JSON; `schema_version` matches binary; no secrets in output | |

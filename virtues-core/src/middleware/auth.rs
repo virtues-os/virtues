@@ -16,7 +16,7 @@
 
 use axum::{
     async_trait,
-    extract::{FromRef, FromRequestParts},
+    extract::{ConnectInfo, FromRef, FromRequestParts},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -25,10 +25,24 @@ use axum_extra::extract::cookie::CookieJar;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
+use std::net::SocketAddr;
 
 /// Idle timeout — sessions go stale after this many hours of inactivity even
 /// if their hard `expires_at` is still in the future.
 const IDLE_TIMEOUT_HOURS: i64 = 8;
+
+/// Synthetic device id for the "I'm sitting at the box's monitor + keyboard"
+/// session. The auth extractor returns an `AuthUser` with this id when the
+/// request's socket peer is loopback (`127.0.0.1` / `::1`), bypassing the
+/// cookie + pair-token requirement.
+///
+/// Safe because the threat model is "physical access = you" — a process on
+/// the box can already read `/var/lib/virtues/lake/` and `/etc/virtues/env`,
+/// so trusting a loopback-only HTTP request adds no attack surface. LAN
+/// peers are NOT trusted; we explicitly check `SocketAddr::ip().is_loopback()`
+/// and not RFC1918.
+pub const CONSOLE_DEVICE_ID: &str = "local-console";
+pub const CONSOLE_DEVICE_LABEL: &str = "Local console";
 
 /// Authenticated principal extracted from the cookie.
 ///
@@ -66,11 +80,50 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // Loopback bypass: a request whose socket peer is 127.0.0.1 / ::1 is
+        // sitting on the box itself (browser on the Jetson's own monitor, or
+        // a localhost curl). Physical access already wins the threat model,
+        // so we skip cookies + pair tokens for these. LAN peers are NOT
+        // covered — `is_loopback()` is strict, RFC1918 IPs still authenticate
+        // normally.
+        if parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip().is_loopback())
+            .unwrap_or(false)
+        {
+            return Ok(AuthUser {
+                id: crate::middleware::http::OWNER_USER_ID.to_string(),
+                device_id: CONSOLE_DEVICE_ID.to_string(),
+                device_label: CONSOLE_DEVICE_LABEL.to_string(),
+            });
+        }
+
         let jar = CookieJar::from_headers(&parts.headers);
         let session_token = read_session_cookie(&jar).ok_or_else(unauthorized)?;
         let pool = PgPool::from_ref(state);
         validate_and_touch(&pool, &session_token).await.ok_or_else(unauthorized)
     }
+}
+
+/// Idempotent upsert for the synthetic console device row. Called at server
+/// startup so the FK in `app_auth_session` (and any future row that references
+/// the console session) stays valid. The row is created revoked=NULL,
+/// last_seen_at=NULL — `last_seen_at` gets touched on real use via the same
+/// validate_and_touch path (loopback bypass updates it best-effort, see below).
+pub async fn ensure_console_device(pool: &PgPool) -> crate::Result<()> {
+    sqlx::query(
+        "INSERT INTO app_device (id, user_id, kind, label, paired_from_ip) \
+         VALUES ($1, $2, 'cli', $3, '127.0.0.1') \
+         ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(CONSOLE_DEVICE_ID)
+    .bind(crate::middleware::http::OWNER_USER_ID)
+    .bind(CONSOLE_DEVICE_LABEL)
+    .execute(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("ensure_console_device: {e}")))?;
+    Ok(())
 }
 
 fn unauthorized() -> AuthError {

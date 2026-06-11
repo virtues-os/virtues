@@ -1,8 +1,8 @@
 # Virtues — Mac dev quickstart + cloud-service deploys.
 #
 # Mac dev uses native brew Postgres (no Docker daemon).
-# Linux home box is installed natively via scripts/install.sh (no Docker).
-# Cloud services (atlas / virtues-api) deploy as Docker images to ECR.
+# Linux home box is installed natively via tools/bootstrap.sh (no Docker).
+# Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
 
 .DEFAULT_GOAL := help
 .PHONY: help init dev dev-core dev-api dev-web dev-link dev-reset db db-stop \
@@ -118,13 +118,13 @@ dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
 	@echo "✓ fresh dbs. Run 'make dev-core' (+ 'make dev-api') to migrate + seed."
 
 # ── Cloud-service deploy (Virtues-operated; not part of self-host) ───────────
-# Build + push services/{atlas,virtues-api} images to ECR :latest. Rolling the
+# Build + push services/virtues-{atlas,api} images to ECR :latest. Rolling the
 # running service is a separate step (the service pulls the new :latest).
 # Needs AWS CLI v2 (configured) + Docker. No secrets are committed — auth comes
 # from your AWS CLI config, account ID is discovered at run time.
 
-deploy-atlas: ## Build + push services/atlas image to ECR :latest
-	@$(MAKE) _ecr-push SVC=virtues-atlas DOCKERFILE=services/atlas/Dockerfile
+deploy-atlas: ## Build + push services/virtues-atlas image to ECR :latest
+	@$(MAKE) _ecr-push SVC=virtues-atlas DOCKERFILE=services/virtues-atlas/Dockerfile
 
 deploy-virtues-api: ## Build + push services/virtues-api image to ECR :latest
 	@$(MAKE) _ecr-push SVC=virtues-api DOCKERFILE=services/virtues-api/Dockerfile

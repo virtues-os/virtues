@@ -213,12 +213,19 @@ pub(crate) async fn finalize_paid_session(
     };
 
     // Upsert customer with the new billing token (reissue on re-claim).
+    //
+    // We also NULL `last_voucher_issued_at` on the conflict path: a customer
+    // re-claiming has paid for a fresh subscription period and the previous
+    // gate timestamp is no longer the right limiter — leaving it stale would
+    // 429 their first /voucher call for up to 25 days after cancel + resub.
     sqlx::query(
         r#"
         INSERT INTO customers (stripe_customer_id, email, billing_token_hash)
         VALUES ($1, $2, $3)
         ON CONFLICT (stripe_customer_id)
-        DO UPDATE SET billing_token_hash = $3, email = $2
+        DO UPDATE SET billing_token_hash = $3,
+                      email = $2,
+                      last_voucher_issued_at = NULL
         "#,
     )
     .bind(&stripe_customer_id)

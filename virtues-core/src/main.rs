@@ -27,8 +27,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // We use rustls with `default-features = false, features = ["ring"]` to
         // avoid aws-lc-rs (and aws-lc-sys, which doesn't cross-compile under
         // GCC 11). Rustls 0.23 requires the provider to be installed once at
-        // startup before any TLS work; otherwise the axum-server TLS task
-        // panics on first connection.
+        // startup before any TLS work — the box serves no TLS itself, but
+        // outbound HTTPS to atlas (via reqwest with rustls-tls-webpki-roots)
+        // still needs the provider installed.
         rustls::crypto::ring::default_provider()
             .install_default()
             .expect("install rustls ring CryptoProvider");
@@ -46,12 +47,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = dotenv::from_path("../.env");
         }
 
-        // Initialize tracing
-        // Use RUST_LOG env var, falling back to INFO if not set
+        // Initialize tracing.
+        //
+        // Interactive subcommands share stdout with cliclack/dialoguer wizards
+        // — INFO log lines collide with the TUI and break the carefully drawn
+        // rail-connected prompts. So:
+        //   • Default to `warn` for interactive subcommands; full `info` for
+        //     `server` and the background/daemon commands.
+        //   • Always write tracing output to stderr so cliclack owns stdout
+        //     cleanly, even when RUST_LOG bumps the filter to debug.
+        // RUST_LOG still overrides for debugging.
+        let interactive = matches!(
+            std::env::args().nth(1).as_deref(),
+            Some("init")
+                | Some("link")
+                | Some("login")
+                | Some("subscribe")
+                | Some("status")
+                | Some("doctor")
+                | Some("upgrade")
+                | Some("backup")
+                | Some("restore")
+                | Some("sudo")
+                | Some("warm-models")
+        );
+        let default_filter = if interactive { "warn" } else { "info" };
         let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_filter));
 
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::io::stderr)
+            .init();
 
         // Initialize observability (metrics)
         // If OTEL_EXPORTER_OTLP_ENDPOINT is set, metrics will be exported
@@ -101,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         use dialoguer::{theme::ColorfulTheme, Select};
 
         // The Recommended/Advanced choice lives ONE level up — in the
-        // installer (apps/installer/) — where it actually means something
+        // installer (tools/virtues-installer/) — where it actually means something
         // (apt installs, install prefix, data dir, download base, etc.).
         // Asking again here was a UX bug: virtues init has nothing
         // meaningful to expose as "Advanced" because the env file
@@ -204,7 +231,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        virtues::setup::display_completion();
         return Ok(());
     }
 
@@ -512,13 +538,12 @@ fn print_account_intro() {
 /// Print the inference stack's hardware-resolution plan: which accelerator is
 /// active, whether this build links CUDA, the chosen ONNX precision, and where
 /// each model's files come from (baked vs download). Pure — no DB, no network,
-/// Print the `virtues link` + `virtues init` output: the pair URL(s), then
-/// the per-OS CA-trust recipes. Honors `ENVIRONMENT=dev` (plain HTTP, no CA
-/// step) and falls back from `virtues.local` to the box's primary IP for
-/// clients on which mDNS isn't resolving. Shared between `Link` and `Init`
-/// so the user sees identical output regardless of which command they ran.
+/// Print the `virtues link` + `virtues init` output: the pair URL for the box
+/// itself (loopback — works in Chromium on this Jetson without any cert dance),
+/// plus a hint that other devices reach the box through a paired Virtues client
+/// daemon (v0.2). Shared between `Link` and `Init`.
 fn print_link_output(token: &str) {
-    use virtues::cli::link::{ca_recipe_host, ca_recipes, reachable_pair_urls};
+    use virtues::cli::link::reachable_pair_urls;
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     let web_port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
     let urls = reachable_pair_urls(token, is_dev, &web_port);
@@ -531,25 +556,10 @@ fn print_link_output(token: &str) {
         println!("    {:<18}  {}", format!("{}:", url.label), url.url);
     }
     println!();
-    if is_dev {
-        println!("  Notes:");
-        println!("    • Dev mode (ENVIRONMENT=dev): plain HTTP, no CA trust needed.");
-        println!("    • Link expires in 15 minutes. Single-use.");
-    } else {
-        println!("  First visit only: trust the box's CA root (one-time).");
-        println!("  Run the line for your client OS:");
-        println!();
-        for recipe in ca_recipes(&ca_recipe_host()) {
-            println!("    {}:", recipe.os);
-            println!("      {}", recipe.command);
-            println!();
-        }
-        println!("  Notes:");
-        println!("    • If `virtues.local` doesn't resolve on your laptop, use the IP URL above.");
-        println!("    • Linux clients can also install `libnss-mdns` (Debian/Ubuntu) or");
-        println!("      `nss-mdns` (Fedora) to make `.local` work natively.");
-        println!("    • Link expires in 15 minutes. Single-use.");
-    }
+    println!("  Notes:");
+    println!("    • From this Jetson: open Chromium and hit the localhost URL above.");
+    println!("    • From another device: install the Virtues client (v0.2 — coming soon).");
+    println!("    • Link expires in 15 minutes. Single-use.");
     println!("─────────────────────────────────────────────────────────");
 }
 

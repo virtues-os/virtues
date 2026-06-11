@@ -21,9 +21,9 @@ That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the produ
 
 ---
 
-## Home box: native install via `scripts/install.sh`
+## Home box: native install via `tools/bootstrap.sh` + `virtues-installer`
 
-`curl get.virtues.com | sudo sh` runs the installer, which is `scripts/install.sh` (served from `main` via Caddy → `raw.githubusercontent.com`). The installer is idempotent and does, in order:
+`curl get.virtues.com | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh` (served via Caddy on the install host). Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent and does, in order:
 
 1. **Pick the package manager** (`apt` for Debian/Ubuntu, `dnf` for Fedora) and install: `postgresql-18` + `postgresql-18-pgvector`, `avahi-daemon`, `libnss-mdns`, `wireguard`, `openssl`, `ca-certificates`.
 2. **Resolve the latest release tag** from `https://api.github.com/repos/virtues-os/virtues/releases/latest`, download the `virtues-<ver>-<arch>-linux.tar.gz` tarball + its `.sha256` from the matching GitHub Release, verify the checksum, extract the `virtues` binary to `/usr/local/bin/`.
@@ -64,7 +64,7 @@ WireGuard needs `CAP_NET_ADMIN` against the kernel. Rather than make the *whole 
 
 ## Networking: mDNS and SSDP live in the WG daemon
 
-Multicast/broadcast protocols (mDNS for `virtues.local` discovery, SSDP for the pinhole wizard's router detection) require host network access. Both ride along with the WG daemon (which is already host-networked for `wg0`). The app process binds explicit ports (`:8000` HTTP, `:443` HTTPS), unicast only.
+Multicast/broadcast protocols (mDNS for `virtues.local` discovery, SSDP for the pinhole wizard's router detection) require host network access. Both ride along with the WG daemon (which is already host-networked for `wg0`). The app process binds a single explicit port (`:8000` HTTP, no TLS surface — see [[localhost-daemon-trust]] in MEMORY.md), unicast only.
 
 ---
 
@@ -72,7 +72,7 @@ Multicast/broadcast protocols (mDNS for `virtues.local` discovery, SSDP for the 
 
 The cloud half is the *metered* edge — Stripe billing (atlas) and the AI/web/bank passthrough (virtues-api). Single tenant from a box's perspective; multi-tenant from the cloud's perspective. Shipped as:
 
-- **Two Docker images** (`services/atlas/Dockerfile`, `services/virtues-api/Dockerfile`), built `--platform linux/amd64`, pushed to ECR via `make deploy-atlas` / `make deploy-virtues-api`.
+- **Two Docker images** (`services/virtues-atlas/Dockerfile`, `services/virtues-api/Dockerfile`), built `--platform linux/amd64`, pushed to ECR via `make deploy-atlas` / `make deploy-virtues-api`.
 - **One EC2 instance** runs both as `docker run` units behind **Caddy** (which terminates TLS for `atlas.virtues.com` + `api.virtues.com` via Let's Encrypt and reverse-proxies to the containers).
 - **RDS Postgres** with TLS-to-RDS, in the same VPC. No NAT, no load balancer, no App Runner — flat and cheap.
 - **Access**: SSM Session Manager only, no public SSH.
@@ -87,7 +87,7 @@ Why one EC2 + Caddy and not ECS/App Runner/Fargate: latency, cost, and avoiding 
 - GitHub Actions workflow `release-linux.yml` builds the `virtues` binary on tag push (`v*`).
 - Matrix: `x86_64-unknown-linux-gnu` + `aarch64-unknown-linux-gnu` via `cross`.
 - Each tarball + sha256 uploads to the GitHub Release as a draft. A publish job flips draft → live after both arches are built.
-- `scripts/install.sh` discovers the latest release via the GitHub API at install time — no separate "manifest" or update server.
+- `tools/bootstrap.sh` discovers the latest release via the GitHub API at install time — no separate "manifest" or update server.
 
 **Cloud releases:**
 - `make deploy-atlas` / `make deploy-virtues-api` build + push `:latest` to ECR.
