@@ -149,6 +149,75 @@ pub fn compute_net_status() -> NetStatus {
     }
 }
 
+/// Outcome of the external inbound-reachability echo.
+pub enum InboundResult {
+    /// virtues-api reached us — inbound is confirmed open on the tested path.
+    Reachable,
+    /// Could not confirm. NOT a definitive "blocked": a timeout is ambiguous
+    /// (the box's firewall, OR api having no IPv6 yet, OR a transient drop), so
+    /// we never claim "blocked" — only "couldn't confirm" + a short reason.
+    Inconclusive(String),
+}
+
+/// Ask virtues-api to fire a UDP nonce back at us over IPv6 and see if it
+/// arrives — the one honest inbound test (a box can't test its own firewall
+/// from inside). Returns [`InboundResult::Reachable`] only on a positive
+/// confirmation; everything else is `Inconclusive` (we never assert "blocked").
+///
+/// Forces the probe request out over the box's global IPv6 (`local_address`) so
+/// api observes our v6 source and fires at v6 — testing the doctrine's primary
+/// path. Requires api to have an AAAA; until then this is always inconclusive,
+/// which is honest (no false negatives).
+pub async fn verify_inbound(global_v6: Ipv6Addr, api_base: &str) -> InboundResult {
+    use std::time::Duration;
+
+    let sock = match tokio::net::UdpSocket::bind("[::]:0").await {
+        Ok(s) => s,
+        Err(e) => return InboundResult::Inconclusive(format!("could not bind probe socket: {e}")),
+    };
+    let port = match sock.local_addr() {
+        Ok(a) => a.port(),
+        Err(e) => return InboundResult::Inconclusive(format!("local_addr: {e}")),
+    };
+
+    // A short random nonce so we can match the echoed datagram to this request.
+    let nonce: String = {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        (0..16).map(|_| format!("{:x}", rng.gen_range(0u8..16))).collect()
+    };
+
+    // Pin egress to the global v6 so api observes our v6 (not a happy-eyeballs v4).
+    let client = match reqwest::Client::builder()
+        .local_address(IpAddr::V6(global_v6))
+        .timeout(Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return InboundResult::Inconclusive(format!("http client: {e}")),
+    };
+    let url = format!("{}/v1/net/probe", api_base.trim_end_matches('/'));
+    let body = serde_json::json!({ "port": port, "nonce": nonce });
+    if let Err(e) = client.post(&url).json(&body).send().await {
+        return InboundResult::Inconclusive(format!(
+            "could not reach virtues-api over IPv6 ({e}) — api may not have an IPv6 address yet"
+        ));
+    }
+
+    // Wait up to 3s for the echoed nonce.
+    let mut buf = [0u8; 256];
+    match tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await {
+        Ok(Ok((n, _))) if buf[..n] == *nonce.as_bytes() => InboundResult::Reachable,
+        Ok(Ok(_)) => InboundResult::Inconclusive("received an unexpected datagram".into()),
+        Ok(Err(e)) => InboundResult::Inconclusive(format!("recv error: {e}")),
+        Err(_) => InboundResult::Inconclusive(
+            "no packet arrived within 3s — inbound may be blocked (open udp/51820), \
+             or api has no IPv6 yet"
+                .into(),
+        ),
+    }
+}
+
 impl NetStatus {
     /// Print a human-readable report (used by `virtues doctor`).
     pub fn print_report(&self) {
