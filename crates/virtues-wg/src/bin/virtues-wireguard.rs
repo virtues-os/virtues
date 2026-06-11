@@ -23,6 +23,10 @@ async fn main() -> anyhow::Result<()> {
     let db = sqlx::PgPool::connect(&db_url).await?;
     eprintln!("[virtues-wireguard] started; reconciling wg0 from the peer store");
 
+    // Open the inbound pinhole once at startup so a default-deny host is
+    // reachable on the WG port. Best-effort + idempotent — see the fn docs.
+    ensure_inbound_pinhole(manager::WG_LISTEN_PORT);
+
     // Poll loop. The reconcile + endpoint-record are idempotent, so a steady tick
     // is safe; a netlink RTM_NEWADDR watch + Postgres LISTEN/NOTIFY replace the
     // poll later (staging) for prompt reaction to prefix rotation / new pairings.
@@ -52,23 +56,26 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Detect the box's current routable IP — what a peer dialing the box would
-/// see as its source-of-truth destination.
+/// Detect the box's current GLOBALLY-ROUTABLE IP — the address a remote peer
+/// on the internet would dial. Per the IPv6-direct doctrine, the box is a real
+/// computer on the real internet; we publish only an address that's actually
+/// reachable, never a LAN/NAT one.
 ///
 /// Resolution order:
 ///   1. `VIRTUES_WG_PUBLIC_IP` env override — explicit, takes priority. Used
 ///      when the box sits behind a router with port-forwarding and the
-///      operator knows the WAN address out-of-band.
+///      operator knows the WAN address out-of-band. Trusted as-is.
 ///   2. The "outbound socket trick": open a UDP socket, `connect()` it to a
-///      public address (no packets sent, just kernel route lookup), read back
-///      the local address the kernel picked. That's the IP on whichever
-///      interface owns the default route — i.e. the LAN-routable IP that a
-///      peer on the same LAN would dial. For LAN-only E2E this is exactly
-///      right. (IPv6-direct doctrine: the box has a real routable address;
-///      there is no NAT to traverse — see [[project_networking_doctrine]].)
+///      public address (no packets sent, just a kernel route lookup), read back
+///      the local source address the kernel picked for the default route.
+///      Prefer IPv6, fall back to IPv4 — but accept ONLY a globally-routable
+///      result ([`is_globally_routable`]). A ULA / link-local / RFC1918 / CGNAT
+///      source means the box isn't directly reachable on that family, so we
+///      return `None` and retry rather than baking a dead endpoint into bundles.
 ///
-/// Returns `None` only when both fail (no default route, no interfaces). In
-/// that case the rendezvous won't be updated this tick and we retry.
+/// `None` therefore means "not directly reachable yet" — the publish/pairing
+/// path treats that honestly (no wildcard placeholder) and the install-time
+/// network check surfaces it to the user.
 #[cfg(target_os = "linux")]
 fn detect_public_ip() -> Option<String> {
     if let Ok(s) = std::env::var("VIRTUES_WG_PUBLIC_IP") {
@@ -77,28 +84,140 @@ fn detect_public_ip() -> Option<String> {
         }
     }
 
-    // Two probes — once for v4, once for v6. The kernel chooses the source
-    // address based on the destination's family + the default route. We
-    // prefer v6 if present (matches our ULA-by-default design) but accept
-    // either; whichever resolves is what the box has working egress on.
-    if let Some(ip) = probe_outbound_addr("[2606:4700:4700::1111]:53", "[::]:0") {
+    if let Some(ip) = probe_global_addr("[2606:4700:4700::1111]:53", "[::]:0") {
         return Some(ip);
     }
-    probe_outbound_addr("1.1.1.1:53", "0.0.0.0:0")
+    probe_global_addr("1.1.1.1:53", "0.0.0.0:0")
 }
 
+/// Run the outbound-socket trick and return the source address ONLY if it is
+/// globally routable; otherwise `None`.
 #[cfg(target_os = "linux")]
-fn probe_outbound_addr(dest: &str, bind: &str) -> Option<String> {
+fn probe_global_addr(dest: &str, bind: &str) -> Option<String> {
     let sock = std::net::UdpSocket::bind(bind).ok()?;
     sock.connect(dest).ok()?;
-    let local = sock.local_addr().ok()?;
-    let ip = local.ip();
-    // Loopback / unspecified mean the kernel didn't pick a real address —
-    // treat as "no answer" so we retry next tick rather than publishing junk.
-    if ip.is_loopback() || ip.is_unspecified() {
-        return None;
+    let ip = sock.local_addr().ok()?.ip();
+    if is_globally_routable(ip) {
+        Some(ip.to_string())
+    } else {
+        None
     }
-    Some(ip.to_string())
+}
+
+/// True only for addresses reachable from the public internet. Rejects every
+/// non-global range so the box never advertises an address a remote peer can't
+/// dial: loopback, unspecified, multicast, link-local, IPv6 unique-local (ULA),
+/// IPv4 private (RFC1918), CGNAT (RFC6598), broadcast.
+///
+/// `Ipv6Addr::is_unique_local`/`is_unicast_link_local` are unstable on stable
+/// Rust, so the v6 ranges are open-coded against the leading bits.
+#[cfg(target_os = "linux")]
+fn is_globally_routable(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v) => {
+            !v.is_loopback()
+                && !v.is_unspecified()
+                && !v.is_private()
+                && !v.is_link_local()
+                && !v.is_broadcast()
+                && !v.is_multicast()
+                && !is_cgnat_v4(v)
+        }
+        IpAddr::V6(v) => {
+            !v.is_loopback()
+                && !v.is_unspecified()
+                && !v.is_multicast()
+                && !is_link_local_v6(v)
+                && !is_unique_local_v6(v)
+        }
+    }
+}
+
+/// 100.64.0.0/10 (RFC 6598) — carrier-grade NAT space, never internet-routable.
+#[cfg(target_os = "linux")]
+fn is_cgnat_v4(v: std::net::Ipv4Addr) -> bool {
+    let o = v.octets();
+    o[0] == 100 && (o[1] & 0xc0) == 0x40
+}
+
+/// fe80::/10 — IPv6 link-local.
+#[cfg(target_os = "linux")]
+fn is_link_local_v6(v: std::net::Ipv6Addr) -> bool {
+    (v.segments()[0] & 0xffc0) == 0xfe80
+}
+
+/// fc00::/7 — IPv6 unique-local (ULA).
+#[cfg(target_os = "linux")]
+fn is_unique_local_v6(v: std::net::Ipv6Addr) -> bool {
+    (v.segments()[0] & 0xfe00) == 0xfc00
+}
+
+/// Best-effort: ensure the WG listen port is accepted inbound, so a box on a
+/// default-deny host is reachable. Idempotent — checks for the rule first
+/// (`-C`) and only inserts (`-I INPUT`, prepended so the terminal `ACCEPT`
+/// beats any later default-DROP) if absent. Runs for both `ip6tables` (the
+/// doctrine's primary v6 path) and `iptables`; on iptables-nft systems these
+/// are the standard nft-backed shims.
+///
+/// ADDITIVE ONLY: it adds one `ACCEPT` and never drops anything, so it cannot
+/// tighten the host. It genuinely opens the port on the common "bare default
+/// DROP policy" lockdown; on a ufw/firewalld-managed host with a conflicting
+/// rule it may not, which is why `virtues doctor net` independently verifies
+/// real inbound reachability and tells the user the truth.
+///
+/// Disable with `VIRTUES_WG_MANAGE_FIREWALL=0` if you manage your own firewall.
+/// Failures are logged, never fatal (many appliance installs have no
+/// restrictive firewall at all, so this is a no-op there).
+#[cfg(target_os = "linux")]
+fn ensure_inbound_pinhole(port: u16) {
+    let disabled = std::env::var("VIRTUES_WG_MANAGE_FIREWALL")
+        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    if disabled {
+        eprintln!(
+            "[virtues-wireguard] firewall management disabled \
+             (VIRTUES_WG_MANAGE_FIREWALL=0); ensure inbound udp/{port} is open"
+        );
+        return;
+    }
+
+    let port_s = port.to_string();
+    let mut opened_any = false;
+    for bin in ["ip6tables", "iptables"] {
+        let check = ["-C", "INPUT", "-p", "udp", "--dport", &port_s, "-j", "ACCEPT"];
+        let insert = ["-I", "INPUT", "-p", "udp", "--dport", &port_s, "-j", "ACCEPT"];
+        // Rule already present → nothing to do (idempotent).
+        if run_fw(bin, &check) {
+            opened_any = true;
+            continue;
+        }
+        if run_fw(bin, &insert) {
+            eprintln!("[virtues-wireguard] opened inbound udp/{port} via {bin}");
+            opened_any = true;
+        }
+    }
+    if !opened_any {
+        eprintln!(
+            "[virtues-wireguard] could not auto-open inbound udp/{port} \
+             (no ip(6)tables?); if your firewall is default-deny, open it \
+             manually — run `virtues doctor net` to verify reachability"
+        );
+    }
+}
+
+/// Spawn a firewall command silently; return whether it exited 0. Sync
+/// `std::process` is fine — this runs once at startup.
+#[cfg(target_os = "linux")]
+fn run_fw(bin: &str, args: &[&str]) -> bool {
+    use std::process::{Command, Stdio};
+    Command::new(bin)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|st| st.success())
+        .unwrap_or(false)
 }
 
 #[cfg(not(target_os = "linux"))]

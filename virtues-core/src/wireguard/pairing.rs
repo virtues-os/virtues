@@ -49,37 +49,80 @@ pub async fn ensure_rendezvous_identity(db: &PgPool) -> Result<RendezvousIdentit
     Ok(RendezvousIdentity { publish_id, key_b64 })
 }
 
-/// The box's current public WG endpoint (`host:port`) to bake into the bundle as
-/// the initial value. Resolution order:
+/// The box's current WG endpoint (`host:port`) to bake into the bundle as the
+/// initial dial target. Resolution order:
 ///   1. `VIRTUES_WG_ENDPOINT` env override — explicit operator pin.
-///   2. The endpoint `virtues-wireguard` last detected and wrote to
-///      `box_secrets.wg_current_endpoint` — what a peer on the LAN would
-///      actually dial.
-///   3. Wildcard listen `[::]:<port>` — useless to dial but keeps the
-///      bundle well-formed; the daemon's rendezvous re-resolve handles
-///      this case once that ships.
+///   2. The GLOBAL endpoint `virtues-wireguard` detected + wrote to
+///      `box_secrets.wg_current_endpoint` — the doctrine's primary path: a
+///      real, internet-routable IPv6 a remote device dials directly.
+///   3. The box's current LOCAL source address (any non-loopback, incl. LAN) —
+///      so a device pairing on the same network reaches the box immediately
+///      even before the daemon has detected a global address. Remote
+///      reachability then depends on (2) landing; the device re-resolves via
+///      the rendezvous when the prefix rotates.
 ///
-/// Ongoing endpoint changes after pairing are the rendezvous publisher's
-/// job (`virtues-wireguard` writes box_secrets → the app pushes ciphertext
-/// to virtues-api), and the desktop daemon re-reads on handshake failure.
+/// We NEVER bake a wildcard `[::]` — that's an undiallable placeholder. If the
+/// box has no detectable address at all (no interfaces), we fall back to its
+/// ULA and log loudly; pairing still succeeds so the device can retry later.
 #[cfg(target_os = "linux")]
 async fn current_endpoint(db: &PgPool) -> String {
+    let port = super::manager::WG_LISTEN_PORT;
+
+    // 1. Operator override.
     if let Ok(s) = std::env::var("VIRTUES_WG_ENDPOINT") {
         if !s.is_empty() {
             return s;
         }
     }
+    // 2. Daemon-detected global endpoint (the real internet-routable address).
     if let Ok(Some(ep)) = super::endpoint::read_current(db).await {
-        // Bracket IPv6 literals so `parse::<SocketAddr>()` on the daemon side
-        // accepts the bundle without further massaging.
-        let host = if ep.ip.contains(':') && !ep.ip.starts_with('[') {
-            format!("[{}]", ep.ip)
-        } else {
-            ep.ip
-        };
-        return format!("{host}:{}", ep.port);
+        return format!("{}:{}", bracket_host(&ep.ip), ep.port);
     }
-    format!("[::]:{}", super::manager::WG_LISTEN_PORT)
+    // 3. Current local address (LAN is acceptable for same-network pairing).
+    if let Some(ip) = local_best_addr() {
+        return format!("{}:{port}", bracket_host(&ip.to_string()));
+    }
+    // 4. No address at all — extreme edge. Bake the ULA (reachable once the
+    //    tunnel is up) and warn; never a wildcard.
+    tracing::warn!(
+        "current_endpoint: box has no detectable address; baking ULA only — \
+         this device won't reach the box until it has a real address"
+    );
+    format!("[{}]:{port}", super::ula::server_address())
+}
+
+/// Bracket an IPv6 literal so `parse::<SocketAddr>()` on the daemon accepts it.
+#[cfg(target_os = "linux")]
+fn bracket_host(ip: &str) -> String {
+    if ip.contains(':') && !ip.starts_with('[') {
+        format!("[{ip}]")
+    } else {
+        ip.to_string()
+    }
+}
+
+/// Best-effort: the box's current outbound source address (any non-loopback).
+/// Unlike the daemon's `detect_public_ip`, this accepts LAN addresses — it's
+/// only the *initial* bundle target for same-network pairing, not the
+/// published global endpoint.
+#[cfg(target_os = "linux")]
+fn local_best_addr() -> Option<std::net::IpAddr> {
+    for (dest, bind) in [
+        ("[2606:4700:4700::1111]:53", "[::]:0"),
+        ("1.1.1.1:53", "0.0.0.0:0"),
+    ] {
+        if let Ok(sock) = std::net::UdpSocket::bind(bind) {
+            if sock.connect(dest).is_ok() {
+                if let Ok(local) = sock.local_addr() {
+                    let ip = local.ip();
+                    if !ip.is_loopback() && !ip.is_unspecified() {
+                        return Some(ip);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "linux")]

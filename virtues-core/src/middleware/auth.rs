@@ -1,18 +1,26 @@
 //! Authentication middleware.
 //!
-//! Validates a session cookie against the three-table model:
-//!   - `app_auth_session` holds the cookie token
-//!   - `app_device`       is the canonical paired-device record
-//!   - `app_auth_user`    is the single-tenant owner
+//! **Auth lives at the app layer; the network is a dumb transport.** The box
+//! authenticates every request from its own credentials — NOT from the path it
+//! arrived over — so the same auth works whether a request comes over Virtues'
+//! WireGuard, a user's BYO overlay (Tailscale/Headscale/VPS), or plain LAN.
+//! See `[[project_networking_doctrine]]`.
 //!
-//! A request is authenticated iff all three are true:
-//!   1. Cookie matches an `app_auth_session` row whose `expires_at > now()`.
-//!   2. `app_device.revoked_at IS NULL` for the linked device.
-//!   3. `app_auth_session.last_used_at > now() - IDLE_TIMEOUT` (8h default).
+//! Three accepted credentials, checked in order:
+//!   1. **Device bearer** (`Authorization: Bearer <token>`) — a paired
+//!      non-browser device (iOS/Mac/custom). HMAC-lookup against `credentials`,
+//!      joined to its `app_device` (enforcing `revoked_at IS NULL`). Pure
+//!      capability, works over any transport.
+//!   2. **Loopback console** — a process on the box itself connecting directly
+//!      to `127.0.0.1`/`::1`. Gated: refused when a forwarding header is
+//!      present (a reverse proxy also connects from loopback — see below).
+//!   3. **Session cookie** — a browser, validated against the three-table model
+//!      (`app_auth_session` → `app_device` → `app_auth_user`) with hard expiry,
+//!      soft revoke, and an 8h idle ceiling.
 //!
-//! Each authenticated request bumps `last_used_at` and `app_device.last_seen_at`.
-//! Idle timeout means a forgotten browser tab can't be used to re-enter the box
-//! after the user has walked away — they have to re-pair.
+//! Each authenticated request bumps `last_used_at` / `last_seen_at`. Idle
+//! timeout means a forgotten browser tab can't re-enter the box after the user
+//! walks away — they have to re-pair.
 
 use axum::{
     async_trait,
@@ -33,14 +41,20 @@ const IDLE_TIMEOUT_HOURS: i64 = 8;
 
 /// Synthetic device id for the "I'm sitting at the box's monitor + keyboard"
 /// session. The auth extractor returns an `AuthUser` with this id when the
-/// request's socket peer is loopback (`127.0.0.1` / `::1`), bypassing the
-/// cookie + pair-token requirement.
+/// request's socket peer is loopback (`127.0.0.1` / `::1`) AND no forwarding
+/// header is present, bypassing the cookie + pair-token requirement.
 ///
 /// Safe because the threat model is "physical access = you" — a process on
 /// the box can already read `/var/lib/virtues/lake/` and `/etc/virtues/env`,
 /// so trusting a loopback-only HTTP request adds no attack surface. LAN
-/// peers are NOT trusted; we explicitly check `SocketAddr::ip().is_loopback()`
-/// and not RFC1918.
+/// peers are NOT trusted (`is_loopback()` is strict, not RFC1918).
+///
+/// CRITICAL: a reverse proxy (Caddy/an HTTPS sidecar) terminating an external
+/// connection ALSO forwards to the box from loopback — so a naive
+/// "loopback == owner" rule would hand owner auth to anyone who reached the
+/// proxy. We therefore refuse the bypass whenever an `X-Forwarded-For` /
+/// `Forwarded` header is present: a genuinely local process connects directly
+/// and sets no such header; a proxied request always carries one.
 pub const CONSOLE_DEVICE_ID: &str = "local-console";
 pub const CONSOLE_DEVICE_LABEL: &str = "Local console";
 
@@ -80,18 +94,31 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // Loopback bypass: a request whose socket peer is 127.0.0.1 / ::1 is
-        // sitting on the box itself (browser on the Jetson's own monitor, or
-        // a localhost curl). Physical access already wins the threat model,
-        // so we skip cookies + pair tokens for these. LAN peers are NOT
-        // covered — `is_loopback()` is strict, RFC1918 IPs still authenticate
-        // normally.
-        if parts
+        let pool = PgPool::from_ref(state);
+
+        // 1. Device bearer — transport-agnostic app-layer credential. A paired
+        //    non-browser device presents `Authorization: Bearer <token>`. The
+        //    bearer IS the credential, so this authenticates over ANY transport
+        //    (Virtues WG, a BYO overlay, plain LAN) — the network is never the
+        //    trust boundary. An explicit bearer means "I am a device": a bad
+        //    one fails closed rather than falling through to cookie/loopback.
+        if let Some(token) = read_bearer(&parts.headers) {
+            return validate_bearer(&pool, &token).await.ok_or_else(unauthorized);
+        }
+
+        // 2. Loopback console — a process on the box itself, connecting
+        //    directly to 127.0.0.1 / ::1. Physical access wins the threat
+        //    model. Refused when a forwarding header is present, because a
+        //    reverse proxy in front of the box also connects from loopback
+        //    while forwarding a REMOTE client (see CONSOLE_DEVICE_ID docs).
+        let is_loopback = parts
             .extensions
             .get::<ConnectInfo<SocketAddr>>()
             .map(|ci| ci.0.ip().is_loopback())
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        let is_proxied = parts.headers.contains_key("x-forwarded-for")
+            || parts.headers.contains_key("forwarded");
+        if is_loopback && !is_proxied {
             return Ok(AuthUser {
                 id: crate::middleware::http::OWNER_USER_ID.to_string(),
                 device_id: CONSOLE_DEVICE_ID.to_string(),
@@ -99,11 +126,65 @@ where
             });
         }
 
+        // 3. Session cookie — a browser.
         let jar = CookieJar::from_headers(&parts.headers);
         let session_token = read_session_cookie(&jar).ok_or_else(unauthorized)?;
-        let pool = PgPool::from_ref(state);
         validate_and_touch(&pool, &session_token).await.ok_or_else(unauthorized)
     }
+}
+
+/// Extract a token from an `Authorization: Bearer <token>` header.
+fn read_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    let token = raw
+        .strip_prefix("Bearer ")
+        .or_else(|| raw.strip_prefix("bearer "))?
+        .trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
+}
+
+/// Validate a device bearer into an `AuthUser`. HMAC-looks-up the credential,
+/// joins it to its paired device + owner, and enforces the device-list ACL
+/// (credential `active`, device `revoked_at IS NULL`). Touches last-seen on
+/// success. Transport-independent — this is what makes the box reachable over
+/// a BYO overlay with no special-casing.
+async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUser> {
+    let credential_id = crate::api::credentials::validate_device_token(pool, token)
+        .await
+        .ok()?;
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT u.id, d.id, d.label \
+         FROM credentials c \
+         JOIN app_device d ON d.id = c.device_id \
+         JOIN app_auth_user u ON u.id = d.user_id \
+         WHERE c.id = $1 AND c.status = 'active' AND d.revoked_at IS NULL",
+    )
+    .bind(&credential_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let (user_id, device_id, device_label) = row?;
+
+    // Best-effort last-seen touch on both the credential and the device row.
+    let _ = crate::api::credentials::update_last_seen(pool, &credential_id).await;
+    let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
+        .bind(&device_id)
+        .execute(pool)
+        .await;
+
+    Some(AuthUser {
+        id: user_id,
+        device_id,
+        device_label,
+    })
 }
 
 /// Idempotent upsert for the synthetic console device row. Called at server
