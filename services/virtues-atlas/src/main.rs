@@ -86,13 +86,7 @@ async fn main() -> Result<()> {
         },
         resend_api_key: cfg.resend_api_key.clone(),
         allow_promotion_codes: cfg.allow_promotion_codes,
-        punch: routes::punch::PunchCoordinator::new(),
     };
-
-    // Spawn the punch-slot sweeper. It runs forever as a detached task,
-    // purging entries older than 30s. Cheap (5s wakeups, runs against an
-    // in-memory map), so no need for backpressure.
-    let _sweeper = state.punch.spawn_sweeper();
 
     if cfg.allow_promotion_codes {
         tracing::warn!(
@@ -114,9 +108,8 @@ async fn main() -> Result<()> {
     //     handler (Stripe Checkout creation can take ~5 s end-to-end).
     //
     // Per-IP rate limiting deliberately omitted at this stage: at our
-    // scale there's no abuse to dampen, the punch coordinator now caps
-    // its own memory, and AWS WAF (or Cloudflare) is the right home for
-    // edge-level throttling when traffic grows.
+    // scale there's no abuse to dampen, and AWS WAF (or Cloudflare) is the
+    // right home for edge-level throttling when traffic grows.
     let app = Router::new()
         .merge(routes::router())
         .layer(RequestBodyLimitLayer::new(1_048_576))
