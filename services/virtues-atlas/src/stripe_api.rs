@@ -381,6 +381,7 @@ impl std::fmt::Display for OffSessionChargeError {
 /// Minimal Stripe Checkout Session shape — only the fields Atlas needs.
 #[derive(Debug, Deserialize)]
 pub struct CheckoutSession {
+    #[allow(dead_code)] // surfaced in reconciliation logs once that lands
     pub id: String,
     pub payment_status: String,
     /// `"open" | "complete" | "expired"`. Validated == "complete" in finalize.
@@ -432,6 +433,7 @@ pub struct CreatedCheckoutSession {
 pub struct Subscription {
     #[allow(dead_code)]
     pub id: String,
+    #[allow(dead_code)] // available for future cross-checks; not load-bearing yet
     pub customer: String,
     #[allow(dead_code)]
     pub status: String,

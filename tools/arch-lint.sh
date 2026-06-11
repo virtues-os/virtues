@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Architectural lint guards. Fail early on patterns that cause long-term cruft.
 #
-# Run from the repo root:   bash scripts/arch_lint.sh
+# Run from the repo root:   bash tools/arch-lint.sh
 # Returns non-zero on the first violation.
 #
 # Each lint codifies a charter invariant from docs/architecture.md. The goal is that a
@@ -191,10 +191,10 @@ if [ -d "services/virtues-api/migrations" ]; then
 fi
 
 # Bearer/usage columns forbidden in Atlas migrations.
-if [ -d "services/atlas/migrations" ]; then
+if [ -d "services/virtues-atlas/migrations" ]; then
     violations=$(grep -rEni \
         'bearer_hash|voucher_code|\bbearer\b' \
-        services/atlas/migrations/ --include='*.sql' \
+        services/virtues-atlas/migrations/ --include='*.sql' \
         | grep -vE ':[[:space:]]*--' \
         || true)
     if [ -n "$violations" ]; then

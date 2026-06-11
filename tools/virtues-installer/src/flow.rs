@@ -10,7 +10,7 @@
 //! becomes the wizard — no copy-paste tax for the user.
 
 use anyhow::Result;
-use cliclack::{intro, outro, select};
+use cliclack::outro;
 use std::os::unix::process::CommandExt;
 use std::process::Command as StdCommand;
 
@@ -29,12 +29,6 @@ pub struct Config {
     pub assume_yes: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Recommended,
-    Advanced,
-}
-
 pub async fn run(cli: Config) -> Result<()> {
     // ─── Pre-flight ─────────────────────────────────────────────────────
     ui::section("Pre-flight");
@@ -48,57 +42,32 @@ pub async fn run(cli: Config) -> Result<()> {
         }
     }
 
-    // ─── Mode selector ──────────────────────────────────────────────────
-    let mode = if cli.assume_yes || !brand::is_tty() {
-        Mode::Recommended
-    } else {
-        intro("∴ Setup")?;
-        select("How do you want to install?")
-            .item(Mode::Recommended, "Recommended", "what most people want")
-            .item(Mode::Advanced, "Advanced", "override defaults (coming v0.1.2)")
-            .interact()?
-    };
-
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
-    // Advanced mode prompts for INSTALL_PREFIX, DATA_DIR, embed model, etc.
-    // Land that in a follow-up; for v0.1.1 Recommended path is the locked one.
-    let _ = mode;
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • System dependencies (Postgres 18, WireGuard, Avahi, Ollama)");
-        ui::skip(&format!("  • Pull embedding model ({})", cfg.embed_model));
-        ui::skip("  • Configure mDNS (hostname → virtues, _https._tcp on :443)");
-        ui::skip("  • Create system user 'virtues' + data dir");
-        ui::skip("  • Postgres role + database + pgvector extension");
-        ui::skip(&format!("  • Download virtues binary → {}", cfg.binary_path().display()));
-        ui::skip(&format!("  • Write env file at {}", cfg.env_file_path().display()));
-        ui::skip("  • Run virtues bringup (migrations + box identity)");
-        ui::skip("  • Install systemd unit");
+        ui::skip("  • System packages (Postgres 18, WireGuard, Avahi, Ollama + embed model)");
+        ui::skip(&format!("  • Embedding model: {}", cfg.embed_model));
+        ui::skip("  • mDNS (hostname → virtues, _http._tcp on :8000)");
+        ui::skip("  • System user 'virtues' + data dir + Postgres role/db/pgvector");
+        ui::skip(&format!("  • Virtues binary → {}", cfg.binary_path().display()));
+        ui::skip(&format!("  • Env file at {}", cfg.env_file_path().display()));
+        ui::skip("  • virtues bringup + systemd unit");
         return Ok(());
     }
 
-    // ─── Installing system deps ─────────────────────────────────────────
-    ui::section("Installing system dependencies");
+    // ─── System packages ────────────────────────────────────────────────
+    ui::section("System packages");
     install::install_deps(&target).await?;
-
-    ui::section("Installing Ollama + embedding model");
     install::ensure_ollama(&cfg).await?;
-
-    // ─── Configuring the box ────────────────────────────────────────────
-    ui::section("Configuring");
-    ui::thinking("Forging your box's identity…");
     install::configure_mdns().await?;
     install::create_user(&cfg).await?;
     install::provision_db().await?;
 
-    // ─── Downloading the binary ─────────────────────────────────────────
-    ui::section("Downloading virtues");
+    // ─── Virtues ────────────────────────────────────────────────────────
+    ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
-
-    // ─── Env + bringup + systemd ────────────────────────────────────────
-    ui::section("Sealing your sovereignty");
     install::write_env_file(&cfg).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
@@ -109,7 +78,7 @@ pub async fn run(cli: Config) -> Result<()> {
     steps::run_step("Enable + start virtues service", start).await?;
 
     // ─── Verifying ──────────────────────────────────────────────────────
-    ui::section("Health check");
+    ui::section("Verifying");
     let issues = install::health_check(&cfg).await?;
     if issues > 0 {
         ui::warn(&format!("{issues} post-install issue(s) — run `virtues doctor` for details"));

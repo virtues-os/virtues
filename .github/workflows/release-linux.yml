@@ -13,7 +13,7 @@ name: Release Linux binaries
 # daemon, so the virtues binary only needs glibc 2.31+ — covered by every
 # supported distro and every Jetson JetPack 6.x release.
 #
-# Tarball naming intentionally matches what `scripts/install.sh` expects:
+# Tarball naming intentionally matches what `tools/virtues-installer` expects:
 #
 #     virtues-<tag>-<arch>-linux.tar.gz
 #
@@ -86,6 +86,13 @@ jobs:
         run: |
           cargo build --release -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
 
+      # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
+      # in v0.2.1+. Built here so testers can `curl` it from the release page
+      # without a separate workflow.
+      - name: Build virtues-client binary
+        run: |
+          cargo build --release -p virtues-client --bin virtues-client --target ${{ matrix.target }}
+
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
       # web package + lockfile live at apps/web/, not the repo root.
@@ -113,8 +120,10 @@ jobs:
           mkdir -p dist staging
           BIN_PATH="target/${{ matrix.target }}/release/virtues"
           INSTALLER_PATH="target/${{ matrix.target }}/release/virtues-installer"
+          CLIENT_PATH="target/${{ matrix.target }}/release/virtues-client"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
+          test -x "$CLIENT_PATH"    || (echo "virtues-client not built"      >&2 && exit 1)
 
           # Layout inside the main tarball:
           #   virtues             box binary, installer moves to /usr/local/bin/
@@ -133,9 +142,16 @@ jobs:
           cp "$INSTALLER_PATH" "dist/${INSTALLER_NAME}"
           (cd dist && sha256sum "${INSTALLER_NAME}" > "${INSTALLER_NAME}.sha256")
 
+          # Desktop daemon ships as a standalone binary too — testers download
+          # it directly, `sudo setcap cap_net_admin+ep` it, and run `virtues-client up`.
+          CLIENT_NAME="virtues-client-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
+          cp "$CLIENT_PATH" "dist/${CLIENT_NAME}"
+          (cd dist && sha256sum "${CLIENT_NAME}" > "${CLIENT_NAME}.sha256")
+
           echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "installer_name=${INSTALLER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "client_name=${CLIENT_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -146,6 +162,8 @@ jobs:
             dist/${{ steps.tarball.outputs.name }}.sha256
             dist/${{ steps.tarball.outputs.installer_name }}
             dist/${{ steps.tarball.outputs.installer_name }}.sha256
+            dist/${{ steps.tarball.outputs.client_name }}
+            dist/${{ steps.tarball.outputs.client_name }}.sha256
           fail_on_unmatched_files: true
           # Don't auto-publish: lets the release page collect both arches
           # before going live. The release shows up as draft after the

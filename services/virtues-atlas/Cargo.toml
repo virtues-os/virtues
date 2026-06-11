@@ -1,5 +1,5 @@
 [package]
-name = "atlas"
+name = "virtues-atlas"
 version = "0.1.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
@@ -9,7 +9,7 @@ repository = "https://github.com/virtues-os/virtues"
 keywords = ["billing", "stripe", "entitlement", "privacy-pass"]
 
 [[bin]]
-name = "atlas"
+name = "virtues-atlas"
 path = "src/main.rs"
 
 [dependencies]
@@ -20,7 +20,7 @@ virtues-helpers = { path = "../../crates/virtues-helpers" }
 # HTTP server
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "limit", "timeout", "trace"] }
 
 # HTTP client (outbound to virtues-api for entitlement updates)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "rustls-tls-webpki-roots-no-provider"] }

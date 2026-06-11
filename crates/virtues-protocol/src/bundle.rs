@@ -1,10 +1,15 @@
 //! The pairing bundle — everything a device needs to reach the box, provisioned
-//! in a single exchange at `pair_complete`.
+//! in a single exchange at `/api/pair/consume`.
 //!
-//! The box assembles this and the device (iOS / web) consumes it. It's serialized
-//! to JSON; the Swift `PairingBundle` mirrors this shape exactly. The QR itself
-//! stays tiny (a one-time code + LAN endpoint); this full bundle is pulled over
-//! the initial LAN connection. See `docs/wireguard-pairing.md` §4.
+//! The box assembles this and the device (iOS / desktop daemon / web client)
+//! consumes it. Serialized to JSON; every client implementation mirrors this
+//! shape exactly — the Swift `PairingBundle` in `apps/ios`, the Rust client in
+//! `apps/client`, and any future Android / ESP32 firmware all decode against
+//! these field names.
+//!
+//! The QR / pair URL itself stays tiny (a one-time pair token + box endpoint);
+//! this full bundle is pulled over the initial connection. See
+//! `docs/wireguard-pairing.md` §4.
 
 use serde::{Deserialize, Serialize};
 
@@ -17,12 +22,12 @@ pub struct WgParams {
     /// Box's current public endpoint, `host:port` (IPv6 in brackets). The device
     /// dials this first; on handshake failure it re-resolves via the rendezvous.
     pub server_endpoint: String,
-    /// Per-pair pre-shared key, base64 (defense-in-depth).
+    /// Per-pair pre-shared key, base64 (defense-in-depth on top of Noise IK).
     pub preshared_key: String,
     /// Address assigned to this device inside the box's ULA space (its `/128`).
     pub client_address: String,
     /// Box's WG address — the tunnel peer the device talks to, and what
-    /// `virtues.internal` resolves to.
+    /// `virtues.internal` resolves to (client-side only).
     pub server_address: String,
     /// AllowedIPs the device routes through the tunnel. Split-tunnel: only the
     /// box's address, so nothing else leaves via the tunnel.
@@ -39,7 +44,7 @@ pub struct RendezvousParams {
     /// box + its paired devices.
     pub key: String,
     /// Full GET URL for the rendezvous, e.g.
-    /// `https://api.virtues.example/v1/rendezvous/<publish_id>`.
+    /// `https://api.virtues.com/v1/rendezvous/<publish_id>`.
     pub url: String,
 }
 
@@ -50,16 +55,16 @@ pub struct PairingBundle {
     /// device keychain; also returned by `pair_complete` for convenience.
     pub bearer: String,
     pub wg: WgParams,
-    /// PEM of the per-server CA root. The device pins it for `virtues.internal`
-    /// **only** — scoped trust, no public PKI.
-    pub ca_root_pem: String,
     /// The internal hostname dialed inside the tunnel (never in public DNS).
+    /// The daemon sets this as the Host header when proxying browser requests.
     pub internal_host: String,
     /// What `internal_host` resolves to (client-side only) — equals
     /// `wg.server_address`.
     pub internal_ip: String,
-    /// HTTPS port the device dials at `internal_host` inside the tunnel.
-    pub https_port: u16,
+    /// HTTP port the device dials at `internal_host` inside the tunnel. The
+    /// tunnel itself provides encryption + authentication (Noise IK = SPKI
+    /// pinning); the box runs no TLS surface.
+    pub http_port: u16,
     pub rendezvous: RendezvousParams,
 }
 
@@ -78,10 +83,9 @@ mod tests {
                 server_address: "fd00:5654::1".into(),
                 allowed_ips: vec!["fd00:5654::1/128".into()],
             },
-            ca_root_pem: "-----BEGIN CERTIFICATE-----\n...".into(),
             internal_host: "virtues.internal".into(),
             internal_ip: "fd00:5654::1".into(),
-            https_port: 443,
+            http_port: 8000,
             rendezvous: RendezvousParams {
                 publish_id: "abc123".into(),
                 key: "a2V5".into(),
@@ -100,12 +104,13 @@ mod tests {
 
     #[test]
     fn field_names_are_snake_case_stable() {
-        // The Swift client decodes these exact keys — lock them.
+        // Swift, TypeScript, and ESP32-C decoders all key on these exact names —
+        // any rename here is a wire-protocol break across every client.
         let json = serde_json::to_value(sample()).unwrap();
         assert!(json.get("bearer").is_some());
         assert!(json["wg"].get("server_public_key").is_some());
         assert!(json["wg"].get("client_address").is_some());
-        assert!(json.get("ca_root_pem").is_some());
+        assert!(json.get("http_port").is_some());
         assert!(json["rendezvous"].get("publish_id").is_some());
         assert!(json["rendezvous"].get("key").is_some());
     }

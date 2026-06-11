@@ -50,6 +50,11 @@ virtues-helpers = { path = "../crates/virtues-helpers" }
 # Minimal WireGuard engine (kernel wg0, ULA, sealed box-secrets). Re-exported
 # via core::wireguard; also the basis of the standalone virtues-wireguard daemon.
 virtues-wg = { path = "../crates/virtues-wg" }
+# Wire-protocol types shared with every paired-device daemon (iOS, desktop
+# client, etc.). Pure data + serde; no I/O. virtues-core re-exports these so
+# existing call sites (`crate::wireguard::{PairingBundle, INTERNAL_HOST, ...}`)
+# don't break.
+virtues-protocol = { path = "../crates/virtues-protocol" }
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
@@ -90,16 +95,12 @@ opentelemetry-otlp = { version = "0.27", features = ["metrics", "grpc-tonic"] }
 # HTTP Server
 axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["cookie"] }
-# Box serves HTTPS on :443 with a per-box CA-signed leaf (virtues.local).
-# Using rustls (no OpenSSL) + tokio-rustls for the listener.
-# Use the no-provider variant + an explicit `rustls` dep below with the
-# `ring` provider. The default `tls-rustls` pulls `aws-lc-rs` →
-# `aws-lc-sys`, which the GCC 11 in our cross containers refuses to build
-# (see GCC bug 95189). Ring also avoids needing to install a default
-# CryptoProvider at runtime startup.
-axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+# The box serves no TLS — see [[localhost-daemon-trust]] in MEMORY.md. We
+# keep rustls as a direct dep because outbound HTTPS (reqwest → atlas) still
+# needs the ring CryptoProvider installed at startup (rustls 0.23 requires it
+# once per process). `default-features = false` + `ring` avoids aws-lc-sys,
+# which GCC 11 in our cross containers refuses to build (GCC bug 95189).
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
-tokio-rustls = "0.26"
 mime_guess = "2.0"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }

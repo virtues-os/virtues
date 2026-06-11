@@ -75,11 +75,10 @@ pub async fn assemble_bundle(
     device_wg_pubkey: &str,
 ) -> Result<PairingBundle> {
     use super::bundle::{RendezvousParams, WgParams};
-    use super::{ca, manager, peers, reconcile, ula};
+    use super::{manager, peers, reconcile, ula, INTERNAL_HOST, INTERNAL_PORT};
     use std::net::Ipv6Addr;
 
     let server_kp = reconcile::ensure_server_keypair(db).await?;
-    let ca_pem = ca::ensure_ca(db).await?;
     let rdv = ensure_rendezvous_identity(db).await?;
 
     // Allocate the next free ULA /128, skipping addresses already handed out.
@@ -112,10 +111,9 @@ pub async fn assemble_bundle(
             server_address: server_addr.to_string(),
             allowed_ips: vec![format!("{server_addr}/128")],
         },
-        ca_root_pem: ca_pem.cert_pem,
-        internal_host: ca::INTERNAL_HOST.to_string(),
+        internal_host: INTERNAL_HOST.to_string(),
         internal_ip: server_addr.to_string(),
-        https_port: 443,
+        http_port: INTERNAL_PORT,
         rendezvous: RendezvousParams {
             publish_id: rdv.publish_id,
             key: rdv.key_b64,

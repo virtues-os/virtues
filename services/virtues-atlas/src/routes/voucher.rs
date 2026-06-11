@@ -43,12 +43,14 @@ async fn mint_voucher(
 ) -> axum::response::Response {
     let token_hash = sha256(body.billing_token.as_bytes());
 
-    // Look up the customer by billing token + their active subscription.
-    let row: Option<(String, Option<chrono::DateTime<Utc>>, Option<chrono::DateTime<Utc>>, Option<String>)> =
+    // Look up the customer by billing token + their active subscription. This
+    // pre-flight SELECT is outside the transaction — it's just to validate the
+    // billing token and check subscription status before we touch the gate.
+    // The gate enforcement itself happens atomically below.
+    let row: Option<(String, Option<chrono::DateTime<Utc>>, Option<String>)> =
         sqlx::query_as(
             r#"
-            SELECT c.stripe_customer_id, c.last_voucher_issued_at,
-                   s.current_period_end, s.status
+            SELECT c.stripe_customer_id, s.current_period_end, s.status
             FROM customers c
             LEFT JOIN subscriptions s ON s.stripe_customer_id = c.stripe_customer_id
             WHERE c.billing_token_hash = $1
@@ -61,7 +63,7 @@ async fn mint_voucher(
         .await
         .unwrap_or(None);
 
-    let Some((customer_id, last_issued, period_end, status)) = row else {
+    let Some((customer_id, period_end, status)) = row else {
         return err(StatusCode::UNAUTHORIZED, "invalid_billing_token", "unknown billing token");
     };
 
@@ -77,14 +79,56 @@ async fn mint_voucher(
         );
     }
 
-    // Anti-stacking: refuse if a voucher was issued too recently.
-    if let Some(last) = last_issued {
-        if now - last < Duration::days(state.voucher.min_interval_days) {
+    // Atomic anti-stacking claim. Conditional UPDATE: the customer's slot is
+    // claimed iff `last_voucher_issued_at` is NULL or older than the window.
+    // Concurrent callers race here — exactly one row update succeeds; all
+    // others see `rows_affected == 0` and get 429. This closes the
+    // SELECT-then-check-then-UPDATE race that would otherwise mint N vouchers
+    // for N parallel requests (the ~hundred-ms register_voucher round-trip
+    // below is the original race window).
+    //
+    // We claim BEFORE calling virtues-api so the slot is reserved even if
+    // the network call below is slow. On register failure we ROLLBACK so
+    // the timestamp is restored and the user can retry without losing the
+    // 25-day cycle to a network blip.
+    let mut tx = match state.pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("voucher: begin tx failed: {e:#}");
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "tx_failed", "internal error");
+        }
+    };
+
+    let claim = sqlx::query(
+        r#"
+        UPDATE customers
+           SET last_voucher_issued_at = now()
+         WHERE stripe_customer_id = $1
+           AND (last_voucher_issued_at IS NULL
+                OR last_voucher_issued_at < now() - ($2::int || ' days')::interval)
+        "#,
+    )
+    .bind(&customer_id)
+    .bind(state.voucher.min_interval_days as i32)
+    .execute(&mut *tx)
+    .await;
+
+    match claim {
+        Ok(r) if r.rows_affected() == 1 => { /* slot reserved; continue */ }
+        Ok(_) => {
+            // Another concurrent caller won the race, or the slot is still
+            // inside the 25-day window from a prior mint.
+            let _ = tx.rollback().await;
             return err(
                 StatusCode::TOO_MANY_REQUESTS,
                 "voucher_too_soon",
                 "a voucher was issued recently; wait until near expiry",
             );
+        }
+        Err(e) => {
+            tracing::warn!("voucher: claim UPDATE failed: {e:#}");
+            let _ = tx.rollback().await;
+            return err(StatusCode::INTERNAL_SERVER_ERROR, "claim_failed", "internal error");
         }
     }
 
@@ -107,14 +151,18 @@ async fn mint_voucher(
         .await
     {
         tracing::warn!("voucher registration with virtues-api failed: {e:#}");
+        // Restore the customer's previous gate state so they can retry.
+        let _ = tx.rollback().await;
         return err(StatusCode::BAD_GATEWAY, "register_failed", &e.to_string());
     }
 
-    // Record issuance time (rate-limit state; no bearer link).
-    let _ = sqlx::query("UPDATE customers SET last_voucher_issued_at = now() WHERE stripe_customer_id = $1")
-        .bind(&customer_id)
-        .execute(&state.pool)
-        .await;
+    if let Err(e) = tx.commit().await {
+        tracing::error!(
+            "voucher: tx commit failed AFTER register success — possible stuck \
+             gate for customer {customer_id}: {e:#}"
+        );
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "commit_failed", "internal error");
+    }
 
     (
         StatusCode::CREATED,

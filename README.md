@@ -5,8 +5,10 @@
 A private intelligence that connects your digital life — health, finance, location, conversations — into a coherent, queryable picture of who you are. Self-hosted or cloud.
 
 > **Status**: v1 — single-user, **pair-only auth** (no passwords, no email, no
-> magic links). The only way in is to walk to the box. LAN-first; remote access
-> via WireGuard is a planned v1.1 layer. Expect rough edges.
+> magic links). The only way in is to walk to the box. LAN-first by default;
+> the v0.2 desktop daemon (`virtues-client`, Linux preview) pairs over
+> WireGuard so any browser on a paired machine sees the box at
+> `http://localhost:8000`. Expect rough edges.
 
 [![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
@@ -93,7 +95,7 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 |---|---|
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+. Debian 13 and Ubuntu 26.04+ ship Postgres 18 natively; on Ubuntu 24.04/25.04 the installer adds the [PGDG repo](https://www.postgresql.org/download/linux/) automatically. x86_64 or aarch64. |
 | **Hardware** | 8 GB RAM, an SSD. GPU optional. |
-| **Network** | Standard residential ISP. v1 is LAN-first: the box web UI is at `https://virtues.local` on your home network. Connecting external sources (Google, Notion, etc.) requires you to be on the LAN at the moment of connect. Remote access ships in v1.1. |
+| **Network** | Standard residential ISP. v1 is LAN-first. The web UI is reachable from a browser on the box itself (Chromium on the Jetson → `http://localhost:8000`) or from any machine running the v0.2 desktop daemon (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). Linux client only in v0.2; macOS lands in v0.2.2. |
 | **Mac / Windows** | Not supported as host — Virtues needs root, native Postgres, and full SSD ownership. Use a Linux box. |
 
 ### Install in one command
@@ -106,19 +108,19 @@ That:
 - Downloads the latest `virtues` binary into `/usr/local/bin/`
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
-- Mints a per-box CA + leaf TLS cert and enables the `virtues.service` systemd unit
-- Prints a one-time URL — open it in your desktop browser to land in a logged-in session
+- Mints the box's WG identity (its SPKI fingerprint) and rendezvous identity, and enables the `virtues.service` systemd unit
+- Prints a one-time URL — open it in Chromium on the Jetson to land in a logged-in session
 
 ```bash
 sudo systemctl enable --now virtues
-sudo -u virtues virtues link   # prints the one-time login URL + CA trust recipe
+sudo -u virtues virtues link   # prints the one-time login URL for the box's browser
 ```
 
-After that you're in the web UI on `https://virtues.local`. Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
+After that you're in the web UI on `http://localhost:8000` (run Chromium on the Jetson). Connect a source, and optionally `sudo -u virtues virtues subscribe` to enable AI chat through the Virtues cloud (or set up a [BYO provider key](docs/auth-model.md) under Settings).
 
 | Command | What it does |
 |---|---|
-| `virtues link` | Print a one-time URL to log in to the web UI + per-OS CA trust recipe |
+| `virtues link` | Print a one-time URL to log in to the web UI |
 | `virtues sudo` | Approve a pending sensitive action from a paired browser |
 | `virtues status` | Health dashboard (identity / inference / subscription / devices) |
 | `virtues status --json` | Machine-readable status snapshot for support tickets |
@@ -131,6 +133,37 @@ After that you're in the web UI on `https://virtues.local`. Connect a source, an
 **When something breaks:** see [docs/recovery.md](docs/recovery.md) — covers
 unreachable-box, lost-session, last-device-revoked, Postgres won't start,
 restore from backup, BYO key reset, and more.
+
+## Connect from another machine (v0.2 preview)
+
+The desktop daemon (`virtues-client`) pairs a Linux laptop to your box over
+WireGuard and exposes the box's web UI on `http://localhost:8000` — a Secure
+Context origin with no cert warnings.
+
+```bash
+# On the laptop, one-time setup
+curl -L -o virtues-client \
+  https://github.com/virtues-os/virtues/releases/latest/download/virtues-client-$(uname -m)-linux
+chmod +x virtues-client && sudo mv virtues-client /usr/local/bin/
+sudo setcap cap_net_admin+ep /usr/local/bin/virtues-client
+
+# On the box, mint a pair URL
+sudo -u virtues virtues link    # copy the printed https://…/pair#t=… URL
+
+# On the laptop, pair + bring the tunnel up
+virtues-client pair "<paste-pair-url>"
+sudo virtues-client up          # → "proxy listening on http://localhost:8000"
+```
+
+Open `http://localhost:8000` in any browser on the laptop and you're talking
+to the box.
+
+**Honest scope of the v0.2 preview:**
+
+- Linux client only. macOS lands in v0.2.2.
+- The WireGuard server-side daemon (`virtues-wireguard`) is **v0.2.1 work** —
+  pair succeeds today, but the tunnel won't reach the box until that lands.
+- Strict-symmetric NAT (mostly enterprise) is not supported; cone NAT works.
 
 ## Development
 
@@ -206,9 +239,10 @@ virtues/
 │   ├── virtues-api/         # API proxy: LLM/web/bank/oauth gateway + per-user budgets
 │   └── atlas/               # Identity, billing (Stripe), entitlement issuance
 ├── apps/                    # Client applications
-│   ├── web/                 # SvelteKit web UI (also a Tauri desktop build)
+│   ├── web/                 # SvelteKit web UI (static; served by the box)
+│   ├── desktop/             # virtues-client daemon: pair + WG tunnel + localhost proxy (Linux; macOS/Windows planned)
 │   ├── ios/                 # iOS companion app (Swift)
-│   └── mac/                 # macOS collector (Swift)
+│   └── mac-source/          # macOS data source: HealthKit / EventKit / activity collector
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
 ├── scripts/                 # install.sh + release artifacts (get.virtues.com)
 ├── docs/                    # Architecture + concept docs (flat)
@@ -332,7 +366,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 **Drive & Trash** — Personal file storage with S3 backend. Folder hierarchy, drag-and-drop upload, breadcrumb navigation, storage quotas. Soft delete moves files to trash with restore and permanent purge options.
 
-**macOS Desktop App** — Tauri-based native app with a collector daemon that runs as a LaunchAgent. Streams app usage, browser history, and iMessage data in the background. Manages Full Disk Access and Accessibility permissions. Pairs with your server instance via a 6-digit code.
+**macOS Source Collector** — Swift LaunchAgent (`apps/mac-source/`) that streams app usage, browser history, and iMessage data from a Mac into your box. Manages Full Disk Access and Accessibility permissions. Pairs over the v0.2 desktop daemon's tunnel.
 
 **SSH into Your Server** — Built-in terminal for direct server access from the web UI. Developer tools include an interactive SQL console, data lake browser, task/run inspector, and sitemap viewer.
 
@@ -343,7 +377,7 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 Virtues uses a hybrid model:
 
 - **Server, web app, and infrastructure** — [Business Source License 1.1](LICENSE) (BUSL-1.1): source-available, free to self-host for personal or internal organizational use, **not** for offering a hosted service or commercial hardware product. Each file converts to Apache 2.0 four years after release.
-- **Native apps and the data model** — MIT (see the `LICENSE` file in those directories, e.g. `apps/ios/`, `apps/mac/`).
+- **Native apps and the data model** — MIT (see the `LICENSE` file in those directories, e.g. `apps/ios/`, `apps/mac-source/`).
 
 The repository default is BUSL-1.1 unless a directory contains its own `LICENSE` stating otherwise.
 

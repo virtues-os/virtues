@@ -32,7 +32,8 @@ pub enum Commands {
     /// touching, no prompts. Idempotent — run as often as needed.
     ///
     /// Honors `ENVIRONMENT=dev` to print `http://localhost:<VIRTUES_WEB_PORT>/...`
-    /// instead of `https://virtues.local/...`.
+    /// (vite dev server) instead of `http://localhost:8000/...` (the production
+    /// HTTP server on the box).
     Link,
 
     /// Approve a pending sudo request from the box.

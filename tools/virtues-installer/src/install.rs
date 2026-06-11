@@ -198,7 +198,7 @@ pub async fn configure_mdns() -> Result<()> {
         "-c",
         "systemctl reload avahi-daemon 2>/dev/null || systemctl restart avahi-daemon",
     ]);
-    run_step("Advertise _https._tcp via avahi-daemon", cmd).await
+    run_step("Advertise _http._tcp via avahi-daemon", cmd).await
 }
 
 async fn hostname() -> Result<String> {
@@ -216,8 +216,8 @@ const AVAHI_SERVICE: &str = r#"<?xml version="1.0" standalone='no'?>
 <service-group>
   <name replace-wildcards="yes">Virtues on %h</name>
   <service>
-    <type>_https._tcp</type>
-    <port>443</port>
+    <type>_http._tcp</type>
+    <port>8000</port>
     <txt-record>path=/</txt-record>
     <txt-record>service=virtues</txt-record>
   </service>

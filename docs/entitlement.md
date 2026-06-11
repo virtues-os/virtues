@@ -17,7 +17,7 @@ guarantees it:
 
 **No column may exist in both the Atlas schema and the virtues-api schema.**
 
-Lint 10 (`scripts/arch_lint.sh`) enforces it: identity columns from one
+Lint 10 (`tools/arch-lint.sh`) enforces it: identity columns from one
 side are forbidden from appearing in the other's migrations.
 
 ---
@@ -37,7 +37,7 @@ neither retains as a link.
 
 ## 3. Schemas (no shared column)
 
-### Atlas (`services/atlas/migrations/`)
+### Atlas (`services/virtues-atlas/migrations/`)
 ```sql
 customers(stripe_customer_id PK, email, billing_token_hash, last_voucher_issued_at, created_at)
 subscriptions(stripe_subscription_id PK, stripe_customer_id FK, status, current_period_end, ...)

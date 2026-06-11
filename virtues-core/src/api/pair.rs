@@ -875,12 +875,12 @@ fn format_pair_url(token: &str) -> String {
     let base = match std::env::var("VIRTUES_PUBLIC_URL") {
         Ok(url) => url,
         Err(_) if is_secure_environment() => {
-            tracing::warn!(
-                "VIRTUES_PUBLIC_URL not set; falling back to https://virtues.local. \
-                 If the box is reachable at a different name, set VIRTUES_PUBLIC_URL \
-                 in /etc/virtues/env so pair URLs point there."
-            );
-            "https://virtues.local".to_string()
+            // The box has no TLS surface; pair URLs land on plain HTTP at the
+            // canonical port. On the box itself (loopback) this is auto-authed;
+            // from other devices the URL is consumed by the Virtues client
+            // daemon (v0.2). If your network reaches the box at a different
+            // hostname, set VIRTUES_PUBLIC_URL in /etc/virtues/env.
+            format!("http://localhost:{}", crate::wireguard::INTERNAL_PORT)
         }
         Err(_) => {
             let port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());

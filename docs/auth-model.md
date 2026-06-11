@@ -58,7 +58,7 @@ Three tables support the auth machinery:
 [box]
 $ sudo -u virtues virtues link
   → mints a pair_token with status = 'authorized' (CLI = physical proof)
-  → prints https://virtues.local/pair#t=<24B hex>   (or http://localhost:5173/pair#t=… in dev)
+  → prints http://localhost:8000/pair#t=<24B hex>   (or http://localhost:5173/pair#t=… in dev)
 
 [laptop browser]
 1. Open the URL — the `t=…` is in the URL fragment, so it never hits server
