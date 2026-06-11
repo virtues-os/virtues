@@ -560,6 +560,16 @@ fn print_link_output(token: &str) {
     println!("    • From this Jetson: open Chromium and hit the localhost URL above.");
     println!("    • From another device: install the Virtues client (v0.2 — coming soon).");
     println!("    • Link expires in 15 minutes. Single-use.");
+
+    // Honest reachability verdict — tell the user up front whether direct
+    // remote access will work on this network, rather than letting them
+    // discover a walled wifi the hard way later.
+    let net = virtues::net_check::compute_net_status();
+    println!();
+    println!("  Remote access from outside your network:");
+    println!("    • {}", net.headline);
+    println!("    • {}", net.guidance);
+    println!("    (run `virtues doctor` for the full network report)");
     println!("─────────────────────────────────────────────────────────");
 }
 
@@ -592,4 +602,10 @@ fn print_resolution_report() {
         };
         println!("    - {:<9} {} :: {} [{}]", m.name, m.repo, m.onnx_file, source);
     }
+
+    // Network reachability — the IPv6-direct doctrine's "can a device reach
+    // this box directly?" assessment. Part of `virtues doctor` so a support
+    // recipe is "paste the output of virtues doctor".
+    println!();
+    virtues::net_check::compute_net_status().print_report();
 }
