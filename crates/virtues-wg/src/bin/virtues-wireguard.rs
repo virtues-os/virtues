@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Open the inbound pinhole once at startup so a default-deny host is
     // reachable on the WG port. Best-effort + idempotent — see the fn docs.
-    ensure_inbound_pinhole(manager::WG_LISTEN_PORT);
+    ensure_inbound_pinhole(manager::wg_listen_port());
 
     // Poll loop. The reconcile + endpoint-record are idempotent, so a steady tick
     // is safe; a netlink RTM_NEWADDR watch + Postgres LISTEN/NOTIFY replace the
@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
                 Ok(kp) => {
                     let ep = endpoint::Endpoint {
                         ip,
-                        port: manager::WG_LISTEN_PORT,
+                        port: manager::wg_listen_port(),
                         wg_pub: kp.public_key,
                     };
                     if let Err(e) = endpoint::write_current(&db, &ep).await {

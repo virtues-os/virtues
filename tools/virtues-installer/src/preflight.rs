@@ -70,7 +70,90 @@ pub async fn run() -> Result<Report> {
         }
     }
 
+    // Reachability class — will *remote* access work on this network? Purely
+    // informational: it never blocks the install (local + LAN access always
+    // work), it just tells the user up front instead of letting them discover a
+    // walled network the hard way after pairing. Does NOT count toward
+    // `warnings` (a home box behind IPv4 NAT is normal, not an install problem).
+    match egress_class() {
+        EgressClass::Ipv6 => {
+            ui::ok("Network: global IPv6 — direct remote access will work")
+        }
+        EgressClass::Ipv4Public => {
+            ui::ok("Network: global IPv4 — direct remote access via a router port-forward")
+        }
+        EgressClass::Nat => ui::warn(
+            "Network: behind NAT, no global IPv6 — local + LAN access work fine, but \
+             remote-from-anywhere needs a router port-forward (home) or your own overlay \
+             (dorm/office). See docs/byo-networking.md; run `virtues doctor` anytime.",
+        ),
+        EgressClass::Unknown => {}
+    }
+
     Ok(Report { warnings })
+}
+
+/// The box's outbound reachability class, for the preflight verdict. Mirrors
+/// `virtues-core`'s `net_check` (the installer can't depend on the box binary,
+/// which isn't downloaded yet, so the global-routability logic is duplicated).
+enum EgressClass {
+    /// Has a globally-routable IPv6 source — the doctrine's direct path.
+    Ipv6,
+    /// Global IPv4 source, no global IPv6 (rare static home IP / a VPS).
+    Ipv4Public,
+    /// Private/CGNAT IPv4 source and no global IPv6 — behind NAT.
+    Nat,
+    /// No egress detected.
+    Unknown,
+}
+
+fn egress_class() -> EgressClass {
+    use std::net::{IpAddr, UdpSocket};
+
+    let probe = |dest: &str, bind: &str| -> Option<IpAddr> {
+        let s = UdpSocket::bind(bind).ok()?;
+        s.connect(dest).ok()?;
+        let ip = s.local_addr().ok()?.ip();
+        if ip.is_loopback() || ip.is_unspecified() {
+            None
+        } else {
+            Some(ip)
+        }
+    };
+
+    // Global IPv6? (not loopback/unspecified/multicast/link-local/ULA)
+    if let Some(IpAddr::V6(v)) = probe("[2606:4700:4700::1111]:53", "[::]:0") {
+        let seg0 = v.segments()[0];
+        let global = !v.is_loopback()
+            && !v.is_unspecified()
+            && !v.is_multicast()
+            && (seg0 & 0xffc0) != 0xfe80
+            && (seg0 & 0xfe00) != 0xfc00;
+        if global {
+            return EgressClass::Ipv6;
+        }
+    }
+
+    // IPv4 — global vs NAT (private/CGNAT/link-local).
+    match probe("1.1.1.1:53", "0.0.0.0:0") {
+        Some(IpAddr::V4(v)) => {
+            let o = v.octets();
+            let cgnat = o[0] == 100 && (o[1] & 0xc0) == 0x40;
+            let global = !v.is_loopback()
+                && !v.is_unspecified()
+                && !v.is_private()
+                && !v.is_link_local()
+                && !v.is_broadcast()
+                && !v.is_multicast()
+                && !cgnat;
+            if global {
+                EgressClass::Ipv4Public
+            } else {
+                EgressClass::Nat
+            }
+        }
+        _ => EgressClass::Unknown,
+    }
 }
 
 /// Free disk space on the given mount, in GB. Returns None on stat error.

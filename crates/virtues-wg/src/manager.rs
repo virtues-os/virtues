@@ -23,8 +23,23 @@ use defguard_wireguard_rs::{
 
 /// The single tunnel interface name.
 pub const WG_IFNAME: &str = "wg0";
-/// UDP listen port (also the inbound IPv6 pinhole port — see ipv6-pinhole-setup.md).
-pub const WG_LISTEN_PORT: u16 = 51820;
+
+/// Default WG UDP listen port (WireGuard's standard). Overridable so a box that
+/// already runs another WireGuard on 51820 (a user's own Tailscale/overlay)
+/// can coexist — see [`wg_listen_port`].
+pub const DEFAULT_WG_LISTEN_PORT: u16 = 51820;
+
+/// The WG UDP listen port — also the inbound pinhole port and the port baked
+/// into pairing bundles. Reads `VIRTUES_WG_LISTEN_PORT` (mirroring
+/// `VIRTUES_WG_PUBLIC_IP`), else the WireGuard default 51820. A bad/zero value
+/// falls back to the default.
+pub fn wg_listen_port() -> u16 {
+    std::env::var("VIRTUES_WG_LISTEN_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .filter(|&p| p != 0)
+        .unwrap_or(DEFAULT_WG_LISTEN_PORT)
+}
 
 /// A paired device, as a WG peer to install on the interface.
 #[derive(Debug, Clone)]
@@ -108,7 +123,7 @@ pub fn bring_up(server_privkey: &str, server_addr: IpAddr, peers: &[PeerConfig])
         name: WG_IFNAME.to_string(),
         prvkey: server_privkey.to_string(),
         addresses: vec![server_mask],
-        port: WG_LISTEN_PORT,
+        port: wg_listen_port(),
         peers: peers.iter().map(to_peer).collect::<Result<Vec<_>>>()?,
         mtu: None,
         fwmark: None,
