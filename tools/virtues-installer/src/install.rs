@@ -464,9 +464,37 @@ pub async fn install_systemd_unit(cfg: &InstallConfig) -> Result<()> {
         .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
     fs::write("/etc/systemd/system/virtues.service", body)
         .context("writing /etc/systemd/system/virtues.service")?;
+
+    // Sibling unit: virtues-wireguard reconciles wg0 from the peer rows
+    // virtues writes to Postgres. Without it, pair succeeds but the WG
+    // handshake from a paired desktop never completes — there's no peer
+    // installed on the kernel side.
+    //
+    // Skipped silently when the binary isn't present (older tarballs from
+    // before v0.2.1 didn't ship it). download.rs already warned the user.
+    if cfg.wg_binary_path().exists() {
+        let wg_body = WIREGUARD_UNIT_TEMPLATE
+            .replace("__BIN__", &cfg.wg_binary_path().display().to_string())
+            .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
+        fs::write("/etc/systemd/system/virtues-wireguard.service", wg_body)
+            .context("writing /etc/systemd/system/virtues-wireguard.service")?;
+    }
+
     let mut cmd = Command::new("systemctl");
     cmd.arg("daemon-reload");
     run_step("Install systemd unit", cmd).await
+}
+
+/// Enable + start `virtues-wireguard.service` if its binary was installed.
+/// Called after the main `virtues.service` is up so the WG reconciler reads
+/// a populated DB (server keypair, any pre-existing peer rows).
+pub async fn enable_wireguard_unit(cfg: &InstallConfig) -> Result<()> {
+    if !cfg.wg_binary_path().exists() {
+        return Ok(());
+    }
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["enable", "--now", "virtues-wireguard"]);
+    run_step("Enable + start virtues-wireguard service", cmd).await
 }
 
 const SYSTEMD_UNIT_TEMPLATE: &str = r#"[Unit]
@@ -503,6 +531,55 @@ SystemCallArchitectures=native
 
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+/// Privileged WG reconciler — does netlink to `wg0` and records the box's
+/// current public endpoint into `box_secrets` for the rendezvous publisher.
+///
+/// `After=virtues.service` so the main app has a chance to migrate the DB +
+/// mint the server keypair before reconcile runs. The reconciler is
+/// idempotent and retries internally, so the strict ordering is more about
+/// log clarity than correctness.
+///
+/// `User=virtues` + `AmbientCapabilities=CAP_NET_ADMIN`: systemd starts as
+/// root, sets the cap, then drops to `virtues` while keeping the capability
+/// in the ambient set. Same pattern as `virtues.service`.
+const WIREGUARD_UNIT_TEMPLATE: &str = r#"[Unit]
+Description=Virtues WireGuard reconciler — kernel wg0 from the peer store
+Documentation=https://virtues.com/docs
+After=virtues.service postgresql.service
+Wants=postgresql.service
+Requires=virtues.service
+
+[Service]
+Type=simple
+User=virtues
+Group=virtues
+WorkingDirectory=__DATA_DIR__
+EnvironmentFile=-__DATA_DIR__/virtues.env
+ExecStart=__BIN__
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=__DATA_DIR__
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=false
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+
+# Only NET_ADMIN — no port binding, no other privileged ops.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target

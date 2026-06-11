@@ -50,12 +50,36 @@ pub async fn ensure_rendezvous_identity(db: &PgPool) -> Result<RendezvousIdentit
 }
 
 /// The box's current public WG endpoint (`host:port`) to bake into the bundle as
-/// the initial value. Ongoing changes are handled by the rendezvous (the daemon
-/// detects + publishes). Reads an env override, else the wildcard listen address.
+/// the initial value. Resolution order:
+///   1. `VIRTUES_WG_ENDPOINT` env override — explicit operator pin.
+///   2. The endpoint `virtues-wireguard` last detected and wrote to
+///      `box_secrets.wg_current_endpoint` — what a peer on the LAN would
+///      actually dial.
+///   3. Wildcard listen `[::]:<port>` — useless to dial but keeps the
+///      bundle well-formed; the daemon's rendezvous re-resolve handles
+///      this case once that ships.
+///
+/// Ongoing endpoint changes after pairing are the rendezvous publisher's
+/// job (`virtues-wireguard` writes box_secrets → the app pushes ciphertext
+/// to virtues-api), and the desktop daemon re-reads on handshake failure.
 #[cfg(target_os = "linux")]
-fn current_endpoint() -> String {
-    std::env::var("VIRTUES_WG_ENDPOINT")
-        .unwrap_or_else(|_| format!("[::]:{}", super::manager::WG_LISTEN_PORT))
+async fn current_endpoint(db: &PgPool) -> String {
+    if let Ok(s) = std::env::var("VIRTUES_WG_ENDPOINT") {
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    if let Ok(Some(ep)) = super::endpoint::read_current(db).await {
+        // Bracket IPv6 literals so `parse::<SocketAddr>()` on the daemon side
+        // accepts the bundle without further massaging.
+        let host = if ep.ip.contains(':') && !ep.ip.starts_with('[') {
+            format!("[{}]", ep.ip)
+        } else {
+            ep.ip
+        };
+        return format!("{host}:{}", ep.port);
+    }
+    format!("[::]:{}", super::manager::WG_LISTEN_PORT)
 }
 
 #[cfg(target_os = "linux")]
@@ -105,7 +129,7 @@ pub async fn assemble_bundle(
         bearer: bearer.to_string(),
         wg: WgParams {
             server_public_key: server_kp.public_key,
-            server_endpoint: current_endpoint(),
+            server_endpoint: current_endpoint(db).await,
             preshared_key: psk,
             client_address: client_addr.to_string(),
             server_address: server_addr.to_string(),

@@ -77,6 +77,11 @@ pub async fn run(cli: Config) -> Result<()> {
     start.args(["enable", "--now", "virtues"]);
     steps::run_step("Enable + start virtues service", start).await?;
 
+    // Start virtues-wireguard after virtues is up so the reconciler reads a
+    // populated DB (server keypair + any pre-existing peer rows). No-op if
+    // the WG binary wasn't in the tarball.
+    install::enable_wireguard_unit(&cfg).await?;
+
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");
     let issues = install::health_check(&cfg).await?;
