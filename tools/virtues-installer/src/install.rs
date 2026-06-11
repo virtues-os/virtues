@@ -529,8 +529,11 @@ LockPersonality=true
 RestrictNamespaces=true
 SystemCallArchitectures=native
 
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+# No capabilities: the main app is rootless and does NO kernel networking —
+# it persists WG peers to the DB and the virtues-wireguard daemon (the only
+# holder of CAP_NET_ADMIN) reconciles wg0 from there. Port 8000 is unprivileged
+# so no CAP_NET_BIND_SERVICE either. Empty bounding set drops everything.
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target

@@ -40,6 +40,7 @@ struct StatusJson {
     pair: PairSection,
     billing: BillingSection,
     actions: ActionsSection,
+    network: NetworkSection,
     recent_events: Vec<EventRow>,
 }
 
@@ -79,6 +80,17 @@ struct ActionsSection {
 }
 
 #[derive(Debug, Serialize)]
+struct NetworkSection {
+    /// Reachability class: `ipv6_direct` / `ipv4_public` / `behind_nat` /
+    /// `unknown`. The IPv6-direct doctrine's "can a device reach this box?".
+    class: String,
+    /// Does the box have a globally-routable IPv6 (the direct path)?
+    has_global_ipv6: bool,
+    /// One-line verdict. No literal addresses — keep paste-into-chat safe.
+    headline: String,
+}
+
+#[derive(Debug, Serialize)]
 struct EventRow {
     event_type: String,
     occurred_at: String,
@@ -102,8 +114,19 @@ async fn collect(pool: &PgPool) -> Result<StatusJson> {
         pair: collect_pair(pool).await,
         billing: collect_billing(pool).await,
         actions: collect_actions(pool).await,
+        network: collect_network(),
         recent_events: collect_recent_events(pool).await,
     })
+}
+
+/// Reachability snapshot — class + a boolean, no literal addresses (paste-safe).
+fn collect_network() -> NetworkSection {
+    let s = crate::net_check::compute_net_status();
+    NetworkSection {
+        class: s.class.as_str().to_string(),
+        has_global_ipv6: s.ipv6_global.is_some(),
+        headline: s.headline,
+    }
 }
 
 async fn schema_version(pool: &PgPool) -> String {

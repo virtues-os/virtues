@@ -66,7 +66,7 @@ pub async fn ensure_rendezvous_identity(db: &PgPool) -> Result<RendezvousIdentit
 /// ULA and log loudly; pairing still succeeds so the device can retry later.
 #[cfg(target_os = "linux")]
 async fn current_endpoint(db: &PgPool) -> String {
-    let port = super::manager::WG_LISTEN_PORT;
+    let port = super::manager::wg_listen_port();
 
     // 1. Operator override.
     if let Ok(s) = std::env::var("VIRTUES_WG_ENDPOINT") {

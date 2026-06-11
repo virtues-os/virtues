@@ -18,9 +18,16 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket};
 
 /// The box's WireGuard listen port — the inbound port that must be reachable.
-/// Mirrors `virtues_wg::manager::WG_LISTEN_PORT`; duplicated here so this
-/// module stays free of the (Linux-only) WG crate and runs on any host.
-const WG_PORT: u16 = 51820;
+/// Reads `VIRTUES_WG_LISTEN_PORT` (mirroring `virtues_wg::manager::wg_listen_port`),
+/// else the WireGuard default. Re-read here rather than importing the WG crate
+/// so this module stays free of the (Linux-only) WG crate and runs on any host.
+fn wg_port() -> u16 {
+    std::env::var("VIRTUES_WG_LISTEN_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .filter(|&p| p != 0)
+        .unwrap_or(51820)
+}
 
 /// How the box sits on the network, most → least directly reachable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,12 +48,23 @@ pub enum NetClass {
 }
 
 impl NetClass {
+    /// Human label for `virtues doctor`.
     pub fn label(self) -> &'static str {
         match self {
             NetClass::Ipv6Direct => "ipv6-direct (recommended)",
             NetClass::Ipv4Public => "ipv4-public",
             NetClass::NatNoIpv6 => "behind-nat (no global IPv6)",
             NetClass::Unknown => "unknown (no egress)",
+        }
+    }
+
+    /// Stable machine value for `status --json` / beacons.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NetClass::Ipv6Direct => "ipv6_direct",
+            NetClass::Ipv4Public => "ipv4_public",
+            NetClass::NatNoIpv6 => "behind_nat",
+            NetClass::Unknown => "unknown",
         }
     }
 }
@@ -86,6 +104,7 @@ pub fn compute_net_status() -> NetStatus {
         NetClass::Unknown
     };
 
+    let port = wg_port();
     let (headline, guidance) = match class {
         NetClass::Ipv6Direct => {
             let addr = ipv6_global.expect("ipv6_global is Some in this arm");
@@ -93,7 +112,7 @@ pub fn compute_net_status() -> NetStatus {
                 format!("Global IPv6 detected ({addr}) — direct access works here."),
                 format!(
                     "Highly recommended: reach your box directly over IPv6. The box tries to \
-                     open inbound udp/{WG_PORT} automatically; if your router/firewall is \
+                     open inbound udp/{port} automatically; if your router/firewall is \
                      default-deny you may need to allow it. No third party, no overlay."
                 ),
             )
@@ -101,14 +120,14 @@ pub fn compute_net_status() -> NetStatus {
         NetClass::Ipv4Public => (
             "Global IPv4 detected — direct access works over IPv4.".to_string(),
             format!(
-                "Allow/forward inbound udp/{WG_PORT} to this box on your router. \
+                "Allow/forward inbound udp/{port} to this box on your router. \
                  (IPv6 would be simpler if your ISP offers it.)"
             ),
         ),
         NetClass::NatNoIpv6 => (
             "No global IPv6 — this box is behind NAT.".to_string(),
             format!(
-                "If you control the router (home), forward udp/{WG_PORT} to this box. \
+                "If you control the router (home), forward udp/{port} to this box. \
                  If you do NOT control the network (dorm/office/CGNAT), direct access isn't \
                  possible — host the box where you control the network, or add a BYO overlay \
                  you run yourself (Tailscale/Headscale/your own VPS). Virtues never runs or \
