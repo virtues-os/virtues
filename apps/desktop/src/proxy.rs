@@ -69,6 +69,22 @@ impl ProxyConfig {
             bind_port: INTERNAL_PORT,
         })
     }
+
+    /// Like [`from_bundle`] but forwards to an explicit upstream `addr:port`
+    /// instead of the box's WG-internal address — used by `virtues-client up
+    /// --upstream` to reach the box over a BYO transport (Tailscale/VPS/direct
+    /// IPv6). Accepts `host:port` and `[v6]:port`. Host header still uses the
+    /// bundle's `internal_host` so the box's server-side URL minting is stable.
+    pub fn from_bundle_with_upstream(bundle: &PairingBundle, upstream: &str) -> Result<Self> {
+        let upstream_addr: SocketAddr = upstream
+            .parse()
+            .with_context(|| format!("`{upstream}` is not a valid host:port (try `100.64.0.2:8000` or `[2606:4700::1]:8000`)"))?;
+        Ok(Self {
+            upstream_addr,
+            upstream_host: bundle.internal_host.clone(),
+            bind_port: INTERNAL_PORT,
+        })
+    }
 }
 
 /// Bind the listener and serve forever. Returns only on listener error (which
