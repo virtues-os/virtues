@@ -64,7 +64,8 @@ async fn main() -> anyhow::Result<()> {
 ///      the local address the kernel picked. That's the IP on whichever
 ///      interface owns the default route — i.e. the LAN-routable IP that a
 ///      peer on the same LAN would dial. For LAN-only E2E this is exactly
-///      right; cross-NAT is the punch coordinator's job.
+///      right. (IPv6-direct doctrine: the box has a real routable address;
+///      there is no NAT to traverse — see [[project_networking_doctrine]].)
 ///
 /// Returns `None` only when both fail (no default route, no interfaces). In
 /// that case the rendezvous won't be updated this tick and we retry.

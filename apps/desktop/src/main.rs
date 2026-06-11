@@ -32,7 +32,6 @@ use clap::{Parser, Subcommand};
 mod keychain;
 mod pair;
 mod proxy;
-mod punch;
 mod tunnel;
 mod wg_keys;
 
