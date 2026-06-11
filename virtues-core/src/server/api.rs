@@ -2136,15 +2136,20 @@ pub async fn auth_signout_handler(
 ///
 /// Loopback peers (localhost — the box's own browser, or dev via the vite proxy)
 /// are auto-authenticated as the owner, mirroring the `AuthUser` extractor's
-/// loopback bypass. Without this, every other endpoint auto-authenticates
-/// localhost but this probe reported `user: null`, so the web UI bounced on-box /
-/// dev browsers to `/pair`. Remote peers fall through to the cookie check.
+/// loopback bypass — INCLUDING the same forwarding-header guard: a reverse
+/// proxy also connects from loopback, so a proxied request (carrying
+/// `X-Forwarded-For` / `Forwarded`) must NOT be reported as owner. Without this,
+/// the probe would tell a proxied remote browser it's the owner. Remote peers
+/// fall through to the cookie check.
 pub async fn auth_session_handler(
     State(state): State<AppState>,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     jar: axum_extra::extract::cookie::CookieJar,
 ) -> Response {
-    if addr.ip().is_loopback() {
+    let is_proxied =
+        headers.contains_key("x-forwarded-for") || headers.contains_key("forwarded");
+    if addr.ip().is_loopback() && !is_proxied {
         return axum::Json(crate::api::auth::SessionResponse {
             user: Some(crate::api::auth::SessionUser {
                 id: crate::middleware::http::OWNER_USER_ID.to_string(),
