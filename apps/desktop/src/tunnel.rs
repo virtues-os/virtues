@@ -11,13 +11,21 @@
 use anyhow::Result;
 use virtues_protocol::PairingBundle;
 
+// Linux is the only wired implementation; macOS/Windows are sketched stubs
+// (the WG data plane — utun/wintun + GotaTun) that bail with a clear
+// "use --no-tunnel + BYO" message until implemented.
 #[cfg(target_os = "linux")]
 pub use self::linux::TunnelHandle;
+#[cfg(target_os = "macos")]
+pub use self::macos::TunnelHandle;
+#[cfg(target_os = "windows")]
+pub use self::windows::TunnelHandle;
 
-#[cfg(not(target_os = "linux"))]
+// Fallback for any other target (BSD, etc.) — a unit handle so the proxy-only
+// `--no-tunnel` path still compiles everywhere.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub struct TunnelHandle;
-
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 impl TunnelHandle {
     pub async fn stop(self) {}
 }
@@ -30,17 +38,28 @@ pub async fn start(bundle: &PairingBundle) -> Result<TunnelHandle> {
     {
         return linux::start(bundle).await;
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        return macos::start(bundle).await;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return windows::start(bundle).await;
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = bundle;
         anyhow::bail!(
-            "tunnel: only Linux is supported in this build. macOS userspace \
-             WG (via utun + GotaTun) and Windows (via wintun + GotaTun) are \
-             the next platform milestones — code lives in `tunnel/macos.rs` \
-             and `tunnel/windows.rs` once wired."
+            "tunnel: no built-in WireGuard implementation for this platform. \
+             Reach the box over a BYO transport: `virtues-client up --no-tunnel \
+             --upstream <addr:port>`. See docs/byo-networking.md."
         )
     }
 }
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
