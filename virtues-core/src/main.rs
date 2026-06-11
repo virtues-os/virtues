@@ -94,6 +94,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle Doctor early (no database — pure hardware/model resolution report)
     if matches!(cli.command, Some(Commands::Doctor)) {
         print_resolution_report();
+        // Active inbound-reachability check — only meaningful when the box has a
+        // global IPv6 (the direct path). Asks virtues-api to fire a UDP nonce
+        // back at us; confirms inbound is actually open (the pinhole worked),
+        // which the local egress classification alone can't tell us.
+        let net = virtues::net_check::compute_net_status();
+        if let Some(v6) = net.ipv6_global {
+            let api = std::env::var("VIRTUES_API_URL")
+                .unwrap_or_else(|_| "https://api.virtues.com".to_string());
+            println!("  checking inbound reachability via virtues-api…");
+            match virtues::net_check::verify_inbound(v6, &api).await {
+                virtues::net_check::InboundResult::Reachable => {
+                    println!("  inbound:       ✓ confirmed reachable from the internet")
+                }
+                virtues::net_check::InboundResult::Inconclusive(why) => {
+                    println!("  inbound:       could not confirm — {why}")
+                }
+            }
+        }
         return Ok(());
     }
 

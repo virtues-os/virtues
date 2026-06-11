@@ -201,6 +201,9 @@ async fn main() -> Result<()> {
         // Blind rendezvous: PUT (bearer-authed) / GET (capability) endpoint
         // discovery. The only Virtues touchpoint in direct WireGuard access.
         .merge(routes::rendezvous::router())
+        // Inbound-reachability echo: fires a UDP nonce back at the caller's own
+        // observed address so a box can confirm it's reachable from outside.
+        .merge(routes::net_probe::router())
         // WS-6b bearer-auth smoke endpoints (whoami + charge-test)
         .merge(routes::bearer_test::router())
         // Bearer-auth + entitlement charge: Places, Exa, Unsplash, AI.
