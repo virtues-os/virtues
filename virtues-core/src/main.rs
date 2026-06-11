@@ -424,7 +424,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Cli {
             command: Some(Commands::Server {
-                host: "0.0.0.0".to_string(),
+                // Dual-stack: `[::]` accepts both IPv4 and IPv6 (incl. the WG
+                // tunnel's ULA fd00:5654::1 that pairing bundles advertise).
+                // `0.0.0.0` would be IPv4-only and unreachable over the tunnel.
+                host: "[::]".to_string(),
                 port,
             }),
         }

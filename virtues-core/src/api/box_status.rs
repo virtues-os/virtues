@@ -89,7 +89,15 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
 }
 
 /// `GET /api/box/status` — box health for the phone app's status screen.
-pub async fn box_status_handler(State(state): State<AppState>) -> impl IntoResponse {
+///
+/// Takes `AuthUser` explicitly (not just relying on the protected-route layer)
+/// so this identity-bearing response — WG pubkey, publish_id, billing state —
+/// is never served unauthenticated even if the route's layer is ever
+/// reordered. The phone reaches it with its device bearer over any transport.
+pub async fn box_status_handler(
+    _user: crate::middleware::auth::AuthUser,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     match compute_status(state.db.pool()).await {
         Ok(status) => (StatusCode::OK, Json(status)).into_response(),
         Err(e) => {

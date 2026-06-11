@@ -113,8 +113,10 @@ pub enum Commands {
 
     /// Start the HTTP server
     Server {
-        /// Host to bind to
-        #[arg(long, default_value = "0.0.0.0")]
+        /// Host to bind to. Default `[::]` is dual-stack — it accepts IPv4 AND
+        /// IPv6, including the WG tunnel's ULA the pairing bundle advertises.
+        /// (`0.0.0.0` would be IPv4-only and unreachable over the tunnel.)
+        #[arg(long, default_value = "[::]")]
         host: String,
 
         /// Port to bind to (defaults to NOMAD_PORT_http env var, or 8000)
