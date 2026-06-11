@@ -22,6 +22,7 @@ pub mod ids;
 pub mod maintenance;
 pub mod mcp;
 pub mod middleware;
+pub mod net_check;
 pub mod observability;
 pub mod scheduler;
 pub mod search;
