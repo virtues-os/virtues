@@ -59,7 +59,21 @@ enum Command {
 
     /// Bring the WG tunnel up and start the localhost HTTP proxy. Runs in the
     /// foreground until interrupted.
-    Up,
+    Up {
+        /// Skip Virtues' built-in WireGuard tunnel and proxy to a box you can
+        /// already reach over your OWN transport (Tailscale, Headscale, a VPS,
+        /// direct IPv6, …). The box authenticates at the app layer, so any
+        /// transport works — see docs/byo-networking.md. Requires --upstream.
+        #[arg(long)]
+        no_tunnel: bool,
+
+        /// Override the upstream box address the proxy forwards to, e.g.
+        /// `100.64.0.2:8000` or `[2606:4700::1]:8000`. Defaults to the paired
+        /// box's WG-internal address (reached through the built-in tunnel).
+        /// Set this to the box's address on your BYO transport.
+        #[arg(long)]
+        upstream: Option<String>,
+    },
 
     /// Report tunnel state, last handshake age, and proxy port.
     Status,
@@ -75,7 +89,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Pair { pair_url } => pair::run(&pair_url).await,
-        Command::Up => run_up().await,
+        Command::Up { no_tunnel, upstream } => run_up(no_tunnel, upstream).await,
         Command::Status => print_status(),
         Command::Revoke => revoke().await,
     }
@@ -84,7 +98,19 @@ async fn main() -> Result<()> {
 /// `virtues-client up` — bring the tunnel up + start the local HTTP proxy.
 ///
 /// Returns only on fatal error (listener refused, etc.) or on Ctrl-C.
-async fn run_up() -> Result<()> {
+///
+/// With `--no-tunnel` the built-in WireGuard tunnel is skipped and the proxy
+/// forwards to `--upstream` instead — the box's address on a BYO transport
+/// (Tailscale/VPS/direct IPv6). The proxy itself is transport-agnostic, so this
+/// is the only change needed; the box still authenticates at the app layer.
+async fn run_up(no_tunnel: bool, upstream: Option<String>) -> Result<()> {
+    if no_tunnel && upstream.is_none() {
+        anyhow::bail!(
+            "--no-tunnel needs --upstream <addr:port> — the box's address on your \
+             own transport, e.g. `--upstream 100.64.0.2:8000`. See docs/byo-networking.md."
+        );
+    }
+
     let bundle = keychain::load_bundle()
         .context("read paired bundle from OS keychain")?
         .ok_or_else(|| {
@@ -93,15 +119,25 @@ async fn run_up() -> Result<()> {
             )
         })?;
 
-    // Bring the WG tunnel up (Linux only today; macOS / Windows are
-    // platform-specific impls in `tunnel/` and follow). Errors here are
-    // honest fatals — without a tunnel the proxy can't reach the box.
-    // The handle MUST stay alive for the proxy's lifetime; dropping it
+    // Bring the WG tunnel up unless the user supplies their own transport.
+    // (Linux only today; macOS / Windows impls follow.) Errors here are honest
+    // fatals — without a tunnel AND without --upstream the proxy can't reach the
+    // box. The handle MUST stay alive for the proxy's lifetime; dropping it
     // tears the WG state machine down.
-    let _tunnel = tunnel::start(&bundle).await.context("bring tunnel up")?;
+    let tunnel = if no_tunnel {
+        eprintln!("⤳ skipping built-in WireGuard tunnel (--no-tunnel); using your own transport");
+        None
+    } else {
+        Some(tunnel::start(&bundle).await.context("bring tunnel up")?)
+    };
 
-    // Start the proxy and run until Ctrl-C / signal.
-    let cfg = proxy::ProxyConfig::from_bundle(&bundle)?;
+    // Start the proxy and run until Ctrl-C / signal. The upstream is either the
+    // BYO address (--upstream) or the box's WG-internal address from the bundle.
+    let cfg = match &upstream {
+        Some(addr) => proxy::ProxyConfig::from_bundle_with_upstream(&bundle, addr)
+            .with_context(|| format!("parse --upstream `{addr}`"))?,
+        None => proxy::ProxyConfig::from_bundle(&bundle)?,
+    };
     let result = tokio::select! {
         result = proxy::run(cfg) => result,
         _ = tokio::signal::ctrl_c() => {
@@ -111,9 +147,10 @@ async fn run_up() -> Result<()> {
         }
     };
 
-    // Graceful tunnel teardown before returning. `stop` is a no-op on
-    // non-Linux today and a tasks-cleanup on Linux.
-    _tunnel.stop().await;
+    // Graceful tunnel teardown before returning (no-op when --no-tunnel).
+    if let Some(t) = tunnel {
+        t.stop().await;
+    }
 
     result
 }
