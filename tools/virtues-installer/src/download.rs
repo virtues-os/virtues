@@ -82,6 +82,24 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
         .with_context(|| format!("install {} → {}", bin_src.display(), bin_dst.display()))?;
     fs::set_permissions(&bin_dst, fs::Permissions::from_mode(0o755))?;
 
+    // Install virtues-wireguard alongside it. Older tarballs may not ship the
+    // WG binary yet (pre-v0.2.1 releases) — log a warning rather than failing
+    // the install so the box can still come up; the installer's systemd step
+    // will then skip the WG unit and surface a clear message.
+    let wg_src = tmpdir.path().join("virtues-wireguard");
+    if wg_src.is_file() {
+        let wg_dst = cfg.wg_binary_path();
+        fs::copy(&wg_src, &wg_dst)
+            .with_context(|| format!("install {} → {}", wg_src.display(), wg_dst.display()))?;
+        fs::set_permissions(&wg_dst, fs::Permissions::from_mode(0o755))?;
+        ui::ok(&format!("Installed virtues-wireguard → {}", wg_dst.display()));
+    } else {
+        ui::warn(
+            "virtues-wireguard not in tarball (pre-v0.2.1 release) — WG tunnel \
+             reconciler will not be installed. Upgrade once a newer release is available.",
+        );
+    }
+
     // Install web dir (newer tarballs ship apps/web/build/ as web/).
     let web_src = tmpdir.path().join("web");
     if web_src.is_dir() {

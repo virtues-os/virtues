@@ -52,13 +52,52 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Detect the box's current public IP. **Placeholder** — reads an env override
-/// the box's network config can set. The real implementation is a netlink
-/// `RTM_NEWADDR`/`RTM_DELADDR` watch (or `getifaddrs` poll) for the global IPv6
-/// on the WAN interface; written + validated on staging where real netlink runs.
+/// Detect the box's current routable IP — what a peer dialing the box would
+/// see as its source-of-truth destination.
+///
+/// Resolution order:
+///   1. `VIRTUES_WG_PUBLIC_IP` env override — explicit, takes priority. Used
+///      when the box sits behind a router with port-forwarding and the
+///      operator knows the WAN address out-of-band.
+///   2. The "outbound socket trick": open a UDP socket, `connect()` it to a
+///      public address (no packets sent, just kernel route lookup), read back
+///      the local address the kernel picked. That's the IP on whichever
+///      interface owns the default route — i.e. the LAN-routable IP that a
+///      peer on the same LAN would dial. For LAN-only E2E this is exactly
+///      right; cross-NAT is the punch coordinator's job.
+///
+/// Returns `None` only when both fail (no default route, no interfaces). In
+/// that case the rendezvous won't be updated this tick and we retry.
 #[cfg(target_os = "linux")]
 fn detect_public_ip() -> Option<String> {
-    std::env::var("VIRTUES_WG_PUBLIC_IP").ok().filter(|s| !s.is_empty())
+    if let Ok(s) = std::env::var("VIRTUES_WG_PUBLIC_IP") {
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+
+    // Two probes — once for v4, once for v6. The kernel chooses the source
+    // address based on the destination's family + the default route. We
+    // prefer v6 if present (matches our ULA-by-default design) but accept
+    // either; whichever resolves is what the box has working egress on.
+    if let Some(ip) = probe_outbound_addr("[2606:4700:4700::1111]:53", "[::]:0") {
+        return Some(ip);
+    }
+    probe_outbound_addr("1.1.1.1:53", "0.0.0.0:0")
+}
+
+#[cfg(target_os = "linux")]
+fn probe_outbound_addr(dest: &str, bind: &str) -> Option<String> {
+    let sock = std::net::UdpSocket::bind(bind).ok()?;
+    sock.connect(dest).ok()?;
+    let local = sock.local_addr().ok()?;
+    let ip = local.ip();
+    // Loopback / unspecified mean the kernel didn't pick a real address —
+    // treat as "no answer" so we retry next tick rather than publishing junk.
+    if ip.is_loopback() || ip.is_unspecified() {
+        return None;
+    }
+    Some(ip.to_string())
 }
 
 #[cfg(not(target_os = "linux"))]

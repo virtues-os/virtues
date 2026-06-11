@@ -188,16 +188,58 @@ pub struct AnnounceResponse {
 /// Refuse non-routable IPs (unspecified, loopback, multicast, broadcast)
 /// because (a) the matched peer would dial them and fail silently, and
 /// (b) accepting loopback would make atlas a self-DDoS vector.
+///
+/// In production (`ENVIRONMENT=production`) we also reject RFC1918 / ULA
+/// ranges — atlas only sees real public IPs through Caddy + XFF, so an
+/// RFC1918 address there is either a misconfigured upstream or an attempt
+/// to spam atlas with non-routable matches.
+///
+/// In dev (`ENVIRONMENT` unset, "development", "local", or anything else),
+/// RFC1918 is accepted so a developer running atlas in a VPC + the box on
+/// the same LAN can E2E-test the punch flow without exposing atlas to a
+/// public IP. Controlled by [`is_production_env`] below.
 fn is_routable_reflected(ip: IpAddr) -> bool {
+    is_routable_reflected_with(ip, is_production_env())
+}
+
+/// Routability impl with the production flag explicit, so tests can exercise
+/// both modes without racing on a shared env var.
+fn is_routable_reflected_with(ip: IpAddr, production_strict: bool) -> bool {
     match ip {
         IpAddr::V4(v) => {
-            !v.is_unspecified()
-                && !v.is_loopback()
-                && !v.is_multicast()
-                && !v.is_broadcast()
+            if v.is_unspecified() || v.is_loopback() || v.is_multicast() || v.is_broadcast() {
+                return false;
+            }
+            if production_strict && v.is_private() {
+                return false;
+            }
+            true
         }
-        IpAddr::V6(v) => !v.is_unspecified() && !v.is_loopback() && !v.is_multicast(),
+        IpAddr::V6(v) => {
+            if v.is_unspecified() || v.is_loopback() || v.is_multicast() {
+                return false;
+            }
+            if production_strict && is_unique_local_v6(&v) {
+                return false;
+            }
+            true
+        }
     }
+}
+
+/// True when the deployment is production-strict. Matches the standard
+/// `ENVIRONMENT` env var ("production"). Any other value (or unset) is
+/// dev/test → permissive (accept RFC1918 + ULA).
+fn is_production_env() -> bool {
+    std::env::var("ENVIRONMENT")
+        .map(|s| s.eq_ignore_ascii_case("production"))
+        .unwrap_or(false)
+}
+
+/// IPv6 unique-local range (fc00::/7). `Ipv6Addr::is_unique_local` is a
+/// nightly-only API as of stable Rust today, so we open-code the check.
+fn is_unique_local_v6(v: &std::net::Ipv6Addr) -> bool {
+    (v.segments()[0] & 0xfe00) == 0xfc00
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,6 +439,41 @@ mod tests {
             reflected_addr: addr.to_string(),
             received_at: Instant::now(),
         }
+    }
+
+    #[test]
+    fn routability_dev_accepts_rfc1918() {
+        let lan_v4: IpAddr = "10.0.0.5".parse().unwrap();
+        let lan_v6: IpAddr = "fd00::1".parse().unwrap();
+        // dev (production_strict=false): LAN ranges are allowed so a dev box
+        // and atlas on the same VPC can E2E-test punch.
+        assert!(is_routable_reflected_with(lan_v4, false));
+        assert!(is_routable_reflected_with(lan_v6, false));
+    }
+
+    #[test]
+    fn routability_production_rejects_rfc1918() {
+        let lan_v4: IpAddr = "10.0.0.5".parse().unwrap();
+        let lan_v6: IpAddr = "fd00::1".parse().unwrap();
+        assert!(!is_routable_reflected_with(lan_v4, true));
+        assert!(!is_routable_reflected_with(lan_v6, true));
+    }
+
+    #[test]
+    fn routability_rejects_loopback_and_unspecified_always() {
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        let zero: IpAddr = "0.0.0.0".parse().unwrap();
+        // Both modes reject — these are never legitimate punch endpoints.
+        for strict in [false, true] {
+            assert!(!is_routable_reflected_with(lo, strict));
+            assert!(!is_routable_reflected_with(zero, strict));
+        }
+    }
+
+    #[test]
+    fn routability_production_accepts_public_v4() {
+        let public: IpAddr = "12.34.56.78".parse().unwrap();
+        assert!(is_routable_reflected_with(public, true));
     }
 
     #[tokio::test]

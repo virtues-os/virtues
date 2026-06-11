@@ -93,6 +93,17 @@ jobs:
         run: |
           cargo build --release -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
+      # virtues-wireguard — the box-side privileged WG reconciler. Ships in
+      # the main tarball next to `virtues` so the installer can put it under
+      # /usr/local/bin/ and write a systemd unit pointing at it. Without this
+      # the box has peer rows in the DB but never touches wg0 → daemon
+      # handshake times out forever.
+      - name: Build virtues-wireguard binary
+        env:
+          SQLX_OFFLINE: 'true'
+        run: |
+          cargo build --release -p virtues-wg --bin virtues-wireguard --target ${{ matrix.target }}
+
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
       # web package + lockfile live at apps/web/, not the repo root.
@@ -121,17 +132,21 @@ jobs:
           BIN_PATH="target/${{ matrix.target }}/release/virtues"
           INSTALLER_PATH="target/${{ matrix.target }}/release/virtues-installer"
           CLIENT_PATH="target/${{ matrix.target }}/release/virtues-client"
+          WG_PATH="target/${{ matrix.target }}/release/virtues-wireguard"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
           test -x "$CLIENT_PATH"    || (echo "virtues-client not built"      >&2 && exit 1)
+          test -x "$WG_PATH"        || (echo "virtues-wireguard not built"   >&2 && exit 1)
 
           # Layout inside the main tarball:
           #   virtues             box binary, installer moves to /usr/local/bin/
+          #   virtues-wireguard   privileged WG reconciler, also to /usr/local/bin/
           #   web/                SvelteKit static build, → /usr/local/share/virtues/web/
           cp "$BIN_PATH" staging/virtues
+          cp "$WG_PATH"  staging/virtues-wireguard
           cp -r apps/web/build staging/web
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues web
+          tar -czf "dist/${TAR_NAME}" -C staging virtues virtues-wireguard web
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the
