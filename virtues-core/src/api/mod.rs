@@ -10,6 +10,7 @@ pub mod box_status;
 pub mod devices;
 pub mod pair;
 pub mod settings_byo;
+pub mod setup;
 pub mod sudo;
 pub mod chat;
 pub mod chat_permissions;
