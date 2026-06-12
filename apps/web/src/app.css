@@ -34,6 +34,59 @@
 	background-attachment: fixed;
 }
 
+/* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
+   where Avenir is a system font. Avenir has no native 600/700; the browser
+   nearest-weight matches 600→500 and 700→800, mirroring macOS Core Text. */
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Bold.woff2') format('woff2');
+	font-weight: 800;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* IBM Plex Mono (mono) — self-hosted (OFL) so code/terminal UIs render off-Apple
+   instead of falling back to a generic monospace on the Jetson. */
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
 @font-face {
 	font-family: 'JJannon';
 	src: url('/fonts/JJannon-Display-Regular.woff2') format('woff2');

@@ -14,15 +14,15 @@
 //!
 //!   - Real TUI (cliclack rail-connected prompts) instead of a stream of
 //!     disjoint dialog boxes.
-//!   - Real progress bars for slow steps (Ollama model pull, binary
+//!   - Real progress bars for slow steps (GGUF model downloads, binary
 //!     download) that stream live throughput instead of "spinning ⠋".
 //!   - Themed copy in brand voice without escape-character gymnastics.
 //!   - Real types + error handling instead of `set -euo pipefail` prayer.
 //!   - Reusable: the same binary backs `virtues upgrade` later.
 //!
-//! Everything that mutates the host (apt install, systemctl, ollama pull,
-//! createdb) is a shell-out to the underlying CLI. We're an orchestration
-//! layer, not a re-implementation of apt.
+//! Everything that mutates the host (apt install, systemctl, createdb)
+//! is a shell-out to the underlying CLI. We're an orchestration layer,
+//! not a re-implementation of apt.
 
 mod brand;
 mod config;

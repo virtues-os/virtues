@@ -19,6 +19,7 @@ pub mod error;
 pub mod geo;
 pub mod http_client;
 pub mod ids;
+pub mod inference_report;
 pub mod maintenance;
 pub mod mcp;
 pub mod middleware;

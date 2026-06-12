@@ -87,7 +87,6 @@ pub struct AssistantProfile {
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
     pub embedding_model_id: Option<String>,
-    pub ollama_endpoint: Option<String>,
     /// AI persona/tone: selected persona ID
     pub persona: Option<String>,
     /// JSON blob storing persona definitions: { "items": [...], "hidden": [...] }

@@ -8,6 +8,21 @@
 
 use std::time::Duration;
 
+/// Install the ring CryptoProvider as the process default if nobody has yet.
+///
+/// reqwest-with-rustls panics with "No provider set" if a client is built
+/// before a provider is installed. `main.rs` installs it for the `virtues`
+/// binary, but other entry points (tests, mcp-server, seed bins) build
+/// clients directly — so the constructors below are self-sufficient instead
+/// of relying on every caller remembering. Idempotent: a second install
+/// attempt errors harmlessly and is ignored.
+fn ensure_crypto_provider() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// Connect timeout in seconds (time to establish TCP connection)
 pub const CONNECT_TIMEOUT_SECS: u64 = 10;
 
@@ -21,6 +36,7 @@ pub const STREAMING_TIMEOUT_SECS: u64 = 300;
 ///
 /// Uses moderate timeouts suitable for synchronous LLM calls.
 pub fn virtues_api_client() -> reqwest::Client {
+    ensure_crypto_provider();
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
@@ -33,6 +49,7 @@ pub fn virtues_api_client() -> reqwest::Client {
 /// Uses longer timeouts to accommodate streaming responses that
 /// may take several minutes to complete.
 pub fn virtues_api_streaming_client() -> reqwest::Client {
+    ensure_crypto_provider();
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(STREAMING_TIMEOUT_SECS))

@@ -2,7 +2,7 @@
 //! handful of shell-outs and reports its outcome.
 //!
 //! The functions in this module are deliberately tiny; the real logic
-//! lives in the underlying CLIs (apt, dnf, systemctl, ollama, createdb).
+//! lives in the underlying CLIs (apt, dnf, systemctl, createdb).
 //! We're an orchestration layer + visual identity, not a re-implementation.
 //!
 //! Every step is idempotent — running the installer twice on a working
@@ -13,7 +13,6 @@ use anyhow::{anyhow, Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::ui;
@@ -114,38 +113,6 @@ pub async fn run_step(label: &str, mut cmd: Command) -> Result<()> {
         }
         Err(anyhow!("{label} failed"))
     }
-}
-
-/// Stream live progress from a long-running command (e.g. `ollama pull`).
-/// Unlike `run_step`, this lets the user see real-time output, then collapses
-/// to a single `✓ label` line when done.
-pub async fn run_streaming(label: &str, mut cmd: Command) -> Result<()> {
-    println!("  ⠋ {label}");
-    let mut child = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("spawning {label}"))?;
-
-    let stdout = child.stdout.take().expect("piped");
-    let mut reader = BufReader::new(stdout).lines();
-    while let Some(line) = reader.next_line().await? {
-        // Re-emit with a leading indent so it visually nests under the label.
-        println!("    {line}");
-    }
-
-    let status = child.wait().await?;
-    if status.success() {
-        ui::ok(label);
-        Ok(())
-    } else {
-        Err(anyhow!("{label} failed (exit {:?})", status.code()))
-    }
-}
-
-/// True iff `cmd` is on $PATH.
-pub fn has(cmd: &str) -> bool {
-    which::which(cmd).is_ok()
 }
 
 // Path constants live on `config::InstallConfig` now so advanced operators

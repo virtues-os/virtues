@@ -47,8 +47,11 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • System packages (Postgres 18, WireGuard, Avahi, Ollama + embed model)");
-        ui::skip(&format!("  • Embedding model: {}", cfg.embed_model));
+        ui::skip("  • System packages (Postgres 18, WireGuard, Avahi)");
+        ui::skip(&format!(
+            "  • Inference sidecars (llama-server): {} + {}",
+            cfg.embed_gguf, cfg.rerank_gguf
+        ));
         ui::skip("  • mDNS (hostname → virtues, _http._tcp on :8000)");
         ui::skip("  • System user 'virtues' + data dir + Postgres role/db/pgvector");
         ui::skip(&format!("  • Virtues binary → {}", cfg.binary_path().display()));
@@ -60,7 +63,6 @@ pub async fn run(cli: Config) -> Result<()> {
     // ─── System packages ────────────────────────────────────────────────
     ui::section("System packages");
     install::install_deps(&target).await?;
-    install::ensure_ollama(&cfg).await?;
     install::configure_mdns().await?;
     install::create_user(&cfg).await?;
     install::provision_db().await?;
@@ -68,6 +70,8 @@ pub async fn run(cli: Config) -> Result<()> {
     // ─── Virtues ────────────────────────────────────────────────────────
     ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
+    // After the tarball: the sidecars need the llama-server binary it ships.
+    install::install_inference(&cfg).await?;
     install::write_env_file(&cfg).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;

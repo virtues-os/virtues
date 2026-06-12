@@ -18,7 +18,7 @@ use std::path::Path;
 use tokio::process::Command;
 
 use crate::config::InstallConfig;
-use crate::steps::{has, run_step, run_streaming, PkgMgr, Target};
+use crate::steps::{run_step, PkgMgr, Target};
 use crate::ui;
 
 // ────────────────────────────────────────────────────────────────────────
@@ -142,31 +142,120 @@ async fn systemctl(args: &[&str], label: &str) -> Result<()> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Ollama — local inference daemon + embedding model
+// Inference sidecars — llama-server hosting the embed + rerank GGUFs
 // ────────────────────────────────────────────────────────────────────────
 
-pub async fn ensure_ollama(cfg: &InstallConfig) -> Result<()> {
-    if has("ollama") {
-        ui::skip("Ollama already installed");
-    } else {
-        // Official installer; pipe through sh.
-        let mut cmd = Command::new("bash");
-        cmd.args(["-c", "curl -fsSL https://ollama.com/install.sh | sh"]);
-        run_step("Install Ollama", cmd).await?;
+/// Embedding sidecar (:18181) and rerank sidecar (:18182): two llama-server
+/// units, one model each. The binary comes out of the release tarball
+/// (download.rs put it at `cfg.llama_binary_path()`); the GGUFs come from
+/// the pinned models release, SHA-verified. v0.1.0 ran Ollama here — it
+/// had no rerank endpoint, and its `curl | sh` installer + mutable model
+/// registry were the opposite of an appliance's pin-everything posture.
+pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
+    let bin = cfg.llama_binary_path();
+    if !bin.exists() {
+        return Err(anyhow!(
+            "llama-server not found at {} — tarball predates the v0.1.1 inference sidecars?",
+            bin.display()
+        ));
     }
 
-    // enable --now is idempotent.
-    let mut cmd = Command::new("systemctl");
-    cmd.args(["enable", "--now", "ollama"]);
-    let _ = cmd.output().await; // best-effort; Ollama installer may have done it already
+    // Fetch both GGUFs (skips any already on disk — they're SHA-verified
+    // at download time and immutable afterwards).
+    let models_dir = cfg.models_dir();
+    fs::create_dir_all(&models_dir)
+        .with_context(|| format!("creating {}", models_dir.display()))?;
+    for gguf in [&cfg.embed_gguf, &cfg.rerank_gguf] {
+        crate::download::fetch_model(cfg, gguf).await?;
+    }
+    // The sidecars run as `virtues` (created earlier in the flow); the
+    // GGUFs only need to be readable, but keep ownership uniform.
+    let mut cmd = Command::new("chown");
+    cmd.args(["-R", "virtues:virtues", models_dir.to_str().unwrap()]);
+    let _ = cmd.output().await;
 
-    // Pull the embedding model. We stream stdout live so the user sees
-    // Ollama's own progress display ("47% [████░░] 12 MB/s") instead of
-    // a frozen spinner during a 1.2 GB download.
-    let mut cmd = Command::new("ollama");
-    cmd.args(["pull", &cfg.embed_model]);
-    run_streaming(&format!("Pull embedding model {}", cfg.embed_model), cmd).await
+    // Write + (re)start one unit per model. restart rather than just
+    // enable --now so an installer re-run picks up unit/binary changes.
+    for (unit, template, gguf) in [
+        ("virtues-embed", EMBED_UNIT_TEMPLATE, &cfg.embed_gguf),
+        ("virtues-rerank", RERANK_UNIT_TEMPLATE, &cfg.rerank_gguf),
+    ] {
+        let body = template
+            .replace("__BIN__", &bin.display().to_string())
+            .replace("__MODEL__", &models_dir.join(gguf).display().to_string());
+        fs::write(format!("/etc/systemd/system/{unit}.service"), body)
+            .with_context(|| format!("writing {unit}.service"))?;
+    }
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("daemon-reload");
+    run_step("Install inference sidecar units", cmd).await?;
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["enable", "virtues-embed", "virtues-rerank"]);
+    run_step("Enable inference sidecars", cmd).await?;
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["restart", "virtues-embed", "virtues-rerank"]);
+    run_step("Start inference sidecars", cmd).await
 }
+
+/// Shared shape: loopback-only, runs as `virtues`, read-only filesystem
+/// (the GGUF is mmap'd read-only; PrivateTmp covers scratch). `-c/-b/-ub
+/// 8192` match bge-m3's 8K context — non-causal encoders need the whole
+/// sequence to fit one ubatch or llama-server rejects the request.
+const EMBED_UNIT_TEMPLATE: &str = r#"[Unit]
+Description=Virtues embedding sidecar (llama-server, bge-m3)
+Documentation=https://virtues.com/docs
+After=network.target
+
+[Service]
+Type=simple
+User=virtues
+Group=virtues
+ExecStart=__BIN__ --embedding --pooling cls -m __MODEL__ --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+const RERANK_UNIT_TEMPLATE: &str = r#"[Unit]
+Description=Virtues rerank sidecar (llama-server, bge-reranker-v2-m3)
+Documentation=https://virtues.com/docs
+After=network.target
+
+[Service]
+Type=simple
+User=virtues
+Group=virtues
+ExecStart=__BIN__ --rerank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
+"#;
 
 // ────────────────────────────────────────────────────────────────────────
 // mDNS — hostname + Avahi service advertisement
@@ -262,7 +351,52 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700))
         .with_context(|| format!("chmod 0700 {}", secrets.display()))?;
     ui::ok(&format!("Data dir ready ({})", cfg.data_dir.display()));
+
+    write_setup_sudoers().await?;
     Ok(())
+}
+
+/// The setup wizard's one privileged seam: the "name your box" step needs
+/// `hostnamectl` (root), but the server runs as `virtues`. Grant EXACTLY the
+/// two commands the rename uses — nothing else — via a dedicated sudoers
+/// fragment. The server calls them with `sudo -n`, so on an install that
+/// predates this rule the wizard step fails fast with a clear message
+/// instead of hanging on a password prompt.
+async fn write_setup_sudoers() -> Result<()> {
+    const PATH: &str = "/etc/sudoers.d/virtues-setup";
+    const RULE: &str = "\
+# Written by virtues-installer. Lets the setup wizard's \"name your box\"
+# step rename the host (the mDNS name follows the hostname). Scoped to
+# exactly these commands; the virtues user has no other sudo rights.
+virtues ALL=(root) NOPASSWD: /usr/bin/hostnamectl set-hostname *
+virtues ALL=(root) NOPASSWD: /usr/bin/systemctl reload-or-restart avahi-daemon
+";
+    fs::write(PATH, RULE).with_context(|| format!("writing {PATH}"))?;
+    // Sudoers fragments must be 0440 or sudo ignores the whole file.
+    fs::set_permissions(PATH, fs::Permissions::from_mode(0o440))
+        .with_context(|| format!("chmod 0440 {PATH}"))?;
+    // Syntax-check; a bad fragment can lock sudo out for everyone. visudo
+    // exits non-zero on parse failure → remove the fragment and fail loudly.
+    let check = Command::new("visudo").args(["-c", "-f", PATH]).output().await;
+    match check {
+        Ok(out) if out.status.success() => {
+            ui::ok("Sudoers rule for box rename (setup wizard)");
+            Ok(())
+        }
+        Ok(out) => {
+            let _ = fs::remove_file(PATH);
+            Err(anyhow!(
+                "sudoers fragment failed visudo check (removed): {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+        Err(e) => {
+            // visudo missing entirely — keep the fragment (it's static and
+            // known-good) but say so.
+            ui::warn(&format!("visudo not found ({e}) — installed rename rule unchecked"));
+            Ok(())
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -336,11 +470,15 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
          STATIC_DIR={static_dir}\n\
          STORAGE_PATH={storage_path}\n\
          VIRTUES_ATLAS_URL={atlas}\n\
-         VIRTUES_API_URL={api}\n",
+         VIRTUES_API_URL={api}\n\
+         VIRTUES_MODELS_DIR={models_dir}\n\
+         VIRTUES_EMBED_URL=http://127.0.0.1:18181\n\
+         VIRTUES_RERANK_URL=http://127.0.0.1:18182\n",
         static_dir = cfg.web_dir().display(),
         storage_path = cfg.data_dir.join("lake").display(),
         atlas = cfg.atlas_url,
         api = cfg.virtues_api_url,
+        models_dir = cfg.models_dir().display(),
     );
     fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
     let mut cmd = Command::new("chown");
@@ -385,6 +523,9 @@ async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<(
         ("STORAGE_PATH", cfg.data_dir.join("lake").display().to_string()),
         ("VIRTUES_ATLAS_URL", cfg.atlas_url.clone()),
         ("VIRTUES_API_URL", cfg.virtues_api_url.clone()),
+        ("VIRTUES_MODELS_DIR", cfg.models_dir().display().to_string()),
+        ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
+        ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
     ];
 
     let missing: Vec<&(&str, String)> = want.iter().filter(|(k, _)| !present.contains(*k)).collect();
@@ -608,29 +749,41 @@ pub async fn health_check(cfg: &InstallConfig) -> Result<u32> {
         issues += 1;
     }
 
-    // Ollama daemon responding.
+    // Inference sidecars responding. /health returns 200 only once the
+    // model is loaded, so this also catches a bad/missing GGUF. Model load
+    // can take a few seconds after `systemctl start` — retry briefly.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
         .build()?;
-    match client.get("http://localhost:11434/api/tags").send().await {
-        Ok(r) if r.status().is_success() => ui::ok("Ollama daemon responding on :11434"),
-        _ => {
-            ui::warn("Ollama daemon not responding — start with: systemctl start ollama");
+    for (port, unit) in [(18181u16, "virtues-embed"), (18182, "virtues-rerank")] {
+        let url = format!("http://127.0.0.1:{port}/health");
+        let mut up = false;
+        for _ in 0..10 {
+            if matches!(client.get(&url).send().await, Ok(r) if r.status().is_success()) {
+                up = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        if up {
+            ui::ok(&format!("{unit} responding on :{port}"));
+        } else {
+            ui::warn(&format!(
+                "{unit} not responding on :{port} — journalctl -u {unit}"
+            ));
             issues += 1;
         }
     }
 
-    // Embedding model present.
-    let list = Command::new("ollama").arg("list").output().await?;
-    let stdout = String::from_utf8_lossy(&list.stdout);
-    if stdout.contains(&cfg.embed_model) {
-        ui::ok(&format!("Embedding model present: {}", cfg.embed_model));
-    } else {
-        ui::warn(&format!(
-            "Embedding model not pulled — first embed call will retry: ollama pull {}",
-            cfg.embed_model
-        ));
-        issues += 1;
+    // GGUFs on disk.
+    for gguf in [&cfg.embed_gguf, &cfg.rerank_gguf] {
+        let p = cfg.models_dir().join(gguf);
+        if p.is_file() {
+            ui::ok(&format!("Model present: {gguf}"));
+        } else {
+            ui::warn(&format!("Model missing: {} — re-run the installer", p.display()));
+            issues += 1;
+        }
     }
 
     // Binary --version (now clean, observability init is skipped for

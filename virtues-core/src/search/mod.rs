@@ -1,23 +1,23 @@
 //! Semantic search module.
 //!
-//! v0.1.0 routes all local ML through a separate Ollama daemon (see
-//! `embedder.rs`). The previous ORT-in-process stack — accelerator
-//! detection, model cache, ONNX session construction, cross-encoder
-//! reranker — was removed because ORT 1.24's prebuilt binaries require
-//! glibc 2.38+ which Jetson JetPack 6.x doesn't ship. Ollama owns its
-//! own GPU/CPU detection and model pulls, so this module is now a thin
-//! Rust shim over its HTTP API.
+//! v0.1.1 routes all local ML through two `llama-server` sidecars that the
+//! installer ships, pins, and runs as systemd units (see `embedder.rs` for
+//! the full lineage: in-process ORT died on glibc 2.38+ vs JetPack 6.x's
+//! 2.35; the v0.1.0 Ollama detour died on the missing rerank endpoint).
+//! llama.cpp is compiled per-arch in our own CI — CUDA for the Jetson
+//! appliance, CPU for the DIY floor — so this module stays a thin Rust
+//! shim over loopback HTTP, with zero inference dependencies in-process.
 //!
 //! # Architecture
 //!
-//! - `embedder.rs` - Ollama HTTP client (text → 1024-dim vector via bge-m3)
+//! - `embedder.rs` - sidecar client, :18181 (text → 1024-dim vector, bge-m3)
 //! - `indexer.rs`  - Background job that embeds new records
 //! - `query.rs`    - Vector search (query embedding + pgvector ANN lookup)
-//! - `reranker.rs` - v0.1.0 stub; search auto-falls-back to bi-encoder cosine
+//! - `reranker.rs` - sidecar client, :18182 (cross-encoder, bge-reranker-v2-m3;
+//!   search falls back to bi-encoder cosine if it's down)
 
 pub mod embedder;
 pub mod indexer;
-pub mod model_cache;
 pub mod query;
 pub mod reranker;
 

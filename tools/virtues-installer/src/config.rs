@@ -18,9 +18,19 @@ pub struct InstallConfig {
     pub download_base: Option<String>,
     /// Either a pinned tag ("v0.1.0") or `None` meaning "latest".
     pub pinned_version: Option<String>,
-    /// Embedding model Ollama should pull at install time. Picked here so
-    /// bumping the default is a one-line code change.
-    pub embed_model: String,
+    /// Base URL for the GGUF model assets. Models live on a dedicated,
+    /// stable release tag (they change far less often than code releases,
+    /// and re-uploading ~2 GB per code release would be wasteful). The
+    /// `.github/workflows/models-release.yml` workflow populates that tag
+    /// from vetted upstream GGUFs, with `.sha256` sidecars.
+    pub models_base: String,
+    /// GGUF file names the inference sidecars load. F16 for embedding (to
+    /// match the precision existing search_vectors rows were embedded
+    /// with), Q8_0 for the reranker (stateless, so smaller/faster wins).
+    /// Must stay in sync with virtues-core's `inference_report::{EMBED_GGUF,
+    /// RERANK_GGUF}`.
+    pub embed_gguf: String,
+    pub rerank_gguf: String,
     /// Production environment URLs. Written into the box's env file so
     /// the runtime daemon talks to the real atlas/virtues-api instead of
     /// the localhost dev defaults baked into the box code.
@@ -43,8 +53,17 @@ impl InstallConfig {
                 .unwrap_or_else(|_| "virtues".to_string()),
             download_base: std::env::var("VIRTUES_DOWNLOAD_BASE").ok(),
             pinned_version: None,
-            embed_model: std::env::var("VIRTUES_EMBED_MODEL")
-                .unwrap_or_else(|_| "bge-m3".to_string()),
+            models_base: std::env::var("VIRTUES_MODELS_BASE").unwrap_or_else(|_| {
+                format!(
+                    "https://github.com/{owner}/{repo}/releases/download/models-1",
+                    owner = std::env::var("VIRTUES_GITHUB_OWNER")
+                        .unwrap_or_else(|_| "virtues-os".to_string()),
+                    repo = std::env::var("VIRTUES_GITHUB_REPO")
+                        .unwrap_or_else(|_| "virtues".to_string()),
+                )
+            }),
+            embed_gguf: "bge-m3-F16.gguf".to_string(),
+            rerank_gguf: "bge-reranker-v2-m3-Q8_0.gguf".to_string(),
             atlas_url: "https://atlas.virtues.com".to_string(),
             virtues_api_url: "https://api.virtues.com".to_string(),
         }
@@ -67,5 +86,18 @@ impl InstallConfig {
 
     pub fn web_dir(&self) -> PathBuf {
         self.install_prefix.join("share/virtues/web")
+    }
+
+    /// The llama-server binary that hosts both inference sidecars. Ships in
+    /// the release tarball (built per-arch in our CI at a pinned llama.cpp
+    /// tag); a CUDA build for Jetson is swapped in when available.
+    pub fn llama_binary_path(&self) -> PathBuf {
+        self.install_prefix.join("bin/llama-server")
+    }
+
+    /// Where the GGUFs live on the box. virtues-core reads the same default
+    /// via `VIRTUES_MODELS_DIR` for its resolution report.
+    pub fn models_dir(&self) -> PathBuf {
+        self.data_dir.join("models")
     }
 }

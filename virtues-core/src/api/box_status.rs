@@ -11,7 +11,7 @@ use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::search::model_cache::{self, ModelSource};
+use crate::inference_report::{self, ModelSource};
 use crate::server::webhook::AppState;
 use crate::wireguard::box_secrets;
 
@@ -140,15 +140,14 @@ pub struct ModelInfo {
     pub source: String,
 }
 
-/// The inference stack's hardware resolution, surfaced for the first-run screen
-/// ("CUDA · fp16 · models baked"). Mirrors `virtues doctor`.
+/// The inference stack's resolution, surfaced for the first-run screen.
+/// Mirrors `virtues doctor`.
 #[derive(Debug, Clone, Serialize)]
 pub struct InferenceStatus {
     pub accelerator: String,
     pub precision: String,
-    pub cuda_compiled: bool,
-    /// True when every model is baked on disk (appliance); false when one or
-    /// more would download on first use (typical DIY).
+    /// True when every GGUF is on disk (healthy install); false when one or
+    /// more is missing and the installer needs a re-run.
     pub models_baked: bool,
     pub models: Vec<ModelInfo>,
 }
@@ -163,7 +162,7 @@ pub struct BoxHealth {
 }
 
 fn inference_status() -> InferenceStatus {
-    let r = model_cache::resolution_report();
+    let r = inference_report::resolution_report();
     let models: Vec<ModelInfo> = r
         .models
         .iter()
@@ -179,7 +178,6 @@ fn inference_status() -> InferenceStatus {
     InferenceStatus {
         accelerator: r.accelerator.to_string(),
         precision: r.precision.to_string(),
-        cuda_compiled: r.cuda_compiled,
         models_baked,
         models,
     }

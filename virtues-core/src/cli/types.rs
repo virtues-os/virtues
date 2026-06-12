@@ -215,7 +215,7 @@ pub enum Commands {
     /// detected accelerator, whether this build links CUDA, the chosen ONNX
     /// precision, and whether each model is baked or would be downloaded. The
     /// DB-free composability check for appliance-vs-DIY (web status reads the
-    /// same `model_cache::resolution_report`).
+    /// same `inference_report::resolution_report`).
     Doctor,
 
     /// Compute novelty scores for all days with events

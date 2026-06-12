@@ -15,9 +15,12 @@
 //!    (env + ENCRYPTION KEY + lake) and the Postgres db/role + system user,
 //!    so a later reinstall picks the box back up where it left off. This is
 //!    the dev-loop tier.
-//! 4. **Shared infra is left alone.** Postgres the *server*, Ollama the
-//!    *daemon*, avahi, WireGuard packages all stay — we only remove what is
-//!    ours (and optionally our pulled model via `--purge-models`).
+//! 4. **Shared infra is left alone.** Postgres the *server*, avahi, and
+//!    WireGuard packages all stay — we only remove what is ours. The
+//!    llama-server sidecars (units + binary) ARE ours (the installer put
+//!    them there; nothing else uses them), so they go. The GGUFs live
+//!    under the data dir and follow its tier (`--purge-models` removes
+//!    them even with `--keep-data`; they re-download on reinstall).
 //!
 //! Everything is best-effort with per-item reporting: a missing artifact is a
 //! skip, not an error, so the command is idempotent and safe to re-run.
@@ -27,11 +30,21 @@ use std::path::Path;
 use std::process::Command;
 
 /// Filesystem artifacts the installer creates, probed at runtime.
-const UNITS: &[&str] = &["virtues.service", "virtues-wireguard.service"];
-const BINARIES: &[&str] = &["/usr/local/bin/virtues", "/usr/local/bin/virtues-wireguard"];
+const UNITS: &[&str] = &[
+    "virtues.service",
+    "virtues-wireguard.service",
+    "virtues-embed.service",
+    "virtues-rerank.service",
+];
+const BINARIES: &[&str] = &[
+    "/usr/local/bin/virtues",
+    "/usr/local/bin/virtues-wireguard",
+    "/usr/local/bin/llama-server",
+];
 const WEB_DIR: &str = "/usr/local/share/virtues";
 const AVAHI_SERVICE: &str = "/etc/avahi/services/virtues.service";
 const DATA_DIR: &str = "/var/lib/virtues";
+const MODELS_DIR: &str = "/var/lib/virtues/models";
 const WG_IFNAME: &str = "wg0";
 
 struct Manifest {
@@ -43,7 +56,7 @@ struct Manifest {
     data_dir: bool,
     pg: bool,
     system_user: bool,
-    ollama_model: bool,
+    models_dir: bool,
 }
 
 pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()> {
@@ -121,9 +134,13 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         run_quiet("sh", &["-c", "systemctl reload avahi-daemon 2>/dev/null || true"]);
     }
 
-    // ── Ollama model (opt-in; the daemon itself always stays) ───────────
-    if m.ollama_model {
-        report(run_quiet("ollama", &["rm", "bge-m3"]), "removed Ollama model bge-m3");
+    // ── GGUF models (opt-in with --keep-data; full purge removes the whole
+    //    data dir below anyway). They re-download on the next install. ────
+    if m.models_dir {
+        report(
+            std::fs::remove_dir_all(MODELS_DIR).is_ok(),
+            &format!("removed {MODELS_DIR} (GGUFs re-download on reinstall)"),
+        );
     }
 
     // ── Data tier (skipped with --keep-data) ────────────────────────────
@@ -191,12 +208,7 @@ fn probe(purge_models: bool) -> Manifest {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false),
-        ollama_model: purge_models
-            && Command::new("sh")
-                .args(["-c", "ollama list 2>/dev/null | grep -q '^bge-m3'"])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false),
+        models_dir: purge_models && Path::new(MODELS_DIR).exists(),
     }
 }
 
@@ -210,7 +222,7 @@ impl Manifest {
             && !self.data_dir
             && !self.pg
             && !self.system_user
-            && !self.ollama_model
+            && !self.models_dir
     }
 }
 
@@ -232,8 +244,8 @@ fn print_manifest(m: &Manifest, keep_data: bool) {
     if m.wg_iface {
         println!("  • WireGuard iface    {WG_IFNAME}");
     }
-    if m.ollama_model {
-        println!("  • Ollama model       bge-m3  (Ollama itself stays)");
+    if m.models_dir {
+        println!("  • GGUF models        {MODELS_DIR}  (re-download on reinstall)");
     }
     if keep_data {
         if m.data_dir || m.pg || m.system_user {

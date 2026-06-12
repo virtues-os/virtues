@@ -35,9 +35,9 @@ CREATE TABLE search_embedding_progress (
     last_run_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- 1024-dim vectors from bge-m3 (default embed model via Ollama). Cosine distance.
--- Override via VIRTUES_EMBED_MODEL — if the operator picks a different
--- model with a different dim, that's caught by validate_dim in embedder.rs.
+-- 1024-dim vectors from bge-m3 (the llama-server embed sidecar). Cosine
+-- distance. A different model with a different dim is caught by
+-- validate_dim in embedder.rs.
 CREATE TABLE search_vectors (
     embedding_id  TEXT PRIMARY KEY REFERENCES search_embeddings(id) ON DELETE CASCADE,
     embedding     vector(1024) NOT NULL

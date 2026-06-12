@@ -3,7 +3,9 @@ name: Build cloud sidecar images
 # Builds + pushes the cloud sidecar Docker images (currently just
 # virtues-api) to GHCR on every push to main/staging. The home box itself
 # ships as a native binary via release-linux.yml, not as an image — the
-# old virtues-core Dockerfile was deleted in the Ollama migration cleanup.
+# old virtues-core Dockerfile was deleted when local ML moved out of
+# process (it lives on as the llama-server sidecars, also shipped by
+# release-linux.yml).
 #
 # The atlas image is built + pushed via `make deploy-atlas` from the
 # operator's laptop (Stripe webhook secrets aren't appropriate for CI).

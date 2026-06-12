@@ -9,9 +9,9 @@ name: Release Linux binaries
 # Why Ubuntu 22.04: matches Jetson JetPack 6.x's base (glibc 2.35) so the
 # resulting binary runs on every supported target (Jetson 6.x, Debian 13,
 # Ubuntu 22.04+, Fedora 40+). We removed the in-process ORT dep that was
-# forcing glibc 2.38+; v0.1.0 routes local ML through a separate Ollama
-# daemon, so the virtues binary only needs glibc 2.31+ — covered by every
-# supported distro and every Jetson JetPack 6.x release.
+# forcing glibc 2.38+; local ML runs in llama-server sidecars (also built
+# here, at a pinned llama.cpp tag), so the virtues binary only needs glibc
+# 2.31+ — covered by every supported distro and every JetPack 6.x release.
 #
 # Tarball naming intentionally matches what `tools/virtues-installer` expects:
 #
@@ -34,6 +34,14 @@ on:
 
 permissions:
   contents: write  # upload release assets
+
+env:
+  # llama.cpp tag the inference sidecars are built from. Bump DELIBERATELY:
+  # upstream moves fast and has changed embedding/pooling defaults before.
+  # After a bump, run `virtues warm-models` + a fixture search on a staging
+  # box before publishing (llama-server smoke test below only proves the
+  # binary starts).
+  LLAMA_CPP_TAG: b9606
 
 jobs:
   build:
@@ -107,6 +115,27 @@ jobs:
         run: |
           cargo build --release -p virtues-wg --bin virtues-wireguard --target ${{ matrix.target }}
 
+      # llama-server — the engine behind the virtues-embed/-rerank sidecars
+      # (one CPU binary per arch; the Jetson CUDA flavor is the separate
+      # llama-jetson-cuda job). GGML_NATIVE=OFF keeps the build portable
+      # across the arch instead of tuned to the runner's CPU; static libs
+      # so the tarball ships one self-contained executable. ~5 min.
+      - name: Build llama-server (pinned llama.cpp, CPU)
+        run: |
+          git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
+            https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
+          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=ON
+          cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
+          # Smoke: the binary must at least start and report its version.
+          /tmp/llama.cpp/build/bin/llama-server --version
+
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
       # web package + lockfile live at apps/web/, not the repo root.
@@ -142,15 +171,20 @@ jobs:
           # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
           # (its build step is non-fatal); it's packaged below only if present.
 
+          LLAMA_PATH="/tmp/llama.cpp/build/bin/llama-server"
+          test -x "$LLAMA_PATH" || (echo "llama-server not built" >&2 && exit 1)
+
           # Layout inside the main tarball:
           #   virtues             box binary, installer moves to /usr/local/bin/
           #   virtues-wireguard   privileged WG reconciler, also to /usr/local/bin/
+          #   llama-server        inference sidecar engine (CPU build), also to /usr/local/bin/
           #   web/                SvelteKit static build, → /usr/local/share/virtues/web/
           cp "$BIN_PATH" staging/virtues
           cp "$WG_PATH"  staging/virtues-wireguard
+          cp "$LLAMA_PATH" staging/llama-server
           cp -r apps/web/build staging/web
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues virtues-wireguard web
+          tar -czf "dist/${TAR_NAME}" -C staging virtues virtues-wireguard llama-server web
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the
@@ -208,12 +242,85 @@ jobs:
           fail_on_unmatched_files: true
           draft: true
 
+  # llama-server CUDA build for the Jetson appliance (sm_87). Built inside
+  # NVIDIA's L4T JetPack container on the arm64 runner (native aarch64 — no
+  # qemu), so the binary links against the same CUDA the box has. Uploaded
+  # as a STANDALONE asset, not into the aarch64 tarball: that tarball also
+  # serves non-Jetson aarch64 boxes, where a CUDA-linked binary won't load.
+  # The installer detects Jetson (/etc/nv_tegra_release) and swaps this in,
+  # falling back to the tarball's CPU build when the asset is missing —
+  # which is why this whole job is continue-on-error: it must never block
+  # a release while the Jetson pipeline is young.
+  #
+  # NOTE: first run is the validation run — the L4T image is ~10 GB (slow
+  # pull) and CUDA cross-arch quirks are real. Until this job has shipped a
+  # binary that's been verified on a physical Jetson (sidecars healthy,
+  # `virtues warm-models` green), treat the appliance as CPU-inference.
+  llama-jetson-cuda:
+    name: Build llama-server (Jetson CUDA, sm_87)
+    runs-on: ubuntu-22.04-arm
+    continue-on-error: true
+    container:
+      image: nvcr.io/nvidia/l4t-jetpack:r36.4.0
+    steps:
+      - name: Resolve version tag
+        id: tag
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build deps (git, cmake)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq git cmake build-essential
+
+      - name: Build llama-server (CUDA, sm_87)
+        run: |
+          git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
+            https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
+          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_CUDA=ON \
+            -DCMAKE_CUDA_ARCHITECTURES=87 \
+            -DGGML_NATIVE=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=ON
+          cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
+          # No --version smoke here: the runner has no GPU, and a CUDA
+          # binary may refuse to initialize without one. Physical-Jetson
+          # verification is the gate (see job comment).
+
+      - name: Package + checksum
+        run: |
+          mkdir -p dist
+          NAME="llama-server-${{ steps.tag.outputs.version }}-aarch64-cuda-linux"
+          cp /tmp/llama.cpp/build/bin/llama-server "dist/${NAME}"
+          (cd dist && sha256sum "${NAME}" > "${NAME}.sha256")
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: |
+            dist/llama-server-*
+          fail_on_unmatched_files: true
+          draft: true
+
   # After both arches built + uploaded, flip the draft release to live.
   # Keeping this as a separate job so a single-arch failure doesn't ship
   # a half-baked release.
   publish:
     name: Publish release
-    needs: build
+    # llama-jetson-cuda is continue-on-error, so listing it here only makes
+    # publish WAIT for it (so its asset lands before the draft flips), it
+    # can't block the release.
+    needs: [build, llama-jetson-cuda]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

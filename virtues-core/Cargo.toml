@@ -34,10 +34,10 @@ path = "src/bin/prod_seed.rs"
 # never enable in release builds.
 dev-transport = ["virtues-helpers/dev-transport"]
 
-# Accelerator features are no-ops in v0.1.0 — Ollama owns GPU/CPU
-# detection now. Kept as named features so existing `--features cuda`
-# build invocations (e.g. the Jetson appliance image script) don't break.
-# Will be removed in v0.1.1 once consumers are updated.
+# Accelerator features are no-ops — the llama-server sidecars own GPU/CPU
+# selection now (decided by which binary CI built for the arch). Kept as
+# named features so existing `--features cuda` build invocations (e.g. the
+# Jetson appliance image script) don't break. Remove once consumers update.
 cuda = []
 tensorrt = ["cuda"]
 
@@ -177,12 +177,10 @@ schemars = "1.0"
 # Geospatial/clustering
 geo = "0.28"  # Geospatial calculations (Haversine distance)
 
-# Local inference — Ollama HTTP client. ORT 1.24's prebuilt blobs needed
-# glibc 2.38+ which Jetson JetPack 6.x doesn't ship; migrating to Ollama
-# moves model management + GPU/CPU detection out of our process and into
-# a daemon that handles it cleanly across every target. `embedder.rs`
-# is the only consumer.
-ollama-rs = { version = "0.2", default-features = false, features = ["stream", "rustls"] }
+# Local inference needs no client crate: the llama-server sidecars
+# (embedding :18181, rerank :18182 — installed + pinned by
+# tools/virtues-installer) speak OpenAI/Jina-compatible JSON, handled by
+# the existing reqwest dep in search/embedder.rs + search/reranker.rs.
 futures = "0.3"
 
 # Changepoint detection
