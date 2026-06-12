@@ -25,7 +25,7 @@ on:
       embed_url:
         description: 'Source URL for the embedding GGUF (vetted!)'
         required: true
-        default: 'https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-F16.gguf'
+        default: 'https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-FP16.gguf'
         type: string
       rerank_url:
         description: 'Source URL for the reranker GGUF (vetted!)'

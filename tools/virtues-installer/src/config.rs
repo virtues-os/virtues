@@ -62,7 +62,7 @@ impl InstallConfig {
                         .unwrap_or_else(|_| "virtues".to_string()),
                 )
             }),
-            embed_gguf: "bge-m3-F16.gguf".to_string(),
+            embed_gguf: "bge-m3-FP16.gguf".to_string(),
             rerank_gguf: "bge-reranker-v2-m3-Q8_0.gguf".to_string(),
             atlas_url: "https://atlas.virtues.com".to_string(),
             virtues_api_url: "https://api.virtues.com".to_string(),

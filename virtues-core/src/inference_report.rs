@@ -41,7 +41,7 @@ pub struct ResolutionReport {
 /// precision the v0.1.0 Ollama daemon served (existing `search_vectors`
 /// rows were embedded with F16 weights); the reranker has no stored state,
 /// so it takes the 2× smaller/faster Q8_0.
-pub const EMBED_GGUF: &str = "bge-m3-F16.gguf";
+pub const EMBED_GGUF: &str = "bge-m3-FP16.gguf";
 pub const RERANK_GGUF: &str = "bge-reranker-v2-m3-Q8_0.gguf";
 
 fn models_dir() -> PathBuf {
