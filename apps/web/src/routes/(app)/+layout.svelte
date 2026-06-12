@@ -15,6 +15,7 @@
 	import { thingsStore } from "$lib/stores/things.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
+	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
@@ -78,6 +79,10 @@
 
 		// Start polling for subscription status
 		subscriptionStore.start();
+
+		// Start polling for setup/onboarding state (next-wins checklist,
+		// remote-access flip toast). Stops itself once everything is done.
+		setupStateStore.start();
 
 		// Post-update toast: show once per session if the server was updated
 		if (typeof sessionStorage !== "undefined") {
@@ -173,8 +178,21 @@
 		}
 		spaceStore.destroyUrlSync();
 		subscriptionStore.stop();
+		setupStateStore.stop();
 
 		// (workspace switching keyboard shortcuts removed — single workspace now)
+	});
+
+	// Remote-access flip toast: the verdict flipped to reachable mid-session.
+	// Session-only by design (no persistence) — the flag is consumed so it
+	// fires exactly once per flip; first-load is suppressed by the store.
+	$effect(() => {
+		if (setupStateStore.remoteAccessFlipped) {
+			setupStateStore.remoteAccessFlipped = false;
+			toast.success("Your box is now reachable from anywhere", {
+				description: setupStateStore.remoteAccess?.detail,
+			});
+		}
 	});
 
 	// Trial countdown toasts (day 5, 2, 1, 0)

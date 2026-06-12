@@ -6662,6 +6662,7 @@ dependencies = [
  "indicatif 0.17.11",
  "inventory",
  "lazy_static",
+ "libc",
  "mime_guess",
  "moka",
  "oauth2",

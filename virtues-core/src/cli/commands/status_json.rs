@@ -88,6 +88,9 @@ struct NetworkSection {
     has_global_ipv6: bool,
     /// One-line verdict. No literal addresses — keep paste-into-chat safe.
     headline: String,
+    /// Auto-noticed user-run overlay (Tailscale etc.) — interface name ONLY,
+    /// never its address (same paste-into-chat rule as above).
+    byo_ifname: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -125,6 +128,7 @@ fn collect_network() -> NetworkSection {
     NetworkSection {
         class: s.class.as_str().to_string(),
         has_global_ipv6: s.ipv6_global.is_some(),
+        byo_ifname: s.byo.as_ref().map(|b| b.ifname.clone()),
         headline: s.headline,
     }
 }

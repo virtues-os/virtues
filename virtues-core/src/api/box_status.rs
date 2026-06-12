@@ -241,6 +241,12 @@ pub struct SetupStep {
     /// Optional one-line human detail (e.g. the reachability verdict).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Optional machine-readable qualifier for steps with more than two
+    /// states (today only `remote_access`: "ipv6_direct" | "byo" | a
+    /// net-class string). The frontend treats it as cosmetic only — behavior
+    /// keys off `done`, copy comes from `detail`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -311,24 +317,28 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             title: "Box claimed",
             done: claimed > 0,
             detail: None,
+            kind: None,
         },
         SetupStep {
             id: "account",
             title: "Virtues account",
             done: s.subscription.billing_token,
             detail: None,
+            kind: None,
         },
         SetupStep {
             id: "named",
             title: "Box named",
             done: named,
             detail: named.then(|| format!("{hostname}.local")),
+            kind: None,
         },
         SetupStep {
             id: "network",
             title: "On your network",
             done: crate::cli::link::primary_ip().is_some(),
             detail: None,
+            kind: None,
         },
     ];
     let setup_complete = setup.iter().all(|s| s.done);
@@ -339,24 +349,22 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             title: "Connect a source",
             done: first_source > 0,
             detail: None,
+            kind: None,
         },
         SetupStep {
             id: "first_device",
             title: "Pair a device",
             done: first_device > 0,
             detail: None,
+            kind: None,
         },
-        SetupStep {
-            id: "remote_access",
-            title: "Reachable from anywhere",
-            done: net.ipv6_global.is_some(),
-            detail: Some(net.headline.clone()),
-        },
+        remote_access_step(&net),
         SetupStep {
             id: "first_sync",
             title: "First data synced",
             done: first_sync > 0,
             detail: None,
+            kind: None,
         },
     ];
 
@@ -365,6 +373,37 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         setup_complete,
         onboarding,
     })
+}
+
+/// The `remote_access` onboarding step, three-state. Pure so the states are
+/// unit-testable without a network.
+///
+/// "Auto-notice, never auto-enable" (docs/byo-networking.md): Virtues never
+/// starts or recommends an overlay, but a NAT'd box on a user-run one
+/// (Tailscale, a foreign WireGuard, …) IS reachable — at the overlay address —
+/// so the step is honestly `done`. `kind` qualifies the three states for
+/// renderers; behavior keys off `done`, copy off `detail`.
+fn remote_access_step(net: &crate::net_check::NetStatus) -> SetupStep {
+    let (done, kind) = if net.ipv6_global.is_some() {
+        // The doctrine's happy path: a global IPv6 to be reached at directly.
+        (true, "ipv6_direct")
+    } else if net.byo.is_some() {
+        // No direct path, but the user already runs their own transport.
+        (true, "byo")
+    } else {
+        // Not reachable from here — a weather report, not an error. The box
+        // re-checks per poll, so the step flips on its own wherever it lives.
+        (false, net.class.as_str())
+    };
+    SetupStep {
+        id: "remote_access",
+        title: "Reachable from anywhere",
+        done,
+        // `verdict_line` already prefers IPv6-direct, then the BYO transport,
+        // then the class headline — one copy source, no drift.
+        detail: Some(net.verdict_line()),
+        kind: Some(kind),
+    }
 }
 
 /// `GET /api/setup/state` — public-on-LAN like `/api/box/health`, and by the
@@ -383,5 +422,54 @@ pub async fn setup_state_handler(State(state): State<AppState>) -> impl IntoResp
             )
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net_check::{ByoTransport, NetClass, NetStatus};
+
+    fn net(class: NetClass, ipv6: Option<&str>, byo: Option<&str>) -> NetStatus {
+        NetStatus {
+            class,
+            ipv6_global: ipv6.map(|a| a.parse().unwrap()),
+            ipv4_source: Some("192.168.1.20".parse().unwrap()),
+            byo: byo.map(|ifname| ByoTransport {
+                ifname: ifname.to_string(),
+                addr: None,
+            }),
+            headline: "headline".to_string(),
+            guidance: String::new(),
+        }
+    }
+
+    #[test]
+    fn remote_access_three_states() {
+        // Global IPv6 → done via the direct path, headline as detail.
+        let step = remote_access_step(&net(NetClass::Ipv6Direct, Some("2001:db8::1"), None));
+        assert!(step.done);
+        assert_eq!(step.kind, Some("ipv6_direct"));
+        assert_eq!(step.detail.as_deref(), Some("headline"));
+
+        // NAT'd but on a user-run overlay → honestly done ("auto-notice,
+        // never auto-enable"), with the BYO verdict as detail.
+        let step = remote_access_step(&net(NetClass::NatNoIpv6, None, Some("tailscale0")));
+        assert!(step.done);
+        assert_eq!(step.kind, Some("byo"));
+        assert_eq!(
+            step.detail.as_deref(),
+            Some("Available via your own network (tailscale0).")
+        );
+
+        // No direct path, no overlay → not done; kind carries the net class.
+        let step = remote_access_step(&net(NetClass::NatNoIpv6, None, None));
+        assert!(!step.done);
+        assert_eq!(step.kind, Some("behind_nat"));
+        assert_eq!(step.detail.as_deref(), Some("headline"));
+
+        // id/title are stable across all three states.
+        assert_eq!(step.id, "remote_access");
+        assert_eq!(step.title, "Reachable from anywhere");
     }
 }
