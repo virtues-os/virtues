@@ -25,31 +25,34 @@ struct InitCommand: ParsableCommand {
         group.enter()
         Task {
             do {
-                // Validate token and get endpoint
-                let (endpoint, deviceName) = try await Config.validateToken(token.uppercased())
-                
-                print("✓ Token validated")
-                print("✓ Connected to: \(endpoint)")
-                print("✓ Device name: \(deviceName)")
-                
-                // Generate device ID
-                let deviceId = UUID().uuidString
-                
-                // Create and save config
+                // Consume the one-time pair token via the unified pair flow.
+                // The token is case-sensitive — do NOT uppercase it.
+                let pair = try await Config.pairConsume(token: token)
+
+                print("✓ Paired")
+                print("✓ Connected to: \(pair.endpoint)")
+
+                // Create and save config (bearer + action_ids from the server)
                 let config = Config(
-                    deviceToken: token.uppercased(),
-                    deviceId: deviceId,
-                    apiEndpoint: endpoint,
+                    bearer: pair.bearer,
+                    deviceId: pair.deviceId,
+                    apiEndpoint: pair.endpoint,
+                    actionIds: pair.actionIds,
                     createdAt: Date()
                 )
-                
+
                 try config.save()
-                
+
+                if config.actionIds["mac_activity"] == nil {
+                    print("⚠️ Warning: the box returned no 'mac_activity' action — uploads")
+                    print("   won't work until the box is updated. Re-run `init` after upgrading.")
+                }
+
                 print("✓ Configuration saved to ~/.virtues/config.json")
                 print("\nReady to start monitoring!")
                 print("Run 'virtues-collector start' to begin monitoring")
                 print("Run 'virtues-collector install' to install as background service")
-                
+
                 holder.config = config
             } catch {
                 holder.error = error

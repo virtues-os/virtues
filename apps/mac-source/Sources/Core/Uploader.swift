@@ -5,6 +5,10 @@ class Uploader {
     private let config: Config
     private var timer: DispatchSourceTimer?
 
+    /// Resolved `mac_activity` webhook action id. Normally comes from
+    /// `config.actionIds`; cached here if a one-shot refetch was needed.
+    private var cachedActionId: String?
+
     // Thread-safe state management
     private let stateQueue = DispatchQueue(label: "com.virtues.uploader.state")
     private var _retryDelay: TimeInterval = 60 // Start with 1 minute
@@ -50,7 +54,7 @@ class Uploader {
         self.queue = queue
         self.config = config
     }
-    
+
     func start() {
         print("Starting uploader (5-minute intervals)...")
 
@@ -72,17 +76,17 @@ class Uploader {
         newTimer.resume()
         self.timer = newTimer
     }
-    
+
     func stop() {
         timer?.cancel()
         timer = nil
         print("Uploader stopped")
     }
-    
+
     func uploadNow() async -> (uploaded: Int, failed: Int) {
         return await upload()
     }
-    
+
     @discardableResult
     private func upload() async -> (uploaded: Int, failed: Int) {
         // Check if uploads are paused due to auth failures
@@ -103,15 +107,10 @@ class Uploader {
         var totalUploaded = 0
         var totalFailed = 0
 
-        // Upload events
-        let eventsResult = await uploadEvents()
-        totalUploaded += eventsResult.uploaded
-        totalFailed += eventsResult.failed
-
-        // Upload messages
-        let messagesResult = await uploadMessages()
-        totalUploaded += messagesResult.uploaded
-        totalFailed += messagesResult.failed
+        // One combined batch → the single `mac_activity` webhook action.
+        let result = await uploadBatch()
+        totalUploaded += result.uploaded
+        totalFailed += result.failed
 
         // Log summary
         if totalUploaded > 0 || totalFailed > 0 {
@@ -125,228 +124,162 @@ class Uploader {
 
         return (totalUploaded, totalFailed)
     }
-    
-    private func uploadEvents() async -> (uploaded: Int, failed: Int) {
+
+    /// Upload all pending app events + iMessages as ONE batch to the
+    /// `mac_activity` webhook action, authenticated with the device bearer.
+    /// The action expects a flat payload with top-level `app_events` /
+    /// `browser_history` / `imessages` arrays (see `actions/mac_activity`).
+    private func uploadBatch() async -> (uploaded: Int, failed: Int) {
         do {
-            // Get pending events with their IDs
             let eventsWithIds = try queue.getPendingEvents()
-            
-            if eventsWithIds.isEmpty {
+            let messagesWithIds = try queue.getPendingMessages()
+            let pending = eventsWithIds.count + messagesWithIds.count
+            if pending == 0 {
                 return (0, 0)
             }
-            
-            print("Uploading \(eventsWithIds.count) events...")
-            
-            // Extract just the events for the payload
-            let events = eventsWithIds.map { $0.event }
-            
-            // Prepare payload
-            let payload: [String: Any] = [
-                "source": "mac",
-                "stream": "apps",
-                "device_id": config.deviceId,
-                "records": events.map { $0.toDictionary },
-                "timestamp": ISO8601DateFormatter().string(from: Date())
-            ]
-            
-            // Create request
-            guard let url = URL(string: "\(config.apiEndpoint)/ingest") else {
-                print("Invalid API endpoint")
-                return (0, events.count)
+
+            // Resolve the webhook target (from pair, else a one-shot refetch).
+            guard let actionId = await macActivityActionId() else {
+                print("⚠️ No 'mac_activity' action id — re-pair this collector " +
+                      "(`virtues-collector init <token>`). Skipping upload.")
+                return (0, pending)
             }
-            
+
+            print("Uploading \(eventsWithIds.count) app events + \(messagesWithIds.count) messages…")
+
+            // Map records to the action's field contract. app_events already
+            // match (`timestamp`, `bundle_id`, `app_name`); iMessages need
+            // `message_id`→`guid` and `handle_id`→`from_handle`.
+            let appEvents = eventsWithIds.map { $0.event.toDictionary }
+            let imessages = messagesWithIds.map { mapMessageForWebhook($0.message.toDictionary) }
+            let payload: [String: Any] = [
+                "app_events": appEvents,
+                "browser_history": [],   // no browser collector in mac-source yet
+                "imessages": imessages,
+            ]
+
+            guard let url = URL(string: "\(config.apiEndpoint)/webhook/\(actionId)") else {
+                print("Invalid API endpoint")
+                return (0, pending)
+            }
+
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(config.deviceToken, forHTTPHeaderField: "X-Device-Token")
+            request.setValue("Bearer \(config.bearer)", forHTTPHeaderField: "Authorization")
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            
-            // Send request
+
             let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode == 200 {
-                    // Success - mark events as uploaded
-                    let eventIds = eventsWithIds.map { $0.id }
-                    try queue.markEventsAsUploaded(eventIds)
-
-                    // Clean up old events
-                    try queue.cleanupOldEvents()
-
-                    print("✓ Uploaded \(events.count) events successfully")
-                    retryDelay = 60 // Reset retry delay on success
-                    consecutive401Errors = 0 // Reset auth error counter
-
-                    // Reset pause state on successful upload
-                    if isAuthPaused {
-                        print("🔄 Auth successful - resuming normal uploads")
-                        isAuthPaused = false
-                        authPauseUntil = nil
-                        authPauseDuration = 3600 // Reset to 1 hour
-                    }
-
-                    return (events.count, 0)
-                } else if httpResponse.statusCode == 401 {
-                    print("❌ Upload failed: Authentication error (401)")
-                    if let body = String(data: data, encoding: .utf8) {
-                        print("   Response: \(body)")
-                    }
-
-                    consecutive401Errors += 1
-                    print("   Consecutive 401 errors: \(consecutive401Errors)/\(max401Errors)")
-
-                    if consecutive401Errors >= max401Errors {
-                        // Pause uploads with exponential backoff instead of stopping completely
-                        let pauseMinutes = Int(authPauseDuration / 60)
-                        print("❌ CRITICAL: Auth failed \(consecutive401Errors) times - pausing uploads for \(pauseMinutes) minutes")
-                        print("   Your device may have been unpaired or the source deleted")
-                        print("   Uploads will automatically resume after pause expires")
-                        print("   Or re-pair this device to resume immediately")
-
-                        authPauseUntil = Date().addingTimeInterval(authPauseDuration)
-                        isAuthPaused = true
-
-                        // Double pause duration for next time (exponential backoff)
-                        authPauseDuration = min(authPauseDuration * 2, 24 * 3600) // Max 24 hours
-
-                        // Notify callback
-                        onAuthFailure?()
-                    }
-
-                    return (0, events.count)
-                } else {
-                    print("Upload failed with status: \(httpResponse.statusCode)")
-                    if let body = String(data: data, encoding: .utf8) {
-                        print("Response: \(body)")
-                    }
-
-                    // Reset 401 counter for non-auth errors
-                    consecutive401Errors = 0
-
-                    // Exponential backoff
-                    retryDelay = min(retryDelay * 2, maxRetryDelay)
-                    return (0, events.count)
-                }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return (0, pending)
             }
-            
-            return (0, events.count)
-            
+
+            if httpResponse.statusCode == 200 {
+                try queue.markEventsAsUploaded(eventsWithIds.map { $0.id })
+                try queue.markMessagesAsUploaded(messagesWithIds.map { $0.id })
+                try queue.cleanupOldEvents()
+                try queue.cleanupOldMessages()
+
+                print("✓ Uploaded \(eventsWithIds.count) events + \(messagesWithIds.count) messages")
+                retryDelay = 60
+                consecutive401Errors = 0
+                if isAuthPaused {
+                    print("🔄 Auth successful - resuming normal uploads")
+                    isAuthPaused = false
+                    authPauseUntil = nil
+                    authPauseDuration = 3600
+                }
+                return (pending, 0)
+            } else if httpResponse.statusCode == 401 {
+                handle401(data)
+                return (0, pending)
+            } else {
+                print("Upload failed with status: \(httpResponse.statusCode)")
+                if let body = String(data: data, encoding: .utf8) {
+                    print("Response: \(body)")
+                }
+                consecutive401Errors = 0
+                retryDelay = min(retryDelay * 2, maxRetryDelay)
+                return (0, pending)
+            }
         } catch {
-            print("Upload events error: \(error)")
+            print("Upload error: \(error)")
             retryDelay = min(retryDelay * 2, maxRetryDelay)
             return (0, 0)
         }
     }
-    
-    private func uploadMessages() async -> (uploaded: Int, failed: Int) {
-        do {
-            // Get pending messages with their IDs
-            let messagesWithIds = try queue.getPendingMessages()
-            
-            if messagesWithIds.isEmpty {
-                return (0, 0)
-            }
-            
-            print("Uploading \(messagesWithIds.count) messages...")
-            
-            // Extract just the messages for the payload
-            let messages = messagesWithIds.map { $0.message }
-            
-            // Prepare payload
-            let payload: [String: Any] = [
-                "source": "mac",
-                "stream": "imessage",
-                "device_id": config.deviceId,
-                "records": messages.map { $0.toDictionary },
-                "timestamp": ISO8601DateFormatter().string(from: Date())
-            ]
-            
-            // Create request
-            guard let url = URL(string: "\(config.apiEndpoint)/ingest") else {
-                print("Invalid API endpoint")
-                return (0, messages.count)
-            }
-            
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(config.deviceToken, forHTTPHeaderField: "X-Device-Token")
-            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-            
-            // Send request
-            let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode == 200 {
-                    // Success - mark messages as uploaded
-                    let messageIds = messagesWithIds.map { $0.id }
-                    try queue.markMessagesAsUploaded(messageIds)
 
-                    // Clean up old messages
-                    try queue.cleanupOldMessages()
-
-                    print("✓ Uploaded \(messages.count) messages successfully")
-                    retryDelay = 60 // Reset retry delay on success
-                    consecutive401Errors = 0 // Reset auth error counter
-
-                    // Reset pause state on successful upload
-                    if isAuthPaused {
-                        print("🔄 Auth successful - resuming normal uploads")
-                        isAuthPaused = false
-                        authPauseUntil = nil
-                        authPauseDuration = 3600 // Reset to 1 hour
-                    }
-
-                    return (messages.count, 0)
-                } else if httpResponse.statusCode == 401 {
-                    print("❌ Upload messages failed: Authentication error (401)")
-                    if let body = String(data: data, encoding: .utf8) {
-                        print("   Response: \(body)")
-                    }
-
-                    consecutive401Errors += 1
-                    print("   Consecutive 401 errors: \(consecutive401Errors)/\(max401Errors)")
-
-                    if consecutive401Errors >= max401Errors {
-                        // Pause uploads with exponential backoff instead of stopping completely
-                        let pauseMinutes = Int(authPauseDuration / 60)
-                        print("❌ CRITICAL: Auth failed \(consecutive401Errors) times - pausing uploads for \(pauseMinutes) minutes")
-                        print("   Your device may have been unpaired or the source deleted")
-                        print("   Uploads will automatically resume after pause expires")
-                        print("   Or re-pair this device to resume immediately")
-
-                        authPauseUntil = Date().addingTimeInterval(authPauseDuration)
-                        isAuthPaused = true
-
-                        // Double pause duration for next time (exponential backoff)
-                        authPauseDuration = min(authPauseDuration * 2, 24 * 3600) // Max 24 hours
-
-                        // Notify callback
-                        onAuthFailure?()
-                    }
-
-                    return (0, messages.count)
-                } else {
-                    print("Upload messages failed with status: \(httpResponse.statusCode)")
-                    if let body = String(data: data, encoding: .utf8) {
-                        print("Response: \(body)")
-                    }
-
-                    // Reset 401 counter for non-auth errors
-                    consecutive401Errors = 0
-
-                    // Exponential backoff
-                    retryDelay = min(retryDelay * 2, maxRetryDelay)
-                    return (0, messages.count)
-                }
-            }
-            
-            return (0, messages.count)
-            
-        } catch {
-            print("Upload messages error: \(error)")
-            retryDelay = min(retryDelay * 2, maxRetryDelay)
-            return (0, 0)
+    /// Shared 401 handling — count, and pause uploads with exponential backoff
+    /// after `max401Errors` consecutive failures (device likely unpaired).
+    private func handle401(_ data: Data) {
+        print("❌ Upload failed: Authentication error (401)")
+        if let body = String(data: data, encoding: .utf8) {
+            print("   Response: \(body)")
         }
+        consecutive401Errors += 1
+        print("   Consecutive 401 errors: \(consecutive401Errors)/\(max401Errors)")
+
+        if consecutive401Errors >= max401Errors {
+            let pauseMinutes = Int(authPauseDuration / 60)
+            print("❌ CRITICAL: Auth failed \(consecutive401Errors) times - pausing uploads for \(pauseMinutes) minutes")
+            print("   Your device may have been unpaired or the source deleted")
+            print("   Re-pair this device to resume immediately")
+
+            authPauseUntil = Date().addingTimeInterval(authPauseDuration)
+            isAuthPaused = true
+            authPauseDuration = min(authPauseDuration * 2, 24 * 3600) // Max 24 hours
+            onAuthFailure?()
+        }
+    }
+
+    /// The `mac_activity` action id: from the paired config, else a cached
+    /// value, else a one-shot refetch from `/api/devices/action-ids` (covers a
+    /// config that predates the box-side fanout fix).
+    private func macActivityActionId() async -> String? {
+        if let id = config.actionIds["mac_activity"] {
+            return id
+        }
+        if let id = cachedActionId {
+            return id
+        }
+        if let id = await refetchMacActivityActionId() {
+            cachedActionId = id
+            return id
+        }
+        return nil
+    }
+
+    private func refetchMacActivityActionId() async -> String? {
+        guard let url = URL(string: "\(config.apiEndpoint)/api/devices/action-ids") else {
+            return nil
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(config.bearer)", forHTTPHeaderField: "Authorization")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ids = json["action_ids"] as? [String: String] else {
+                return nil
+            }
+            return ids["mac_activity"]
+        } catch {
+            return nil
+        }
+    }
+
+    /// Rename the iMessage record keys to the `mac_activity` action's contract
+    /// (`message_id`→`guid`, `handle_id`→`from_handle`). The action drops any
+    /// message with an empty `guid`, so the rename is required.
+    private func mapMessageForWebhook(_ dict: [String: Any]) -> [String: Any] {
+        var out = dict
+        if let mid = out["message_id"] {
+            out["guid"] = mid
+        }
+        if let handle = out["handle_id"] {
+            out["from_handle"] = handle
+        }
+        return out
     }
 }
