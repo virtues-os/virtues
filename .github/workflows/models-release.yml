@@ -1,0 +1,78 @@
+# Populates the dedicated `models-1` release with the GGUF model assets the
+# installer downloads (see tools/virtues-installer/src/config.rs
+# `models_base`). Models live on their own stable tag — separate from code
+# releases — because they change rarely and weigh ~2 GB; re-uploading them
+# per code release would be wasteful and would churn the URLs the installer
+# pins.
+#
+# Manual-dispatch only, and deliberately so: adding or changing a model is a
+# provenance decision (the upstream GGUFs are community conversions — vet
+# the conversion + run the embed/rerank fixtures on a staging box BEFORE
+# dispatching). The workflow re-hosts the files under our release with
+# .sha256 sidecars, which is what lets the installer hard-fail on mismatch
+# and never depend on a third-party host at install time.
+#
+# To ship a model UPDATE (e.g. a newer reranker): upload under a NEW file
+# name and bump the names in installer config.rs + virtues-core
+# model_cache.rs. Never replace an asset in place — boxes skip re-downloading
+# files they already have, keyed by name.
+
+name: Release model assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      embed_url:
+        description: 'Source URL for the embedding GGUF (vetted!)'
+        required: true
+        default: 'https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-F16.gguf'
+        type: string
+      rerank_url:
+        description: 'Source URL for the reranker GGUF (vetted!)'
+        required: true
+        default: 'https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf'
+        type: string
+      tag:
+        description: 'Models release tag to (create and) upload to'
+        required: true
+        default: 'models-1'
+        type: string
+
+permissions:
+  contents: write  # create the models release + upload assets
+
+jobs:
+  upload:
+    name: Fetch, checksum, upload
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download GGUFs from vetted upstream
+        run: |
+          mkdir -p dist
+          # File names on OUR release must match installer config.rs /
+          # model_cache.rs constants — derive them from the source URLs so
+          # a mismatch is loud here, not at install time on someone's box.
+          for url in "${{ inputs.embed_url }}" "${{ inputs.rerank_url }}"; do
+            name="$(basename "$url")"
+            echo "fetching $name"
+            curl -fSL --retry 3 -o "dist/$name" "$url"
+            (cd dist && sha256sum "$name" > "$name.sha256")
+          done
+          ls -lh dist/
+
+      - name: Upload to models release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: 'Model assets (${{ inputs.tag }})'
+          body: >
+            GGUF model assets for the Virtues inference sidecars.
+            Downloaded by the installer; verified against the .sha256
+            sidecars. Do not replace assets in place — ship updates under
+            new file names on a new dispatch.
+          files: |
+            dist/*
+          fail_on_unmatched_files: true
+          draft: false
