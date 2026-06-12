@@ -24,10 +24,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Init command should be handled in main.rs");
         }
 
-        Commands::Link => {
+        Commands::Login { .. } => {
             // Handled in main.rs before the Virtues client is created — it
             // only needs the DB pool, not the full app stack.
-            unreachable!("Link command should be handled in main.rs");
+            unreachable!("Login command should be handled in main.rs");
         }
 
         Commands::Sudo { .. } => {
@@ -132,7 +132,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
                 .map_err(|e| e.to_string())?;
         }
 
-        Commands::Login => {
+        Commands::AccountLogin => {
             // Pairs with `virtues init`'s [1] Log in branch; same idempotent
             // migration guard as Subscribe so a standalone retry on a fresh
             // box doesn't hit a missing-table error mid-login.

@@ -96,3 +96,68 @@ pub fn reachable_pair_urls(token: &str, is_dev: bool, web_port: &str) -> Vec<Rea
     });
     urls
 }
+
+/// The URL to encode in the handoff QR. Prefer the raw LAN IP — phones
+/// (notably Android) fumble `.local` resolution, and the QR is precisely the
+/// phone path (docs/onboarding.md: "LAN IP, not mDNS, inside the QR"). Falls
+/// back to the mDNS name when no address is discoverable.
+pub fn qr_pair_url(token: &str) -> String {
+    let host = match primary_ip() {
+        Some(IpAddr::V4(v4)) => v4.to_string(),
+        Some(IpAddr::V6(v6)) => format!("[{v6}]"),
+        None => mdns_host(),
+    };
+    format!("http://{host}:{INTERNAL_PORT}/pair#t={token}")
+}
+
+/// Outcome of waiting on a minted pair token.
+pub enum PairWaitOutcome {
+    /// The human opened the link — a device/session consumed the token.
+    Consumed,
+    /// The token expired (or was denied) before anyone arrived.
+    Expired,
+}
+
+/// Block until the minted pair token is consumed or expires, polling the DB.
+///
+/// After ~90s of silence, print the client-isolation hint
+/// (docs/onboarding.md "hostile networks"): the only reliable box-side signal
+/// for a network that blocks device-to-device traffic is "the link was
+/// printed and nobody arrived." The copy stays setup-scoped — hotspot or a
+/// network you control; no VPN/overlay talk at the moment of max fragility.
+pub async fn wait_for_pair(
+    pool: &sqlx::PgPool,
+    token_id: &str,
+) -> anyhow::Result<PairWaitOutcome> {
+    const HINT_AFTER: std::time::Duration = std::time::Duration::from_secs(90);
+    let start = std::time::Instant::now();
+    let mut hinted = false;
+    loop {
+        let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT status, expires_at FROM app_pair_token WHERE id = $1",
+        )
+        .bind(token_id)
+        .fetch_optional(pool)
+        .await?;
+        let Some((status, expires_at)) = row else {
+            return Ok(PairWaitOutcome::Expired);
+        };
+        match status.as_str() {
+            "consumed" => return Ok(PairWaitOutcome::Consumed),
+            "expired" | "denied" => return Ok(PairWaitOutcome::Expired),
+            _ => {}
+        }
+        if chrono::Utc::now() > expires_at {
+            return Ok(PairWaitOutcome::Expired);
+        }
+        if !hinted && start.elapsed() >= HINT_AFTER {
+            hinted = true;
+            println!();
+            println!("  still waiting — if the page won't load on your phone/laptop, this");
+            println!("  network may block device-to-device traffic (common in offices and");
+            println!("  hotels). → use your phone's hotspot, or a network you control.");
+            println!("  You can move the box to another network after setup.");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
