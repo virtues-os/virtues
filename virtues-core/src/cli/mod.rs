@@ -7,6 +7,7 @@ pub mod link;
 pub mod report_crash;
 pub mod restore;
 pub mod types;
+pub mod uninstall;
 pub mod upgrade;
 
 use crate::Virtues;
@@ -49,6 +50,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — and intentionally does NOT touch the DB; the new
             // binary's `migrate` does that after the binary swap.
             unreachable!("Upgrade command should be handled in main.rs");
+        }
+
+        Commands::Uninstall { .. } => {
+            // Same — must work even when the DB pool can't be built;
+            // a broken install is uninstall's primary use case.
+            unreachable!("Uninstall command should be handled in main.rs");
         }
 
         Commands::Migrate => {

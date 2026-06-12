@@ -96,6 +96,29 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Remove Virtues from this machine (box installs; requires root).
+    ///
+    /// Probes for every artifact the installer creates and prints the exact
+    /// manifest before touching anything. Confirmation = typing this box's
+    /// hostname. Shared infra (Postgres server, Ollama, Avahi) stays.
+    Uninstall {
+        /// Keep all data: /var/lib/virtues (env + ENCRYPTION KEY + lake),
+        /// the Postgres db/role, and the system user. A later reinstall
+        /// picks the box back up. This is the dev-loop tier.
+        #[arg(long)]
+        keep_data: bool,
+
+        /// Also remove the pulled Ollama embedding model (bge-m3).
+        /// Ollama itself always stays.
+        #[arg(long)]
+        purge_models: bool,
+
+        /// Skip the typed-hostname confirmation (scripts/CI). Root is
+        /// still required.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Self-update from the latest GitHub Release.
     ///
     /// Stops the service, swaps `/usr/local/bin/virtues` with the new binary

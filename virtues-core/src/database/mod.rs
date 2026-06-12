@@ -105,6 +105,14 @@ impl Database {
     /// Poll `SELECT 1` until Postgres responds or we exhaust the budget.
     /// One log line per second so `journalctl -u virtues` shows progress
     /// instead of a wall of silence.
+    ///
+    /// Permanent errors fail IMMEDIATELY: auth/role/database errors don't fix
+    /// themselves by waiting, and burning the 30s budget on them used to bury
+    /// the real cause ("peer authentication failed for user adam") under a
+    /// misleading "did not accept connections within 30s" timeout. The classic
+    /// trigger is running a CLI command as the wrong OS user on a box install
+    /// (Unix socket + peer auth maps OS user → Postgres role), so the error
+    /// carries that hint.
     async fn wait_for_postgres(&self, budget: std::time::Duration) -> Result<()> {
         let start = std::time::Instant::now();
         let mut emitted_waiting = false;
@@ -112,6 +120,23 @@ impl Database {
             match sqlx::query("SELECT 1").execute(&self.pool).await {
                 Ok(_) => return Ok(()),
                 Err(e) => {
+                    let msg = e.to_string();
+                    // Auth/identity failures are permanent — retrying is noise.
+                    let permanent = [
+                        "peer authentication failed",
+                        "password authentication failed",
+                        "does not exist", // role "adam" / database "virtues" does not exist
+                        "no pg_hba.conf entry",
+                    ]
+                    .iter()
+                    .any(|p| msg.contains(p));
+                    if permanent {
+                        return Err(Error::Database(format!(
+                            "Postgres refused the connection: {msg}\n  \
+                             hint: on a box install, CLI commands must run as the \
+                             service user — try: sudo -u virtues virtues <command>"
+                        )));
+                    }
                     if start.elapsed() >= budget {
                         return Err(Error::Database(format!(
                             "Postgres did not accept connections within {}s: {e}",

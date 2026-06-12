@@ -47,6 +47,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = dotenv::from_path("../.env");
         }
 
+        // On a box install, DB-touching CLI commands must run as the `virtues`
+        // service user (Unix-socket peer auth maps OS user → Postgres role).
+        // Running `virtues init` as adam/root used to burn a fake 30s
+        // "Postgres did not accept connections" timeout. Self-correct instead.
+        #[cfg(unix)]
+        maybe_reexec_as_service_user();
+
         // Initialize tracing.
         //
         // Interactive subcommands share stdout with cliclack/dialoguer wizards
@@ -387,6 +394,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues uninstall` ────────────────────────────────────────────────
+    // Destructive, root-gated, typed-hostname confirm. Handled here (not in
+    // `cli::run`) because it must not require a healthy DB pool — uninstall
+    // is exactly what you reach for when the install is broken.
+    if let Some(Commands::Uninstall { keep_data, purge_models, force }) = &cli.command {
+        match virtues::cli::uninstall::run(*keep_data, *purge_models, *force).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: uninstall failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // ─── `virtues upgrade` ──────────────────────────────────────────────────
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
@@ -559,39 +580,80 @@ fn print_account_intro() {
 /// Print the inference stack's hardware-resolution plan: which accelerator is
 /// active, whether this build links CUDA, the chosen ONNX precision, and where
 /// each model's files come from (baked vs download). Pure — no DB, no network,
-/// Print the `virtues link` + `virtues init` output: the pair URL for the box
-/// itself (loopback — works in Chromium on this Jetson without any cert dance),
-/// plus a hint that other devices reach the box through a paired Virtues client
-/// daemon (v0.2). Shared between `Link` and `Init`.
+/// Print the `virtues link` + `virtues init` handoff: the pair URLs
+/// (mDNS-first, IP fallback, loopback last) + expiry + a one-line remote-access
+/// verdict. Deliberately terse — the deep network report lives behind
+/// `virtues doctor`. Shared between `Link` and `Init`.
 fn print_link_output(token: &str) {
     use virtues::cli::link::reachable_pair_urls;
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     let web_port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
     let urls = reachable_pair_urls(token, is_dev, &web_port);
 
+    // Onboarding doctrine: ONE clear handoff, no wall of text. The deep
+    // network report lives behind `virtues doctor` — here we show the URLs,
+    // the expiry, and a single honest remote-access verdict line.
     println!();
     println!("─────────────────────────────────────────────────────────");
-    println!("  Open this in your browser to log in:");
+    println!("  Log in to your box — open this on a device on your network:");
     println!();
     for url in &urls {
         println!("    {:<18}  {}", format!("{}:", url.label), url.url);
     }
     println!();
-    println!("  Notes:");
-    println!("    • From this Jetson: open Chromium and hit the localhost URL above.");
-    println!("    • From another device: install the Virtues client (v0.2 — coming soon).");
-    println!("    • Link expires in 15 minutes. Single-use.");
-
-    // Honest reachability verdict — tell the user up front whether direct
-    // remote access will work on this network, rather than letting them
-    // discover a walled wifi the hard way later.
+    println!("  Link expires in 15 minutes · single use");
     let net = virtues::net_check::compute_net_status();
-    println!();
-    println!("  Remote access from outside your network:");
-    println!("    • {}", net.headline);
-    println!("    • {}", net.guidance);
-    println!("    (run `virtues doctor` for the full network report)");
+    println!("  Remote access: {}  (details: virtues doctor)", net.headline);
     println!("─────────────────────────────────────────────────────────");
+}
+
+/// Re-exec `sudo -u virtues <argv>` when a DB-touching CLI command runs as the
+/// wrong OS user on a box install.
+///
+/// Box installs talk to Postgres over the Unix socket with peer auth, so the
+/// OS user IS the database identity: only the `virtues` service user (and the
+/// systemd unit, which runs as it) can connect. A human SSH'd in as adam (or
+/// root) typing `virtues init` would get an instant-but-permanent auth error.
+/// Rather than telling them to retype the command, become the right user.
+///
+/// Guards (all must hold, so dev machines are never touched):
+///   - argv[1] is one of the DB-touching interactive commands
+///   - `/var/lib/virtues/virtues.env` exists (the box-install marker)
+///   - the current user isn't already `virtues`
+///
+/// On exec failure (no sudo rights, etc.) we print the one-line manual hint
+/// and exit — never fall through to the misleading Postgres timeout.
+#[cfg(unix)]
+fn maybe_reexec_as_service_user() {
+    const DB_COMMANDS: &[&str] = &[
+        "init", "link", "login", "subscribe", "sudo", "backup", "status", "migrate", "seed",
+    ];
+    let Some(cmd) = std::env::args().nth(1) else { return };
+    if !DB_COMMANDS.contains(&cmd.as_str()) {
+        return;
+    }
+    if !std::path::Path::new("/var/lib/virtues/virtues.env").exists() {
+        return;
+    }
+    let user = std::process::Command::new("id")
+        .arg("-un")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    if user.is_empty() || user == "virtues" {
+        return;
+    }
+    eprintln!("(running as '{user}' — switching to the 'virtues' service user)");
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new("sudo")
+        .arg("-u")
+        .arg("virtues")
+        .args(std::env::args())
+        .exec();
+    eprintln!("could not switch user: {err}");
+    eprintln!("hint: run it as the service user yourself: sudo -u virtues virtues {cmd}");
+    std::process::exit(1);
 }
 
 /// no session construction.
