@@ -219,3 +219,171 @@ pub async fn box_health_handler(State(state): State<AppState>) -> impl IntoRespo
         }
     }
 }
+
+// ─── Setup / onboarding state machine (docs/onboarding.md) ──────────────────
+//
+// One source of truth, three renderers: the phone wizard, the appliance
+// panel, and `virtues status`. Two distinct lists by design:
+//
+//   * `setup` — the wizard's REQUIRED core. Ends early ("setup ≠ onboarding"):
+//     claimed → account → named → on-network. Everything else is deferred.
+//   * `onboarding` — the dashboard's "next wins" checklist for the first
+//     week: progressive, abandonable, never blocking.
+//
+// Every signal is DERIVED from existing state (vault, credentials, runs,
+// hostname, net_check) — there is intentionally no "wizard progress" table,
+// so the state survives reinstalls, restores, and out-of-band changes.
+
+/// One step of setup or onboarding, public-safe (booleans + copy only).
+#[derive(Debug, Clone, Serialize)]
+pub struct SetupStep {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub done: bool,
+    /// Optional one-line human detail (e.g. the reachability verdict).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SetupState {
+    pub setup: Vec<SetupStep>,
+    pub setup_complete: bool,
+    pub onboarding: Vec<SetupStep>,
+}
+
+/// The hostname the installer assigns before the user names the box.
+const DEFAULT_HOSTNAME: &str = "virtues";
+
+/// Compute the setup/onboarding state. Reuses [`compute_status`] for the
+/// vault-backed signals so the wizard, panel, and CLI can never disagree
+/// with `/api/box/status`.
+pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
+    let s = compute_status(pool).await?;
+    let net = crate::net_check::compute_net_status();
+
+    // Claimed = at least one device has paired (the pair token was consumed
+    // by an owner's browser or phone). Ownership-by-proximity, see
+    // docs/onboarding.md "trust on first boot".
+    let claimed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+    // Named = the operator replaced the installer's default hostname (the
+    // wizard's "name your box" step sets the Avahi/mDNS name).
+    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|h| h.trim().to_string())
+        .unwrap_or_default();
+    let named = !hostname.is_empty() && hostname != DEFAULT_HOSTNAME;
+
+    // First source = an active cloud-source credential (OAuth etc.) — not a
+    // paired device's self-credential, not the BYO-key pseudo-source.
+    let first_source: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credentials \
+         WHERE status = 'active' AND device_id IS NULL \
+           AND source_id NOT IN ($1, $2)",
+    )
+    .bind("__device__")
+    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    // First device = a paired collector (phone/Mac) with its own credential.
+    let first_device: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM credentials WHERE device_id IS NOT NULL AND status = 'active'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    // First sync = any action run has ever succeeded (data actually landed).
+    let first_sync: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app_action_runs WHERE status = 'success'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    let setup = vec![
+        SetupStep {
+            id: "claimed",
+            title: "Box claimed",
+            done: claimed > 0,
+            detail: None,
+        },
+        SetupStep {
+            id: "account",
+            title: "Virtues account",
+            done: s.subscription.billing_token,
+            detail: None,
+        },
+        SetupStep {
+            id: "named",
+            title: "Box named",
+            done: named,
+            detail: named.then(|| format!("{hostname}.local")),
+        },
+        SetupStep {
+            id: "network",
+            title: "On your network",
+            done: crate::cli::link::primary_ip().is_some(),
+            detail: None,
+        },
+    ];
+    let setup_complete = setup.iter().all(|s| s.done);
+
+    let onboarding = vec![
+        SetupStep {
+            id: "first_source",
+            title: "Connect a source",
+            done: first_source > 0,
+            detail: None,
+        },
+        SetupStep {
+            id: "first_device",
+            title: "Pair a device",
+            done: first_device > 0,
+            detail: None,
+        },
+        SetupStep {
+            id: "remote_access",
+            title: "Reachable from anywhere",
+            done: net.ipv6_global.is_some(),
+            detail: Some(net.headline.clone()),
+        },
+        SetupStep {
+            id: "first_sync",
+            title: "First data synced",
+            done: first_sync > 0,
+            detail: None,
+        },
+    ];
+
+    Ok(SetupState {
+        setup,
+        setup_complete,
+        onboarding,
+    })
+}
+
+/// `GET /api/setup/state` — public-on-LAN like `/api/box/health`, and by the
+/// same argument: the wizard and the appliance panel must render it before
+/// any owner session exists, and it carries only booleans, step copy, and the
+/// already-public reachability verdict (plus the mDNS name once the owner has
+/// chosen it — which mDNS broadcasts to the LAN anyway).
+pub async fn setup_state_handler(State(state): State<AppState>) -> impl IntoResponse {
+    match compute_setup_state(state.db.pool()).await {
+        Ok(setup) => (StatusCode::OK, Json(setup)).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "setup state failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
+    }
+}

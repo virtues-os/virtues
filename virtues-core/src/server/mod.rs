@@ -188,6 +188,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/box/health",
             get(crate::api::box_status::box_health_handler),
         )
+        // Setup/onboarding state machine (docs/onboarding.md) — public-on-LAN
+        // for the same reason as /api/box/health: the wizard + panel render it
+        // pre-auth, and it carries only booleans + step copy.
+        .route(
+            "/api/setup/state",
+            get(crate::api::box_status::setup_state_handler),
+        )
         // Auth — pair-only model. Public consume + session probe + signout.
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
         // protected_routes block below.
