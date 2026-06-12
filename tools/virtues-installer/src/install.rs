@@ -272,11 +272,27 @@ WantedBy=multi-user.target
 /// keeps every render path single-path. (A terminal that still mangles
 /// glyphs after this has a client-side font problem the box can't fix.)
 pub async fn ensure_utf8_locale() -> Result<()> {
-    let session_is_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
-        .iter()
-        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
-        .map(|v| v.to_ascii_lowercase().replace('-', "").contains("utf8"))
-        .unwrap_or(false);
+    // `locale charmap` reports the charmap of the locale that ACTUALLY
+    // resolved — not what the env claims. The distinction matters: ssh
+    // forwards the client's LANG (e.g. en_US.UTF-8), but if the box never
+    // generated that locale, setlocale silently falls back to C and
+    // locale-aware programs (tmux, less) mangle multibyte output while the
+    // env still says "UTF-8". Env sniffing is only the fallback for images
+    // without the `locale` binary.
+    let session_is_utf8 = match tokio::process::Command::new("locale")
+        .arg("charmap")
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().eq_ignore_ascii_case("utf-8")
+        }
+        _ => ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+            .map(|v| v.to_ascii_lowercase().replace('-', "").contains("utf8"))
+            .unwrap_or(false),
+    };
     if session_is_utf8 {
         ui::skip("Locale already UTF-8");
         return Ok(());
@@ -293,10 +309,12 @@ pub async fn ensure_utf8_locale() -> Result<()> {
         ui::ok("System locale → C.UTF-8 (wrote /etc/default/locale)");
     }
 
-    // Make THIS run consistent too: the var survives the exec into
-    // `virtues init` (sudo's default env_keep preserves LANG), so the very
-    // first handoff/QR already renders under a UTF-8 locale.
+    // Make THIS run consistent too: the vars survive the exec into
+    // `virtues init` (sudo's default env_keep preserves LANG/LC_*), so the
+    // very first handoff/QR already renders under a UTF-8 locale. LC_ALL too:
+    // a forwarded-but-ungenerated LC_ALL would otherwise override LANG.
     std::env::set_var("LANG", "C.UTF-8");
+    std::env::set_var("LC_ALL", "C.UTF-8");
     Ok(())
 }
 

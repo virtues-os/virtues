@@ -24,10 +24,17 @@ GITHUB_OWNER="${VIRTUES_GITHUB_OWNER:-virtues-os}"
 GITHUB_REPO="${VIRTUES_GITHUB_REPO:-virtues}"
 VIRTUES_VERSION="${VIRTUES_VERSION:-latest}"
 
-# Output is pure ASCII on purpose: bootstrap runs BEFORE the installer's
-# ensure_utf8_locale step, so this is the one moment in the journey where a
-# LANG=C box (or a tmux started under one) would mangle multibyte glyphs.
-# The brand mark and real UI begin in the installer, after the locale is fixed.
+# Brand mark. Bootstrap runs BEFORE the installer's ensure_utf8_locale step,
+# but ssh forwards the client's LANG/LC_* (SendEnv on stock clients, AcceptEnv
+# on Debian/Ubuntu sshd) — so the locale env here is evidence about the very
+# terminal that will render this output. UTF-8 locale → show the real mark;
+# otherwise (serial console, LANG=C, ancient setups) degrade to its ASCII
+# spelling rather than print mojibake. Errors stay pure ASCII always.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) MARK="∴" ;;
+    *) MARK=":." ;;
+esac
+
 die() { printf "  x  %s\n" "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "must be run as root. Try: curl -sSL https://get.virtues.com | sudo sh"
@@ -67,7 +74,7 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 INSTALLER="$TMPDIR/virtues-installer"
 
-printf "  :.  Fetching installer (%s)...\n" "$VIRTUES_VERSION"
+printf "  %s  Fetching installer (%s)...\n" "$MARK" "$VIRTUES_VERSION"
 curl -sSLfo "$INSTALLER" "$INSTALLER_URL" \
     || die "download failed: $INSTALLER_URL"
 
