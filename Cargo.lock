@@ -2117,7 +2117,7 @@ dependencies = [
  "hmac",
  "ip_network",
  "ip_network_table",
- "ipnetwork 0.21.1",
+ "ipnetwork",
  "libc",
  "log",
  "nix",
@@ -2781,15 +2781,6 @@ name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
-
-[[package]]
-name = "ipnetwork"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf466541e9d546596ee94f9f69590f89473455f88372423e0008fc1a7daf100e"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "ipnetwork"
@@ -6813,7 +6804,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.9.0",
  "hyper-util",
- "ipnetwork 0.20.0",
+ "ipnetwork",
  "keyring",
  "rand 0.8.5",
  "reqwest 0.12.28",
