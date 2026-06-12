@@ -74,13 +74,11 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     cmd.args(["-xzf", tar_path.to_str().unwrap(), "-C", tmpdir.path().to_str().unwrap()]);
     run_step(&format!("Extract {tar_name}"), cmd).await?;
 
-    // Install binary.
+    // Install binary (atomic replace — the dst is very likely the running box
+    // binary, so a plain truncating copy would hit ETXTBSY "text file busy").
     let bin_src = tmpdir.path().join("virtues");
     let bin_dst = cfg.binary_path();
-    fs::create_dir_all(bin_dst.parent().unwrap()).ok();
-    fs::copy(&bin_src, &bin_dst)
-        .with_context(|| format!("install {} → {}", bin_src.display(), bin_dst.display()))?;
-    fs::set_permissions(&bin_dst, fs::Permissions::from_mode(0o755))?;
+    install_executable(&bin_src, &bin_dst)?;
 
     // Install virtues-wireguard alongside it. Older tarballs may not ship the
     // WG binary yet (pre-v0.2.1 releases) — log a warning rather than failing
@@ -89,9 +87,7 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     let wg_src = tmpdir.path().join("virtues-wireguard");
     if wg_src.is_file() {
         let wg_dst = cfg.wg_binary_path();
-        fs::copy(&wg_src, &wg_dst)
-            .with_context(|| format!("install {} → {}", wg_src.display(), wg_dst.display()))?;
-        fs::set_permissions(&wg_dst, fs::Permissions::from_mode(0o755))?;
+        install_executable(&wg_src, &wg_dst)?;
         ui::ok(&format!("Installed virtues-wireguard → {}", wg_dst.display()));
     } else {
         ui::warn(
@@ -111,6 +107,31 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     }
 
     cfg.pinned_version = Some(version);
+    Ok(())
+}
+
+/// Install an executable to `dst` atomically, tolerating the common case where
+/// `dst` is a CURRENTLY-RUNNING binary (the systemd service). A plain
+/// `fs::copy` opens the destination with `O_TRUNC`, which the kernel refuses
+/// with ETXTBSY ("text file busy") while the file is being executed — that's
+/// the upgrade failure on a live box. Instead, stage the new bytes in a temp
+/// file in the SAME directory (so the rename stays on one filesystem) and
+/// `rename(2)` it over the target: rename only swaps the directory entry, so a
+/// running process keeps its old inode and the next exec picks up the new file.
+/// No need to stop the service to upgrade.
+fn install_executable(src: &Path, dst: &Path) -> Result<()> {
+    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(dir).ok();
+    let name = dst.file_name().and_then(|s| s.to_str()).unwrap_or("virtues");
+    let tmp = dir.join(format!(".{name}.new"));
+    let _ = fs::remove_file(&tmp); // clear any stale temp from a prior aborted run
+    fs::copy(src, &tmp)
+        .with_context(|| format!("staging {} → {}", src.display(), tmp.display()))?;
+    fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
+        .with_context(|| format!("chmod 0755 {}", tmp.display()))?;
+    fs::rename(&tmp, dst).with_context(|| {
+        format!("install {} → {} (atomic rename)", src.display(), dst.display())
+    })?;
     Ok(())
 }
 
