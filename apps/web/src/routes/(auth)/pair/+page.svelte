@@ -62,6 +62,21 @@
 				// already-consumed token. `replaceState` keeps the navigation
 				// stack clean.
 				history.replaceState(null, "", "/pair");
+				// Fresh box → the setup wizard owns the next steps (account,
+				// name). Set-up box → wherever the server pointed us. The state
+				// is derived server-side, so this is safe to probe every time.
+				try {
+					const s = await fetch("/api/setup/state");
+					if (s.ok) {
+						const setup = await s.json();
+						if (!setup.setup_complete) {
+							await goto("/setup", { replaceState: true });
+							return;
+						}
+					}
+				} catch (_e) {
+					/* fall through to the normal redirect */
+				}
 				await goto(data.redirect ?? "/", { replaceState: true });
 				return;
 			}
