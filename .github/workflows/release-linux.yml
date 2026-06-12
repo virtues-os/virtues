@@ -87,9 +87,12 @@ jobs:
           cargo build --release -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
 
       # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
-      # in v0.2.1+. Built here so testers can `curl` it from the release page
-      # without a separate workflow.
-      - name: Build virtues-client binary
+      # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
+      # compile must NOT gate shipping the box (`virtues`) + installer, so this
+      # step is non-fatal and packaging/upload below include it only when it
+      # actually built this run. The build break is tracked separately.
+      - name: Build virtues-client binary (preview, non-fatal)
+        continue-on-error: true
         run: |
           cargo build --release -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
@@ -135,8 +138,9 @@ jobs:
           WG_PATH="target/${{ matrix.target }}/release/virtues-wireguard"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
-          test -x "$CLIENT_PATH"    || (echo "virtues-client not built"      >&2 && exit 1)
           test -x "$WG_PATH"        || (echo "virtues-wireguard not built"   >&2 && exit 1)
+          # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
+          # (its build step is non-fatal); it's packaged below only if present.
 
           # Layout inside the main tarball:
           #   virtues             box binary, installer moves to /usr/local/bin/
@@ -157,16 +161,23 @@ jobs:
           cp "$INSTALLER_PATH" "dist/${INSTALLER_NAME}"
           (cd dist && sha256sum "${INSTALLER_NAME}" > "${INSTALLER_NAME}.sha256")
 
-          # Desktop daemon ships as a standalone binary too — testers download
-          # it directly, `sudo setcap cap_net_admin+ep` it, and run `virtues-client up`.
-          CLIENT_NAME="virtues-client-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
-          cp "$CLIENT_PATH" "dist/${CLIENT_NAME}"
-          (cd dist && sha256sum "${CLIENT_NAME}" > "${CLIENT_NAME}.sha256")
-
           echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
           echo "installer_name=${INSTALLER_NAME}" >> "$GITHUB_OUTPUT"
-          echo "client_name=${CLIENT_NAME}" >> "$GITHUB_OUTPUT"
+
+          # Desktop daemon ships as a standalone binary too — but it's a v0.2
+          # PREVIEW and may not have built (non-fatal step above). Package +
+          # advertise it ONLY when the binary exists this run; its absence must
+          # never fail the release. Testers download it directly, `sudo setcap
+          # cap_net_admin+ep` it, and run `virtues-client up`.
+          if [ -x "$CLIENT_PATH" ]; then
+            CLIENT_NAME="virtues-client-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
+            cp "$CLIENT_PATH" "dist/${CLIENT_NAME}"
+            (cd dist && sha256sum "${CLIENT_NAME}" > "${CLIENT_NAME}.sha256")
+            echo "client_name=${CLIENT_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::virtues-client (preview daemon) did not build for ${{ matrix.arch }}; releasing box + installer without it"
+          fi
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -177,13 +188,24 @@ jobs:
             dist/${{ steps.tarball.outputs.name }}.sha256
             dist/${{ steps.tarball.outputs.installer_name }}
             dist/${{ steps.tarball.outputs.installer_name }}.sha256
-            dist/${{ steps.tarball.outputs.client_name }}
-            dist/${{ steps.tarball.outputs.client_name }}.sha256
           fail_on_unmatched_files: true
           # Don't auto-publish: lets the release page collect both arches
           # before going live. The release shows up as draft after the
           # first job and ships once you manually publish (or call it as
           # `prerelease: false, draft: false` once both are uploaded).
+          draft: true
+
+      # Preview daemon — separate, optional upload so a missing client asset
+      # (it may not have built) can't fail the strict core upload above.
+      - name: Upload virtues-client (preview, optional)
+        if: steps.tarball.outputs.client_name != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: |
+            dist/${{ steps.tarball.outputs.client_name }}
+            dist/${{ steps.tarball.outputs.client_name }}.sha256
+          fail_on_unmatched_files: true
           draft: true
 
   # After both arches built + uploaded, flip the draft release to live.
