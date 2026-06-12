@@ -146,13 +146,16 @@ pub async fn start(bundle: &PairingBundle) -> Result<TunnelHandle> {
             )
         })?
         .with_private_key(private_key)
-        .with_peer(
-            Peer::new(server_pub)
+        .with_peer({
+            // gotatun 0.7 has no `with_keepalive` builder — `keepalive` is a
+            // plain pub field on `Peer`.
+            let mut peer = Peer::new(server_pub)
                 .with_endpoint(server_endpoint)
                 .with_preshared_key(preshared)
-                .with_keepalive(KEEPALIVE_SECS)
-                .with_allowed_ip(server_allowed),
-        );
+                .with_allowed_ip(server_allowed);
+            peer.keepalive = Some(KEEPALIVE_SECS);
+            peer
+        });
 
     // 5. Configure the L3 addressing on the new TUN before build() so the
     //    state machine doesn't drop packets while we're still adding the
