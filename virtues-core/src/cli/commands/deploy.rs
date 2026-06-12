@@ -272,7 +272,7 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     loop {
         tokio::time::sleep(interval).await;
         if std::time::Instant::now() > deadline {
-            println!("  link expired — run `virtues login` again.");
+            println!("  link expired — run `virtues account-login` again.");
             return Ok(());
         }
         match link::poll(pool, &http, &atlas_url, &api_url).await {
@@ -284,11 +284,11 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
                 return handle_status(virtues).await;
             }
             Ok(LinkStatus::Expired) => {
-                println!("  link expired or denied — run `virtues login` again.");
+                println!("  link expired or denied — run `virtues account-login` again.");
                 return Ok(());
             }
             Ok(LinkStatus::None) => {
-                println!("  no link in flight — run `virtues login` again.");
+                println!("  no link in flight — run `virtues account-login` again.");
                 return Ok(());
             }
             Ok(LinkStatus::Pending) => { /* keep waiting */ }
@@ -323,7 +323,7 @@ fn print_welcome(atlas_url: &str) {
 /// Render a QR code for `data` using unicode half-block characters so each
 /// row is two QR-modules tall — keeps the QR compact enough to scan on
 /// reasonable terminals (~25 lines tall for typical link URLs).
-fn print_qr_block(data: &str) {
+pub fn print_qr_block(data: &str) {
     let qr = match qrcode::QrCode::new(data) {
         Ok(q) => q,
         Err(_) => {

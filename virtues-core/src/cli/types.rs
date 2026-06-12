@@ -27,14 +27,23 @@ pub enum Commands {
     /// before overwriting.
     Init,
 
-    /// Print a one-time URL for the human to open in their browser and land in
-    /// a logged-in web session. Mints a fresh pair token in the DB; no `.env`
-    /// touching, no prompts. Idempotent — run as often as needed.
+    /// Log in to your box: print a one-time URL + QR to open in any browser
+    /// on your network, then wait until it's opened.
+    ///
+    /// Mints a fresh pair token in the DB; no `.env` touching, no prompts.
+    /// Idempotent — run as often as needed. THE one human verb for getting
+    /// into the box (docs/onboarding.md); `link` survives as an alias.
     ///
     /// Honors `ENVIRONMENT=dev` to print `http://localhost:<VIRTUES_WEB_PORT>/...`
     /// (vite dev server) instead of `http://localhost:8000/...` (the production
     /// HTTP server on the box).
-    Link,
+    #[command(alias = "link")]
+    Login {
+        /// Print the URL and exit immediately instead of waiting for the
+        /// link to be opened (scripts, copy-paste workflows).
+        #[arg(long)]
+        no_wait: bool,
+    },
 
     /// Approve a pending sudo request from the box.
     ///
@@ -100,7 +109,8 @@ pub enum Commands {
     ///
     /// Probes for every artifact the installer creates and prints the exact
     /// manifest before touching anything. Confirmation = typing this box's
-    /// hostname. Shared infra (Postgres server, Ollama, Avahi) stays.
+    /// hostname. Shared infra (Postgres server, Avahi) stays; the inference
+    /// sidecars (llama-server + units) are ours and go.
     Uninstall {
         /// Keep all data: /var/lib/virtues (env + ENCRYPTION KEY + lake),
         /// the Postgres db/role, and the system user. A later reinstall
@@ -108,8 +118,8 @@ pub enum Commands {
         #[arg(long)]
         keep_data: bool,
 
-        /// Also remove the pulled Ollama embedding model (bge-m3).
-        /// Ollama itself always stays.
+        /// Also remove the downloaded GGUF models (/var/lib/virtues/models)
+        /// when using --keep-data. They re-download on reinstall.
         #[arg(long)]
         purge_models: bool,
 
@@ -191,7 +201,12 @@ pub enum Commands {
     /// Attach this box to an existing Virtues subscription via the
     /// magic-link login flow. Pairs with `virtues init`'s [1] Log in
     /// branch — same code path, just standalone for retries.
-    Login,
+    ///
+    /// Hidden power-user command: `virtues login` is the box-login verb
+    /// (the pair URL); this is the *account* attach, which the web wizard
+    /// owns in the normal flow (docs/onboarding.md).
+    #[command(name = "account-login", hide = true)]
+    AccountLogin,
 
     /// Pre-download ML models (embedding, etc.) for offline/Docker use
     WarmModels,

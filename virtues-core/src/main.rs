@@ -224,7 +224,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(e) = virtues::cli::commands::deploy::handle_login(&virtues).await {
                 println!();
                 println!("  ⚠  log-in step did not finish: {e}");
-                println!("     Run `virtues login` later when you're ready, or");
+                println!("     Run `virtues account-login` later when you're ready, or");
                 println!("     re-run `virtues init` and pick Create new instead.");
             }
         } else {
@@ -332,18 +332,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // ─── `virtues link` ─────────────────────────────────────────────────────
-    // Mints a CLI-origin pair token (authorized immediately because typing
-    // this command IS proof of physical access) and prints a one-time URL.
+    // ─── `virtues login` (alias: `link`) ────────────────────────────────────
+    // THE human verb for getting into the box (docs/onboarding.md). Mints a
+    // CLI-origin pair token (authorized immediately because typing this
+    // command IS proof of physical access), prints the one-time URL + QR,
+    // then waits until the link is opened — the wait is also the
+    // client-isolation detector (a printed link nobody opens is the only
+    // box-side signal for a network that blocks device-to-device traffic).
     // The URL puts the token in a `#t=` fragment, so it never hits server
-    // logs or referer headers. Open it in any browser to land in a paired
-    // session.
-    if matches!(cli.command, Some(Commands::Link)) {
+    // logs or referer headers.
+    if let Some(Commands::Login { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
         match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
             Ok(minted) => {
                 print_link_output(&minted.token);
+                if !*no_wait {
+                    use virtues::cli::link::{wait_for_pair, PairWaitOutcome};
+                    println!("  waiting for you to open the link… (Ctrl+C to exit; the link");
+                    println!("  stays valid for 15 minutes either way)");
+                    match wait_for_pair(db.pool(), &minted.id).await {
+                        Ok(PairWaitOutcome::Consumed) => {
+                            println!();
+                            println!("  ✓ opened — finish up in your browser.");
+                        }
+                        Ok(PairWaitOutcome::Expired) => {
+                            println!();
+                            println!("  link expired — run `virtues login` for a fresh one.");
+                        }
+                        Err(e) => eprintln!("  (stopped waiting: {e})"),
+                    }
+                }
                 return Ok(());
             }
             Err(e) => {
@@ -559,7 +578,7 @@ fn print_account_intro() {
     println!("    • {}.  Edge models close the gap with cloud LLMs every",
         style("Local inference").bold());
     println!("      quarter. We route embeddings on-device today; chat-tier");
-    println!("      moves home as Ollama-class models reach parity.");
+    println!("      moves home as open-weight models reach parity.");
     println!();
     println!("    • {}.  IETF is standardizing flows that don't need",
         style("Device-bound OAuth").bold());
@@ -599,6 +618,15 @@ fn print_link_output(token: &str) {
     println!();
     for url in &urls {
         println!("    {:<18}  {}", format!("{}:", url.label), url.url);
+    }
+
+    // Terminal QR — phone scans straight from the SSH session (appliance
+    // parity with zero hardware). Encodes the raw-IP URL: phones fumble
+    // .local, and the QR is precisely the phone path. Skipped in dev
+    // (localhost-only URL is useless on a phone).
+    if !is_dev {
+        println!();
+        virtues::cli::commands::deploy::print_qr_block(&virtues::cli::link::qr_pair_url(token));
     }
     println!();
     println!("  Link expires in 15 minutes · single use");
@@ -662,26 +690,17 @@ fn print_resolution_report() {
 
     let r = resolution_report();
     println!("Virtues inference resolution");
-    println!("  accelerator:   {}", r.accelerator);
+    println!("  accelerator:   {} (GPU vs CPU decided by the sidecar binary)", r.accelerator);
     println!("  precision:     {}", r.precision);
-    println!(
-        "  cuda in build: {}",
-        if r.cuda_compiled { "yes" } else { "no (CPU-only image)" }
-    );
     match &r.models_dir {
-        Some(d) => println!("  models dir:    {} (baked)", d.display()),
-        None => println!("  models dir:    none — models download from HuggingFace on first use"),
-    }
-    if r.accelerator == "cuda" && !r.cuda_compiled {
-        // reconcile() already downgraded to CPU + warned; never reached, but
-        // kept as a guard if policy changes.
-        println!("  note:          GPU detected but no CUDA EP linked — running on CPU");
+        Some(d) => println!("  models dir:    {}", d.display()),
+        None => println!("  models dir:    unset"),
     }
     println!("  models:");
     for m in &r.models {
         let source = match &m.source {
-            ModelSource::Baked(p) => format!("baked @ {}", p.display()),
-            ModelSource::Download => "download".to_string(),
+            ModelSource::Baked(p) => format!("on disk @ {}", p.display()),
+            ModelSource::Download => "MISSING — re-run the installer to fetch".to_string(),
         };
         println!("    - {:<9} {} :: {} [{}]", m.name, m.repo, m.onnx_file, source);
     }
