@@ -25,7 +25,7 @@ on:
       embed_url:
         description: 'Source URL for the embedding GGUF (vetted!)'
         required: true
-        default: 'https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-F16.gguf'
+        default: 'https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-FP16.gguf'
         type: string
       rerank_url:
         description: 'Source URL for the reranker GGUF (vetted!)'
@@ -76,3 +76,9 @@ jobs:
             dist/*
           fail_on_unmatched_files: true
           draft: false
+          # The models release is an ASSET BUCKET, not a software release —
+          # it must never become `releases/latest` (get.virtues.com resolves
+          # that to find the installer; a models tag there 404s every
+          # install). Prerelease excludes it from latest; the installer
+          # downloads by direct tag URL, which ignores prerelease status.
+          prerelease: true
