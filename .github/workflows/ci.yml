@@ -16,10 +16,30 @@ on:
 jobs:
   rust:
     runs-on: ubuntu-22.04
+    # A real Postgres for the #[sqlx::test] tests (action_templates,
+    # scheduler) — sqlx spins up throwaway databases per test, so the user
+    # must be a superuser. pgvector image because migrations CREATE
+    # EXTENSION vector; pg18 matches what the installer provisions on boxes.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: virtues
+          POSTGRES_PASSWORD: virtues
+          POSTGRES_DB: virtues
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U virtues"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       # Sqlx queries are checked against the recorded schema under .sqlx/ —
-      # offline mode avoids needing a live DB in CI (same as release-linux).
+      # offline mode keeps the BUILD from needing a DB (same as
+      # release-linux); the live URL below is only for the test binaries.
       SQLX_OFFLINE: 'true'
+      DATABASE_URL: postgres://virtues:virtues@localhost:5432/virtues
     steps:
       - uses: actions/checkout@v4
 
