@@ -21,8 +21,15 @@ use crate::error::{Error, Result};
 /// callers — including action subprocesses — go through one consistent
 /// resolver. Postgres URLs are location-independent, so no rewriting needed.
 pub fn normalize_database_url() -> Result<String> {
-    std::env::var("DATABASE_URL")
-        .map_err(|_| Error::Configuration("DATABASE_URL env var not set".to_string()))
+    normalize_from(std::env::var("DATABASE_URL").ok())
+}
+
+/// Pure core of [`normalize_database_url`] — takes the env value instead of
+/// reading it, so tests never have to mutate the process-global env. (Env
+/// mutation in tests races the `#[sqlx::test]` suites, which read
+/// DATABASE_URL concurrently and panic on a mid-run change.)
+fn normalize_from(value: Option<String>) -> Result<String> {
+    value.ok_or_else(|| Error::Configuration("DATABASE_URL env var not set".to_string()))
 }
 
 /// Database connection and operations
@@ -233,21 +240,21 @@ pub struct HealthStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
+
+    // Tests go through the pure `normalize_from`, never the env: set_var/
+    // remove_var here raced the #[sqlx::test] suites (env is process-global,
+    // tests run concurrently across modules) — sqlx's tamper guard saw
+    // DATABASE_URL change mid-run and panicked.
 
     #[test]
-    #[serial]
     fn test_normalize_returns_url() {
-        std::env::set_var("DATABASE_URL", "postgres://user:pass@localhost:5432/db");
-        let normalized = normalize_database_url().unwrap();
+        let normalized =
+            normalize_from(Some("postgres://user:pass@localhost:5432/db".to_string())).unwrap();
         assert_eq!(normalized, "postgres://user:pass@localhost:5432/db");
     }
 
     #[test]
-    #[serial]
     fn test_normalize_errors_when_unset() {
-        std::env::remove_var("DATABASE_URL");
-        let result = normalize_database_url();
-        assert!(result.is_err());
+        assert!(normalize_from(None).is_err());
     }
 }
