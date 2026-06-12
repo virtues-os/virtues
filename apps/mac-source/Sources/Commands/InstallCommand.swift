@@ -27,19 +27,20 @@ struct InstallCommand: ParsableCommand {
         }
 
         if let token = effectiveToken {
-            print("Validating token...")
-            let (endpoint, deviceName) = try runAsyncAndWait {
-                try await Config.validateToken(token)
+            print("Pairing...")
+            let pair = try runAsyncAndWait {
+                try await Config.pairConsume(token: token)
             }
 
             let config = Config(
-                deviceToken: token,
-                deviceId: UUID().uuidString,
-                apiEndpoint: endpoint,
+                bearer: pair.bearer,
+                deviceId: pair.deviceId,
+                apiEndpoint: pair.endpoint,
+                actionIds: pair.actionIds,
                 createdAt: Date()
             )
             try config.save()
-            print("\u{2713} Configured for \(deviceName)")
+            print("\u{2713} Paired (\(pair.endpoint))")
         } else {
             // Check if already configured
             guard Config.load() != nil else {

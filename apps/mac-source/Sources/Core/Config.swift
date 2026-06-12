@@ -2,49 +2,56 @@ import Foundation
 import Security
 
 struct Config: Codable {
-    let deviceToken: String
+    /// Server-issued device bearer (stored in the Keychain). Sent as
+    /// `Authorization: Bearer <bearer>` on every webhook upload.
+    let bearer: String
     let deviceId: String
     let apiEndpoint: String
+    /// `function_name → action_id` map from pair-consume — the webhook targets.
+    /// mac-source posts to `actionIds["mac_activity"]`.
+    let actionIds: [String: String]
     let createdAt: Date
 
     static let configDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".virtues")
     static let configFile = configDir.appendingPathComponent("config.json")
 
-    // Keychain constants
+    // Keychain constants (account kept stable; it now stores the bearer)
     private static let keychainService = "com.virtues.collector"
     private static let keychainAccount = "device-token"
 
-    // Private struct for JSON storage (without token)
+    // Private struct for JSON storage (secret bearer stays in the Keychain)
     private struct ConfigFile: Codable {
         let deviceId: String
         let apiEndpoint: String
+        let actionIds: [String: String]
         let createdAt: Date
     }
-    
+
     static func load() -> Config? {
         guard FileManager.default.fileExists(atPath: configFile.path) else {
             return nil
         }
 
         do {
-            // Load config file (without token)
+            // Load config file (without the secret bearer)
             let data = try Data(contentsOf: configFile)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            let configFile = try decoder.decode(ConfigFile.self, from: data)
+            let cf = try decoder.decode(ConfigFile.self, from: data)
 
-            // Load token from Keychain
-            guard let deviceToken = loadTokenFromKeychain() else {
-                print("⚠️ Config file exists but token not found in Keychain")
+            // Load bearer from Keychain
+            guard let bearer = loadTokenFromKeychain() else {
+                print("⚠️ Config file exists but bearer not found in Keychain — re-run `init`")
                 return nil
             }
 
             return Config(
-                deviceToken: deviceToken,
-                deviceId: configFile.deviceId,
-                apiEndpoint: configFile.apiEndpoint,
-                createdAt: configFile.createdAt
+                bearer: bearer,
+                deviceId: cf.deviceId,
+                apiEndpoint: cf.apiEndpoint,
+                actionIds: cf.actionIds,
+                createdAt: cf.createdAt
             )
         } catch {
             print("Error loading config: \(error)")
@@ -59,23 +66,24 @@ struct Config: Codable {
             withIntermediateDirectories: true
         )
 
-        // Save token to Keychain
-        try Self.saveTokenToKeychain(deviceToken)
+        // Save bearer to Keychain
+        try Self.saveTokenToKeychain(bearer)
 
-        // Save config file (without token)
-        let configFile = ConfigFile(
+        // Save config file (without the secret)
+        let cf = ConfigFile(
             deviceId: deviceId,
             apiEndpoint: apiEndpoint,
+            actionIds: actionIds,
             createdAt: createdAt
         )
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
-        let data = try encoder.encode(configFile)
+        let data = try encoder.encode(cf)
         try data.write(to: Config.configFile)
 
-        print("✅ Config saved (token stored securely in Keychain)")
+        print("✅ Config saved (bearer stored securely in Keychain)")
     }
     
     static func delete() throws {
@@ -162,39 +170,60 @@ struct Config: Codable {
         }
     }
     
-    static func validateToken(_ token: String) async throws -> (endpoint: String, deviceName: String) {
-        // Check for API URL from environment variable first, then fall back to localhost
-        // This allows the installer to pass the endpoint via VIRTUES_API_URL
-        let baseURL = ProcessInfo.processInfo.environment["VIRTUES_API_URL"] ?? "http://localhost:3000"
+    /// Pair this collector with the box via the unified `/api/pair/consume`
+    /// flow (the same path the iOS app uses). Consumes a one-time pair token
+    /// (from `virtues link` on the box) and returns the server-issued bearer +
+    /// the `action_ids` map + the box endpoint.
+    ///
+    /// We declare `source = "mac"` so the box sets the credential's `source_id`
+    /// to "mac" and `reconcile_templates` fans out the `mac_activity` webhook
+    /// action — the key we then POST uploads to. The box URL comes from
+    /// `VIRTUES_API_URL` (the installer sets it), defaulting to the box's
+    /// localhost port.
+    static func pairConsume(token: String) async throws -> (bearer: String, deviceId: String, endpoint: String, actionIds: [String: String]) {
+        let baseURL = ProcessInfo.processInfo.environment["VIRTUES_API_URL"] ?? "http://localhost:8000"
+        let trimmed = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+        let root = trimmed.hasSuffix("/api") ? String(trimmed.dropLast(4)) : trimmed
 
-        guard let url = URL(string: "\(baseURL)/api/sources/device-token") else {
+        guard let url = URL(string: "\(root)/api/pair/consume") else {
             throw ConfigError.invalidToken
         }
+
+        let host = ProcessInfo.processInfo.hostName
+        let body: [String: Any] = [
+            "token": token,
+            "kind": "desktop_app",
+            "source": "mac",
+            "label": host,
+            "device_info": [
+                "device_name": host,
+                "os": "macos",
+                "client": "virtues-collector",
+            ],
+        ]
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        // Pass token in Authorization header instead of query string for security
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+        request.timeoutInterval = 15
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
         let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
+        guard let http = response as? HTTPURLResponse else {
+            throw ConfigError.networkError("no HTTP response from \(root)")
+        }
+        guard http.statusCode == 200 else {
+            let msg = String(data: data, encoding: .utf8) ?? "status \(http.statusCode)"
+            throw ConfigError.networkError("pair/consume failed (\(http.statusCode)): \(msg)")
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let bearer = json["bearer"] as? String, !bearer.isEmpty,
+              let deviceId = json["device_id"] as? String else {
             throw ConfigError.invalidToken
         }
-        
-        // Parse response to check if token exists
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let success = json["success"] as? Bool,
-           let exists = json["exists"] as? Bool,
-           success && exists,
-           let source = json["source"] as? [String: Any],
-           let instanceName = source["instanceName"] as? String {
-            return (endpoint: baseURL, deviceName: instanceName)
-        }
-        
-        throw ConfigError.invalidToken
+        let actionIds = (json["action_ids"] as? [String: String]) ?? [:]
+        return (bearer: bearer, deviceId: deviceId, endpoint: root, actionIds: actionIds)
     }
 }
 
