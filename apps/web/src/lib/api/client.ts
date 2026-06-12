@@ -1767,3 +1767,32 @@ export async function queryOntologyData(
 	return res.json();
 }
 
+// ============================================================================
+// Setup state API
+// ============================================================================
+
+export interface SetupStep {
+	id: string;
+	title: string;
+	done: boolean;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/**
+	 * Cosmetic hint only (e.g. "ipv6_direct", "byo", or a network class).
+	 * Behavior must key off `done`; unknown/missing kinds render like today.
+	 */
+	kind?: string;
+}
+
+export interface SetupState {
+	setup: SetupStep[];
+	setup_complete: boolean;
+	onboarding: SetupStep[];
+}
+
+export async function getSetupState(): Promise<SetupState> {
+	const res = await fetch(`${API_BASE}/setup/state`);
+	if (!res.ok) throw new Error(`Failed to get setup state: ${res.statusText}`);
+	return res.json();
+}
+

@@ -273,7 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     use virtues::cli::link::{wait_for_pair, PairWaitOutcome};
                     println!("  waiting for you to open the link… (Ctrl+C to exit; the link");
                     println!("  stays valid for 15 minutes either way)");
-                    match wait_for_pair(db.pool(), &minted.id).await {
+                    match wait_for_pair(db.pool(), &minted.id, &minted.token).await {
                         Ok(PairWaitOutcome::Consumed) => {
                             println!();
                             println!("  ✓ opened — finish up in your browser.");
@@ -460,11 +460,23 @@ fn print_link_output(token: &str) {
     if !is_dev {
         println!();
         virtues::cli::commands::deploy::print_qr_block(&virtues::cli::link::qr_pair_url(token));
+
+        // Setup-scoped escape hatch for client-isolated networks: when this
+        // command arrived over SSH, that session is proof of a working path
+        // to the box, so print the local-forward recipe (docs/onboarding.md:
+        // "auto-enable nothing, auto-notice everything").
+        if let Some(ssh) = virtues::cli::link::ssh_context() {
+            println!();
+            let host = virtues::cli::link::forward_host();
+            for line in virtues::cli::link::ssh_handoff_block(&ssh, &host, token) {
+                println!("{line}");
+            }
+        }
     }
     println!();
     println!("  Link expires in 15 minutes · single use");
     let net = virtues::net_check::compute_net_status();
-    println!("  Remote access: {}  (details: virtues doctor)", net.headline);
+    println!("  Remote access: {}  (details: virtues doctor)", net.verdict_line());
     println!("─────────────────────────────────────────────────────────");
 }
 

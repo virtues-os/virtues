@@ -14,6 +14,7 @@
 	import type { Citation } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
+	import NextWinsChecklist from "$lib/components/NextWinsChecklist.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
@@ -1255,6 +1256,9 @@
 							on:stop={() => handleChatStop()}
 						/>
 
+						{#if isEmpty}
+							<NextWinsChecklist />
+						{/if}
 					</div>
 				</div>
 			</div>

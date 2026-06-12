@@ -38,6 +38,13 @@ setup just has to satisfy the same three:
 > and no third party ever sees plaintext. **Cloudflare Tunnel and Tor are
 > different** — see their sections for the tradeoff.
 
+## Virtues notices your overlay
+
+`virtues doctor`, `virtues status --json`, and the dashboard's remote-access
+item auto-detect a user-run overlay interface (`tailscale0`, a foreign `wg`,
+netbird/nebula/zerotier) and report reachability **"via your own network"**.
+Detection is report-only — Virtues never starts or configures the overlay.
+
 ## Composability at a glance
 
 | Option | Works today? | Third party sees your traffic? |
@@ -178,6 +185,6 @@ dial `.onion` directly.
   bearers) are unaffected.
 - **Desktop client over BYO:** the local proxy is independent of the built-in WG
   tunnel — it forwards `localhost:8000` to whatever upstream TCP address it's
-  given. (A `virtues-client up --no-tunnel --upstream <addr>` flag to run it
-  over a BYO transport without bringing up Virtues' own WG is a small planned
-  addition.)
+  given. `virtues-client up --no-tunnel --upstream 100.x.y.z:8000` runs the
+  localhost proxy over your own transport without bringing up Virtues'
+  built-in WG.

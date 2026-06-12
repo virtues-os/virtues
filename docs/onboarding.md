@@ -6,7 +6,7 @@
 
 ## Doctrine
 
-Three rules everything else follows from:
+Four rules everything else follows from:
 
 1. **The channel picks the path — no one is ever asked.**
    Flashed Virtues hardware ⇒ kiosk enabled in the image. `curl
@@ -26,6 +26,19 @@ Three rules everything else follows from:
    on the network where the box actually lives, and reported by the honest
    `net_check` verdict. Overlays/VPNs are never mentioned during setup — BYO
    transport lives behind the post-setup `[Fix remote access]` → *Advanced*.
+
+4. **Auto-enable nothing, auto-notice everything.**
+   Virtues never installs, configures, or recommends a transport — but it
+   always notices the ones the user already has and folds them into copy and
+   verdicts: the SSH session you're typing in becomes the handoff's
+   local-forward hint; a user-run overlay (`tailscale0`) becomes "Available
+   via your own network" in the reachability verdict. Disclosure climbs a
+   ladder, never jumps: silent (preflight) → one verdict line (handoff) →
+   evidence-triggered hint (90s, nobody arrived) → intent-triggered options
+   (the dashboard's `[Fix remote access]` — the *only* place BYO is
+   mentioned) → forensics (`virtues doctor`). And the copy rules: weather
+   reports, not errors; never say "wait"; never block forward motion on
+   network class — "move the box later; it re-checks automatically."
 
 ## The two journeys
 
@@ -51,6 +64,12 @@ installer: deps → db → user → env → binary → systemd → health check
   → ONE handoff block: mDNS URL · IP fallback · loopback · expiry · verdict line
   → user opens the URL from any browser on the LAN → same wizard
 ```
+
+The SSH session the installer ran in is itself the fallback transport on
+hostile networks — `ssh -L 8000:localhost:8000 user@box` from the laptop
+puts the wizard at `http://localhost:8000`. (Power users: an existing
+OpenSSH session can add the forward live — type `~C`, then
+`-L 8000:localhost:8000`.)
 
 Idiomatic headless-server convention (Proxmox/Home Assistant/Pi-hole): one
 `curl`, one URL. A terminal ANSI QR next to the URL gives parity with the
@@ -91,7 +110,7 @@ appliance (P2).
 
 | Situation | Behavior |
 |---|---|
-| **Client-isolated wifi** (offices, hotels — phone can't reach box's LAN IP) | Detect: outbound ✓ + wizard unvisited after N min (+ mDNS self-probe fails) → panel/terminal suggests: *"This network blocks devices from talking to each other. Use your phone's hotspot, or a network you control. You can move the box afterward."* Setup-scoped copy only — no VPN/overlay talk at the moment of maximum fragility. |
+| **Client-isolated wifi** (offices, hotels — phone can't reach box's LAN IP) | Detect: outbound ✓ + wizard unvisited after N min (+ mDNS self-probe fails). **DIY/SSH:** the session the installer ran in is the transport — `ssh -L 8000:localhost:8000 user@box-ip` from the laptop, then open `http://localhost:8000/pair#t=…`. The box stays on its own uplink: the multi-GB model pull never rides a hotspot; only the pairing page rides the forward. **Phone/appliance:** *"This network blocks devices from talking to each other. Use your phone's hotspot, or a network you control. You can move the box afterward."* Setup-scoped copy only — no VPN/overlay talk at the moment of maximum fragility (an SSH forward is not an overlay). |
 | **Wifi-only first boot** (appliance; no ethernet) | Pilot batch: "plug in ethernet for the 10 minutes of setup." v1.1: AP-mode — box boots its own AP, screen shows a `WIFI:` join-QR (iPhone camera joins natively), wizard collects home-wifi creds, box switches over. DIY users have networking by definition (they SSH'd in). |
 | **Onboarding venue ≠ deployment venue** (set up at the office, lives at home) | Fine by design: reachability is re-assessed wherever the box is plugged in; the verdict updates. Setup never depends on inbound reachability. |
 | **Two boxes on one LAN** | mDNS auto-suffixes; panel and CLI always print the box's *actual* name, never hardcoded copy. |

@@ -77,6 +77,11 @@ pub struct NetStatus {
     pub ipv6_global: Option<Ipv6Addr>,
     /// The box's egress IPv4 source (may be a private/LAN address behind NAT).
     pub ipv4_source: Option<Ipv4Addr>,
+    /// A user-run overlay transport noticed on this box (Tailscale, a foreign
+    /// WireGuard, …). Auto-noticed, never auto-enabled: Virtues never starts,
+    /// configures, or recommends one (docs/byo-networking.md) — but a box that
+    /// IS on one is reachable there, and the verdict should say so.
+    pub byo: Option<ByoTransport>,
     /// One-line verdict.
     pub headline: String,
     /// What the user should do, doctrine-aware.
@@ -84,6 +89,11 @@ pub struct NetStatus {
 }
 
 /// Assess the box's direct-reachability from on-box signals alone.
+///
+/// Cheap by design — two UDP `connect()`s (kernel route lookups, no packets
+/// on the wire) plus one `getifaddrs` syscall. It is called per-poll from
+/// `/api/setup/state`, so keep it allocation-light and never add network I/O
+/// here; the active inbound echo lives in [`verify_inbound`], doctor-only.
 pub fn compute_net_status() -> NetStatus {
     let ipv6_global = probe_source("[2606:4700:4700::1111]:53", "[::]:0").and_then(|ip| match ip {
         IpAddr::V6(v) if is_global_v6(v) => Some(v),
@@ -104,12 +114,30 @@ pub fn compute_net_status() -> NetStatus {
         NetClass::Unknown
     };
 
-    let port = wg_port();
-    let (headline, guidance) = match class {
+    let (headline, guidance) = verdict_strings(class, ipv6_global, wg_port());
+
+    NetStatus {
+        class,
+        ipv6_global,
+        ipv4_source,
+        byo: detect_byo(),
+        headline,
+        guidance,
+    }
+}
+
+/// Headline + guidance per class. The split is a copy doctrine
+/// (docs/onboarding.md): the **headline is a weather report** — it reaches
+/// the setup handoff and `/api/setup/state`, so it states a fact about the
+/// network and never instructs, never blames, never says "wait". The
+/// **guidance carries the instructions** and only renders in `virtues
+/// doctor`, where the user has asked for them.
+fn verdict_strings(class: NetClass, ipv6: Option<Ipv6Addr>, port: u16) -> (String, String) {
+    match class {
         NetClass::Ipv6Direct => {
-            let addr = ipv6_global.expect("ipv6_global is Some in this arm");
+            let addr = ipv6.expect("ipv6 is Some for Ipv6Direct");
             (
-                format!("Global IPv6 detected ({addr}) — direct access works here."),
+                format!("Global IPv6 detected ({addr}) — reachable directly from anywhere."),
                 format!(
                     "Highly recommended: reach your box directly over IPv6. The box tries to \
                      open inbound udp/{port} automatically; if your router/firewall is \
@@ -118,14 +146,16 @@ pub fn compute_net_status() -> NetStatus {
             )
         }
         NetClass::Ipv4Public => (
-            "Global IPv4 detected — direct access works over IPv4.".to_string(),
+            "Global IPv4 detected — reachable directly over IPv4.".to_string(),
             format!(
                 "Allow/forward inbound udp/{port} to this box on your router. \
                  (IPv6 would be simpler if your ISP offers it.)"
             ),
         ),
         NetClass::NatNoIpv6 => (
-            "No global IPv6 — this box is behind NAT.".to_string(),
+            "Remote access isn't available from this network — everything else works. \
+             The box re-checks wherever it lives."
+                .to_string(),
             format!(
                 "If you control the router (home), forward udp/{port} to this box. \
                  If you do NOT control the network (dorm/office/CGNAT), direct access isn't \
@@ -135,17 +165,9 @@ pub fn compute_net_status() -> NetStatus {
             ),
         ),
         NetClass::Unknown => (
-            "No network egress detected.".to_string(),
+            "No internet connection detected.".to_string(),
             "The box can't reach the internet. Check its network connection.".to_string(),
         ),
-    };
-
-    NetStatus {
-        class,
-        ipv6_global,
-        ipv4_source,
-        headline,
-        guidance,
     }
 }
 
@@ -219,6 +241,19 @@ pub async fn verify_inbound(global_v6: Ipv6Addr, api_base: &str) -> InboundResul
 }
 
 impl NetStatus {
+    /// The one-line verdict consumers print (setup handoff, `/api/setup/state`).
+    /// Prefers concrete reachability over the class headline: a NAT'd box on a
+    /// user-run overlay IS reachable — at the overlay address.
+    pub fn verdict_line(&self) -> String {
+        if self.ipv6_global.is_some() {
+            return self.headline.clone();
+        }
+        match &self.byo {
+            Some(b) => format!("Available via your own network ({}).", b.ifname),
+            None => self.headline.clone(),
+        }
+    }
+
     /// Print a human-readable report (used by `virtues doctor`).
     pub fn print_report(&self) {
         println!("Virtues network reachability");
@@ -230,6 +265,13 @@ impl NetStatus {
         match self.ipv4_source {
             Some(a) => println!("  IPv4 source:   {a}"),
             None => println!("  IPv4 source:   none"),
+        }
+        if let Some(b) = &self.byo {
+            let addr_paren = b.addr.map(|a| format!(" ({a})")).unwrap_or_default();
+            println!(
+                "  BYO transport: {}{addr_paren} — your devices can reach this box at that address",
+                b.ifname
+            );
         }
         println!("  {}", self.headline);
         println!("  → {}", self.guidance);
@@ -279,6 +321,147 @@ fn is_cgnat_v4(v: Ipv4Addr) -> bool {
     o[0] == 100 && (o[1] & 0xc0) == 0x40
 }
 
+// ─── BYO transport auto-notice ──────────────────────────────────────────────
+//
+// "Auto-enable nothing, auto-notice everything" (docs/onboarding.md): Virtues
+// never runs, configures, or recommends an overlay — but the box answers on
+// every interface it has ([::]:8000), so a user-run Tailscale/WireGuard IS a
+// working path to it, and pretending otherwise would make the verdict a lie.
+// Detection is name+address heuristics over the interface list; report-only.
+
+/// A user-run overlay transport noticed on this box.
+#[derive(Debug, Clone)]
+pub struct ByoTransport {
+    /// Interface name, e.g. "tailscale0".
+    pub ifname: String,
+    /// The overlay address devices would dial, if one was found on the
+    /// interface (the CGNAT v4 for Tailscale; first non-link-local otherwise).
+    pub addr: Option<IpAddr>,
+}
+
+/// The box's own tunnel interface — never a "BYO" finding. Mirrors
+/// `virtues_wg::manager::WG_IFNAME` rather than importing it, same reasoning
+/// as [`wg_port`]: that crate's `manager` is Linux-only and this module (and
+/// its tests) must build on any host. Keep in sync.
+const BUILTIN_WG_IFNAME: &str = "wg0";
+
+/// Detect a user-run overlay on this box. Linux-only signal; `None` elsewhere.
+fn detect_byo() -> Option<ByoTransport> {
+    classify_byo(&list_interfaces())
+}
+
+/// Pure classification over (ifname, addrs) — unit-testable on any OS.
+/// Rules in priority order (lowest rank wins):
+///   0. ifname starts with "tailscale"
+///   1. any non-loopback, non-builtin interface carrying a CGNAT (100.64/10)
+///      address — catches Tailscale on a renamed tun + other CGNAT overlays
+///   2. a WireGuard interface that isn't the built-in one
+///   3. other known overlay names: NetBird (nb-*/wt0), Nebula, ZeroTier (zt*)
+fn classify_byo(ifaces: &[(String, Vec<IpAddr>)]) -> Option<ByoTransport> {
+    let mut best: Option<(u8, &str, &[IpAddr])> = None;
+    for (name, addrs) in ifaces {
+        if name == "lo" || name == BUILTIN_WG_IFNAME {
+            continue;
+        }
+        let rank = if name.starts_with("tailscale") {
+            Some(0)
+        } else if addrs.iter().any(|a| matches!(a, IpAddr::V4(v) if is_cgnat_v4(*v))) {
+            Some(1)
+        } else if name.starts_with("wg") {
+            Some(2)
+        } else if name.starts_with("nb-")
+            || name == "wt0"
+            || name.starts_with("nebula")
+            || name.starts_with("zt")
+        {
+            Some(3)
+        } else {
+            None
+        };
+        if let Some(r) = rank {
+            if best.map(|(b, _, _)| r < b).unwrap_or(true) {
+                best = Some((r, name, addrs));
+            }
+        }
+    }
+    best.map(|(_, name, addrs)| ByoTransport {
+        ifname: name.to_string(),
+        addr: pick_dial_addr(addrs),
+    })
+}
+
+/// The address a device would dial: prefer the CGNAT v4 (Tailscale's stable
+/// per-node address), else the first non-link-local address of any family.
+fn pick_dial_addr(addrs: &[IpAddr]) -> Option<IpAddr> {
+    addrs
+        .iter()
+        .find(|a| matches!(a, IpAddr::V4(v) if is_cgnat_v4(*v)))
+        .or_else(|| {
+            addrs.iter().find(|a| match a {
+                IpAddr::V4(v) => !v.is_link_local(),
+                IpAddr::V6(v) => (v.segments()[0] & 0xffc0) != 0xfe80,
+            })
+        })
+        .copied()
+}
+
+/// Enumerate (ifname, addresses) via `getifaddrs(3)`. Interfaces appear even
+/// when they carry no INET address yet (an unconfigured `wg1` still matters
+/// for the name rules). All unsafe lives here.
+#[cfg(target_os = "linux")]
+fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
+    use std::collections::BTreeMap;
+    use std::ffi::CStr;
+
+    let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+    // SAFETY: getifaddrs allocates the list into ifap on success; freed below.
+    if unsafe { libc::getifaddrs(&mut ifap) } != 0 {
+        return Vec::new();
+    }
+    let mut map: BTreeMap<String, Vec<IpAddr>> = BTreeMap::new();
+    let mut cur = ifap;
+    while !cur.is_null() {
+        // SAFETY: cur is a valid node of the list returned by getifaddrs.
+        let ifa = unsafe { &*cur };
+        cur = ifa.ifa_next;
+        if ifa.ifa_name.is_null() {
+            continue;
+        }
+        // SAFETY: ifa_name is a NUL-terminated C string owned by the list.
+        let name = unsafe { CStr::from_ptr(ifa.ifa_name) }
+            .to_string_lossy()
+            .into_owned();
+        let entry = map.entry(name).or_default();
+        // ifa_addr is NULL for AF_PACKET-only/point-to-point entries — the
+        // one real segfault risk here; check before any deref.
+        if ifa.ifa_addr.is_null() {
+            continue;
+        }
+        // SAFETY: ifa_addr is non-null; sa_family tells us the concrete type.
+        match unsafe { (*ifa.ifa_addr).sa_family } as i32 {
+            libc::AF_INET => {
+                // SAFETY: sa_family == AF_INET guarantees sockaddr_in layout.
+                let sa = unsafe { &*(ifa.ifa_addr as *const libc::sockaddr_in) };
+                entry.push(IpAddr::V4(Ipv4Addr::from(u32::from_be(sa.sin_addr.s_addr))));
+            }
+            libc::AF_INET6 => {
+                // SAFETY: sa_family == AF_INET6 guarantees sockaddr_in6 layout.
+                let sa = unsafe { &*(ifa.ifa_addr as *const libc::sockaddr_in6) };
+                entry.push(IpAddr::V6(Ipv6Addr::from(sa.sin6_addr.s6_addr)));
+            }
+            _ => {}
+        }
+    }
+    // SAFETY: ifap came from getifaddrs and is freed exactly once.
+    unsafe { libc::freeifaddrs(ifap) };
+    map.into_iter().collect()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn list_interfaces() -> Vec<(String, Vec<IpAddr>)> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +475,109 @@ mod tests {
         assert!(!is_global_v6("fc00::1".parse().unwrap())); // ULA
         assert!(!is_global_v6("fd00:5654::1".parse().unwrap())); // ULA (our WG range)
         assert!(!is_global_v6("ff02::1".parse().unwrap())); // multicast
+    }
+
+    #[test]
+    fn headlines_are_weather_reports() {
+        // Headlines reach the setup handoff — they must state facts, never
+        // instruct (instructions live in guidance, rendered by doctor only).
+        for (class, ipv6) in [
+            (NetClass::Ipv6Direct, Some("2001:db8::1".parse().unwrap())),
+            (NetClass::Ipv4Public, None),
+            (NetClass::NatNoIpv6, None),
+            (NetClass::Unknown, None),
+        ] {
+            let (headline, _) = verdict_strings(class, ipv6, 51820);
+            for instruction in ["forward", "router", "open udp", "allow", "run ", "check "] {
+                assert!(
+                    !headline.to_lowercase().contains(instruction),
+                    "{class:?} headline instructs ({instruction:?}): {headline}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn headline_copy_exact() {
+        let (h, _) = verdict_strings(NetClass::NatNoIpv6, None, 51820);
+        assert_eq!(
+            h,
+            "Remote access isn't available from this network — everything else works. \
+             The box re-checks wherever it lives."
+        );
+        let (h, _) = verdict_strings(NetClass::Unknown, None, 51820);
+        assert_eq!(h, "No internet connection detected.");
+        let (h, _) =
+            verdict_strings(NetClass::Ipv6Direct, Some("2001:db8::1".parse().unwrap()), 51820);
+        assert_eq!(h, "Global IPv6 detected (2001:db8::1) — reachable directly from anywhere.");
+    }
+
+    fn iface(name: &str, addrs: &[&str]) -> (String, Vec<IpAddr>) {
+        (name.to_string(), addrs.iter().map(|a| a.parse().unwrap()).collect())
+    }
+
+    #[test]
+    fn byo_classification() {
+        // Tailscale by name, CGNAT addr preferred for dialing.
+        let found = classify_byo(&[
+            iface("lo", &["127.0.0.1"]),
+            iface("tailscale0", &["fe80::1", "100.101.102.103"]),
+        ])
+        .unwrap();
+        assert_eq!(found.ifname, "tailscale0");
+        assert_eq!(found.addr, Some("100.101.102.103".parse().unwrap()));
+
+        // CGNAT address on a renamed tun still counts.
+        let found = classify_byo(&[iface("tun0", &["100.64.0.7"])]).unwrap();
+        assert_eq!(found.ifname, "tun0");
+
+        // The built-in wg0 is never a BYO finding; a foreign wg1 is.
+        assert!(classify_byo(&[iface("wg0", &["fd00:5654::1"])]).is_none());
+        let found = classify_byo(&[iface("wg1", &["10.9.0.2"])]).unwrap();
+        assert_eq!(found.ifname, "wg1");
+        assert_eq!(found.addr, Some("10.9.0.2".parse().unwrap()));
+
+        // Other known overlay names, even with no address yet.
+        assert!(classify_byo(&[iface("wt0", &[])]).is_some());
+        assert!(classify_byo(&[iface("nebula1", &["192.168.100.2"])]).is_some());
+        assert!(classify_byo(&[iface("zt7nnplfqx", &["10.147.17.5"])]).is_some());
+
+        // Ordinary interfaces never match.
+        assert!(classify_byo(&[
+            iface("eth0", &["192.168.1.20"]),
+            iface("docker0", &["172.17.0.1"]),
+            iface("veth1a2b", &[]),
+            iface("lo", &["127.0.0.1"]),
+        ])
+        .is_none());
+
+        // Priority: tailscale name beats a foreign wg.
+        let found = classify_byo(&[
+            iface("wg1", &["10.9.0.2"]),
+            iface("tailscale0", &["100.64.0.9"]),
+        ])
+        .unwrap();
+        assert_eq!(found.ifname, "tailscale0");
+    }
+
+    #[test]
+    fn verdict_line_prefers_concrete_reachability() {
+        let mut status = NetStatus {
+            class: NetClass::NatNoIpv6,
+            ipv6_global: None,
+            ipv4_source: Some("192.168.1.20".parse().unwrap()),
+            byo: None,
+            headline: "Remote access isn't available from this network — everything else \
+                       works. The box re-checks wherever it lives."
+                .to_string(),
+            guidance: String::new(),
+        };
+        assert_eq!(status.verdict_line(), status.headline);
+        status.byo = Some(ByoTransport {
+            ifname: "tailscale0".to_string(),
+            addr: Some("100.64.0.9".parse().unwrap()),
+        });
+        assert_eq!(status.verdict_line(), "Available via your own network (tailscale0).");
     }
 
     #[test]

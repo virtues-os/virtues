@@ -13,10 +13,33 @@
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
+	import { onMount } from "svelte";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { getSetupState, type SetupStep } from "$lib/api/client";
 
 	let isContinuing = $state(false);
+
+	// One-shot fetch — this is a splash, not a dashboard; no polling.
+	// On fetch failure `onboarding` stays null and the page renders the
+	// static splash exactly as before.
+	let onboarding = $state<SetupStep[] | null>(null);
+
+	onMount(async () => {
+		try {
+			const s = await getSetupState();
+			onboarding = s.onboarding ?? null;
+		} catch {
+			/* box briefly unreachable — render static splash */
+		}
+	});
+
+	function stepDone(id: string): boolean {
+		return onboarding?.find((s) => s.id === id)?.done ?? false;
+	}
+
+	const firstSourceDone = $derived(stepDone("first_source"));
+	const firstSyncDone = $derived(stepDone("first_sync"));
 
 	async function continueToSources() {
 		isContinuing = true;
@@ -50,9 +73,15 @@
 		<!-- What's next -->
 		<div class="mb-10 space-y-6">
 			<div class="flex items-start gap-4">
-				<div class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center text-sm font-medium">
-					1
-				</div>
+				{#if firstSourceDone}
+					<div class="flex-shrink-0 w-8 h-8 flex items-center justify-center">
+						<Icon icon="ri:checkbox-circle-fill" class="text-2xl text-success" />
+					</div>
+				{:else}
+					<div class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center text-sm font-medium">
+						1
+					</div>
+				{/if}
 				<div>
 					<div class="font-medium mb-1">Connect a data source</div>
 					<div class="text-foreground-muted text-sm">
@@ -62,9 +91,15 @@
 			</div>
 
 			<div class="flex items-start gap-4">
-				<div class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center text-sm font-medium">
-					2
-				</div>
+				{#if firstSyncDone}
+					<div class="flex-shrink-0 w-8 h-8 flex items-center justify-center">
+						<Icon icon="ri:checkbox-circle-fill" class="text-2xl text-success" />
+					</div>
+				{:else}
+					<div class="flex-shrink-0 w-8 h-8 rounded-full bg-surface-alt border border-border flex items-center justify-center text-sm font-medium">
+						2
+					</div>
+				{/if}
 				<div>
 					<div class="font-medium mb-1">Let Virtues organize</div>
 					<div class="text-foreground-muted text-sm">
@@ -108,6 +143,8 @@
 				{#if isContinuing}
 					<Icon icon="ri:loader-4-line" class="animate-spin" />
 					Opening…
+				{:else if firstSourceDone}
+					Continue to sources
 				{:else}
 					Connect your first source
 				{/if}
