@@ -76,3 +76,9 @@ jobs:
             dist/*
           fail_on_unmatched_files: true
           draft: false
+          # The models release is an ASSET BUCKET, not a software release —
+          # it must never become `releases/latest` (get.virtues.com resolves
+          # that to find the installer; a models tag there 404s every
+          # install). Prerelease excludes it from latest; the installer
+          # downloads by direct tag URL, which ignores prerelease status.
+          prerelease: true
