@@ -777,6 +777,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
     }
 
+    // BYO-networking safety check: warn if the box is advertised at a plain-HTTP
+    // origin on a non-local host, where browser session cookies would be either
+    // rejected (secure env) or sent in cleartext (dev env). Advisory only.
+    crate::middleware::security::warn_insecure_cookie_origin();
+
     // Run the server with graceful shutdown — Ctrl+C / SIGTERM triggers
     // SIGTERM to all `app`-runtime children before we exit.
     let shutdown_supervisor = service_supervisor.clone();
