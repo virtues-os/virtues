@@ -37,13 +37,38 @@ pub fn primary_ip() -> Option<IpAddr> {
     socket.local_addr().ok().map(|a| a.ip())
 }
 
+/// The box's mDNS name (`<hostname>.local`). The installer registers the box
+/// with Avahi, so this resolves on the LAN — it's the name we lead with in
+/// every cross-device handoff (onboarding doctrine: `virtues.local`, never
+/// `localhost`, for anything meant to be opened on another device).
+pub fn mdns_host() -> String {
+    let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "virtues".to_string());
+    format!("{host}.local")
+}
+
 /// Build the URLs `virtues link` / `virtues init` print for the user.
 ///
-/// `Local` (loopback) always works in Chromium on the Jetson itself — it's a
-/// W3C Secure Context without needing TLS. `LAN` is the box's IP, useful for
-/// developer scenarios where you're SSH'd in but want to use a browser on a
-/// different machine on the same LAN. In production the LAN URL is more of a
-/// diagnostic — the canonical path for other devices is the Virtues client.
+/// Order matters — it's a UX statement:
+///   1. `Any device` — the mDNS name. The URL a human should actually use,
+///      from a phone or laptop on the same network.
+///   2. `(if .local fails)` — the raw LAN IP. mDNS is flaky on some clients
+///      (notably Android) and filtered on some networks; the IP is the
+///      universal fallback.
+///   3. `This machine` — loopback, for a browser on the box itself (a W3C
+///      Secure Context without TLS). Last because almost nobody runs a
+///      browser on the box; the kiosk panel is the exception and doesn't
+///      read this output.
 pub fn reachable_pair_urls(token: &str, is_dev: bool, web_port: &str) -> Vec<ReachableUrl> {
     if is_dev {
         return vec![ReachableUrl {
@@ -52,8 +77,8 @@ pub fn reachable_pair_urls(token: &str, is_dev: bool, web_port: &str) -> Vec<Rea
         }];
     }
     let mut urls = vec![ReachableUrl {
-        label: "Local",
-        url: format!("http://localhost:{INTERNAL_PORT}/pair#t={token}"),
+        label: "Any device",
+        url: format!("http://{}:{INTERNAL_PORT}/pair#t={token}", mdns_host()),
     }];
     if let Some(ip) = primary_ip() {
         let host = match ip {
@@ -61,9 +86,13 @@ pub fn reachable_pair_urls(token: &str, is_dev: bool, web_port: &str) -> Vec<Rea
             IpAddr::V6(v6) => format!("[{v6}]"),
         };
         urls.push(ReachableUrl {
-            label: "LAN",
+            label: "(if .local fails)",
             url: format!("http://{host}:{INTERNAL_PORT}/pair#t={token}"),
         });
     }
+    urls.push(ReachableUrl {
+        label: "This machine",
+        url: format!("http://localhost:{INTERNAL_PORT}/pair#t={token}"),
+    });
     urls
 }
