@@ -346,6 +346,34 @@ pub async fn deny_handler(
 
 // ─── Consume ────────────────────────────────────────────────────────────────
 
+/// Resolve the credential `source_id` from a pair-consume `kind` + optional
+/// explicit `source` (see [`ConsumeRequest::source`]).
+///
+/// - Explicit `source` present + non-blank: must resolve via the sources
+///   catalog (`lookup_source`), else `Err(())` (caller → 400 `invalid_source`).
+/// - Absent + `kind = "mobile_app"`: `"ios"` (mobile is unambiguously iOS today,
+///   so collectors needn't change).
+/// - Otherwise: `"__device__"` — a sentinel that matches no template, so NO
+///   action fan-out. Correct for the WG desktop daemon (`kind=desktop_app`, no
+///   source — NOT a collector) and for `sensor` (no source defined yet).
+///
+/// This is the fix for the `__device__`-matches-nothing bug: a collector that
+/// declares its real source now gets `reconcile_templates` to create its
+/// per-credential webhook actions.
+fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<String, ()> {
+    match source.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => {
+            if crate::action_templates::lookup_source(s).is_none() {
+                Err(())
+            } else {
+                Ok(s.to_string())
+            }
+        }
+        None if kind == "mobile_app" => Ok("ios".to_string()),
+        None => Ok("__device__".to_string()),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ConsumeRequest {
     pub token: String,
@@ -353,6 +381,15 @@ pub struct ConsumeRequest {
     pub label: Option<String>,                        // auto-generated if absent
     pub device_info: Option<Value>,                   // arbitrary JSON describing the device
     pub wg_public_key: Option<String>,                // WG-capable devices only
+    /// The data source this collector represents (`"mac"`, `"ios"`, …, from
+    /// `actions/sources.toml`). REQUIRED for a collector to receive its
+    /// per-credential action fan-out — the credential's `source_id` is set
+    /// from this so `reconcile_templates` matches the source's webhook
+    /// templates. `kind="desktop_app"` is ambiguous (the WG daemon AND
+    /// mac-source both use it), so collectors MUST declare `source` explicitly;
+    /// `mobile_app` defaults to `"ios"`. Absent/`"__device__"` → no fan-out
+    /// (correct for the WG desktop daemon, which is not a collector).
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -393,6 +430,16 @@ pub async fn consume_handler(
         "browser" | "mobile_app" | "desktop_app" | "sensor" => body.kind.as_str(),
         _ => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
+                .into_response()
+        }
+    };
+
+    // Resolve the credential's source (see `resolve_source_id`). A bad explicit
+    // source is a loud 400, not a silent no-fan-out.
+    let source_id = match resolve_source_id(kind, body.source.as_deref()) {
+        Ok(s) => s,
+        Err(()) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_source"})))
                 .into_response()
         }
     };
@@ -573,7 +620,7 @@ pub async fn consume_handler(
              VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, now())",
         )
         .bind(&bp.credential_id)
-        .bind("__device__")
+        .bind(&source_id)
         .bind(&label)
         .bind(&device_id)
         .bind(&bp.ciphertext)
@@ -965,4 +1012,51 @@ async fn log_event(
     .execute(pool)
     .await
     .map(|_| ())
+}
+
+#[cfg(test)]
+mod source_resolution_tests {
+    use super::resolve_source_id;
+
+    // The sources catalog is compiled in (`include_str!(sources.toml)`), so
+    // `lookup_source` resolves real ids here without a DB.
+
+    #[test]
+    fn mobile_app_defaults_to_ios() {
+        assert_eq!(resolve_source_id("mobile_app", None).unwrap(), "ios");
+        // explicit ios works too
+        assert_eq!(resolve_source_id("mobile_app", Some("ios")).unwrap(), "ios");
+    }
+
+    #[test]
+    fn desktop_app_without_source_is_sentinel_no_fanout() {
+        // The WG desktop daemon pairs as desktop_app with NO source — it must
+        // get "__device__" so mac_activity never fans out to it.
+        assert_eq!(resolve_source_id("desktop_app", None).unwrap(), "__device__");
+    }
+
+    #[test]
+    fn collector_declares_explicit_source() {
+        // mac-source sends source="mac" → its credential matches the
+        // mac_activity template's source and fans out.
+        assert_eq!(resolve_source_id("desktop_app", Some("mac")).unwrap(), "mac");
+    }
+
+    #[test]
+    fn sensor_without_source_is_sentinel() {
+        assert_eq!(resolve_source_id("sensor", None).unwrap(), "__device__");
+    }
+
+    #[test]
+    fn invalid_source_is_rejected_not_silently_downgraded() {
+        // A typo must be a loud 400 (Err), not a silent no-fan-out.
+        assert!(resolve_source_id("desktop_app", Some("Mac")).is_err()); // wrong case
+        assert!(resolve_source_id("desktop_app", Some("nope")).is_err());
+    }
+
+    #[test]
+    fn blank_source_falls_through_to_kind_default() {
+        assert_eq!(resolve_source_id("desktop_app", Some("   ")).unwrap(), "__device__");
+        assert_eq!(resolve_source_id("mobile_app", Some("")).unwrap(), "ios");
+    }
 }
