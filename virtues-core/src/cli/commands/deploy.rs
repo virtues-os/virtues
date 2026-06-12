@@ -8,7 +8,7 @@
 use anyhow::Result;
 
 use crate::api::box_status::BoxStatus;
-use crate::search::model_cache::{self, ModelSource};
+use crate::inference_report::{self, ModelSource};
 use crate::wireguard::pairing;
 use crate::Virtues;
 
@@ -35,20 +35,17 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
         println!("      publish_id         {pid}");
     }
 
-    // Inference resolution (accelerator + per-model baked/download).
-    let r = model_cache::resolution_report();
+    // Inference resolution (sidecar engine + per-model on-disk/missing).
+    let r = inference_report::resolution_report();
     println!("  inference:");
     println!("    accelerator          {} ({})", r.accelerator, r.precision);
-    if r.accelerator == "cuda" && !r.cuda_compiled {
-        println!("    note                 GPU present but CPU-only build — `--features cuda`");
-    }
     let mut any_download = false;
     for m in &r.models {
         let src = match &m.source {
-            ModelSource::Baked(_) => "baked",
+            ModelSource::Baked(_) => "on disk",
             ModelSource::Download => {
                 any_download = true;
-                "download on first use"
+                "missing — re-run installer"
             }
         };
         println!("    {:<8}             {}", m.name, src);
@@ -76,7 +73,11 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     }
     println!();
 
-    let _ = any_download; // models lazy-download on first use; no nag here
+    if any_download {
+        // GGUFs don't lazy-download — a missing one means the sidecar for it
+        // can't be serving. Surface it next to the per-model lines above.
+        println!("  note: missing model files — re-run the installer to fetch");
+    }
     println!("  next: {}", next_step(&s));
     println!();
     Ok(())

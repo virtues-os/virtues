@@ -135,7 +135,8 @@ fold into the wizard and survive only as hidden power-user commands.
 
 `sudo virtues uninstall`: computed manifest (probed, never guessed),
 typed-hostname confirmation, `--keep-data` dev tier, `--purge-models`,
-`--force` for CI. Shared infra (Postgres server, Ollama, Avahi) always stays.
+`--force` for CI. Shared infra (Postgres server, Avahi) always stays; the
+llama-server inference sidecars are ours and are removed.
 
 Wrong-user self-correction: on a box install, DB-touching commands re-exec
 as the `virtues` service user (Unix-socket peer auth maps OS user → Postgres

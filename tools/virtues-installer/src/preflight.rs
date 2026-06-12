@@ -1,8 +1,8 @@
 //! Pre-flight checks — fail fast on environmental problems before we touch
-//! apt/systemd/PG/Ollama.
+//! apt/systemd/PG.
 //!
 //! Catches the failure modes that would otherwise produce an ugly half-
-//! install: out of disk mid-Ollama-pull, network blocked, port already
+//! install: out of disk mid-GGUF-download, network blocked, port already
 //! bound by another service. Mirrors the bash install.sh's preflight_checks
 //! function, ported to typed Rust with one place per check.
 
@@ -22,13 +22,13 @@ pub struct Report {
 pub async fn run() -> Result<Report> {
     let mut warnings = 0u32;
 
-    // Disk space — bge-m3 alone is ~1.2 GB; PG18 + WireGuard + Ollama
-    // daemon add another ~1 GB; binary + web + working room another GB.
-    // We want ≥ 3 GB free on /.
+    // Disk space — the GGUFs are ~1.8 GB (bge-m3 F16 ~1.2 GB + reranker
+    // Q8_0 ~0.6 GB); PG18 + WireGuard add another ~1 GB; binaries + web +
+    // working room another GB. We want ≥ 4 GB free on /.
     match free_gb(Path::new("/")) {
-        Some(gb) if gb >= 3 => ui::ok(&format!("Disk space ({gb} GB free on /)")),
+        Some(gb) if gb >= 4 => ui::ok(&format!("Disk space ({gb} GB free on /)")),
         Some(gb) => {
-            ui::warn(&format!("Disk space ({gb} GB free on / — recommend ≥ 3 GB)"));
+            ui::warn(&format!("Disk space ({gb} GB free on / — recommend ≥ 4 GB)"));
             warnings += 1;
         }
         None => {
@@ -37,13 +37,14 @@ pub async fn run() -> Result<Report> {
         }
     }
 
-    // Network reachability — the three hosts the install genuinely needs.
-    // 5s timeout per probe; total worst-case ~15s on a fully offline box.
+    // Network reachability — the two hosts the install genuinely needs
+    // (binaries AND model GGUFs both come from GitHub releases now).
+    // 5s timeout per probe; total worst-case ~10s on a fully offline box.
     let http = Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .expect("build http client");
-    for host in &["https://github.com", "https://ollama.com", "https://apt.postgresql.org"] {
+    for host in &["https://github.com", "https://apt.postgresql.org"] {
         match http.head(*host).send().await {
             Ok(r) if r.status().is_success() || r.status().is_redirection() => {
                 ui::ok(&format!("Reachable: {host}"));
@@ -63,7 +64,12 @@ pub async fn run() -> Result<Report> {
     // listens on; on a fresh box they should be free. If they're held,
     // either an old Virtues is still running (idempotent re-run, fine) or
     // an unrelated service is squatting on a port we need.
-    for (port, name) in [(5432u16, "postgres"), (8000, "virtues"), (11434, "ollama")] {
+    for (port, name) in [
+        (5432u16, "postgres"),
+        (8000, "virtues"),
+        (18181, "virtues-embed"),
+        (18182, "virtues-rerank"),
+    ] {
         if port_in_use(port) {
             ui::warn(&format!("Port {port} ({name}) in use — re-run on existing install?"));
             warnings += 1;

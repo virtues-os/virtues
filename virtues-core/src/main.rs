@@ -140,119 +140,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle Init command early (doesn't need Virtues client).
     //
-    // `virtues init` is the all-in-one first-run wizard:
-    //   1. Local config: DB URL, server URL, storage path, encryption key
-    //   2. Save to .env
-    //   3. Migrations (required before subscribe — box_secrets table)
-    //   4. Subscribe ($20/mo via QR + URL on the same screen)
-    //   5. Done — print next-step hints
+    // `virtues init` is PLUMBING, not a wizard (docs/onboarding.md): resolve
+    // config from the env the installer wrote, run migrations, mint a pair
+    // token, print the handoff. The account/subscribe conversation lives in
+    // the web setup wizard (/setup) — a TTY is the worst possible medium for
+    // billing and OAuth, so the interactive middle this command used to have
+    // is gone. The installer execs this at the end of `curl get.virtues.com`;
+    // re-running it by hand is always safe (everything here is idempotent).
     //
-    // Power users still have `virtues subscribe` / `virtues migrate` separately
-    // when they want granular control.
+    // Power users keep `virtues subscribe` / `account-login` / `migrate` as
+    // hidden standalone commands.
     if matches!(cli.command, Some(Commands::Init)) {
-        use dialoguer::{theme::ColorfulTheme, Select};
-
-        // The Recommended/Advanced choice lives ONE level up — in the
-        // installer (tools/virtues-installer/) — where it actually means something
-        // (apt installs, install prefix, data dir, download base, etc.).
-        // Asking again here was a UX bug: virtues init has nothing
-        // meaningful to expose as "Advanced" because the env file
-        // install.sh wrote already has all the runtime config. The only
-        // decision that matters here is the account branch.
-        //
-        // Use recommended_config() directly — it reads DATABASE_URL,
-        // VIRTUES_ENCRYPTION_KEY, STATIC_DIR, STORAGE_PATH, etc. from the
-        // process env (systemd EnvironmentFile + dotenv both populate
-        // them). Operators who need to override can edit
-        // /var/lib/virtues/virtues.env before running this; no second
-        // wizard required.
+        // recommended_config() reads DATABASE_URL, VIRTUES_ENCRYPTION_KEY,
+        // STATIC_DIR, STORAGE_PATH, etc. from the process env (systemd
+        // EnvironmentFile + dotenv both populate them). Operators who need
+        // to override can edit /var/lib/virtues/virtues.env first; there is
+        // deliberately no second wizard here — the Recommended/Advanced
+        // choice lives one level up, in the installer.
         let config = virtues::setup::recommended_config()?;
 
-        // Migrations are functionally required before the subscribe step
-        // (box vault stores billing_token in `box_secrets`). Idempotent —
-        // safe to re-run on every `virtues init` invocation.
         println!();
         println!("📊 Running migrations...");
         let db = virtues::database::Database::new(&config.database_url)?;
         db.initialize().await?;
         println!("✅ Migrations complete");
 
-        // Privacy framing before the account prompt. The user is *deciding*
-        // whether to attach a Virtues account — they need the trust pitch
-        // now, not buried in a Settings page later.
-        print_account_intro();
-
-        // Account selector. Replaces the old binary Confirm.
-        //
-        // [1] Log in: lands when atlas /init/login (Stripe Customer Portal
-        //     magic link → mint billing_token for verified customer) ships.
-        //     Until then, the option exists in the UI for honesty + sets
-        //     expectations.
-        // [2] Create new: existing device-authorization → Stripe Checkout
-        //     flow that's been working since v0.1.0.
-        let account_idx = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Account")
-            .items(&[
-                "Log in to existing Virtues account",
-                "Create a new Virtues account ($20/mo, $15 wallet)",
-            ])
-            .default(1)
-            .interact()
-            .unwrap_or(1);
-
-        // Two completely different "log ins":
-        //   - account login   = atlas /init/login → Resend magic link → box
-        //                       polls until the user clicks the email and
-        //                       atlas flips the device_link to ready.
-        //   - box login       = your laptop browser pairing with the box
-        //                       via the pair URL printed at the end of
-        //                       this function. Same UI surface (the web
-        //                       app); fundamentally different semantics
-        //                       (this is "log into the box's web UI",
-        //                       not "log into Virtues account").
-        if account_idx == 0 {
-            // Account login via magic-link email. The function below
-            // calls /api/billing/link/login on the box, which in turn
-            // hits atlas /init/login. On success, the existing poll
-            // loop will pick up the billing_token when the user clicks
-            // the email link.
-            use virtues::VirtuesBuilder;
-            let virtues = VirtuesBuilder::new()
-                .database(&config.database_url)
-                .build()
-                .await?;
-            if let Err(e) = virtues::cli::commands::deploy::handle_login(&virtues).await {
+        // Mint a CLI-origin pair token and print the handoff. The fragment
+        // form (`/pair#t=…`) never leaks the token to server logs or
+        // referers. Opening it lands the browser in the setup wizard, which
+        // owns everything that used to be prompted here.
+        match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
+            Ok(minted) => print_link_output(&minted.token),
+            Err(e) => {
                 println!();
-                println!("  ⚠  log-in step did not finish: {e}");
-                println!("     Run `virtues account-login` later when you're ready, or");
-                println!("     re-run `virtues init` and pick Create new instead.");
-            }
-        } else {
-            use virtues::VirtuesBuilder;
-            let virtues = VirtuesBuilder::new()
-                .database(&config.database_url)
-                .build()
-                .await?;
-            // Soft-fail — let the user retry with `virtues subscribe` if
-            // the link expires or atlas is unreachable.
-            if let Err(e) = virtues::cli::commands::deploy::handle_subscribe(&virtues).await {
-                println!();
-                println!("  ⚠  subscribe step did not finish: {e}");
-                println!("     Run `virtues subscribe` later when you're ready.");
-            }
-        }
-
-        // Mint a CLI-origin pair token and print the URL.  The fragment-token
-        // form (`/pair#t=…`) never leaks the token to server logs or referers.
-        {
-            let db = virtues::database::Database::new(&config.database_url)?;
-            match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
-                Ok(minted) => print_link_output(&minted.token),
-                Err(e) => {
-                    println!();
-                    println!("  ⚠  could not mint pair token: {e}");
-                    println!("     Run `virtues link` later to get a fresh URL.");
-                }
+                println!("  ⚠  could not mint pair token: {e}");
+                println!("     Run `virtues login` later to get a fresh URL.");
             }
         }
 
@@ -499,102 +421,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Print the first-boot trust pitch shown right before the account prompt
-/// in `virtues init`.
-///
-/// Design notes (deliberate, not stylistic):
-///
-/// - **No named competitor comparisons.** Earlier drafts had a table
-///   ("Google reads your content; we don't") — visually punchy but legally
-///   exposed (Lanham false-advertising; trade libel; named-trademark use).
-///   The cost-to-defend a single bad-faith C&D outweighs the rhetorical
-///   win. Replaced with pure self-statements + one positive Plex analogy.
-///
-/// - **First-person, not comparative.** "What stays on your box" / "What
-///   we see" lets the reader supply their own contrast from their own
-///   life — usually more damning than ours.
-///
-/// - **Sunset commitment elevated to the closer.** The strongest trust
-///   signal isn't a state (today's privacy) but a direction (where we're
-///   going). It lands last so it's the thought the user holds when they
-///   make the [1] / [2] choice.
-///
-/// - **Every claim has to remain true.** If we add a feature that breaks
-///   one ("anything semantic about who you are stays on your box" implies
-///   no telemetry of behavior), this copy needs updating in lockstep.
-fn print_account_intro() {
-    use console::style;
-    let line = style("─────────────────────────────────────────────────────────").dim();
-    let sep  = style("═════════════════════════════════════════════════════════").dim();
-
-    println!();
-    println!("{line}");
-    println!();
-    println!("  {}", style("Your data lives on this Linux device. Never our cloud.").bold());
-    println!();
-    println!("  {}", style("What stays on your box:").bold());
-    println!("    • Every message, photo, file, calendar event, note");
-    println!("    • Every prompt you type and every response");
-    println!("    • Your encryption keys");
-    println!("    • Anything semantic about who you are");
-    println!();
-    println!("  {}", style("What we see (the strict minimum):").bold());
-    println!("    • A Stripe customer ID  ({})",
-        style("Stripe holds your card and email").dim());
-    println!("    • Token counts on AI calls  ({})",
-        style("for billing").dim());
-    println!("    • OAuth callbacks for ~200ms  ({})",
-        style("so Google / Notion / Plaid will talk to your box at all").dim());
-    println!();
-    println!("  We never see content, conversations, who you talk to, or what");
-    println!("  you ask. No metadata, no contact graph, no semantic shape of");
-    println!("  your life.");
-    println!();
-    println!("{sep}");
-    println!();
-    println!("  {}",
-        style("Two things still require a Virtues account").bold());
-    println!("  — the smallest remaining surface, shrinking every release:");
-    println!();
-    println!("    1. {}.  Google, Notion, Plaid etc. require a registered",
-        style("OAuth callbacks").bold());
-    println!("       HTTPS URL. virtues.com hosts it, forwards to your box");
-    println!("       in ~200ms, discards the auth code.");
-    println!();
-    println!("    2. {}.  Your provider key (yours or Virtues wallet) stays",
-        style("AI proxy").bold());
-    println!("       server-side as a short-lived bearer instead of living on");
-    println!("       every device. Calls are passthrough — providers log");
-    println!("       nothing of our traffic; we see only token counts.");
-    println!();
-    println!("{sep}");
-    println!();
-    println!("  {}",
-        style("Our north star: make virtues-api extinct.").bold().green());
-    println!();
-    println!("  Every line of code there is something we'd rather you ran at");
-    println!("  home. The roadmap is structured around shrinking this layer:");
-    println!();
-    println!("    • {}.  Edge models close the gap with cloud LLMs every",
-        style("Local inference").bold());
-    println!("      quarter. We route embeddings on-device today; chat-tier");
-    println!("      moves home as open-weight models reach parity.");
-    println!();
-    println!("    • {}.  IETF is standardizing flows that don't need",
-        style("Device-bound OAuth").bold());
-    println!("      a hosted callback. When providers adopt them, the");
-    println!("      callback-hosting role disappears.");
-    println!();
-    println!("    • {}.  Replaces atlas's role in box",
-        style("Self-coordinated rendezvous").bold());
-    println!("      discovery — signaling-only, then nothing.");
-    println!();
-    println!("  Every release that removes us from your data path is one we");
-    println!("  ship harder than features.");
-    println!();
-    println!("{line}");
-    println!();
-}
+// NOTE: the first-boot trust pitch (`print_account_intro`) that used to live
+// here moved to the web setup wizard's account step — the user now makes the
+// account decision in a browser, so that's where the pitch belongs. Its
+// design rules travel with it (kept in the wizard's comments): first-person
+// claims only, no named-competitor comparisons (Lanham/trade-libel exposure),
+// the virtues-api sunset commitment as the closer, and every claim must stay
+// true in lockstep with shipped features.
 
 /// Print the inference stack's hardware-resolution plan: which accelerator is
 /// active, whether this build links CUDA, the chosen ONNX precision, and where
@@ -686,7 +519,7 @@ fn maybe_reexec_as_service_user() {
 
 /// no session construction.
 fn print_resolution_report() {
-    use virtues::search::model_cache::{resolution_report, ModelSource};
+    use virtues::inference_report::{resolution_report, ModelSource};
 
     let r = resolution_report();
     println!("Virtues inference resolution");
@@ -702,7 +535,7 @@ fn print_resolution_report() {
             ModelSource::Baked(p) => format!("on disk @ {}", p.display()),
             ModelSource::Download => "MISSING — re-run the installer to fetch".to_string(),
         };
-        println!("    - {:<9} {} :: {} [{}]", m.name, m.repo, m.onnx_file, source);
+        println!("    - {:<9} {} :: {} [{}]", m.name, m.repo, m.gguf_file, source);
     }
 
     // Network reachability — the IPv6-direct doctrine's "can a device reach

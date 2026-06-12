@@ -32,10 +32,9 @@
 ## Reaching the web UI
 
 Virtues serves the web UI over **plain HTTP on port 8000**. There is no TLS
-on the box — see [trust model docs](architecture.md) for the rationale.
+on the box — see [wireguard-pairing.md](wireguard-pairing.md) for the rationale.
 
-Until the Virtues client daemon ships (v0.2), the web UI is reachable from
-**a browser on the box itself**:
+On the box itself, the web UI is always reachable from a browser at:
 
 ```
 http://localhost:8000
@@ -44,11 +43,14 @@ http://localhost:8000
 Loopback is a Secure Context per W3C spec, so all modern browsers treat it
 as if it were HTTPS (cookies, Service Workers, WebAuthn, no warnings).
 
-From other devices on the LAN, you can reach the box at `http://<box-ip>:8000`
-but the box's pair-only auth model still applies — you'll see the pairing
-prompt unless you have a session. Once the Virtues client daemon ships,
-other devices will pair via WireGuard and reach the box at `http://localhost:8000`
-on their own machine through a local proxy.
+Since the Virtues client daemon shipped (v0.2), other devices pair via
+WireGuard and reach the box at `http://localhost:8000` on their own machine
+through a local proxy — the WireGuard handshake is the trust pin, so the
+remote browser also lands in a loopback Secure Context.
+
+From other devices on the LAN *without* the daemon, you can still reach the
+box directly at `http://<box-ip>:8000`, but the box's pair-only auth model
+applies — you'll see the pairing prompt unless you have a session.
 
 ---
 

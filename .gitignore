@@ -122,7 +122,7 @@ tmp/*
 
 /.pnpm-store
 /apps/web/.pnpm-store
-/apps/mac/.build
+/apps/mac-source/.build
 /crates/virtues-registry/target
 /virtues-core/core/
 /virtues-core/.sqlx

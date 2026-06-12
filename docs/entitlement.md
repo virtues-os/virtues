@@ -211,8 +211,8 @@ prior legacy behavior (no regression); restoring them is a separate fix.
 
 - `/claim` real-Stripe smoke test (needs a live Stripe test account).
 - Billing-portal-based billing_token reissue (currently via re-claim).
-- Plaid (see [`plaid-migration.md`](plaid-migration.md)) — its per-Item
-  monthly cost model needs separate treatment.
+- Plaid per-Item cost model — Plaid data sync ships via the standard registry
+  source model; a per-Item monthly-cost entitlement treatment is still open.
 
 ## 11. Behavioral blocklist
 

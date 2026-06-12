@@ -20,7 +20,7 @@ Most companies promise privacy: *"we won't look at your data."* That promise is 
 
 So we split the company's knowledge in two and made sure the two halves can never be rejoined:
 
-- **Billing** knows *who you are* — your email, your card, that you pay us $29/month. It knows **nothing** about what you do.
+- **Billing** knows *who you are* — your email, your card, that you pay us $20/month. It knows **nothing** about what you do.
 - **The API** knows *what gets used* — that some anonymous token spent a few cents on a map lookup. It knows **nothing** about who you are.
 
 The link between "who" and "what" exists in exactly one place: **your own server, in your own home.** That's your data, on your hardware. We never hold it.
@@ -54,7 +54,7 @@ holds an **opaque pointer to an encrypted address it can't read.**
 | Party | Its job — and *only* this | Knows | Never sees |
 |---|---|---|---|
 | **Your home server** (VirtuesOS) | runs your stuff; the one place the link lives | everything (it's yours) | — |
-| **Billing** (Atlas) | who pays, plus admin / support | customer, email, that you pay $29/mo | your usage token |
+| **Billing** (Atlas) | who pays, plus admin / support | customer, email, that you pay $20/mo | your usage token |
 | **The API** (virtues-api) | serves requests, counts the budget down | an anonymous token has budget left | who you are |
 | **Rendezvous** | helps your phone find your home server | an opaque pointer to an encrypted address | who you are; your real address (it's encrypted) |
 
@@ -123,7 +123,7 @@ This is the line that matters, and we mean it literally:
 - We don't have a "customer-to-activity table we promise not to join." **There is no shared key to join on.** Billing's records and the API's records have no field in common.
 - We don't *decline* to link your identity to your behavior. **We are unable to.** The only copy of that link lives on hardware we don't own and can't reach.
 
-A subpoena to Billing yields: *"This customer pays us $29/month."* Nothing else.
+A subpoena to Billing yields: *"This customer pays us $20/month."* Nothing else.
 A subpoena to the API yields: *"Some token has $4.40 left this month."* Nothing else.
 A subpoena to both yields: *those two facts, still unjoinable.*
 
