@@ -24,7 +24,11 @@ GITHUB_OWNER="${VIRTUES_GITHUB_OWNER:-virtues-os}"
 GITHUB_REPO="${VIRTUES_GITHUB_REPO:-virtues}"
 VIRTUES_VERSION="${VIRTUES_VERSION:-latest}"
 
-die() { printf "  ✖  %s\n" "$*" >&2; exit 1; }
+# Output is pure ASCII on purpose: bootstrap runs BEFORE the installer's
+# ensure_utf8_locale step, so this is the one moment in the journey where a
+# LANG=C box (or a tmux started under one) would mangle multibyte glyphs.
+# The brand mark and real UI begin in the installer, after the locale is fixed.
+die() { printf "  x  %s\n" "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "must be run as root. Try: curl -sSL https://get.virtues.com | sudo sh"
 
@@ -63,7 +67,7 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 INSTALLER="$TMPDIR/virtues-installer"
 
-printf "  ∴  Fetching installer (%s)…\n" "$VIRTUES_VERSION"
+printf "  :.  Fetching installer (%s)...\n" "$VIRTUES_VERSION"
 curl -sSLfo "$INSTALLER" "$INSTALLER_URL" \
     || die "download failed: $INSTALLER_URL"
 
@@ -73,7 +77,7 @@ if curl -sSLfo "$INSTALLER.sha256" "$SHA_URL" 2>/dev/null; then
     expected=$(awk '{print $1}' "$INSTALLER.sha256")
     actual=$(sha256sum "$INSTALLER" | awk '{print $1}')
     [ "$expected" = "$actual" ] \
-        || die "SHA256 mismatch on $NAME — refusing to execute"
+        || die "SHA256 mismatch on $NAME - refusing to execute"
 fi
 
 chmod +x "$INSTALLER"

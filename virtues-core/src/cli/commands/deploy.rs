@@ -324,6 +324,11 @@ fn print_welcome(atlas_url: &str) {
 /// Render a QR code for `data` using unicode half-block characters so each
 /// row is two QR-modules tall — keeps the QR compact enough to scan on
 /// reasonable terminals (~25 lines tall for typical link URLs).
+///
+/// Assumes a UTF-8 terminal — the installer provisions a UTF-8 system locale
+/// (`ensure_utf8_locale`) precisely so box-side output never needs an ASCII
+/// fallback path. A terminal that still mangles this has a client-side font
+/// problem no box-side rendering choice can detect or fix.
 pub fn print_qr_block(data: &str) {
     let qr = match qrcode::QrCode::new(data) {
         Ok(q) => q,

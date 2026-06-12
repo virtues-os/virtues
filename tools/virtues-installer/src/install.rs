@@ -258,6 +258,49 @@ WantedBy=multi-user.target
 "#;
 
 // ────────────────────────────────────────────────────────────────────────
+// Locale — every box surface assumes UTF-8
+// ────────────────────────────────────────────────────────────────────────
+
+/// Ensure the system locale is UTF-8 (`C.UTF-8` — built into glibc on every
+/// target distro; no `locales` package or locale-gen needed).
+///
+/// This is an install step, not a render-time fallback, on purpose: the
+/// brand mark (`∴`), the half-block QR in the setup handoff, and the
+/// box-drawing rules are all multibyte UTF-8, and a `LANG=C` minimal image
+/// (or a tmux/screen started under one) renders them as diamonds/mojibake
+/// at the worst possible moment — onboarding. Provisioning the locale once
+/// keeps every render path single-path. (A terminal that still mangles
+/// glyphs after this has a client-side font problem the box can't fix.)
+pub async fn ensure_utf8_locale() -> Result<()> {
+    let session_is_utf8 = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
+        .map(|v| v.to_ascii_lowercase().replace('-', "").contains("utf8"))
+        .unwrap_or(false);
+    if session_is_utf8 {
+        ui::skip("Locale already UTF-8");
+        return Ok(());
+    }
+
+    // Persist the system default. localectl writes /etc/default/locale (or
+    // /etc/locale.conf); fall back to writing the file directly on images
+    // without it (containers).
+    let mut cmd = Command::new("localectl");
+    cmd.args(["set-locale", "LANG=C.UTF-8"]);
+    if run_step("System locale → C.UTF-8", cmd).await.is_err() {
+        fs::write("/etc/default/locale", "LANG=C.UTF-8\n")
+            .context("writing /etc/default/locale")?;
+        ui::ok("System locale → C.UTF-8 (wrote /etc/default/locale)");
+    }
+
+    // Make THIS run consistent too: the var survives the exec into
+    // `virtues init` (sudo's default env_keep preserves LANG), so the very
+    // first handoff/QR already renders under a UTF-8 locale.
+    std::env::set_var("LANG", "C.UTF-8");
+    Ok(())
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // mDNS — hostname + Avahi service advertisement
 // ────────────────────────────────────────────────────────────────────────
 

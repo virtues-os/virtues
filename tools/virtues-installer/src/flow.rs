@@ -47,6 +47,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
+        ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, WireGuard, Avahi)");
         ui::skip(&format!(
             "  • Inference sidecars (llama-server): {} + {}",
@@ -62,6 +63,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     // ─── System packages ────────────────────────────────────────────────
     ui::section("System packages");
+    install::ensure_utf8_locale().await?;
     install::install_deps(&target).await?;
     install::configure_mdns().await?;
     install::create_user(&cfg).await?;
