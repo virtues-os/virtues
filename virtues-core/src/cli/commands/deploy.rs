@@ -59,12 +59,36 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("    AI ready (bearer)    {}", yn(s.subscription.bearer));
     println!("  devices:");
     println!("    paired (WG)          {}", s.devices.paired_wg);
+
+    // Setup + next-wins checklists — the textual mirror of the panel/wizard
+    // (one state machine, three renderers; see docs/onboarding.md).
+    if let Ok(setup) = crate::api::box_status::compute_setup_state(virtues.database.pool()).await {
+        println!("  setup:");
+        for step in &setup.setup {
+            print_step(step);
+        }
+        if setup.setup_complete {
+            println!("  next wins:");
+            for step in &setup.onboarding {
+                print_step(step);
+            }
+        }
+    }
     println!();
 
     let _ = any_download; // models lazy-download on first use; no nag here
     println!("  next: {}", next_step(&s));
     println!();
     Ok(())
+}
+
+/// Render one setup/onboarding step as a checklist line.
+fn print_step(step: &crate::api::box_status::SetupStep) {
+    let mark = if step.done { "✓" } else { "—" };
+    match &step.detail {
+        Some(d) => println!("    {:<20} {mark}  ({d})", step.title),
+        None => println!("    {:<20} {mark}", step.title),
+    }
 }
 
 /// The single next action a DIY operator should take, derived from the boot
