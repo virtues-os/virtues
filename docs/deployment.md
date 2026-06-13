@@ -23,7 +23,15 @@ That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the produ
 
 ## Home box: native install via `tools/bootstrap.sh` + `virtues-installer`
 
-`curl get.virtues.com | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh` (served via Caddy on the install host). Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent and does, in order:
+`curl get.virtues.com | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The install host's Caddy serves it by redirecting to the **latest GitHub Release asset** (uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift:
+
+```caddyfile
+get.virtues.com {
+    redir https://github.com/virtues-os/virtues/releases/latest/download/bootstrap.sh 302
+}
+```
+
+Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent and does, in order:
 
 1. **Pick the package manager** (`apt` for Debian/Ubuntu, `dnf` for Fedora) and install: `postgresql-18` + `postgresql-18-pgvector`, `avahi-daemon`, `libnss-mdns`, `wireguard`, `openssl`, `ca-certificates`.
 2. **Resolve the latest release tag** from `https://api.github.com/repos/virtues-os/virtues/releases/latest`, download the `virtues-<ver>-<arch>-linux.tar.gz` tarball + its `.sha256` from the matching GitHub Release, verify the checksum, extract the `virtues` binary to `/usr/local/bin/`.
