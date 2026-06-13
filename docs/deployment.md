@@ -13,7 +13,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** (DIY + appliance) | `virtues` binary + `virtues-wireguard` daemon | `curl get.virtues.com \| sudo sh` → systemd units | App rootless; WG daemon `NET_ADMIN` only |
+| **Home box** (DIY + appliance) | `virtues` binary + `virtues-wireguard` daemon | `curl -sSL https://get.virtues.com \| sudo sh` → systemd units | App rootless; WG daemon `NET_ADMIN` only |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on a single EC2 + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -23,7 +23,7 @@ That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the produ
 
 ## Home box: native install via `tools/bootstrap.sh` + `virtues-installer`
 
-`curl get.virtues.com | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The install host's Caddy serves it by redirecting to the **latest GitHub Release asset** (uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift:
+`curl -sSL https://get.virtues.com | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The install host's Caddy 302-redirects the domain to the **latest GitHub Release asset** (`bootstrap.sh`, uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift. The canonical command uses `-sSL` precisely because the endpoint is a redirect (`-L` follows it):
 
 ```caddyfile
 get.virtues.com {

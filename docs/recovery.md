@@ -20,7 +20,7 @@
 | Forgot which BYO AI key you saved | [Reset BYO key](#reset-byo-key) |
 | `systemctl status virtues` shows the service failing | [Service won't start](#service-wont-start) |
 | Postgres won't start | [Postgres won't start](#postgres-wont-start) |
-| `curl get.virtues.com \| sudo sh` failed partway through | [`tools/bootstrap.sh` failed mid-run](#toolsbootstrapsh-failed-mid-run) |
+| `curl -sSL https://get.virtues.com \| sudo sh` failed partway through | [`tools/bootstrap.sh` failed mid-run](#toolsbootstrapsh-failed-mid-run) |
 | Want to copy your box to new hardware | [Migrating to new hardware](#migrating-to-new-hardware) |
 | Want to roll back after a bad upgrade | [Rolling back a `virtues upgrade`](#rolling-back-a-virtues-upgrade) |
 | Chat returns 402 / `insufficient_budget` | [402 on chat](#402-on-chat) |
@@ -121,7 +121,7 @@ Common patterns:
 - **"VIRTUES_ENCRYPTION_KEY not set"** — `/etc/virtues/env` is missing
   or the key line is empty. The installer writes this; if you restored
   from a backup tarball, the key is included. If neither, the box is
-  uninitialized — re-run `curl get.virtues.com | sudo sh`.
+  uninitialized — re-run `curl -sSL https://get.virtues.com | sudo sh`.
 - **"Failed to bind 0.0.0.0:8000"** — something else is using port
   8000. Find it with `sudo ss -lntp '( sport = :8000 )'`.
 - **Out of memory (OOM) kill** — `dmesg | grep -i oom` will confirm.
