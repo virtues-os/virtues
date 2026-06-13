@@ -229,6 +229,20 @@ jobs:
           # `prerelease: false, draft: false` once both are uploaded).
           draft: true
 
+      # The bootstrap script ships WITH the release so get.virtues.com can
+      # serve it from the stable `releases/latest/download/bootstrap.sh` URL
+      # (Caddy redir on the install host) — the script and the binaries it
+      # fetches version together, gated on the same tag, and no server-side
+      # copy exists to drift. Arch-independent → one matrix leg uploads it.
+      - name: Upload bootstrap.sh (x86_64 leg only)
+        if: matrix.arch == 'x86_64'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: tools/bootstrap.sh
+          fail_on_unmatched_files: true
+          draft: true
+
       # Preview daemon — separate, optional upload so a missing client asset
       # (it may not have built) can't fail the strict core upload above.
       - name: Upload virtues-client (preview, optional)
