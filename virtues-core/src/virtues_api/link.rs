@@ -66,7 +66,7 @@ where
                 if attempt >= BACKOFFS_MS.len() {
                     return Err(e);
                 }
-                tracing::warn!(attempt = attempt + 1, error = %e, "atlas request failed; retrying");
+                tracing::warn!(attempt = attempt + 1, error = ?e, "atlas request failed; retrying");
                 tokio::time::sleep(std::time::Duration::from_millis(BACKOFFS_MS[attempt])).await;
                 attempt += 1;
             }
