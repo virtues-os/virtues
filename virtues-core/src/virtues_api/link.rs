@@ -46,10 +46,36 @@ pub enum LinkStatus {
 
 /// Start a device link: ask Atlas for a device/user code pair, stash the secret
 /// device_code, and return the user-facing bits.
+/// Send with bounded retry on transient *transport* failures (connection
+/// resets, timeouts). The box is almost always set up on captive/flaky wifi,
+/// where a single blip would otherwise hard-fail onboarding with a 502 mid-
+/// wizard (the exact pain point this addresses). A real HTTP response — even
+/// an error status — returns immediately and is the caller's to interpret;
+/// only `send()` transport errors are retried. Three attempts, ~0.3s then
+/// ~1.2s backoff between them.
+async fn send_with_retry<F>(make_req: F) -> reqwest::Result<reqwest::Response>
+where
+    F: Fn() -> reqwest::RequestBuilder,
+{
+    const BACKOFFS_MS: [u64; 2] = [300, 1200];
+    let mut attempt = 0usize;
+    loop {
+        match make_req().send().await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                if attempt >= BACKOFFS_MS.len() {
+                    return Err(e);
+                }
+                tracing::warn!(attempt = attempt + 1, error = %e, "atlas request failed; retrying");
+                tokio::time::sleep(std::time::Duration::from_millis(BACKOFFS_MS[attempt])).await;
+                attempt += 1;
+            }
+        }
+    }
+}
+
 pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Result<LinkStart> {
-    let resp = http
-        .post(format!("{}/init/start", atlas_url.trim_end_matches('/')))
-        .send()
+    let resp = send_with_retry(|| http.post(format!("{}/init/start", atlas_url.trim_end_matches('/'))))
         .await
         .context("POST /init/start")?;
     if !resp.status().is_success() {
@@ -99,12 +125,12 @@ pub async fn poll(
         return Ok(LinkStatus::None);
     };
 
-    let resp = http
-        .post(format!("{}/init/poll", atlas_url.trim_end_matches('/')))
-        .json(&serde_json::json!({ "device_code": device_code }))
-        .send()
-        .await
-        .context("POST /init/poll")?;
+    let resp = send_with_retry(|| {
+        http.post(format!("{}/init/poll", atlas_url.trim_end_matches('/')))
+            .json(&serde_json::json!({ "device_code": device_code }))
+    })
+    .await
+    .context("POST /init/poll")?;
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().await.unwrap_or_default();
@@ -174,12 +200,12 @@ pub async fn login(
         ));
     };
 
-    let resp = http
-        .post(format!("{}/init/login", atlas_url.trim_end_matches('/')))
-        .json(&serde_json::json!({ "device_code": device_code, "email": email }))
-        .send()
-        .await
-        .context("POST /init/login")?;
+    let resp = send_with_retry(|| {
+        http.post(format!("{}/init/login", atlas_url.trim_end_matches('/')))
+            .json(&serde_json::json!({ "device_code": device_code, "email": email }))
+    })
+    .await
+    .context("POST /init/login")?;
 
     let status = resp.status();
     let v: serde_json::Value = resp.json().await.context("/init/login non-JSON response")?;
