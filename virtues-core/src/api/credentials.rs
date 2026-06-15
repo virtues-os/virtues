@@ -129,9 +129,9 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.source_id,
               c.name,
               c.status,
-              c.metadata,
-              c.last_seen_at,
-              c.created_at,
+              c.metadata::text,
+              c.last_seen_at::text,
+              c.created_at::text,
               (SELECT COUNT(*) FROM app_actions WHERE credential_id = c.id) AS action_count
            FROM credentials c
            ORDER BY c.created_at DESC"#,
