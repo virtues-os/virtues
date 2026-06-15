@@ -21,10 +21,7 @@ mod entitlement;
 mod providers;
 mod proxy;
 mod routes;
-mod subscription;
 mod sweeper;
-mod tier;
-pub mod version;
 mod voucher;
 
 use anyhow::Result;
@@ -36,16 +33,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::blocklist::Blocklist;
 use crate::config::Config;
-use crate::subscription::SubscriptionManager;
-use crate::tier::TierManager;
-use crate::version::VersionCache;
 
 /// Shared application state
 pub struct AppState {
     pub config: Arc<Config>,
-    pub tier: TierManager,
-    pub subscription: SubscriptionManager,
-    pub version_cache: VersionCache,
     pub http_client: reqwest::Client,
     /// Postgres pool for WS-6b entitlement queries. `None` until the
     /// `VIRTUES_API_DATABASE_URL` env var is set — existing RAM paths
@@ -90,12 +81,7 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = Arc::new(Config::from_env()?);
 
-    let mode = if config.has_atlas() { "production" } else { "standalone" };
-    tracing::info!(
-        "Starting virtues-api on port {} in {} mode",
-        config.port,
-        mode
-    );
+    tracing::info!("Starting virtues-api on port {}", config.port);
 
     // Log AI Gateway configuration
     tracing::info!(
@@ -110,15 +96,6 @@ async fn main() -> Result<()> {
         config.google_api_key.is_some(),
         config.has_plaid()
     );
-
-    // Initialize tier manager
-    let tier = TierManager::new();
-
-    // Initialize subscription manager
-    let subscription = SubscriptionManager::new();
-
-    // Initialize version cache (shared between route handlers)
-    let version_cache = VersionCache::new();
 
     // Build HTTP client for embeddings and other direct API calls
     let http_client = reqwest::Client::builder()
@@ -150,12 +127,12 @@ async fn main() -> Result<()> {
         sweeper::spawn(pool.clone());
     }
 
-    // Dev-only: fund a known bearer so a local standalone virtues-api accepts
-    // calls without the Atlas voucher/redeem path. Gated to ENVIRONMENT=dev +
-    // no-Atlas so it can never fire in production.
+    // Dev-only: fund a known bearer so a local virtues-api accepts calls
+    // without the Atlas voucher/redeem path. Gated to ENVIRONMENT=dev so it
+    // can never fire in production.
     if let Some(pool) = db.as_ref() {
         let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
-        if is_dev && !config.has_atlas() {
+        if is_dev {
             dev_seed::seed_dev_entitlement(pool).await?;
         }
     }
@@ -163,9 +140,6 @@ async fn main() -> Result<()> {
     // Build shared state
     let state = Arc::new(AppState {
         config,
-        tier,
-        subscription,
-        version_cache,
         http_client,
         db,
         blocklist,
@@ -200,12 +174,6 @@ async fn main() -> Result<()> {
         .merge(routes::exa::router())
         .merge(routes::unsplash::router())
         .merge(routes::ai::router())
-        // Connection limits (tier-based)
-        .nest("/v1", routes::limits::router())
-        // Subscription status and billing portal
-        .nest("/v1", routes::subscription::router())
-        // Version checking and updates
-        .nest("/v1", routes::version::router())
         // Middleware
         .layer(TraceLayer::new_for_http())
         // F2: no CORS. virtues-api is a server-to-server sidecar (the home box
