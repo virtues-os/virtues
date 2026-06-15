@@ -453,18 +453,11 @@ fn print_link_output(token: &str) {
         println!("    {:<18}  {}", format!("{}:", url.label), url.url);
     }
 
-    // Terminal QR — phone scans straight from the SSH session (appliance
-    // parity with zero hardware). Encodes the raw-IP URL: phones fumble
-    // .local, and the QR is precisely the phone path. Skipped in dev
-    // (localhost-only URL is useless on a phone).
+    // Setup-scoped escape hatch for client-isolated networks: when this
+    // command arrived over SSH, that session is proof of a working path
+    // to the box, so print the local-forward recipe (docs/onboarding.md:
+    // "auto-enable nothing, auto-notice everything").
     if !is_dev {
-        println!();
-        virtues::cli::commands::deploy::print_qr_block(&virtues::cli::link::qr_pair_url(token));
-
-        // Setup-scoped escape hatch for client-isolated networks: when this
-        // command arrived over SSH, that session is proof of a working path
-        // to the box, so print the local-forward recipe (docs/onboarding.md:
-        // "auto-enable nothing, auto-notice everything").
         if let Some(ssh) = virtues::cli::link::ssh_context() {
             println!();
             let host = virtues::cli::link::ssh_forward_host();
