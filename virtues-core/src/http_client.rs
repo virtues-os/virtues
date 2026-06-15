@@ -6,6 +6,8 @@
 //! All clients going to virtues-api should use these to ensure consistent
 //! timeout behavior and connection pooling.
 
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Install the ring CryptoProvider as the process default if nobody has yet.
@@ -21,6 +23,29 @@ fn ensure_crypto_provider() {
     ONCE.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
     });
+}
+
+/// DNS resolver that returns only A (IPv4) records.
+///
+/// reqwest (via rustls) tries AAAA first when DNS returns both A and AAAA.
+/// On boxes with no global IPv6 routing, the connect gets ENETUNREACH
+/// instantly and reqwest does NOT fall back to IPv4 — it just fails. This
+/// resolver strips AAAA records so the connector never attempts IPv6.
+#[derive(Clone, Debug)]
+struct Ipv4OnlyResolver;
+
+impl reqwest::dns::Resolve for Ipv4OnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_owned();
+        Box::pin(async move {
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host(format!("{}:0", host))
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
+                .filter(SocketAddr::is_ipv4)
+                .collect();
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
 }
 
 /// Connect timeout in seconds (time to establish TCP connection)
@@ -40,7 +65,7 @@ pub fn virtues_api_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+        .dns_resolver(Arc::new(Ipv4OnlyResolver))
         .build()
         .expect("Failed to build HTTP client")
 }
@@ -54,7 +79,7 @@ pub fn virtues_api_streaming_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(STREAMING_TIMEOUT_SECS))
-        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+        .dns_resolver(Arc::new(Ipv4OnlyResolver))
         .build()
         .expect("Failed to build streaming HTTP client")
 }
@@ -66,14 +91,12 @@ mod tests {
     #[test]
     fn test_virtues_api_client_creation() {
         let client = virtues_api_client();
-        // Just verify it creates without panicking
         drop(client);
     }
 
     #[test]
     fn test_streaming_client_creation() {
         let client = virtues_api_streaming_client();
-        // Just verify it creates without panicking
         drop(client);
     }
 }
