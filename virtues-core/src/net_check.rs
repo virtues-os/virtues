@@ -153,8 +153,9 @@ fn verdict_strings(class: NetClass, ipv6: Option<Ipv6Addr>, port: u16) -> (Strin
             ),
         ),
         NetClass::NatNoIpv6 => (
-            "Remote access isn't available from this network — everything else works. \
-             The box re-checks wherever it lives."
+            "Network: behind NAT, no global IPv6 — local + LAN access work fine, but \
+             remote-from-anywhere needs a router port-forward (home) or your own overlay \
+             (dorm/office). See docs/byo-networking.md; run `virtues doctor` anytime."
                 .to_string(),
             format!(
                 "If you control the router (home), forward udp/{port} to this box. \

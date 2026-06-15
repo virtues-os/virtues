@@ -376,9 +376,9 @@
 			<div class="text-center space-y-6">
 				<h1 class="text-2xl font-semibold tracking-tight">Almost there</h1>
 				{#each state_.setup.filter((s) => !s.done) as step (step.id)}
-					<p class="text-foreground-muted text-sm">
-						{step.title}: {step.detail ?? "pending"}
-					</p>
+					<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm text-left">
+						{step.detail ?? step.title}
+					</div>
 				{/each}
 				<Button type="button" variant="primary" class="w-full" onclick={finish}>
 					Continue anyway

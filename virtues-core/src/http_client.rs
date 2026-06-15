@@ -40,6 +40,7 @@ pub fn virtues_api_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
         .build()
         .expect("Failed to build HTTP client")
 }
@@ -53,6 +54,7 @@ pub fn virtues_api_streaming_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(STREAMING_TIMEOUT_SECS))
+        .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
         .build()
         .expect("Failed to build streaming HTTP client")
 }
