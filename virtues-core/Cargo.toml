@@ -115,6 +115,7 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 # OAuth
 oauth2 = "4.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "stream"] }
+rustls-native-certs = "0.8"
 
 # Financial integrations
 plaid = "9.0.1"

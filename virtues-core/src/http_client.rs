@@ -6,7 +6,6 @@
 //! All clients going to virtues-api should use these to ensure consistent
 //! timeout behavior and connection pooling.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,14 +37,36 @@ impl reqwest::dns::Resolve for Ipv4OnlyResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_owned();
         Box::pin(async move {
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host(format!("{}:0", host))
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
-                .filter(SocketAddr::is_ipv4)
-                .collect();
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host(format!("{}:0", host))
+                    .await
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
+                    .filter(std::net::SocketAddr::is_ipv4)
+                    .collect();
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }
+}
+
+/// Load the OS native CA certificate store.
+///
+/// Uses rustls-native-certs so our TLS verification tracks the system trust
+/// store rather than the compiled-in webpki-roots bundle. This means Let's
+/// Encrypt intermediate rotation (e.g. R3→R11, E1→E8) never breaks outbound
+/// HTTPS, because the OS CA store already trusts ISRG Root X1 and X2.
+fn native_root_certs() -> Vec<reqwest::Certificate> {
+    let result = rustls_native_certs::load_native_certs();
+    if !result.errors.is_empty() {
+        tracing::warn!(
+            count = result.errors.len(),
+            "some native CA certs failed to load; continuing with those that did"
+        );
+    }
+    result
+        .certs
+        .iter()
+        .filter_map(|cert| reqwest::Certificate::from_der(cert).ok())
+        .collect()
 }
 
 /// Connect timeout in seconds (time to establish TCP connection)
@@ -57,15 +78,24 @@ pub const REQUEST_TIMEOUT_SECS: u64 = 60;
 /// Request timeout for streaming requests in seconds (longer for SSE)
 pub const STREAMING_TIMEOUT_SECS: u64 = 300;
 
+fn base_builder() -> reqwest::ClientBuilder {
+    ensure_crypto_provider();
+    let mut builder = reqwest::Client::builder()
+        .tls_built_in_root_certs(false) // use native roots only
+        .dns_resolver(Arc::new(Ipv4OnlyResolver));
+    for cert in native_root_certs() {
+        builder = builder.add_root_certificate(cert);
+    }
+    builder
+}
+
 /// Create an HTTP client for regular virtues-api requests (non-streaming)
 ///
 /// Uses moderate timeouts suitable for synchronous LLM calls.
 pub fn virtues_api_client() -> reqwest::Client {
-    ensure_crypto_provider();
-    reqwest::Client::builder()
+    base_builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .dns_resolver(Arc::new(Ipv4OnlyResolver))
         .build()
         .expect("Failed to build HTTP client")
 }
@@ -75,11 +105,9 @@ pub fn virtues_api_client() -> reqwest::Client {
 /// Uses longer timeouts to accommodate streaming responses that
 /// may take several minutes to complete.
 pub fn virtues_api_streaming_client() -> reqwest::Client {
-    ensure_crypto_provider();
-    reqwest::Client::builder()
+    base_builder()
         .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(STREAMING_TIMEOUT_SECS))
-        .dns_resolver(Arc::new(Ipv4OnlyResolver))
         .build()
         .expect("Failed to build streaming HTTP client")
 }
