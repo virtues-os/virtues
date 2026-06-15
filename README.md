@@ -125,7 +125,7 @@ After that you're in the web UI on `http://localhost:8000` (run Chromium on the 
 | `virtues status` | Health dashboard (identity / inference / subscription / devices) |
 | `virtues status --json` | Machine-readable status snapshot for support tickets |
 | `virtues subscribe` | Connect this box to your Virtues subscription via Stripe |
-| `virtues setup` | First-boot bringup (migrate + identity + warm models) — usually run by the installer, not by hand |
+| `virtues init` | First-boot plumbing (migrations + pair-token handoff) — usually run by the installer, not by hand |
 | `virtues doctor` | Hardware + inference resolution report |
 | `virtues backup` / `virtues restore` | Snapshot + restore the box state |
 | `virtues upgrade` | Self-update from the latest GitHub Release |
@@ -244,7 +244,7 @@ virtues/
 │   ├── ios/                 # iOS companion app (Swift)
 │   └── mac-source/          # macOS data source: HealthKit / EventKit / activity collector
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
-├── scripts/                 # install.sh + release artifacts (get.virtues.com)
+├── tools/                   # bootstrap.sh + virtues-installer (get.virtues.com)
 ├── docs/                    # Architecture + concept docs (flat)
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
