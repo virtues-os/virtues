@@ -1,9 +1,4 @@
-//! Google Places via bearer-auth + entitlement::charge() (WS-6b).
-//!
-//! This is the migrated v1 of the Places routes. The legacy paths at
-//! `/v1/services/google/places/*` (X-Internal-Secret + X-User-Id) still
-//! exist in `services.rs` for the in-flight transition; callers should
-//! move to these new paths once they support bearer auth.
+//! Google Places via bearer-auth + entitlement::charge().
 //!
 //! Charge model: charge before upstream → refund if upstream fails. The
 //! charge window is short enough that race-vs-cancel is negligible at
@@ -55,13 +50,7 @@ async fn places_autocomplete(
             "Google Places API key not set",
         );
     };
-    let Some(pool) = state.db.as_ref() else {
-        return error_resp(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
     let _ = &headers; // X-Virtues-Purpose accepted (v3 no-op telemetry)
     let charged = match entitlement::charge(pool, &ent.bearer_hash, PLACES_COST_MICROS).await {
@@ -96,13 +85,7 @@ async fn places_details(
             "Google Places API key not set",
         );
     };
-    let Some(pool) = state.db.as_ref() else {
-        return error_resp(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
     let _ = &headers; // X-Virtues-Purpose accepted (v3 no-op telemetry)
     let charged = match entitlement::charge(pool, &ent.bearer_hash, PLACES_COST_MICROS).await {

@@ -59,13 +59,7 @@ async fn block_bearer(
     _auth: AuthenticatedRequest,
     Json(body): Json<BlockBody>,
 ) -> axum::response::Response {
-    let Some(pool) = state.db.as_ref() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "VIRTUES_API_DATABASE_URL not configured",
-        );
-    };
+    let pool = &state.db;
     let Ok(hash) = hex_decode(&body.bearer_hash) else {
         return error(
             StatusCode::BAD_REQUEST,
@@ -91,13 +85,7 @@ async fn unblock_bearer(
     _auth: AuthenticatedRequest,
     Json(body): Json<UnblockBody>,
 ) -> axum::response::Response {
-    let Some(pool) = state.db.as_ref() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "VIRTUES_API_DATABASE_URL not configured",
-        );
-    };
+    let pool = &state.db;
     let Ok(hash) = hex_decode(&body.bearer_hash) else {
         return error(
             StatusCode::BAD_REQUEST,
@@ -119,6 +107,15 @@ struct RegisterVoucherBody {
     #[serde(default)]
     is_renewal: bool,
     voucher_expires_at: DateTime<Utc>,
+    /// The customer's daily spend ceiling, carried from Atlas. Defaults to the
+    /// $20 floor when an older atlas omits it (forward/backward compatible
+    /// during a rolling deploy).
+    #[serde(default = "default_daily_cap")]
+    daily_cap_micros: i64,
+}
+
+fn default_daily_cap() -> i64 {
+    crate::entitlement::DEFAULT_DAILY_CEILING_MICROS
 }
 
 async fn register_voucher(
@@ -126,13 +123,7 @@ async fn register_voucher(
     _auth: AuthenticatedRequest,
     Json(body): Json<RegisterVoucherBody>,
 ) -> impl IntoResponse {
-    let Some(pool) = state.db.as_ref() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "VIRTUES_API_DATABASE_URL not configured",
-        );
-    };
+    let pool = &state.db;
 
     let Ok(hash) = hex_decode(&body.voucher_code_hash) else {
         return error(
@@ -149,6 +140,7 @@ async fn register_voucher(
             amount_micros: body.amount_micros,
             is_renewal: body.is_renewal,
             voucher_expires_at: body.voucher_expires_at,
+            daily_cap_micros: body.daily_cap_micros,
         },
     )
     .await

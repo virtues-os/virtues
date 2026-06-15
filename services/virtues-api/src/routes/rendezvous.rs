@@ -82,13 +82,7 @@ async fn put_rendezvous(
     Path(publish_id): Path<String>,
     body: Bytes,
 ) -> axum::response::Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "database not configured",
-        );
-    };
+    let pool = &state.db;
     if !valid_publish_id(&publish_id) {
         return err(
             StatusCode::BAD_REQUEST,
@@ -142,13 +136,7 @@ async fn get_rendezvous(
     State(state): State<Arc<AppState>>,
     Path(publish_id): Path<String>,
 ) -> axum::response::Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "database not configured",
-        );
-    };
+    let pool = &state.db;
     if !valid_publish_id(&publish_id) {
         return err(
             StatusCode::BAD_REQUEST,

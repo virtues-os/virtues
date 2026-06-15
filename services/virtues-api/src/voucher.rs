@@ -38,6 +38,9 @@ pub struct RegisterVoucher {
     /// `true` = sub renewal (overwrite wallet). `false` = top-up (add).
     pub is_renewal: bool,
     pub voucher_expires_at: DateTime<Utc>,
+    /// The customer's daily spend ceiling, carried from Atlas. Lands on the
+    /// entitlement at redeem; `charge()` enforces it per-bearer.
+    pub daily_cap_micros: i64,
 }
 
 /// Register a freshly minted voucher. Called by Atlas via
@@ -45,14 +48,15 @@ pub struct RegisterVoucher {
 pub async fn register(pool: &PgPool, v: RegisterVoucher) -> Result<()> {
     sqlx::query(
         r#"
-        INSERT INTO vouchers (voucher_code_hash, amount_micros, is_renewal, voucher_expires_at)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO vouchers (voucher_code_hash, amount_micros, is_renewal, voucher_expires_at, daily_cap_micros)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
     )
     .bind(&v.voucher_code_hash)
     .bind(v.amount_micros)
     .bind(v.is_renewal)
     .bind(v.voucher_expires_at)
+    .bind(v.daily_cap_micros)
     .execute(pool)
     .await
     .context("register voucher")?;
@@ -106,14 +110,14 @@ pub async fn redeem(
     let mut tx = pool.begin().await.map_err(|e| RedeemError::Db(e.into()))?;
 
     // Atomically claim. Hour-bucket the timestamp.
-    let claimed: Option<(i64, bool)> = sqlx::query_as(
+    let claimed: Option<(i64, bool, i64)> = sqlx::query_as(
         r#"
         UPDATE vouchers
         SET redeemed_at = date_trunc('hour', now())
         WHERE voucher_code_hash = $1
           AND redeemed_at IS NULL
           AND voucher_expires_at > now()
-        RETURNING amount_micros, is_renewal
+        RETURNING amount_micros, is_renewal, daily_cap_micros
         "#,
     )
     .bind(&code_hash)
@@ -121,7 +125,7 @@ pub async fn redeem(
     .await
     .map_err(|e| RedeemError::Db(e.into()))?;
 
-    let (amount_micros, is_renewal) = match claimed {
+    let (amount_micros, is_renewal, daily_cap_micros) = match claimed {
         Some(v) => v,
         None => {
             let existing: Option<(Option<DateTime<Utc>>, DateTime<Utc>)> = sqlx::query_as(
@@ -147,13 +151,14 @@ pub async fn redeem(
         sqlx::query_as(
             r#"
             INSERT INTO entitlements
-                (bearer_hash, wallet_micros, today_spent_micros, today_reset_at, expires_at)
-            VALUES ($1, $2, 0, $3, $4)
+                (bearer_hash, wallet_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros)
+            VALUES ($1, $2, 0, $3, $4, $5)
             ON CONFLICT (bearer_hash) DO UPDATE
             SET wallet_micros = $2,
                 today_spent_micros = 0,
                 today_reset_at = $3,
-                expires_at = $4
+                expires_at = $4,
+                daily_cap_micros = $5
             RETURNING expires_at, wallet_micros
             "#,
         )
@@ -161,6 +166,7 @@ pub async fn redeem(
         .bind(amount_micros)
         .bind(reset)
         .bind(new_expiry)
+        .bind(daily_cap_micros)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| RedeemError::Db(e.into()))?
@@ -173,10 +179,11 @@ pub async fn redeem(
         sqlx::query_as(
             r#"
             INSERT INTO entitlements
-                (bearer_hash, wallet_micros, today_spent_micros, today_reset_at, expires_at)
-            VALUES ($1, $2, 0, $3, $4)
+                (bearer_hash, wallet_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros)
+            VALUES ($1, $2, 0, $3, $4, $5)
             ON CONFLICT (bearer_hash) DO UPDATE
-            SET wallet_micros = entitlements.wallet_micros + EXCLUDED.wallet_micros
+            SET wallet_micros = entitlements.wallet_micros + EXCLUDED.wallet_micros,
+                daily_cap_micros = EXCLUDED.daily_cap_micros
             RETURNING expires_at, wallet_micros
             "#,
         )
@@ -184,6 +191,7 @@ pub async fn redeem(
         .bind(amount_micros)
         .bind(reset)
         .bind(new_expiry)
+        .bind(daily_cap_micros)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| RedeemError::Db(e.into()))?

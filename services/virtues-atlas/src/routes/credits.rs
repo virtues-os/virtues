@@ -161,6 +161,19 @@ async fn do_topup(
     let code_hash_hex = hex::encode(sha256(voucher_code.as_bytes()));
     let voucher_expires_at = Utc::now() + Duration::days(state.voucher.unredeemed_days);
 
+    // Carry the customer's daily ceiling across the wall so virtues-api keeps
+    // enforcing it after a top-up refresh. Falls back to the $20 default if the
+    // row read hiccups — never block a paid top-up on this.
+    let daily_cap_micros: i64 = sqlx::query_scalar(
+        "SELECT daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
+    )
+    .bind(customer_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(20_000_000);
+
     if let Err(e) = state
         .virtues_api
         .register_voucher(&RegisterVoucher {
@@ -168,6 +181,7 @@ async fn do_topup(
             amount_micros,
             is_renewal: false, // top-ups ADD to wallet, not overwrite
             voucher_expires_at,
+            daily_cap_micros,
         })
         .await
     {

@@ -1277,18 +1277,53 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
 
 /// POST /api/billing/portal - Stripe billing portal.
 ///
-/// The portal belongs to Atlas (which holds the Stripe customer); the
-/// in-app entry point is not yet wired (entitlement.md §10). Returns a clean
-/// message the BillingView renders, rather than calling a route that no
-/// longer exists on virtues-api.
-pub async fn create_billing_portal_handler() -> Response {
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "error": "Subscription is managed through Virtues billing. The in-app portal isn't available yet."
-        })),
-    )
-        .into_response()
+/// The portal belongs to Atlas (which holds the Stripe customer). We read the
+/// billing token from the local vault, ask Atlas to mint a Stripe-hosted
+/// Customer Portal session, and return its `url` for BillingView to open.
+/// Any failure (no billing token yet, inactive subscription, Stripe hiccup)
+/// returns a clean `{error}` string the button renders inline — never a 500.
+pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    let billing_token = match crate::virtues_api::renew::read_billing_token(&pool).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "error": "Connect your subscription first, then you can manage billing here."
+                })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::warn!("billing portal: vault read failed: {e}");
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
+            )
+                .into_response();
+        }
+    };
+
+    let atlas_url =
+        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+    // The box has no stable public URL, so we don't supply a return_url —
+    // Atlas defaults it to its own public billing page (where Stripe sends the
+    // customer after they click "Return to Virtues").
+    let http = crate::http_client::virtues_api_client();
+
+    match crate::virtues_api::renew::fetch_portal_session(&http, &atlas_url, &billing_token, "")
+        .await
+    {
+        Ok(url) => (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response(),
+        Err(e) => {
+            tracing::warn!("billing portal session failed: {e}");
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({ "error": "Couldn't open the billing portal. Try again." })),
+            )
+                .into_response()
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]

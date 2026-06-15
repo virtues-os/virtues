@@ -47,10 +47,10 @@ async fn mint_voucher(
     // pre-flight SELECT is outside the transaction — it's just to validate the
     // billing token and check subscription status before we touch the gate.
     // The gate enforcement itself happens atomically below.
-    let row: Option<(String, Option<chrono::DateTime<Utc>>, Option<String>)> =
+    let row: Option<(String, Option<chrono::DateTime<Utc>>, Option<String>, i64)> =
         sqlx::query_as(
             r#"
-            SELECT c.stripe_customer_id, s.current_period_end, s.status
+            SELECT c.stripe_customer_id, s.current_period_end, s.status, c.daily_cap_micros
             FROM customers c
             LEFT JOIN subscriptions s ON s.stripe_customer_id = c.stripe_customer_id
             WHERE c.billing_token_hash = $1
@@ -63,7 +63,7 @@ async fn mint_voucher(
         .await
         .unwrap_or(None);
 
-    let Some((customer_id, period_end, status)) = row else {
+    let Some((customer_id, period_end, status, daily_cap_micros)) = row else {
         return err(StatusCode::UNAUTHORIZED, "invalid_billing_token", "unknown billing token");
     };
 
@@ -147,6 +147,7 @@ async fn mint_voucher(
             amount_micros: state.voucher.renewal_micros,
             is_renewal: true,
             voucher_expires_at,
+            daily_cap_micros,
         })
         .await
     {

@@ -36,6 +36,7 @@ async fn whoami(BearerAuth(ent): BearerAuth) -> impl IntoResponse {
         "today_spent_micros": ent.today_spent_micros,
         "today_reset_at": ent.today_reset_at,
         "expires_at": ent.expires_at,
+        "daily_cap_micros": ent.daily_cap_micros,
     }))
 }
 
@@ -54,16 +55,7 @@ async fn charge_test(
     headers: HeaderMap,
     Query(params): Query<ChargeParams>,
 ) -> impl IntoResponse {
-    let pool = match state.db.as_ref() {
-        Some(p) => p,
-        None => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(json!({ "error": { "code": "db_unavailable" } })),
-            )
-                .into_response()
-        }
-    };
+    let pool = &state.db;
 
     let cost = params.cost_micros.unwrap_or(1_000); // default $0.001
     if cost <= 0 {

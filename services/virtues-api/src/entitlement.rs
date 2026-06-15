@@ -40,9 +40,11 @@ use sqlx::PgPool;
 /// Applied AFTER markup — `billed > PER_CALL_CAP_MICROS` is what 400s.
 pub const PER_CALL_CAP_MICROS: i64 = 5_000_000; // $5/call billed
 
-/// Default daily spend ceiling (overridden per-customer via atlas
-/// `customers.daily_cap_micros` once we wire that — TODO). Until the
-/// per-customer override lands, every bearer uses this floor.
+/// Default daily spend ceiling. The per-bearer value lives on the
+/// `entitlements.daily_cap_micros` column, carried from the customer's
+/// atlas-side `customers.daily_cap_micros` via the voucher. This const is the
+/// migration/column default and the fallback a pre-wire voucher deserializes
+/// to (`routes::internal::default_daily_cap`).
 pub const DEFAULT_DAILY_CEILING_MICROS: i64 = 20_000_000; // $20/day
 
 /// Universal markup applied to the real upstream cost before wallet
@@ -74,6 +76,9 @@ pub struct Entitlement {
     pub today_spent_micros: i64,
     pub today_reset_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
+    /// Per-bearer daily spend ceiling, carried from the customer's atlas-side
+    /// cap via the voucher. Enforced in `charge()`.
+    pub daily_cap_micros: i64,
 }
 
 /// Look up an entitlement by its bearer hash. Called by bearer-auth on
@@ -85,7 +90,7 @@ pub async fn get_by_bearer_hash(
     let row = sqlx::query_as::<_, Entitlement>(
         r#"
         SELECT bearer_hash, wallet_micros, today_spent_micros,
-               today_reset_at, expires_at
+               today_reset_at, expires_at, daily_cap_micros
         FROM entitlements
         WHERE bearer_hash = $1
         "#,
@@ -122,7 +127,6 @@ pub async fn charge(
 
     let now = Utc::now();
     let next_midnight = next_utc_midnight(now);
-    let daily_ceiling = DEFAULT_DAILY_CEILING_MICROS;
 
     // Lazy daily reset: zero `today_spent` at UTC midnight rollover.
     sqlx::query(
@@ -142,6 +146,8 @@ pub async fn charge(
     .map_err(|e| ChargeError::Db(e.into()))?;
 
     // Atomic decrement guarded by expiry + wallet + daily-cap invariants.
+    // The ceiling is the row's own per-bearer `daily_cap_micros` — no separate
+    // read, so no TOCTOU against a concurrent cap change.
     let row: Option<(i64,)> = sqlx::query_as(
         r#"
         UPDATE entitlements
@@ -150,13 +156,12 @@ pub async fn charge(
         WHERE bearer_hash = $2
           AND expires_at > now()
           AND wallet_micros >= $1
-          AND today_spent_micros + $1 <= $3
+          AND today_spent_micros + $1 <= daily_cap_micros
         RETURNING wallet_micros
         "#,
     )
     .bind(billed)
     .bind(bearer_hash)
-    .bind(daily_ceiling)
     .fetch_optional(pool)
     .await
     .map_err(|e| ChargeError::Db(e.into()))?;
@@ -169,7 +174,7 @@ pub async fn charge(
         });
     }
 
-    classify_failure(pool, bearer_hash, billed, daily_ceiling).await
+    classify_failure(pool, bearer_hash, billed).await
 }
 
 /// On a failed debit, disambiguate why: not found / expired / insufficient
@@ -180,10 +185,10 @@ async fn classify_failure(
     pool: &PgPool,
     bearer_hash: &[u8],
     billed: i64,
-    daily_ceiling: i64,
 ) -> Result<ChargeOk, ChargeError> {
-    let row: Option<(DateTime<Utc>, i64, i64)> = sqlx::query_as(
-        "SELECT expires_at, wallet_micros, today_spent_micros FROM entitlements WHERE bearer_hash = $1",
+    let row: Option<(DateTime<Utc>, i64, i64, i64)> = sqlx::query_as(
+        "SELECT expires_at, wallet_micros, today_spent_micros, daily_cap_micros \
+         FROM entitlements WHERE bearer_hash = $1",
     )
     .bind(bearer_hash)
     .fetch_optional(pool)
@@ -192,8 +197,8 @@ async fn classify_failure(
 
     match row {
         None => Err(ChargeError::NotFound),
-        Some((expires_at, _, _)) if expires_at <= Utc::now() => Err(ChargeError::Expired),
-        Some((_, _, today_spent)) if today_spent + billed > daily_ceiling => {
+        Some((expires_at, _, _, _)) if expires_at <= Utc::now() => Err(ChargeError::Expired),
+        Some((_, _, today_spent, daily_cap)) if today_spent + billed > daily_cap => {
             Err(ChargeError::DailyCapReached)
         }
         Some(_) => Err(ChargeError::InsufficientBudget),
@@ -262,4 +267,55 @@ pub fn next_utc_midnight(now: DateTime<Utc>) -> DateTime<Utc> {
     date.and_hms_opt(0, 0, 0)
         .expect("midnight construction")
         .and_utc()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Insert an entitlement row directly (bypassing the voucher path) so we
+    /// can exercise `charge()` against a chosen per-bearer `daily_cap_micros`.
+    async fn seed(pool: &PgPool, bearer_hash: &[u8], wallet: i64, daily_cap: i64) {
+        let now = Utc::now();
+        sqlx::query(
+            r#"
+            INSERT INTO entitlements
+                (bearer_hash, wallet_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros)
+            VALUES ($1, $2, 0, $3, $4, $5)
+            "#,
+        )
+        .bind(bearer_hash)
+        .bind(wallet)
+        .bind(next_utc_midnight(now))
+        .bind(now + chrono::Duration::days(30))
+        .bind(daily_cap)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// `charge()` enforces the row's own `daily_cap_micros`, not the hardcoded
+    /// default. With markup at the 20% default, a real cost of $4 bills $4.80;
+    /// against a $10 cap the third such call trips `DailyCapReached`.
+    #[sqlx::test]
+    async fn charge_enforces_per_bearer_daily_cap(pool: PgPool) {
+        let low = b"low-cap-bearer-hash-0000000000001".to_vec();
+        seed(&pool, &low, 1_000_000_000, 10_000_000).await; // $10/day cap
+
+        // billed = 4_800_000 each; two land (9.6M ≤ 10M), the third trips.
+        charge(&pool, &low, 4_000_000).await.expect("1st charge ok");
+        charge(&pool, &low, 4_000_000).await.expect("2nd charge ok");
+        let third = charge(&pool, &low, 4_000_000).await;
+        assert!(
+            matches!(third, Err(ChargeError::DailyCapReached)),
+            "third charge should trip the $10 cap, got {third:?}"
+        );
+
+        // A bearer with a higher cap sails through the same sequence.
+        let high = b"high-cap-bearer-hash-000000000001".to_vec();
+        seed(&pool, &high, 1_000_000_000, 100_000_000).await; // $100/day cap
+        for _ in 0..3 {
+            charge(&pool, &high, 4_000_000).await.expect("under high cap");
+        }
+    }
 }

@@ -46,10 +46,14 @@ stripe_webhook_events(stripe_event_id PK, event_type, processed_at)
 
 ### virtues-api (`services/virtues-api/migrations/`)
 ```sql
-entitlements(bearer_hash PK, daily_budget_micros, today_remaining_micros, today_reset_at, expires_at, ...)
-vouchers(voucher_code_hash PK, budget_micros, valid_days, voucher_expires_at, redeemed_at)
+entitlements(bearer_hash PK, wallet_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros, ...)
+vouchers(voucher_code_hash PK, amount_micros, is_renewal, voucher_expires_at, daily_cap_micros, redeemed_at)
 blocklist(bearer_hash PK, reason_code, blocked_at, expires_at)
 ```
+
+`daily_cap_micros` is the per-customer daily spend ceiling, carried from
+Atlas's `customers.daily_cap_micros` on the voucher and enforced per-bearer.
+It's a *number*, not an identity column — the wall (no shared key) holds.
 
 **Cross-check:** Atlas's identifier columns (`stripe_customer_id`, `email`,
 `billing_token_hash`) appear nowhere in virtues-api. virtues-api's
@@ -81,9 +85,9 @@ Triggered when the bearer is expired (virtues-api returns `bearer_expired`,
 1. Generates a fresh random bearer (only its hash ever leaves the device).
 2. `POST /voucher {billing_token}` to Atlas → Atlas checks the
    subscription is active, anti-stacking rate-limit passes, mints a
-   one-time **voucher_code**, registers `sha256(code)` + value with
-   virtues-api via `POST /internal/voucher` (no customer, no bearer in
-   that call), returns the raw code.
+   one-time **voucher_code**, registers `sha256(code)` + value + the
+   customer's `daily_cap_micros` with virtues-api via `POST /internal/voucher`
+   (no customer, no bearer in that call), returns the raw code.
 3. `POST /v1/redeem` to virtues-api with the code + bearer (in the
    Authorization header). virtues-api validates the voucher, loads the
    budget + cohort-aligned expiry onto the bearer, marks the voucher
@@ -133,7 +137,8 @@ discarding the voucher↔bearer link and Atlas not logging voucher requests.
 
 **Atlas**
 - `POST /claim {session_id}` — Stripe session → billing_token
-- `POST /voucher {billing_token}` — → voucher_code (registers with virtues-api)
+- `POST /voucher {billing_token}` — → voucher_code (registers with virtues-api, carries `daily_cap_micros`)
+- `POST /billing/portal/sessions {billing_token, return_url?}` — → Stripe Customer Portal `{url}`
 - `POST /webhooks/stripe` — maintains subscription status (signature-verified, idempotent)
 - `GET /health`
 
@@ -190,29 +195,36 @@ or utility upstream now authenticates with the device bearer:
 
 `subscription.rs` is now **local-first**: `/api/subscription` reads the vault
 (billing-token presence) instead of calling the deleted virtues-api
-`/v1/subscription`; gating is by bearer expiry. `/api/billing/portal` returns
-a clean "managed in billing, not yet wired" message (the portal is an Atlas
-concern — §10).
+`/v1/subscription`; gating is by bearer expiry. `/api/billing/portal` reads
+the billing token from the vault and asks Atlas (`POST /billing/portal/sessions`)
+to mint a Stripe-hosted Customer Portal session, returning `{url}` for the web
+BillingView to open. Card/invoice/cancellation management all live on Stripe;
+Atlas resolves billing_token → customer and never exposes a billing UI.
 
 Day-illustration image generation (`day_illustration::generate_image_via_gateway`)
 also routes through `/v1/ai/chat/completions` now — `AI_GATEWAY_API_KEY` is no
 longer used anywhere in core, and image-gen cost is metered through the bearer.
 
-**Still on legacy `X-Internal-Secret` (deliberately deferred):**
-- `chat.rs::_create_chat_stream_legacy` — dead code (`#[allow(dead_code)]`),
-  kept for reference; not a live path.
+Every home-server AI/utility path now authenticates with the device bearer;
+no live core path uses `X-Internal-Secret`.
 
-Note: the streaming path forwards model/messages/max_tokens/temperature/
-tools/tool_choice only — `provider_options` and `thought_signature` are
-dropped at the virtues-api `StreamingRequest` boundary. This matches the
-prior legacy behavior (no regression); restoring them is a separate fix.
+The streaming path forwards `provider_options` and `thought_signature` end to
+end (`agent/stream.rs` adds both to the request body when present), so
+extended-thinking / tool-signature continuity is preserved on the bearer route.
 
 ## 10. Open / deferred
 
 - `/claim` real-Stripe smoke test (needs a live Stripe test account).
-- Billing-portal-based billing_token reissue (currently via re-claim).
 - Plaid per-Item cost model — Plaid data sync ships via the standard registry
   source model; a per-Item monthly-cost entitlement treatment is still open.
+- Dunning recovery beyond `past_due` (full retry/grace flow).
+
+**Daily-cap propagation latency (by design):** a change to
+`customers.daily_cap_micros` takes effect at the customer's *next* voucher or
+top-up, because the cap travels only on the voucher (the wall forbids Atlas
+addressing a bearer directly). This is the natural, privacy-preserving latency
+— not a bug, and we deliberately don't add an eager-refresh path for a spend
+ceiling.
 
 ## 11. Behavioral blocklist
 

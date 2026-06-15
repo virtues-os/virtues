@@ -44,13 +44,7 @@ async fn redeem(
     headers: HeaderMap,
     Json(body): Json<RedeemBody>,
 ) -> axum::response::Response {
-    let Some(pool) = state.db.as_ref() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
     let Some(bearer) = extract_bearer(&headers) else {
         return error(

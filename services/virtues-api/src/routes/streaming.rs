@@ -81,10 +81,9 @@ pub struct StreamingRequest {
 /// Create SSE streaming response with caller-supplied charge callback.
 ///
 /// `on_complete` is called once with the resolved `cost_micros` after the
-/// upstream stream emits `[DONE]`. The legacy chat route wires this to a
-/// RAM-budget deduct; the bearer-auth AI route wires it to
-/// `entitlement::charge()`. Either way, the streaming hot path knows
-/// nothing about budget storage.
+/// upstream stream emits `[DONE]`. The bearer-auth AI route wires this to
+/// `entitlement::charge()`. The streaming hot path knows nothing about
+/// budget storage.
 pub async fn create_streaming_response<F, Fut>(
     client: &reqwest::Client,
     config: &Config,

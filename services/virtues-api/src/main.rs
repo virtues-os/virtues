@@ -1,13 +1,13 @@
 //! virtues-api - Open Source API Proxy with Budget Enforcement
 //!
 //! A "prepaid arcade card" model for AI API access:
-//! - Check budget in RAM (0ms latency) using DashMap + atomic floats
-//! - Forward requests via litellm-rs (100+ providers)
-//! - Optionally sync with Atlas orchestrator for production budgets
+//! - Authenticate the device bearer, look up its entitlement in Postgres
+//! - Enforce per-call cap, daily ceiling, and wallet balance on each charge
+//! - Forward requests upstream (Vercel AI Gateway, Exa, Places, Unsplash)
 //!
-//! Two modes:
-//! - Standalone: Default budget for all users, usage tracking in RAM only
-//! - Production: Hydrate budgets from Atlas on startup, report usage back
+//! Budget state lives entirely in the `entitlements` table (refilled by
+//! voucher redemption). There is no RAM-budget mode and no Atlas hydration —
+//! the Postgres pool is required at boot.
 //!
 //! This code is open source so users can verify we don't log their data.
 
@@ -24,7 +24,7 @@ mod routes;
 mod sweeper;
 mod voucher;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use axum::{routing::get, Router};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -38,10 +38,9 @@ use crate::config::Config;
 pub struct AppState {
     pub config: Arc<Config>,
     pub http_client: reqwest::Client,
-    /// Postgres pool for WS-6b entitlement queries. `None` until the
-    /// `VIRTUES_API_DATABASE_URL` env var is set — existing RAM paths
-    /// continue to work in the meantime.
-    pub db: Option<sqlx::PgPool>,
+    /// Postgres pool backing the entitlement/voucher/blocklist tables. The
+    /// only budget store — required at boot (`VIRTUES_API_DATABASE_URL`).
+    pub db: sqlx::PgPool,
     /// Behavioral abuse blocklist (in-memory hot path, DB-snapshotted).
     pub blocklist: Blocklist,
 }
@@ -89,12 +88,12 @@ async fn main() -> Result<()> {
         config.ai_gateway_url
     );
 
-    // Log external services configuration
+    // Log external services configuration. (Plaid/OAuth providers read their
+    // own env in routes/oauth.rs, so they're not surfaced here.)
     tracing::info!(
-        "External services: Exa={}, GooglePlaces={}, Plaid={}",
+        "External services: Exa={}, GooglePlaces={}",
         config.exa_api_key.is_some(),
         config.google_api_key.is_some(),
-        config.has_plaid()
     );
 
     // Build HTTP client for embeddings and other direct API calls
@@ -102,39 +101,27 @@ async fn main() -> Result<()> {
         .timeout(std::time::Duration::from_secs(300)) // 5 min for long completions
         .build()?;
 
-    // Optional DB connect + migrate. Skip if env var is unset so the
-    // existing RAM-budget paths still run while WS-6b refactor proceeds.
-    let db = match std::env::var("VIRTUES_API_DATABASE_URL") {
-        Ok(url) => Some(db::connect_and_migrate(&url).await?),
-        Err(_) => {
-            tracing::warn!(
-                "VIRTUES_API_DATABASE_URL not set — running RAM-only; \
-                 entitlement schema unavailable until WS-6b sets this"
-            );
-            None
-        }
-    };
+    // DB connect + migrate. Required — the entitlement schema is the only
+    // budget store (there is no RAM-budget fallback), so fail fast at boot
+    // rather than silently 503'ing every metered call.
+    let db_url = std::env::var("VIRTUES_API_DATABASE_URL")
+        .context("VIRTUES_API_DATABASE_URL is required")?;
+    let db = db::connect_and_migrate(&db_url).await?;
 
     // Behavioral blocklist: in-memory hot path, snapshotted from the table.
     let blocklist = Blocklist::from_env();
-    if let Some(pool) = db.as_ref() {
-        blocklist.load_snapshot(pool).await;
-    }
+    blocklist.load_snapshot(&db).await;
     blocklist.spawn_pruner();
 
     // Background housekeeping: reclaim expired entitlements + dead vouchers.
-    if let Some(pool) = db.as_ref() {
-        sweeper::spawn(pool.clone());
-    }
+    sweeper::spawn(db.clone());
 
     // Dev-only: fund a known bearer so a local virtues-api accepts calls
     // without the Atlas voucher/redeem path. Gated to ENVIRONMENT=dev so it
     // can never fire in production.
-    if let Some(pool) = db.as_ref() {
-        let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
-        if is_dev {
-            dev_seed::seed_dev_entitlement(pool).await?;
-        }
+    let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
+    if is_dev {
+        dev_seed::seed_dev_entitlement(&db).await?;
     }
 
     // Build shared state
@@ -167,9 +154,7 @@ async fn main() -> Result<()> {
         .merge(routes::bearer_test::router())
         // Bearer-auth + entitlement charge: Places, Exa, Unsplash, AI.
         // AI (`/v1/ai/*`) covers both streaming and non-streaming chat; the
-        // charge fires from a callback once the upstream usage is known. The
-        // `/v1/services/*` proxies above still use the RAM budget until they
-        // migrate to entitlement too.
+        // charge fires from a callback once the upstream usage is known.
         .merge(routes::places::router())
         .merge(routes::exa::router())
         .merge(routes::unsplash::router())

@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use crate::stripe_api::StripeClient;
 use crate::virtues_api_client::VirtuesApiClient;
 
+mod billing_portal;
 mod claim;
 mod credits;
 mod diag;
@@ -85,6 +86,7 @@ pub fn router() -> Router<AppState> {
         .merge(preorder::router())
         .merge(voucher::router())
         .merge(credits::router())
+        .merge(billing_portal::router())
         .merge(settings::router())
         .merge(webhooks::router())
         .merge(diag::router())
