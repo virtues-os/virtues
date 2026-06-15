@@ -30,6 +30,13 @@ pub struct Config {
 }
 
 pub async fn run(cli: Config) -> Result<()> {
+    // ─── Intro ──────────────────────────────────────────────────────────
+    // One sentence so the user knows where this ends: the installer sets up
+    // the box, then the desktop app completes setup via a short code.
+    println!("  Installing Virtues on this machine. At the end you'll connect");
+    println!("  the desktop app (virtues.com/downloads) to finish setup.");
+    println!();
+
     // ─── Pre-flight ─────────────────────────────────────────────────────
     ui::section("Pre-flight");
     let target = steps::detect()?;

@@ -170,11 +170,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // referers. Opening it lands the browser in the setup wizard, which
         // owns everything that used to be prompted here.
         match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
-            Ok(minted) => print_link_output(&minted.token),
+            Ok(minted) => print_link_output(&minted),
             Err(e) => {
                 println!();
                 println!("  ⚠  could not mint pair token: {e}");
-                println!("     Run `virtues login` later to get a fresh URL.");
+                println!("     Run `virtues login` later to get a fresh code.");
             }
         }
 
@@ -268,19 +268,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let db = virtues::database::Database::new(&database_url)?;
         match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
             Ok(minted) => {
-                print_link_output(&minted.token);
+                print_link_output(&minted);
                 if !*no_wait {
                     use virtues::cli::link::{wait_for_pair, PairWaitOutcome};
-                    println!("  waiting for you to open the link… (Ctrl+C to exit; the link");
-                    println!("  stays valid for 15 minutes either way)");
+                    println!("  Waiting for the app or browser to connect… (Ctrl+C to exit;");
+                    println!("  the code stays valid for 30 minutes either way)");
                     match wait_for_pair(db.pool(), &minted.id, &minted.token).await {
                         Ok(PairWaitOutcome::Consumed) => {
                             println!();
-                            println!("  ✓ opened — finish up in your browser.");
+                            println!("  ✓ connected — finish setup in the app.");
                         }
                         Ok(PairWaitOutcome::Expired) => {
                             println!();
-                            println!("  link expired — run `virtues login` for a fresh one.");
+                            println!("  code expired — run `virtues login` for a fresh one.");
                         }
                         Err(e) => eprintln!("  (stopped waiting: {e})"),
                     }
@@ -436,40 +436,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// (mDNS-first, IP fallback, loopback last) + expiry + a one-line remote-access
 /// verdict. Deliberately terse — the deep network report lives behind
 /// `virtues doctor`. Shared between `Link` and `Init`.
-fn print_link_output(token: &str) {
-    use virtues::cli::link::reachable_pair_urls;
+fn print_link_output(minted: &virtues::api::pair::MintedToken) {
+    use virtues::cli::link::{reachable_pair_urls, ssh_context, ssh_forward_host, ssh_handoff_block};
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     let web_port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
-    let urls = reachable_pair_urls(token, is_dev, &web_port);
+    let token = &minted.token;
+    let display = minted.display_code();
 
-    // Onboarding doctrine: ONE clear handoff, no wall of text. The deep
-    // network report lives behind `virtues doctor` — here we show the URLs,
-    // the expiry, and a single honest remote-access verdict line.
     println!();
     println!("─────────────────────────────────────────────────────────");
-    println!("  Log in to your box — open this on a device on your network:");
-    println!();
-    for url in &urls {
-        println!("    {:<18}  {}", format!("{}:", url.label), url.url);
+
+    if is_dev {
+        println!("  [dev] http://localhost:{web_port}/pair#t={token}");
+        println!("─────────────────────────────────────────────────────────");
+        return;
     }
 
-    // Setup-scoped escape hatch for client-isolated networks: when this
-    // command arrived over SSH, that session is proof of a working path
-    // to the box, so print the local-forward recipe (docs/onboarding.md:
-    // "auto-enable nothing, auto-notice everything").
-    if !is_dev {
-        if let Some(ssh) = virtues::cli::link::ssh_context() {
-            println!();
-            let host = virtues::cli::link::ssh_forward_host();
-            for line in virtues::cli::link::ssh_handoff_block(&ssh, &host, token) {
-                println!("{line}");
-            }
+    println!("  Your box is ready.");
+    println!();
+    println!("  1.  Get the app     virtues.com/downloads");
+    println!("  2.  Enter code      {display}");
+    println!();
+    println!("  Code expires in 30 minutes · single use");
+
+    // On SSH: the desktop app needs a route to the box. On isolated networks
+    // (office/hotel) mDNS is blocked, so the existing SSH session is the
+    // reliable path — print the forward recipe ("auto-notice everything").
+    if let Some(ssh) = ssh_context() {
+        println!();
+        let host = ssh_forward_host();
+        for line in ssh_handoff_block(&ssh, &host, token) {
+            println!("{line}");
         }
     }
+
+    // Secondary: browser URLs for users who don't have the app yet.
+    // Less prominent — the app flow is the intended path.
+    let urls = reachable_pair_urls(token, is_dev, &web_port);
     println!();
-    println!("  Link expires in 15 minutes · single use");
-    let net = virtues::net_check::compute_net_status();
-    println!("  Remote access: {}  (details: virtues doctor)", net.verdict_line());
+    println!("  No app yet? Open in a browser on your network:");
+    for url in &urls {
+        println!("    {}", url.url);
+    }
+
     println!("─────────────────────────────────────────────────────────");
 }
 

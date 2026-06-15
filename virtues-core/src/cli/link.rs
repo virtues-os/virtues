@@ -366,15 +366,16 @@ fn forward_target(ctx: &SshContext, host: &str) -> String {
 pub fn ssh_handoff_block(ctx: &SshContext, host: &str, token: &str) -> Vec<String> {
     let target = forward_target(ctx, host);
     vec![
-        "  You're connected over SSH — open the link from your own machine:".to_string(),
+        "  On SSH — the app needs to reach your box on the same network.".to_string(),
+        "  If your network blocks device traffic (office/hotel), forward the port:".to_string(),
         String::new(),
         format!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}"),
-        format!("    then open  http://localhost:{INTERNAL_PORT}/pair#t={token}"),
+        format!("    then open  http://localhost:{INTERNAL_PORT} in the app or browser"),
         String::new(),
         format!(
-            "    (if local port {INTERNAL_PORT} is busy: ssh -L {FALLBACK_FWD_PORT}:localhost:{INTERNAL_PORT} {target}"
+            "    (if port {INTERNAL_PORT} is busy: ssh -L {FALLBACK_FWD_PORT}:localhost:{INTERNAL_PORT} {target}"
         ),
-        format!("     and open http://localhost:{FALLBACK_FWD_PORT}/pair#t={token})"),
+        format!("     → http://localhost:{FALLBACK_FWD_PORT}/pair#t={token})"),
     ]
 }
 
@@ -433,20 +434,18 @@ pub async fn wait_for_pair(
             match &ssh {
                 Some(ctx) => {
                     let target = forward_target(ctx, &host);
-                    println!("  still waiting — this network may block device-to-device traffic (common");
-                    println!("  in offices and hotels). You're on SSH, so this works regardless — run on");
-                    println!("  the machine you SSH'd from:");
+                    println!("  Still waiting — this network may block device-to-device traffic");
+                    println!("  (common in offices, hotels, WeWork). You're on SSH, so forward");
+                    println!("  the port from your laptop and open it there:");
                     println!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}");
-                    println!("    then open http://localhost:{INTERNAL_PORT}/pair#t={token}");
-                    println!("  From a phone instead: use its hotspot, or a network you control.");
+                    println!("    then open http://localhost:{INTERNAL_PORT} in the app or browser");
                 }
                 None => {
-                    println!("  still waiting — if the page won't load on your phone/laptop, this");
-                    println!("  network may block device-to-device traffic (common in offices and");
-                    println!("  hotels). → use your phone's hotspot, or a network you control.");
-                    println!("  If you can SSH into this box from another machine,");
-                    println!("  `ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {host}` opens it there.");
-                    println!("  You can move the box to another network after setup.");
+                    println!("  Still waiting — if the app or page won't load, this network may");
+                    println!("  block device-to-device traffic (offices, hotels, WeWork).");
+                    println!("  → Use your phone's hotspot, or a network you control.");
+                    println!("  → Or SSH in: ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {host}");
+                    println!("  You can move the box to a different network after setup.");
                 }
             }
         }
@@ -600,9 +599,9 @@ mod tests {
         let ctx = SshContext { user: Some("adam".to_string()) };
         let lines = ssh_handoff_block(&ctx, "10.1.4.22", "tok123");
         let joined = lines.join("\n");
-        assert!(lines[0].contains("You're connected over SSH"));
+        assert!(lines[0].contains("On SSH"));
         assert!(joined.contains("ssh -L 8000:localhost:8000 adam@10.1.4.22"));
-        assert!(joined.contains("http://localhost:8000/pair#t=tok123"));
+        assert!(joined.contains("http://localhost:8000"));
         // Fallback recipe: forward from 18000 on the laptop to 8000 on the box.
         assert!(joined.contains("ssh -L 18000:localhost:8000 adam@10.1.4.22"));
         assert!(joined.contains("http://localhost:18000/pair#t=tok123"));
@@ -613,6 +612,7 @@ mod tests {
         let ctx = SshContext { user: None };
         let joined = ssh_handoff_block(&ctx, "10.1.4.22", "tok123").join("\n");
         assert!(joined.contains("ssh -L 8000:localhost:8000 10.1.4.22"));
-        assert!(!joined.contains('@'));
+        // The ssh command itself has no @, but the fallback URL still has #t=
+        assert!(!joined.split("ssh").nth(1).unwrap_or("").contains('@'));
     }
 }

@@ -39,3 +39,19 @@ pub fn die(msg: &str) -> ! {
     process::exit(1);
 }
 
+/// Network topology callout — more weight than a plain `warn` because this is
+/// an architectural fact the user may need to plan around, not a transient
+/// issue. Red marker, extra vertical space, and bullet context so it stands
+/// out from the rest of the pre-flight checklist.
+pub fn network_critical(headline: &str, bullets: &[&str], note: &str) {
+    println!();
+    println!("  {}  {}", style("⚠").bold().red(), style(headline).bold().red());
+    for bullet in bullets {
+        println!("       {}", style(bullet).red());
+    }
+    if !note.is_empty() {
+        println!("       {}", style(note).dim());
+    }
+    println!();
+}
+

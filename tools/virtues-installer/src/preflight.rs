@@ -37,26 +37,32 @@ pub async fn run() -> Result<Report> {
         }
     }
 
-    // Network reachability — the two hosts the install genuinely needs
-    // (binaries AND model GGUFs both come from GitHub releases now).
-    // 5s timeout per probe; total worst-case ~10s on a fully offline box.
+    // Network reachability — probe the two hosts the install actually needs.
+    // Report as a single "Internet reachable" line when both pass; call out
+    // the specific failing host only when something is wrong.
     let http = Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
         .expect("build http client");
+    let mut failed_hosts: Vec<String> = Vec::new();
     for host in &["https://github.com", "https://apt.postgresql.org"] {
         match http.head(*host).send().await {
-            Ok(r) if r.status().is_success() || r.status().is_redirection() => {
-                ui::ok(&format!("Reachable: {host}"));
-            }
+            Ok(r) if r.status().is_success() || r.status().is_redirection() => {}
             Ok(r) => {
-                ui::warn(&format!("Reachable: {host} (HTTP {})", r.status()));
+                failed_hosts.push(format!("{host} (HTTP {})", r.status()));
                 warnings += 1;
             }
             Err(_) => {
-                ui::warn(&format!("Unreachable: {host}"));
+                failed_hosts.push(host.to_string());
                 warnings += 1;
             }
+        }
+    }
+    if failed_hosts.is_empty() {
+        ui::ok("Internet reachable");
+    } else {
+        for h in &failed_hosts {
+            ui::warn(&format!("Unreachable: {h}"));
         }
     }
 
@@ -88,10 +94,15 @@ pub async fn run() -> Result<Report> {
         EgressClass::Ipv4Public => {
             ui::ok("Network: global IPv4 — direct remote access via a router port-forward")
         }
-        EgressClass::Nat => ui::warn(
-            "Network: behind NAT, no global IPv6 — local + LAN access work fine, but \
-             remote-from-anywhere needs a router port-forward (home) or your own overlay \
-             (dorm/office). See docs/byo-networking.md; run `virtues doctor` anytime.",
+        EgressClass::Nat => ui::network_critical(
+            "Behind NAT — no global IPv6",
+            &[
+                "Local and LAN access: always work",
+                "Remote from anywhere: needs extra setup",
+                "  → home router: forward a port to this box",
+                "  → office/dorm/CGNAT: BYO overlay (Tailscale, Cloudflared, ngrok, any VPS)",
+            ],
+            "This won't block setup. Run `virtues doctor` for a network diagnosis.",
         ),
         EgressClass::Unknown => {}
     }
