@@ -1,7 +1,7 @@
 # Entitlement & Voucher Architecture (Spec)
 
 > The technical spec. For the *why* and the marketing language, see
-> [`Virtues-API.md`](../Virtues-API.md) in docs/.
+> [`virtues-api.md`](virtues-api.md) in docs/.
 >
 > Supersedes the earlier `activation_handle` design. The load-bearing
 > change: **no field is shared between Atlas and virtues-api.** The

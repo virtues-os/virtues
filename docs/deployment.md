@@ -1,9 +1,8 @@
 # Deployment & Runtime Architecture
 
 > How Virtues ships and runs. Companion to
-> [`wireguard-pairing.md`](wireguard-pairing.md) (the WG transport),
-> [`ipv6-pinhole-setup.md`](ipv6-pinhole-setup.md) (router config), and
-> [`entitlement.md`](entitlement.md) (the cloud wall).
+> [`networking.md`](networking.md) (the WG transport + IPv6-direct reachability)
+> and [`entitlement.md`](entitlement.md) (the cloud wall).
 
 ---
 
