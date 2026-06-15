@@ -31,6 +31,47 @@ Apple Continuity, and most modern consumer infra use; it's just rare in
 self-hosted because the legacy SaaS auth model leaked into self-hosted
 templates.
 
+## The money plane: how the box pays for AI
+
+Pair-only governs getting *into* the box. A separate, equally-deliberate token
+model governs how the box *pays for AI* — across three services: the **box**
+(consumer), **atlas** (the money/identity plane: Stripe, accounts), and
+**virtues-api** (the metered-usage plane: the AI wallet). The whole design
+exists to keep one promise: the cloud can never tie your spend to your identity.
+
+Three properties make it elegant:
+
+1. **The two tokens never cross.** The `billing_token` (stable "I'm a paying
+   customer," box↔atlas) and the `bearer` (ephemeral monthly, box↔api, funded by
+   a voucher) live in separate planes. atlas never sees your bearer; virtues-api
+   never sees your billing_token *or your identity*.
+
+2. **The voucher is a privacy seam, not just a credential.** The only thing
+   crossing atlas→api is a voucher's *value* — amount, hash, expiry. No customer,
+   no Stripe ID, no email. virtues-api literally cannot tie AI spend to a paying
+   identity. That's the "make the server layer extinct" doctrine realized in the
+   money plane — a real architectural property, not marketing.
+
+3. **Everything is hashed at rest, claimed atomically.** `billing_token`,
+   `bearer`, the magic-link token, `device_code` — all SHA-256 in the DB, raw
+   only in transit. Every single-use claim (voucher redeem, device-link,
+   magic-link verify) is an atomic `UPDATE … WHERE … RETURNING`, so replays and
+   races fail closed.
+
+```
+   box ──billing_token──► atlas        atlas ──voucher value──► virtues-api
+   (consumer)            (money)       (amount · hash · expiry — nothing else)
+   box ─────────bearer───────────────────────────────────────► virtues-api
+                                                                (metered AI)
+```
+
+Note the deliberate asymmetry with the box's own auth: device access is
+**pair-only** (no email, no magic links — proximity is the root of trust),
+because the box holds your data. The *account* identity at atlas — a billing
+relationship, not a data boundary — uses an email magic-link, because that's the
+right primitive for "prove you're the person paying Stripe." Two planes, two
+roots of trust, chosen on purpose.
+
 ## Schema (4 + 3 tables)
 
 Four tables hold authority:
