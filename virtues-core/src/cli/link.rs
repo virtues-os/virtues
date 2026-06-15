@@ -366,7 +366,7 @@ fn forward_target(ctx: &SshContext, host: &str) -> String {
 pub fn ssh_handoff_block(ctx: &SshContext, host: &str, token: &str) -> Vec<String> {
     let target = forward_target(ctx, host);
     vec![
-        "  On SSH — the app needs to reach your box on the same network.".to_string(),
+        "  On SSH — the app needs to reach your server on the same network.".to_string(),
         "  If your network blocks device traffic (office/hotel), forward the port:".to_string(),
         String::new(),
         format!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}"),
@@ -445,7 +445,7 @@ pub async fn wait_for_pair(
                     println!("  block device-to-device traffic (offices, hotels, WeWork).");
                     println!("  → Use your phone's hotspot, or a network you control.");
                     println!("  → Or SSH in: ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {host}");
-                    println!("  You can move the box to a different network after setup.");
+                    println!("  You can move the server to a different network after setup.");
                 }
             }
         }
