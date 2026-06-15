@@ -467,7 +467,7 @@ fn print_link_output(token: &str) {
         // "auto-enable nothing, auto-notice everything").
         if let Some(ssh) = virtues::cli::link::ssh_context() {
             println!();
-            let host = virtues::cli::link::forward_host();
+            let host = virtues::cli::link::ssh_forward_host();
             for line in virtues::cli::link::ssh_handoff_block(&ssh, &host, token) {
                 println!("{line}");
             }
@@ -519,11 +519,23 @@ fn maybe_reexec_as_service_user() {
     }
     eprintln!("(running as '{user}' — switching to the 'virtues' service user)");
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new("sudo")
-        .arg("-u")
-        .arg("virtues")
-        .args(std::env::args())
-        .exec();
+    let mut reexec = std::process::Command::new("sudo");
+    reexec.arg("-u").arg("virtues");
+    // `SSH_CONNECTION` is set in this (login-user) process but stripped by
+    // sudo's env_reset. It carries the box-side IP the client reached us on —
+    // the only provably-reachable address for the SSH-forward handoff (the LAN
+    // IP is unreachable on client-isolated wifi). Thread it across via an `env`
+    // prefix (run as the virtues user, after the privilege drop), which
+    // sidesteps any sudoers env policy. Absent over a console login → omitted,
+    // and the handoff falls back to the overlay/LAN address.
+    if let Some(ip) = std::env::var("SSH_CONNECTION")
+        .ok()
+        .and_then(|c| c.split_whitespace().nth(2).map(str::to_string))
+        .filter(|s| !s.is_empty())
+    {
+        reexec.arg("env").arg(format!("VIRTUES_SSH_SERVER_IP={ip}"));
+    }
+    let err = reexec.args(std::env::args()).exec();
     eprintln!("could not switch user: {err}");
     eprintln!("hint: run it as the service user yourself: sudo -u virtues virtues {cmd}");
     std::process::exit(1);

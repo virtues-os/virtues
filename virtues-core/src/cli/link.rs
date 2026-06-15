@@ -124,6 +124,52 @@ pub fn forward_host() -> String {
     }
 }
 
+/// Pull the box-side IP out of an `SSH_CONNECTION` value
+/// ("client_ip client_port server_ip server_port") — the third field is the
+/// address the client connected *to*.
+fn parse_ssh_server_ip(conn: &str) -> Option<String> {
+    conn.split_whitespace()
+        .nth(2)
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+}
+
+/// The IP the SSH client actually reached this box on — *provably reachable*,
+/// because the laptop is connected through it right now. Read from
+/// `SSH_CONNECTION` (present in the login shell) or, since the
+/// `sudo -u virtues` re-exec strips it, from the `VIRTUES_SSH_SERVER_IP` that
+/// `maybe_reexec_as_service_user` threads across that boundary.
+fn ssh_server_ip() -> Option<String> {
+    std::env::var("SSH_CONNECTION")
+        .ok()
+        .as_deref()
+        .and_then(parse_ssh_server_ip)
+        .or_else(|| {
+            std::env::var("VIRTUES_SSH_SERVER_IP")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+/// The host for the `ssh -L … user@HOST` recipe — the address the laptop can
+/// actually reach the box on, in priority order:
+///   1. the IP the SSH client connected to (provably reachable),
+///   2. a detected user-run overlay address (Tailscale et al.),
+///   3. the LAN IP.
+/// The LAN IP is **last** on purpose: on the very networks where the forward
+/// matters (client-isolated wifi), it's the one address the laptop *can't*
+/// reach — which is exactly the bug where the box printed an unusable command.
+pub fn ssh_forward_host() -> String {
+    if let Some(ip) = ssh_server_ip() {
+        return ip;
+    }
+    if let Some(addr) = crate::net_check::compute_net_status().byo.and_then(|b| b.addr) {
+        return addr.to_string();
+    }
+    forward_host()
+}
+
 /// The URL to encode in the handoff QR. Prefer the raw LAN IP — phones
 /// (notably Android) fumble `.local` resolution, and the QR is precisely the
 /// phone path (docs/onboarding.md: "LAN IP, not mDNS, inside the QR"). Falls
@@ -362,7 +408,7 @@ pub async fn wait_for_pair(
     // Auto-notice once, up front — the answer can't change mid-wait, and the
     // hint must print instantly when the 90s mark hits.
     let ssh = ssh_context();
-    let host = forward_host();
+    let host = ssh_forward_host();
     loop {
         let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
             "SELECT status, expires_at FROM app_pair_token WHERE id = $1",
@@ -502,6 +548,30 @@ mod tests {
         let mangled = "not a passwd line\n::\nadam:x:1000:1000::/home/adam:/bin/zsh\n";
         assert_eq!(passwd_name_for_uid(mangled, 1000), Some("adam".to_string()));
         assert_eq!(passwd_name_for_uid("uid only::1000", 1000), None);
+    }
+
+    // ── parse_ssh_server_ip ──────────────────────────────────────────────────
+
+    #[test]
+    fn ssh_server_ip_extraction() {
+        // SSH_CONNECTION = "client_ip client_port server_ip server_port"
+        assert_eq!(
+            parse_ssh_server_ip("10.1.4.22 53412 10.0.0.5 22").as_deref(),
+            Some("10.0.0.5")
+        );
+        // Reached over Tailscale → the overlay IP is the server field.
+        assert_eq!(
+            parse_ssh_server_ip("100.107.249.93 51000 100.104.55.76 22").as_deref(),
+            Some("100.104.55.76")
+        );
+        // IPv6 server address, bare (ssh accepts `user@<bare v6>`).
+        assert_eq!(
+            parse_ssh_server_ip("2001:db8::1 51000 2001:db8::5 22").as_deref(),
+            Some("2001:db8::5")
+        );
+        // Malformed / truncated → None, never a bogus target.
+        assert_eq!(parse_ssh_server_ip("10.1.4.22 53412"), None);
+        assert_eq!(parse_ssh_server_ip(""), None);
     }
 
     // ── forward_target ──────────────────────────────────────────────────────
