@@ -53,9 +53,9 @@ const PENDING_CONFIRM_TTL_MIN: i64 = 10;
 /// Window during which an `authorized` token can be consumed.
 const AUTHORIZED_REDEEM_TTL_MIN: i64 = 5;
 
-/// CLI-minted tokens get a longer window — they're typed off the box, no
-/// shoulder-surf risk, and the user may need a minute to walk to a browser.
-const CLI_REDEEM_TTL_MIN: i64 = 15;
+/// CLI-minted tokens get a longer window — they're typed into the desktop app,
+/// and the user may need a few minutes to download it the first time.
+const CLI_REDEEM_TTL_MIN: i64 = 30;
 
 /// Session cookie hard expiry (idle expiry is shorter and enforced in
 /// middleware via `last_used_at`).
@@ -63,10 +63,24 @@ const SESSION_TTL_DAYS: i64 = 30;
 
 // ─── Token helpers ──────────────────────────────────────────────────────────
 
-fn random_24() -> String {
-    let mut bytes = [0u8; 24];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
+/// Generate a short human-typeable pair code: 6 chars from an unambiguous
+/// uppercase alphabet (A-Z minus I and O, which are indistinguishable from
+/// 1 and 0 in many fonts). 24^6 ≈ 191M combinations; combined with rate
+/// limiting on /api/pair/consume this is unbrutable in the 30-min window.
+/// Displayed as "ABC DEF" in the CLI handoff, entered that way in the app.
+fn random_pair_code() -> String {
+    const ALPHA: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ"; // 24 chars
+    let mut code = String::with_capacity(6);
+    let mut buf = [0u8; 1];
+    let mut rng = rand::rng();
+    while code.len() < 6 {
+        rng.fill_bytes(&mut buf);
+        // 240 = 10 * 24; reject 240–255 so every char maps with equal probability.
+        if buf[0] < 240 {
+            code.push(ALPHA[(buf[0] % 24) as usize] as char);
+        }
+    }
+    code
 }
 
 fn random_32_session_token() -> String {
@@ -101,7 +115,7 @@ pub async fn mint_pair_token(
     minted_by_device: Option<&str>,
     intended_kind: Option<&str>,
 ) -> crate::Result<MintedToken> {
-    let token = random_24();
+    let token = random_pair_code();
     let token_hash = hash_token(&token);
     let id = crate::ids::generate_id(
         crate::ids::PAIR_TOKEN_PREFIX,
@@ -146,6 +160,20 @@ pub struct MintedToken {
     pub token: String,
     pub expires_at: chrono::DateTime<Utc>,
     pub status: String,
+}
+
+impl MintedToken {
+    /// Human-readable display of the pair code, grouped as "ABC DEF".
+    /// The raw token (no space) is used in URL fragments and API calls;
+    /// the display form is what the user sees in the CLI and types in the app.
+    pub fn display_code(&self) -> String {
+        let t = &self.token;
+        if t.len() == 6 {
+            format!("{} {}", &t[..3], &t[3..])
+        } else {
+            t.clone()
+        }
+    }
 }
 
 // ─── HTTP handlers ──────────────────────────────────────────────────────────
