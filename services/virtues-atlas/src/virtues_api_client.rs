@@ -31,6 +31,11 @@ pub struct RegisterVoucher {
     /// Whether this voucher overwrites the wallet (sub renewal) or adds to it (top-up).
     pub is_renewal: bool,
     pub voucher_expires_at: DateTime<Utc>,
+    /// The customer's user-tunable daily spend ceiling (`customers.daily_cap_micros`),
+    /// carried across the wall so virtues-api can enforce it per-bearer without
+    /// ever learning the customer. Lands on the entitlement at redeem; a cap
+    /// change takes effect at the customer's next voucher / top-up.
+    pub daily_cap_micros: i64,
 }
 
 impl VirtuesApiClient {

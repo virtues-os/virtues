@@ -225,6 +225,37 @@ impl StripeClient {
             .context("parse created deposit checkout session")
     }
 
+    /// Create a Stripe-hosted Customer Portal session and return its URL.
+    /// The portal lets the customer update their card, view invoices, and
+    /// cancel — all on Stripe's side, so Atlas implements no billing UI.
+    /// Backed by `POST /api/billing/portal` in core. `return_url` is where
+    /// Stripe sends the customer when they click "Return to Virtues".
+    pub async fn create_billing_portal_session(
+        &self,
+        customer_id: &str,
+        return_url: &str,
+    ) -> Result<BillingPortalSession> {
+        let params = [("customer", customer_id), ("return_url", return_url)];
+        let resp = self
+            .http
+            .post(format!("{}/billing_portal/sessions", STRIPE_API))
+            .basic_auth(&self.secret_key, Some(""))
+            .form(&params)
+            .send()
+            .await
+            .context("POST create billing portal session")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("stripe billing portal create failed: {status} — {body}"));
+        }
+
+        resp.json::<BillingPortalSession>()
+            .await
+            .context("parse billing portal session")
+    }
+
     /// Off-session charge to a customer's saved default payment method.
     /// Used by the v3 top-up flow (`POST /credits/auto-topup` and
     /// `POST /credits/topup`).
@@ -418,6 +449,13 @@ pub struct LineItem {
 #[derive(Debug, Deserialize)]
 pub struct Price {
     pub id: String,
+}
+
+/// Minimal shape of a freshly-created Billing Portal session — just the
+/// hosted URL the customer is redirected to.
+#[derive(Debug, Deserialize)]
+pub struct BillingPortalSession {
+    pub url: String,
 }
 
 /// Minimal shape of a freshly-created Checkout Session — the hosted URL to

@@ -1,8 +1,4 @@
-//! Exa (web search) via bearer-auth + entitlement::charge() (WS-6b).
-//!
-//! Migrated v1 of the Exa routes. Legacy paths at
-//! `/v1/services/exa/*` (X-User-Id) remain in `services.rs` until
-//! callers move to these new paths.
+//! Exa (web search) via bearer-auth + entitlement::charge().
 
 use axum::{
     extract::State,
@@ -48,13 +44,7 @@ async fn exa_search(
             "Exa API key not set",
         );
     };
-    let Some(pool) = state.db.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
     let _ = &headers;
     let charged = match entitlement::charge(pool, &ent.bearer_hash, EXA_COST_MICROS).await {
@@ -87,13 +77,7 @@ async fn exa_contents(
             "Exa API key not set",
         );
     };
-    let Some(pool) = state.db.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
     let _ = &headers;
     let charged = match entitlement::charge(pool, &ent.bearer_hash, EXA_COST_MICROS).await {

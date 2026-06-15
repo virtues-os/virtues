@@ -1,10 +1,7 @@
-//! Postgres connection + migration application for the WS-6b entitlement
-//! schema.
+//! Postgres connection + migration application for the entitlement schema.
 //!
-//! Optional during the transition: if `VIRTUES_API_DATABASE_URL` is unset,
-//! we skip DB init and keep running with the existing RAM-budget paths.
-//! Once WS-6b replaces those paths with PG-backed entitlement lookups,
-//! the env var becomes required.
+//! Required at boot: `VIRTUES_API_DATABASE_URL` must be set. The entitlement
+//! table is the only budget store — there is no RAM-budget fallback.
 
 use anyhow::{Context, Result};
 use sqlx::postgres::PgPoolOptions;

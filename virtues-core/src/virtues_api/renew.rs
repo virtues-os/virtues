@@ -272,6 +272,55 @@ pub async fn has_billing_token(db: &PgPool) -> Result<bool> {
         .unwrap_or(false))
 }
 
+/// Read the raw billing token from the vault, if one has been claimed. Used
+/// by the billing-portal handler, which needs to authenticate to Atlas as the
+/// customer without minting a bearer.
+pub async fn read_billing_token(db: &PgPool) -> Result<Option<String>> {
+    let Some(id) = find_credential_id(db).await? else {
+        return Ok(None);
+    };
+    let secrets = vault::read_credential_secrets(db, &id)
+        .await
+        .map_err(|e| anyhow!(e.to_string()))?;
+    Ok(secrets["billing_token"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string()))
+}
+
+/// `POST {atlas}/billing/portal/sessions` — exchange the billing token for a
+/// Stripe-hosted Customer Portal URL. The customer manages their card,
+/// invoices, and cancellation there.
+pub async fn fetch_portal_session(
+    http: &reqwest::Client,
+    atlas_url: &str,
+    billing_token: &str,
+    return_url: &str,
+) -> Result<String> {
+    let resp = http
+        .post(format!(
+            "{}/billing/portal/sessions",
+            atlas_url.trim_end_matches('/')
+        ))
+        .json(&serde_json::json!({
+            "billing_token": billing_token,
+            "return_url": return_url,
+        }))
+        .send()
+        .await
+        .context("POST /billing/portal/sessions")?;
+    if !resp.status().is_success() {
+        let s = resp.status();
+        let b = resp.text().await.unwrap_or_default();
+        return Err(anyhow!("portal session fetch failed: {s} — {b}"));
+    }
+    let v: serde_json::Value = resp.json().await?;
+    v["url"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow!("portal response missing url"))
+}
+
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT id FROM credentials WHERE source_id = $1 LIMIT 1")

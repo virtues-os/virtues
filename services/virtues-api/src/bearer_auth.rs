@@ -24,7 +24,6 @@ pub struct BearerAuth(pub Entitlement);
 pub enum BearerError {
     MissingHeader,
     MalformedHeader,
-    DbUnavailable,
     NotFound,
     Expired,
     Blocked,
@@ -35,7 +34,6 @@ impl virtues_helpers::error::StructuredError for BearerError {
     fn status(&self) -> u16 {
         match self {
             Self::MissingHeader | Self::MalformedHeader | Self::NotFound => 401,
-            Self::DbUnavailable => 503,
             Self::Expired => 402,
             Self::Blocked => 403,
             Self::Internal(_) => 500,
@@ -45,7 +43,6 @@ impl virtues_helpers::error::StructuredError for BearerError {
         match self {
             Self::MissingHeader => "missing_bearer",
             Self::MalformedHeader => "malformed_bearer",
-            Self::DbUnavailable => "db_unavailable",
             Self::NotFound => "unknown_bearer",
             Self::Expired => "bearer_expired",
             Self::Blocked => "blocked",
@@ -56,7 +53,6 @@ impl virtues_helpers::error::StructuredError for BearerError {
         match self {
             Self::MissingHeader => "Authorization: Bearer header required".into(),
             Self::MalformedHeader => "expected `Authorization: Bearer <token>`".into(),
-            Self::DbUnavailable => "VIRTUES_API_DATABASE_URL not configured".into(),
             Self::NotFound => "bearer not recognized".into(),
             Self::Expired => "bearer expired — redeem a fresh voucher".into(),
             Self::Blocked => "bearer is on the behavioral blocklist".into(),
@@ -89,7 +85,7 @@ impl FromRequestParts<Arc<AppState>> for BearerAuth {
 
         let hash = sha256(bearer.as_bytes());
 
-        let pool = state.db.as_ref().ok_or(BearerError::DbUnavailable)?;
+        let pool = &state.db;
 
         let ent = entitlement::get_by_bearer_hash(pool, &hash)
             .await

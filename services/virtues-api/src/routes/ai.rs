@@ -68,13 +68,7 @@ async fn chat_completions(
     headers: HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "db_unavailable",
-            "entitlement DB not configured",
-        );
-    };
+    let pool = &state.db;
 
     // A valid (non-expired) bearer can use AI — single $39/mo plan, no
     // tier check. BearerAuth already enforced expiry; budget is enforced
@@ -188,9 +182,7 @@ async fn completions(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(StatusCode::SERVICE_UNAVAILABLE, "db_unavailable", "entitlement DB not configured");
-    };
+    let pool = &state.db;
 
     let model = request
         .get("model")
@@ -218,9 +210,7 @@ async fn embeddings(
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Response {
-    let Some(pool) = state.db.as_ref() else {
-        return err(StatusCode::SERVICE_UNAVAILABLE, "db_unavailable", "entitlement DB not configured");
-    };
+    let pool = &state.db;
 
     let provider = get_embeddings_config(&state.config);
     let _ = &headers;

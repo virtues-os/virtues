@@ -3,9 +3,9 @@
 //! All secrets are injected via environment variables at runtime.
 //! The source code contains no secrets.
 //!
-//! virtues-api runs in two modes:
-//! - Standalone: RAM-only budget tracking, default budget for all users
-//! - Production: Hydrates from Atlas on startup, reports usage to Atlas
+//! Budget state lives in Postgres (the entitlement schema); the pool is
+//! required at boot. Atlas registers vouchers over the wall but virtues-api
+//! never calls back — there is no hydration mode.
 
 use anyhow::{bail, Context, Result};
 
@@ -43,15 +43,8 @@ pub struct Config {
 
     /// Unsplash API key (for cover image search)
     pub unsplash_access_key: Option<String>,
-
-    /// Plaid Client ID
-    pub plaid_client_id: Option<String>,
-
-    /// Plaid Secret
-    pub plaid_secret: Option<String>,
-
-    /// Plaid Environment (sandbox, development, production)
-    pub plaid_env: String,
+    // Plaid/OAuth provider credentials are read directly from the environment
+    // in `routes/oauth.rs` (the OAuth proxy), not carried on this struct.
 }
 
 impl Config {
@@ -87,21 +80,11 @@ impl Config {
             exa_api_key: std::env::var("EXA_API_KEY").ok(),
             google_api_key: std::env::var("GOOGLE_API_KEY").ok(),
             unsplash_access_key: std::env::var("UNSPLASH_ACCESS_KEY").ok(),
-
-            // Plaid
-            plaid_client_id: std::env::var("PLAID_CLIENT_ID").ok(),
-            plaid_secret: std::env::var("PLAID_SECRET").ok(),
-            plaid_env: std::env::var("PLAID_ENV").unwrap_or_else(|_| "sandbox".to_string()),
         })
     }
 
     /// Check if LLM provider (AI Gateway) is configured
     pub fn has_llm_provider(&self) -> bool {
         !self.ai_gateway_api_key.is_empty()
-    }
-
-    /// Check if Plaid is configured
-    pub fn has_plaid(&self) -> bool {
-        self.plaid_client_id.is_some() && self.plaid_secret.is_some()
     }
 }
