@@ -452,7 +452,7 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
         return;
     }
 
-    println!("  Your box is ready.");
+    println!("  Your server is ready.");
     println!();
     println!("  1.  Get the app     virtues.com/downloads");
     println!("  2.  Enter code      {display}");

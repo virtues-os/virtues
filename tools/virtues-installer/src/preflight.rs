@@ -98,9 +98,9 @@ pub async fn run() -> Result<Report> {
             "Behind NAT — no global IPv6",
             &[
                 "Local and LAN access: always work",
-                "Remote from anywhere: needs extra setup",
-                "  → home router: forward a port to this box",
-                "  → office/dorm/CGNAT: BYO overlay (Tailscale, Cloudflared, ngrok, any VPS)",
+                "Remote from anywhere: depends on your router",
+                "  · You control it  → one port-forward and done",
+                "  · You don't       → you'll need a tunnel you run (Tailscale, Cloudflared, etc.)",
             ],
             "This won't block setup. Run `virtues doctor` for a network diagnosis.",
         ),

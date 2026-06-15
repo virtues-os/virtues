@@ -139,35 +139,33 @@ fn verdict_strings(class: NetClass, ipv6: Option<Ipv6Addr>, port: u16) -> (Strin
             (
                 format!("Global IPv6 detected ({addr}) — reachable directly from anywhere."),
                 format!(
-                    "Highly recommended: reach your box directly over IPv6. The box tries to \
-                     open inbound udp/{port} automatically; if your router/firewall is \
-                     default-deny you may need to allow it. No third party, no overlay."
+                    "Your server has a public IPv6 address, which is the ideal path. \
+                     It tries to open inbound udp/{port} automatically; if your router \
+                     is default-deny you may need to allow it. No third party, no overlay."
                 ),
             )
         }
         NetClass::Ipv4Public => (
             "Global IPv4 detected — reachable directly over IPv4.".to_string(),
             format!(
-                "Allow/forward inbound udp/{port} to this box on your router. \
+                "Forward inbound udp/{port} to your server on your router. \
                  (IPv6 would be simpler if your ISP offers it.)"
             ),
         ),
         NetClass::NatNoIpv6 => (
-            "Network: behind NAT, no global IPv6 — local + LAN access work fine, but \
-             remote-from-anywhere needs a router port-forward (home) or your own overlay \
-             (dorm/office). See docs/byo-networking.md; run `virtues doctor` anytime."
+            "Behind NAT, no global IPv6 — local + LAN access work. \
+             Remote access depends on whether you control the router."
                 .to_string(),
             format!(
-                "If you control the router (home), forward udp/{port} to this box. \
-                 If you do NOT control the network (dorm/office/CGNAT), direct access isn't \
-                 possible — host the box where you control the network, or add a BYO overlay \
-                 you run yourself (Tailscale/Headscale/your own VPS). Virtues never runs or \
-                 requires one."
+                "If you control the router, forward udp/{port} to your server — that's all it \
+                 takes. If you don't control the network, remote access needs a tunnel you run \
+                 yourself (Tailscale/Headscale/your own VPS). Virtues never installs or \
+                 requires one. Run `virtues doctor` for a network diagnosis."
             ),
         ),
         NetClass::Unknown => (
             "No internet connection detected.".to_string(),
-            "The box can't reach the internet. Check its network connection.".to_string(),
+            "Your server can't reach the internet. Check its network connection.".to_string(),
         ),
     }
 }
@@ -270,7 +268,7 @@ impl NetStatus {
         if let Some(b) = &self.byo {
             let addr_paren = b.addr.map(|a| format!(" ({a})")).unwrap_or_default();
             println!(
-                "  BYO transport: {}{addr_paren} — your devices can reach this box at that address",
+                "  BYO transport: {}{addr_paren} — your devices can reach your server at that address",
                 b.ifname
             );
         }
