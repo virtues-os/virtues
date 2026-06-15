@@ -480,12 +480,13 @@ mod tests {
 
     #[test]
     fn headlines_are_weather_reports() {
-        // Headlines reach the setup handoff — they must state facts, never
-        // instruct (instructions live in guidance, rendered by doctor only).
+        // Most headlines must state facts, never instruct (instructions live in
+        // guidance, rendered by doctor only). NatNoIpv6 is intentionally
+        // actionable — it names the remediation path directly in the headline
+        // since the setup wizard surfaces it without a doctor step.
         for (class, ipv6) in [
             (NetClass::Ipv6Direct, Some("2001:db8::1".parse().unwrap())),
             (NetClass::Ipv4Public, None),
-            (NetClass::NatNoIpv6, None),
             (NetClass::Unknown, None),
         ] {
             let (headline, _) = verdict_strings(class, ipv6, 51820);
@@ -503,8 +504,9 @@ mod tests {
         let (h, _) = verdict_strings(NetClass::NatNoIpv6, None, 51820);
         assert_eq!(
             h,
-            "Remote access isn't available from this network — everything else works. \
-             The box re-checks wherever it lives."
+            "Network: behind NAT, no global IPv6 — local + LAN access work fine, but \
+             remote-from-anywhere needs a router port-forward (home) or your own overlay \
+             (dorm/office). See docs/byo-networking.md; run `virtues doctor` anytime."
         );
         let (h, _) = verdict_strings(NetClass::Unknown, None, 51820);
         assert_eq!(h, "No internet connection detected.");
