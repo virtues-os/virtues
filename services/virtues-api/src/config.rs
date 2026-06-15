@@ -23,19 +23,6 @@ pub struct Config {
     pub internal_secret: String,
 
     // =========================================================================
-    // Atlas Integration (Optional - for production with orchestrator)
-    // =========================================================================
-    /// Atlas API URL for hydrating tiers/subscriptions on startup
-    /// If not set, runs in standalone mode
-    pub atlas_url: Option<String>,
-
-    /// Shared secret for authenticating with Atlas internal API
-    pub atlas_secret: Option<String>,
-
-    /// Subdomain identifying this tenant (used when calling Atlas endpoints)
-    pub subdomain: Option<String>,
-
-    // =========================================================================
     // Vercel AI Gateway (Single unified LLM provider)
     // =========================================================================
     /// Vercel AI Gateway API key
@@ -89,9 +76,6 @@ impl Config {
             },
 
             // Atlas integration (optional)
-            atlas_url: std::env::var("VIRTUES_ATLAS_URL").ok(),
-            atlas_secret: std::env::var("VIRTUES_ATLAS_SECRET").ok(),
-            subdomain: std::env::var("SUBDOMAIN").ok(),
 
             // Vercel AI Gateway
             ai_gateway_api_key: std::env::var("AI_GATEWAY_API_KEY")
@@ -114,11 +98,6 @@ impl Config {
     /// Check if LLM provider (AI Gateway) is configured
     pub fn has_llm_provider(&self) -> bool {
         !self.ai_gateway_api_key.is_empty()
-    }
-
-    /// Check if Atlas integration is configured
-    pub fn has_atlas(&self) -> bool {
-        self.atlas_url.is_some() && self.atlas_secret.is_some()
     }
 
     /// Check if Plaid is configured
