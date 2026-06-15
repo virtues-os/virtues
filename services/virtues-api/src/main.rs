@@ -14,7 +14,6 @@
 mod auth;
 mod bearer_auth;
 mod blocklist;
-mod atlas_hydrator;
 mod config;
 mod db;
 mod dev_seed;
@@ -35,7 +34,6 @@ use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::atlas_hydrator::AtlasHydrator;
 use crate::blocklist::Blocklist;
 use crate::config::Config;
 use crate::subscription::SubscriptionManager;
@@ -45,7 +43,6 @@ use crate::version::VersionCache;
 /// Shared application state
 pub struct AppState {
     pub config: Arc<Config>,
-    pub atlas: AtlasHydrator,
     pub tier: TierManager,
     pub subscription: SubscriptionManager,
     pub version_cache: VersionCache,
@@ -93,7 +90,7 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let config = Arc::new(Config::from_env()?);
 
-    let mode = if config.has_atlas() { "production (Atlas sync)" } else { "standalone" };
+    let mode = if config.has_atlas() { "production" } else { "standalone" };
     tracing::info!(
         "Starting virtues-api on port {} in {} mode",
         config.port,
@@ -122,17 +119,6 @@ async fn main() -> Result<()> {
 
     // Initialize version cache (shared between route handlers)
     let version_cache = VersionCache::new();
-
-    // Atlas hydrator: populates the tier + subscription managers from Atlas on
-    // startup and on a periodic re-hydrate (catches trial expirations, plan
-    // changes, cancellations). No metered budgets — paid calls charge the DB
-    // entitlement wallet instead.
-    let atlas = AtlasHydrator::new(&config, &tier, &subscription).await?;
-    let atlas_rehydrator = atlas.clone();
-    let rehydrate_interval = config.atlas_rehydrate_interval_secs;
-    tokio::spawn(async move {
-        atlas_rehydrator.run_rehydrator(rehydrate_interval).await;
-    });
 
     // Build HTTP client for embeddings and other direct API calls
     let http_client = reqwest::Client::builder()
@@ -177,7 +163,6 @@ async fn main() -> Result<()> {
     // Build shared state
     let state = Arc::new(AppState {
         config,
-        atlas,
         tier,
         subscription,
         version_cache,

@@ -35,11 +35,6 @@ pub struct Config {
     /// Subdomain identifying this tenant (used when calling Atlas endpoints)
     pub subdomain: Option<String>,
 
-    /// Interval in seconds for re-hydrating tiers/subscriptions from Atlas (default: 900 = 15 min)
-    /// Catches subscription changes, trial expirations, balance top-ups, and plan upgrades
-    /// that happen while virtues-api is running.
-    pub atlas_rehydrate_interval_secs: u64,
-
     // =========================================================================
     // Vercel AI Gateway (Single unified LLM provider)
     // =========================================================================
@@ -97,10 +92,6 @@ impl Config {
             atlas_url: std::env::var("VIRTUES_ATLAS_URL").ok(),
             atlas_secret: std::env::var("VIRTUES_ATLAS_SECRET").ok(),
             subdomain: std::env::var("SUBDOMAIN").ok(),
-            atlas_rehydrate_interval_secs: std::env::var("VIRTUES_API_REHYDRATE_INTERVAL")
-                .unwrap_or_else(|_| "900".to_string())
-                .parse()
-                .context("Invalid VIRTUES_API_REHYDRATE_INTERVAL")?,
 
             // Vercel AI Gateway
             ai_gateway_api_key: std::env::var("AI_GATEWAY_API_KEY")
