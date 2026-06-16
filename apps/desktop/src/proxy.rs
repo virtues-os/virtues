@@ -92,9 +92,17 @@ impl ProxyConfig {
     /// IPv6). Accepts `host:port` and `[v6]:port`. Host header still uses the
     /// bundle's `internal_host` so the box's server-side URL minting is stable.
     pub fn from_bundle_with_upstream(bundle: &PairingBundle, upstream: &str) -> Result<Self> {
-        let upstream_addr: SocketAddr = upstream
-            .parse()
-            .with_context(|| format!("`{upstream}` is not a valid host:port (try `100.64.0.2:8000` or `[2606:4700::1]:8000`)"))?;
+        // Resolve via ToSocketAddrs so the upstream may be a hostname, not just
+        // an IP literal — e.g. an mDNS `adam.local:8000`, a Tailscale MagicDNS
+        // `virtues:8000`, or a plain `100.64.0.2:8000` / `[2606:4700::1]:8000`.
+        // One-shot resolution at startup; the LaunchAgent restarts the proxy if
+        // the box's address ever changes.
+        use std::net::ToSocketAddrs;
+        let upstream_addr = upstream
+            .to_socket_addrs()
+            .with_context(|| format!("resolve upstream `{upstream}` (expected host:port)"))?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("`{upstream}` resolved to no addresses"))?;
         Ok(Self {
             upstream_addr,
             upstream_host: bundle.internal_host.clone(),

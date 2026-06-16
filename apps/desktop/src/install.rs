@@ -33,29 +33,39 @@ const SYSTEM_BIN: &str = "/usr/local/bin/virtues-client";
 // User-level: localhost proxy LaunchAgent (no root)
 // ─────────────────────────────────────────────────────────────────────────
 
-/// `virtues-client install` — copy the binary to `~/.virtues/bin` and install +
-/// load the LaunchAgent that runs the localhost proxy. Requires a paired bundle
-/// (for the upstream address). No root.
-pub fn run_user() -> Result<()> {
+/// `virtues-client install [--upstream <host:port>]` — copy the binary to
+/// `~/.virtues/bin` and install + load the LaunchAgent that runs the localhost
+/// proxy. No root.
+///
+/// `upstream` is the box address the proxy forwards to. Normally this is the
+/// address you paired against (Tailscale/LAN/SSH/IPv6) — the "direct" path,
+/// which needs no WireGuard tunnel. When omitted, we fall back to the bundle's
+/// WG-internal address (the legacy tunnel path, which needs the root daemon up).
+pub fn run_user(upstream: Option<&str>) -> Result<()> {
     let home = home_dir()?;
     let bin_dir = home.join(".virtues").join("bin");
     std::fs::create_dir_all(&bin_dir).context("create ~/.virtues/bin")?;
     let install_path = bin_dir.join("virtues-client");
     copy_self_to(&install_path).context("install binary to ~/.virtues/bin")?;
 
-    // Derive the proxy upstream from the paired bundle: the box's WG-internal
-    // address + HTTP port, reachable once the root daemon's tunnel is up.
-    let bundle = keychain::load_bundle()
-        .context("read paired bundle from keychain")?
-        .ok_or_else(|| {
-            anyhow::anyhow!("not paired — run pairing first, then install")
-        })?;
-    let ip = bundle
-        .internal_ip
-        .parse()
-        .with_context(|| format!("parse internal_ip `{}`", bundle.internal_ip))?;
-    // SocketAddr renders IPv6 with the required brackets, e.g. [fd00:5654::1]:8000.
-    let upstream = SocketAddr::new(ip, bundle.http_port).to_string();
+    let upstream = match upstream {
+        Some(u) => u.to_string(),
+        None => {
+            // Legacy fallback: the box's WG-internal address from the bundle,
+            // reachable only once the root daemon's tunnel is up.
+            let bundle = keychain::load_bundle()
+                .context("read paired bundle from keychain")?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("not paired — run pairing first, then install")
+                })?;
+            let ip = bundle
+                .internal_ip
+                .parse()
+                .with_context(|| format!("parse internal_ip `{}`", bundle.internal_ip))?;
+            // SocketAddr renders IPv6 with brackets, e.g. [fd00:5654::1]:8000.
+            SocketAddr::new(ip, bundle.http_port).to_string()
+        }
+    };
 
     let logs_dir = home.join(".virtues").join("logs");
     std::fs::create_dir_all(&logs_dir).context("create ~/.virtues/logs")?;
