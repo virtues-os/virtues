@@ -105,6 +105,27 @@ jobs:
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
           echo "Found DMG: $DMG"
 
+      # Gate: refuse to publish unless the app is Developer ID signed AND the DMG
+      # is notarized + stapled. If the APPLE_* secrets are missing, tauri builds
+      # unsigned and this fails here — so a misconfigured run never ships an
+      # unsigned release.
+      - name: Verify signed + notarized
+        run: |
+          APP=$(find apps/web/src-tauri/target/universal-apple-darwin/release/bundle/macos -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "no .app produced"; exit 1; }
+          echo "== codesign =="
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if ! codesign -dvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application"; then
+            echo "::error::app is NOT Developer ID signed — are the APPLE_* secrets set?"
+            exit 1
+          fi
+          echo "== notarization staple =="
+          if ! xcrun stapler validate "${{ steps.dmg.outputs.path }}"; then
+            echo "::error::DMG is not notarized/stapled"
+            exit 1
+          fi
+          echo "✓ signed + notarized"
+
       - name: Create Release (versioned tag)
         uses: softprops/action-gh-release@v2
         with:
