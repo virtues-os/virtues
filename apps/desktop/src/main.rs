@@ -120,7 +120,13 @@ enum Command {
     /// Install the user-level LaunchAgent (localhost proxy). No root needed.
     /// Run after pairing. The Tauri app calls this on the bundled sidecar.
     #[command(hide = true)]
-    Install,
+    Install {
+        /// Box address the proxy forwards to (e.g. `100.104.55.76:8000` or
+        /// `adam.local:8000`) — normally the address you paired against. When
+        /// omitted, falls back to the bundle's WG-internal address.
+        #[arg(long)]
+        upstream: Option<String>,
+    },
 
     /// Remove the user-level LaunchAgent + the ~/.virtues/bin binary.
     #[command(hide = true)]
@@ -156,7 +162,7 @@ async fn main() -> Result<()> {
         Command::Up { no_tunnel, upstream } => run_up(no_tunnel, upstream).await,
         Command::Status => print_status(),
         Command::Revoke => revoke().await,
-        Command::Install => install::run_user(),
+        Command::Install { upstream } => install::run_user(upstream.as_deref()),
         Command::Uninstall => install::uninstall_user(),
         Command::InstallSystem { user, bundle } => install::run_system(&user, &bundle),
         Command::UninstallSystem => install::uninstall_system(),
