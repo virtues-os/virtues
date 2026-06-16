@@ -210,10 +210,14 @@ async fn run_or_ignore(argv: &[&str]) -> Result<()> {
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     let lower = stderr.to_ascii_lowercase();
-    // ifconfig/route "already configured" variants on BSD/macOS
+    // ifconfig/route "already configured" variants on BSD/macOS. Re-assigning
+    // an address that's already present yields "file exists" (SIOCAIFADDR
+    // EEXIST), so that covers the idempotent case. We deliberately do NOT
+    // tolerate "can't assign requested address" (EADDRNOTAVAIL) — for the
+    // `inet6` step that's a genuine failure that would leave utun9 up but
+    // unaddressed, a silent half-configured tunnel.
     if lower.contains("file exists")
         || lower.contains("already")
-        || lower.contains("can't assign requested address")
         || lower.contains("eexist")
     {
         tracing::debug!(argv = ?argv, "already configured (tolerated)");

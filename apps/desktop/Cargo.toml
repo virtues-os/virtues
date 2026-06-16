@@ -81,3 +81,8 @@ ipnetwork = "0.21"
 
 # mDNS service discovery — browses _http._tcp.local. for Virtues servers.
 mdns-sd = "0.11"
+
+# mdns-sd's browse channel is a flume Receiver; we name flume's
+# RecvTimeoutError directly to tell "no packet yet" (keep polling) apart from
+# "channel closed" (stop). Pinned to mdns-sd's own flume major to keep one copy.
+flume = "0.11"
