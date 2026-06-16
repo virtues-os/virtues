@@ -153,20 +153,49 @@ fn host_arch() -> &'static str {
     }
 }
 
+/// Build the HTTP client used for all release fetches. When `force_ipv4`, bind
+/// the local socket to an IPv4 address so the connection can't attempt IPv6.
+///
+/// Why: some networks (Tailscale-only, corporate Wi-Fi like WeWork) advertise
+/// an IPv6 default route that black-holes — the default connect stalls on the
+/// AAAA record and the update fails with "error sending request", even though
+/// IPv4 egress works fine (curl -4 succeeds). A short connect timeout makes that
+/// stall fail fast so we can retry over IPv4.
+fn build_client(force_ipv4: bool) -> Result<reqwest::Client, crate::Error> {
+    let mut b = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(10));
+    if force_ipv4 {
+        b = b.local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    }
+    b.build()
+        .map_err(|e| crate::Error::Other(format!("build client: {e}")))
+}
+
+/// GET a URL, falling back to IPv4 if the default attempt can't connect/times
+/// out (the IPv6-black-hole symptom). Returns the response after `error_for_status`.
+async fn send_get(url: &str) -> Result<reqwest::Response, crate::Error> {
+    let resp = match build_client(false)?.get(url).send().await {
+        Ok(r) => r,
+        Err(e) if e.is_connect() || e.is_timeout() => {
+            tracing::warn!("GET {url} failed ({e}); retrying over IPv4");
+            build_client(true)?
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| crate::Error::Other(format!("GET {url} (ipv4 retry): {e}")))?
+        }
+        Err(e) => return Err(crate::Error::Other(format!("GET {url}: {e}"))),
+    };
+    resp.error_for_status()
+        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))
+}
+
 async fn fetch_latest_tag() -> Result<String, crate::Error> {
     let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases/latest");
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|e| crate::Error::Other(format!("build client: {e}")))?;
-    let resp = client
-        .get(&url)
-        .send()
+    let body: serde_json::Value = send_get(&url)
         .await
         .map_err(|e| crate::Error::Other(format!("github api: {e}")))?
-        .error_for_status()
-        .map_err(|e| crate::Error::Other(format!("github api: {e}")))?;
-    let body: serde_json::Value = resp
         .json()
         .await
         .map_err(|e| crate::Error::Other(format!("parse github json: {e}")))?;
@@ -177,17 +206,8 @@ async fn fetch_latest_tag() -> Result<String, crate::Error> {
 }
 
 async fn fetch_text(url: &str) -> Result<String, crate::Error> {
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|e| crate::Error::Other(format!("build client: {e}")))?;
-    let body = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?
-        .error_for_status()
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?
+    let body = send_get(url)
+        .await?
         .text()
         .await
         .map_err(|e| crate::Error::Other(format!("read body: {e}")))?;
@@ -195,17 +215,7 @@ async fn fetch_text(url: &str) -> Result<String, crate::Error> {
 }
 
 async fn download(url: &str, dest: &Path) -> Result<(), crate::Error> {
-    let client = reqwest::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .map_err(|e| crate::Error::Other(format!("build client: {e}")))?;
-    let mut resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?
-        .error_for_status()
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?;
+    let mut resp = send_get(url).await?;
     let mut file = File::create(dest)
         .map_err(|e| crate::Error::Other(format!("create {}: {e}", dest.display())))?;
     while let Some(chunk) = resp
