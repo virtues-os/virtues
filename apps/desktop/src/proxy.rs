@@ -1,9 +1,13 @@
-//! Local HTTP reverse proxy on `127.0.0.1:INTERNAL_PORT`.
+//! Local HTTP reverse proxy on `127.0.0.1:LOCAL_PROXY_PORT` (7117).
 //!
 //! Browser → daemon (this) → over WG tunnel → box. The browser sees an
-//! `http://localhost:8000` origin (Secure Context per W3C, no TLS, no cert
+//! `http://localhost:7117` origin (Secure Context per W3C, no TLS, no cert
 //! warnings, full Fetch / Service Workers / cookies). The daemon forwards
 //! upstream to the box at `http://virtues.internal:8000` over the WG tunnel.
+//!
+//! Note the two ports are deliberately different: the box keeps `INTERNAL_PORT`
+//! (8000), but the local listener uses [`LOCAL_PROXY_PORT`] so it doesn't squat
+//! 8000 — a port developers reach for constantly (Django, uvicorn, http.server).
 //!
 //! ## Capabilities
 //!
@@ -35,7 +39,19 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
-use virtues_protocol::{PairingBundle, INTERNAL_PORT};
+use virtues_protocol::PairingBundle;
+
+/// Port the local reverse proxy listens on (`127.0.0.1:7117`). This is the
+/// origin the browser / Tauri app opens. It is intentionally NOT the box's
+/// `INTERNAL_PORT` (8000): the proxy must not permanently squat 8000 on the
+/// user's machine. The box's own HTTP port stays 8000 (carried in the pairing
+/// bundle's `http_port`); only this local listener moves.
+///
+/// 7117 is a quiet registered-range port (no ephemeral-socket collisions) and
+/// `localhost` is a Secure Context at any port. Keep in sync with the literal
+/// `7117` in the Tauri app (`apps/web/src-tauri/src/main.rs`, `tauri.conf.json`,
+/// `ui/pair.html`).
+pub const LOCAL_PROXY_PORT: u16 = 7117;
 
 /// Body type returned by every proxy handler. Lets us mix streamed responses
 /// (passed through from upstream) and synthetic byte responses (502s) under
@@ -52,8 +68,8 @@ pub struct ProxyConfig {
     /// `virtues.internal` so the box's server-side URL minting stays stable
     /// regardless of how the daemon got there.
     pub upstream_host: String,
-    /// Port the local proxy binds. Defaults to the box's `INTERNAL_PORT` so
-    /// pair URLs printed by the box stay valid on a paired desktop.
+    /// Port the local proxy binds. Defaults to [`LOCAL_PROXY_PORT`] (7117) —
+    /// distinct from the box's upstream port so the proxy doesn't squat 8000.
     pub bind_port: u16,
 }
 
@@ -66,7 +82,7 @@ impl ProxyConfig {
         Ok(Self {
             upstream_addr: SocketAddr::new(ip, bundle.http_port),
             upstream_host: bundle.internal_host.clone(),
-            bind_port: INTERNAL_PORT,
+            bind_port: LOCAL_PROXY_PORT,
         })
     }
 
@@ -82,7 +98,7 @@ impl ProxyConfig {
         Ok(Self {
             upstream_addr,
             upstream_host: bundle.internal_host.clone(),
-            bind_port: INTERNAL_PORT,
+            bind_port: LOCAL_PROXY_PORT,
         })
     }
 }
@@ -440,9 +456,10 @@ mod tests {
     #[test]
     fn config_from_bundle_parses_ipv6() {
         let cfg = ProxyConfig::from_bundle(&fixture_bundle()).unwrap();
-        assert_eq!(cfg.upstream_addr.port(), 8000);
+        assert_eq!(cfg.upstream_addr.port(), 8000); // box upstream stays 8000
         assert_eq!(cfg.upstream_host, "virtues.internal");
-        assert_eq!(cfg.bind_port, INTERNAL_PORT);
+        assert_eq!(cfg.bind_port, LOCAL_PROXY_PORT); // local listener is 7117, not 8000
+        assert_ne!(cfg.bind_port, cfg.upstream_addr.port()); // the decoupling invariant
         assert!(matches!(cfg.upstream_addr.ip(), IpAddr::V6(_)));
     }
 

@@ -1,7 +1,7 @@
 //! # virtues-client
 //!
 //! The desktop daemon. Pairs to a Virtues box over WireGuard and runs a local
-//! HTTP reverse proxy on `127.0.0.1:8000` so any browser on this machine sees
+//! HTTP reverse proxy on `127.0.0.1:7117` so any browser on this machine sees
 //! the box at a Secure-Context-eligible loopback URL — no per-box CA install,
 //! no cert warnings, no trust dance.
 //!
@@ -33,6 +33,7 @@ use clap::{Parser, Subcommand};
 mod daemon;
 mod discover;
 mod dns;
+mod install;
 mod keychain;
 mod pair;
 mod proxy;
@@ -115,6 +116,31 @@ enum Command {
 
     /// Clear local creds + remove this device's WG peer from the box.
     Revoke,
+
+    /// Install the user-level LaunchAgent (localhost proxy). No root needed.
+    /// Run after pairing. The Tauri app calls this on the bundled sidecar.
+    #[command(hide = true)]
+    Install,
+
+    /// Remove the user-level LaunchAgent + the ~/.virtues/bin binary.
+    #[command(hide = true)]
+    Uninstall,
+
+    /// Install the root LaunchDaemon (WG tunnel + .virtues DNS). Must run as
+    /// root — invoked once via `osascript … with administrator privileges`.
+    #[command(hide = true)]
+    InstallSystem {
+        /// The login user whose ~/.virtues/bundle.json the daemon reads.
+        #[arg(long)]
+        user: String,
+        /// Path to that user's bundle.json.
+        #[arg(long)]
+        bundle: std::path::PathBuf,
+    },
+
+    /// Remove the root LaunchDaemon + /usr/local/bin binary. Must run as root.
+    #[command(hide = true)]
+    UninstallSystem,
 }
 
 #[tokio::main]
@@ -130,6 +156,10 @@ async fn main() -> Result<()> {
         Command::Up { no_tunnel, upstream } => run_up(no_tunnel, upstream).await,
         Command::Status => print_status(),
         Command::Revoke => revoke().await,
+        Command::Install => install::run_user(),
+        Command::Uninstall => install::uninstall_user(),
+        Command::InstallSystem { user, bundle } => install::run_system(&user, &bundle),
+        Command::UninstallSystem => install::uninstall_system(),
     }
 }
 
@@ -272,7 +302,7 @@ fn print_status() -> Result<()> {
     println!("client address:   {}", bundle.wg.client_address);
     println!();
     println!("wg private key:   {}", if has_wg_private { "present" } else { "MISSING (re-pair to regenerate)" });
-    println!("local proxy:      http://localhost:{}", virtues_protocol::INTERNAL_PORT);
+    println!("local proxy:      http://localhost:{}", proxy::LOCAL_PROXY_PORT);
     println!();
     println!("tunnel state:     run `virtues-client up` to bring it up");
     println!("                  (Linux: needs CAP_NET_ADMIN — see linux/virtues-client.service)");
@@ -309,7 +339,7 @@ async fn revoke() -> Result<()> {
             .build()?;
         let url = format!(
             "http://localhost:{}/api/credentials/{credential_id}",
-            virtues_protocol::INTERNAL_PORT
+            proxy::LOCAL_PROXY_PORT
         );
         match client
             .delete(&url)
