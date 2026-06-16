@@ -157,11 +157,21 @@ jobs:
 
             ### Install
             1. Download the `.dmg`, open it, drag **Virtues** to Applications.
-            2. Launch it and enter the 6-char code from `virtues login` on your server.
+            2. Launch it and enter the 6-char code from `virtues pair` on your server.
           files: |
             ${{ steps.dmg.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Stable, version-independent filename so the download page / Caddy 302 can
+      # point at a fixed URL:
+      #   https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.dmg
+      - name: Stable-named copy for the download URL
+        id: stable
+        run: |
+          STABLE="$(dirname "${{ steps.dmg.outputs.path }}")/Virtues.dmg"
+          cp "${{ steps.dmg.outputs.path }}" "$STABLE"
+          echo "path=$STABLE" >> "$GITHUB_OUTPUT"
 
       - name: Update mac-latest
         if: success()
@@ -172,7 +182,10 @@ jobs:
           body: |
             Automatically tracks the latest stable Mac build.
             Current version: v${{ steps.version.outputs.VERSION }}
+
+            Stable download: `Virtues.dmg` (same file, version-independent URL).
           files: |
             ${{ steps.dmg.outputs.path }}
+            ${{ steps.stable.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
