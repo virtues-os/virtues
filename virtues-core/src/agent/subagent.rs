@@ -39,6 +39,24 @@ const MAX_SOURCE_TEXT: usize = 600;
 /// keys workers by `(dispatch_id, worker_id)` so multiple dispatch rounds in one turn don't collide.
 static DISPATCH_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// How a dispatched worker is framed. Deep Research workers are READ-ONLY researchers; Council
+/// workers are VOICES that speak as a perspective. Defaults to `Research` when a mission omits `style`,
+/// so existing Deep Research calls are unaffected.
+#[derive(Clone, Copy)]
+enum WorkerStyle {
+    Research,
+    Voice,
+}
+
+impl WorkerStyle {
+    fn from_mission(mission: &Value) -> Self {
+        match mission.get("style").and_then(|v| v.as_str()) {
+            Some("voice") => WorkerStyle::Voice,
+            _ => WorkerStyle::Research,
+        }
+    }
+}
+
 /// One worker's result, collected back at the orchestrator.
 struct MissionResult {
     title: String,
@@ -115,6 +133,7 @@ pub async fn dispatch(
             Some("strong") => strong.clone(),
             _ => balanced.clone(),
         };
+        let style = WorkerStyle::from_mission(mission);
 
         let worker_id = handles.len();
         let pool = pool.clone();
@@ -128,6 +147,7 @@ pub async fn dispatch(
                 model,
                 title,
                 objective,
+                style,
                 tx,
                 cancel,
             )
@@ -205,15 +225,25 @@ async fn run_one_worker(
     model: String,
     title: String,
     objective: String,
+    style: WorkerStyle,
     tx: Option<Sender<SubagentUpdate>>,
     cancel: Option<CancellationToken>,
 ) -> MissionResult {
     // Announce the worker as thinking so the panel shows it immediately.
     emit(&tx, dispatch_id, worker_id, &title, &model, SubagentStatus::Thinking, 0).await;
 
-    let system_prompt = build_worker_prompt(&objective);
+    // Research workers investigate read-only; Council voices speak as a perspective (think-only).
+    let (system_prompt, tools) = match style {
+        WorkerStyle::Research => (
+            build_worker_prompt(&objective),
+            crate::tools::get_tools_for_subagent(),
+        ),
+        WorkerStyle::Voice => (
+            build_council_voice_prompt(&objective),
+            crate::tools::get_tools_for_council_voice(),
+        ),
+    };
     let messages = build_context_for_llm(&[], None, 0, Some(&system_prompt));
-    let tools = crate::tools::get_tools_for_subagent();
 
     let context = ToolContext {
         user_id: Some("subagent".to_string()),
@@ -270,6 +300,24 @@ async fn run_one_worker(
                 had_error = true;
             }
             _ => {}
+        }
+    }
+
+    // Fallback: a think-only voice worker may pour its perspective into `think` calls and end without
+    // a final text answer, leaving `findings` empty. Recover the thinking so the voice isn't lost
+    // (and wrongly reported as failed). Harmless for research workers — only fires when there's no text.
+    if findings.trim().is_empty() {
+        let thoughts: Vec<String> = pending
+            .values()
+            .filter(|(name, _)| name == "think")
+            .filter_map(|(_, args)| {
+                args.get("thought")
+                    .and_then(|t| t.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        if !thoughts.is_empty() {
+            findings = thoughts.join("\n\n");
         }
     }
 
@@ -366,6 +414,27 @@ fn build_worker_prompt(objective: &str) -> String {
          - Report correlations and observations only — never assert causation.\n\
          - Return a CONCISE findings summary (a few tight paragraphs or bullets), NOT a transcript. \
          Give the orchestrator signal, not noise."
+    )
+}
+
+/// System prompt for a Council VOICE worker. Unlike a research worker, a voice does not investigate
+/// or cite — it speaks in first person as the archetype its objective describes. The objective carries
+/// the whole role (who this voice is, the decision, any context); the voice sees only that.
+fn build_council_voice_prompt(objective: &str) -> String {
+    format!(
+        "You are ONE voice at a council, speaking from a single point of view. You are NOT a researcher \
+         and you do NOT cite sources — you give an honest, human perspective.\n\n\
+         <objective>\n{objective}\n</objective>\n\n\
+         How to speak:\n\
+         - Speak in the FIRST PERSON from this vantage. Be specific and honest, including what you'd \
+         worry about, push for, or refuse to let slide.\n\
+         - You are this perspective only — do NOT try to be balanced or represent the other voices. \
+         Your job is to make your angle as real and sharp as it deserves to be.\n\
+         - If your objective frames you as a real person's LENS (\"how X would approach this\"), speak \
+         AS THAT LIKELY LENS, not as a faithful prediction of what they would really say — you are a \
+         thought experiment that helps take their view, not a forecast of their actual opinion.\n\
+         - End with a plain-text view (do NOT end on a think call). Use think to reason if it helps, \
+         then give your view as a few tight paragraphs (or a short list) — signal, not a transcript."
     )
 }
 
