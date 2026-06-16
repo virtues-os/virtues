@@ -6,7 +6,7 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help init dev dev-core dev-api dev-web dev-link dev-reset db db-stop \
-        deploy-atlas deploy-virtues-api _ecr-push
+        deploy-atlas deploy-virtues-api _ecr-push mac-app
 
 AWS_REGION ?= us-east-1
 
@@ -116,6 +116,11 @@ dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
 	@$(PG_BIN)/createdb virtues_api
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@echo "✓ fresh dbs. Run 'make dev-core' (+ 'make dev-api') to migrate + seed."
+
+# ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
+
+mac-app: ## Build the macOS DMG (Virtues.app + virtues-client + virtues-collector)
+	tools/build-mac-app.sh
 
 # ── Cloud-service deploy (Virtues-operated; not part of self-host) ───────────
 # Build + push services/virtues-{atlas,api} images to ECR :latest. Rolling the
