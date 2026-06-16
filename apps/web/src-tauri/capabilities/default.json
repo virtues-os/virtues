@@ -22,6 +22,10 @@
           "name": "binaries/virtues-client",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "osascript",
+          "args": true
         }
       ]
     },
@@ -40,6 +44,10 @@
         },
         {
           "name": "open",
+          "args": true
+        },
+        {
+          "name": "osascript",
           "args": true
         }
       ]

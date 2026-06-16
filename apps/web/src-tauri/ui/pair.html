@@ -227,8 +227,22 @@
 
       try {
         await invoke('pair_with_code', { server, code });
-        setStatus('Paired! Loading your server…', 'ok');
-        setTimeout(() => { window.location.href = 'http://localhost:8000'; }, 800);
+        setStatus('Paired! Setting up the tunnel…', 'ok');
+
+        // Install the helpers: the user-level proxy + collector install
+        // silently; the WG tunnel runs as root, so macOS will show ONE
+        // password prompt. If the user cancels, we still land them on the app
+        // (they can finish setup later from Settings).
+        btn.textContent = 'Authorizing…';
+        try {
+          await invoke('install_helpers');
+        } catch (e) {
+          console.warn('install_helpers failed or was cancelled:', e);
+        }
+
+        setStatus('Loading your server…', 'ok');
+        // Local virtues-client proxy (see LOCAL_PROXY_PORT). Keep port in sync.
+        setTimeout(() => { window.location.href = 'http://localhost:7117'; }, 800);
       } catch (e) {
         setStatus(e || 'Pairing failed. Check the code and try again.', 'error');
         btn.disabled = false;
