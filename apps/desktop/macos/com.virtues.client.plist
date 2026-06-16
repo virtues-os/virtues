@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- User LaunchAgent — runs at login as the current user (no root). -->
+    <!-- Install: cp com.virtues.client.plist ~/Library/LaunchAgents/ -->
+    <!--          launchctl load -w ~/Library/LaunchAgents/com.virtues.client.plist -->
+
+    <key>Label</key>
+    <string>com.virtues.client</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/virtues-client</string>
+        <string>up</string>
+        <!-- Skip the built-in WireGuard tunnel — the LaunchDaemon handles it. -->
+        <string>--no-tunnel</string>
+        <!-- Forward to the server's WireGuard ULA address (brought up by the daemon). -->
+        <string>--upstream</string>
+        <string>fd00:5654::1:8000</string>
+    </array>
+
+    <!-- Start at login and restart on exit. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/virtues-client.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/virtues-client.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>

@@ -29,6 +29,9 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+mod daemon;
+mod discover;
+mod dns;
 mod keychain;
 mod pair;
 mod proxy;
@@ -75,6 +78,36 @@ enum Command {
         upstream: Option<String>,
     },
 
+    /// Pair using a short 6-character code displayed by `virtues link --code`
+    /// on the server. Discovers the server via mDNS if --server is not given.
+    PairCode {
+        /// The 6-character code shown by the server (spaces optional, e.g. "ABC DEF").
+        code: String,
+        /// Server origin to pair with, e.g. `http://adam.local:8000`.
+        /// If omitted, discovered automatically via mDNS.
+        #[arg(long)]
+        server: Option<String>,
+    },
+
+    /// Discover Virtues servers on the local network via mDNS.
+    Discover {
+        /// Emit JSON array of found servers instead of human-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Privileged background daemon: brings up the WireGuard tunnel and runs
+    /// the `.virtues` DNS server. Invoked by the LaunchDaemon as root.
+    #[command(hide = true)]
+    Daemon {
+        /// Path to the bundle JSON file written by `virtues-client pair`.
+        /// Required when running as root (LaunchDaemon) because the OS keychain
+        /// is user-specific and not accessible to the root process.
+        /// The installer embeds the actual user's home path in the plist.
+        #[arg(long)]
+        bundle_path: Option<std::path::PathBuf>,
+    },
+
     /// Report tunnel state, last handshake age, and proxy port.
     Status,
 
@@ -89,10 +122,41 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Pair { pair_url } => pair::run(&pair_url).await,
+        Command::PairCode { code, server } => run_pair_code(code, server).await,
+        Command::Discover { json } => run_discover(json).await,
+        Command::Daemon { bundle_path } => daemon::run(bundle_path).await,
         Command::Up { no_tunnel, upstream } => run_up(no_tunnel, upstream).await,
         Command::Status => print_status(),
         Command::Revoke => revoke().await,
     }
+}
+
+async fn run_pair_code(code: String, server: Option<String>) -> Result<()> {
+    let origin = match server {
+        Some(s) => s,
+        None => {
+            eprintln!("searching for Virtues servers on the local network…");
+            let servers = discover::discover_servers(5).await;
+            if servers.is_empty() {
+                anyhow::bail!(
+                    "no Virtues servers found via mDNS. Pass --server <origin> explicitly, \
+                     e.g. `--server http://adam.local:8000`."
+                );
+            }
+            discover::pick_server(&servers)?.origin.clone()
+        }
+    };
+    pair::run_with_code(&origin, &code).await
+}
+
+async fn run_discover(json: bool) -> Result<()> {
+    let servers = discover::discover_servers(3).await;
+    if json {
+        println!("{}", serde_json::to_string(&servers)?);
+    } else {
+        discover::print_servers(&servers);
+    }
+    Ok(())
 }
 
 /// `virtues-client up` — bring the tunnel up + start the local HTTP proxy.
@@ -225,11 +289,47 @@ fn decode_b64_32(s: &str) -> Result<[u8; 32]> {
 }
 
 async fn revoke() -> Result<()> {
-    // TODO: POST to box's revoke endpoint; clear keychain entry.
+    let bundle = match keychain::load_bundle()? {
+        Some(b) => b,
+        None => {
+            println!("not paired — nothing to revoke.");
+            return Ok(());
+        }
+    };
+
+    // Best-effort: tell the server to drop this device's credential row.
+    if let Some(device_id) = keychain::load_device_id()? {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
+        let url = format!(
+            "http://localhost:{}/api/credentials/{device_id}",
+            virtues_protocol::INTERNAL_PORT
+        );
+        match client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", bundle.bearer))
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                eprintln!("✓ removed device from server");
+            }
+            Ok(r) => {
+                eprintln!(
+                    "warning: server returned {} — clearing local creds anyway",
+                    r.status()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "warning: could not reach server ({e}) — clearing local creds anyway"
+                );
+            }
+        }
+    }
+
     keychain::delete_bundle()?;
     println!("local creds cleared.");
-    println!("warning: this only removes credentials on THIS machine. To also");
-    println!("remove this device from the box's Devices list, open the box's web");
-    println!("UI on another paired device and revoke it there.");
     Ok(())
 }

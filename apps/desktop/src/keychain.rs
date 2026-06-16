@@ -22,6 +22,7 @@ const SERVICE: &str = "virtues-client";
 /// `box-<publish_id>` so multiple bundles can coexist on one device.
 const ACCOUNT_BUNDLE: &str = "default-box";
 const ACCOUNT_WG_PRIVATE: &str = "default-box-wg-private";
+const ACCOUNT_DEVICE_ID: &str = "default-box-device-id";
 
 fn entry(account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, account).context("open keyring entry")
@@ -71,13 +72,33 @@ pub fn load_wg_private() -> Result<Option<String>> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Device ID (from server's credential row, used for revoke)
+// ────────────────────────────────────────────────────────────────────────
+
+pub fn save_device_id(id: &str) -> Result<()> {
+    entry(ACCOUNT_DEVICE_ID)?
+        .set_password(id)
+        .context("write device ID to keyring")?;
+    Ok(())
+}
+
+pub fn load_device_id() -> Result<Option<String>> {
+    match entry(ACCOUNT_DEVICE_ID)?.get_password() {
+        Ok(s) => Ok(Some(s)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(anyhow::Error::new(e).context("read device ID from keyring")),
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Delete (revoke)
 // ────────────────────────────────────────────────────────────────────────
 
 pub fn delete_bundle() -> Result<()> {
     delete_entry(ACCOUNT_BUNDLE)?;
-    // Best-effort: also drop the WG private key. We don't error if it's absent.
+    // Best-effort: also drop the WG private key and device ID. Don't error if absent.
     let _ = delete_entry(ACCOUNT_WG_PRIVATE);
+    let _ = delete_entry(ACCOUNT_DEVICE_ID);
     Ok(())
 }
 
