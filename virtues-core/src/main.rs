@@ -452,9 +452,51 @@ fn print_banner() {
       VF    .JMML..JMML.     `Mbmo  `Mbod"YML.`Mbmmd' M9mmmP'
 "#;
     println!("{WORDMARK}");
-    println!("   your data. your hardware.");
+    println!("   This is technology that helps you be the person you want to become.");
     println!("─────────────────────────────────────────────────────────");
     println!();
+}
+
+/// Print the boxed "Your server is ready" call-to-action — the one thing the
+/// user must act on, so it's the only block with a border. The pair code is the
+/// single most important glyph on screen: bright + bold on a TTY, plain when
+/// piped/captured. The box itself uses Unicode line-drawing (renders fine in
+/// terminals and logs); only the colour is TTY-gated to avoid garbling logs.
+fn print_pair_hero(display: &str) {
+    use console::style;
+    const W: usize = 50; // inner width between the borders
+    let tty = console::Term::stdout().is_term();
+
+    let top = format!("  ┌{}┐", "─".repeat(W));
+    let bot = format!("  └{}┘", "─".repeat(W));
+    let blank = format!("  │{}│", " ".repeat(W));
+    // A left-padded content line, right-padded to the inner width.
+    let line = |content: &str| {
+        let pad = W.saturating_sub(content.chars().count());
+        format!("  │{}{}│", content, " ".repeat(pad))
+    };
+
+    println!("{top}");
+    println!("{blank}");
+    println!("{}", line("   Your server is ready."));
+    println!("{blank}");
+    println!("{}", line("   1.  Get the app     virtues.com/downloads"));
+
+    // The code line: pad on the *visible* length (ANSI is zero-width), then
+    // wrap just the code in colour so the right border still aligns.
+    let prefix = "   2.  Enter code      ";
+    let pad = W.saturating_sub(prefix.chars().count() + display.chars().count());
+    let code = if tty {
+        style(display).cyan().bold().to_string()
+    } else {
+        display.to_string()
+    };
+    println!("  │{prefix}{code}{}│", " ".repeat(pad));
+
+    println!("{blank}");
+    println!("{}", line("   Expires in 30 minutes · single use"));
+    println!("{blank}");
+    println!("{bot}");
 }
 
 fn print_link_output(minted: &virtues::api::pair::MintedToken) {
@@ -473,13 +515,13 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
         return;
     }
 
-    print_banner();
-    println!("  Your server is ready.");
-    println!();
-    println!("  1.  Get the app     virtues.com/downloads");
-    println!("  2.  Enter code      {display}");
-    println!();
-    println!("  Code expires in 30 minutes · single use");
+    // Skip the wordmark when the installer chained straight into `init` — it
+    // already printed the serif banner at the top of `curl … | sh`. Standalone
+    // `virtues pair` / `virtues init` runs still get it.
+    if std::env::var_os("VIRTUES_NO_BANNER").is_none() {
+        print_banner();
+    }
+    print_pair_hero(&display);
 
     // On SSH: the desktop app needs a route to the box. On isolated networks
     // (office/hotel) mDNS is blocked, so the existing SSH session is the

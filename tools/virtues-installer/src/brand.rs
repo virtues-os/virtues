@@ -14,25 +14,42 @@ pub fn is_tty() -> bool {
     Term::stdout().is_term()
 }
 
+/// The serif Virtues wordmark — the same "Georgia11" figlet the CLI opens with,
+/// replicated here so `curl … | sh` and the CLI share one visual identity.
+/// Plain ASCII art: it pipes and logs cleanly with no ANSI to garble.
+const WORDMARK: &str = r#"
+              ,,
+`7MMF'   `7MF'db             mm
+  `MA     ,V                 MM
+   VM:   ,V `7MM  `7Mb,od8 mmMMmm `7MM  `7MM  .gP"Ya  ,pP"Ybd
+    MM.  M'   MM    MM' "'   MM     MM    MM ,M'   Yb 8I   `"
+    `MM A'    MM    MM       MM     MM    MM 8M"""""" `YMMMa.
+     :MM;     MM    MM       MM     MM    MM YM.    , L.   I8
+      VF    .JMML..JMML.     `Mbmo  `Mbod"YML.`Mbmmd' M9mmmP'
+"#;
+
+const MISSION: &str = "   This is technology that helps you be the person you want to become.";
+
+/// The brand badges — claims, not instructions, so they live here in the
+/// installer (discovery mode) rather than on the pair screen (task mode).
+const BADGES: &str = "   ◆ Open Source    ◆ 100% Yours    ◆ $0 Venture Funding    ◆ Public Benefit Co";
+
 /// The single brand header, printed once at the top of the installer.
-/// Three lines, low ink, scannable at any terminal width.
 pub fn print_header() {
     if !is_tty() {
-        // Plain-text fallback for logs.
+        // Plain-text fallback for logs — no ANSI.
+        println!("{WORDMARK}");
+        println!("{MISSION}");
         println!();
-        println!("   --------- ∴ ---------");
-        println!("        V I R T U E S");
-        println!("   your data. your hardware.");
-        println!("   ---------------------");
+        println!("{BADGES}");
         println!();
         return;
     }
 
+    println!("{WORDMARK}");
+    println!("   {}", style("This is technology that helps you be the person you want to become.").dim());
     println!();
-    println!("   {}", style("─────────∴─────────").bold());
-    println!("   {}", style("     V I R T U E S").bold());
-    println!("   {}", style("your data. your hardware.").dim());
-    println!("   {}", style("───────────────────").bold());
+    println!("   {}", style("◆ Open Source    ◆ 100% Yours    ◆ $0 Venture Funding    ◆ Public Benefit Co").bold());
     println!();
 }
 
