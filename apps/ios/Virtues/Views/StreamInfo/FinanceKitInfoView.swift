@@ -114,6 +114,8 @@ struct FinanceKitInfoView: View {
             }
 
             InfoRow(label: "Pending Records", value: "\(uploadCoordinator.streamCounts.finance)")
+
+            ActionLinkRow(streamKey: "ios_financekit")
         }
         .padding(16)
         .background(Color.warmSurfaceElevated)
@@ -160,7 +162,7 @@ struct FinanceKitInfoView: View {
                 InfoRow(label: "Initial Lookback", value: "10 years")
             }
 
-            Text("Configuration is managed by the server.")
+            Text("Default collection settings.")
                 .font(.caption)
                 .foregroundColor(.warmForegroundMuted)
                 .padding(.top, 4)

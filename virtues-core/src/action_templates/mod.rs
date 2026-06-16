@@ -171,15 +171,39 @@ fn default_runtime() -> String {
 /// can't be read at runtime (binary shipped without the tree, tests, etc.).
 const SOURCES_TOML: &str = include_str!("../../../actions/sources.toml");
 
-/// Absolute path to the on-disk `actions/` root. Resolved against
-/// `CARGO_MANIFEST_DIR` so `cargo run` works regardless of the user's CWD.
-/// Importers (`/api/admin/actions/import-git`) clone into this same directory
-/// so the standard scanner picks the new folder up — there is no separate
-/// "imported actions" location.
+/// Absolute path to the on-disk `actions/` root. Resolved in priority order:
+///
+/// 1. `$VIRTUES_ACTIONS_DIR` — set by the installer in the box env file (and
+///    by the Docker image), so a deployed box points at the real install
+///    location. This is the production path; without it a binary-only deploy
+///    would have no actions at all (the tree is *not* baked into the binary).
+/// 2. The well-known install location (`/usr/local/share/virtues/actions`,
+///    mirroring where the installer drops `web/`) — used only if it exists, so
+///    dev builds fall through to (3).
+/// 3. The in-tree `actions/` relative to this crate, via `CARGO_MANIFEST_DIR`,
+///    so `cargo run`/tests work regardless of the user's CWD.
+///
+/// Importers (`/api/admin/actions/import-git`) clone into whichever directory
+/// this resolves to, so the standard scanner picks the new folder up — there
+/// is no separate "imported actions" location.
 pub fn actions_root() -> std::path::PathBuf {
+    if let Ok(dir) = std::env::var("VIRTUES_ACTIONS_DIR") {
+        if !dir.is_empty() {
+            return std::path::PathBuf::from(dir);
+        }
+    }
+    let installed = std::path::PathBuf::from(WELL_KNOWN_ACTIONS_DIR);
+    if installed.is_dir() {
+        return installed;
+    }
     let core_manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     core_manifest.join(ACTIONS_DIR_FROM_CORE)
 }
+
+/// Default deployed location, matching the installer's `share/virtues/web`
+/// convention (`InstallConfig::web_dir`). Kept in sync with the path the
+/// installer copies `actions/` to and sets `VIRTUES_ACTIONS_DIR` to.
+const WELL_KNOWN_ACTIONS_DIR: &str = "/usr/local/share/virtues/actions";
 
 /// The actions directory, relative to the repo root. Resolved against
 /// `CARGO_MANIFEST_DIR`'s parent at runtime so `cargo run` works regardless

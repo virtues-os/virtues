@@ -173,8 +173,11 @@ class DeviceManager: ObservableObject {
 
         do {
             guard let url = URL(string: "\(configuration.apiEndpoint)/health") else { return }
-            let (data, response) = try await URLSession.shared.data(from: url)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
+            // Through BoxTransport so it tunnels (works off-LAN, never plaintext)
+            // for a paired device, consistent with every other box call.
+            let request = URLRequest(url: url)
+            let (data, http) = try await BoxTransport.shared.send(request, session: .shared)
+            guard http.statusCode == 200 else { return }
 
             struct HealthResponse: Decodable {
                 let min_ios_version: String?

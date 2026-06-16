@@ -23,7 +23,7 @@ import AVFoundation
 struct QRScannerView: View {
     /// Called when a v1 pair-flow QR is successfully decoded. Hands the
     /// caller `(endpoint, pairToken)` ready for `consumePairToken(...)`.
-    let onScanned: (String, String) -> Void
+    let onScanned: (String, String, String?) -> Void
     let onCancel: () -> Void
 
     @State private var cameraPermissionGranted = false
@@ -204,7 +204,7 @@ struct QRScannerView: View {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
 
-        onScanned(parsed.endpoint, parsed.token)
+        onScanned(parsed.endpoint, parsed.token, parsed.fpr)
     }
 
     private func showInvalid(_ message: String) {
@@ -222,23 +222,28 @@ struct QRScannerView: View {
     ///   - `https://virtues.local/pair#t=<token>`         (browser-friendly URL the box prints)
     ///   - `https://<box-ip>/pair#t=<token>`              (IP fallback for clients without mDNS)
     ///   - `virtues://pair?t=<token>&e=<endpoint>`        (iOS deep-link with explicit endpoint)
-    static func parsePairURL(_ raw: String) -> (endpoint: String, token: String)? {
+    /// `fpr` is the box's SPKI fingerprint, embedded by the box so the device
+    /// can verify the WG server key in the returned bundle wasn't substituted by
+    /// a LAN MITM. Optional (absent from dev boxes / pre-fpr links); when present
+    /// the pair flow rejects a bundle whose key doesn't match it.
+    static func parsePairURL(_ raw: String) -> (endpoint: String, token: String, fpr: String?)? {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed) else { return nil }
 
-        // virtues://pair?t=...&e=...  — explicit-endpoint deep link
+        // virtues://pair?t=...&e=...&f=...  — explicit-endpoint deep link
         if url.scheme == "virtues", url.host == "pair",
            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
            let items = components.queryItems {
             let token = items.first(where: { $0.name == "t" })?.value ?? ""
             let endpoint = items.first(where: { $0.name == "e" })?.value ?? ""
+            let fpr = items.first(where: { $0.name == "f" || $0.name == "fpr" })?.value
             if !token.isEmpty, !endpoint.isEmpty {
-                return (endpoint, token)
+                return (endpoint, token, fpr)
             }
             return nil
         }
 
-        // https://<box>/pair#t=<token>  — what `virtues link` prints
+        // https://<box>/pair#t=<token>&fpr=<fpr>  — what the box/web page emits
         guard let scheme = url.scheme,
               scheme == "http" || scheme == "https",
               url.path == "/pair",
@@ -250,13 +255,14 @@ struct QRScannerView: View {
         guard let fragment = url.fragment else { return nil }
         let token = extractFragmentValue(named: "t", from: fragment)
         guard let token, !token.isEmpty else { return nil }
+        let fpr = extractFragmentValue(named: "fpr", from: fragment)
 
         // Endpoint is the URL's origin (scheme://host[:port]).
         var endpoint = "\(scheme)://\(host)"
         if let port = url.port {
             endpoint += ":\(port)"
         }
-        return (endpoint, token)
+        return (endpoint, token, fpr)
     }
 
     private static func extractFragmentValue(named name: String, from fragment: String) -> String? {

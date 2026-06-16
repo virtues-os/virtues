@@ -110,6 +110,8 @@ struct HealthKitInfoView: View {
             }
 
             InfoRow(label: "Pending Records", value: "\(uploadCoordinator.streamCounts.healthkit)")
+
+            ActionLinkRow(streamKey: "ios_healthkit")
         }
         .padding(16)
         .background(Color.warmSurfaceElevated)
@@ -159,7 +161,7 @@ struct HealthKitInfoView: View {
                 InfoRow(label: "Batch Size", value: "1000 samples")
             }
 
-            Text("Configuration is managed by the server.")
+            Text("Default collection settings.")
                 .font(.caption)
                 .foregroundColor(.warmForegroundMuted)
                 .padding(.top, 4)

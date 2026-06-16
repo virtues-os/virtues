@@ -103,6 +103,8 @@ struct AudioInfoView: View {
 
             InfoRow(label: "Pending Chunks", value: "\(uploadCoordinator.streamCounts.audio)")
 
+            ActionLinkRow(streamKey: "ios_microphone")
+
             if audioManager.isRecording {
                 InfoRow(label: "Recording", value: "Active", valueColor: .warmSuccess)
 

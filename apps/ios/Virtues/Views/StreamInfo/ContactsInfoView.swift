@@ -108,6 +108,8 @@ struct ContactsInfoView: View {
             }
 
             InfoRow(label: "Contacts Synced", value: "\(contactsManager.contactCount)")
+
+            ActionLinkRow(streamKey: "ios_contacts")
         }
         .padding(16)
         .background(Color.warmSurfaceElevated)

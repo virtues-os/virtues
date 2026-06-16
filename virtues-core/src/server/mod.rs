@@ -229,6 +229,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route(
             "/api/devices/action-ids",
             get(api::device_action_ids_handler),
+        )
+        // Device-scoped run history for one of the caller's own actions, so the
+        // app can show real server-side outcome per stream. Device-token bearer
+        // auth + credential-ownership check (see handler). Distinct from the
+        // session-authed /api/actions/:id/runs.
+        .route(
+            "/api/devices/actions/:id/runs",
+            get(api::device_action_runs_handler),
         );
 
     // ============================================================
@@ -239,6 +247,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/timeline/day/:date", get(api::timeline_get_day_handler))
         // ─── Pair-only auth: "+ Add device" from a paired session ─────
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
+        .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
         .route("/api/pair/status/:id",    get(crate::api::pair::status_handler))
         .route("/api/pair/confirm/:id",   post(crate::api::pair::confirm_handler))
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
@@ -303,6 +312,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .delete(api::delete_action_handler),
         )
         .route("/api/actions/:id/run", post(api::trigger_action_handler))
+        // Chat-export upload (Tier 3 one-time import). Per-route body limit
+        // overrides the router-wide 105MB cap — ChatGPT exports can be larger.
+        .route(
+            "/api/chat-import/upload",
+            post(api::chat_import_upload_handler)
+                .layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
         .route("/api/actions/:id/runs", get(api::list_action_runs_handler))
         .route("/api/actions/runs/:id", get(api::get_action_run_handler))
         .route("/api/runs", get(api::list_runs_handler))
