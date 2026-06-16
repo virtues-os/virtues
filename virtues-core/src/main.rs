@@ -436,6 +436,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// (mDNS-first, IP fallback, loopback last) + expiry + a one-line remote-access
 /// verdict. Deliberately terse — the deep network report lives behind
 /// `virtues doctor`. Shared between `Link` and `Init`.
+/// The Virtues wordmark — a serif figlet ("Georgia11") that opens the CLI
+/// journey. Plain text on purpose: this output is frequently piped, captured,
+/// and read over SSH, so no ANSI styling that would garble in a log.
+fn print_banner() {
+    const WORDMARK: &str = r#"
+              ,,
+`7MMF'   `7MF'db             mm
+  `MA     ,V                 MM
+   VM:   ,V `7MM  `7Mb,od8 mmMMmm `7MM  `7MM  .gP"Ya  ,pP"Ybd
+    MM.  M'   MM    MM' "'   MM     MM    MM ,M'   Yb 8I   `"
+    `MM A'    MM    MM       MM     MM    MM 8M"""""" `YMMMa.
+     :MM;     MM    MM       MM     MM    MM YM.    , L.   I8
+      VF    .JMML..JMML.     `Mbmo  `Mbod"YML.`Mbmmd' M9mmmP'
+"#;
+    println!("{WORDMARK}");
+    println!("   your data. your hardware.");
+    println!("─────────────────────────────────────────────────────────");
+    println!();
+}
+
 fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     use virtues::cli::link::{reachable_pair_urls, ssh_context, ssh_forward_host, ssh_handoff_block};
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
@@ -444,14 +464,15 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     let display = minted.display_code();
 
     println!();
-    println!("─────────────────────────────────────────────────────────");
 
     if is_dev {
+        println!("─────────────────────────────────────────────────────────");
         println!("  [dev] http://localhost:{web_port}/pair#t={token}");
         println!("─────────────────────────────────────────────────────────");
         return;
     }
 
+    print_banner();
     println!("  Your server is ready.");
     println!();
     println!("  1.  Get the app     virtues.com/downloads");
