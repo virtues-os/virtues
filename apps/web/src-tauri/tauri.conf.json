@@ -5,14 +5,15 @@
   "identifier": "com.virtues.app",
   "build": {
     "beforeBuildCommand": "",
-    "beforeDevCommand": ""
+    "beforeDevCommand": "",
+    "frontendDist": "ui"
   },
   "app": {
     "withGlobalTauri": true,
     "macOSPrivateApi": true,
     "windows": [],
     "security": {
-      "csp": "default-src 'self' https://virtues.com https://*.virtues.com; script-src 'self' 'unsafe-inline' https://virtues.com https://*.virtues.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://virtues.com https://*.virtues.com wss://*.virtues.com"
+      "csp": "default-src 'self' http://localhost:8000 http://*.virtues:8000; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:8000 ws://localhost:8000 http://*.virtues:8000 ws://*.virtues:8000"
     }
   },
   "bundle": {

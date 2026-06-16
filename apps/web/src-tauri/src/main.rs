@@ -1,24 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::PathBuf;
-use std::sync::Mutex;
-use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_shell::ShellExt;
-
-/// User configuration stored at ~/.virtues/config.json
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct VirtuesConfig {
-    domain: Option<String>,
-    #[serde(default)]
-    first_close_shown: bool,
-}
-
-/// State shared across the app
-struct AppState {
-    config: Mutex<VirtuesConfig>,
-}
 
 /// Collector status returned from CLI
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -32,79 +16,91 @@ pub struct CollectorStatus {
     pub has_accessibility: bool,
 }
 
+/// A Virtues server discovered on the local network.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoundServer {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub origin: String,
+}
+
 // ============================================================================
-// Config Management
+// Pairing state helpers
 // ============================================================================
 
-fn config_path() -> PathBuf {
-    dirs::home_dir()
+/// Check whether this machine has a paired bundle in the OS keychain.
+fn is_paired() -> bool {
+    keyring::Entry::new("virtues-client", "default-box")
+        .and_then(|e| e.get_password())
+        .is_ok()
+}
+
+/// Find the virtues-client binary: prefer the user-installed copy, fall back
+/// to /usr/local/bin.
+fn virtues_client_bin() -> String {
+    let installed = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
-        .join("config.json")
-}
-
-fn load_config() -> VirtuesConfig {
-    let path = config_path();
-    if path.exists() {
-        fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        .join("bin")
+        .join("virtues-client");
+    if installed.exists() {
+        installed.to_string_lossy().into_owned()
     } else {
-        VirtuesConfig::default()
+        "/usr/local/bin/virtues-client".to_string()
     }
-}
-
-fn save_config(config: &VirtuesConfig) -> Result<(), String> {
-    let path = config_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 // ============================================================================
 // Tauri Commands (IPC from web frontend)
 // ============================================================================
 
-/// Get the user's domain (if authenticated)
+/// Returns whether the machine is currently paired to a Virtues server.
 #[tauri::command]
-fn get_user_domain(state: State<AppState>) -> Option<String> {
-    state.config.lock().unwrap().domain.clone()
+fn get_client_status() -> bool {
+    is_paired()
 }
 
-/// Set the user's domain after authentication
-/// Called by web app after successful OAuth
+/// Discover Virtues servers on the local network by shelling to virtues-client.
 #[tauri::command]
-fn set_user_domain(
+async fn discover_servers(app: AppHandle) -> Result<Vec<FoundServer>, String> {
+    let bin = virtues_client_bin();
+    let output = app
+        .shell()
+        .command(&bin)
+        .args(["discover", "--json"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+    } else {
+        Ok(vec![])
+    }
+}
+
+/// Pair with a server using a 6-character code.
+#[tauri::command]
+async fn pair_with_code(
     app: AppHandle,
-    state: State<AppState>,
-    domain: String,
+    server: String,
+    code: String,
 ) -> Result<(), String> {
-    {
-        let mut config = state.config.lock().unwrap();
-        config.domain = Some(domain.clone());
-        save_config(&config)?;
+    let bin = virtues_client_bin();
+    let output = app
+        .shell()
+        .command(&bin)
+        .args(["pair-code", &code, "--server", &server])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
-
-    // Navigate to user's instance
-    if let Some(window) = app.get_webview_window("main") {
-        let url = format!("https://{}.virtues.com", domain);
-        let _ = window.navigate(url.parse().unwrap());
-    }
-
-    Ok(())
-}
-
-/// Clear stored domain (logout)
-#[tauri::command]
-fn clear_user_domain(state: State<AppState>) -> Result<(), String> {
-    let mut config = state.config.lock().unwrap();
-    config.domain = None;
-    save_config(&config)?;
-    Ok(())
 }
 
 /// Get collector daemon status by invoking CLI
@@ -112,7 +108,6 @@ fn clear_user_domain(state: State<AppState>) -> Result<(), String> {
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
     let shell = app.shell();
 
-    // Try to run the installed collector first
     let installed_path = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
@@ -120,7 +115,6 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
         .join("virtues-collector");
 
     let output = if installed_path.exists() {
-        // Use installed version
         shell
             .command(installed_path.to_string_lossy().to_string())
             .args(["status", "--json"])
@@ -128,7 +122,6 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
             .await
             .map_err(|e| e.to_string())?
     } else {
-        // Try bundled sidecar
         match shell.sidecar("virtues-collector") {
             Ok(cmd) => cmd.args(["status", "--json"]).output().await.map_err(|e| e.to_string())?,
             Err(_) => return Ok(CollectorStatus::default()),
@@ -147,7 +140,6 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
 async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
     let shell = app.shell();
 
-    // Pass token via environment variable for security (avoids token in ps output)
     let output = shell
         .sidecar("virtues-collector")
         .map_err(|e| e.to_string())?
@@ -192,7 +184,7 @@ async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Pause collector (data collection stops, daemon keeps running)
+/// Pause collector
 #[tauri::command]
 async fn pause_collector(app: AppHandle) -> Result<(), String> {
     let installed_path = dirs::home_dir()
@@ -248,7 +240,7 @@ async fn resume_collector(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Stop collector daemon (keeps it installed but stops the service)
+/// Stop collector daemon
 #[tauri::command]
 async fn stop_collector(app: AppHandle) -> Result<(), String> {
     let installed_path = dirs::home_dir()
@@ -279,8 +271,7 @@ async fn stop_collector(app: AppHandle) -> Result<(), String> {
 /// Open System Preferences to Full Disk Access pane
 #[tauri::command]
 async fn open_full_disk_access(app: AppHandle) -> Result<(), String> {
-    let shell = app.shell();
-    shell
+    app.shell()
         .command("open")
         .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
         .spawn()
@@ -291,8 +282,7 @@ async fn open_full_disk_access(app: AppHandle) -> Result<(), String> {
 /// Open System Preferences to Accessibility pane
 #[tauri::command]
 async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
-    let shell = app.shell();
-    shell
+    app.shell()
         .command("open")
         .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
         .spawn()
@@ -305,18 +295,13 @@ async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
 // ============================================================================
 
 fn main() {
-    let config = load_config();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState {
-            config: Mutex::new(config.clone()),
-        })
         .invoke_handler(tauri::generate_handler![
-            get_user_domain,
-            set_user_domain,
-            clear_user_domain,
+            get_client_status,
+            discover_servers,
+            pair_with_code,
             get_collector_status,
             install_collector,
             uninstall_collector,
@@ -326,61 +311,35 @@ fn main() {
             open_full_disk_access,
             open_accessibility_settings,
         ])
-        .setup(move |app| {
-            // Determine which URL to load
-            let url = if let Some(domain) = &config.domain {
-                format!("https://{}.virtues.com", domain)
+        .setup(|app| {
+            let url = if is_paired() {
+                WebviewUrl::External("http://localhost:8000".parse().unwrap())
             } else {
-                // First run - show login page
-                "https://virtues.com/login".to_string()
+                WebviewUrl::App("pair.html".into())
             };
 
-            // Create the main window
-            let window = WebviewWindowBuilder::new(
-                app,
-                "main",
-                WebviewUrl::External(url.parse().unwrap()),
-            )
-            .title("Virtues")
-            .inner_size(1200.0, 800.0)
-            .min_inner_size(800.0, 600.0)
-            .center()
-            .visible(true)
-            .build()?;
+            let window = WebviewWindowBuilder::new(app, "main", url)
+                .title("Virtues")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .center()
+                .visible(true)
+                .build()?;
 
-            // Enable dev tools in debug mode
             #[cfg(debug_assertions)]
             window.open_devtools();
 
             Ok(())
         })
         .on_window_event(|window, event| {
-            match event {
-                WindowEvent::CloseRequested { api, .. } => {
-                    // Hide window instead of closing (background mode)
-                    let _ = window.hide();
-                    api.prevent_close();
-
-                    // Show notification on first close
-                    let app = window.app_handle();
-                    let state: State<AppState> = app.state();
-                    let mut config = state.config.lock().unwrap();
-
-                    if !config.first_close_shown {
-                        config.first_close_shown = true;
-                        let _ = save_config(&config);
-
-                        // TODO: Show system notification
-                        // "Virtues is still running. Data collection continues."
-                    }
-                }
-                _ => {}
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            // Handle dock click on macOS (and similar on other platforms)
             if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
                 if !has_visible_windows {
                     if let Some(window) = app_handle.get_webview_window("main") {
@@ -391,10 +350,6 @@ fn main() {
             }
         });
 }
-
-// ============================================================================
-// Library entry point (required for iOS/Android, optional for desktop)
-// ============================================================================
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

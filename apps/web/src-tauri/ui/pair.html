@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connect — Virtues</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f10;
+      color: #e8e8e8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      -webkit-app-region: drag;
+    }
+
+    .card {
+      -webkit-app-region: no-drag;
+      background: #1a1a1c;
+      border: 1px solid #2a2a2e;
+      border-radius: 12px;
+      padding: 40px 48px;
+      width: 420px;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 32px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: #666;
+      margin-bottom: 10px;
+    }
+
+    /* Server list */
+    .server-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    #server-list {
+      flex: 1;
+      min-height: 36px;
+      background: #111113;
+      border: 1px solid #2a2a2e;
+      border-radius: 8px;
+      padding: 0 12px;
+      color: #e8e8e8;
+      font-size: 14px;
+      appearance: none;
+      cursor: pointer;
+    }
+
+    #server-list:focus { outline: none; border-color: #5a5a9a; }
+
+    #refresh-btn {
+      margin-left: 10px;
+      padding: 8px 14px;
+      background: transparent;
+      border: 1px solid #2a2a2e;
+      border-radius: 8px;
+      color: #aaa;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    #refresh-btn:hover { border-color: #555; color: #e8e8e8; }
+
+    /* Code input */
+    #code-input {
+      width: 100%;
+      padding: 10px 14px;
+      background: #111113;
+      border: 1px solid #2a2a2e;
+      border-radius: 8px;
+      color: #e8e8e8;
+      font-size: 22px;
+      font-family: "SF Mono", "JetBrains Mono", monospace;
+      letter-spacing: 6px;
+      text-align: center;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+    }
+    #code-input:focus { outline: none; border-color: #5a5a9a; }
+    #code-input::placeholder { color: #444; letter-spacing: 4px; }
+
+    /* Connect button */
+    #connect-btn {
+      width: 100%;
+      padding: 12px;
+      background: #4a4a8a;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    #connect-btn:hover:not(:disabled) { background: #5a5a9a; }
+    #connect-btn:disabled { background: #2a2a3a; color: #666; cursor: default; }
+
+    /* Status / error */
+    #status {
+      margin-top: 16px;
+      font-size: 13px;
+      min-height: 20px;
+      text-align: center;
+    }
+    #status.error { color: #e05555; }
+    #status.info  { color: #888; }
+    #status.ok    { color: #4caf50; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connect to your server</h1>
+    <p class="subtitle">Enter the code shown in your server terminal after running <code style="color:#aaa">virtues link</code>.</p>
+
+    <div class="section-label">Server</div>
+    <div class="server-row">
+      <select id="server-list">
+        <option value="">Searching…</option>
+      </select>
+      <button id="refresh-btn" onclick="refresh()">↺ Refresh</button>
+    </div>
+
+    <div class="section-label">Code</div>
+    <input
+      id="code-input"
+      type="text"
+      maxlength="7"
+      placeholder="ABC DEF"
+      autocomplete="off"
+      spellcheck="false"
+      oninput="onCodeInput(this)"
+    />
+
+    <button id="connect-btn" onclick="connect()" disabled>Connect</button>
+    <div id="status" class="info"></div>
+  </div>
+
+  <script>
+    const invoke = window.__TAURI__?.core?.invoke;
+
+    let servers = [];
+
+    async function refresh() {
+      setStatus('Searching…', 'info');
+      const list = document.getElementById('server-list');
+      list.innerHTML = '<option value="">Searching…</option>';
+      updateConnectBtn();
+
+      try {
+        servers = await invoke('discover_servers') ?? [];
+      } catch (e) {
+        servers = [];
+      }
+
+      list.innerHTML = '';
+      if (servers.length === 0) {
+        list.innerHTML = '<option value="">No servers found</option>';
+        setStatus('No servers found on this network. Make sure your server is running and on the same Wi-Fi.', 'error');
+      } else {
+        for (const s of servers) {
+          const opt = document.createElement('option');
+          opt.value = s.origin;
+          opt.textContent = `${s.name}  (${s.origin})`;
+          list.appendChild(opt);
+        }
+        setStatus('', '');
+      }
+      updateConnectBtn();
+    }
+
+    function onCodeInput(el) {
+      // Auto-insert space after 3 chars for "ABC DEF" feel
+      let v = el.value.replace(/\s/g, '').toUpperCase();
+      if (v.length > 3) v = v.slice(0, 3) + ' ' + v.slice(3, 6);
+      el.value = v;
+      updateConnectBtn();
+    }
+
+    function rawCode() {
+      return document.getElementById('code-input').value.replace(/\s/g, '');
+    }
+
+    function selectedServer() {
+      return document.getElementById('server-list').value;
+    }
+
+    function updateConnectBtn() {
+      const ready = rawCode().length === 6 && selectedServer();
+      document.getElementById('connect-btn').disabled = !ready;
+    }
+
+    async function connect() {
+      const code = rawCode();
+      const server = selectedServer();
+      if (!code || !server) return;
+
+      const btn = document.getElementById('connect-btn');
+      btn.disabled = true;
+      btn.textContent = 'Connecting…';
+      setStatus('', '');
+
+      try {
+        await invoke('pair_with_code', { server, code });
+        setStatus('Paired! Loading your server…', 'ok');
+        setTimeout(() => { window.location.href = 'http://localhost:8000'; }, 800);
+      } catch (e) {
+        setStatus(e || 'Pairing failed. Check the code and try again.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+      }
+    }
+
+    function setStatus(msg, cls) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = cls;
+    }
+
+    // Keyboard shortcut
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter') connect();
+    });
+
+    // Auto-discover on load
+    refresh();
+  </script>
+</body>
+</html>
