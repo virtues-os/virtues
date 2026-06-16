@@ -9,7 +9,6 @@
 	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
-	import QRCode from "qrcode";
 
 	interface Props {
 		deviceType: "ios" | "mac";
@@ -26,10 +25,11 @@
 	let apiEndpoint = $state("");
 	let isLoadingEndpoint = $state(true);
 
-	// iOS QR pairing state
-	let qrDataUrl = $state<string>("");
+	// iOS QR pairing state — qrSvg is the server-rendered SVG that encodes the
+	// `/pair#t=<token>` URL the iOS app scans (the box renders it so the token
+	// never touches a third-party QR service).
+	let qrSvg = $state<string>("");
 	let qrSourceId = $state<string>("");
-	let isGeneratingQR = $state(false);
 	// Shared polling state (used by both iOS QR and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
 	let isInitiating = $state(false);
@@ -70,13 +70,6 @@
 		}
 	});
 
-	// Generate QR code once we have both endpoint and source_id
-	$effect(() => {
-		if (qrSourceId && apiEndpoint && !isLoadingEndpoint && !qrDataUrl) {
-			generateQRCode(apiEndpoint, qrSourceId);
-		}
-	});
-
 	// --- iOS QR Flow ---
 
 	async function initiateQRPairing() {
@@ -87,6 +80,7 @@
 			const response = await api.initiatePairing(deviceType, displayName);
 			pairingData = response;
 			qrSourceId = response.source_id;
+			qrSvg = response.qr_svg ?? "";
 			startPolling();
 			// Client-side 10 minute timer (server enforces actual expiry)
 			timeRemaining = 600;
@@ -98,31 +92,11 @@
 		}
 	}
 
-	async function generateQRCode(endpoint: string, sourceId: string) {
-		isGeneratingQR = true;
-		try {
-			// Strip /api suffix — the QR payload should be the root server URL
-			const root = endpoint.replace(/\/api\/?$/, "");
-			const payload = JSON.stringify({ e: root, s: sourceId });
-			qrDataUrl = await QRCode.toDataURL(payload, {
-				width: 240,
-				margin: 2,
-				errorCorrectionLevel: "M",
-				color: { dark: "#26251E", light: "#FFFFFF" },
-			});
-		} catch (err) {
-			console.error("Failed to generate QR code:", err);
-			error = "Failed to generate QR code";
-		} finally {
-			isGeneratingQR = false;
-		}
-	}
-
 	function retryQRPairing() {
 		hasTimedOut = false;
 		pairingData = null;
 		qrSourceId = "";
-		qrDataUrl = "";
+		qrSvg = "";
 		error = null;
 		timeRemaining = 600;
 		initiateQRPairing();
@@ -235,15 +209,13 @@
 		stopPolling();
 		stopTimer();
 
-		// Cancel mid-flow: hard-delete the pending credential the server minted
-		// at pair_initiate, otherwise it sits in the DB as a stale `pending`
-		// row and surfaces in the credentials list. Backend's smart DELETE
-		// dispatches by status, so this is a no-op for already-active rows.
+		// Cancel mid-flow: deny the pending pair token so it can't be redeemed
+		// later. No credential exists yet (the new device creates it at
+		// `/api/pair/consume`), so we deny the token rather than revoke a row.
+		// No-op server-side if the token was already consumed/expired.
 		const pendingId = pairingData?.source_id || qrSourceId;
 		if (pendingId && !pairingSucceeded) {
-			void api.revokeCredential(pendingId).catch(() => {
-				/* benign — row may have been finalized in a race */
-			});
+			void api.pairDeny(pendingId);
 		}
 
 		onClose();
@@ -287,14 +259,17 @@
 						</p>
 					</div>
 
-					<!-- QR Code -->
+					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>) -->
 					<div class="bg-white rounded-xl p-4 shadow-sm border border-border mb-3">
-						{#if isGeneratingQR || isInitiating || isLoadingEndpoint}
+						{#if isInitiating}
 							<div class="w-[240px] h-[240px] flex items-center justify-center">
 								<p class="text-sm text-foreground-muted">Generating...</p>
 							</div>
-						{:else if qrDataUrl}
-							<img src={qrDataUrl} alt="Pairing QR Code" class="w-[240px] h-[240px]" />
+						{:else if qrSvg}
+							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+							<div class="w-[240px] h-[240px] [&>svg]:w-full [&>svg]:h-full">
+								{@html qrSvg}
+							</div>
 						{:else}
 							<div class="w-[240px] h-[240px] flex items-center justify-center">
 								<p class="text-sm text-error">Failed to generate QR</p>
@@ -349,10 +324,10 @@
 				<div class="space-y-6">
 					<div>
 						<p class="text-sm text-foreground-muted mb-4">
-							Enter this device ID in the Virtues Mac app:
+							Enter this pairing code in the Virtues Mac app:
 						</p>
-						<div class="font-mono text-xl font-medium tracking-wide text-foreground py-4 break-all">
-							{pairingData.source_id}
+						<div class="font-mono text-2xl font-medium tracking-[0.3em] text-foreground py-4 break-all">
+							{pairingData.token ?? "…"}
 						</div>
 						<p class="text-xs text-foreground-subtle mb-2">
 							Expires in {formatTime(timeRemaining)}

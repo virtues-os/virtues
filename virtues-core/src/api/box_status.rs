@@ -311,6 +311,53 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
+    // Tier 2: a living (cloud/OAuth) source that has actually synced — i.e. a
+    // non-device, non-BYO credential with at least one successful run. Stronger
+    // than `first_source` (which only means "connected"): this means data flows.
+    let living_source: bool = sqlx::query_scalar(
+        "SELECT EXISTS( \
+           SELECT 1 FROM credentials c \
+           JOIN app_actions a ON a.credential_id = c.id \
+           JOIN app_action_runs r ON r.action_id = a.id AND r.status = 'success' \
+           WHERE c.status = 'active' AND c.device_id IS NULL \
+             AND c.source_id NOT IN ($1, $2))",
+    )
+    .bind("__device__")
+    .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    // Tier -1: the owner deliberately named at least one device (doorplate),
+    // distinct from the auto-generated label.
+    let device_named: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_device \
+         WHERE named_at IS NOT NULL AND revoked_at IS NULL)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    // Tier 0/1: a paired device finished its initial backfill. The FDA gate for
+    // the Mac (daemon running + Full Disk Access) is enforced client-side in the
+    // CollectorPermissionCard, which polls getCollectorStatus() directly; this
+    // derived step reflects that data has actually flowed for the device.
+    let device_collecting: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_device \
+         WHERE init_sync_completed_at IS NOT NULL AND revoked_at IS NULL)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    let device_sync_started: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_device \
+         WHERE init_sync_started_at IS NOT NULL AND init_sync_completed_at IS NULL \
+           AND revoked_at IS NULL)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
     let setup = vec![
         SetupStep {
             id: "claimed",
@@ -345,9 +392,30 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     let onboarding = vec![
         SetupStep {
+            id: "device_named",
+            title: "Name this device",
+            done: device_named,
+            detail: None,
+            kind: None,
+        },
+        SetupStep {
+            id: "device_collecting",
+            title: "Start collecting",
+            done: device_collecting,
+            detail: None,
+            kind: collecting_kind(device_collecting, device_sync_started),
+        },
+        SetupStep {
             id: "first_source",
             title: "Connect a source",
             done: first_source > 0,
+            detail: None,
+            kind: None,
+        },
+        SetupStep {
+            id: "living_source",
+            title: "Sync your living spine",
+            done: living_source,
             detail: None,
             kind: None,
         },
@@ -373,6 +441,20 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         setup_complete,
         onboarding,
     })
+}
+
+/// Three-state qualifier for the `device_collecting` step (behavior keys off
+/// `done`; this is cosmetic for renderers): "collecting" once a device's
+/// backfill completed, "syncing" while one is in flight, else none. Pure so the
+/// states are unit-testable without a DB.
+fn collecting_kind(completed: bool, started: bool) -> Option<&'static str> {
+    if completed {
+        Some("collecting")
+    } else if started {
+        Some("syncing")
+    } else {
+        None
+    }
 }
 
 /// The `remote_access` onboarding step, three-state. Pure so the states are
@@ -471,5 +553,17 @@ mod tests {
         // id/title are stable across all three states.
         assert_eq!(step.id, "remote_access");
         assert_eq!(step.title, "Reachable from anywhere");
+    }
+
+    #[test]
+    fn device_collecting_kind_states() {
+        // Backfill done → "collecting" (done=true; qualifier is cosmetic).
+        assert_eq!(collecting_kind(true, false), Some("collecting"));
+        // Started but not finished → "syncing".
+        assert_eq!(collecting_kind(false, true), Some("syncing"));
+        // Not started → no qualifier (renders as a plain not-done step).
+        assert_eq!(collecting_kind(false, false), None);
+        // Completed wins even if a later sync is mid-flight.
+        assert_eq!(collecting_kind(true, true), Some("collecting"));
     }
 }

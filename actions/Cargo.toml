@@ -101,6 +101,12 @@ path = "plaid_investments_sync/main.rs"
 name = "plaid_liabilities_sync"
 path = "plaid_liabilities_sync/main.rs"
 
+# ── One-time import (manual-trigger, no cron) ───────────────────────────────
+
+[[bin]]
+name = "chat_import"
+path = "chat_import/main.rs"
+
 # ── Example app-runtime action ──────────────────────────────────────────────
 
 [[bin]]

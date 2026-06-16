@@ -17,6 +17,8 @@
 	import { spaceStore } from '$lib/stores/space.svelte';
 	import DevicePairModal from '$lib/components/sources/DevicePairModal.svelte';
 	import ApiKeyConnectModal from '$lib/components/sources/ApiKeyConnectModal.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import ChatImportCard from '$lib/components/onboarding/ChatImportCard.svelte';
 	import SourceConnectButton from '$lib/components/sources/SourceConnectButton.svelte';
 	import UniversalDataGrid, {
 		type Column
@@ -45,6 +47,8 @@
 
 	let apikeyModalOpen = $state(false);
 	let apikeyModalSource = $state<SourceCatalogItem | null>(null);
+
+	let chatImportOpen = $state(false);
 
 	// ────────────────────────────────────────────────────────────────────────
 	// Data loading
@@ -108,6 +112,12 @@
 			return;
 		}
 
+		// One-time import sources open the upload card, not the api-key form.
+		if (source.id === 'chat_import') {
+			chatImportOpen = true;
+			return;
+		}
+
 		if (source.auth_kind === 'api_key') {
 			apikeyModalSource = source;
 			apikeyModalOpen = true;
@@ -141,7 +151,9 @@
 			.map((c) => ({
 				...c,
 				source_label: sourceLabel(c.provider),
-				status_label: c.status,
+				// Active rows show the Tier-2 init-sync lifecycle
+				// (connected → backfilling → live); others show the raw status.
+				status_label: c.status === 'active' ? (c.sync_state ?? 'active') : c.status,
 				last_seen_label: c.last_seen_at
 					? relativeTime(c.last_seen_at)
 					: c.status === 'active'
@@ -172,7 +184,13 @@
 			width: '15%',
 			minWidth: '100px',
 			format: 'badge',
-			badgeColors: { active: 'badge-success', revoked: 'badge-muted' }
+			badgeColors: {
+				live: 'badge-success',
+				active: 'badge-success',
+				backfilling: 'badge-warning',
+				connected: 'badge-muted',
+				revoked: 'badge-muted'
+			}
 		},
 		{
 			key: 'last_seen_label',
@@ -269,6 +287,10 @@
 		void load();
 	}}
 />
+
+<Modal open={chatImportOpen} onClose={() => { chatImportOpen = false; void load(); }} title="Import chat history" width="md">
+	<ChatImportCard />
+</Modal>
 
 <style>
 	.sources-page {

@@ -13,9 +13,18 @@ export interface DeviceInfo {
 	app_version?: string;
 }
 
-// Response when initiating device pairing
+// Response when initiating device pairing. Backed by the unified
+// `/api/pair/mint` flow: `source_id` carries the pair-token id (polled via
+// `/api/pair/status/:id`), and the QR/token fields are the redemption payload
+// the new device scans or types (`/pair#t=<token>`).
 export interface PairingInitResponse {
 	source_id: string;
+	/** Raw pair token (6-char display for Mac code entry). */
+	token?: string;
+	/** Server-rendered QR SVG encoding the `/pair#t=<token>` URL (iOS scan). */
+	qr_svg?: string;
+	/** The `/pair#t=<token>` URL the QR encodes. */
+	pair_url?: string;
 }
 
 // Response when completing device pairing

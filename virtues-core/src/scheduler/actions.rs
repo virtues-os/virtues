@@ -535,6 +535,21 @@ pub async fn create_run(
     .fetch_one(db)
     .await?;
 
+    // Onboarding (Tier 0/1): stamp the first init-sync start on the device this
+    // action collects for. No-op for cloud sources / transforms (the action has
+    // no credential, or the credential has no device_id → subquery is NULL).
+    if let Some(aid) = action_id {
+        let _ = sqlx::query(
+            "UPDATE app_device SET init_sync_started_at = now() \
+             WHERE id = (SELECT c.device_id FROM app_actions a \
+                         JOIN credentials c ON c.id = a.credential_id WHERE a.id = $1) \
+               AND init_sync_started_at IS NULL",
+        )
+        .bind(aid)
+        .execute(db)
+        .await;
+    }
+
     run_from_row(&row)
 }
 
@@ -594,6 +609,21 @@ pub async fn complete_run(
     .bind(run_id)
     .execute(db)
     .await?;
+
+    // Onboarding (Tier 0/1): a device's first successful run completes its
+    // init backfill. No-op for cloud/transform runs (device_id resolves NULL).
+    if status == "success" {
+        let _ = sqlx::query(
+            "UPDATE app_device SET init_sync_completed_at = now() \
+             WHERE id = (SELECT c.device_id FROM app_action_runs r \
+                         JOIN app_actions a ON a.id = r.action_id \
+                         JOIN credentials c ON c.id = a.credential_id WHERE r.id = $1) \
+               AND init_sync_completed_at IS NULL",
+        )
+        .bind(run_id)
+        .execute(db)
+        .await;
+    }
 
     Ok(())
 }

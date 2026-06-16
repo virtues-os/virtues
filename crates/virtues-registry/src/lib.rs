@@ -4,9 +4,11 @@
 //! - Models (LLM providers and their capabilities)
 //! - Agents (assistant personas)
 //! - Tools (built-in capabilities like web_search, query_ontology)
-//! - Sources (data sources like Google, iOS, Mac)
-//! - Streams (data streams like calendar, healthkit)
 //! - Ontologies (normalized data schemas)
+//!
+//! Source/stream catalog data lives in `actions/` (TOML manifests reconciled
+//! into the `app_actions` table), not here — the former `sources`/`streams`
+//! modules were removed as dead code.
 //!
 //! # Design Principles
 //!
@@ -25,8 +27,6 @@ pub mod assistant;
 pub mod models;
 pub mod ontologies;
 pub mod personas;
-pub mod sources;
-pub mod streams;
 pub mod tools;
 
 // Re-export main types for convenience
@@ -34,10 +34,5 @@ pub use agents::{default_agents, AgentConfig};
 pub use assistant::{assistant_profile_defaults, AssistantProfileDefaults, DEFAULT_THEME};
 pub use models::{default_models, ModelConfig};
 pub use ontologies::{registered_ontologies, EmbeddingConfig, OntologyDescriptor};
-pub use sources::{
-    get_connection_limit, get_source, is_multi_instance, registered_sources, AuthType,
-    ConnectionLimits, ConnectionPolicy, OAuthConfig, SourceDescriptor, SourceTier,
-};
-pub use streams::{registered_streams, StreamDescriptor};
 pub use personas::{default_personas, get_persona, PersonaConfig};
 pub use tools::{default_tools, ToolConfig};
