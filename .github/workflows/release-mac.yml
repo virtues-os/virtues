@@ -66,21 +66,39 @@ jobs:
         with:
           node-version: '20'
 
-      # ── Build the two sidecars as UNIVERSAL binaries ──────────────────────
-      # Tauri's universal target expects sidecars suffixed -universal-apple-darwin.
+      # ── Stage both sidecars for the universal build ───────────────────────
+      # `tauri build --target universal-apple-darwin` compiles EACH arch as its
+      # own cargo invocation, and the tauri build script checks for a PER-ARCH
+      # sidecar (binaries/<name>-aarch64-apple-darwin and -x86_64-apple-darwin).
+      # We stage both per-arch files plus the lipo'd -universal one (used for the
+      # final bundle), for each helper.
 
-      - name: Build virtues-collector sidecar (Swift, universal)
-        run: apps/mac-source/Scripts/build-sidecar.sh
+      - name: Build virtues-collector sidecar (Swift)
+        working-directory: apps/mac-source
+        run: |
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+          ARM="$(swift build -c release --arch arm64 --show-bin-path)/virtues-collector"
+          X86="$(swift build -c release --arch x86_64 --show-bin-path)/virtues-collector"
+          OUT="$GITHUB_WORKSPACE/apps/web/src-tauri/binaries"
+          mkdir -p "$OUT"
+          cp "$ARM" "$OUT/virtues-collector-aarch64-apple-darwin"
+          cp "$X86" "$OUT/virtues-collector-x86_64-apple-darwin"
+          lipo -create "$ARM" "$X86" -output "$OUT/virtues-collector-universal-apple-darwin"
+          chmod +x "$OUT"/virtues-collector-*
 
-      - name: Build virtues-client sidecar (Rust, universal)
+      - name: Build virtues-client sidecar (Rust)
         run: |
           cargo build -p virtues-client --release --target aarch64-apple-darwin
           cargo build -p virtues-client --release --target x86_64-apple-darwin
+          OUT="apps/web/src-tauri/binaries"
+          cp target/aarch64-apple-darwin/release/virtues-client "$OUT/virtues-client-aarch64-apple-darwin"
+          cp target/x86_64-apple-darwin/release/virtues-client "$OUT/virtues-client-x86_64-apple-darwin"
           lipo -create \
-            target/aarch64-apple-darwin/release/virtues-client \
-            target/x86_64-apple-darwin/release/virtues-client \
-            -output apps/web/src-tauri/binaries/virtues-client-universal-apple-darwin
-          chmod +x apps/web/src-tauri/binaries/virtues-client-universal-apple-darwin
+            "$OUT/virtues-client-aarch64-apple-darwin" \
+            "$OUT/virtues-client-x86_64-apple-darwin" \
+            -output "$OUT/virtues-client-universal-apple-darwin"
+          chmod +x "$OUT"/virtues-client-*
 
       - name: Install web deps (tauri CLI + plugins)
         working-directory: apps/web
