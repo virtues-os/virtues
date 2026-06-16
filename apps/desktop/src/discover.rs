@@ -88,6 +88,12 @@ fn discover_blocking(timeout_secs: u64) -> Vec<FoundServer> {
     }
 
     let _ = mdns.stop_browse("_http._tcp.local.");
+
+    // mDNS can resolve the same service more than once (one ServiceResolved per
+    // address/interface, or repeated answers), which would show the box twice
+    // in the picker. Collapse to one entry per origin.
+    found.sort_by(|a, b| a.origin.cmp(&b.origin));
+    found.dedup_by(|a, b| a.origin == b.origin);
     found
 }
 
