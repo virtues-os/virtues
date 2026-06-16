@@ -10,7 +10,8 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::middleware::auth::{
-    delete_session, peek_session, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_SECURE,
+    delete_session, peek_session, read_bearer, validate_bearer, SESSION_COOKIE_NAME,
+    SESSION_COOKIE_NAME_SECURE,
 };
 
 #[derive(Debug, Serialize)]
@@ -30,61 +31,56 @@ pub struct SessionUser {
 }
 
 /// `GET /auth/session` — "who am I?" probe used by the web UI to decide
-/// whether to render the app shell or redirect to `/pair`. Does NOT touch
-/// `last_used_at` (uses the peek path), so a polling status check doesn't
-/// keep an idle session alive.
+/// whether to render the app shell or redirect to `/pair`.
+///
+/// Honors EITHER credential the box accepts:
+///   1. a browser **session cookie** (the web `/pair` flow), or
+///   2. a device **`Authorization: Bearer`** — the desktop app's local proxy
+///      injects this on every request, so a paired device authenticating the
+///      local browser counts as "paired" too. Without this, an app-paired
+///      device (which has a bearer, not a cookie) would be wrongly bounced to
+///      `/pair` even though it's fully paired.
+///
+/// The cookie path uses `peek_session` (no `last_used_at` touch) so a polling
+/// status check doesn't keep an idle browser session alive.
 pub async fn session_handler(
     State(pool): State<PgPool>,
+    headers: axum::http::HeaderMap,
     jar: CookieJar,
 ) -> impl IntoResponse {
-    let session_token = read_cookie(&jar);
-    let session_token = match session_token {
-        Some(t) => t,
-        None => {
-            return (
-                StatusCode::OK,
-                Json(SessionResponse {
-                    user: None,
-                    expires: None,
-                }),
+    // 1. Browser session cookie.
+    if let Some(session_token) = read_cookie(&jar) {
+        if let Some(user) = peek_session(&pool, &session_token).await {
+            let expires: Option<String> = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+                "SELECT expires_at FROM app_auth_session WHERE session_token = $1",
             )
+            .bind(&session_token)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten()
+            .map(|dt| dt.to_rfc3339());
+            return (StatusCode::OK, Json(SessionResponse { user: Some(session_user(user)), expires }));
         }
-    };
+    }
 
-    let user = match peek_session(&pool, &session_token).await {
-        Some(u) => u,
-        None => {
-            return (
-                StatusCode::OK,
-                Json(SessionResponse {
-                    user: None,
-                    expires: None,
-                }),
-            )
+    // 2. Device bearer (no session-expiry concept for device credentials).
+    if let Some(token) = read_bearer(&headers) {
+        if let Some(user) = validate_bearer(&pool, &token).await {
+            return (StatusCode::OK, Json(SessionResponse { user: Some(session_user(user)), expires: None }));
         }
-    };
+    }
 
-    let expires: Option<String> = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
-        "SELECT expires_at FROM app_auth_session WHERE session_token = $1",
-    )
-    .bind(&session_token)
-    .fetch_optional(&pool)
-    .await
-    .ok()
-    .flatten()
-    .map(|dt| dt.to_rfc3339());
+    // 3. Neither → not paired.
+    (StatusCode::OK, Json(SessionResponse { user: None, expires: None }))
+}
 
-    (
-        StatusCode::OK,
-        Json(SessionResponse {
-            user: Some(SessionUser {
-                id: user.id,
-                device_id: user.device_id,
-                device_label: user.device_label,
-            }),
-            expires,
-        }),
-    )
+fn session_user(u: crate::middleware::auth::AuthUser) -> SessionUser {
+    SessionUser {
+        id: u.id,
+        device_id: u.device_id,
+        device_label: u.device_label,
+    }
 }
 
 /// `POST /auth/signout` — delete the session row + clear the cookie. The

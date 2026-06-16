@@ -2195,7 +2195,7 @@ pub async fn auth_session_handler(
         })
         .into_response();
     }
-    crate::api::auth::session_handler(axum::extract::State(state.db.pool().clone()), jar)
+    crate::api::auth::session_handler(axum::extract::State(state.db.pool().clone()), headers, jar)
         .await
         .into_response()
 }
