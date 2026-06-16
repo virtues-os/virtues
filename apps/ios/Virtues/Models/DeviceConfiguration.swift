@@ -78,14 +78,13 @@ struct DeviceConfiguration: Codable {
     /// Required by the `ConfigurationProvider` protocol (callers expect a
     /// `String`, not `String?`).
     ///
-    /// **Backwards-compat shim during the v1 cutover:** if no Keychain
-    /// bearer is present but a legacy `deviceId`-based config exists, fall
-    /// back to the old "deviceId as bearer" behavior so currently-paired
-    /// devices keep working until the user re-pairs. New pairings always
-    /// populate the Keychain; the fallback goes away in v1.1 once every
-    /// device has re-paired.
+    /// The legacy `deviceId`-as-bearer fallback was retired in v1.1: pairing now
+    /// always provisions a real bearer (and a WG bundle) in the Keychain. If no
+    /// bearer is present the device simply isn't paired — we return an empty
+    /// string so the box rejects the call (401) and the UI prompts a re-pair,
+    /// rather than silently sending a non-credential the box never honored.
     var deviceToken: String {
-        bearerToken ?? deviceId
+        bearerToken ?? ""
     }
 
     /// True when this device has both an endpoint AND a usable bearer

@@ -21,6 +21,9 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     @Published var lastSuccessfulSyncDate: Date?
     @Published var uploadStats: (pending: Int, failed: Int, total: Int) = (0, 0, 0)
     @Published var streamCounts: (healthkit: Int, location: Int, audio: Int, finance: Int, eventkit: Int, contacts: Int) = (0, 0, 0, 0, 0, 0)
+    /// Per-stream upload outcome (canonical stream key → state). Tells the
+    /// StreamInfo views whether each stream's last upload actually landed.
+    @Published var streamSync: [String: StreamSyncState] = [:]
 
     // MARK: - Dependencies
     private let configProvider: ConfigurationProvider
@@ -43,6 +46,7 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
     private let lastUploadKey = "com.virtues.lastUploadDate"
     private let lastSuccessfulSyncKey = "com.virtues.lastSuccessfulSyncDate"
+    private let streamSyncKey = "com.virtues.streamSyncState"
 
     // MARK: - Circuit Breaker
 
@@ -82,6 +86,7 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
         loadLastUploadDate()
         loadLastSuccessfulSyncDate()
+        loadStreamSync()
         registerBackgroundTasks()
         updateUploadStats()
         setupLowPowerModeObserver()
@@ -204,7 +209,17 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
     func performUpload() async -> Bool {
         guard tryBeginUpload() else { return false }
-        defer { endUpload() }
+        defer {
+            endUpload()
+            // Drop the in-app WG tunnel between upload bursts so we don't hold an
+            // idle keepalive (the dominant battery cost — see the audit research).
+            // The next off-LAN burst re-establishes it (~1 RTT). No-op on-LAN,
+            // where the tunnel was never brought up. This is the battery half of
+            // the location-keepalive model: the app stays alive via background
+            // location, fires this 5-min cycle, tunnels the burst, then lets the
+            // tunnel go until the next cycle.
+            VirtuesTunnelManager.shared.teardown()
+        }
 
         #if DEBUG
         print("🚀 Starting upload process...")
@@ -306,6 +321,8 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
             // Record upload result for adaptive batching
             networkMonitor.recordUploadResult(success: success)
+            // Record the per-stream outcome for the StreamInfo views (2A).
+            recordStreamOutcome(streamName, success: success)
 
             if success {
                 anyUploadSucceeded = true
@@ -408,8 +425,10 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         request.timeoutInterval = 30
 
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            // Route through BoxTransport so the refetch works off-LAN (via the
+            // tunnel) just like the uploads do.
+            let (data, http) = try await BoxTransport.shared.send(request, session: URLSession.shared)
+            guard http.statusCode == 200 else {
                 return false
             }
             struct ActionIdsResponse: Decodable {
@@ -695,6 +714,46 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             self?.lastSuccessfulSyncDate = date
         }
         UserDefaults.standard.set(date.timeIntervalSince1970, forKey: lastSuccessfulSyncKey)
+    }
+
+    // MARK: - Per-stream outcome (2A)
+
+    /// Update and persist the outcome for one stream after an upload attempt.
+    /// Keyed by the canonical stream name so it matches `actionIds` and the
+    /// StreamInfo views' lookups.
+    private func recordStreamOutcome(_ streamName: String, success: Bool, error: String? = nil) {
+        let key = DeviceConfiguration.canonicalStreamName(streamName)
+        let now = Date()
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            var state = self.streamSync[key] ?? StreamSyncState()
+            state.lastAttempt = now
+            if success {
+                state.lastSuccess = now
+                state.consecutiveFailures = 0
+                state.lastError = nil
+            } else {
+                state.consecutiveFailures += 1
+                state.lastError = error ?? "Upload failed — will retry"
+            }
+            self.streamSync[key] = state
+            self.persistStreamSync()
+        }
+    }
+
+    private func persistStreamSync() {
+        if let data = try? JSONEncoder().encode(streamSync) {
+            UserDefaults.standard.set(data, forKey: streamSyncKey)
+        }
+    }
+
+    private func loadStreamSync() {
+        guard let data = UserDefaults.standard.data(forKey: streamSyncKey),
+              let decoded = try? JSONDecoder().decode([String: StreamSyncState].self, from: data)
+        else { return }
+        Task { @MainActor [weak self] in
+            self?.streamSync = decoded
+        }
     }
     
     // MARK: - Low Power Mode Monitoring

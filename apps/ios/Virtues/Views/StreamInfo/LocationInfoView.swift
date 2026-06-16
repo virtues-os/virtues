@@ -105,6 +105,8 @@ struct LocationInfoView: View {
 
             InfoRow(label: "Pending Records", value: "\(uploadCoordinator.streamCounts.location)")
 
+            ActionLinkRow(streamKey: "ios_location")
+
             if locationManager.isTracking {
                 InfoRow(label: "Tracking Mode", value: "Continuous", valueColor: .warmInfo)
             }
@@ -159,7 +161,7 @@ struct LocationInfoView: View {
                 InfoRow(label: "Background Mode", value: "Always On")
             }
 
-            Text("Configuration is managed by the server.")
+            Text("Default collection settings.")
                 .font(.caption)
                 .foregroundColor(.warmForegroundMuted)
                 .padding(.top, 4)

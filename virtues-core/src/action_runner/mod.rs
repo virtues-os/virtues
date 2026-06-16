@@ -639,13 +639,20 @@ async fn run_subprocess(
     Ok(action_output.result)
 }
 
+/// Default deployed location for action binaries, matching the installer's
+/// `InstallConfig::actions_bin_dir` (`$INSTALL_PREFIX/libexec/virtues`). Kept
+/// in sync with where the installer copies `actions-bin/` and points
+/// `VIRTUES_ACTIONS_BIN_DIR`.
+const WELL_KNOWN_ACTIONS_BIN_DIR: &str = "/usr/local/libexec/virtues";
+
 /// Resolve a command's program (argv[0]) to something spawnable.
 ///
 /// A bare name (no path separator) is first looked up as a Cargo-built action
-/// binary — `$VIRTUES_ACTIONS_BIN_DIR/<name>` in production, else
-/// `target/{release,debug}/<name>` walking up from cwd. If no workspace binary
-/// matches (e.g. `python3`, `node`) the name is returned verbatim so the OS
-/// resolves it on `PATH`. Explicit paths (`./x`, `/usr/bin/x`) pass through.
+/// binary — `$VIRTUES_ACTIONS_BIN_DIR/<name>` in production, then the
+/// well-known install dir, else `target/{release,debug}/<name>` walking up from
+/// cwd. If no workspace binary matches (e.g. `python3`, `node`) the name is
+/// returned verbatim so the OS resolves it on `PATH`. Explicit paths
+/// (`./x`, `/usr/bin/x`) pass through.
 fn resolve_program(argv0: &str) -> PathBuf {
     if argv0.contains('/') {
         return PathBuf::from(argv0);
@@ -656,6 +663,15 @@ fn resolve_program(argv0: &str) -> PathBuf {
         if p.exists() {
             return p;
         }
+    }
+
+    // Well-known install location (matches the installer's
+    // `InstallConfig::actions_bin_dir`), so a deployed box still resolves
+    // action binaries even if VIRTUES_ACTIONS_BIN_DIR didn't reach the process
+    // environment. Dev builds fall through to the target/ walk below.
+    let installed = PathBuf::from(WELL_KNOWN_ACTIONS_BIN_DIR).join(argv0);
+    if installed.exists() {
+        return installed;
     }
 
     if let Ok(cwd) = std::env::current_dir() {

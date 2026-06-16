@@ -88,6 +88,25 @@ impl InstallConfig {
         self.install_prefix.join("share/virtues/web")
     }
 
+    /// Where the action tree (manifests + UI + sources.toml) lands on the box.
+    /// virtues-core reads this via `VIRTUES_ACTIONS_DIR` (see
+    /// `action_templates::actions_root`); the default here must match
+    /// `WELL_KNOWN_ACTIONS_DIR` in virtues-core. Shipped in the release
+    /// tarball as `actions/`; not baked into the binary, so a box with no
+    /// copy here has no actions at all.
+    pub fn actions_dir(&self) -> PathBuf {
+        self.install_prefix.join("share/virtues/actions")
+    }
+
+    /// Where the compiled function-action executables land (libexec = helper
+    /// binaries not meant for direct user invocation). virtues-core resolves
+    /// action `command[0]` here via `VIRTUES_ACTIONS_BIN_DIR` (see
+    /// `action_runner::resolve_program`); the default must match
+    /// `WELL_KNOWN_ACTIONS_BIN_DIR` in virtues-core. Shipped as `actions-bin/`.
+    pub fn actions_bin_dir(&self) -> PathBuf {
+        self.install_prefix.join("libexec/virtues")
+    }
+
     /// The llama-server binary that hosts both inference sidecars. Ships in
     /// the release tarball (built per-arch in our CI at a pinned llama.cpp
     /// tag); a CUDA build for Jetson is swapped in when available.

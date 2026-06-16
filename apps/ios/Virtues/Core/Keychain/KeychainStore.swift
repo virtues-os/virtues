@@ -48,6 +48,12 @@ final class KeychainStore {
         /// (server pubkey, allowed IPs, endpoint, CA root, rendezvous K).
         /// Used to bring the tunnel up when needed.
         case wgBundle = "virtues.wg.bundle"
+
+        /// Trust-on-first-use pin: the box's WG server public key (base64) seen
+        /// at the first successful pair. A later pair offering a *different* key
+        /// is refused unless the user explicitly confirms a rotation — catches a
+        /// silent server-identity substitution on re-pair.
+        case wgServerPin = "virtues.wg.serverpin"
     }
 
     // ─── Bearer ────────────────────────────────────────────────────────
@@ -84,12 +90,22 @@ final class KeychainStore {
         load(.wgBundle)
     }
 
+    func saveServerPin(_ publicKeyB64: String) throws {
+        try save(publicKeyB64.data(using: .utf8)!, for: .wgServerPin)
+    }
+
+    func loadServerPin() -> String? {
+        guard let data = load(.wgServerPin) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// Wipe everything pair-related — used after a `/api/devices/:id`
     /// revoke reflects in the iOS app, or at the start of a new pair.
     func wipeAll() {
         delete(.bearerToken)
         delete(.wgPrivateKey)
         delete(.wgBundle)
+        delete(.wgServerPin)
     }
 
     // ─── Primitives ────────────────────────────────────────────────────

@@ -76,12 +76,10 @@ class NetworkManager: ObservableObject {
         request.httpBody = try encoder.encode(data)
         
         do {
-            let (data, response) = try await session.data(for: request)
-            
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
-            }
-            
+            // Direct on-LAN, tunnel fallback off-LAN. BoxTransport returns the
+            // HTTPURLResponse directly (no optional cast needed).
+            let (data, httpResponse) = try await BoxTransport.shared.send(request, session: session)
+
             switch httpResponse.statusCode {
             case 200...299:
                 return try JSONDecoder().decode(UploadResponse.self, from: data)
@@ -157,7 +155,8 @@ class NetworkManager: ObservableObject {
     func consumePairToken(
         endpoint: String,
         pairToken: String,
-        deviceId: String
+        deviceId: String,
+        expectedFingerprint: String? = nil
     ) async throws -> PairConsumeResponse {
         let baseURL = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
         let root = baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
@@ -184,12 +183,18 @@ class NetworkManager: ObservableObject {
             app_version: appVersion
         )
 
+        // Generate a fresh WG keypair and send the public half. The private key
+        // is stored in the Keychain by the tunnel manager; the box uses the
+        // public key to provision a peer and returns a `bundle` we persist
+        // below for tunnel bring-up.
+        let wgPublicKey = try? VirtuesTunnelManager.shared.generateAndStorePairKeypair()
+
         let body = PairConsumeRequest(
             token: pairToken,
             kind: "mobile_app",
             label: deviceName,
             device_info: deviceInfo,
-            wg_public_key: nil      // v1.1 will generate + send the WG pubkey here.
+            wg_public_key: wgPublicKey
         )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
@@ -211,6 +216,24 @@ class NetworkManager: ObservableObject {
             if let bearer = parsed.bearer, !bearer.isEmpty {
                 try? KeychainStore.shared.saveBearer(bearer)
             }
+            // Persist the raw `bundle` sub-object (if the box returned one) for
+            // tunnel bring-up. We pull it out of the JSON verbatim rather than
+            // re-encoding a decoded struct, so the exact wire shape the Rust FFI
+            // expects is preserved. Boxes that don't provision WG omit it.
+            //
+            // SECURITY: before storing, verify the bundle's WG server key against
+            // the SPKI fingerprint that came over the QR (an out-of-band channel
+            // the LAN MITM can't sit on) and apply TOFU. `verifyAndStoreBundle`
+            // throws on a mismatch, which aborts pairing — exactly what we want
+            // if someone substituted the server identity.
+            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let bundle = obj["bundle"] as? [String: Any],
+               let bundleData = try? JSONSerialization.data(withJSONObject: bundle) {
+                try VirtuesTunnelManager.shared.verifyAndStoreBundle(
+                    bundleData,
+                    expectedFingerprint: expectedFingerprint
+                )
+            }
             return parsed
         case 401:
             throw NetworkError.badRequest(message: "Pair token is invalid, expired, or already used. Get a fresh one from `virtues link` on the box.")
@@ -227,6 +250,39 @@ class NetworkManager: ObservableObject {
         default:
             throw NetworkError.unknown(NSError(domain: "HTTP \(httpResponse.statusCode)", code: httpResponse.statusCode))
         }
+    }
+
+    // MARK: - Action runs (server-side outcome, 2B)
+
+    /// Fetch recent server-side run history for one of this device's actions via
+    /// `GET /api/devices/actions/{id}/runs` (device-bearer auth, ownership-scoped
+    /// on the box). Goes through `BoxTransport`, so it tunnels like every other
+    /// box call. On-demand only (StreamInfo view appear / refresh) — never in the
+    /// background upload loop.
+    func fetchActionRuns(actionId: String, limit: Int = 5) async throws -> [ActionRun] {
+        guard let base = DeviceManager.shared.configuration.baseURL else {
+            throw NetworkError.invalidURL
+        }
+        let token = DeviceManager.shared.configuration.deviceToken
+        guard let url = URL(
+            string: "\(base.absoluteString)/api/devices/actions/\(actionId)/runs?limit=\(limit)"
+        ) else {
+            throw NetworkError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+
+        let (data, http) = try await BoxTransport.shared.send(request, session: session)
+        guard http.statusCode == 200 else {
+            if http.statusCode == 401 { throw NetworkError.invalidToken }
+            throw NetworkError.serverError(http.statusCode)
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([ActionRun].self, from: data)
     }
 
     /// Hardware model identifier (e.g. "iPhone16,1")

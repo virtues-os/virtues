@@ -228,7 +228,12 @@ pub async fn mint_handler(
     )
     .await;
 
-    let pair_url = format_pair_url(&minted.token);
+    // Embed the box's SPKI fingerprint in the QR so the scanning device can
+    // verify the WG server key it gets back in the bundle was not substituted
+    // by a LAN MITM. The QR travels over an out-of-band channel (the screen),
+    // not the spoofable HTTP response, so it's a trustworthy carrier.
+    let fpr = box_spki_fpr(&pool).await;
+    let pair_url = format_pair_url(&minted.token, fpr.as_deref());
     let qr_svg = render_qr_svg(&pair_url);
     (
         StatusCode::OK,
@@ -238,6 +243,83 @@ pub async fn mint_handler(
             pair_url,
             qr_svg,
             expires_at: minted.expires_at.to_rfc3339(),
+        }),
+    )
+        .into_response()
+}
+
+#[derive(Debug, Serialize)]
+pub struct MintCollectorResponse {
+    pub token: String,
+    pub expires_at: String,
+}
+
+/// `POST /api/pair/mint-collector` — auth'd. Mints a one-time pair token for
+/// installing the local data collector (`virtues-collector`) and authorizes it
+/// in the SAME call. Unlike `/api/pair/mint` (which starts `pending` and needs
+/// a separate `/confirm` from a second device), the collector runs on the same
+/// machine as the already-authenticated owner session, so the confirm
+/// round-trip is friction with no security gain — the caller IS the owner on
+/// this host. The raw token is handed straight to `installCollector(token)` via
+/// the Tauri bridge; the collector redeems it at `/api/pair/consume` declaring
+/// `source="mac"` to receive its `mac_activity` action fan-out.
+pub async fn mint_collector_handler(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+) -> impl IntoResponse {
+    let minted = match mint_pair_token(&pool, Some(&user.device_id), Some("desktop_app")).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!("collector mint failed: {e:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "mint_failed"})),
+            )
+                .into_response();
+        }
+    };
+    // Self-authorize (same-host owner; no second-device confirm). Mirrors the
+    // confirm_handler transition but folded in for the local-install case.
+    let authorized = sqlx::query(
+        "UPDATE app_pair_token \
+         SET status = 'authorized', authorized_at = now(), \
+             expires_at = now() + make_interval(mins => $3::int) \
+         WHERE id = $1 \
+           AND minted_by_device = $2 \
+           AND minted_via = 'web' \
+           AND status = 'pending'",
+    )
+    .bind(&minted.id)
+    .bind(&user.device_id)
+    .bind(AUTHORIZED_REDEEM_TTL_MIN as i32)
+    .execute(&pool)
+    .await;
+    match authorized {
+        Ok(r) if r.rows_affected() == 1 => {}
+        _ => {
+            tracing::warn!("collector token self-authorize failed: {}", minted.id);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "authorize_failed"})),
+            )
+                .into_response();
+        }
+    }
+    let _ = log_event(
+        &pool,
+        Some(&user.device_id),
+        "collector_token_minted",
+        json!({"token_id": &minted.id}),
+        None,
+        None,
+    )
+    .await;
+    let expires_at = (Utc::now() + Duration::minutes(AUTHORIZED_REDEEM_TTL_MIN)).to_rfc3339();
+    (
+        StatusCode::OK,
+        Json(MintCollectorResponse {
+            token: minted.token,
+            expires_at,
         }),
     )
         .into_response()
@@ -963,7 +1045,28 @@ fn render_qr_svg(data: &str) -> String {
     }
 }
 
-fn format_pair_url(token: &str) -> String {
+/// The box's SPKI fingerprint (`sha256-<b64nopad>` of its WG server public key),
+/// for out-of-band identity verification at pairing. `None` on a host with no WG
+/// engine (macOS dev) — such a box returns no tunnel bundle either, so there's
+/// nothing to verify.
+#[cfg(target_os = "linux")]
+async fn box_spki_fpr(pool: &PgPool) -> Option<String> {
+    let kp = crate::wireguard::reconcile::ensure_server_keypair(pool)
+        .await
+        .ok()?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(kp.public_key.trim())
+        .ok()?;
+    let arr: [u8; 32] = raw.try_into().ok()?;
+    Some(virtues_protocol::spki_fingerprint(&arr).to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn box_spki_fpr(_pool: &PgPool) -> Option<String> {
+    None
+}
+
+fn format_pair_url(token: &str, fpr: Option<&str>) -> String {
     // URL fragment (not query): fragments never leave the browser, so the
     // token doesn't end up in proxy logs or referer headers.
     //
@@ -987,7 +1090,10 @@ fn format_pair_url(token: &str) -> String {
             format!("http://localhost:{port}")
         }
     };
-    format!("{base}/pair#t={token}")
+    match fpr {
+        Some(fpr) => format!("{base}/pair#t={token}&fpr={fpr}"),
+        None => format!("{base}/pair#t={token}"),
+    }
 }
 
 fn default_label_for(kind: &str, ua: Option<&str>, info: &Option<Value>) -> String {

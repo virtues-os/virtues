@@ -111,6 +111,12 @@ struct SettingsView: View {
                         .foregroundColor(.warmForegroundMuted)
                         .font(.subheadline)
                     }
+
+                    // Connection / WireGuard tunnel details (status, endpoint,
+                    // SPKI fingerprint, forget credentials).
+                    NavigationLink(destination: ConnectionSettingsView()) {
+                        Label("Connection", systemImage: "lock.shield")
+                    }
                 }
                 
                 // Permissions Section
@@ -329,7 +335,7 @@ struct SettingsView: View {
     /// `kind = "mobile_app"`, persist the server-issued bearer into the
     /// Keychain (done inside `consumePairToken`), and persist the endpoint
     /// + action_ids into `DeviceConfiguration`.
-    private func handleQRScanResult(endpoint: String, pairToken: String) {
+    private func handleQRScanResult(endpoint: String, pairToken: String, fingerprint: String?) {
         showQRScanner = false
         isCompletingPairing = true
         pairingError = nil
@@ -339,7 +345,8 @@ struct SettingsView: View {
                 let response = try await NetworkManager.shared.consumePairToken(
                     endpoint: endpoint,
                     pairToken: pairToken,
-                    deviceId: DeviceManager.shared.deviceId
+                    deviceId: DeviceManager.shared.deviceId,
+                    expectedFingerprint: fingerprint
                 )
 
                 await MainActor.run {

@@ -533,6 +533,8 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
          VIRTUES_ATLAS_URL={atlas}\n\
          VIRTUES_API_URL={api}\n\
          VIRTUES_MODELS_DIR={models_dir}\n\
+         VIRTUES_ACTIONS_DIR={actions_dir}\n\
+         VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n\
          VIRTUES_EMBED_URL=http://127.0.0.1:18181\n\
          VIRTUES_RERANK_URL=http://127.0.0.1:18182\n",
         static_dir = cfg.web_dir().display(),
@@ -540,6 +542,8 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
         atlas = cfg.atlas_url,
         api = cfg.virtues_api_url,
         models_dir = cfg.models_dir().display(),
+        actions_dir = cfg.actions_dir().display(),
+        actions_bin_dir = cfg.actions_bin_dir().display(),
     );
     fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
     let mut cmd = Command::new("chown");
@@ -585,6 +589,8 @@ async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<(
         ("VIRTUES_ATLAS_URL", cfg.atlas_url.clone()),
         ("VIRTUES_API_URL", cfg.virtues_api_url.clone()),
         ("VIRTUES_MODELS_DIR", cfg.models_dir().display().to_string()),
+        ("VIRTUES_ACTIONS_DIR", cfg.actions_dir().display().to_string()),
+        ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
         ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
         ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
     ];

@@ -135,6 +135,52 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
         ui::ok(&format!("Installed web UI → {}", web_dst.display()));
     }
 
+    // Install the action tree (newer tarballs ship `actions/`). virtues-core
+    // globs this at runtime; without it the box has no actions and pairing
+    // returns an empty action map. Older tarballs lack it — warn, don't fail.
+    let actions_src = tmpdir.path().join("actions");
+    if actions_src.is_dir() {
+        let actions_dst = cfg.actions_dir();
+        let _ = fs::remove_dir_all(&actions_dst);
+        copy_dir_all(&actions_src, &actions_dst)?;
+        ui::ok(&format!("Installed actions → {}", actions_dst.display()));
+    } else {
+        ui::warn(
+            "actions/ not in tarball (pre-v1.x release) — the box will have no \
+             actions and clients will pair with an empty action map. Upgrade to \
+             a release that ships actions/.",
+        );
+    }
+
+    // Install the compiled action binaries (ios_*, *_sync, …). These must be
+    // executable, so they go through install_executable (atomic replace +
+    // chmod 0755) rather than copy_dir_all, which copies bytes without the
+    // exec bit. virtues-core forks them by name via VIRTUES_ACTIONS_BIN_DIR.
+    let actions_bin_src = tmpdir.path().join("actions-bin");
+    if actions_bin_src.is_dir() {
+        let actions_bin_dst = cfg.actions_bin_dir();
+        fs::create_dir_all(&actions_bin_dst)
+            .with_context(|| format!("creating {}", actions_bin_dst.display()))?;
+        let mut count = 0usize;
+        for entry in fs::read_dir(&actions_bin_src)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                install_executable(&entry.path(), &actions_bin_dst.join(entry.file_name()))?;
+                count += 1;
+            }
+        }
+        ui::ok(&format!(
+            "Installed {count} action binaries → {}",
+            actions_bin_dst.display()
+        ));
+    } else {
+        ui::warn(
+            "actions-bin/ not in tarball (pre-v1.x release) — function actions \
+             (ios_*, syncs) have no executable on the box and their webhooks \
+             will fail. Upgrade to a release that ships actions-bin/.",
+        );
+    }
+
     cfg.pinned_version = Some(version);
     Ok(())
 }

@@ -142,6 +142,79 @@ pub async fn trigger_action_handler(
         .into_response()
 }
 
+/// POST /api/chat-import/upload — multipart upload of a Claude / ChatGPT /
+/// Gemini conversation export (Tier 3 "one-time import"). The file is staged to
+/// a transient local path and the `chat_import` action is run synchronously
+/// (one-time imports are user-initiated and expected to take a moment), so the
+/// response carries the "Imported N messages" summary for the confirmation UI.
+///
+/// Mounted with a raised body limit (chat exports can exceed the 105MB default).
+pub async fn chat_import_upload_handler(
+    State(state): State<AppState>,
+    mut multipart: axum::extract::Multipart,
+) -> Response {
+    let mut provider = "unknown".to_string();
+    let mut data: Option<axum::body::Bytes> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        match field.name().unwrap_or("") {
+            "provider" => {
+                if let Ok(t) = field.text().await {
+                    provider = t;
+                }
+            }
+            "file" => {
+                if let Ok(b) = field.bytes().await {
+                    data = Some(b);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(bytes) = data else {
+        return error_response(crate::error::Error::InvalidInput(
+            "no file provided".into(),
+        ));
+    };
+
+    // Stage to a transient local path the action subprocess reads then deletes.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let file_path = std::env::temp_dir().join(format!("virtues_chat_import_{unique}.json"));
+    if let Err(e) = std::fs::write(&file_path, &bytes) {
+        return error_response(crate::error::Error::Other(format!(
+            "failed to stage upload: {e}"
+        )));
+    }
+
+    let deps = crate::action_runner::RunnerDeps {
+        db: state.db.pool().clone(),
+        yjs: state.yjs_state.clone(),
+    };
+    let payload = serde_json::json!({
+        "file_path": file_path.to_string_lossy(),
+        "provider": provider,
+    });
+
+    match crate::action_runner::run_action(&deps, "action_chat_import", "manual", Some(&payload))
+        .await
+    {
+        Ok(r) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "ok",
+                "summary": r.summary,
+                "run_id": r.run_id,
+            })),
+        )
+            .into_response(),
+        Err(e) => error_response(crate::error::Error::Other(e.to_string())),
+    }
+}
+
 /// List all actions with their latest run status.
 pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
     let pool = state.db.pool();
@@ -833,6 +906,84 @@ pub async fn device_action_ids_handler(
             })),
         )
             .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/devices/actions/:id/runs — a paired device reads the run history of
+/// one of ITS OWN actions, so the app can show real server-side outcome
+/// (success/failure/timing/error) per stream rather than just "did the POST
+/// return 2xx."
+///
+/// Device-bearer auth, same as `/webhook/{action_id}` and
+/// `/api/devices/action-ids`. The action's `credential_id` must match the
+/// caller's credential or it's 403 — a token leaked from one device can't read
+/// another device's run history. This is the device-scoped sibling of the
+/// session-authed `list_action_runs_handler`.
+pub async fn device_action_runs_handler(
+    State(state): State<AppState>,
+    Path(action_id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<RunsQuery>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "));
+
+    let Some(token) = token else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Missing bearer token" })),
+        )
+            .into_response();
+    };
+
+    let credential_id =
+        match crate::api::credentials::validate_device_token(state.db.pool(), token).await {
+            Ok(id) => id,
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({ "error": "Invalid or revoked device token" })),
+                )
+                    .into_response();
+            }
+        };
+
+    // Ownership: the action must belong to this credential. EXISTS returns a
+    // non-null bool, so a missing action and a foreign action both → false.
+    let owned: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = $1 AND credential_id = $2)",
+    )
+    .bind(&action_id)
+    .bind(&credential_id)
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap_or(false);
+
+    if !owned {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Action not found for this device" })),
+        )
+            .into_response();
+    }
+
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    match crate::scheduler::actions::query_runs(
+        state.db.pool(),
+        Some(&action_id),
+        q.status.as_deref(),
+        limit,
+    )
+    .await
+    {
+        Ok(runs) => (StatusCode::OK, Json(runs)).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
