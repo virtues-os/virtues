@@ -134,7 +134,7 @@ where
 }
 
 /// Extract a token from an `Authorization: Bearer <token>` header.
-fn read_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
+pub(crate) fn read_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
     let raw = headers
         .get(axum::http::header::AUTHORIZATION)?
         .to_str()
@@ -155,7 +155,7 @@ fn read_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
 /// (credential `active`, device `revoked_at IS NULL`). Touches last-seen on
 /// success. Transport-independent — this is what makes the box reachable over
 /// a BYO overlay with no special-casing.
-async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUser> {
+pub(crate) async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUser> {
     let credential_id = crate::api::credentials::validate_device_token(pool, token)
         .await
         .ok()?;
