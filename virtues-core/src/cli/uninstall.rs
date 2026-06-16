@@ -175,7 +175,7 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     } else {
         println!("✓ Virtues fully removed. Reinstall any time:");
     }
-    println!("    curl -fsSL https://get.virtues.com | sudo sh");
+    println!("    curl -fsSL https://virtues.com/sh | sudo sh");
     Ok(())
 }
 
