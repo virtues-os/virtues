@@ -22,7 +22,13 @@ const SERVICE: &str = "virtues-client";
 /// `box-<publish_id>` so multiple bundles can coexist on one device.
 const ACCOUNT_BUNDLE: &str = "default-box";
 const ACCOUNT_WG_PRIVATE: &str = "default-box-wg-private";
+/// Legacy entry written by an earlier build (stored the device id, which the
+/// revoke endpoint doesn't accept). No longer written; kept only so
+/// [`delete_bundle`] can clean it up on machines that still have it.
 const ACCOUNT_DEVICE_ID: &str = "default-box-device-id";
+/// The server credential row id. This — NOT the device id — is what
+/// `DELETE /api/credentials/:id` matches on, so revoke needs it.
+const ACCOUNT_CREDENTIAL_ID: &str = "default-box-credential-id";
 
 fn entry(account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, account).context("open keyring entry")
@@ -72,21 +78,21 @@ pub fn load_wg_private() -> Result<Option<String>> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Device ID (from server's credential row, used for revoke)
+// Credential ID (the revocable credential row id, for revoke)
 // ────────────────────────────────────────────────────────────────────────
 
-pub fn save_device_id(id: &str) -> Result<()> {
-    entry(ACCOUNT_DEVICE_ID)?
+pub fn save_credential_id(id: &str) -> Result<()> {
+    entry(ACCOUNT_CREDENTIAL_ID)?
         .set_password(id)
-        .context("write device ID to keyring")?;
+        .context("write credential ID to keyring")?;
     Ok(())
 }
 
-pub fn load_device_id() -> Result<Option<String>> {
-    match entry(ACCOUNT_DEVICE_ID)?.get_password() {
+pub fn load_credential_id() -> Result<Option<String>> {
+    match entry(ACCOUNT_CREDENTIAL_ID)?.get_password() {
         Ok(s) => Ok(Some(s)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow::Error::new(e).context("read device ID from keyring")),
+        Err(e) => Err(anyhow::Error::new(e).context("read credential ID from keyring")),
     }
 }
 
@@ -96,9 +102,11 @@ pub fn load_device_id() -> Result<Option<String>> {
 
 pub fn delete_bundle() -> Result<()> {
     delete_entry(ACCOUNT_BUNDLE)?;
-    // Best-effort: also drop the WG private key and device ID. Don't error if absent.
+    // Best-effort: also drop the WG private key, device ID, and credential ID.
+    // Don't error if absent.
     let _ = delete_entry(ACCOUNT_WG_PRIVATE);
     let _ = delete_entry(ACCOUNT_DEVICE_ID);
+    let _ = delete_entry(ACCOUNT_CREDENTIAL_ID);
     Ok(())
 }
 

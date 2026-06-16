@@ -8,17 +8,18 @@
 //! See [[localhost-daemon-trust]] and [[v02-plan]] in MEMORY.md for the
 //! architectural commitment this implements.
 //!
-//! ## Subcommands (this commit)
+//! ## Subcommands
 //!
-//! - `pair <pair-url>` — consume a one-time pair token from the box; receive a
-//!   [`virtues_protocol::PairingBundle`] (WG keys, box endpoint, rendezvous
+//! - `pair <pair-url>` — consume a one-time pair URL from the server; receive a
+//!   [`virtues_protocol::PairingBundle`] (WG keys, server endpoint, rendezvous
 //!   params, session bearer); store it in the OS keychain.
-//!
-//! ## Subcommands (stubs — fill in next commits)
-//!
+//! - `pair-code <code>` — same, but via the short 6-char code the server prints
+//!   (server discovered over mDNS unless `--server` is given).
+//! - `discover` — list Virtues servers found on the LAN via mDNS (`--json`).
 //! - `up` — bring the WG tunnel up (via GotaTun) and start the localhost proxy.
-//! - `status` — report tunnel state, last handshake, proxy port.
-//! - `revoke` — clear local creds + tell the box to drop this device's peer.
+//! - `status` — report pairing + tunnel state and the proxy port.
+//! - `revoke` — clear local creds + tell the server to drop this credential.
+//! - `daemon` (hidden) — privileged root service: WG tunnel + `.virtues` DNS.
 //!
 //! ## Why this binary exists
 //!
@@ -78,8 +79,9 @@ enum Command {
         upstream: Option<String>,
     },
 
-    /// Pair using a short 6-character code displayed by `virtues link --code`
-    /// on the server. Discovers the server via mDNS if --server is not given.
+    /// Pair using a short 6-character code printed by `virtues login` (alias
+    /// `virtues link`) or `virtues init` on the server. Discovers the server
+    /// via mDNS if --server is not given.
     PairCode {
         /// The 6-character code shown by the server (spaces optional, e.g. "ABC DEF").
         code: String,
@@ -298,12 +300,15 @@ async fn revoke() -> Result<()> {
     };
 
     // Best-effort: tell the server to drop this device's credential row.
-    if let Some(device_id) = keychain::load_device_id()? {
+    // NB: the DELETE endpoint matches on the *credential* id, not the device
+    // id — they're different id spaces. Older pairings (pre-credential_id)
+    // won't have it stored; those revoke locally only.
+    if let Some(credential_id) = keychain::load_credential_id()? {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
         let url = format!(
-            "http://localhost:{}/api/credentials/{device_id}",
+            "http://localhost:{}/api/credentials/{credential_id}",
             virtues_protocol::INTERNAL_PORT
         );
         match client
@@ -327,6 +332,12 @@ async fn revoke() -> Result<()> {
                 );
             }
         }
+    } else {
+        eprintln!(
+            "note: no stored credential id (paired before revoke support) — \
+             clearing local creds only. Remove this device from the server's \
+             Devices page to fully de-authorize it."
+        );
     }
 
     keychain::delete_bundle()?;

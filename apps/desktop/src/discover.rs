@@ -79,7 +79,11 @@ fn discover_blocking(timeout_secs: u64) -> Vec<FoundServer> {
                 });
             }
             Ok(_) => {}
-            Err(_) => break,
+            // A timeout just means no packet arrived in this 100ms slice —
+            // keep polling until the deadline. Only stop when the channel is
+            // actually disconnected (daemon gone).
+            Err(flume::RecvTimeoutError::Timeout) => continue,
+            Err(flume::RecvTimeoutError::Disconnected) => break,
         }
     }
 

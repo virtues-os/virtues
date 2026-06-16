@@ -50,8 +50,12 @@ struct ConsumeRequest {
 #[derive(Debug, Deserialize)]
 struct ConsumeResponse {
     bundle: Option<PairingBundle>,
+    /// The revocable credential row id. This — not the device id — is what
+    /// `revoke` sends to `DELETE /api/credentials/:id`. Absent for browser
+    /// pairings (cookie sessions have no revocable row id). Other response
+    /// fields (`device_id`, `bearer`, `action_ids`) are ignored by this client.
     #[serde(default)]
-    device_id: Option<String>,
+    credential_id: Option<String>,
 }
 
 pub async fn run(pair_url: &str) -> Result<()> {
@@ -136,9 +140,10 @@ async fn consume(origin: String, token: String) -> Result<()> {
     keychain::save_wg_private(&keypair.private_b64())?;
     keychain::save_bundle(&bundle)?;
 
-    // Save the server-assigned device ID so revoke() can call DELETE /api/credentials/:id.
-    if let Some(ref id) = parsed.device_id {
-        keychain::save_device_id(id)?;
+    // Save the credential ID — what revoke() sends to DELETE
+    // /api/credentials/:id (a different id space from device_id).
+    if let Some(ref id) = parsed.credential_id {
+        keychain::save_credential_id(id)?;
     }
 
     // Write bundle to ~/.virtues/bundle.json so the root LaunchDaemon can read
@@ -160,20 +165,40 @@ async fn consume(origin: String, token: String) -> Result<()> {
 }
 
 /// Write the bundle to `~/.virtues/bundle.json` so the root LaunchDaemon can
-/// read it. The file is mode 600 (owner-read-only) but root bypasses permissions.
+/// read it. Holds the bearer + WG key material, so it must never be exposed.
+///
+/// The write is atomic and 0600 from creation: we write to a sibling temp file
+/// opened with mode 0600 (so there is no world-readable window — unlike
+/// write-then-chmod), then `rename` it into place (atomic on the same
+/// filesystem, so a crash mid-write can't leave the daemon a truncated bundle).
+/// Root bypasses the 0600 permission to read it.
 fn write_daemon_bundle(bundle: &PairingBundle) -> Result<()> {
     let home = std::env::var("HOME").context("$HOME not set")?;
     let dir = std::path::PathBuf::from(home).join(".virtues");
     std::fs::create_dir_all(&dir).context("create ~/.virtues")?;
     let path = dir.join("bundle.json");
+    let tmp = dir.join("bundle.json.tmp");
     let json = serde_json::to_string(bundle).context("serialize bundle")?;
-    std::fs::write(&path, &json)
-        .with_context(|| format!("write {}", path.display()))?;
-    #[cfg(unix)]
+
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write as _;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts
+            .open(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
+        f.write_all(json.as_bytes())
+            .with_context(|| format!("write {}", tmp.display()))?;
+        f.sync_all().ok();
     }
+
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     Ok(())
 }
 
