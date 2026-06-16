@@ -10,4 +10,4 @@ pub mod rate_limit;
 pub mod security;
 
 pub use auth::AuthUser;
-pub use http::{client_ip, is_secure_environment, OWNER_USER_ID};
+pub use http::{client_ip, is_secure_environment, rate_limit_ip, OWNER_USER_ID};

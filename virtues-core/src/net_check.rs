@@ -502,9 +502,8 @@ mod tests {
         let (h, _) = verdict_strings(NetClass::NatNoIpv6, None, 51820);
         assert_eq!(
             h,
-            "Network: behind NAT, no global IPv6 — local + LAN access work fine, but \
-             remote-from-anywhere needs a router port-forward (home) or your own overlay \
-             (dorm/office). See docs/byo-networking.md; run `virtues doctor` anytime."
+            "Behind NAT, no global IPv6 — local + LAN access work. \
+             Remote access depends on whether you control the router."
         );
         let (h, _) = verdict_strings(NetClass::Unknown, None, 51820);
         assert_eq!(h, "No internet connection detected.");

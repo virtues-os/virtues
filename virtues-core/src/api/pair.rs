@@ -42,7 +42,7 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 use crate::middleware::auth::{AuthUser, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_SECURE};
-use crate::middleware::{client_ip, is_secure_environment, OWNER_USER_ID};
+use crate::middleware::{client_ip, is_secure_environment, rate_limit_ip, OWNER_USER_ID};
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -423,6 +423,12 @@ pub struct ConsumeRequest {
 #[derive(Debug, Serialize)]
 pub struct ConsumeResponse {
     pub device_id: String,
+    /// The credential row id (`AUTH_TOKEN_PREFIX`). This is the id the device
+    /// must send to `DELETE /api/credentials/:id` to revoke itself — distinct
+    /// from `device_id` (the `app_device.id`). Absent for browser pairings,
+    /// whose credential is a session cookie with no revocable row id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_id: Option<String>,
     pub redirect: String,
     /// Server-issued bearer — returned ONCE for non-browser devices. Browsers
     /// don't see this; their credential is a session cookie set on this response.
@@ -456,9 +462,12 @@ pub async fn consume_handler(
     }
 
     // Per-IP rate limit: 10 attempts per 30-minute window. Defends the 6-char
-    // code space against LAN enumeration.
-    {
-        let ip_key = client_ip(&headers).unwrap_or_else(|| "unknown".to_string());
+    // code space against LAN enumeration. We key on the proxy-appended
+    // (right-most) XFF entry so a client can't earn a fresh budget by spoofing
+    // the header. A request with NO XFF didn't transit our proxy (direct
+    // loopback / dev) and isn't remotely reachable, so it's exempt rather than
+    // sharing one bucket with every other header-less caller.
+    if let Some(ip_key) = rate_limit_ip(&headers) {
         if !crate::middleware::rate_limit::pair_limiter().check_and_record(&ip_key) {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -727,6 +736,7 @@ pub async fn consume_handler(
                 StatusCode::OK,
                 Json(ConsumeResponse {
                     device_id,
+                    credential_id: None,
                     redirect: "/".to_string(),
                     bearer: None,
                     action_ids: std::collections::HashMap::new(),
@@ -780,6 +790,7 @@ pub async fn consume_handler(
         StatusCode::OK,
         Json(ConsumeResponse {
             device_id,
+            credential_id: Some(bp.credential_id),
             redirect: "/".to_string(),
             bearer: Some(bp.bearer),
             action_ids,
