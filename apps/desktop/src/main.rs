@@ -169,6 +169,33 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Load the paired bundle, resilient to macOS's per-binary keychain ACL.
+///
+/// The keychain item is scoped to whatever binary created it — the app's
+/// *bundled* sidecar at pair time. A *different* binary (e.g. this one running
+/// as the installed LaunchAgent at `~/.virtues/bin/virtues-client`) usually
+/// can't read it, so `keychain::load_bundle()` comes back empty and the proxy
+/// would die with "no paired box". `pair` also writes `~/.virtues/bundle.json`
+/// (mode 600), readable by any of the user's processes regardless of code
+/// identity — so fall back to that.
+fn load_paired_bundle() -> Result<Option<virtues_protocol::PairingBundle>> {
+    if let Some(b) = keychain::load_bundle().context("read bundle from keychain")? {
+        return Ok(Some(b));
+    }
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return Ok(None),
+    };
+    let path = std::path::PathBuf::from(home).join(".virtues").join("bundle.json");
+    match std::fs::read_to_string(&path) {
+        Ok(json) => Ok(Some(
+            serde_json::from_str(&json)
+                .with_context(|| format!("decode {}", path.display()))?,
+        )),
+        Err(_) => Ok(None),
+    }
+}
+
 async fn run_pair_code(code: String, server: Option<String>) -> Result<()> {
     let origin = match server {
         Some(s) => s,
@@ -213,13 +240,9 @@ async fn run_up(no_tunnel: bool, upstream: Option<String>) -> Result<()> {
         );
     }
 
-    let bundle = keychain::load_bundle()
-        .context("read paired bundle from OS keychain")?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no paired box — run `virtues-client pair <pair-url>` first"
-            )
-        })?;
+    let bundle = load_paired_bundle()?.ok_or_else(|| {
+        anyhow::anyhow!("no paired box — run `virtues-client pair` first")
+    })?;
 
     // Bring the WG tunnel up unless the user supplies their own transport.
     // (Linux only today; macOS / Windows impls follow.) Errors here are honest
@@ -271,7 +294,7 @@ fn init_tracing() {
 fn print_status() -> Result<()> {
     use virtues_protocol::spki_fingerprint;
 
-    let bundle = match keychain::load_bundle()? {
+    let bundle = match load_paired_bundle()? {
         Some(b) => b,
         None => {
             println!("paired:           no");
@@ -327,7 +350,7 @@ fn decode_b64_32(s: &str) -> Result<[u8; 32]> {
 }
 
 async fn revoke() -> Result<()> {
-    let bundle = match keychain::load_bundle()? {
+    let bundle = match load_paired_bundle()? {
         Some(b) => b,
         None => {
             println!("not paired — nothing to revoke.");
