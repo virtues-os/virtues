@@ -53,7 +53,7 @@ enum Command {
     /// Consume a one-time pair URL from the box and store the resulting
     /// PairingBundle in this machine's OS keychain.
     ///
-    /// The pair URL is what `virtues link` prints on the box. Copy it from the
+    /// The pair URL is what `virtues pair` prints on the box. Copy it from the
     /// box's terminal output (or scan its QR if your box has a screen) and
     /// paste it here. The token expires in 15 minutes and is single-use.
     Pair {
@@ -80,9 +80,9 @@ enum Command {
         upstream: Option<String>,
     },
 
-    /// Pair using a short 6-character code printed by `virtues login` (alias
-    /// `virtues link`) or `virtues init` on the server. Discovers the server
-    /// via mDNS if --server is not given.
+    /// Pair using a short 6-character code printed by `virtues pair` or
+    /// `virtues init` on the server. Discovers the server via mDNS if --server
+    /// is not given.
     PairCode {
         /// The 6-character code shown by the server (spaces optional, e.g. "ABC DEF").
         code: String,
@@ -277,7 +277,7 @@ fn print_status() -> Result<()> {
             println!("paired:           no");
             println!();
             println!("Run `virtues-client pair <pair-url>` to pair with your box.");
-            println!("The pair URL is printed by `virtues link` on the box itself.");
+            println!("The pair URL is printed by `virtues pair` on the box itself.");
             return Ok(());
         }
     };

@@ -67,6 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let interactive = matches!(
             std::env::args().nth(1).as_deref(),
             Some("init")
+                | Some("pair")
                 | Some("link")
                 | Some("login")
                 | Some("subscribe")
@@ -174,7 +175,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => {
                 println!();
                 println!("  ⚠  could not mint pair token: {e}");
-                println!("     Run `virtues login` later to get a fresh code.");
+                println!("     Run `virtues pair` later to get a fresh code.");
             }
         }
 
@@ -254,8 +255,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // ─── `virtues login` (alias: `link`) ────────────────────────────────────
-    // THE human verb for getting into the box (docs/onboarding.md). Mints a
+    // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
+    // THE human verb for connecting a device to the box (docs/onboarding.md). Mints a
     // CLI-origin pair token (authorized immediately because typing this
     // command IS proof of physical access), prints the one-time URL + QR,
     // then waits until the link is opened — the wait is also the
@@ -263,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // box-side signal for a network that blocks device-to-device traffic).
     // The URL puts the token in a `#t=` fragment, so it never hits server
     // logs or referer headers.
-    if let Some(Commands::Login { no_wait }) = &cli.command {
+    if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
         match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
@@ -280,7 +281,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Ok(PairWaitOutcome::Expired) => {
                             println!();
-                            println!("  code expired — run `virtues login` for a fresh one.");
+                            println!("  code expired — run `virtues pair` for a fresh one.");
                         }
                         Err(e) => eprintln!("  (stopped waiting: {e})"),
                     }
@@ -432,10 +433,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Print the inference stack's hardware-resolution plan: which accelerator is
 /// active, whether this build links CUDA, the chosen ONNX precision, and where
 /// each model's files come from (baked vs download). Pure — no DB, no network,
-/// Print the `virtues link` + `virtues init` handoff: the pair URLs
+/// Print the `virtues pair` + `virtues init` handoff: the pair code + URLs
 /// (mDNS-first, IP fallback, loopback last) + expiry + a one-line remote-access
 /// verdict. Deliberately terse — the deep network report lives behind
-/// `virtues doctor`. Shared between `Link` and `Init`.
+/// `virtues doctor`. Shared between `Pair` and `Init`.
 /// The Virtues wordmark — a serif figlet ("Georgia11") that opens the CLI
 /// journey. Plain text on purpose: this output is frequently piped, captured,
 /// and read over SSH, so no ANSI styling that would garble in a log.
@@ -522,7 +523,7 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 #[cfg(unix)]
 fn maybe_reexec_as_service_user() {
     const DB_COMMANDS: &[&str] = &[
-        "init", "link", "login", "subscribe", "sudo", "backup", "status", "migrate", "seed",
+        "init", "pair", "link", "login", "subscribe", "sudo", "backup", "status", "migrate", "seed",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {

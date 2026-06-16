@@ -24,10 +24,10 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Init command should be handled in main.rs");
         }
 
-        Commands::Login { .. } => {
+        Commands::Pair { .. } => {
             // Handled in main.rs before the Virtues client is created — it
             // only needs the DB pool, not the full app stack.
-            unreachable!("Login command should be handled in main.rs");
+            unreachable!("Pair command should be handled in main.rs");
         }
 
         Commands::Sudo { .. } => {
