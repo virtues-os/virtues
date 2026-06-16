@@ -11,6 +11,12 @@ members = [
     "services/virtues-atlas",
     "tools/virtues-installer",
 ]
+# The Tauri desktop app is a standalone crate built by the `tauri` CLI, with
+# its own Cargo.lock and release profile (panic=abort, lto). It must NOT be a
+# workspace member, or `cargo metadata` (which the tauri CLI runs) fails.
+exclude = [
+    "apps/web/src-tauri",
+]
 resolver = "2"
 
 [workspace.package]
