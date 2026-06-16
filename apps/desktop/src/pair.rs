@@ -51,7 +51,6 @@ struct ConsumeRequest {
 struct ConsumeResponse {
     bundle: Option<PairingBundle>,
     #[serde(default)]
-    #[allow(dead_code)] // surfaced in future commits via Status / observability
     device_id: Option<String>,
 }
 
@@ -65,10 +64,28 @@ pub async fn run(pair_url: &str) -> Result<()> {
     }
 
     eprintln!("pairing with {origin} …");
+    consume(origin, token).await
+}
 
-    // Generate a fresh WG keypair for this device. The public key goes to the
-    // box at pair time (so it can install us as a peer); the private key lands
-    // in the OS keychain and never leaves this machine.
+/// Pair using a short 6-character display code (e.g. "ABC DEF") instead of a
+/// full URL. The server origin is either discovered via mDNS or supplied by
+/// the caller.
+pub async fn run_with_code(server_origin: &str, code: &str) -> Result<()> {
+    // Strip spaces so "ABC DEF" and "ABCDEF" both work.
+    let token = code.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let origin = server_origin.trim_end_matches('/').to_string();
+
+    if keychain::load_bundle()?.is_some() {
+        eprintln!("warning: this machine is already paired. Pairing again will");
+        eprintln!("         overwrite the existing creds. To unpair first, run");
+        eprintln!("         `virtues-client revoke`.");
+    }
+
+    eprintln!("pairing with {origin} using code {code} …");
+    consume(origin, token).await
+}
+
+async fn consume(origin: String, token: String) -> Result<()> {
     let keypair = Keypair::generate();
     let wg_public_b64 = keypair.public_b64();
 
@@ -106,8 +123,8 @@ pub async fn run(pair_url: &str) -> Result<()> {
 
     let bundle = parsed.bundle.ok_or_else(|| {
         anyhow!(
-            "box returned no PairingBundle — is the box running on Linux? \
-             The WG engine is Linux-only; macOS dev boxes can pair but won't \
+            "server returned no PairingBundle — is the server running on Linux? \
+             The WG engine is Linux-only; macOS dev servers can pair but won't \
              return a bundle until they're moved to a real appliance."
         )
     })?;
@@ -119,15 +136,44 @@ pub async fn run(pair_url: &str) -> Result<()> {
     keychain::save_wg_private(&keypair.private_b64())?;
     keychain::save_bundle(&bundle)?;
 
+    // Save the server-assigned device ID so revoke() can call DELETE /api/credentials/:id.
+    if let Some(ref id) = parsed.device_id {
+        keychain::save_device_id(id)?;
+    }
+
+    // Write bundle to ~/.virtues/bundle.json so the root LaunchDaemon can read
+    // it (the OS keychain is user-specific and unavailable to the root process).
+    if let Err(e) = write_daemon_bundle(&bundle) {
+        tracing::warn!("could not write daemon bundle file: {e}");
+    }
+
     println!();
     println!("✓ paired with {origin}");
-    println!("  box ID:        {}", &bundle.rendezvous.publish_id);
-    println!("  box address:   {}", &bundle.internal_ip);
+    println!("  server ID:     {}", &bundle.rendezvous.publish_id);
+    println!("  server addr:   {}", &bundle.internal_ip);
     println!("  device pubkey: {wg_public_b64}");
     println!("  bundle stored: OS keychain (service = 'virtues-client')");
     println!();
     println!("next: run `virtues-client up` to start the local proxy.");
 
+    Ok(())
+}
+
+/// Write the bundle to `~/.virtues/bundle.json` so the root LaunchDaemon can
+/// read it. The file is mode 600 (owner-read-only) but root bypasses permissions.
+fn write_daemon_bundle(bundle: &PairingBundle) -> Result<()> {
+    let home = std::env::var("HOME").context("$HOME not set")?;
+    let dir = std::path::PathBuf::from(home).join(".virtues");
+    std::fs::create_dir_all(&dir).context("create ~/.virtues")?;
+    let path = dir.join("bundle.json");
+    let json = serde_json::to_string(bundle).context("serialize bundle")?;
+    std::fs::write(&path, &json)
+        .with_context(|| format!("write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     Ok(())
 }
 
