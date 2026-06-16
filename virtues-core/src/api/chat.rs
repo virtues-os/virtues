@@ -1268,12 +1268,13 @@ fn create_agent_stream(
         }
 
         // Determine max_steps based on agent mode
-        // - agent: 20 (full access — edit, search, data)
-        // - research: 50 (read-only, needs more exploration)
-        // - chat: 20 (conversational, no tools but allows multi-turn)
+        // - deep_research: 50 (read-only, needs more exploration)
+        // - council: 40 (gate + 1-2 dispatch rounds + synthesis; bounded)
+        // - chat / default: 20 (conversational, full tool access, multi-turn)
         let max_steps = match request.agent_mode.as_str() {
             "deep_research" => 50,
-            _ => 20, // "chat" or default
+            "council" => 40, // gate + 1-2 dispatch rounds + synthesis; bounded
+            _ => 20,         // "chat" or default
         };
 
         // Create AgentLoop with YjsState for real-time page editing

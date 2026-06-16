@@ -622,6 +622,11 @@ Example:
                                 "type": "string",
                                 "enum": ["fast", "balanced", "strong"],
                                 "description": "Worker model tier by difficulty. Default balanced."
+                            },
+                            "style": {
+                                "type": "string",
+                                "enum": ["research", "voice"],
+                                "description": "How the worker is framed. \"research\" (default): a read-only researcher that investigates and cites. \"voice\": a Council voice that speaks in first person as the perspective its objective describes (no tools but think). Use \"voice\" only in Council mode."
                             }
                         }
                     }
@@ -633,7 +638,7 @@ Example:
         icon: "ri:team-line".to_string(),
         display_order: 6,
         // Internal orchestration tool: excluded from Chat (which filters out system tools) but
-        // included in Deep Research via the Search|Data category filter.
+        // included in Deep Research and Council via their explicit tool allow-lists.
         is_system: true,
     }
 }

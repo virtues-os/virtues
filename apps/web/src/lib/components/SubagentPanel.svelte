@@ -2,7 +2,11 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import type { SubagentStatus } from '$lib/stores/chatInstances.svelte';
 
-	let { subagents }: { subagents: SubagentStatus[] } = $props();
+	let { subagents, variant = 'research' }: {
+		subagents: SubagentStatus[];
+		/** 'research' = Deep Research workers; 'voice' = Council voices (different copy, no model/token chrome). */
+		variant?: 'research' | 'voice';
+	} = $props();
 
 	// Strip the provider prefix: "google/gemini-3-flash" → "gemini-3-flash".
 	function shortModel(model: string): string {
@@ -15,11 +19,15 @@
 </script>
 
 {#if subagents.length > 0}
-	<div class="subagent-panel" data-done={allDone}>
+	<div class="subagent-panel" data-done={allDone} data-variant={variant}>
 		<div class="subagent-header">
 			<span class="subagent-mark">∴</span>
 			<span class="subagent-title">
-				{allDone ? 'Researchers reported back' : 'Researchers investigating'}
+				{#if variant === 'voice'}
+					{allDone ? 'The council has spoken' : 'The council is convening'}
+				{:else}
+					{allDone ? 'Researchers reported back' : 'Researchers investigating'}
+				{/if}
 			</span>
 			<span class="subagent-count">{doneCount}/{subagents.length}</span>
 		</div>
@@ -36,9 +44,11 @@
 						{/if}
 					</span>
 					<span class="subagent-mission" title={s.title}>{s.title}</span>
-					<span class="subagent-model" title={s.model}>{shortModel(s.model)}</span>
-					{#if s.tokens > 0}
-						<span class="subagent-tokens">{s.tokens}t</span>
+					{#if variant !== 'voice'}
+						<span class="subagent-model" title={s.model}>{shortModel(s.model)}</span>
+						{#if s.tokens > 0}
+							<span class="subagent-tokens">{s.tokens}t</span>
+						{/if}
 					{/if}
 				</div>
 			{/each}
@@ -63,6 +73,15 @@
 		margin-bottom: 0.5rem;
 		color: var(--color-info);
 		font-weight: 500;
+	}
+
+	/* Council voices match the mode's amber accent, not Deep Research's info-blue. */
+	.subagent-panel[data-variant='voice'] {
+		background: color-mix(in srgb, var(--color-warning) 5%, transparent);
+	}
+
+	.subagent-panel[data-variant='voice'] .subagent-header {
+		color: var(--color-warning);
 	}
 
 	.subagent-mark {

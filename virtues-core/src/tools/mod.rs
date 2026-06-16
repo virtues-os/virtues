@@ -127,6 +127,27 @@ pub fn get_tools_for_subagent() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// A Council voice reasons from its vantage; it does not investigate or cite. `think` only.
+const COUNCIL_VOICE_TOOLS: &[&str] = &["think"];
+
+/// Get tool definitions for a Council voice worker (think-only — voices reason, they don't research).
+pub fn get_tools_for_council_voice() -> Vec<serde_json::Value> {
+    virtues_registry::tools::default_tools()
+        .into_iter()
+        .filter(|tool| COUNCIL_VOICE_TOOLS.contains(&tool.id.as_str()))
+        .map(|tool| {
+            serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": tool.id,
+                    "description": tool.llm_description,
+                    "parameters": tool.parameters,
+                }
+            })
+        })
+        .collect()
+}
+
 /// Onboarding-only tools: just naming + memory (no search, no data, no edit).
 ///
 /// Prevents the AI from running web searches, SQL queries, or other tools
@@ -165,17 +186,29 @@ const DEEP_RESEARCH_TOOLS: &[&str] = &[
     "create_page",
 ];
 
+/// The Council orchestrator's tools: read-only grounding (`semantic_search`, `sql_query`) plus the
+/// fan-out tool to convene voices. No `create_page` (Council replies in chat, not a page), no
+/// `web_search`/`code_interpreter` (Council is about perspectives, not facts). Explicit allow-list,
+/// for the same read-only-safety reason as `DEEP_RESEARCH_TOOLS`.
+const COUNCIL_TOOLS: &[&str] = &["think", "semantic_search", "sql_query", "dispatch_subagents"];
+
 /// Get tool definitions filtered by agent mode
 ///
 /// Agent modes:
 /// - "chat": All tools (smart default; write/act tools confirm before running)
 /// - "deep_research": read-only research tools + `dispatch_subagents` (fan-out) + `create_page`
 ///   (the report artifact). No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
+/// - "council": read-only grounding + `dispatch_subagents` (fan-out voices). No page — see `COUNCIL_TOOLS`.
 pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
-    match agent_mode {
-        "deep_research" => virtues_registry::tools::default_tools()
+    let allowlist = match agent_mode {
+        "deep_research" => Some(DEEP_RESEARCH_TOOLS),
+        "council" => Some(COUNCIL_TOOLS),
+        _ => None,
+    };
+    match allowlist {
+        Some(allowed) => virtues_registry::tools::default_tools()
             .into_iter()
-            .filter(|tool| DEEP_RESEARCH_TOOLS.contains(&tool.id.as_str()))
+            .filter(|tool| allowed.contains(&tool.id.as_str()))
             .map(|tool| {
                 serde_json::json!({
                     "type": "function",
@@ -187,7 +220,7 @@ pub fn get_tools_for_agent_mode(agent_mode: &str) -> Vec<serde_json::Value> {
                 })
             })
             .collect(),
-        _ => {
+        None => {
             // "chat" mode or default: all tools
             get_tool_definitions_for_llm()
         }

@@ -1070,6 +1070,7 @@
 											{#if subagents.length > 0}
 												<SubagentPanel
 													{subagents}
+													variant={selectedAgentMode === 'council' ? 'voice' : 'research'}
 												/>
 											{/if}
 
