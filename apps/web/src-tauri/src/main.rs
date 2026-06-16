@@ -36,19 +36,30 @@ fn is_paired() -> bool {
         .is_ok()
 }
 
-/// Find the virtues-client binary: prefer the user-installed copy, fall back
-/// to /usr/local/bin.
-fn virtues_client_bin() -> String {
-    let installed = dirs::home_dir()
+/// Build a shell `Command` for virtues-client. Resolution order:
+///   1. `~/.virtues/bin/virtues-client` (system installer's location)
+///   2. `/usr/local/bin/virtues-client` (alt install location)
+///   3. the bundled sidecar (`binaries/virtues-client`)
+///
+/// The sidecar fallback matters for first-run: a freshly-installed app can pair
+/// before virtues-client has been installed system-wide. Mirrors the collector.
+fn virtues_client_command(
+    app: &AppHandle,
+) -> Result<tauri_plugin_shell::process::Command, String> {
+    let shell = app.shell();
+    let home_bin = dirs::home_dir()
         .unwrap_or_default()
         .join(".virtues")
         .join("bin")
         .join("virtues-client");
-    if installed.exists() {
-        installed.to_string_lossy().into_owned()
-    } else {
-        "/usr/local/bin/virtues-client".to_string()
+    if home_bin.exists() {
+        return Ok(shell.command(home_bin.to_string_lossy().to_string()));
     }
+    let usr_local = std::path::Path::new("/usr/local/bin/virtues-client");
+    if usr_local.exists() {
+        return Ok(shell.command(usr_local.to_string_lossy().to_string()));
+    }
+    shell.sidecar("virtues-client").map_err(|e| e.to_string())
 }
 
 // ============================================================================
@@ -64,10 +75,7 @@ fn get_client_status() -> bool {
 /// Discover Virtues servers on the local network by shelling to virtues-client.
 #[tauri::command]
 async fn discover_servers(app: AppHandle) -> Result<Vec<FoundServer>, String> {
-    let bin = virtues_client_bin();
-    let output = app
-        .shell()
-        .command(&bin)
+    let output = virtues_client_command(&app)?
         .args(["discover", "--json"])
         .output()
         .await
@@ -87,10 +95,7 @@ async fn pair_with_code(
     server: String,
     code: String,
 ) -> Result<(), String> {
-    let bin = virtues_client_bin();
-    let output = app
-        .shell()
-        .command(&bin)
+    let output = virtues_client_command(&app)?
         .args(["pair-code", &code, "--server", &server])
         .output()
         .await
