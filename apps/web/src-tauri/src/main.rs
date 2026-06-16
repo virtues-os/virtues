@@ -108,6 +108,88 @@ async fn pair_with_code(
     }
 }
 
+/// Install the networking helpers after pairing: the user-level localhost proxy
+/// (LaunchAgent, silent) and the root WG tunnel + .virtues DNS (LaunchDaemon).
+///
+/// The daemon needs root, so macOS shows ONE password prompt via osascript. The
+/// collector (data collection) is deliberately NOT installed here — it pairs as
+/// its own device and needs Full Disk Access / Accessibility grants, so it stays
+/// an explicit opt-in via `install_collector`.
+#[tauri::command]
+async fn install_helpers(app: AppHandle) -> Result<(), String> {
+    // 1. User-level proxy LaunchAgent. Runs the bundled sidecar (or an existing
+    //    install) which copies itself to ~/.virtues/bin and loads the agent.
+    let out = virtues_client_command(&app)?
+        .args(["install"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "proxy install failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+
+    // 2. Root daemon (WG tunnel + .virtues DNS) — one admin prompt. We run the
+    //    binary that step 1 just placed at ~/.virtues/bin (absolute path, since
+    //    osascript's root shell has a different $HOME). Single-quote each
+    //    component so usernames with spaces survive the inner /bin/sh.
+    let home = dirs::home_dir().ok_or("no home directory")?;
+    let user = std::env::var("USER").unwrap_or_else(|_| {
+        home.file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    let client_bin = home.join(".virtues").join("bin").join("virtues-client");
+    let bundle = home.join(".virtues").join("bundle.json");
+    let script = format!(
+        "do shell script \"'{bin}' install-system --user '{user}' --bundle '{bundle}'\" \
+         with administrator privileges",
+        bin = client_bin.display(),
+        user = user,
+        bundle = bundle.display(),
+    );
+    let out = app
+        .shell()
+        .command("osascript")
+        .args(["-e", &script])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        // Most commonly: the user cancelled the password dialog (-128).
+        return Err(format!(
+            "tunnel install (admin): {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Remove the networking helpers (reverse of [`install_helpers`]). Best-effort.
+#[tauri::command]
+async fn uninstall_helpers(app: AppHandle) -> Result<(), String> {
+    // Root daemon first (one admin prompt), then the user-level agent.
+    let home = dirs::home_dir().ok_or("no home directory")?;
+    let client_bin = home.join(".virtues").join("bin").join("virtues-client");
+    let script = format!(
+        "do shell script \"'{bin}' uninstall-system\" with administrator privileges",
+        bin = client_bin.display(),
+    );
+    let _ = app
+        .shell()
+        .command("osascript")
+        .args(["-e", &script])
+        .output()
+        .await;
+    let _ = virtues_client_command(&app)?
+        .args(["uninstall"])
+        .output()
+        .await;
+    Ok(())
+}
+
 /// Get collector daemon status by invoking CLI
 #[tauri::command]
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
@@ -307,6 +389,8 @@ fn main() {
             get_client_status,
             discover_servers,
             pair_with_code,
+            install_helpers,
+            uninstall_helpers,
             get_collector_status,
             install_collector,
             uninstall_collector,
@@ -317,8 +401,12 @@ fn main() {
             open_accessibility_settings,
         ])
         .setup(|app| {
+            // Paired → the local virtues-client proxy on :7117 (NOT the box's
+            // own 8000; the proxy listens on 7117 to avoid squatting a common
+            // dev port). Keep in sync with LOCAL_PROXY_PORT in
+            // apps/desktop/src/proxy.rs, the CSP, and pair.html.
             let url = if is_paired() {
-                WebviewUrl::External("http://localhost:8000".parse().unwrap())
+                WebviewUrl::External("http://localhost:7117".parse().unwrap())
             } else {
                 WebviewUrl::App("pair.html".into())
             };
@@ -331,8 +419,11 @@ fn main() {
                 .visible(true)
                 .build()?;
 
+            // Only used in debug; silence the release-build unused warning.
             #[cfg(debug_assertions)]
             window.open_devtools();
+            #[cfg(not(debug_assertions))]
+            let _ = window;
 
             Ok(())
         })
