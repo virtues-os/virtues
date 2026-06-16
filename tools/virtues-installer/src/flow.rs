@@ -115,8 +115,12 @@ pub async fn run(cli: Config) -> Result<()> {
     // `exec` replaces this process with `sudo -u virtues virtues init`.
     // dialoguer/cliclack read /dev/tty internally, so even when our parent
     // was `curl | sh` (stdin = pipe), the wizard still reads input.
+    // The installer already printed the serif wordmark at the top, so tell
+    // `init` to skip its banner and avoid showing it a second time. sudo resets
+    // the environment (env_reset), so pass the var through an `env` prefix that
+    // runs after the privilege drop rather than via Command::env (stripped).
     let err = StdCommand::new("sudo")
-        .args(["-u", "virtues", "virtues", "init"])
+        .args(["-u", "virtues", "env", "VIRTUES_NO_BANNER=1", "virtues", "init"])
         .exec();
     // If we reach this line, exec failed.
     Err(anyhow::anyhow!("failed to exec `virtues init`: {err}"))
