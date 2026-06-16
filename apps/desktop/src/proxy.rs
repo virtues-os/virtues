@@ -33,7 +33,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::header::{HeaderMap, HeaderValue, CONNECTION, HOST, UPGRADE};
+use hyper::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONNECTION, HOST, UPGRADE};
 use hyper::server::conn::http1 as server_http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -71,6 +71,11 @@ pub struct ProxyConfig {
     /// Port the local proxy binds. Defaults to [`LOCAL_PROXY_PORT`] (7117) —
     /// distinct from the box's upstream port so the proxy doesn't squat 8000.
     pub bind_port: u16,
+    /// The paired device's bearer token. Injected as `Authorization: Bearer`
+    /// on every forwarded request so the local browser is auto-authenticated
+    /// as this device — the box has no separate browser login. The browser
+    /// never sees the token; the proxy adds it server-side. See auth.rs.
+    pub bearer: String,
 }
 
 impl ProxyConfig {
@@ -83,6 +88,7 @@ impl ProxyConfig {
             upstream_addr: SocketAddr::new(ip, bundle.http_port),
             upstream_host: bundle.internal_host.clone(),
             bind_port: LOCAL_PROXY_PORT,
+            bearer: bundle.bearer.clone(),
         })
     }
 
@@ -107,6 +113,7 @@ impl ProxyConfig {
             upstream_addr,
             upstream_host: bundle.internal_host.clone(),
             bind_port: LOCAL_PROXY_PORT,
+            bearer: bundle.bearer.clone(),
         })
     }
 }
@@ -316,6 +323,16 @@ fn rewrite_request_headers(req: &mut Request<Incoming>, cfg: &ProxyConfig, is_up
     let host_value = format!("{}:{}", cfg.upstream_host, cfg.upstream_addr.port());
     if let Ok(hv) = HeaderValue::from_str(&host_value) {
         req.headers_mut().insert(HOST, hv);
+    }
+
+    // Authenticate the local browser as this paired device. The box has no
+    // separate browser login — it accepts `Authorization: Bearer <token>`
+    // (auth.rs). The browser sends no auth of its own, so inject the device
+    // bearer here (don't clobber an Authorization the caller already set).
+    if !cfg.bearer.is_empty() && !req.headers().contains_key(AUTHORIZATION) {
+        if let Ok(hv) = HeaderValue::from_str(&format!("Bearer {}", cfg.bearer)) {
+            req.headers_mut().insert(AUTHORIZATION, hv);
+        }
     }
 
     if is_upgrade {
