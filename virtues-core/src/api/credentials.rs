@@ -109,6 +109,11 @@ pub struct CredentialListItem {
     pub created_at: String,
     /// Number of `app_actions` rows linked to this credential.
     pub action_count: i64,
+    /// Derived initial-sync lifecycle for active credentials (Tier 2 UX):
+    /// `connected` (paired, no run yet) → `backfilling` (runs in flight, no
+    /// success) → `live` (≥1 successful run). `None` for pending/revoked rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync_state: Option<String>,
 }
 
 /// List credentials. Returns pending and revoked rows too so the UI can show
@@ -123,6 +128,8 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
         Option<String>,
         String,
         i64,
+        i64,
+        i64,
     )> = sqlx::query_as(
         r#"SELECT
               c.id,
@@ -132,7 +139,11 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               c.metadata::text,
               c.last_seen_at::text,
               c.created_at::text,
-              (SELECT COUNT(*) FROM app_actions WHERE credential_id = c.id) AS action_count
+              (SELECT COUNT(*) FROM app_actions WHERE credential_id = c.id) AS action_count,
+              (SELECT COUNT(*) FROM app_action_runs r JOIN app_actions a ON a.id = r.action_id
+                 WHERE a.credential_id = c.id) AS total_runs,
+              (SELECT COUNT(*) FROM app_action_runs r JOIN app_actions a ON a.id = r.action_id
+                 WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
            ORDER BY c.created_at DESC"#,
     )
@@ -142,24 +153,40 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
     Ok(rows
         .into_iter()
         .map(
-            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count)| {
+            |(id, source_id, name, status, metadata_raw, last_seen_at, created_at, action_count, total_runs, success_runs)| {
                 let device_info = device_info_from_metadata(Some(&metadata_raw));
                 let auth_type = auth_type_for_source(&source_id).to_string();
+                let is_active = status == "active";
+                let sync_state = is_active.then(|| sync_state_for(total_runs, success_runs).to_string());
                 CredentialListItem {
                     id,
                     provider: source_id,
                     name,
                     auth_type,
-                    is_active: status == "active",
+                    is_active,
                     status,
                     device_info,
                     last_seen_at,
                     created_at,
                     action_count,
+                    sync_state,
                 }
             },
         )
         .collect())
+}
+
+/// Derive the Tier-2 sync lifecycle from an active credential's run history.
+/// Pure for unit-testing: `live` once anything succeeded, `backfilling` while
+/// runs are in flight with no success yet, else `connected`.
+fn sync_state_for(total_runs: i64, success_runs: i64) -> &'static str {
+    if success_runs > 0 {
+        "live"
+    } else if total_runs > 0 {
+        "backfilling"
+    } else {
+        "connected"
+    }
 }
 
 /// Map a source id to the legacy `auth_type` string the frontend expects.
@@ -190,6 +217,17 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
             "credential not found: {credential_id}"
         )));
     }
+    // Tier -1 "doorplate": renaming a device-backed credential marks the device
+    // as deliberately named (drives the `device_named` onboarding step). No-op
+    // for cloud-source credentials (device_id IS NULL → subquery matches nothing).
+    let _ = sqlx::query(
+        "UPDATE app_device SET named_at = now() \
+         WHERE id = (SELECT device_id FROM credentials WHERE id = $1) \
+           AND named_at IS NULL",
+    )
+    .bind(credential_id)
+    .execute(db)
+    .await;
     Ok(())
 }
 
@@ -321,4 +359,19 @@ pub async fn list_pending_pairings(db: &PgPool) -> Result<Vec<PendingPairing>> {
                 .unwrap_or_else(|_| chrono::Utc::now()),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_state_lifecycle() {
+        // No runs yet → just connected.
+        assert_eq!(sync_state_for(0, 0), "connected");
+        // Runs in flight, none succeeded → backfilling.
+        assert_eq!(sync_state_for(3, 0), "backfilling");
+        // Anything succeeded → live (data is flowing).
+        assert_eq!(sync_state_for(5, 1), "live");
+    }
 }

@@ -52,6 +52,15 @@ CREATE TABLE app_device (
                         CHECK (kind IN ('browser', 'mobile_app', 'desktop_app', 'sensor', 'cli')),
     label           TEXT NOT NULL,                                 -- "MacBook · Chrome", "iPhone 15 Pro", "garage ESP32"
     device_info     JSONB NOT NULL DEFAULT '{}'::jsonb,            -- model, os, app_version, user_agent, etc.
+    -- Onboarding "doorplate": set when the owner deliberately renames this
+    -- device (vs the auto-generated `label`). NULL = still auto-labeled.
+    -- Drives the Tier -1 "named" onboarding step (see api/box_status.rs).
+    named_at        TIMESTAMPTZ,
+    -- Initial backfill timing for collector/source devices (Tier 0/1). Set on
+    -- the first action run for this device's credential, and on its first
+    -- success. Drives the "device_collecting" onboarding step.
+    init_sync_started_at   TIMESTAMPTZ,
+    init_sync_completed_at TIMESTAMPTZ,
     paired_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     paired_from_ip  TEXT,                                          -- audit-only
     last_seen_at    TIMESTAMPTZ,

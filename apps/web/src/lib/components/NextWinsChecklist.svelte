@@ -10,6 +10,7 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import RemoteAccessExplainer from "$lib/components/RemoteAccessExplainer.svelte";
+	import CollectorPermissionCard from "$lib/components/onboarding/CollectorPermissionCard.svelte";
 	import { onMount } from "svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
@@ -164,26 +165,36 @@
 			<div class="accordion-inner">
 				<div class="steps-list">
 					{#each setupStateStore.onboarding as step (step.id)}
-						<button
-							class="step-item"
-							class:done={step.done}
-							onclick={() => dispatchStepAction(step)}
-							disabled={step.done}
-						>
-							<div class="step-indicator">
-								<Icon
-									icon={stepIcon(step)}
-									width="18"
-									class={stepIconClass(step)}
+						{#if step.id === "device_collecting" && !step.done}
+							<!-- Tier 0: live collector setup card (drives the local
+							     daemon via the Tauri bridge; polls truth). -->
+							<div class="step-card">
+								<CollectorPermissionCard
+									onComplete={() => setupStateStore.check()}
 								/>
 							</div>
-							<div class="step-content">
-								<div class="step-title">{step.title}</div>
-								{#if step.detail}
-									<div class="step-detail">{step.detail}</div>
-								{/if}
-							</div>
-						</button>
+						{:else}
+							<button
+								class="step-item"
+								class:done={step.done}
+								onclick={() => dispatchStepAction(step)}
+								disabled={step.done}
+							>
+								<div class="step-indicator">
+									<Icon
+										icon={stepIcon(step)}
+										width="18"
+										class={stepIconClass(step)}
+									/>
+								</div>
+								<div class="step-content">
+									<div class="step-title">{step.title}</div>
+									{#if step.detail}
+										<div class="step-detail">{step.detail}</div>
+									{/if}
+								</div>
+							</button>
+						{/if}
 					{/each}
 				</div>
 			</div>

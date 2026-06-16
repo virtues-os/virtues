@@ -34,8 +34,12 @@ CREATE TABLE app_user_profile (
     server_status         TEXT NOT NULL DEFAULT 'provisioning'
                               CHECK (server_status IN ('provisioning', 'migrating', 'ready')),
     timezone              TEXT,
+    -- Onboarding lifecycle: new (just claimed) → onboarding (in the relational
+    -- first-chat / next-wins flow) → active (using the box day-to-day) →
+    -- complete (checklist fully done). Written by chat.rs (first-message flip)
+    -- and tools/executor.rs (name captured → active).
     onboarding_status     TEXT NOT NULL DEFAULT 'new'
-                              CHECK (onboarding_status IN ('new', 'active', 'complete')),
+                              CHECK (onboarding_status IN ('new', 'onboarding', 'active', 'complete')),
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT user_profile_singleton CHECK (id = '00000000-0000-0000-0000-000000000001')

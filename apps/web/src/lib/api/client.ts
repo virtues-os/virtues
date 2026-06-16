@@ -364,6 +364,9 @@ export interface Credential {
 	last_seen_at: string | null;
 	created_at: string;
 	action_count: number;
+	/** Tier-2 init-sync lifecycle for active credentials:
+	 *  'connected' → 'backfilling' → 'live'. Absent for pending/revoked. */
+	sync_state?: 'connected' | 'backfilling' | 'live';
 }
 
 export async function listCredentials(): Promise<Credential[]> {
@@ -424,43 +427,109 @@ export async function listSourceCatalog(): Promise<SourceCatalogItem[]> {
 // Source-connect flows (drive the 5 thin handlers in virtues-core/src/api/source_auth.rs)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface PairInitiateResponse {
-	credential_id: string;
-	qr_payload: string;
+// ─── Unified pairing (`/api/pair/*`) ─────────────────────────────────────────
+// One token mechanism for every device: the owner's authenticated session mints
+// a token, the new device redeems it at `/api/pair/consume`. The phone scans the
+// QR (`/pair#t=<token>`); the Mac app / collector takes the token directly.
+
+export interface PairMintResponse {
+	id: string;
+	token: string;
+	pair_url: string;
+	qr_svg: string;
+	expires_at: string;
+}
+
+/** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
+export async function pairMint(intendedKind?: string): Promise<PairMintResponse> {
+	const res = await fetch(`${API_BASE}/pair/mint`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ intended_kind: intendedKind ?? null })
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `pair_mint failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+/** POST /api/pair/confirm/:id — auth'd. Authorize a pending token. */
+export async function pairConfirm(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/pair/confirm/${encodeURIComponent(id)}`, {
+		method: 'POST'
+	});
+	if (!res.ok) throw new Error(`pair_confirm failed: ${res.statusText}`);
+}
+
+/** POST /api/pair/deny/:id — auth'd. Cancel a pending token (e.g. modal close). */
+export async function pairDeny(id: string): Promise<void> {
+	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(
+		() => {
+			/* benign — token may have already been consumed/expired */
+		}
+	);
+}
+
+export interface PairStatusResponse {
+	status: string; // pending | authorized | consumed | denied | expired
+	consumed_by_device: string | null;
+	consumed_by_label: string | null;
+}
+
+/** GET /api/pair/status/:id — auth'd. Poll for the new device redeeming. */
+export async function pairStatus(id: string): Promise<PairStatusResponse> {
+	const res = await fetch(`${API_BASE}/pair/status/${encodeURIComponent(id)}`);
+	if (!res.ok) throw new Error(`pair_status failed: ${res.statusText}`);
+	return res.json();
+}
+
+export interface ChatImportResponse {
+	status: string;
+	summary: string;
+	run_id: string | null;
 }
 
 /**
- * **DEPRECATED IN v1.** The legacy `/api/pairing/initiate` and
- * `/api/pairing/complete/:credential_id` endpoints were removed when iOS
- * migrated to the unified pair-only flow. Pair iOS / Mac / sensor devices
- * via Settings → Devices → "Add device" instead — that mints a pair token
- * the device redeems against `/api/pair/consume`.
- *
- * These stubs remain so old call sites (DevicePairModal.svelte, the
- * Sources-tab "Pair iOS" button) throw a clear error instead of silently
- * hitting a 404. Delete callers in v1.1 and remove these exports.
+ * POST /api/chat-import/upload — multipart upload of a chat export (Tier 3
+ * one-time import). Parsed + ingested box-side; returns the "Imported N
+ * messages" summary once the run completes.
  */
-const LEGACY_PAIRING_REMOVED =
-	'This pairing flow was removed in v1. Pair the device from Settings → Devices → "Add device".';
-
-export async function pairInitiate(
-	_source_id: string,
-	_name: string
-): Promise<PairInitiateResponse> {
-	throw new Error(LEGACY_PAIRING_REMOVED);
+export async function uploadChatImport(
+	file: File,
+	provider: string
+): Promise<ChatImportResponse> {
+	const form = new FormData();
+	form.append('provider', provider);
+	form.append('file', file);
+	const res = await fetch(`${API_BASE}/chat-import/upload`, {
+		method: 'POST',
+		body: form
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
+	}
+	return res.json();
 }
 
-export interface PairCompleteResponse {
-	credential_id: string;
-	action_ids: Record<string, string>;
+export interface MintCollectorResponse {
+	token: string;
+	expires_at: string;
 }
 
-export async function pairComplete(
-	_credential_id: string,
-	_token: string,
-	_device_info: Record<string, unknown> = {}
-): Promise<PairCompleteResponse> {
-	throw new Error(LEGACY_PAIRING_REMOVED);
+/**
+ * POST /api/pair/mint-collector — auth'd. Mint + self-authorize a token for
+ * installing the local collector on THIS machine (handed to
+ * `installCollector(token)` via the Tauri bridge).
+ */
+export async function mintCollectorToken(): Promise<MintCollectorResponse> {
+	const res = await fetch(`${API_BASE}/pair/mint-collector`, { method: 'POST' });
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `mint_collector failed: ${res.statusText}`);
+	}
+	return res.json();
 }
 
 export interface OauthStartResponse {
@@ -520,48 +589,49 @@ import type {
 } from '$lib/types/device-pairing';
 
 /**
- * Initiate device pairing — wraps the Phase 6+ `/api/pairing/initiate` endpoint.
+ * Initiate device pairing via the unified `/api/pair/mint` flow.
  *
- * The new endpoint returns a `credential_id` + `qr_payload`. We adapt to the
- * `PairingInitResponse` shape (with `source_id` populated from `credential_id`)
- * so the modal that reads this type keeps working without a rewrite.
+ * Returns a `PairingInitResponse` whose `source_id` is the pair-token id (polled
+ * via {@link getPairingStatus}), plus the QR/token redemption payload the new
+ * device scans (`qr_svg` encodes `/pair#t=<token>`) or types (`token`).
  *
- * @param deviceType - Source id (e.g., "ios", "mac"). Becomes the `source_id`
- *   on the credentials row.
- * @param name - Display name for the credential.
+ * @param deviceType - "ios" → `mobile_app`, otherwise `desktop_app`.
+ * @param _name - Display name (the device labels itself at consume time).
  */
 export async function initiatePairing(
 	deviceType: string,
-	name: string
+	_name: string
 ): Promise<PairingInitResponse> {
-	const { credential_id } = await pairInitiate(deviceType, name);
+	const intendedKind = deviceType === 'ios' ? 'mobile_app' : 'desktop_app';
+	const minted = await pairMint(intendedKind);
 	return {
-		source_id: credential_id
+		source_id: minted.id,
+		token: minted.token,
+		qr_svg: minted.qr_svg,
+		pair_url: minted.pair_url
 	};
 }
 
 /**
- * Check pairing status by polling the credential row.
- *
- * The legacy `GET /api/devices/pairing/:source_id` endpoint is gone.
- * We poll the credentials list and look up the row by id.
+ * Poll pairing status by the token id. Maps the unified token lifecycle onto
+ * the modal's `pending | active | revoked` shape: `consumed` → active (the new
+ * device redeemed), `denied`/`expired` → revoked, everything else → pending.
  */
 export async function getPairingStatus(sourceId: string): Promise<PairingStatus> {
-	const list = await listCredentials();
-	const row = list.find((c) => c.id === sourceId);
-	if (!row) {
-		return { status: 'pending' };
-	}
-	if (row.is_active) {
+	const s = await pairStatus(sourceId);
+	if (s.status === 'consumed') {
 		return {
 			status: 'active',
-			device_info: row.device_info ?? {
-				device_id: '',
-				device_name: row.name,
+			device_info: {
+				device_id: s.consumed_by_device ?? '',
+				device_name: s.consumed_by_label ?? '',
 				device_model: '',
 				os_version: ''
 			}
 		};
+	}
+	if (s.status === 'denied' || s.status === 'expired') {
+		return { status: 'revoked' };
 	}
 	return { status: 'pending' };
 }

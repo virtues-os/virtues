@@ -2,8 +2,11 @@
   /setup — the setup wizard (docs/onboarding.md).
 
   Where a freshly-paired browser lands when the box isn't set up yet. Renders
-  the REQUIRED core only — account → name — then hands off to /onboarding
-  (the "next wins" screen) and the dashboard. Progress is read from the
+  the REQUIRED core only — account → name → network — then hands off to the
+  guided stepper (/get-started: device → phone → sources → import), which is
+  skippable and drops the user on the dashboard, where the NextWinsChecklist
+  holds whatever's left. (The old static /onboarding splash was removed.)
+  Progress is read from the
   derived state machine (GET /api/setup/state), so this page is a pure
   renderer: refresh, switch devices, or abandon mid-way and it resumes
   exactly where the box actually is. No wizard-session state anywhere.
@@ -157,7 +160,7 @@
 	}
 
 	async function finish() {
-		await goto("/onboarding", { replaceState: true });
+		await goto("/get-started", { replaceState: true });
 	}
 
 	onMount(() => {
