@@ -29,18 +29,29 @@ impl PairRateLimiter {
     }
 
     /// Record an attempt from `ip_key` and return `true` (allow) or `false`
-    /// (deny — limit exceeded). Purges timestamps older than WINDOW on every
-    /// call so the map doesn't grow unboundedly.
+    /// (deny — limit exceeded).
+    ///
+    /// Before checking, we sweep the WHOLE map: slide each IP's window and drop
+    /// any IP whose window is now empty. This bounds the map by the number of
+    /// IPs *actively* pairing within the last WINDOW — not by every IP ever
+    /// seen — so distinct source IPs coming and going can't grow it without
+    /// limit. The sweep is O(n) but n is tiny (a handful of real pairs).
     pub fn check_and_record(&self, ip_key: &str) -> bool {
         let now = Instant::now();
         let cutoff = now - WINDOW;
 
         let mut map = self.0.lock().unwrap();
+
+        // Slide every window and evict fully-expired IPs.
+        map.retain(|_, attempts| {
+            attempts.retain(|t| *t > cutoff);
+            !attempts.is_empty()
+        });
+
+        // A newly-inserted entry has 0 attempts, so it's never denied here (it
+        // gets a timestamp pushed below); the deny path always has a non-empty
+        // Vec. So `or_default` can't strand an empty entry.
         let attempts = map.entry(ip_key.to_string()).or_default();
-
-        // Slide the window: discard timestamps that have expired.
-        attempts.retain(|t| *t > cutoff);
-
         if attempts.len() >= MAX_ATTEMPTS {
             return false;
         }
@@ -77,5 +88,24 @@ mod tests {
         }
         // Separate IP still has a full budget.
         assert!(lim.check_and_record("10.0.0.2"));
+    }
+
+    #[test]
+    fn map_does_not_retain_empty_entries() {
+        let lim = PairRateLimiter::new();
+        // One attempt creates one live entry.
+        lim.check_and_record("10.0.0.1");
+        assert_eq!(lim.0.lock().unwrap().len(), 1);
+        // Force its timestamps to look expired by rewriting them past the window.
+        {
+            let mut map = lim.0.lock().unwrap();
+            let v = map.get_mut("10.0.0.1").unwrap();
+            *v = vec![Instant::now() - WINDOW - Duration::from_secs(1)];
+        }
+        // A check for a different IP sweeps the expired entry out.
+        lim.check_and_record("10.0.0.2");
+        let map = lim.0.lock().unwrap();
+        assert!(!map.contains_key("10.0.0.1"), "expired IP should be evicted");
+        assert_eq!(map.len(), 1, "only the active IP remains");
     }
 }
