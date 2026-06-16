@@ -17,6 +17,11 @@
           "name": "binaries/virtues-collector",
           "sidecar": true,
           "args": true
+        },
+        {
+          "name": "binaries/virtues-client",
+          "sidecar": true,
+          "args": true
         }
       ]
     },
@@ -29,6 +34,11 @@
           "args": true
         },
         {
+          "name": "binaries/virtues-client",
+          "sidecar": true,
+          "args": true
+        },
+        {
           "name": "open",
           "args": true
         }
@@ -36,6 +46,12 @@
     }
   ],
   "remote": {
-    "urls": ["https://virtues.com/*", "https://*.virtues.com/*", "https://localhost:*/*"]
+    "urls": [
+      "https://virtues.com/*",
+      "https://*.virtues.com/*",
+      "https://localhost:*/*",
+      "http://localhost:*/*",
+      "http://*.virtues:*/*"
+    ]
   }
 }
