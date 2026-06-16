@@ -94,7 +94,7 @@ pub async fn run(path: PathBuf, force: bool) -> Result<(), crate::Error> {
     println!("✓ restore complete.");
     println!("  Next steps:");
     println!("    sudo systemctl start virtues");
-    println!("    sudo -u virtues virtues link");
+    println!("    sudo -u virtues virtues pair");
     Ok(())
 }
 

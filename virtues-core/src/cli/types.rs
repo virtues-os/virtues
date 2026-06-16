@@ -27,20 +27,21 @@ pub enum Commands {
     /// before overwriting.
     Init,
 
-    /// Log in to your box: print a one-time URL + QR to open in any browser
-    /// on your network, then wait until it's opened.
+    /// Pair a device with your box: print a one-time code (+ URL/QR) to enter
+    /// in the desktop app or open in any browser, then wait until it's used.
     ///
     /// Mints a fresh pair token in the DB; no `.env` touching, no prompts.
-    /// Idempotent — run as often as needed. THE one human verb for getting
-    /// into the box (docs/onboarding.md); `link` survives as an alias.
+    /// Idempotent — run as often as needed. THE one human verb for connecting
+    /// a device to the box (docs/onboarding.md). `login` and `link` survive as
+    /// aliases (this used to be `virtues login`).
     ///
     /// Honors `ENVIRONMENT=dev` to print `http://localhost:<VIRTUES_WEB_PORT>/...`
     /// (vite dev server) instead of `http://localhost:8000/...` (the production
     /// HTTP server on the box).
-    #[command(alias = "link")]
-    Login {
-        /// Print the URL and exit immediately instead of waiting for the
-        /// link to be opened (scripts, copy-paste workflows).
+    #[command(alias = "login", alias = "link")]
+    Pair {
+        /// Print the code/URL and exit immediately instead of waiting for it
+        /// to be used (scripts, copy-paste workflows).
         #[arg(long)]
         no_wait: bool,
     },
@@ -202,8 +203,8 @@ pub enum Commands {
     /// magic-link login flow. Pairs with `virtues init`'s [1] Log in
     /// branch — same code path, just standalone for retries.
     ///
-    /// Hidden power-user command: `virtues login` is the box-login verb
-    /// (the pair URL); this is the *account* attach, which the web wizard
+    /// Hidden power-user command: `virtues pair` is the device-pairing verb
+    /// (the pair code/URL); this is the *account* attach, which the web wizard
     /// owns in the normal flow (docs/onboarding.md).
     #[command(name = "account-login", hide = true)]
     AccountLogin,
