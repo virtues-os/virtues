@@ -1051,6 +1051,7 @@ fn render_qr_svg(data: &str) -> String {
 /// nothing to verify.
 #[cfg(target_os = "linux")]
 async fn box_spki_fpr(pool: &PgPool) -> Option<String> {
+    use base64::Engine as _; // brings `.decode()` into scope (Linux-only path)
     let kp = crate::wireguard::reconcile::ensure_server_keypair(pool)
         .await
         .ok()?;
