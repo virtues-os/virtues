@@ -29,11 +29,23 @@ pub struct FoundServer {
 // Pairing state helpers
 // ============================================================================
 
-/// Check whether this machine has a paired bundle in the OS keychain.
+/// Check whether this machine is paired.
+///
+/// Tries the keychain first, then falls back to `~/.virtues/bundle.json`. The
+/// fallback matters because macOS scopes keychain items to the creating binary:
+/// the bundle was written by the `virtues-client` sidecar, so this app binary
+/// often can't read that keychain entry. `pair` also writes the bundle to a
+/// 0600 file readable by any of the user's processes — the reliable signal.
 fn is_paired() -> bool {
-    keyring::Entry::new("virtues-client", "default-box")
+    let keychain_ok = keyring::Entry::new("virtues-client", "default-box")
         .and_then(|e| e.get_password())
-        .is_ok()
+        .is_ok();
+    if keychain_ok {
+        return true;
+    }
+    dirs::home_dir()
+        .map(|h| h.join(".virtues").join("bundle.json").exists())
+        .unwrap_or(false)
 }
 
 /// Build a shell `Command` for virtues-client. Resolution order:
