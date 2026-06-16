@@ -454,6 +454,20 @@ pub async fn consume_handler(
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_token"})))
             .into_response();
     }
+
+    // Per-IP rate limit: 10 attempts per 30-minute window. Defends the 6-char
+    // code space against LAN enumeration.
+    {
+        let ip_key = client_ip(&headers).unwrap_or_else(|| "unknown".to_string());
+        if !crate::middleware::rate_limit::pair_limiter().check_and_record(&ip_key) {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                Json(json!({"error": "too_many_attempts", "retry_after_secs": 1800})),
+            )
+                .into_response();
+        }
+    }
+
     let kind = match body.kind.as_str() {
         "browser" | "mobile_app" | "desktop_app" | "sensor" => body.kind.as_str(),
         _ => {
