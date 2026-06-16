@@ -58,20 +58,19 @@
       margin-bottom: 24px;
     }
 
-    #server-list {
+    #server-input {
       flex: 1;
+      min-width: 0;
       min-height: 36px;
       background: #111113;
       border: 1px solid #2a2a2e;
       border-radius: 8px;
-      padding: 0 12px;
+      padding: 8px 12px;
       color: #e8e8e8;
       font-size: 14px;
-      appearance: none;
-      cursor: pointer;
     }
-
-    #server-list:focus { outline: none; border-color: #5a5a9a; }
+    #server-input:focus { outline: none; border-color: #5a5a9a; }
+    #server-input::placeholder { color: #555; }
 
     #refresh-btn {
       margin-left: 10px;
@@ -136,13 +135,19 @@
 <body>
   <div class="card">
     <h1>Connect to your server</h1>
-    <p class="subtitle">Enter the code shown in your server terminal after running <code style="color:#aaa">virtues link</code>.</p>
+    <p class="subtitle">Enter the code from <code style="color:#aaa">virtues login</code> on your server. On the same Wi-Fi it's found automatically — otherwise type its address (Tailscale IP, LAN IP, or hostname).</p>
 
     <div class="section-label">Server</div>
     <div class="server-row">
-      <select id="server-list">
-        <option value="">Searching…</option>
-      </select>
+      <input
+        id="server-input"
+        list="server-options"
+        placeholder="Searching…"
+        autocomplete="off"
+        spellcheck="false"
+        oninput="updateConnectBtn()"
+      />
+      <datalist id="server-options"></datalist>
       <button id="refresh-btn" onclick="refresh()">↺ Refresh</button>
     </div>
 
@@ -168,9 +173,9 @@
 
     async function refresh() {
       setStatus('Searching…', 'info');
-      const list = document.getElementById('server-list');
-      list.innerHTML = '<option value="">Searching…</option>';
-      updateConnectBtn();
+      const dl = document.getElementById('server-options');
+      const input = document.getElementById('server-input');
+      dl.innerHTML = '';
 
       try {
         servers = await invoke('discover_servers') ?? [];
@@ -178,19 +183,20 @@
         servers = [];
       }
 
-      list.innerHTML = '';
-      if (servers.length === 0) {
-        list.innerHTML = '<option value="">No servers found</option>';
-        setStatus('No servers found on this network. Make sure your server is running and on the same Wi-Fi.', 'error');
-      } else {
-        for (const s of servers) {
-          const opt = document.createElement('option');
-          opt.value = s.origin;
-          opt.textContent = `${s.name}  (${s.origin})`;
-          list.appendChild(opt);
-        }
-        setStatus('', '');
+      for (const s of servers) {
+        const opt = document.createElement('option');
+        opt.value = s.origin;       // e.g. http://adam.local:8000
+        opt.label = s.name;
+        dl.appendChild(opt);
       }
+
+      if (servers.length > 0) {
+        if (!input.value) input.value = servers[0].origin;
+        setStatus(`Found ${servers.length} server${servers.length > 1 ? 's' : ''} nearby.`, 'info');
+      } else {
+        setStatus("None found nearby — type your server's address (its Tailscale or LAN IP, e.g. 100.104.55.76).", 'info');
+      }
+      input.placeholder = 'e.g. 100.104.55.76  or  adam.local';
       updateConnectBtn();
     }
 
@@ -206,19 +212,38 @@
       return document.getElementById('code-input').value.replace(/\s/g, '');
     }
 
-    function selectedServer() {
-      return document.getElementById('server-list').value;
+    // Normalize whatever the user typed/picked into a full origin. Accepts a
+    // bare IP/host ("100.x", "adam.local"), host:port, or a full URL; defaults
+    // the scheme to http:// and the port to 8000 (the box's HTTP port).
+    function normalizeServer(raw) {
+      let s = (raw || '').trim();
+      if (!s) return '';
+      if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
+      try {
+        const u = new URL(s);
+        if (!u.port) u.port = '8000';
+        return u.origin;
+      } catch {
+        return '';
+      }
+    }
+
+    function serverValue() {
+      return document.getElementById('server-input').value;
     }
 
     function updateConnectBtn() {
-      const ready = rawCode().length === 6 && selectedServer();
+      const ready = rawCode().length === 6 && !!normalizeServer(serverValue());
       document.getElementById('connect-btn').disabled = !ready;
     }
 
     async function connect() {
       const code = rawCode();
-      const server = selectedServer();
-      if (!code || !server) return;
+      const server = normalizeServer(serverValue());
+      if (!code || !server) {
+        setStatus('Enter your server address and the 6-character code.', 'error');
+        return;
+      }
 
       const btn = document.getElementById('connect-btn');
       btn.disabled = true;
@@ -227,27 +252,29 @@
 
       try {
         await invoke('pair_with_code', { server, code });
-        setStatus('Paired! Setting up the tunnel…', 'ok');
-
-        // Install the helpers: the user-level proxy + collector install
-        // silently; the WG tunnel runs as root, so macOS will show ONE
-        // password prompt. If the user cancels, we still land them on the app
-        // (they can finish setup later from Settings).
-        btn.textContent = 'Authorizing…';
-        try {
-          await invoke('install_helpers');
-        } catch (e) {
-          console.warn('install_helpers failed or was cancelled:', e);
-        }
-
-        setStatus('Loading your server…', 'ok');
-        // Local virtues-client proxy (see LOCAL_PROXY_PORT). Keep port in sync.
-        setTimeout(() => { window.location.href = 'http://localhost:7117'; }, 800);
       } catch (e) {
-        setStatus(e || 'Pairing failed. Check the code and try again.', 'error');
+        setStatus(e || 'Pairing failed. Check the code and address, then try again.', 'error');
         btn.disabled = false;
         btn.textContent = 'Connect';
+        return;
       }
+
+      // Point the local proxy at the address we just paired against (the
+      // "direct" path — no WireGuard, no admin prompt). Works over Tailscale,
+      // LAN, SSH-forward, or direct IPv6.
+      setStatus('Paired! Starting the local proxy…', 'ok');
+      try {
+        await invoke('install_helpers', { server });
+      } catch (e) {
+        setStatus('Paired, but starting the local proxy failed: ' + e, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Connect';
+        return;
+      }
+
+      setStatus('Loading your server…', 'ok');
+      // Local virtues-client proxy (LOCAL_PROXY_PORT). Keep port in sync.
+      setTimeout(() => { window.location.href = 'http://localhost:7117'; }, 800);
     }
 
     function setStatus(msg, cls) {

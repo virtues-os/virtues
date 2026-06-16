@@ -108,19 +108,24 @@ async fn pair_with_code(
     }
 }
 
-/// Install the networking helpers after pairing: the user-level localhost proxy
-/// (LaunchAgent, silent) and the root WG tunnel + .virtues DNS (LaunchDaemon).
+/// Install the localhost proxy after pairing, pointed at the box address you
+/// just paired against (`server`, e.g. `http://100.104.55.76:8000`).
 ///
-/// The daemon needs root, so macOS shows ONE password prompt via osascript. The
-/// collector (data collection) is deliberately NOT installed here — it pairs as
-/// its own device and needs Full Disk Access / Accessibility grants, so it stays
-/// an explicit opt-in via `install_collector`.
+/// This is the "direct" path: the proxy forwards `localhost:7117` straight to
+/// that address over whatever transport reached it (Tailscale / LAN / SSH-forward
+/// / IPv6). No WireGuard tunnel, no root daemon, no admin prompt — it works
+/// anywhere the box's HTTP port is reachable, which is every case where you were
+/// able to pair. (WireGuard remains in the binary for a future encrypted-LAN
+/// mode; it's just not on the default path.)
+///
+/// The collector (data collection) is NOT installed here — it pairs as its own
+/// device and needs Full Disk Access / Accessibility grants, so it stays an
+/// explicit opt-in via `install_collector`.
 #[tauri::command]
-async fn install_helpers(app: AppHandle) -> Result<(), String> {
-    // 1. User-level proxy LaunchAgent. Runs the bundled sidecar (or an existing
-    //    install) which copies itself to ~/.virtues/bin and loads the agent.
+async fn install_helpers(app: AppHandle, server: String) -> Result<(), String> {
+    let upstream = origin_to_hostport(&server);
     let out = virtues_client_command(&app)?
-        .args(["install"])
+        .args(["install", "--upstream", &upstream])
         .output()
         .await
         .map_err(|e| e.to_string())?;
@@ -130,64 +135,35 @@ async fn install_helpers(app: AppHandle) -> Result<(), String> {
             String::from_utf8_lossy(&out.stderr)
         ));
     }
-
-    // 2. Root daemon (WG tunnel + .virtues DNS) — one admin prompt. We run the
-    //    binary that step 1 just placed at ~/.virtues/bin (absolute path, since
-    //    osascript's root shell has a different $HOME). Single-quote each
-    //    component so usernames with spaces survive the inner /bin/sh.
-    let home = dirs::home_dir().ok_or("no home directory")?;
-    let user = std::env::var("USER").unwrap_or_else(|_| {
-        home.file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    });
-    let client_bin = home.join(".virtues").join("bin").join("virtues-client");
-    let bundle = home.join(".virtues").join("bundle.json");
-    let script = format!(
-        "do shell script \"'{bin}' install-system --user '{user}' --bundle '{bundle}'\" \
-         with administrator privileges",
-        bin = client_bin.display(),
-        user = user,
-        bundle = bundle.display(),
-    );
-    let out = app
-        .shell()
-        .command("osascript")
-        .args(["-e", &script])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        // Most commonly: the user cancelled the password dialog (-128).
-        return Err(format!(
-            "tunnel install (admin): {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
     Ok(())
 }
 
-/// Remove the networking helpers (reverse of [`install_helpers`]). Best-effort.
+/// Remove the localhost proxy LaunchAgent (reverse of [`install_helpers`]).
 #[tauri::command]
 async fn uninstall_helpers(app: AppHandle) -> Result<(), String> {
-    // Root daemon first (one admin prompt), then the user-level agent.
-    let home = dirs::home_dir().ok_or("no home directory")?;
-    let client_bin = home.join(".virtues").join("bin").join("virtues-client");
-    let script = format!(
-        "do shell script \"'{bin}' uninstall-system\" with administrator privileges",
-        bin = client_bin.display(),
-    );
-    let _ = app
-        .shell()
-        .command("osascript")
-        .args(["-e", &script])
-        .output()
-        .await;
     let _ = virtues_client_command(&app)?
         .args(["uninstall"])
         .output()
         .await;
     Ok(())
+}
+
+/// Reduce a paired server origin to the `host:port` the proxy forwards to.
+/// `http://100.104.55.76:8000` -> `100.104.55.76:8000`; `adam.local:8000` stays.
+/// Defaults the port to 8000 (the box's HTTP port) when none is present and the
+/// host isn't a bracketed IPv6 literal.
+fn origin_to_hostport(origin: &str) -> String {
+    let s = origin.trim();
+    let s = s
+        .strip_prefix("http://")
+        .or_else(|| s.strip_prefix("https://"))
+        .unwrap_or(s);
+    let hostport = s.split('/').next().unwrap_or(s).trim_end_matches('/');
+    if hostport.contains(':') || hostport.starts_with('[') {
+        hostport.to_string()
+    } else {
+        format!("{hostport}:8000")
+    }
 }
 
 /// Get collector daemon status by invoking CLI
