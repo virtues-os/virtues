@@ -123,6 +123,21 @@ jobs:
           echo "path=$DMG" >> "$GITHUB_OUTPUT"
           echo "Found DMG: $DMG"
 
+      # Tauri notarizes + staples the .app, but NOT the DMG. A downloaded DMG
+      # that isn't itself notarized triggers Gatekeeper's "Apple cannot check
+      # it" prompt — so notarize + staple the DMG too. notarytool accepts the
+      # DMG because the executables inside are already Developer-ID signed +
+      # hardened; the DMG wrapper needs no separate codesign.
+      - name: Notarize + staple the DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
+
       # Gate: refuse to publish unless the app is Developer ID signed AND the DMG
       # is notarized + stapled. If the APPLE_* secrets are missing, tauri builds
       # unsigned and this fails here — so a misconfigured run never ships an
