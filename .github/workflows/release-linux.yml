@@ -70,6 +70,17 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
+      # Staging tags (v*-staging.*) build the faster `staging` cargo profile
+      # (no LTO, opt-level 2) for quicker turnaround; production v* tags keep
+      # `release`. The profile name == the target/<arch>/<profile>/ output dir.
+      - name: Select cargo profile
+        run: |
+          if [[ "${{ steps.tag.outputs.version }}" == *staging* ]]; then
+            echo "CARGO_PROFILE=staging" >> "$GITHUB_ENV"
+          else
+            echo "CARGO_PROFILE=release" >> "$GITHUB_ENV"
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -86,13 +97,13 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --release -p virtues --bin virtues --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues --bin virtues --target ${{ matrix.target }}
 
       - name: Build virtues-installer binary
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --release -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-installer --bin virtues-installer --target ${{ matrix.target }}
 
       # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
       # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
@@ -102,7 +113,7 @@ jobs:
       - name: Build virtues-client binary (preview, non-fatal)
         continue-on-error: true
         run: |
-          cargo build --release -p virtues-client --bin virtues-client --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
       # virtues-wireguard — the box-side privileged WG reconciler. Ships in
       # the main tarball next to `virtues` so the installer can put it under
@@ -113,7 +124,7 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --release -p virtues-wg --bin virtues-wireguard --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-wg --bin virtues-wireguard --target ${{ matrix.target }}
 
       # Action binaries — the function-runtime actions (ios_*, day_summary_eod,
       # google_*_sync, plaid_*, …) are separate executables the box forks via
@@ -126,7 +137,7 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
         run: |
-          cargo build --release -p virtues-actions --bins --target ${{ matrix.target }}
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-actions --bins --target ${{ matrix.target }}
 
       # llama-server — the engine behind the virtues-embed/-rerank sidecars
       # (one CPU binary per arch; the Jetson CUDA flavor is the separate
@@ -174,10 +185,10 @@ jobs:
         id: tarball
         run: |
           mkdir -p dist staging
-          BIN_PATH="target/${{ matrix.target }}/release/virtues"
-          INSTALLER_PATH="target/${{ matrix.target }}/release/virtues-installer"
-          CLIENT_PATH="target/${{ matrix.target }}/release/virtues-client"
-          WG_PATH="target/${{ matrix.target }}/release/virtues-wireguard"
+          BIN_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues"
+          INSTALLER_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-installer"
+          CLIENT_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-client"
+          WG_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-wireguard"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
           test -x "$WG_PATH"        || (echo "virtues-wireguard not built"   >&2 && exit 1)
@@ -210,7 +221,7 @@ jobs:
           # Stage every action binary. The list comes from cargo metadata so it
           # tracks actions/Cargo.toml's [[bin]] entries automatically (no
           # second list to keep in sync). Built into the same target/ dir above.
-          REL="target/${{ matrix.target }}/release"
+          REL="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}"
           mkdir -p staging/actions-bin
           ACTION_BINS=$(cargo metadata --format-version 1 --no-deps \
             | jq -r '.packages[] | select(.name=="virtues-actions") | .targets[] | select(.kind[]=="bin") | .name')

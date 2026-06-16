@@ -25,6 +25,7 @@ pub enum Commands {
     /// `install.sh` which writes `.env` non-interactively. Kept for niche manual
     /// setups. Safe by default: backs up an existing `.env` to `.env.bak.<ts>`
     /// before overwriting.
+    #[command(hide = true)]
     Init,
 
     /// Pair a device with your box: print a one-time code (+ URL/QR) to enter
@@ -146,6 +147,7 @@ pub enum Commands {
     },
 
     /// Start the HTTP server
+    #[command(hide = true)]
     Server {
         /// Host to bind to. Default `[::]` is dual-stack — it accepts IPv4 AND
         /// IPv6, including the WG tunnel's ULA the pairing bundle advertises.
@@ -159,6 +161,7 @@ pub enum Commands {
     },
 
     /// Seed the database with demo data (people, places, events, etc.)
+    #[command(hide = true)]
     Seed,
 
     /// Show box health: identity (CA / WG keypair / rendezvous), subscription,
@@ -183,10 +186,12 @@ pub enum Commands {
     /// post-stop.
     ///
     /// Never run this by hand. Service-internal hook.
+    #[command(hide = true)]
     ReportCrash,
 
     /// First-boot bringup (non-interactive): run migrations + ensure the box's
     /// identity exists. Idempotent; the appliance runs this headless, DIY too.
+    #[command(hide = true)]
     Bringup,
 
     /// Connect this box to a paid Virtues subscription (device-authorization
@@ -196,7 +201,7 @@ pub enum Commands {
     /// Most users want `virtues init` instead (full first-run wizard: config
     /// + subscribe + migrate). `subscribe` is the lower-level subscribe-only
     /// command for re-subscribing or dev iteration.
-    #[command(alias = "claim")]
+    #[command(alias = "claim", hide = true)]
     Subscribe,
 
     /// Attach this box to an existing Virtues subscription via the
@@ -210,6 +215,7 @@ pub enum Commands {
     AccountLogin,
 
     /// Pre-download ML models (embedding, etc.) for offline/Docker use
+    #[command(hide = true)]
     WarmModels,
 
     /// Report the inference stack's hardware resolution without downloading:
@@ -220,9 +226,11 @@ pub enum Commands {
     Doctor,
 
     /// Compute novelty scores for all days with events
+    #[command(hide = true)]
     ComputeNovelty,
 
     /// Compute autonomic z-scores for all days with avg_hr data
+    #[command(hide = true)]
     ComputeAutonomic,
 
     /// Pair an iOS device manually (dev shortcut — bypasses the QR flow).
@@ -231,6 +239,7 @@ pub enum Commands {
     /// for you to paste into the app's keychain) and fans out the per-device iOS
     /// `app_actions`. The device id is stored only as a label, never as the
     /// bearer.
+    #[command(hide = true)]
     PairIos {
         /// Device label (e.g. the app's install id). Stored as metadata only —
         /// NOT used as the auth token.
@@ -245,6 +254,7 @@ pub enum Commands {
     /// them with the current `VIRTUES_ENCRYPTION_KEY`, and report what happens
     /// for each. Pass an optional bearer token to compare against the
     /// decrypted plaintext.
+    #[command(hide = true)]
     VerifyTokens {
         /// Optional bearer token (raw, no "Bearer " prefix) to match against
         bearer: Option<String>,
@@ -258,6 +268,7 @@ pub enum Commands {
     /// `wiki_events` (clearing existing auto events first; manual events are
     /// preserved). Gaps in the LLM-emitted timeline are backfilled as "Unknown"
     /// to guarantee 00:00–24:00 coverage.
+    #[command(hide = true)]
     DaySummary {
         /// Date to summarize (YYYY-MM-DD). Defaults to today in the user's
         /// profile timezone (or local time if no timezone is set).
@@ -271,6 +282,7 @@ pub enum Commands {
     /// owns clustering. The new actions path (ios_location, etc.) writes
     /// `data_location_point` rows but doesn't chain into place resolution,
     /// so visits don't get created. Use this to manually backfill.
+    #[command(hide = true)]
     ResolveEntities {
         /// Lookback window in hours (default: 24)
         #[arg(long, default_value_t = 24)]

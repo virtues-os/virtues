@@ -31,6 +31,16 @@ repository = "https://github.com/virtues-os/virtues"
 opt-level = 3
 lto = "thin"
 
+# Faster-compiling profile for staging/test builds: drops LTO and eases the
+# optimizer so CI turns around quicker. Runtime is marginally slower than
+# `release` (negligible for this I/O- and network-bound workload), so it's only
+# used for `*-staging.*` tags — production `v*` tags still build `release`.
+# release-linux.yml selects this via `--profile staging` (CARGO_PROFILE env).
+[profile.staging]
+inherits = "release"
+opt-level = 2
+lto = false
+
 [profile.dev]
 opt-level = 0
 
