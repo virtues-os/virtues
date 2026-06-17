@@ -216,6 +216,7 @@ impl AgentLoop {
                         &tls,
                         provider_options,
                         thought_signature,
+                        None, // agent loop: no fixed output cap
                         |event| {
                             let _ = ev_tx.send(event);
                         },

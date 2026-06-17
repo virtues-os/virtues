@@ -413,51 +413,7 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
         .with_context(|| format!("chmod 0700 {}", secrets.display()))?;
     ui::ok(&format!("Data dir ready ({})", cfg.data_dir.display()));
 
-    write_setup_sudoers().await?;
     Ok(())
-}
-
-/// The setup wizard's one privileged seam: the "name your box" step needs
-/// `hostnamectl` (root), but the server runs as `virtues`. Grant EXACTLY the
-/// two commands the rename uses — nothing else — via a dedicated sudoers
-/// fragment. The server calls them with `sudo -n`, so on an install that
-/// predates this rule the wizard step fails fast with a clear message
-/// instead of hanging on a password prompt.
-async fn write_setup_sudoers() -> Result<()> {
-    const PATH: &str = "/etc/sudoers.d/virtues-setup";
-    const RULE: &str = "\
-# Written by virtues-installer. Lets the setup wizard's \"name your box\"
-# step rename the host (the mDNS name follows the hostname). Scoped to
-# exactly these commands; the virtues user has no other sudo rights.
-virtues ALL=(root) NOPASSWD: /usr/bin/hostnamectl set-hostname *
-virtues ALL=(root) NOPASSWD: /usr/bin/systemctl reload-or-restart avahi-daemon
-";
-    fs::write(PATH, RULE).with_context(|| format!("writing {PATH}"))?;
-    // Sudoers fragments must be 0440 or sudo ignores the whole file.
-    fs::set_permissions(PATH, fs::Permissions::from_mode(0o440))
-        .with_context(|| format!("chmod 0440 {PATH}"))?;
-    // Syntax-check; a bad fragment can lock sudo out for everyone. visudo
-    // exits non-zero on parse failure → remove the fragment and fail loudly.
-    let check = Command::new("visudo").args(["-c", "-f", PATH]).output().await;
-    match check {
-        Ok(out) if out.status.success() => {
-            ui::ok("Sudoers rule for box rename (setup wizard)");
-            Ok(())
-        }
-        Ok(out) => {
-            let _ = fs::remove_file(PATH);
-            Err(anyhow!(
-                "sudoers fragment failed visudo check (removed): {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            ))
-        }
-        Err(e) => {
-            // visudo missing entirely — keep the fragment (it's static and
-            // known-good) but say so.
-            ui::warn(&format!("visudo not found ({e}) — installed rename rule unchecked"));
-            Ok(())
-        }
-    }
 }
 
 // ────────────────────────────────────────────────────────────────────────

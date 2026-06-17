@@ -2254,6 +2254,20 @@ pub async fn chat_handler(
     .await
 }
 
+/// POST /api/ai/complete - Lean inline AI completion (live AI cursor)
+pub async fn ai_complete_handler(
+    State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    Json(request): Json<crate::api::ai_complete::AiCompleteRequest>,
+) -> Response {
+    crate::api::ai_complete::ai_complete_handler(
+        axum::extract::State(state.db.pool().clone()),
+        user,
+        Json(request),
+    )
+    .await
+}
+
 /// POST /api/chat/cancel - Cancel an in-progress chat request
 pub async fn cancel_chat_handler(
     State(state): State<AppState>,

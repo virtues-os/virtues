@@ -1,6 +1,33 @@
+<!--
+  ┌─ HEADING CONVENTION (read before editing any # / ## / ### heading) ──────────┐
+  Headings are NOT plain markdown text. GitHub's sanitizer strips CSS, so to get
+  a serif (Times) heading we render each one as a theme-aware SVG image wrapped in
+  a real markdown heading, e.g.:
+
+    ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-foo-dark.svg"><img alt="Foo" src=".github/images/headings/h2-foo-light.svg" height="28"></picture>
+
+  Because the heading's visible content is an image (no text), two things follow:
+    • The GitHub "Outline" sidebar shows blank labels — accepted tradeoff.
+    • GitHub can't auto-generate anchors, so each H2/H3 has an explicit
+      `<a id="github-slug"></a>` on the line ABOVE it to keep deep links working.
+
+  TO ADD OR EDIT A HEADING (do ALL of these, or you'll get a stale image / dead link):
+    1. Edit the heading list in .github/images/headings/gen.py
+       (font sizes: H1=34/h40, H2=24/h28, H3=20/h22; weight 400; light+dark each).
+    2. Run:  python3 .github/images/headings/gen.py   (regenerates the SVGs).
+    3. In this file, update the <picture> block's `alt`, both `srcset`/`src`
+       filenames, and the `<a id>` anchor above it. The `<a id>` must equal the
+       GitHub slug of the heading text (lowercase, punctuation stripped,
+       spaces -> hyphens), so existing #deep-links keep resolving.
+
+  Keep headings short — wide SVGs (>~360px) get scaled down on mobile, breaking
+  the visual size hierarchy. Times is a system font; Linux/Android fall back to
+  their default serif.
+  └──────────────────────────────────────────────────────────────────────────────┘
+-->
 ![Virtues](.github/images/cover3.png)
 
-# Virtues
+# <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h1-virtues-dark.svg"><img alt="Virtues" src=".github/images/headings/h1-virtues-light.svg" height="40"></picture>
 
 A private intelligence that connects your digital life — health, finance, location, conversations — into a coherent, queryable picture of who you are. Self-hosted or cloud.
 
@@ -13,7 +40,8 @@ A private intelligence that connects your digital life — health, finance, loca
 [![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)](https://discord.gg/sSQKzDWqgv)
 
-## What It Does
+<a id="what-it-does"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What It Does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
 
 Virtues replaces a fragmented app ecosystem with a single, unified system:
 
@@ -24,7 +52,8 @@ Virtues replaces a fragmented app ecosystem with a single, unified system:
 
 All of it runs on a single Rust server with a Postgres database and S3 storage. Your data stays on your infrastructure.
 
-## Architecture
+<a id="architecture"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-architecture-dark.svg"><img alt="Architecture" src=".github/images/headings/h2-architecture-light.svg" height="28"></picture>
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -53,7 +82,8 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
-## Data Sources
+<a id="data-sources"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-data-sources-dark.svg"><img alt="Data Sources" src=".github/images/headings/h2-data-sources-light.svg" height="28"></picture>
 
 | Source | Streams | Method |
 |--------|---------|--------|
@@ -67,7 +97,8 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 
 Extensible: add a new source as an action in `actions/<name>/` with a `manifest.toml` — see [`actions/AUTHORING.md`](actions/AUTHORING.md).
 
-## Overview
+<a id="overview"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-overview-dark.svg"><img alt="Overview" src=".github/images/headings/h2-overview-light.svg" height="28"></picture>
 
 **Knowledge Graph** — People, places, organizations, and events extracted from your data. Entity resolution links mentions across sources (the "Sarah" in your calendar is the same one in your contacts).
 
@@ -87,9 +118,11 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 
 **Developer Tools** — SQL console, lake browser, job inspector, sitemap viewer.
 
-## Install (Linux home server)
+<a id="install-linux-home-server"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-install-linux-home-server-dark.svg"><img alt="Install (Linux home server)" src=".github/images/headings/h2-install-linux-home-server-light.svg" height="28"></picture>
 
-### Requirements
+<a id="requirements"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-requirements-dark.svg"><img alt="Requirements" src=".github/images/headings/h3-requirements-light.svg" height="22"></picture>
 
 | | |
 |---|---|
@@ -98,7 +131,8 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 | **Network** | Standard residential ISP. v1 is LAN-first. The web UI is reachable from a browser on the box itself (Chromium on the Jetson → `http://localhost:8000`) or from any machine running the v0.2 desktop daemon (see [Connect from another machine](#connect-from-another-machine-v02-preview) below). Linux client only in v0.2; macOS lands in v0.2.2. |
 | **Mac / Windows** | Not supported as host — Virtues needs root, native Postgres, and full SSD ownership. Use a Linux box. |
 
-### Install in one command
+<a id="install-in-one-command"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-install-in-one-command-dark.svg"><img alt="Install in one command" src=".github/images/headings/h3-install-in-one-command-light.svg" height="22"></picture>
 
 ```bash
 curl -sSL https://get.virtues.com | sudo sh
@@ -134,7 +168,8 @@ After that you're in the web UI on `http://localhost:8000` (run Chromium on the 
 unreachable-box, lost-session, last-device-revoked, Postgres won't start,
 restore from backup, BYO key reset, and more.
 
-## Connect from another machine (v0.2 preview)
+<a id="connect-from-another-machine-v02-preview"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-dark.svg"><img alt="Connect from another machine (v0.2 preview)" src=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-light.svg" height="28"></picture>
 
 The desktop daemon (`virtues-client`) pairs a Linux laptop to your box over
 WireGuard and exposes the box's web UI on `http://localhost:8000` — a Secure
@@ -165,17 +200,20 @@ to the box.
   pair succeeds today, but the tunnel won't reach the box until that lands.
 - Strict-symmetric NAT (mostly enterprise) is not supported; cone NAT works.
 
-## Development
+<a id="development"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-development-dark.svg"><img alt="Development" src=".github/images/headings/h2-development-light.svg" height="28"></picture>
 
 For contributors working on the codebase itself (not for running Virtues in production):
 
-### Prerequisites
+<a id="prerequisites"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-prerequisites-dark.svg"><img alt="Prerequisites" src=".github/images/headings/h3-prerequisites-light.svg" height="22"></picture>
 
 - Rust 1.75+
 - Node.js 18+ and pnpm
 - Docker (for local S3 via MinIO, optional)
 
-### Setup
+<a id="setup"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-setup-dark.svg"><img alt="Setup" src=".github/images/headings/h3-setup-light.svg" height="22"></picture>
 
 ```bash
 git clone https://github.com/virtues-os/virtues
@@ -184,7 +222,8 @@ cp .env.example .env
 # Edit .env with your API keys (see comments in .env.example)
 ```
 
-### Run
+<a id="run"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-run-dark.svg"><img alt="Run" src=".github/images/headings/h3-run-light.svg" height="22"></picture>
 
 ```bash
 # Terminal 1: Start Core server
@@ -199,7 +238,8 @@ cd apps/web && pnpm dev
 
 Access: `http://localhost:8000` (Core serves the built web UI) or `http://localhost:5173` (dev server with hot reload).
 
-### virtues-api (required for AI features)
+<a id="virtues-api-required-for-ai-features"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-virtues-api-required-for-ai-features-dark.svg"><img alt="virtues-api (required for AI features)" src=".github/images/headings/h3-virtues-api-required-for-ai-features-light.svg" height="22"></picture>
 
 ```bash
 # Terminal 3: Start virtues-api sidecar
@@ -208,15 +248,18 @@ cd services/virtues-api && cargo run
 
 virtues-api runs on port 9002. Core connects to it via `VIRTUES_API_URL=http://localhost:9002`. See `.env.example` for required API keys (`AI_GATEWAY_API_KEY`, `VIRTUES_API_INTERNAL_SECRET`).
 
-## Cloud sidecar
+<a id="cloud-sidecar"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-cloud-sidecar-dark.svg"><img alt="Cloud sidecar" src=".github/images/headings/h2-cloud-sidecar-light.svg" height="28"></picture>
 
 **Cloud (managed)**: Virtues Cloud provisions a dedicated, isolated instance for each user — your own server, your own database, your own encryption keys. No shared infrastructure, no pooled data. Managed by [Atlas](https://github.com/virtues-os/atlas), our open-source orchestration layer.
 
-## iOS App
+<a id="ios-app"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-ios-app-dark.svg"><img alt="iOS App" src=".github/images/headings/h2-ios-app-light.svg" height="28"></picture>
 
 The iOS companion app pairs with your box from `/virtues/devices → Add device` (scan the QR with the camera). See [docs/auth-model.md](docs/auth-model.md) for the pairing model. Source: `apps/ios/`.
 
-## Project Structure
+<a id="project-structure"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-project-structure-dark.svg"><img alt="Project Structure" src=".github/images/headings/h2-project-structure-light.svg" height="28"></picture>
 
 ```
 virtues/
@@ -249,7 +292,8 @@ virtues/
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
 
-## Database Schema
+<a id="database-schema"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-database-schema-dark.svg"><img alt="Database Schema" src=".github/images/headings/h2-database-schema-light.svg" height="28"></picture>
 
 | Prefix | Purpose | Examples |
 |--------|---------|----------|
@@ -260,11 +304,13 @@ virtues/
 | `wiki_*` | Entity graph | `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_events` |
 | `narrative_*` | Life narrative | `narrative_telos`, `narrative_acts`, `narrative_chapters` |
 
-## Daily Context & Scoring System
+<a id="daily-context--scoring-system"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-daily-context-scoring-system-dark.svg"><img alt="Daily Context & Scoring System" src=".github/images/headings/h2-daily-context-scoring-system-light.svg" height="28"></picture>
 
 The daily context system transforms raw ontology data into two measurable signals: **how completely a day is observed** (7-dimension coverage) and **how unusual a day is** (chaos/order score). Think of the chaos score as a **VIX for your persona** — a single number that captures the volatility of your daily experience relative to your recent baseline.
 
-### 7-Dimension Context Model
+<a id="7-dimension-context-model"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-7-dimension-context-model-dark.svg"><img alt="7-Dimension Context Model" src=".github/images/headings/h3-7-dimension-context-model-light.svg" height="22"></picture>
 
 Evolved from journalism's W5H framework, expanded to 7 dimensions by splitting "who" into self-awareness and relational resolution:
 
@@ -278,13 +324,15 @@ Evolved from journalism's W5H framework, expanded to 7 dimensions by splitting "
 | **Why** | `why` | Intent & motivation — the rarest dimension, requires rich transcription or content data |
 | **How** | `how` | Physical state — body metrics (sleep, workout, heart rate, HRV, steps) |
 
-### Ontology Weight Matrix
+<a id="ontology-weight-matrix"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-ontology-weight-matrix-dark.svg"><img alt="Ontology Weight Matrix" src=".github/images/headings/h3-ontology-weight-matrix-light.svg" height="22"></picture>
 
 Each of the 17 ontologies carries a 7-dimensional weight vector indicating how much it contributes to each context dimension. Weights follow a strict assignment principle: **0.0 unless the ontology genuinely informs that dimension**.
 
 For example, `health_heart_rate` weights `[0.8, 0.0, 0.0, 0.8, 0.0, 0.0, 0.8]` — it tells you about self-awareness (who), temporal coverage (when), and physical state (how), but nothing about relationships, content, space, or intent. Meanwhile `communication_message` weights `[0.0, 1.0, 0.4, 0.0, 0.0, 0.0, 0.0]` — it's the strongest signal for relational resolution (whom) with modest content (what).
 
-### Coverage Formula
+<a id="coverage-formula"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-coverage-formula-dark.svg"><img alt="Coverage Formula" src=".github/images/headings/h3-coverage-formula-light.svg" height="22"></picture>
 
 For each of the 7 dimensions:
 
@@ -294,7 +342,8 @@ coverage[dim] = sum(weights[dim] for present ontologies) / sum(weights[dim] for 
 
 This produces a 0.0–1.0 score per dimension — the **ContextVector** displayed on each DayPage. A day with health data, location, and messages but no speech or knowledge will show high coverage in who/whom/when/where/how but low coverage in what/why.
 
-### Daily Summary Generation
+<a id="daily-summary-generation"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-daily-summary-generation-dark.svg"><img alt="Daily Summary Generation" src=".github/images/headings/h3-daily-summary-generation-light.svg" height="22"></picture>
 
 When "Generate Summary" is triggered on a DayPage, the system:
 
@@ -306,7 +355,8 @@ When "Generate Summary" is triggered on a DayPage, the system:
 6. Generates per-domain embeddings and computes the chaos/order score
 7. Saves everything (autobiography, context vector, chaos score) to the wiki_days record
 
-### Chaos/Order Scoring
+<a id="chaosorder-scoring"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-chaos-order-scoring-dark.svg"><img alt="Chaos/Order Scoring" src=".github/images/headings/h3-chaos-order-scoring-light.svg" height="22"></picture>
 
 The chaos score measures how **novel** or **routine** a day is compared to your recent 30-day baseline.
 
@@ -324,7 +374,8 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 - **0.0** = Perfectly ordered/routine — every domain looks like your recent average
 - **1.0** = Maximally chaotic/novel — every domain diverges from its centroid
 
-### Domain Groupings
+<a id="domain-groupings"></a>
+### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-domain-groupings-dark.svg"><img alt="Domain Groupings" src=".github/images/headings/h3-domain-groupings-light.svg" height="22"></picture>
 
 | Domain | Ontologies |
 |--------|-----------|
@@ -336,7 +387,8 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 | activity | activity_app_usage, activity_web_browsing |
 | content | content_document, content_conversation, content_bookmark |
 
-## Features
+<a id="features"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-features-dark.svg"><img alt="Features" src=".github/images/headings/h2-features-light.svg" height="28"></picture>
 
 **Spaces & Workspaces** — Arc-browser-style multi-space system. Each space has its own tabs, theme, and accent color. Swipeable sidebar carousel for switching between spaces. Organize your life into contexts — work, health, finance — each with its own look and layout.
 
@@ -372,7 +424,8 @@ The final normalization by coverage is the key insight: **sparse days don't appe
 
 **Feedback & Changelog** — Built-in feedback submission and a changelog view for tracking what's new. Onboarding checklist guides new users through connecting sources, pairing devices, and starting their first chat.
 
-## License
+<a id="license"></a>
+## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-license-dark.svg"><img alt="License" src=".github/images/headings/h2-license-light.svg" height="28"></picture>
 
 Virtues uses a hybrid model:
 

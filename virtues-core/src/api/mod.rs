@@ -2,6 +2,7 @@
 
 pub mod action_events;
 pub mod agents;
+pub mod ai_complete;
 pub mod assistant_profile;
 pub mod audit;
 pub mod auth;

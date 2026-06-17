@@ -67,6 +67,7 @@ pub async fn stream_llm_response<F>(
     tools: &[Value],
     provider_options: Option<Value>,
     thought_signature: Option<String>,
+    max_tokens: Option<u32>,
     mut emit: F,
 ) -> Result<LlmStreamResult, StreamError>
 where
@@ -78,6 +79,10 @@ where
         "messages": messages,
         "stream": true
     });
+
+    if let Some(mt) = max_tokens {
+        body["max_tokens"] = serde_json::json!(mt);
+    }
 
     if !tools.is_empty() {
         body["tools"] = serde_json::json!(tools);

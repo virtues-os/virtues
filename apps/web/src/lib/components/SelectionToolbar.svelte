@@ -30,11 +30,13 @@
 		};
 		/** Called when a format button is clicked */
 		onFormat: (mark: MarkType) => void;
+		/** Called when "Ask AI" is clicked */
+		onAskAi?: () => void;
 		/** Called when toolbar should close */
 		onClose: () => void;
 	}
 
-	let { position, activeMarks, onFormat, onClose }: Props = $props();
+	let { position, activeMarks, onFormat, onAskAi, onClose }: Props = $props();
 
 	let toolbarEl: HTMLDivElement | null = $state(null);
 
@@ -97,6 +99,21 @@
 		aria-label="Text formatting"
 		tabindex="-1"
 	>
+		{#if onAskAi}
+			<button
+				type="button"
+				class="toolbar-btn toolbar-btn-ai"
+				onclick={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					onAskAi?.();
+				}}
+				title="Ask AI"
+			>
+				<Icon icon="ri:sparkling-2-line" width="16" />
+			</button>
+			<span class="toolbar-sep"></span>
+		{/if}
 		{#each buttons as btn}
 			<button
 				type="button"
@@ -124,12 +141,12 @@
 	.selection-toolbar {
 		display: flex;
 		align-items: center;
-		gap: 2px;
-		padding: 4px;
+		gap: 1px;
+		padding: 3px;
 		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: 9px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.13);
 	}
 
 	/* Arrow pointing down (default when placement is top) */
@@ -184,14 +201,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		width: 28px;
+		height: 28px;
 		border: none;
 		background: transparent;
 		border-radius: 6px;
 		cursor: pointer;
 		color: var(--color-foreground-muted);
-		transition: all 0.1s ease;
+		transition:
+			color 0.12s ease,
+			background-color 0.12s ease;
 	}
 
 	.toolbar-btn:hover {
@@ -206,5 +225,16 @@
 
 	.toolbar-btn:hover.active {
 		background: var(--color-primary-subtle);
+	}
+
+	.toolbar-btn-ai {
+		color: var(--color-primary);
+	}
+
+	.toolbar-sep {
+		width: 1px;
+		align-self: stretch;
+		margin: 3px 3px;
+		background: var(--color-border-subtle, var(--color-border));
 	}
 </style>

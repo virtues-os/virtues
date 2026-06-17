@@ -204,8 +204,8 @@ pub async fn verify_inbound(global_v6: Ipv6Addr, api_base: &str) -> InboundResul
     // A short random nonce so we can match the echoed datagram to this request.
     let nonce: String = {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
-        (0..16).map(|_| format!("{:x}", rng.gen_range(0u8..16))).collect()
+        let mut rng = rand::rng();
+        (0..16).map(|_| format!("{:x}", rng.random_range(0u8..16))).collect()
     };
 
     // Pin egress to the global v6 so api observes our v6 (not a happy-eyeballs v4).

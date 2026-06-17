@@ -248,13 +248,15 @@ pub async fn box_health_handler(State(state): State<AppState>) -> impl IntoRespo
 // panel, and `virtues status`. Two distinct lists by design:
 //
 //   * `setup` — the wizard's REQUIRED core. Ends early ("setup ≠ onboarding"):
-//     claimed → account → named → on-network. Everything else is deferred.
+//     claimed → account → on-network. Everything else is deferred. (The box
+//     keeps its default `virtues.local` name — naming is cosmetic and reach is
+//     WireGuard/SPKI + localhost, not mDNS, so there's no rename step.)
 //   * `onboarding` — the dashboard's "next wins" checklist for the first
 //     week: progressive, abandonable, never blocking.
 //
 // Every signal is DERIVED from existing state (vault, credentials, runs,
-// hostname, net_check) — there is intentionally no "wizard progress" table,
-// so the state survives reinstalls, restores, and out-of-band changes.
+// net_check) — there is intentionally no "wizard progress" table, so the
+// state survives reinstalls, restores, and out-of-band changes.
 
 /// One step of setup or onboarding, public-safe (booleans + copy only).
 #[derive(Debug, Clone, Serialize)]
@@ -280,9 +282,6 @@ pub struct SetupState {
     pub onboarding: Vec<SetupStep>,
 }
 
-/// The hostname the installer assigns before the user names the box.
-const DEFAULT_HOSTNAME: &str = "virtues";
-
 /// Compute the setup/onboarding state. Reuses [`compute_status`] for the
 /// vault-backed signals so the wizard, panel, and CLI can never disagree
 /// with `/api/box/status`.
@@ -298,13 +297,6 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             .fetch_one(pool)
             .await
             .unwrap_or(0);
-
-    // Named = the operator replaced the installer's default hostname (the
-    // wizard's "name your box" step sets the Avahi/mDNS name).
-    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
-        .map(|h| h.trim().to_string())
-        .unwrap_or_default();
-    let named = !hostname.is_empty() && hostname != DEFAULT_HOSTNAME;
 
     // First source = an active cloud-source credential (OAuth etc.) — not a
     // paired device's self-credential, not the BYO-key pseudo-source.
@@ -408,8 +400,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // Dev convenience: `make dev` sets VIRTUES_DEV_SKIP_SETUP=1 so the required
     // setup wizard is pre-satisfied and the browser lands straight in the app
-    // shell. Off by default; meaningless (and never set) in prod. Lets a Mac dev
-    // box past the `named` gate, which reads /proc and can't be satisfied here.
+    // shell. Off by default; meaningless (and never set) in prod.
     // Unset it (`make dev VIRTUES_DEV_SKIP_SETUP=`) to walk the real wizard.
     let dev_skip = std::env::var("VIRTUES_DEV_SKIP_SETUP")
         .map(|v| v == "1" || v == "true")
@@ -428,13 +419,6 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             title: "Virtues account",
             done: s.subscription.billing_token,
             detail: None,
-            kind: None,
-        },
-        SetupStep {
-            id: "named",
-            title: "Box named",
-            done: named,
-            detail: named.then(|| format!("{hostname}.local")),
             kind: None,
         },
         SetupStep {
@@ -458,7 +442,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // weather-report the wizard renders but the user can't "do", and it flips
     // false on any transient LAN blip, which previously bounced a fully-set-up
     // user back into /setup.
-    const REQUIRED_SETUP_STEPS: &[&str] = &["claimed", "account", "named"];
+    const REQUIRED_SETUP_STEPS: &[&str] = &["claimed", "account"];
     let setup_complete = setup
         .iter()
         .filter(|s| REQUIRED_SETUP_STEPS.contains(&s.id))

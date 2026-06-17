@@ -9,18 +9,20 @@ import { EditorView } from '@codemirror/view';
 
 export const virtuesTheme = EditorView.theme({
 	'&': {
-		fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif)',
-		fontSize: '1rem',
-		lineHeight: '1.6',
+		fontFamily: 'var(--editor-font-family, var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif))',
+		fontSize: 'var(--editor-font-size, 1rem)',
+		lineHeight: '1.7',
 		color: 'var(--color-foreground)',
 	},
 	'& .cm-content': {
-		fontFamily: 'var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif)',
+		fontFamily: 'var(--editor-font-family, var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif))',
 		caretColor: 'var(--color-primary)',
 		padding: '8px 0',
 	},
 	'& .cm-line': {
-		padding: '0 4px',
+		// Horizontal gutter + a touch of inter-paragraph rhythm (padding, never
+		// margin — margin collapses and creates dead click-zones in CM6).
+		padding: '0.12rem 4px',
 	},
 	'&.cm-focused': {
 		outline: 'none',
@@ -43,14 +45,6 @@ export const virtuesTheme = EditorView.theme({
 	'.cm-gutters': {
 		backgroundColor: 'transparent',
 		borderRight: 'none',
-	},
-	'.cm-lineNumbers .cm-gutterElement': {
-		fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-		fontSize: '0.7rem',
-		color: 'var(--color-foreground-subtle)',
-		padding: '0 8px',
-		minWidth: '2rem',
-		textAlign: 'center',
 	},
 	'.cm-scroller': {
 		overflow: 'visible',

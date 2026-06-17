@@ -16,6 +16,8 @@
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 	import { onMount, onDestroy } from "svelte";
 	import { createAIContext } from "@ai-sdk/svelte";
 	import { initTheme } from "$lib/utils/theme";
@@ -38,6 +40,14 @@
 
 	// Track initialization state
 	let initialized = $state(false);
+
+	// Full-screen focus mode: hide all app chrome (sidebar, tab bars, frame)
+	// by toggling a body class that app.css keys off. Driven by the same
+	// pageDisplay.focusMode that the editor's dim/typewriter mode uses.
+	$effect(() => {
+		document.body.classList.toggle("focus-mode", pageDisplay.focusMode);
+		return () => document.body.classList.remove("focus-mode");
+	});
 
 	// Load chat sessions, workspaces, and initialize theme on mount
 	onMount(async () => {
@@ -301,6 +311,18 @@
 	</main>
 </div>
 
+<!-- Focus mode: floating exit affordance (chrome is hidden via body.focus-mode) -->
+{#if pageDisplay.focusMode}
+	<button
+		class="focus-exit"
+		onclick={() => pageDisplay.toggleFocus()}
+		title="Exit focus mode (⌘⇧F)"
+		aria-label="Exit focus mode"
+	>
+		<Icon icon="ri:fullscreen-exit-line" width="18" />
+	</button>
+{/if}
+
 <!-- Server Provisioning Overlay (shown while virtues-api is hydrating) -->
 {#if data?.serverStatus && data.serverStatus !== "ready"}
 	<ServerProvisioning initialStatus={data.serverStatus} />
@@ -326,5 +348,34 @@
 <style>
 	main {
 		view-transition-name: main-content;
+	}
+
+	/* Focus-mode exit button — appears top-right when chrome is hidden. */
+	.focus-exit {
+		position: fixed;
+		top: 1rem;
+		right: 1rem;
+		z-index: 9999;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: 8px;
+		background: var(--color-surface);
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		opacity: 0.4;
+		transition:
+			opacity 0.18s ease,
+			color 0.15s ease,
+			background-color 0.15s ease;
+	}
+
+	.focus-exit:hover {
+		opacity: 1;
+		color: var(--color-foreground);
+		background: var(--color-surface-elevated);
 	}
 </style>

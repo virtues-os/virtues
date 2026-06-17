@@ -258,7 +258,7 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
     .bind(&req.content)
     .bind(&req.icon)
     .bind(&req.cover_url)
-    .bind(&req.tags)
+    .bind(req.tags.clone().unwrap_or_else(|| serde_json::json!([])))
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;

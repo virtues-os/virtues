@@ -9,6 +9,7 @@
 
 import type { Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import { toast } from 'svelte-sonner';
 
 export type UploadFn = (file: File, onProgress?: (pct: number) => void) => Promise<string>;
 
@@ -103,5 +104,8 @@ function handleUpload(view: EditorView, file: File, pos: number, uploadFn: Uploa
 				});
 			}
 			console.error('Upload failed:', err);
+			toast.error('Upload failed', {
+				description: err instanceof Error ? err.message : String(err),
+			});
 		});
 }

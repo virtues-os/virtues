@@ -730,7 +730,7 @@ pub async fn upload_file(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
         "#,
     )
     .bind(&file_id)
@@ -833,7 +833,7 @@ pub async fn upload_system_file(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, mime_type, size_bytes, parent_id, is_folder, sha256_hash)
-        VALUES ($1, $2, $3, $4, $5, $6, 0, $7)
+        VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
         "#,
     )
     .bind(&file_id)
@@ -898,7 +898,7 @@ async fn get_or_create_system_folder_record(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
-        VALUES ($1, $2, $3, 0, $4, 1)
+        VALUES ($1, $2, $3, 0, $4, TRUE)
         ON CONFLICT (path) DO NOTHING
         "#,
     )
@@ -1519,7 +1519,7 @@ pub async fn create_folder(
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
-        VALUES ($1, $2, $3, 0, $4, 1)
+        VALUES ($1, $2, $3, 0, $4, TRUE)
         "#,
     )
     .bind(&folder_id)
@@ -1733,7 +1733,7 @@ async fn get_or_create_folder_record(pool: &PgPool, path: &str) -> Result<Option
     sqlx::query(
         r#"
         INSERT INTO app_drive_files (id, path, filename, size_bytes, parent_id, is_folder)
-        VALUES ($1, $2, $3, 0, $4, 1)
+        VALUES ($1, $2, $3, 0, $4, TRUE)
         ON CONFLICT (path) DO NOTHING
         "#,
     )
