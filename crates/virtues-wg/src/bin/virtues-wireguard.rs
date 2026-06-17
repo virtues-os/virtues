@@ -56,20 +56,23 @@ async fn main() -> anyhow::Result<()> {
 
         // Wait for a reconcile notification OR the backstop tick, whichever
         // comes first. A recv error means the LISTEN connection dropped — fall
-        // back to pure polling so we never wedge.
-        match listener.as_mut() {
+        // back to pure polling so we never wedge. The match returns a bool so
+        // the `&mut listener` borrow ends before we (maybe) reassign `listener`.
+        let listen_failed = match listener.as_mut() {
             Some(l) => {
                 tokio::select! {
-                    res = l.recv() => {
-                        if let Err(e) = res {
-                            eprintln!("[virtues-wireguard] LISTEN recv error ({e:#}); polling only");
-                            listener = None;
-                        }
-                    }
-                    _ = tokio::time::sleep(POLL_INTERVAL) => {}
+                    res = l.recv() => res.is_err(),
+                    _ = tokio::time::sleep(POLL_INTERVAL) => false,
                 }
             }
-            None => tokio::time::sleep(POLL_INTERVAL).await,
+            None => {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                false
+            }
+        };
+        if listen_failed {
+            eprintln!("[virtues-wireguard] LISTEN recv error; falling back to polling only");
+            listener = None;
         }
     }
 }
