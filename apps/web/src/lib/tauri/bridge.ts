@@ -28,58 +28,6 @@ export interface CollectorStatus {
 }
 
 // ============================================================================
-// Domain / Auth
-// ============================================================================
-
-/**
- * Get the stored user domain (e.g., "adam" for adam.virtues.com)
- */
-export async function getUserDomain(): Promise<string | null> {
-	const invoke = await getInvoke();
-	if (!invoke) return null;
-
-	try {
-		return await invoke<string | null>('get_user_domain');
-	} catch (e) {
-		console.error('[Tauri] Failed to get user domain:', e);
-		return null;
-	}
-}
-
-/**
- * Set the user's domain after authentication
- * This will also navigate the WebView to the user's instance
- */
-export async function setUserDomain(domain: string): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
-
-	try {
-		await invoke('set_user_domain', { domain });
-		return true;
-	} catch (e) {
-		console.error('[Tauri] Failed to set user domain:', e);
-		return false;
-	}
-}
-
-/**
- * Clear stored domain (logout)
- */
-export async function clearUserDomain(): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
-
-	try {
-		await invoke('clear_user_domain');
-		return true;
-	} catch (e) {
-		console.error('[Tauri] Failed to clear user domain:', e);
-		return false;
-	}
-}
-
-// ============================================================================
 // Collector Daemon
 // ============================================================================
 
@@ -121,16 +69,22 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
  * Install the collector daemon as a LaunchAgent
  * This copies the binary to ~/.virtues/bin and creates a LaunchAgent plist
  */
-export async function installCollector(token: string): Promise<boolean> {
+export async function installCollector(token: string): Promise<void> {
 	const invoke = await getInvoke();
-	if (!invoke) return false;
+	if (!invoke) {
+		throw new Error("Desktop bridge unavailable — open this in the Virtues app, not a browser.");
+	}
 
 	try {
 		await invoke('install_collector', { token });
-		return true;
 	} catch (e) {
+		// The Tauri command returns the collector's real stderr as the error
+		// string (and "program not found" when the sidecar isn't bundled).
+		// Surface it instead of collapsing every cause into a bare `false` —
+		// "The collector failed to install" with no detail was undiagnosable.
 		console.error('[Tauri] Failed to install collector:', e);
-		return false;
+		const msg = e instanceof Error ? e.message : String(e);
+		throw new Error(msg?.trim() || "The collector failed to install.");
 	}
 }
 

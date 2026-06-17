@@ -25,6 +25,21 @@ use virtues_protocol::PairingBundle;
 use crate::keychain;
 use virtues_tunnel::generate_keypair;
 
+/// The box's SPKI fingerprint (`sha256-<base64>`) derived from the WG server
+/// public key in the bundle — the value compared against the out-of-band QR
+/// fingerprint and the TOFU pin.
+fn bundle_spki(bundle: &PairingBundle) -> Result<String> {
+    use base64::Engine as _;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(bundle.wg.server_public_key.trim())
+        .context("decode bundle server_public_key")?;
+    let arr: [u8; 32] = raw
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("bundle server_public_key is not 32 bytes"))?;
+    Ok(virtues_protocol::spki_fingerprint(&arr))
+}
+
 /// Body the box's `/api/pair/consume` endpoint accepts. The shape is fixed by
 /// `virtues-core::api::pair::ConsumeRequest` — keep these field names in sync.
 #[derive(Debug, Serialize)]
@@ -59,7 +74,7 @@ struct ConsumeResponse {
 }
 
 pub async fn run(pair_url: &str) -> Result<()> {
-    let (origin, token) = parse_pair_url(pair_url)?;
+    let (origin, token, fpr) = parse_pair_url(pair_url)?;
 
     if keychain::load_bundle()?.is_some() {
         eprintln!("warning: this machine is already paired. Pairing again will");
@@ -68,7 +83,7 @@ pub async fn run(pair_url: &str) -> Result<()> {
     }
 
     eprintln!("pairing with {origin} …");
-    consume(origin, token).await
+    consume(origin, token, fpr).await
 }
 
 /// Pair using a short 6-character display code (e.g. "ABC DEF") instead of a
@@ -86,10 +101,12 @@ pub async fn run_with_code(server_origin: &str, code: &str) -> Result<()> {
     }
 
     eprintln!("pairing with {origin} using code {code} …");
-    consume(origin, token).await
+    // A bare display code carries no out-of-band fingerprint, so verification
+    // falls back to TOFU (pin first-seen, verify after) — same as iOS.
+    consume(origin, token, None).await
 }
 
-async fn consume(origin: String, token: String) -> Result<()> {
+async fn consume(origin: String, token: String, expected_fpr: Option<String>) -> Result<()> {
     let keypair = generate_keypair();
     let wg_public_b64 = keypair.public_key_b64.clone();
 
@@ -133,12 +150,42 @@ async fn consume(origin: String, token: String) -> Result<()> {
         )
     })?;
 
+    // ── SPKI verification (mirror iOS `verifyAndStoreBundle`) ──────────────
+    // The bundle's WG server key arrived over spoofable HTTP; the WG Noise
+    // handshake only proves we reached *whoever owns that key*. So before we
+    // trust it: (1) if the QR carried an out-of-band fingerprint, the key must
+    // hash to it; (2) TOFU — the key must match the one pinned at first pair.
+    // Either mismatch aborts pairing (a different box, or a MITM) — we never
+    // silently re-pin a changed identity.
+    let actual_fpr = bundle_spki(&bundle)?;
+    if let Some(expected) = expected_fpr.as_deref() {
+        if actual_fpr != expected {
+            bail!(
+                "SPKI fingerprint mismatch — the box's key does not match the \
+                 pairing code. Someone may be intercepting the connection.\n  \
+                 expected: {expected}\n  got:      {actual_fpr}"
+            );
+        }
+    }
+    if let Some(pinned) = keychain::load_server_pin()? {
+        if pinned != actual_fpr {
+            bail!(
+                "the box's identity key changed since this device first paired.\n  \
+                 pinned: {pinned}\n  now:    {actual_fpr}\n\
+                 If you reinstalled the box, run `virtues-client revoke` first; \
+                 otherwise this may be an attack."
+            );
+        }
+    }
+
     // Persist private key BEFORE the bundle. If the bundle write fails we want
     // a leftover private key in the keychain (harmless garbage we'll overwrite
     // on retry) — we do NOT want a stored bundle that references a private key
     // we threw away.
     keychain::save_wg_private(&keypair.private_key_b64)?;
     keychain::save_bundle(&bundle)?;
+    // Pin the verified identity for TOFU on the next pair/reconnect.
+    keychain::save_server_pin(&actual_fpr)?;
 
     // Save the credential ID — what revoke() sends to DELETE
     // /api/credentials/:id (a different id space from device_id).
@@ -207,7 +254,7 @@ fn write_daemon_bundle(bundle: &PairingBundle) -> Result<()> {
 ///
 /// The token lives in the URL fragment so the browser-side JS can read it
 /// without ever sending it to a third-party referer. We parse it the same way.
-fn parse_pair_url(s: &str) -> Result<(String, String)> {
+fn parse_pair_url(s: &str) -> Result<(String, String, Option<String>)> {
     let u = Url::parse(s).context("invalid pair URL")?;
 
     let origin = match (u.scheme(), u.host_str(), u.port_or_known_default()) {
@@ -232,7 +279,18 @@ fn parse_pair_url(s: &str) -> Result<(String, String)> {
         bail!("pair URL token is empty");
     }
 
-    Ok((origin, token))
+    // The box's SPKI fingerprint, embedded out-of-band in the QR so we can
+    // verify the WG server key in the (HTTP-delivered, spoofable) bundle wasn't
+    // substituted by a LAN MITM. Taken verbatim — it's `sha256-<base64>`, which
+    // can contain `+`/`/`; percent-decoding would corrupt it. `f` is an alias
+    // the iOS scanner also accepts. Optional (dev/pre-fpr boxes omit it).
+    let fpr = params
+        .get("fpr")
+        .or_else(|| params.get("f"))
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+
+    Ok((origin, token, fpr))
 }
 
 /// Best-effort machine hostname for the Devices page label.
@@ -280,18 +338,30 @@ mod tests {
 
     #[test]
     fn parses_localhost_url() {
-        let (origin, token) =
+        let (origin, token, fpr) =
             parse_pair_url("http://localhost:8000/pair#t=abc123&ep=foo").unwrap();
         assert_eq!(origin, "http://localhost:8000");
         assert_eq!(token, "abc123");
+        assert_eq!(fpr, None);
     }
 
     #[test]
     fn parses_ip_literal_url() {
-        let (origin, token) =
+        let (origin, token, fpr) =
             parse_pair_url("http://10.0.0.5:8000/pair#t=xyz").unwrap();
         assert_eq!(origin, "http://10.0.0.5:8000");
         assert_eq!(token, "xyz");
+        assert_eq!(fpr, None);
+    }
+
+    #[test]
+    fn extracts_fpr_verbatim() {
+        // The fingerprint is base64 and may contain `+`/`/`; it must come back
+        // exactly as embedded (no percent-decoding).
+        let (_, token, fpr) =
+            parse_pair_url("http://localhost:8000/pair#t=abc&fpr=sha256-AbC+d/E").unwrap();
+        assert_eq!(token, "abc");
+        assert_eq!(fpr.as_deref(), Some("sha256-AbC+d/E"));
     }
 
     #[test]
@@ -314,7 +384,7 @@ mod tests {
 
     #[test]
     fn handles_https() {
-        let (origin, _) =
+        let (origin, _, _) =
             parse_pair_url("https://example.com/pair#t=abc").unwrap();
         assert_eq!(origin, "https://example.com:443");
     }

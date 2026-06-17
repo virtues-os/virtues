@@ -327,6 +327,30 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
+    // A paired phone, specifically (kind = 'mobile_app'). Distinct from
+    // `first_device`, which counts ANY paired collector (incl. the Mac) — the
+    // onboarding "Add your phone" step must not light up just because the Mac
+    // collector paired.
+    let first_phone: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM app_device \
+         WHERE kind = 'mobile_app' AND revoked_at IS NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+
+    // Chat history imported = the one-time chat_import action has at least one
+    // successful run. Server-backed (not a client-local flag) so skipping it is
+    // recoverable from the dashboard backlog and survives a refresh. The action
+    // row's id is `action_chat_import` (see server::api::chat_import_upload).
+    let chat_imported: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+         WHERE action_id = 'action_chat_import' AND status = 'success')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
     // First sync = any action run has ever succeeded (data actually landed).
     let first_sync: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM app_action_runs WHERE status = 'success'",
@@ -382,7 +406,16 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(false);
 
-    let setup = vec![
+    // Dev convenience: `make dev` sets VIRTUES_DEV_SKIP_SETUP=1 so the required
+    // setup wizard is pre-satisfied and the browser lands straight in the app
+    // shell. Off by default; meaningless (and never set) in prod. Lets a Mac dev
+    // box past the `named` gate, which reads /proc and can't be satisfied here.
+    // Unset it (`make dev VIRTUES_DEV_SKIP_SETUP=`) to walk the real wizard.
+    let dev_skip = std::env::var("VIRTUES_DEV_SKIP_SETUP")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
+    let mut setup = vec![
         SetupStep {
             id: "claimed",
             title: "Box claimed",
@@ -412,7 +445,24 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             kind: None,
         },
     ];
-    let setup_complete = setup.iter().all(|s| s.done);
+    if dev_skip {
+        for step in &mut setup {
+            step.done = true;
+        }
+    }
+    // `setup_complete` gates the redirect into the app shell, so it must reflect
+    // only the user-completable core. Positive allow-list (not a deny-list) so a
+    // newly-added step is non-gating by default — you opt a step INTO blocking
+    // the gate, never accidentally out of it. `network` ("on your network" =
+    // `primary_ip().is_some()`) is deliberately absent: it's an informational
+    // weather-report the wizard renders but the user can't "do", and it flips
+    // false on any transient LAN blip, which previously bounced a fully-set-up
+    // user back into /setup.
+    const REQUIRED_SETUP_STEPS: &[&str] = &["claimed", "account", "named"];
+    let setup_complete = setup
+        .iter()
+        .filter(|s| REQUIRED_SETUP_STEPS.contains(&s.id))
+        .all(|s| s.done);
 
     let onboarding = vec![
         SetupStep {
@@ -447,6 +497,20 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             id: "first_device",
             title: "Pair a device",
             done: first_device > 0,
+            detail: None,
+            kind: None,
+        },
+        SetupStep {
+            id: "first_phone",
+            title: "Add your phone",
+            done: first_phone > 0,
+            detail: None,
+            kind: None,
+        },
+        SetupStep {
+            id: "chat_imported",
+            title: "Bring your chat history",
+            done: chat_imported,
             detail: None,
             kind: None,
         },

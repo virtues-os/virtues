@@ -14,7 +14,7 @@
 //! App-side pieces that need core's deps stay here: `pairing` (assembly) and
 //! `publisher` (rendezvous PUT via `BearerClient`).
 
-pub use virtues_wg::{box_secrets, endpoint, peers, ula};
+pub use virtues_wg::{box_secrets, endpoint, peers, signal, ula};
 
 #[cfg(target_os = "linux")]
 pub use virtues_wg::{manager, reconcile};

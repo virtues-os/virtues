@@ -5,13 +5,15 @@
 //! long-lived secret; the redeeming device generates its own keypair (for
 //! WG-capable devices) and submits the pubkey when consuming.
 //!
-//! Mint paths
-//!   - CLI (`virtues link`): minted on the box itself; status starts
-//!     `authorized` because physical access proves intent. Used for first-pair
-//!     and recovery.
-//!   - Web ("+ Add Device" from a paired browser): status starts `pending`;
-//!     the minting device must POST `/api/pair/confirm/:id` before the new
-//!     device can redeem. Defeats shoulder-surf-the-QR attacks.
+//! Mint paths — one model: an authenticated mint is `authorized`.
+//!   - CLI (`virtues pair`): minted on the box itself; trusted by physical
+//!     access. Used for first-pair and recovery.
+//!   - Web ("+ Add Device" from a paired browser): minted by the
+//!     already-authenticated owner, so it's authorized in the same call (same
+//!     justification as the collector). The old `pending` → `/confirm`
+//!     round-trip was friction with no security gain for a QR the owner scans
+//!     on their own screen, so it was removed. Cancel an outstanding token via
+//!     `POST /api/pair/deny/:id` (the modal fires it on close).
 //!
 //! Consume path (`POST /api/pair/consume`)
 //!   - Accepts `{token, kind, label, device_info, wg_public_key?}`.
@@ -45,10 +47,6 @@ use crate::middleware::auth::{AuthUser, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME
 use crate::middleware::{client_ip, is_secure_environment, rate_limit_ip, OWNER_USER_ID};
 
 // ─── Constants ──────────────────────────────────────────────────────────────
-
-/// Window during which a `pending` web-minted token can be confirmed by the
-/// minting device. After this elapses the row is `expired`.
-const PENDING_CONFIRM_TTL_MIN: i64 = 10;
 
 /// Window during which an `authorized` token can be consumed.
 const AUTHORIZED_REDEEM_TTL_MIN: i64 = 5;
@@ -122,9 +120,14 @@ pub async fn mint_pair_token(
         &[&token_hash[..16]],
     );
 
+    // One model: an authenticated mint is authorized. The CLI mint is trusted by
+    // physical access to the box; a web mint is trusted because the caller is the
+    // already-authenticated owner (same justification as mint-collector). The old
+    // web `pending` → `/confirm` round-trip added friction with no security gain
+    // for a QR the owner scans on their own screen, so it's collapsed away.
     let (status, minted_via, ttl_min) = match minted_by_device {
         None => ("authorized", "cli", CLI_REDEEM_TTL_MIN),
-        Some(_) => ("pending", "web", PENDING_CONFIRM_TTL_MIN),
+        Some(_) => ("authorized", "web", AUTHORIZED_REDEEM_TTL_MIN),
     };
     let expires_at = Utc::now() + Duration::minutes(ttl_min);
     let authorized_at = if status == "authorized" { Some(Utc::now()) } else { None };
@@ -198,8 +201,9 @@ pub struct MintResponse {
 }
 
 /// `POST /api/pair/mint` — auth'd. Paired user creates a token to add a new
-/// device. Status starts `pending` and the minting device must call
-/// `/api/pair/confirm/:id` to authorize.
+/// device. The token is minted `authorized` (the caller is the authenticated
+/// owner), so the QR is immediately redeemable; closing the modal cancels it
+/// via `/api/pair/deny/:id`.
 pub async fn mint_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
@@ -267,6 +271,9 @@ pub async fn mint_collector_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
 ) -> impl IntoResponse {
+    // `mint_pair_token` now mints authenticated tokens as `authorized` directly
+    // (one model — see its body), so the collector token is immediately
+    // redeemable with no separate self-authorize step.
     let minted = match mint_pair_token(&pool, Some(&user.device_id), Some("desktop_app")).await {
         Ok(m) => m,
         Err(e) => {
@@ -278,33 +285,6 @@ pub async fn mint_collector_handler(
                 .into_response();
         }
     };
-    // Self-authorize (same-host owner; no second-device confirm). Mirrors the
-    // confirm_handler transition but folded in for the local-install case.
-    let authorized = sqlx::query(
-        "UPDATE app_pair_token \
-         SET status = 'authorized', authorized_at = now(), \
-             expires_at = now() + make_interval(mins => $3::int) \
-         WHERE id = $1 \
-           AND minted_by_device = $2 \
-           AND minted_via = 'web' \
-           AND status = 'pending'",
-    )
-    .bind(&minted.id)
-    .bind(&user.device_id)
-    .bind(AUTHORIZED_REDEEM_TTL_MIN as i32)
-    .execute(&pool)
-    .await;
-    match authorized {
-        Ok(r) if r.rows_affected() == 1 => {}
-        _ => {
-            tracing::warn!("collector token self-authorize failed: {}", minted.id);
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "authorize_failed"})),
-            )
-                .into_response();
-        }
-    }
     let _ = log_event(
         &pool,
         Some(&user.device_id),
@@ -368,65 +348,12 @@ pub async fn status_handler(
     }
 }
 
-/// `POST /api/pair/confirm/:id` — auth'd. The minting device approves a
-/// pending pair, transitioning the token to `authorized`. Web-minted tokens
-/// cannot be consumed before this fires.
-pub async fn confirm_handler(
-    State(pool): State<PgPool>,
-    user: AuthUser,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    // `minted_via = 'web'` is defense-in-depth: today CLI mints land directly
-    // in `authorized`, so the `status = 'pending'` filter already excludes
-    // them, but if that ever changes we don't want a CLI-origin token to be
-    // re-confirmable by a paired browser session.
-    let result = sqlx::query(
-        "UPDATE app_pair_token \
-         SET status = 'authorized', authorized_at = now(), \
-             expires_at = now() + make_interval(mins => $3::int) \
-         WHERE id = $1 \
-           AND minted_by_device = $2 \
-           AND minted_via = 'web' \
-           AND status = 'pending' \
-           AND expires_at > now()",
-    )
-    .bind(&id)
-    .bind(&user.device_id)
-    .bind(AUTHORIZED_REDEEM_TTL_MIN as i32)
-    .execute(&pool)
-    .await;
-
-    match result {
-        Ok(r) if r.rows_affected() == 1 => {
-            let _ = log_event(
-                &pool,
-                Some(&user.device_id),
-                "pair_token_authorized",
-                json!({"token_id": &id}),
-                None,
-                None,
-            )
-            .await;
-            (StatusCode::OK, Json(json!({"ok": true}))).into_response()
-        }
-        Ok(_) => (
-            StatusCode::CONFLICT,
-            Json(json!({"error": "not_pending"})),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::warn!("pair confirm db error: {e:#}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "internal"})),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// `POST /api/pair/deny/:id` — auth'd. The minting device explicitly denies
-/// a pending pair (e.g. "this wasn't me"). Transitions to `denied`.
+/// `POST /api/pair/deny/:id` — auth'd. The minting device cancels an
+/// outstanding (unconsumed) pair token — e.g. the user closes the Add-Device
+/// modal before a device scanned the QR. Tokens are minted `authorized` now
+/// (the `pending`/`confirm` step was collapsed away), so this cancels an
+/// `authorized` token; `pending` is kept in the filter for forward-safety. A
+/// no-op once the token has been consumed/expired.
 pub async fn deny_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
@@ -435,7 +362,8 @@ pub async fn deny_handler(
     let _ = sqlx::query(
         "UPDATE app_pair_token \
          SET status = 'denied' \
-         WHERE id = $1 AND minted_by_device = $2 AND status = 'pending'",
+         WHERE id = $1 AND minted_by_device = $2 \
+           AND status IN ('pending', 'authorized')",
     )
     .bind(&id)
     .bind(&user.device_id)
@@ -905,9 +833,10 @@ async fn assemble_action_fanout(
 
 /// Assemble the WG provisioning bundle on Linux; no-op on the macOS dev
 /// host (the WG engine is Linux-only). When the device supplied a
-/// `wg_public_key`, the box installs them as a peer and returns the bundle
-/// of (server pubkey, allowed IPs, endpoint, CA root, rendezvous capability)
-/// the device needs to dial the tunnel later.
+/// `wg_public_key`, the box records them as a peer in the durable store and
+/// returns the bundle of (server pubkey, allowed IPs, endpoint, rendezvous
+/// capability) the device needs to dial the tunnel later. (No CA — trust is
+/// SPKI pinning over the WG Noise handshake.)
 #[cfg(target_os = "linux")]
 async fn assemble_wg_bundle(
     pool: &PgPool,
@@ -915,10 +844,18 @@ async fn assemble_wg_bundle(
     bearer: &str,
     pubkey: &str,
 ) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
-    crate::wireguard::pairing::assemble_bundle(pool, credential_id, bearer, pubkey)
+    let bundle = crate::wireguard::pairing::assemble_bundle(pool, credential_id, bearer, pubkey)
         .await
-        .map(Some)
-        .map_err(|e| crate::Error::Other(format!("assemble_bundle: {e}")))
+        .map_err(|e| crate::Error::Other(format!("assemble_bundle: {e}")))?;
+    // The peer is now in the durable store but not yet in the kernel `wg0`.
+    // Nudge the privileged daemon to reconcile NOW so the device can complete
+    // its WG handshake immediately instead of racing the daemon's backstop
+    // poll (the desktop client only waits ~6s). Best-effort: the poll catches
+    // up regardless.
+    if let Err(e) = crate::wireguard::signal::notify_reconcile(pool).await {
+        tracing::warn!(error = %e, "wg reconcile notify failed (poll backstop will catch up)");
+    }
+    Ok(Some(bundle))
 }
 
 #[cfg(not(target_os = "linux"))]

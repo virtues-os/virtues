@@ -276,6 +276,14 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
         .execute(db)
         .await?;
 
+    // If this credential carried a WG peer it's now inactive; nudge the daemon
+    // to reconcile so transport is cut in ~1s (its active-only rebuild drops
+    // the peer) rather than waiting for the backstop poll. Idempotent/harmless
+    // when the credential had no peer.
+    if let Err(e) = crate::wireguard::signal::notify_reconcile(db).await {
+        tracing::warn!(error = %e, "wg reconcile notify on credential revoke failed");
+    }
+
     Ok(())
 }
 

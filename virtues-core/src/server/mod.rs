@@ -249,7 +249,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
         .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
         .route("/api/pair/status/:id",    get(crate::api::pair::status_handler))
-        .route("/api/pair/confirm/:id",   post(crate::api::pair::confirm_handler))
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
         // ─── Devices: unified list + revoke ───────────────────────────
         .route("/api/devices",            get(crate::api::devices::list_handler))
