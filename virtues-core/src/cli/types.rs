@@ -144,6 +144,12 @@ pub enum Commands {
         /// Pin to a specific tag (e.g. `v0.1.3`). Defaults to `latest`.
         #[arg(long)]
         version: Option<String>,
+
+        /// Track the staging channel: upgrade to the newest *prerelease* instead
+        /// of the latest stable. (Once staging tags are marked prerelease, the
+        /// default `latest` follows stable; `--pre` opts into staging.)
+        #[arg(long)]
+        pre: bool,
     },
 
     /// Start the HTTP server
