@@ -1,27 +1,32 @@
 <!--
-  /setup — the setup wizard (docs/onboarding.md).
+  /setup — THE single onboarding flow. One page, one progress rail, every step:
 
-  Where a freshly-paired browser lands when the box isn't set up yet. Renders
-  the REQUIRED core only — account → name → network — then hands off to the
-  guided stepper (/get-started: device → phone → sources → import), which is
-  skippable and drops the user on the dashboard. Whatever's left is reachable
-  from the sidebar's "Finish setup" entry, which reopens this stepper. (The old
-  under-chat checklist + floating nudge were removed.)
-  Progress is read from the
-  derived state machine (GET /api/setup/state), so this page is a pure
-  renderer: refresh, switch devices, or abandon mid-way and it resumes
-  exactly where the box actually is. No wizard-session state anywhere.
+    1. Account   — sign in / link your Virtues subscription (atlas + virtues-api)   [required]
+    2. Name      — name the box (its mDNS address)                                  [required]
+    3. This Mac  — collector + Full Disk Access + Accessibility                     [skippable]
+    4. Phone     — pair your iPhone                                                 [skippable]
+    5. Sources   — connect Calendar & Email (Google)                               [skippable]
+    6. Import    — one-time chat-history import                                     [skippable]
 
-  The account step drives the box-side device-link (Stripe checkout or
-  magic-link email) via POST /api/setup/{subscribe,login}/start and polls
-  POST /api/setup/link/poll — poll-only by design: no Stripe redirect-back
-  to a LAN address, the wizard tab just notices the link flipped to ready.
+  No second wizard, no dashboard hand-off: everything lives here, behind one rail.
+  Required steps (1–2) can't be skipped — they gate `setup_complete` and the app.
+  Skippable steps show a small corner "Skip" with an "I know what I'm doing"
+  confirm, so people don't bail by accident. The sidebar "Finish setup" entry
+  re-opens this page at the first unfinished step.
+
+  All step state is read from the derived /api/setup/state (setup[] + onboarding[]),
+  so the flow survives refreshes and the OAuth round-trip.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import Modal from "$lib/components/Modal.svelte";
 	import Stepper from "$lib/components/Stepper.svelte";
+	import CollectorPermissionCard from "$lib/components/onboarding/CollectorPermissionCard.svelte";
+	import ChatImportCard from "$lib/components/onboarding/ChatImportCard.svelte";
+	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
+	import { oauthStart } from "$lib/api/client";
 	import { onMount, onDestroy } from "svelte";
 
 	type Step = { id: string; title: string; done: boolean; detail?: string };
@@ -30,28 +35,58 @@
 	let state_ = $state<SetupState | null>(null);
 	let loading = $state(true);
 
-	// Short rail labels for the shared Stepper (the full titles are long and
-	// overflowed the 448px column when shown inline).
-	const RAIL_LABELS: Record<string, string> = {
-		claimed: "Claim",
-		account: "Account",
-		named: "Name",
-		network: "Network",
-	};
-	const railSteps = $derived(
-		(state_?.setup ?? []).map((s) => ({
-			id: s.id,
-			label: RAIL_LABELS[s.id] ?? s.title,
-			done: s.done,
-		})),
-	);
-	// Active step = the first not-yet-done one.
-	const railCurrent = $derived(
-		Math.max(0, (state_?.setup ?? []).findIndex((s) => !s.done)),
-	);
+	// ── the one rail ──
+	type StepId = "account" | "name" | "device" | "phone" | "sources" | "import";
+	const STEPS: { id: StepId; short: string; title: string; subtitle: string; required: boolean }[] = [
+		{ id: "account", short: "Account", required: true,
+		  title: "Sign in to Virtues",
+		  subtitle: "Link your subscription. It covers the only two things that still need a server — OAuth callbacks and the AI wallet. Your data never leaves the box." },
+		{ id: "name", short: "Name", required: true,
+		  title: "Name your box",
+		  subtitle: "This becomes its address on your network — e.g. adam-jace → http://adam-jace.local:8000" },
+		{ id: "device", short: "This Mac", required: false,
+		  title: "Set up this Mac",
+		  subtitle: "Let your box remember what happens on this machine. It all stays on your box." },
+		{ id: "phone", short: "Phone", required: false,
+		  title: "Add your iPhone",
+		  subtitle: "Your richest source — where you go, who you message, your health." },
+		{ id: "sources", short: "Sources", required: false,
+		  title: "Connect calendar & email",
+		  subtitle: "Living sources — they stay current on their own. Read-only." },
+		{ id: "import", short: "Import", required: false,
+		  title: "Bring your chat history",
+		  subtitle: "A one-time import of your past Claude, ChatGPT, or Gemini conversations." },
+	];
 
-	// ── account step ──
-	type AccountMode = "choose" | "subscribe" | "login" | "waiting" | "done";
+	let current = $state(0);
+	const step = $derived(STEPS[current]);
+	const isLast = $derived(current === STEPS.length - 1);
+
+	// Optimistic local flag (flips the phone step the instant the modal succeeds,
+	// before the next poll confirms it).
+	let phonePaired = $state(false);
+
+	function setupDone(id: string): boolean {
+		return state_?.setup.find((s) => s.id === id)?.done ?? false;
+	}
+	function onboardingDone(id: string): boolean {
+		return state_?.onboarding.find((s) => s.id === id)?.done ?? false;
+	}
+	function stepDone(id: StepId): boolean {
+		switch (id) {
+			case "account": return setupDone("account");
+			case "name": return setupDone("named");
+			case "device": return onboardingDone("device_collecting");
+			case "phone": return phonePaired || onboardingDone("first_phone");
+			case "sources": return onboardingDone("first_source") || onboardingDone("living_source");
+			case "import": return onboardingDone("chat_imported");
+		}
+	}
+
+	const railSteps = $derived(STEPS.map((s) => ({ id: s.id, label: s.short, done: stepDone(s.id) })));
+
+	// ── account step machine ──
+	type AccountMode = "choose" | "subscribe" | "login" | "waiting";
 	let accountMode = $state<AccountMode>("choose");
 	let checkoutUrl = $state<string | null>(null);
 	let email = $state("");
@@ -62,11 +97,14 @@
 	let boxName = $state("");
 	let nameError = $state<string | null>(null);
 	let savingName = $state(false);
-	let newMdns = $state<string | null>(null);
 
-	function stepDone(id: string): boolean {
-		return state_?.setup.find((s) => s.id === id)?.done ?? false;
-	}
+	// ── sources step ──
+	let connectingGoogle = $state(false);
+	let sourcesError = $state<string | null>(null);
+
+	// ── skip confirmation ──
+	let skipModalOpen = $state(false);
+	let pairModalOpen = $state(false);
 
 	async function refreshState() {
 		try {
@@ -74,7 +112,6 @@
 			if (r.ok) {
 				state_ = await r.json();
 				if (stepDone("account") && (accountMode === "waiting" || accountMode === "choose")) {
-					accountMode = "done";
 					stopPolling();
 				}
 			}
@@ -86,12 +123,8 @@
 	}
 
 	function stopPolling() {
-		if (pollTimer) {
-			clearInterval(pollTimer);
-			pollTimer = null;
-		}
+		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 	}
-
 	function startPolling() {
 		stopPolling();
 		pollTimer = setInterval(async () => {
@@ -100,16 +133,13 @@
 				const data = await r.json();
 				if (data.status === "ready") {
 					stopPolling();
-					accountMode = "done";
 					await refreshState();
 				} else if (data.status === "expired" || data.status === "none") {
 					stopPolling();
 					accountMode = "choose";
 					accountError = "That link expired — start again.";
 				}
-			} catch {
-				/* transient; next tick retries */
-			}
+			} catch { /* transient; next tick retries */ }
 		}, 3000);
 	}
 
@@ -126,7 +156,6 @@
 			accountError = "Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
 		}
 	}
-
 	async function startLogin() {
 		accountError = null;
 		if (!email.includes("@") || !email.includes(".")) {
@@ -141,14 +170,9 @@
 			});
 			if (!r.ok) throw new Error();
 			const data = await r.json();
-			if (data.status === "sent") {
-				accountMode = "waiting";
-				startPolling();
-			} else if (data.status === "no_account") {
-				accountError = "No Virtues subscription on that email — create a new account instead.";
-			} else if (data.status === "rate_limited") {
-				accountError = "Too many attempts for that email — try again in an hour.";
-			}
+			if (data.status === "sent") { accountMode = "waiting"; startPolling(); }
+			else if (data.status === "no_account") accountError = "No Virtues subscription on that email — create a new account instead.";
+			else if (data.status === "rate_limited") accountError = "Too many attempts for that email — try again in an hour.";
 		} catch {
 			accountError = "Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
 		}
@@ -165,14 +189,10 @@
 			});
 			const data = await r.json();
 			if (r.ok) {
-				newMdns = data.mdns;
 				await refreshState();
 			} else {
-				nameError =
-					data.detail ??
-					(data.error === "invalid_name"
-						? "Only lowercase letters, digits, and hyphens."
-						: "Couldn't rename the box.");
+				nameError = data.detail ?? (data.error === "invalid_name"
+					? "Only lowercase letters, digits, and hyphens." : "Couldn't rename the box.");
 			}
 		} catch {
 			nameError = "Couldn't reach the box.";
@@ -181,29 +201,47 @@
 		}
 	}
 
-	async function finish() {
-		await goto("/get-started", { replaceState: true });
+	async function connectGoogle() {
+		connectingGoogle = true;
+		sourcesError = null;
+		try {
+			const { redirect_url } = await oauthStart("google", {
+				return_url: `${window.location.origin}/setup`,
+			});
+			window.location.assign(redirect_url);
+		} catch (e) {
+			sourcesError = e instanceof Error ? e.message : String(e);
+			connectingGoogle = false;
+		}
 	}
 
+	// ── navigation ──
+	let landed = false;
 	onMount(() => {
-		void refreshState();
-		// Light background refresh so steps completed elsewhere (another
-		// device, the CLI) tick over here too — the panel-mirror behavior.
-		const t = setInterval(refreshState, 5000);
+		void refreshState().then(() => {
+			if (landed) return;
+			landed = true;
+			const firstUndone = STEPS.findIndex((s) => !stepDone(s.id));
+			current = firstUndone === -1 ? STEPS.length - 1 : firstUndone;
+		});
+		// Light poll so steps completed elsewhere (CLI, OAuth round-trip, the
+		// collector daemon) tick over here too.
+		const t = setInterval(refreshState, 4000);
 		return () => clearInterval(t);
 	});
 	onDestroy(stopPolling);
+
+	function next() {
+		if (isLast) { void goto("/"); return; }
+		current += 1;
+	}
+	function back() { if (current > 0) current -= 1; }
+	function requestSkip() { skipModalOpen = true; }
+	function confirmSkip() { skipModalOpen = false; next(); }
 </script>
 
 <div class="min-h-screen flex items-center justify-center px-6 py-12">
 	<div class="w-full max-w-md">
-		<!-- Progress rail -->
-		{#if state_ && !state_.setup_complete}
-			<div class="mb-10">
-				<Stepper steps={railSteps} current={railCurrent} />
-			</div>
-		{/if}
-
 		{#if loading}
 			<div class="flex items-center justify-center gap-2 text-foreground-muted text-sm">
 				<Icon icon="ri:loader-4-line" class="animate-spin" />
@@ -213,196 +251,163 @@
 			<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm">
 				Couldn't reach the box. Make sure you're on the same network, then refresh.
 			</div>
-		{:else if state_.setup_complete}
-			<!-- ── All done ── -->
-			<div class="text-center space-y-6">
-				<div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-surface-alt border border-border">
-					<Icon icon="ri:checkbox-circle-fill" class="text-3xl text-success" />
-				</div>
-				<div>
-					<h1 class="text-2xl font-semibold tracking-tight mb-2">Your box is set up</h1>
-					<p class="text-foreground-muted text-sm">
-						{#if newMdns}
-							From now on, find it at <span class="text-foreground font-medium">http://{newMdns}:8000</span>
-						{:else}
-							Everything required is done — the rest happens in the app.
-						{/if}
-					</p>
-				</div>
-				<Button type="button" variant="primary" class="w-full" onclick={finish}>
-					Continue
-				</Button>
-			</div>
-		{:else if !stepDone("account")}
-			<!-- ── Step: account ──
-			  Trust-pitch rules (moved here from the old `virtues init` TTY
-			  intro — they're deliberate, not stylistic): first-person claims
-			  only ("what stays on your box" / "what we see"); NO named
-			  competitor comparisons (Lanham / trade-libel exposure); the
-			  virtues-api sunset commitment is the closer; and every claim
-			  must remain true in lockstep with shipped features.
-			-->
-			<div class="space-y-6">
-				<div class="text-center">
-					<h1 class="text-2xl font-semibold tracking-tight mb-2">Connect your account</h1>
-					<p class="text-foreground-muted text-sm">
-						Your data lives on this box — never our cloud. The account covers the two
-						things that still need a server: OAuth callbacks and the AI wallet.
-					</p>
-				</div>
-
-				<details class="rounded-lg bg-surface-alt border border-border text-sm">
-					<summary class="px-4 py-3 cursor-pointer text-foreground-muted hover:text-foreground transition-colors">
-						What stays on your box, and what we see
-					</summary>
-					<div class="px-4 pb-4 space-y-3 text-foreground-muted">
-						<div>
-							<div class="text-foreground font-medium mb-1">Stays on your box</div>
-							<p>Every message, photo, file, note, and prompt. Your encryption keys. Anything semantic about who you are.</p>
-						</div>
-						<div>
-							<div class="text-foreground font-medium mb-1">What we see — the strict minimum</div>
-							<p>A Stripe customer ID (Stripe holds your card and email), token counts on AI calls (for billing), and OAuth callbacks for ~200ms so providers will talk to your box at all. Never content, conversations, or who you talk to.</p>
-						</div>
-						<p class="text-xs">
-							Our north star is making this server layer extinct — every release that
-							removes us from your data path ships harder than features.
-						</p>
-					</div>
-				</details>
-
-				{#if accountError}
-					<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm">
-						{accountError}
-					</div>
-				{/if}
-
-				{#if accountMode === "choose"}
-					<div class="flex flex-col gap-3">
-						<Button type="button" variant="primary" class="w-full" onclick={startSubscribe}>
-							Create a Virtues account · $20/mo
-						</Button>
-						<button
-							type="button"
-							class="text-sm text-foreground-muted hover:text-foreground transition-colors py-2"
-							onclick={() => { accountMode = "login"; accountError = null; }}
-						>
-							I already have an account
-						</button>
-					</div>
-				{:else if accountMode === "subscribe"}
-					<div class="space-y-4 text-center">
-						<a
-							href={checkoutUrl}
-							target="_blank"
-							rel="noopener"
-							class="inline-flex items-center gap-2 justify-center w-full px-4 py-2.5 rounded-lg bg-foreground text-surface font-medium text-sm"
-						>
-							<Icon icon="ri:external-link-line" />
-							Open checkout
-						</a>
-						<p class="text-foreground-muted text-xs flex items-center justify-center gap-2">
-							<Icon icon="ri:loader-4-line" class="animate-spin" />
-							Waiting for checkout to complete — this page advances on its own.
-						</p>
-					</div>
-				{:else if accountMode === "login"}
-					<div class="space-y-3">
-						<input
-							type="email"
-							bind:value={email}
-							placeholder="Email on your Virtues subscription"
-							class="w-full px-3 py-2.5 rounded-lg bg-surface-alt border border-border text-sm outline-none focus:border-foreground-muted"
-						/>
-						<Button type="button" variant="primary" class="w-full" onclick={startLogin}>
-							Email me a sign-in link
-						</Button>
-						<button
-							type="button"
-							class="w-full text-sm text-foreground-muted hover:text-foreground transition-colors py-1"
-							onclick={() => { accountMode = "choose"; accountError = null; }}
-						>
-							Back
-						</button>
-					</div>
-				{:else if accountMode === "waiting"}
-					<p class="text-foreground-muted text-sm text-center flex items-center justify-center gap-2">
-						<Icon icon="ri:mail-send-line" />
-						Check your email and click the link — this page advances on its own.
-					</p>
-				{/if}
-			</div>
-		{:else if !stepDone("named")}
-			<!-- ── Step: name your box ── -->
-			<div class="space-y-6">
-				<div class="text-center">
-					<h1 class="text-2xl font-semibold tracking-tight mb-2">Name your box</h1>
-					<p class="text-foreground-muted text-sm">
-						This becomes its address on your network — e.g.
-						<span class="text-foreground">adam-jace</span> →
-						<span class="text-foreground">http://adam-jace.local:8000</span>
-					</p>
-				</div>
-
-				{#if nameError}
-					<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm">
-						{nameError}
-					</div>
-				{/if}
-
-				<div class="space-y-3">
-					<input
-						type="text"
-						bind:value={boxName}
-						placeholder="adam-jace"
-						autocapitalize="off"
-						autocorrect="off"
-						spellcheck="false"
-						class="w-full px-3 py-2.5 rounded-lg bg-surface-alt border border-border text-sm outline-none focus:border-foreground-muted font-mono"
-					/>
-					<Button
-						type="button"
-						variant="primary"
-						class="w-full"
-						disabled={savingName || boxName.trim().length < 2}
-						onclick={saveName}
-					>
-						{#if savingName}
-							<Icon icon="ri:loader-4-line" class="animate-spin" />
-							Renaming…
-						{:else}
-							Set name
-						{/if}
-					</Button>
-					<button
-						type="button"
-						class="w-full text-sm text-foreground-muted hover:text-foreground transition-colors py-1"
-						onclick={finish}
-					>
-						Skip — keep "virtues"
-					</button>
-				</div>
-			</div>
 		{:else}
-			<!-- Steps the wizard can't drive (network) — show honestly, never
-			     block. These are informational, NOT errors: the box works fine
-			     locally and re-checks on its own, so style them neutrally
-			     (red here read as "something's broken"). -->
-			<div class="text-center space-y-6">
-				<h1 class="text-2xl font-semibold tracking-tight">You're set up</h1>
-				<p class="text-sm text-foreground-muted">
-					One thing still settling — you don't have to wait, it'll sort itself out.
-				</p>
-				{#each state_.setup.filter((s) => !s.done) as step (step.id)}
-					<div class="flex items-start gap-2 p-3 rounded-lg bg-surface-alt border border-border text-foreground-muted text-sm text-left">
-						<Icon icon="ri:information-line" class="text-foreground-subtle mt-0.5 shrink-0" />
-						<span>{step.detail ?? step.title}</span>
+			<!-- One rail, all six steps -->
+			<div class="mb-10">
+				<Stepper steps={railSteps} {current} />
+			</div>
+
+			<div class="space-y-2 mb-5 text-center">
+				<h1 class="text-2xl font-semibold tracking-tight">{step.title}</h1>
+				<p class="text-foreground-muted text-sm">{step.subtitle}</p>
+			</div>
+
+			<div class="mb-6">
+				{#if step.id === "account"}
+					{#if stepDone("account")}
+						<p class="text-sm text-success text-center">Your Virtues account is connected.</p>
+					{:else}
+						<details class="rounded-lg bg-surface-alt border border-border text-sm mb-4">
+							<summary class="px-4 py-3 cursor-pointer text-foreground-muted hover:text-foreground transition-colors">
+								What stays on your box, and what we see
+							</summary>
+							<div class="px-4 pb-4 space-y-3 text-foreground-muted">
+								<div>
+									<div class="text-foreground font-medium mb-1">Stays on your box</div>
+									<p>Every message, photo, file, note, and prompt. Your encryption keys. Anything semantic about who you are.</p>
+								</div>
+								<div>
+									<div class="text-foreground font-medium mb-1">What we see — the strict minimum</div>
+									<p>A Stripe customer ID, token counts on AI calls (for billing), and OAuth callbacks for ~200ms. Never content, conversations, or who you talk to.</p>
+								</div>
+							</div>
+						</details>
+
+						{#if accountError}
+							<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm mb-3">{accountError}</div>
+						{/if}
+
+						{#if accountMode === "choose"}
+							<div class="flex flex-col gap-3">
+								<Button type="button" variant="primary" class="w-full" onclick={startSubscribe}>
+									Create a Virtues account · $20/mo
+								</Button>
+								<button type="button" class="text-sm text-foreground-muted hover:text-foreground transition-colors py-2"
+									onclick={() => { accountMode = "login"; accountError = null; }}>
+									I already have an account
+								</button>
+							</div>
+						{:else if accountMode === "subscribe"}
+							<div class="space-y-4 text-center">
+								<a href={checkoutUrl} target="_blank" rel="noopener"
+									class="inline-flex items-center gap-2 justify-center w-full px-4 py-2.5 rounded-lg bg-foreground text-surface font-medium text-sm">
+									<Icon icon="ri:external-link-line" /> Open checkout
+								</a>
+								<p class="text-foreground-muted text-xs flex items-center justify-center gap-2">
+									<Icon icon="ri:loader-4-line" class="animate-spin" /> Waiting for checkout — this advances on its own.
+								</p>
+							</div>
+						{:else if accountMode === "login"}
+							<div class="space-y-3">
+								<input type="email" bind:value={email} placeholder="Email on your Virtues subscription"
+									class="w-full px-3 py-2.5 rounded-lg bg-surface-alt border border-border text-sm outline-none focus:border-foreground-muted" />
+								<Button type="button" variant="primary" class="w-full" onclick={startLogin}>Email me a sign-in link</Button>
+								<button type="button" class="w-full text-sm text-foreground-muted hover:text-foreground transition-colors py-1"
+									onclick={() => { accountMode = "choose"; accountError = null; }}>Back</button>
+							</div>
+						{:else if accountMode === "waiting"}
+							<p class="text-foreground-muted text-sm text-center flex items-center justify-center gap-2">
+								<Icon icon="ri:mail-send-line" /> Check your email and click the link — this advances on its own.
+							</p>
+						{/if}
+					{/if}
+				{:else if step.id === "name"}
+					{#if stepDone("name")}
+						<p class="text-sm text-success text-center">Named — reachable at its <code>.local</code> address.</p>
+					{:else}
+						{#if nameError}
+							<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm mb-3">{nameError}</div>
+						{/if}
+						<div class="space-y-3">
+							<input type="text" bind:value={boxName} placeholder="adam-jace"
+								autocapitalize="off" autocorrect="off" spellcheck="false"
+								class="w-full px-3 py-2.5 rounded-lg bg-surface-alt border border-border text-sm outline-none focus:border-foreground-muted font-mono" />
+							<Button type="button" variant="primary" class="w-full"
+								disabled={savingName || boxName.trim().length < 2} onclick={saveName}>
+								{#if savingName}<Icon icon="ri:loader-4-line" class="animate-spin" /> Renaming…{:else}Set name{/if}
+							</Button>
+						</div>
+					{/if}
+				{:else if step.id === "device"}
+					<CollectorPermissionCard onComplete={() => refreshState()} />
+				{:else if step.id === "phone"}
+					<div class="rounded-lg border border-border p-4 space-y-3">
+						{#if stepDone("phone")}
+							<p class="text-sm text-success">Your iPhone is connected.</p>
+						{:else}
+							<p class="text-sm text-foreground-muted">Install the Virtues app on your iPhone, then scan the code to pair.</p>
+							<Button variant="primary" onclick={() => (pairModalOpen = true)}>Pair iPhone</Button>
+							<p class="text-xs text-foreground-subtle">Android is coming soon.</p>
+						{/if}
 					</div>
-				{/each}
-				<Button type="button" variant="primary" class="w-full" onclick={finish}>
-					Continue
-				</Button>
+				{:else if step.id === "sources"}
+					<div class="rounded-lg border border-border p-4 space-y-3">
+						{#if stepDone("sources")}
+							<p class="text-sm text-success">Google is connected and backfilling.</p>
+						{:else}
+							<Button variant="primary" onclick={connectGoogle} disabled={connectingGoogle}>
+								{connectingGoogle ? "Redirecting…" : "Connect Google"}
+							</Button>
+							{#if sourcesError}<p class="text-sm text-error">{sourcesError}</p>{/if}
+						{/if}
+					</div>
+				{:else if step.id === "import"}
+					<ChatImportCard />
+				{/if}
+			</div>
+
+			<!-- Footer: Back · (Skip for optional) · Continue/Finish -->
+			<div class="flex items-center justify-between border-t border-border pt-4">
+				<div>
+					{#if current > 0}
+						<button class="text-sm text-foreground-muted hover:text-foreground" onclick={back}>Back</button>
+					{/if}
+				</div>
+				<div class="flex items-center gap-4">
+					{#if !step.required && !stepDone(step.id)}
+						<button class="text-sm text-foreground-subtle hover:text-foreground" onclick={requestSkip}>Skip</button>
+					{/if}
+					{#if stepDone(step.id)}
+						<Button variant="primary" onclick={next}>{isLast ? "Finish" : "Continue"}</Button>
+					{/if}
+				</div>
 			</div>
 		{/if}
 	</div>
 </div>
+
+<!-- Skip-confirmation: discourage bailing on an optional step by accident -->
+<Modal open={skipModalOpen} onClose={() => (skipModalOpen = false)} title="Skip this step?" width="sm">
+	{#snippet children()}
+		<div class="space-y-4 text-sm">
+			<p class="text-foreground-muted">
+				You can finish this later from the sidebar's <strong>Finish setup</strong> entry — but the
+				more you connect now, the more your box knows about your life. Skip <strong>{step.title}</strong> for now?
+			</p>
+			<div class="flex justify-end gap-3">
+				<button class="text-sm text-foreground-muted hover:text-foreground px-3 py-2" onclick={() => (skipModalOpen = false)}>
+					Keep going
+				</button>
+				<Button variant="primary" onclick={confirmSkip}>Skip — I know what I'm doing</Button>
+			</div>
+		</div>
+	{/snippet}
+</Modal>
+
+<DevicePairModal
+	deviceType="ios"
+	displayName="iPhone"
+	open={pairModalOpen}
+	onClose={() => (pairModalOpen = false)}
+	onSuccess={() => { pairModalOpen = false; phonePaired = true; void refreshState(); }}
+/>

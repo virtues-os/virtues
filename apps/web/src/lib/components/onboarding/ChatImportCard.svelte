@@ -47,22 +47,8 @@
 </script>
 
 <div class="rounded-lg border border-border p-4 space-y-4">
-	<div>
-		<p class="font-serif text-base text-foreground mb-1">Bring your chat history</p>
-		<p class="text-sm text-foreground-muted">Two ways to feed Virtues:</p>
-	</div>
-
-	<!-- The two buckets teach cron-vs-one-time without the word "cron". -->
-	<div class="grid grid-cols-2 gap-3">
-		<div class="rounded-md border border-border p-3">
-			<p class="text-xs font-medium text-foreground-muted uppercase tracking-wide mb-1">Living</p>
-			<p class="text-sm text-foreground">Stays current on its own — Calendar, Email, your devices.</p>
-		</div>
-		<div class="rounded-md border border-primary/40 bg-primary/5 p-3">
-			<p class="text-xs font-medium text-primary uppercase tracking-wide mb-1">One-time import</p>
-			<p class="text-sm text-foreground">A snapshot of the past — drop a Claude, ChatGPT, or Gemini export.</p>
-		</div>
-	</div>
+	<!-- No heading/explainer here — the onboarding step supplies the title +
+	     subtitle, and the living-vs-one-time framing lives on the sources step. -->
 
 	{#if result}
 		<div class="p-3 bg-success-subtle border border-success rounded-lg">

@@ -2,8 +2,8 @@
   Sidebar "Finish setup" entry — the ONE persistent onboarding surface.
 
   Replaces the under-chat NextWinsChecklist and the floating BoxSetupNudge (both
-  removed): a single quiet, dismissible row that reopens the guided /get-started
-  stepper. Shows only while guided onboarding has steps left; dismissal is
+  removed): a single quiet, dismissible row that reopens the unified /setup
+  onboarding flow. Shows only while onboarding has steps left; dismissal is
   per-session (sessionStorage) so it returns on next launch until setup is
   actually complete — you can't permanently lose the path back.
 -->
@@ -25,7 +25,7 @@
 	);
 
 	function open() {
-		void goto("/get-started");
+		void goto("/setup");
 	}
 	function dismiss(e: MouseEvent) {
 		e.stopPropagation();
