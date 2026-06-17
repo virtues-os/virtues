@@ -4,8 +4,9 @@
   Where a freshly-paired browser lands when the box isn't set up yet. Renders
   the REQUIRED core only — account → name → network — then hands off to the
   guided stepper (/get-started: device → phone → sources → import), which is
-  skippable and drops the user on the dashboard, where the NextWinsChecklist
-  holds whatever's left. (The old static /onboarding splash was removed.)
+  skippable and drops the user on the dashboard. Whatever's left is reachable
+  from the sidebar's "Finish setup" entry, which reopens this stepper. (The old
+  under-chat checklist + floating nudge were removed.)
   Progress is read from the
   derived state machine (GET /api/setup/state), so this page is a pure
   renderer: refresh, switch devices, or abandon mid-way and it resumes
@@ -20,6 +21,7 @@
 	import { goto } from "$app/navigation";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import Stepper from "$lib/components/Stepper.svelte";
 	import { onMount, onDestroy } from "svelte";
 
 	type Step = { id: string; title: string; done: boolean; detail?: string };
@@ -27,6 +29,26 @@
 
 	let state_ = $state<SetupState | null>(null);
 	let loading = $state(true);
+
+	// Short rail labels for the shared Stepper (the full titles are long and
+	// overflowed the 448px column when shown inline).
+	const RAIL_LABELS: Record<string, string> = {
+		claimed: "Claim",
+		account: "Account",
+		named: "Name",
+		network: "Network",
+	};
+	const railSteps = $derived(
+		(state_?.setup ?? []).map((s) => ({
+			id: s.id,
+			label: RAIL_LABELS[s.id] ?? s.title,
+			done: s.done,
+		})),
+	);
+	// Active step = the first not-yet-done one.
+	const railCurrent = $derived(
+		Math.max(0, (state_?.setup ?? []).findIndex((s) => !s.done)),
+	);
 
 	// ── account step ──
 	type AccountMode = "choose" | "subscribe" | "login" | "waiting" | "done";
@@ -176,22 +198,9 @@
 <div class="min-h-screen flex items-center justify-center px-6 py-12">
 	<div class="w-full max-w-md">
 		<!-- Progress rail -->
-		{#if state_}
-			<div class="mb-10 flex items-center justify-center gap-2">
-				{#each state_.setup as step (step.id)}
-					<div
-						class="flex items-center gap-1.5 text-xs {step.done
-							? 'text-foreground'
-							: 'text-foreground-muted'}"
-						title={step.title}
-					>
-						<Icon
-							icon={step.done ? "ri:checkbox-circle-fill" : "ri:checkbox-blank-circle-line"}
-							class={step.done ? "text-success" : ""}
-						/>
-						<span class="hidden sm:inline">{step.title}</span>
-					</div>
-				{/each}
+		{#if state_ && !state_.setup_complete}
+			<div class="mb-10">
+				<Stepper steps={railSteps} current={railCurrent} />
 			</div>
 		{/if}
 
@@ -375,16 +384,23 @@
 				</div>
 			</div>
 		{:else}
-			<!-- Steps the wizard can't drive (network) — show honestly, never block -->
+			<!-- Steps the wizard can't drive (network) — show honestly, never
+			     block. These are informational, NOT errors: the box works fine
+			     locally and re-checks on its own, so style them neutrally
+			     (red here read as "something's broken"). -->
 			<div class="text-center space-y-6">
-				<h1 class="text-2xl font-semibold tracking-tight">Almost there</h1>
+				<h1 class="text-2xl font-semibold tracking-tight">You're set up</h1>
+				<p class="text-sm text-foreground-muted">
+					One thing still settling — you don't have to wait, it'll sort itself out.
+				</p>
 				{#each state_.setup.filter((s) => !s.done) as step (step.id)}
-					<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm text-left">
-						{step.detail ?? step.title}
+					<div class="flex items-start gap-2 p-3 rounded-lg bg-surface-alt border border-border text-foreground-muted text-sm text-left">
+						<Icon icon="ri:information-line" class="text-foreground-subtle mt-0.5 shrink-0" />
+						<span>{step.detail ?? step.title}</span>
 					</div>
 				{/each}
 				<Button type="button" variant="primary" class="w-full" onclick={finish}>
-					Continue anyway
+					Continue
 				</Button>
 			</div>
 		{/if}

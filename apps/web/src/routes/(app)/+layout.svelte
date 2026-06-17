@@ -6,7 +6,6 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
-	import BoxSetupNudge from "$lib/components/BoxSetupNudge.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
@@ -306,9 +305,6 @@
 {#if data?.serverStatus && data.serverStatus !== "ready"}
 	<ServerProvisioning initialStatus={data.serverStatus} />
 {/if}
-
-<!-- First-run setup nudge (subscription / pairing) — non-blocking -->
-<BoxSetupNudge />
 
 <!-- Global Icon Picker Modal -->
 <Modal open={iconPickerStore.open} onClose={() => iconPickerStore.hide()} title="Change Icon" width="md">

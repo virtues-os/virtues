@@ -22,8 +22,6 @@
 
 	// Shared state
 	let error = $state<string | null>(null);
-	let apiEndpoint = $state("");
-	let isLoadingEndpoint = $state(true);
 
 	// iOS QR pairing state — qrSvg is the server-rendered SVG that encodes the
 	// `/pair#t=<token>` URL the iOS app scans (the box renders it so the token
@@ -44,21 +42,6 @@
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
-	// Fetch server endpoint on mount
-	$effect(() => {
-		if (typeof window !== "undefined" && open) {
-			fetch("/api/app/server-info")
-				.then((r) => r.json())
-				.then((data) => {
-					apiEndpoint = data.apiEndpoint;
-					isLoadingEndpoint = false;
-				})
-				.catch(() => {
-					apiEndpoint = `${window.location.origin}/api`;
-					isLoadingEndpoint = false;
-				});
-		}
-	});
 
 	// Start iOS QR pairing or Mac pairing when modal opens
 	$effect(() => {
@@ -117,14 +100,6 @@
 			error = err instanceof Error ? err.message : "Failed to initiate pairing";
 		} finally {
 			isInitiating = false;
-		}
-	}
-
-	async function copyEndpoint() {
-		try {
-			await navigator.clipboard.writeText(apiEndpoint);
-		} catch (err) {
-			console.error("Failed to copy endpoint:", err);
 		}
 	}
 
@@ -240,13 +215,13 @@
 			{#if hasTimedOut}
 				<!-- Expired state -->
 				<div class="text-center py-6">
-					<p class="font-serif text-lg text-foreground mb-2">QR Code Expired</p>
+					<p class="font-serif text-lg text-foreground mb-2">Code expired</p>
 					<p class="text-sm text-foreground-muted mb-6">
 						The pairing session timed out. No device connected.
 					</p>
 					<div class="flex justify-center gap-4">
 						<Button variant="ghost" onclick={handleClose}>Cancel</Button>
-						<Button variant="primary" onclick={retryQRPairing}>Generate New Code</Button>
+						<Button variant="primary" onclick={retryQRPairing}>Generate a new code</Button>
 					</div>
 				</div>
 
@@ -281,7 +256,7 @@
 					<div class="flex items-center gap-2 text-sm text-foreground-muted">
 						{#if isPolling}
 							<span class="inline-block w-2 h-2 bg-primary rounded-full animate-pulse"></span>
-							<span>Waiting for device...</span>
+							<span>Waiting for your device…</span>
 							<span class="text-foreground-subtle">{formatTime(timeRemaining)}</span>
 						{/if}
 					</div>
@@ -311,13 +286,13 @@
 				<p class="text-foreground-muted py-8">Generating pairing code...</p>
 			{:else if hasTimedOut}
 				<div class="py-4">
-					<p class="font-serif text-lg text-foreground mb-2">Code Expired</p>
+					<p class="font-serif text-lg text-foreground mb-2">Code expired</p>
 					<p class="text-sm text-foreground-muted mb-6">
 						The pairing code expired. No device connected.
 					</p>
 					<div class="flex justify-center gap-4">
 						<Button variant="ghost" onclick={handleClose}>Cancel</Button>
-						<Button variant="primary" onclick={retryMacPairing}>Try Again</Button>
+						<Button variant="primary" onclick={retryMacPairing}>Try again</Button>
 					</div>
 				</div>
 			{:else if pairingData}
@@ -334,24 +309,8 @@
 						</p>
 					</div>
 
-					<div class="pt-4 border-t border-border">
-						<p class="text-xs text-foreground-subtle mb-2">Server endpoint:</p>
-						<div class="flex items-center justify-center gap-2">
-							<code class="text-xs font-mono text-foreground">
-								{isLoadingEndpoint ? "Loading..." : apiEndpoint}
-							</code>
-							<button
-								class="text-xs text-primary hover:underline"
-								onclick={copyEndpoint}
-								disabled={isLoadingEndpoint}
-							>
-								Copy
-							</button>
-						</div>
-					</div>
-
 					{#if isPolling}
-						<p class="text-sm text-foreground-muted">Waiting for device...</p>
+						<p class="text-sm text-foreground-muted">Waiting for your device…</p>
 					{/if}
 
 					<div class="pt-4">

@@ -68,16 +68,18 @@
         }
     });
 
+    // Appliance voice — this is the user's own box finishing a local task, not
+    // a cloud service spinning up. No "cold storage", no "contact support".
     function getStatusMessage(): string {
         switch (status) {
             case "provisioning":
-                return "Setting up your Virtues server...";
+                return "Your box is finishing its first boot…";
             case "migrating":
-                return "Restoring your data...";
+                return "Applying an update to your box…";
             case "error":
-                return "Setup is taking longer than expected";
+                return "Your box is taking longer than expected";
             default:
-                return "Please wait...";
+                return "One moment…";
         }
     }
 
@@ -86,7 +88,7 @@
             case "provisioning":
                 return "This usually takes about 30 seconds.";
             case "migrating":
-                return "Waking up your server from cold storage...";
+                return "Bringing services back up — this won't take long.";
             case "error":
                 return errorMessage || "";
             default:
@@ -130,10 +132,15 @@
                         class="retry-button"
                         onclick={() => window.location.reload()}
                     >
-                        Refresh Page
+                        Refresh
                     </button>
-                    <a href="mailto:support@virtues.com" class="support-link">
-                        Contact Support
+                    <a
+                        href="https://github.com/jaces/virtues/blob/main/docs/troubleshooting.md"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="support-link"
+                    >
+                        Check your box — run <code>virtues doctor</code>
                     </a>
                 </div>
             {/if}
