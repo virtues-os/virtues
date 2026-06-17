@@ -49,6 +49,18 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version: $VERSION"
 
+      # Stamp the tag-derived version into tauri.conf.json so the bundler names
+      # the DMG `Virtues_<VERSION>_universal.dmg` to match the tag. Without this
+      # the bundler uses the static `"version"` in the config and every build
+      # was misnamed (e.g. mac-v1.0.16 → Virtues_1.0.15_universal.dmg).
+      - name: Stamp app version from tag
+        working-directory: apps/web/src-tauri
+        run: |
+          tmp="$(mktemp)"
+          jq --arg v "${{ steps.version.outputs.VERSION }}" '.version = $v' tauri.conf.json > "$tmp"
+          mv "$tmp" tauri.conf.json
+          echo "tauri.conf.json version → $(jq -r .version tauri.conf.json)"
+
       - name: Install Rust (universal targets)
         uses: dtolnay/rust-toolchain@stable
         with:
