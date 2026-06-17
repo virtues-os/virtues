@@ -128,9 +128,35 @@ where
 
         // 3. Session cookie — a browser.
         let jar = CookieJar::from_headers(&parts.headers);
-        let session_token = read_session_cookie(&jar).ok_or_else(unauthorized)?;
-        validate_and_touch(&pool, &session_token).await.ok_or_else(unauthorized)
+        if let Some(session_token) = read_session_cookie(&jar) {
+            if let Some(user) = validate_and_touch(&pool, &session_token).await {
+                return Ok(user);
+            }
+        }
+
+        // 4. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
+        //    isn't exposed; the request reaches us through the vite proxy, which
+        //    defeats the loopback bypass above). Authenticate as the console
+        //    owner so `make dev` lands straight in the app with no pairing — the
+        //    complement to VIRTUES_DEV_SKIP_SETUP. A real box NEVER sets
+        //    ENVIRONMENT=dev, so this is inert in production. Last resort: a real
+        //    bearer/cookie still wins above.
+        if is_dev() {
+            return Ok(AuthUser {
+                id: crate::middleware::http::OWNER_USER_ID.to_string(),
+                device_id: CONSOLE_DEVICE_ID.to_string(),
+                device_label: CONSOLE_DEVICE_LABEL.to_string(),
+            });
+        }
+
+        Err(unauthorized())
     }
+}
+
+/// True only on a developer's local stack (`ENVIRONMENT=dev`). Gates the dev
+/// auto-login + skip-pairing conveniences; never set on a real appliance.
+pub fn is_dev() -> bool {
+    std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false)
 }
 
 /// Extract a token from an `Authorization: Bearer <token>` header.
