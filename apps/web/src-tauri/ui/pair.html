@@ -5,139 +5,167 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connect — Virtues</title>
   <style>
+    /* Virtues warm brand (matches the site + install hero): cream surface,
+       constellation serif headings, a single cerulean accent, warm-gray text,
+       chalk hairlines. Standalone page (no app CSS), so tokens are inline. */
+    :root {
+      --bg: #FFFDF9;            /* comet-bright — page */
+      --card: #FFFFFF;          /* card surface */
+      --field: #F7F3EC;         /* comet — input fill */
+      --border: #E8E3DA;        /* chalk — hairline */
+      --heading: #14283D;       /* constellation — serif headings */
+      --ink: #2A2622;           /* body text */
+      --muted: #6B6359;         /* gravel — secondary */
+      --faint: #B7AFA3;         /* fog — placeholders, hints */
+      --accent: #1872A0;        /* cerulean — the one accent + CTA */
+      --accent-hover: #155D82;
+      --error: #932725;         /* cinder */
+      --ok: #2F7D56;
+    }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0f0f10;
-      color: #e8e8e8;
+      background: var(--bg);
+      color: var(--ink);
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
       -webkit-app-region: drag;
+      -webkit-font-smoothing: antialiased;
     }
 
     .card {
       -webkit-app-region: no-drag;
-      background: #1a1a1c;
-      border: 1px solid #2a2a2e;
-      border-radius: 12px;
-      padding: 40px 48px;
-      width: 420px;
-      box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px 44px 36px;
+      width: 440px;
+      box-shadow: 0 1px 2px rgba(20,40,61,0.04), 0 18px 48px rgba(20,40,61,0.10);
     }
 
+    .wordmark {
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      font-size: 15px;
+      color: var(--heading);
+      letter-spacing: 0.2px;
+      margin-bottom: 28px;
+    }
+    .wordmark .mark { color: var(--accent); margin-right: 6px; }
+
     h1 {
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: -0.3px;
-      margin-bottom: 6px;
+      font-family: ui-serif, Georgia, "Times New Roman", serif;
+      font-size: 26px;
+      font-weight: 500;
+      letter-spacing: -0.2px;
+      color: var(--heading);
+      margin-bottom: 8px;
     }
 
     .subtitle {
-      font-size: 13px;
-      color: #888;
-      margin-bottom: 32px;
+      font-size: 13.5px;
+      line-height: 1.5;
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+    .subtitle code {
+      font-family: "SF Mono", ui-monospace, monospace;
+      font-size: 12px;
+      background: var(--field);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 1px 5px;
+      color: var(--heading);
     }
 
-    .section-label {
+    .label {
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: #666;
-      margin-bottom: 10px;
+      letter-spacing: 0.7px;
+      color: var(--muted);
+      margin-bottom: 8px;
     }
 
-    /* Server list */
-    .server-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 24px;
-    }
-
+    /* Server row */
+    .server-row { display: flex; align-items: center; gap: 8px; margin-bottom: 22px; }
     #server-input {
-      flex: 1;
-      min-width: 0;
-      min-height: 36px;
-      background: #111113;
-      border: 1px solid #2a2a2e;
-      border-radius: 8px;
-      padding: 8px 12px;
-      color: #e8e8e8;
+      flex: 1; min-width: 0; min-height: 40px;
+      background: var(--field);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 9px 12px;
+      color: var(--ink);
       font-size: 14px;
     }
-    #server-input:focus { outline: none; border-color: #5a5a9a; }
-    #server-input::placeholder { color: #555; }
+    #server-input:focus { outline: none; border-color: var(--accent); background: var(--card); }
+    #server-input::placeholder { color: var(--faint); }
 
     #refresh-btn {
-      margin-left: 10px;
-      padding: 8px 14px;
+      padding: 9px 14px;
       background: transparent;
-      border: 1px solid #2a2a2e;
-      border-radius: 8px;
-      color: #aaa;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--muted);
       font-size: 13px;
       cursor: pointer;
       white-space: nowrap;
-      transition: border-color 0.15s, color 0.15s;
+      transition: border-color .15s, color .15s, background .15s;
     }
-    #refresh-btn:hover { border-color: #555; color: #e8e8e8; }
+    #refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
 
     /* Code input */
     #code-input {
       width: 100%;
-      padding: 10px 14px;
-      background: #111113;
-      border: 1px solid #2a2a2e;
-      border-radius: 8px;
-      color: #e8e8e8;
-      font-size: 22px;
-      font-family: "SF Mono", "JetBrains Mono", monospace;
-      letter-spacing: 6px;
+      padding: 12px 14px;
+      background: var(--field);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--heading);
+      font-size: 24px;
+      font-family: "SF Mono", ui-monospace, "JetBrains Mono", monospace;
+      letter-spacing: 8px;
       text-align: center;
       text-transform: uppercase;
-      margin-bottom: 28px;
+      margin-bottom: 26px;
     }
-    #code-input:focus { outline: none; border-color: #5a5a9a; }
-    #code-input::placeholder { color: #444; letter-spacing: 4px; }
+    #code-input:focus { outline: none; border-color: var(--accent); background: var(--card); }
+    #code-input::placeholder { color: var(--faint); letter-spacing: 5px; }
 
-    /* Connect button */
+    /* Connect — always alive (no dead-grey disabled state). Validates on click
+       and guides inline if something's missing. Dims slightly until ready, but
+       always reads as a live button. */
     #connect-btn {
       width: 100%;
-      padding: 12px;
-      background: #4a4a8a;
+      padding: 13px;
+      background: var(--accent);
       border: none;
-      border-radius: 8px;
+      border-radius: 9px;
       color: #fff;
       font-size: 15px;
       font-weight: 600;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background .15s, opacity .15s, transform .05s;
     }
-    #connect-btn:hover:not(:disabled) { background: #5a5a9a; }
-    #connect-btn:disabled { background: #2a2a3a; color: #666; cursor: default; }
+    #connect-btn:not(.ready) { opacity: 0.55; }
+    #connect-btn:hover { background: var(--accent-hover); }
+    #connect-btn:active { transform: translateY(1px); }
 
-    /* Status / error */
-    #status {
-      margin-top: 16px;
-      font-size: 13px;
-      min-height: 20px;
-      text-align: center;
-    }
-    #status.error { color: #e05555; }
-    #status.info  { color: #888; }
-    #status.ok    { color: #4caf50; }
+    #status { margin-top: 14px; font-size: 13px; min-height: 18px; text-align: center; line-height: 1.4; }
+    #status.error { color: var(--error); }
+    #status.info  { color: var(--muted); }
+    #status.ok    { color: var(--ok); }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Connect to your server</h1>
-    <p class="subtitle">Enter the code from <code style="color:#aaa">virtues pair</code> on your server. On the same Wi-Fi it's found automatically — otherwise type its address (Tailscale IP, LAN IP, or hostname).</p>
+    <div class="wordmark"><span class="mark">∴</span>Virtues</div>
+    <h1>Connect to your box</h1>
+    <p class="subtitle">Run <code>virtues pair</code> on your box and enter the code it prints. On the same Wi-Fi your box is found automatically — otherwise type its address (Tailscale IP, LAN IP, or hostname).</p>
 
-    <div class="section-label">Server</div>
+    <div class="label">Your box</div>
     <div class="server-row">
       <input
         id="server-input"
@@ -151,7 +179,7 @@
       <button id="refresh-btn" onclick="refresh()">↺ Refresh</button>
     </div>
 
-    <div class="section-label">Code</div>
+    <div class="label">Pairing code</div>
     <input
       id="code-input"
       type="text"
@@ -162,17 +190,16 @@
       oninput="onCodeInput(this)"
     />
 
-    <button id="connect-btn" onclick="connect()" disabled>Connect</button>
+    <button id="connect-btn" onclick="connect()">Connect</button>
     <div id="status" class="info"></div>
   </div>
 
   <script>
     const invoke = window.__TAURI__?.core?.invoke;
-
     let servers = [];
 
     async function refresh() {
-      setStatus('Searching…', 'info');
+      setStatus('Searching for your box…', 'info');
       const dl = document.getElementById('server-options');
       const input = document.getElementById('server-input');
       dl.innerHTML = '';
@@ -192,9 +219,9 @@
 
       if (servers.length > 0) {
         if (!input.value) input.value = servers[0].origin;
-        setStatus(`Found ${servers.length} server${servers.length > 1 ? 's' : ''} nearby.`, 'info');
+        setStatus(`Found ${servers.length} box${servers.length > 1 ? 'es' : ''} nearby.`, 'info');
       } else {
-        setStatus("None found nearby — type your server's address (its Tailscale or LAN IP, e.g. 100.104.55.76).", 'info');
+        setStatus("None found nearby — type your box's address (its Tailscale or LAN IP, e.g. 100.104.55.76).", 'info');
       }
       input.placeholder = 'e.g. 100.104.55.76  or  adam.local';
       updateConnectBtn();
@@ -232,21 +259,23 @@
       return document.getElementById('server-input').value;
     }
 
+    // Reflect readiness on the button WITHOUT disabling it — a dimmed-but-live
+    // CTA reads as a working product; a hard-disabled grey one reads as broken.
+    function isReady() {
+      return rawCode().length === 6 && !!normalizeServer(serverValue());
+    }
     function updateConnectBtn() {
-      const ready = rawCode().length === 6 && !!normalizeServer(serverValue());
-      document.getElementById('connect-btn').disabled = !ready;
+      document.getElementById('connect-btn').classList.toggle('ready', isReady());
     }
 
     async function connect() {
       const code = rawCode();
       const server = normalizeServer(serverValue());
-      if (!code || !server) {
-        setStatus('Enter your server address and the 6-character code.', 'error');
-        return;
-      }
+      // Validate on click (the button is always clickable) — guide, don't block.
+      if (!server) { setStatus("Enter your box's address (or hit Refresh to find it).", 'error'); return; }
+      if (code.length !== 6) { setStatus('Enter the 6-character code from `virtues pair`.', 'error'); return; }
 
       const btn = document.getElementById('connect-btn');
-      btn.disabled = true;
       btn.textContent = 'Connecting…';
       setStatus('', '');
 
@@ -254,25 +283,20 @@
         await invoke('pair_with_code', { server, code });
       } catch (e) {
         setStatus(e || 'Pairing failed. Check the code and address, then try again.', 'error');
-        btn.disabled = false;
         btn.textContent = 'Connect';
         return;
       }
 
-      // Point the local proxy at the address we just paired against (the
-      // "direct" path — no WireGuard, no admin prompt). Works over Tailscale,
-      // LAN, SSH-forward, or direct IPv6.
       setStatus('Paired! Starting the local proxy…', 'ok');
       try {
         await invoke('install_helpers', { server });
       } catch (e) {
         setStatus('Paired, but starting the local proxy failed: ' + e, 'error');
-        btn.disabled = false;
         btn.textContent = 'Connect';
         return;
       }
 
-      setStatus('Loading your server…', 'ok');
+      setStatus('Loading your box…', 'ok');
       // Local virtues-client proxy (LOCAL_PROXY_PORT). Keep port in sync.
       setTimeout(() => { window.location.href = 'http://localhost:7117'; }, 800);
     }
@@ -283,10 +307,7 @@
       el.className = cls;
     }
 
-    // Keyboard shortcut
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Enter') connect();
-    });
+    document.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 
     // Auto-discover on load
     refresh();
