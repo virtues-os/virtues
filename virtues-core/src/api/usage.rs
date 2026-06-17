@@ -401,7 +401,7 @@ pub async fn check_and_record_usage(
         ),
         upsert AS (
             INSERT INTO app_api_usage (id, endpoint, day_bucket, request_count, token_count)
-            SELECT lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) || substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6))), $1, $2, $3, $4
+            SELECT gen_random_uuid()::text, $1, $2, $3, $4
             FROM new_usage
             WHERE within_limit = true OR $8 = false
             ON CONFLICT (endpoint, day_bucket) DO UPDATE SET
