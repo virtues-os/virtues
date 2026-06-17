@@ -262,6 +262,47 @@ async fn uninstall_helpers(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Clear THIS Mac's pairing — the productized `make dev-wipe-mac`. Clears the
+/// stored bundle/keys (keychain + ~/.virtues/bundle.json) and removes the proxy
+/// LaunchAgent. Local-only: never needs the box to be reachable.
+///
+/// Called (a) by the connect screen *before* a re-pair, so re-pairing a box
+/// that was RESET starts clean — otherwise the box's new SPKI key trips the
+/// TOFU pin from the old pairing and the daemon refuses; and (b) by Settings →
+/// "Disconnect this Mac" for a deliberate hand-off / box switch.
+#[tauri::command]
+async fn forget_pairing(app: AppHandle) -> Result<(), String> {
+    // `revoke` clears the local creds (keychain + bundle.json), best-effort
+    // box-side credential delete first but clears locally regardless.
+    let _ = virtues_client_command(&app)?
+        .args(["revoke"])
+        .output()
+        .await;
+    // Drop the proxy LaunchAgent so a stale bearer can't keep serving.
+    let _ = virtues_client_command(&app)?
+        .args(["uninstall"])
+        .output()
+        .await;
+    Ok(())
+}
+
+/// Re-check whether the box now accepts this device — backs the connect
+/// screen's "Retry" on the unreachable state (box was off/asleep/elsewhere).
+/// `true` → load the box; `false` → still not reachable/accepted.
+#[tauri::command]
+fn recheck_box() -> bool {
+    probe_box_session() == Some(true)
+}
+
+/// Relaunch the app — used after Settings → "Disconnect this Mac" so the window
+/// comes back up through the launch decision (now unpaired → the connect
+/// screen) instead of sitting on a dead localhost:7117 the proxy no longer
+/// serves. Never returns.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
 /// Reduce a paired server origin to the `host:port` the proxy forwards to.
 /// `http://100.104.55.76:8000` -> `100.104.55.76:8000`; `adam.local:8000` stays.
 /// Defaults the port to 8000 (the box's HTTP port) when none is present and the
@@ -481,6 +522,9 @@ fn main() {
             pair_with_code,
             install_helpers,
             uninstall_helpers,
+            forget_pairing,
+            recheck_box,
+            restart_app,
             get_collector_status,
             install_collector,
             uninstall_collector,
@@ -495,15 +539,23 @@ fn main() {
             // own 8000; the proxy listens on 7117 to avoid squatting a common
             // dev port). Keep in sync with LOCAL_PROXY_PORT in
             // apps/desktop/src/proxy.rs, the CSP, and pair.html.
-            // Paired on disk, but is the bundle still VALID with the box? A
-            // definitively-rejected device (box reinstalled/revoked) goes back
-            // to our own pairing screen instead of the box's dead-end /pair
-            // page. Unknown/unreachable (proxy still starting) → still load the
-            // box, so a valid device isn't bounced on a startup race.
-            let url = if is_paired() && probe_box_session() != Some(false) {
-                WebviewUrl::External("http://localhost:7117".parse().unwrap())
-            } else {
+            // Decide where to land. A valid pairing reconnects SILENTLY (the
+            // 90% reinstall case); we only ever interrupt when something's
+            // actually wrong, and the connect screen is the single recovery
+            // surface. The verdict is passed to pair.html via the URL hash so it
+            // can show the right one-line banner:
+            //   not paired        → fresh connect screen
+            //   box accepts us    → load the box
+            //   box rejects us    → #reset      ("your box was reset, reconnect")
+            //   box unreachable   → #unreachable ("can't reach it" + Retry)
+            let url = if !is_paired() {
                 WebviewUrl::App("pair.html".into())
+            } else {
+                match probe_box_session() {
+                    Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
+                    Some(false) => WebviewUrl::App("pair.html#reset".into()),
+                    None => WebviewUrl::App("pair.html#unreachable".into()),
+                }
             };
 
             let window = WebviewWindowBuilder::new(app, "main", url)

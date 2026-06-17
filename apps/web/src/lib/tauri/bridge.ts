@@ -89,6 +89,36 @@ export async function installCollector(token: string): Promise<void> {
 }
 
 /**
+ * Disconnect this Mac from its box: clears the stored pairing (keychain +
+ * bundle) and the proxy LaunchAgent. Local-only — doesn't need the box
+ * reachable. Tauri-only (no-op/false in a browser). After this, reload to the
+ * pairing screen.
+ */
+export async function forgetPairing(): Promise<boolean> {
+	const invoke = await getInvoke();
+	if (!invoke) return false;
+	try {
+		await invoke('forget_pairing');
+		return true;
+	} catch (e) {
+		console.error('[Tauri] forget_pairing failed:', e);
+		return false;
+	}
+}
+
+/** Relaunch the desktop app (after disconnecting, so it comes back up on the
+ *  pairing screen). Tauri-only. */
+export async function restartApp(): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) return;
+	try {
+		await invoke('restart_app');
+	} catch (e) {
+		console.error('[Tauri] restart_app failed:', e);
+	}
+}
+
+/**
  * Uninstall the collector daemon
  * This stops the daemon and removes the LaunchAgent
  */
