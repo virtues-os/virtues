@@ -30,7 +30,7 @@ on:
 
 jobs:
   build-and-release:
-    runs-on: macos-latest
+    runs-on: blacksmith-6vcpu-macos-15
     permissions:
       contents: write
 
