@@ -1,3 +1,30 @@
+<!--
+  ┌─ HEADING CONVENTION (read before editing any # / ## / ### heading) ──────────┐
+  Headings are NOT plain markdown text. GitHub's sanitizer strips CSS, so to get
+  a serif (Times) heading we render each one as a theme-aware SVG image wrapped in
+  a real markdown heading, e.g.:
+
+    ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-foo-dark.svg"><img alt="Foo" src=".github/images/headings/h2-foo-light.svg" height="28"></picture>
+
+  Because the heading's visible content is an image (no text), two things follow:
+    • The GitHub "Outline" sidebar shows blank labels — accepted tradeoff.
+    • GitHub can't auto-generate anchors, so each H2/H3 has an explicit
+      `<a id="github-slug"></a>` on the line ABOVE it to keep deep links working.
+
+  TO ADD OR EDIT A HEADING (do ALL of these, or you'll get a stale image / dead link):
+    1. Edit the heading list in .github/images/headings/gen.py
+       (font sizes: H1=34/h40, H2=24/h28, H3=20/h22; weight 400; light+dark each).
+    2. Run:  python3 .github/images/headings/gen.py   (regenerates the SVGs).
+    3. In this file, update the <picture> block's `alt`, both `srcset`/`src`
+       filenames, and the `<a id>` anchor above it. The `<a id>` must equal the
+       GitHub slug of the heading text (lowercase, punctuation stripped,
+       spaces -> hyphens), so existing #deep-links keep resolving.
+
+  Keep headings short — wide SVGs (>~360px) get scaled down on mobile, breaking
+  the visual size hierarchy. Times is a system font; Linux/Android fall back to
+  their default serif.
+  └──────────────────────────────────────────────────────────────────────────────┘
+-->
 ![Virtues](.github/images/cover3.png)
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h1-virtues-dark.svg"><img alt="Virtues" src=".github/images/headings/h1-virtues-light.svg" height="40"></picture>
