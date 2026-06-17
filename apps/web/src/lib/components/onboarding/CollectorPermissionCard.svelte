@@ -73,14 +73,36 @@
 		error = null;
 		try {
 			const { token } = await api.mintCollectorToken();
-			const ok = await installCollector(token);
-			if (!ok) throw new Error("The collector failed to install.");
+			// Throws with the daemon's real stderr if the install itself fails.
+			await installCollector(token);
+			// Install can return OK while `launchctl bootstrap` silently fails,
+			// so don't assume success — wait for the daemon to actually report
+			// running, and only then call it done.
+			const started = await waitForRunning(12_000);
 			await refresh();
+			if (!started) {
+				error =
+					"Installed, but the collector didn't start. Check ~/.virtues/logs/collector.error.log, then try again.";
+			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Failed to start the collector.";
 		} finally {
 			installing = false;
 		}
+	}
+
+	// Poll the daemon's own status until it reports running (or we give up).
+	async function waitForRunning(timeoutMs: number): Promise<boolean> {
+		const deadline = Date.now() + timeoutMs;
+		while (Date.now() < deadline) {
+			const s = await getCollectorStatus();
+			if (s?.running) {
+				status = s;
+				return true;
+			}
+			await new Promise((r) => setTimeout(r, 1000));
+		}
+		return false;
 	}
 </script>
 
@@ -140,8 +162,10 @@
 						<span class="text-foreground-subtle">— read your Messages history</span>
 						{#if !status.hasFullDiskAccess}
 							<p class="text-xs text-foreground-muted mt-1">
-								macOS only allows this from System Settings. Flip <strong>Virtues</strong>
-								to on, then come back — this updates on its own.
+								Your Messages are read locally and stored only on your box —
+								never sent to Virtues. macOS only allows this from System
+								Settings: flip <strong>Virtues</strong> to on, then come back —
+								this updates on its own.
 							</p>
 							<button
 								class="text-xs text-primary hover:underline mt-1"
