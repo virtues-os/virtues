@@ -160,11 +160,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // choice lives one level up, in the installer.
         let config = virtues::setup::recommended_config()?;
 
-        println!();
-        println!("📊 Running migrations...");
         let db = virtues::database::Database::new(&config.database_url)?;
         db.initialize().await?;
-        println!("✅ Migrations complete");
+        // Match the installer's step iconography (it just printed its own
+        // "✓" steps right above us via `ui::ok`), so the handoff reads as one
+        // continuous checklist rather than switching to emoji mid-stream.
+        println!();
+        println!("  {}  {}", console::style("✓").green(), "Database ready");
 
         // Mint a CLI-origin pair token and print the handoff. The fragment
         // form (`/pair#t=…`) never leaks the token to server logs or
@@ -274,7 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     use virtues::cli::link::{wait_for_pair, PairWaitOutcome};
                     println!("  Waiting for the app or browser to connect… (Ctrl+C to exit;");
                     println!("  the code stays valid for 30 minutes either way)");
-                    match wait_for_pair(db.pool(), &minted.id, &minted.token).await {
+                    match wait_for_pair(db.pool(), &minted.id).await {
                         Ok(PairWaitOutcome::Consumed) => {
                             println!();
                             println!("  ✓ connected — finish setup in the app.");
@@ -480,7 +482,7 @@ fn print_pair_hero(display: &str) {
     println!("{blank}");
     println!("{}", line("   Your server is ready."));
     println!("{blank}");
-    println!("{}", line("   1.  Get the app     virtues.com/downloads"));
+    println!("{}", line("   1.  Desktop app     virtues.com/downloads"));
 
     // The code line: pad on the *visible* length (ANSI is zero-width), then
     // wrap just the code in colour so the right border still aligns.

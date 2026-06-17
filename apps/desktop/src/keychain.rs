@@ -29,6 +29,10 @@ const ACCOUNT_DEVICE_ID: &str = "default-box-device-id";
 /// The server credential row id. This — NOT the device id — is what
 /// `DELETE /api/credentials/:id` matches on, so revoke needs it.
 const ACCOUNT_CREDENTIAL_ID: &str = "default-box-credential-id";
+/// The box's SPKI fingerprint (`sha256-<base64>`) pinned at first pair. TOFU:
+/// a subsequent pair against a different server key is rejected (the box was
+/// swapped, or a MITM). Mirrors the iOS `loadServerPin`/`saveServerPin`.
+const ACCOUNT_SERVER_PIN: &str = "default-box-server-pin";
 
 fn entry(account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, account).context("open keyring entry")
@@ -97,6 +101,25 @@ pub fn load_credential_id() -> Result<Option<String>> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// Server pin (TOFU SPKI fingerprint)
+// ────────────────────────────────────────────────────────────────────────
+
+pub fn save_server_pin(fpr: &str) -> Result<()> {
+    entry(ACCOUNT_SERVER_PIN)?
+        .set_password(fpr)
+        .context("write server pin to keyring")?;
+    Ok(())
+}
+
+pub fn load_server_pin() -> Result<Option<String>> {
+    match entry(ACCOUNT_SERVER_PIN)?.get_password() {
+        Ok(s) => Ok(Some(s)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(anyhow::Error::new(e).context("read server pin from keyring")),
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // Delete (revoke)
 // ────────────────────────────────────────────────────────────────────────
 
@@ -107,6 +130,7 @@ pub fn delete_bundle() -> Result<()> {
     let _ = delete_entry(ACCOUNT_WG_PRIVATE);
     let _ = delete_entry(ACCOUNT_DEVICE_ID);
     let _ = delete_entry(ACCOUNT_CREDENTIAL_ID);
+    let _ = delete_entry(ACCOUNT_SERVER_PIN);
     Ok(())
 }
 

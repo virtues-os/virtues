@@ -454,15 +454,7 @@ export async function pairMint(intendedKind?: string): Promise<PairMintResponse>
 	return res.json();
 }
 
-/** POST /api/pair/confirm/:id — auth'd. Authorize a pending token. */
-export async function pairConfirm(id: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/pair/confirm/${encodeURIComponent(id)}`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`pair_confirm failed: ${res.statusText}`);
-}
-
-/** POST /api/pair/deny/:id — auth'd. Cancel a pending token (e.g. modal close). */
+/** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
 export async function pairDeny(id: string): Promise<void> {
 	await fetch(`${API_BASE}/pair/deny/${encodeURIComponent(id)}`, { method: 'POST' }).catch(
 		() => {

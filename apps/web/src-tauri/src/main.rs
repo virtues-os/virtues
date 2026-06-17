@@ -74,17 +74,80 @@ fn probe_box_session() -> Option<bool> {
             if s.write_all(req.as_bytes()).is_ok() {
                 let mut buf = String::new();
                 let _ = s.read_to_string(&mut buf);
-                if buf.contains("\"user\":null") {
-                    return Some(false);
-                }
-                if buf.contains("\"device_id\"") || buf.contains("\"user\":{") {
-                    return Some(true);
+                if let Some(verdict) = classify_session_response(&buf) {
+                    return Some(verdict);
                 }
             }
         }
         std::thread::sleep(Duration::from_millis(300));
     }
     None
+}
+
+/// Classify a raw `/auth/session` HTTP response into rejected (`Some(false)`),
+/// authenticated (`Some(true)`), or indeterminate (`None`, retry).
+///
+/// Parses deliberately: a 401 status line is a definitive rejection, and the
+/// `user` check runs ONLY against the body (after the header terminator) so
+/// header text can never false-match. `/auth/session` returns a small known
+/// shape — `{"user":null}` unauth, `{"user":{…}}` authed — so a body substring
+/// test is sufficient without dragging in an HTTP/JSON dep.
+fn classify_session_response(raw: &str) -> Option<bool> {
+    // Status line first: an explicit 401 means the box rejected this device.
+    if let Some(status_line) = raw.lines().next() {
+        if status_line.contains(" 401") {
+            return Some(false);
+        }
+    }
+    // Body only — split on the header terminator so we never inspect headers.
+    let body = raw.split("\r\n\r\n").nth(1)?;
+    let body = body.split_whitespace().collect::<String>(); // drop chunk framing/whitespace
+    if body.contains("\"user\":null") {
+        return Some(false);
+    }
+    if body.contains("\"user\":{") {
+        return Some(true);
+    }
+    None
+}
+
+#[cfg(test)]
+mod session_probe_tests {
+    use super::classify_session_response;
+
+    fn resp(status: &str, body: &str) -> String {
+        format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}")
+    }
+
+    #[test]
+    fn unauth_user_null_is_rejected() {
+        assert_eq!(classify_session_response(&resp("200 OK", "{\"user\":null}")), Some(false));
+    }
+
+    #[test]
+    fn authed_user_object_is_ok() {
+        assert_eq!(
+            classify_session_response(&resp("200 OK", "{\"user\":{\"device_id\":\"d1\"}}")),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn status_401_is_rejected() {
+        assert_eq!(classify_session_response(&resp("401 Unauthorized", "{}")), Some(false));
+    }
+
+    #[test]
+    fn header_text_never_false_matches() {
+        // A header value containing the sentinel must not be read as the body.
+        let raw = "HTTP/1.1 200 OK\r\nX-Note: \"user\":null\r\n\r\n{\"user\":{\"device_id\":\"d\"}}";
+        assert_eq!(classify_session_response(raw), Some(true));
+    }
+
+    #[test]
+    fn indeterminate_when_no_body() {
+        assert_eq!(classify_session_response("HTTP/1.1 200 OK\r\n\r\n"), None);
+    }
 }
 
 /// Build a shell `Command` for virtues-client. Resolution order:

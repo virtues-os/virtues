@@ -12,11 +12,16 @@
 //! Env: `DATABASE_URL` (the box's local Postgres) + `VIRTUES_ENCRYPTION_KEY`
 //! (to unseal the WG server key from `box_secrets`).
 
+/// Backstop poll interval. With LISTEN/NOTIFY wired, pair/revoke reconcile in
+/// ~1s; this tick still catches prefix rotation, a missed notification, or a
+/// dropped LISTEN connection.
+#[cfg(target_os = "linux")]
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
 #[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use std::time::Duration;
-    use virtues_wg::{endpoint, manager, reconcile};
+    use virtues_wg::{manager, signal};
 
     let db_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL not set"))?;
@@ -27,32 +32,73 @@ async fn main() -> anyhow::Result<()> {
     // reachable on the WG port. Best-effort + idempotent — see the fn docs.
     ensure_inbound_pinhole(manager::wg_listen_port());
 
-    // Poll loop. The reconcile + endpoint-record are idempotent, so a steady tick
-    // is safe; a netlink RTM_NEWADDR watch + Postgres LISTEN/NOTIFY replace the
-    // poll later (staging) for prompt reaction to prefix rotation / new pairings.
+    // Event-driven reconcile: the box's API fires `NOTIFY wg_reconcile` on
+    // pair-consume / revoke (see virtues_wg::signal), so a new peer lands in
+    // wg0 in ~1s instead of waiting up to a full poll interval — that window
+    // was racing the desktop client's handshake budget on first pair. If the
+    // listener can't be established we degrade to pure polling.
+    let mut listener = match sqlx::postgres::PgListener::connect(&db_url).await {
+        Ok(mut l) => match l.listen(signal::RECONCILE_CHANNEL).await {
+            Ok(()) => Some(l),
+            Err(e) => {
+                eprintln!("[virtues-wireguard] LISTEN failed ({e:#}); polling only");
+                None
+            }
+        },
+        Err(e) => {
+            eprintln!("[virtues-wireguard] listener connect failed ({e:#}); polling only");
+            None
+        }
+    };
+
     loop {
-        if let Err(e) = reconcile::rebuild_interface(&db).await {
-            eprintln!("[virtues-wireguard] reconcile failed: {e:#}");
-        }
+        reconcile_once(&db).await;
 
-        match detect_public_ip() {
-            Some(ip) => match reconcile::ensure_server_keypair(&db).await {
-                Ok(kp) => {
-                    let ep = endpoint::Endpoint {
-                        ip,
-                        port: manager::wg_listen_port(),
-                        wg_pub: kp.public_key,
-                    };
-                    if let Err(e) = endpoint::write_current(&db, &ep).await {
-                        eprintln!("[virtues-wireguard] endpoint record failed: {e:#}");
+        // Wait for a reconcile notification OR the backstop tick, whichever
+        // comes first. A recv error means the LISTEN connection dropped — fall
+        // back to pure polling so we never wedge.
+        match listener.as_mut() {
+            Some(l) => {
+                tokio::select! {
+                    res = l.recv() => {
+                        if let Err(e) = res {
+                            eprintln!("[virtues-wireguard] LISTEN recv error ({e:#}); polling only");
+                            listener = None;
+                        }
                     }
+                    _ = tokio::time::sleep(POLL_INTERVAL) => {}
                 }
-                Err(e) => eprintln!("[virtues-wireguard] server key load failed: {e:#}"),
-            },
-            None => { /* no public IP yet; try again next tick */ }
+            }
+            None => tokio::time::sleep(POLL_INTERVAL).await,
         }
+    }
+}
 
-        tokio::time::sleep(Duration::from_secs(15)).await;
+/// One reconcile pass: make `wg0` match the durable peer set, then detect and
+/// record the box's current public endpoint. Both steps are idempotent.
+#[cfg(target_os = "linux")]
+async fn reconcile_once(db: &sqlx::PgPool) {
+    use virtues_wg::{endpoint, manager, reconcile};
+
+    if let Err(e) = reconcile::rebuild_interface(db).await {
+        eprintln!("[virtues-wireguard] reconcile failed: {e:#}");
+    }
+
+    match detect_public_ip() {
+        Some(ip) => match reconcile::ensure_server_keypair(db).await {
+            Ok(kp) => {
+                let ep = endpoint::Endpoint {
+                    ip,
+                    port: manager::wg_listen_port(),
+                    wg_pub: kp.public_key,
+                };
+                if let Err(e) = endpoint::write_current(db, &ep).await {
+                    eprintln!("[virtues-wireguard] endpoint record failed: {e:#}");
+                }
+            }
+            Err(e) => eprintln!("[virtues-wireguard] server key load failed: {e:#}"),
+        },
+        None => { /* no public IP yet; try again next tick */ }
     }
 }
 

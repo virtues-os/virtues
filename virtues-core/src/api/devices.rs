@@ -241,9 +241,15 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // WG eviction — best-effort, after commit so DB state is authoritative.
-    if let Some(pubkey) = wg_pubkey.as_deref() {
-        evict_wg_peer(pubkey);
+    // WG eviction is the daemon's job (single writer of kernel state): the
+    // device row is now revoked, so the daemon's next reconcile rebuilds wg0
+    // from the active peers only (REPLACE_PEERS) and the peer drops out. Nudge
+    // it to reconcile NOW rather than at the next backstop poll. Best-effort,
+    // after commit so the DB is authoritative.
+    if wg_pubkey.is_some() {
+        if let Err(e) = crate::wireguard::signal::notify_reconcile(&pool).await {
+            tracing::warn!(error = %e, "wg reconcile notify on revoke failed (poll backstop will catch up)");
+        }
     }
 
     // Event log.
@@ -260,23 +266,11 @@ pub async fn revoke_handler(
     (StatusCode::OK, Json(json!({"ok": true}))).into_response()
 }
 
-// ─── WG peer eviction ───────────────────────────────────────────────────────
-// Linux-only. The macOS dev host has no kernel WG; revocation is still
-// authoritative in the DB and the WG daemon will simply have no peer to
-// reconcile when it next syncs.
-
-#[cfg(target_os = "linux")]
-fn evict_wg_peer(public_key: &str) {
-    match virtues_wg::manager::remove_peer(public_key) {
-        Ok(()) => tracing::info!(public_key, "evicted wg peer on revoke"),
-        Err(e) => tracing::warn!("wg peer eviction failed (DB state is authoritative): {e:#}"),
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn evict_wg_peer(_public_key: &str) {
-    tracing::debug!("wg peer eviction skipped (non-Linux host)");
-}
+// WG peer eviction is no longer done inline here. Kernel `wg0` state has a
+// single writer — the `virtues-wireguard` daemon — which reconciles from the
+// active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
+// and fires `NOTIFY wg_reconcile`; the daemon drops the peer. This removes the
+// previous dual-writer (a direct `remove_peer` here racing the daemon's poll).
 
 // Silence unused `Value` import if the file evolves.
 #[allow(dead_code)]

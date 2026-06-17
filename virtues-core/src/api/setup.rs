@@ -215,13 +215,29 @@ pub async fn name_handler(
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
             tracing::warn!(error = %err, "hostnamectl set-hostname failed");
+            // `sudo -n` failing means we couldn't rename non-interactively.
+            // The common cause on older boxes is a missing sudoers rule (the
+            // installer writes /etc/sudoers.d/virtues-setup), but it can also
+            // be a container/read-only host. Surface the real stderr so the
+            // cause is visible instead of always blaming a stale install, and
+            // always offer the manual escape hatch.
+            let hint = if err.contains("a password is required")
+                || err.contains("not allowed")
+                || err.contains("no tty")
+            {
+                "the box is missing its rename permission (older install) — "
+            } else {
+                ""
+            };
             return (
                 StatusCode::NOT_IMPLEMENTED,
                 Json(json!({
                     "error": "rename_unavailable",
-                    "detail": "this install predates the rename rule — \
-                               run `sudo hostnamectl set-hostname <name>` on the box, \
-                               or reinstall to add it",
+                    "detail": format!(
+                        "couldn't rename the box: {hint}run \
+                         `sudo hostnamectl set-hostname <name>` on the box directly. \
+                         (details: {err})"
+                    ),
                 })),
             )
                 .into_response();
@@ -236,12 +252,24 @@ pub async fn name_handler(
     }
 
     // Re-announce on mDNS under the new name. Best-effort: the hostname is
-    // already set (the step's source of truth); avahi catches up on its own
-    // within seconds even if the reload is refused.
-    let _ = tokio::process::Command::new("sudo")
+    // already set (the step's source of truth) so we still return success, but
+    // log a refused reload instead of swallowing it — if the sudoers rule only
+    // whitelists hostnamectl (not systemctl), the `.local` name lags until
+    // avahi notices on its own, and the operator should be able to see why.
+    match tokio::process::Command::new("sudo")
         .args(["-n", "systemctl", "reload-or-restart", "avahi-daemon"])
         .output()
-        .await;
+        .await
+    {
+        Ok(out) if !out.status.success() => {
+            tracing::warn!(
+                stderr = %String::from_utf8_lossy(&out.stderr).trim(),
+                "avahi reload refused after rename; mDNS name will catch up on its own"
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "could not invoke avahi reload after rename"),
+        Ok(_) => {}
+    }
 
     (
         StatusCode::OK,

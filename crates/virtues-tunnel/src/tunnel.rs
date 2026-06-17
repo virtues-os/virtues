@@ -566,8 +566,15 @@ impl TunnelStream {
     /// Split into independent read + write halves so an async bridge (e.g. the
     /// desktop proxy's loopback forwarder) can run reads and writes on separate
     /// threads concurrently — required for full-duplex traffic like WebSockets.
-    /// The write half owns the close-on-drop (one `Close`, sent when *both*
-    /// halves are gone — the writer is the last logical owner of the socket).
+    ///
+    /// CONTRACT: the **write half owns the connection's lifetime**. Dropping it
+    /// sends exactly one `Close`, which causes the read half to return EOF. The
+    /// read half has no `Drop` of its own. This is intentional and is how the
+    /// forwarder tears a connection down (the browser→box copy drops the write
+    /// half on EOF to end the box→browser copy). The consequence a caller must
+    /// respect: **do not keep reading after dropping the write half** — the
+    /// split is for concurrent use within ONE connection's lifetime, not for
+    /// giving the two halves independent lifetimes.
     pub fn into_split(self) -> (TunnelReadHalf, TunnelWriteHalf) {
         // Move fields out without firing the bundled `Drop` (which would send a
         // premature `Close`). SocketHandle is `Copy`; the rest are read once.

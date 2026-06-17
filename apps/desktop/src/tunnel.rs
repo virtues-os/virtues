@@ -148,17 +148,29 @@ async fn bridge_conn(
     let in_rd = inbound_std.try_clone().context("clone inbound socket")?;
     let in_wr = inbound_std;
 
-    // up: browser→box ; down: box→browser. Each is a blocking copy loop; the
-    // first EOF drops its writer half, which closes the other direction.
+    // up: browser→box ; down: box→browser. Each is a blocking copy loop.
+    //
+    // Terminating BOTH directions when EITHER peer goes away is the subtle part
+    // (a blocking `read()` can't be cancelled, so a half-open connection would
+    // otherwise hang a thread forever and leak it from the bounded blocking
+    // pool):
+    //   • browser closes first → `up` ends → dropping `tun_wr` sends the tunnel
+    //     Close, which EOFs `tun_rd`, ending `down`.
+    //   • box closes first → `down` ends → we explicitly `shutdown(Both)` the
+    //     inbound socket, which unblocks `up`'s `in_rd.read()` (same fd) instead
+    //     of leaving it parked forever.
     let up = tokio::task::spawn_blocking(move || {
         let mut r = in_rd;
         let mut w = tun_wr;
         let _ = std::io::copy(&mut r, &mut w);
+        // `tun_wr` drops here → tunnel Close → `tun_rd` EOFs.
     });
     let down = tokio::task::spawn_blocking(move || {
         let mut r = tun_rd;
         let mut w = in_wr;
         let _ = std::io::copy(&mut r, &mut w);
+        // Unblock a still-parked `up` on a half-open connection.
+        let _ = w.shutdown(std::net::Shutdown::Both);
     });
     let _ = tokio::join!(up, down);
     Ok(())

@@ -16,7 +16,11 @@ export const load: LayoutLoad = async ({ fetch }) => {
 		}
 		return { session: sessionData };
 	} catch (error) {
-		if (error instanceof Response && error.status === 303) throw error;
+		// SvelteKit's redirect() throws a Redirect object (has `status`), NOT a
+		// Response — the old `instanceof Response` check never matched, so the
+		// intentional /pair redirects above fell through to the catch-all below.
+		// Re-throw genuine redirects untouched (mirrors (app)/+layout.ts).
+		if (error && typeof error === 'object' && 'status' in error) throw error;
 		// Anything else (network, parse error) — punt to login so the user
 		// can retry instead of getting stuck on a half-rendered wizard.
 		throw redirect(303, '/pair');

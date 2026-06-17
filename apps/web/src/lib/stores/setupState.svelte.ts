@@ -28,7 +28,14 @@ class SetupStateStore {
 	 */
 	private prevRemoteDone: boolean | null = null;
 
-	/** Once everything is done there is nothing left to flip — stay stopped. */
+	/**
+	 * Snapshot of "everything done" from the last check — when true we stop the
+	 * polling interval (nothing left to flip). NOT a permanent latch: `check()`
+	 * recomputes it every fetch, and `start()` always does one fresh check, so
+	 * if state later regresses (a new device pairs, a step un-completes) polling
+	 * revives on the next start()/visibility change instead of being frozen for
+	 * the rest of the session.
+	 */
 	private finished = false;
 
 	private intervalId: ReturnType<typeof setInterval> | null = null;
@@ -50,9 +57,14 @@ class SetupStateStore {
 
 	/** Start polling /api/setup/state */
 	start() {
-		if (this.intervalId || this.finished) return;
+		if (this.intervalId) return; // already running
 
+		// Always do one fresh check on (re)start — this re-evaluates `finished`,
+		// so a remount after state regressed revives polling rather than being
+		// blocked by a stale latch.
 		this.check();
+		if (this.finished) return; // done — one check, no interval/handler
+
 		this.intervalId = setInterval(() => this.check(), POLL_INTERVAL);
 
 		this.visibilityHandler = () => {
@@ -100,9 +112,11 @@ class SetupStateStore {
 				this.prevRemoteDone = nowDone;
 			}
 
-			// Setup complete and every win collected — stop polling permanently.
-			if (this.setupComplete === true && this.allDone) {
-				this.finished = true;
+			// Recompute "done" every fetch (revivable, not a permanent latch).
+			// When done, stop the interval; if state later regresses this flips
+			// back to false and the next start()/visibility change resumes.
+			this.finished = this.setupComplete === true && this.allDone;
+			if (this.finished) {
 				this.stop();
 			}
 		} catch {

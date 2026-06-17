@@ -12,6 +12,7 @@
 pub mod box_secrets;
 pub mod endpoint;
 pub mod peers;
+pub mod signal;
 pub mod ula;
 
 // Kernel WireGuard engine — Linux only (netlink). The macOS dev host compiles
