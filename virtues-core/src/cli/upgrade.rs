@@ -162,7 +162,11 @@ fn host_arch() -> &'static str {
 /// IPv4 egress works fine (curl -4 succeeds). A short connect timeout makes that
 /// stall fail fast so we can retry over IPv4.
 fn build_client(force_ipv4: bool) -> Result<reqwest::Client, crate::Error> {
-    let mut b = reqwest::Client::builder()
+    // Start from the shared rooted builder — `reqwest` is `rustls-tls-no-provider`,
+    // so a bare client has no CA roots and every HTTPS request fails to send
+    // (the bug this fixes). `base_builder` installs the provider + OS native
+    // roots and is already IPv4-only (so the IPv6-black-hole case is moot).
+    let mut b = crate::http_client::base_builder()
         .user_agent(USER_AGENT)
         .connect_timeout(std::time::Duration::from_secs(10));
     if force_ipv4 {

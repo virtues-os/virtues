@@ -78,7 +78,14 @@ pub const REQUEST_TIMEOUT_SECS: u64 = 60;
 /// Request timeout for streaming requests in seconds (longer for SSE)
 pub const STREAMING_TIMEOUT_SECS: u64 = 300;
 
-fn base_builder() -> reqwest::ClientBuilder {
+/// Shared rooted builder: installs the rustls crypto provider and loads the OS
+/// native CA store, with an IPv4-only resolver. `reqwest` is built with
+/// `rustls-tls-no-provider` (no bundled provider/roots), so a bare
+/// `reqwest::Client::builder()` has an EMPTY trust store and every HTTPS
+/// handshake fails ("error sending request") — every outbound client must start
+/// here. Exposed `pub(crate)` so the CLI (`virtues upgrade`) shares the exact
+/// same TLS setup instead of rolling a rootless client.
+pub(crate) fn base_builder() -> reqwest::ClientBuilder {
     ensure_crypto_provider();
     let mut builder = reqwest::Client::builder()
         .tls_built_in_root_certs(false) // use native roots only
