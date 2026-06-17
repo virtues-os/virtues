@@ -2,14 +2,15 @@
   /setup — THE single onboarding flow. One page, one progress rail, every step:
 
     1. Account   — sign in / link your Virtues subscription (atlas + virtues-api)   [required]
-    2. Name      — name the box (its mDNS address)                                  [required]
-    3. This Mac  — collector + Full Disk Access + Accessibility                     [skippable]
-    4. Phone     — pair your iPhone                                                 [skippable]
-    5. Sources   — connect Calendar & Email (Google)                               [skippable]
-    6. Import    — one-time chat-history import                                     [skippable]
+    2. This Mac  — collector + Full Disk Access + Accessibility                     [skippable]
+    3. Phone     — pair your iPhone                                                 [skippable]
+    4. Sources   — connect Calendar & Email (Google)                               [skippable]
+    5. Import    — one-time chat-history import                                     [skippable]
 
   No second wizard, no dashboard hand-off: everything lives here, behind one rail.
-  Required steps (1–2) can't be skipped — they gate `setup_complete` and the app.
+  Required steps (1) can't be skipped — they gate `setup_complete` and the app.
+  (The box keeps its default `virtues.local` name — there's no rename step: the
+  name is cosmetic and reachability is WireGuard/SPKI + localhost, not mDNS.)
   Skippable steps show a small corner "Skip" with an "I know what I'm doing"
   confirm, so people don't bail by accident. The sidebar "Finish setup" entry
   re-opens this page at the first unfinished step.
@@ -36,14 +37,11 @@
 	let loading = $state(true);
 
 	// ── the one rail ──
-	type StepId = "account" | "name" | "device" | "phone" | "sources" | "import";
+	type StepId = "account" | "device" | "phone" | "sources" | "import";
 	const STEPS: { id: StepId; short: string; title: string; subtitle: string; required: boolean }[] = [
 		{ id: "account", short: "Account", required: true,
 		  title: "Sign in to Virtues",
 		  subtitle: "Link your subscription. It covers the only two things that still need a server — OAuth callbacks and the AI wallet. Your data never leaves the box." },
-		{ id: "name", short: "Name", required: true,
-		  title: "Name your box",
-		  subtitle: "This becomes its address on your network — e.g. adam-jace → http://adam-jace.local:8000" },
 		{ id: "device", short: "This Mac", required: false,
 		  title: "Set up this Mac",
 		  subtitle: "Let your box remember what happens on this machine. It all stays on your box." },
@@ -75,7 +73,6 @@
 	function stepDone(id: StepId): boolean {
 		switch (id) {
 			case "account": return setupDone("account");
-			case "name": return setupDone("named");
 			case "device": return onboardingDone("device_collecting");
 			case "phone": return phonePaired || onboardingDone("first_phone");
 			case "sources": return onboardingDone("first_source") || onboardingDone("living_source");
@@ -92,11 +89,6 @@
 	let email = $state("");
 	let accountError = $state<string | null>(null);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-	// ── name step ──
-	let boxName = $state("");
-	let nameError = $state<string | null>(null);
-	let savingName = $state(false);
 
 	// ── sources step ──
 	let connectingGoogle = $state(false);
@@ -178,29 +170,6 @@
 		}
 	}
 
-	async function saveName() {
-		nameError = null;
-		savingName = true;
-		try {
-			const r = await fetch("/api/setup/name", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name: boxName }),
-			});
-			const data = await r.json();
-			if (r.ok) {
-				await refreshState();
-			} else {
-				nameError = data.detail ?? (data.error === "invalid_name"
-					? "Only lowercase letters, digits, and hyphens." : "Couldn't rename the box.");
-			}
-		} catch {
-			nameError = "Couldn't reach the box.";
-		} finally {
-			savingName = false;
-		}
-	}
-
 	async function connectGoogle() {
 		connectingGoogle = true;
 		sourcesError = null;
@@ -252,7 +221,7 @@
 				Couldn't reach the box. Make sure you're on the same network, then refresh.
 			</div>
 		{:else}
-			<!-- One rail, all six steps -->
+			<!-- One rail, every step -->
 			<div class="mb-10">
 				<Stepper steps={railSteps} {current} />
 			</div>
@@ -320,23 +289,6 @@
 								<Icon icon="ri:mail-send-line" /> Check your email and click the link — this advances on its own.
 							</p>
 						{/if}
-					{/if}
-				{:else if step.id === "name"}
-					{#if stepDone("name")}
-						<p class="text-sm text-success text-center">Named — reachable at its <code>.local</code> address.</p>
-					{:else}
-						{#if nameError}
-							<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm mb-3">{nameError}</div>
-						{/if}
-						<div class="space-y-3">
-							<input type="text" bind:value={boxName} placeholder="adam-jace"
-								autocapitalize="off" autocorrect="off" spellcheck="false"
-								class="w-full px-3 py-2.5 rounded-lg bg-surface-alt border border-border text-sm outline-none focus:border-foreground-muted font-mono" />
-							<Button type="button" variant="primary" class="w-full"
-								disabled={savingName || boxName.trim().length < 2} onclick={saveName}>
-								{#if savingName}<Icon icon="ri:loader-4-line" class="animate-spin" /> Renaming…{:else}Set name{/if}
-							</Button>
-						</div>
 					{/if}
 				{:else if step.id === "device"}
 					<CollectorPermissionCard onComplete={() => refreshState()} />

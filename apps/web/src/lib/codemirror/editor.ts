@@ -12,7 +12,7 @@ import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { GFM } from '@lezer/markdown';
 import { languages } from '@codemirror/language-data';
 import { EditorState, type Extension } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, placeholder as cmPlaceholder } from '@codemirror/view';
+import { EditorView, keymap, placeholder as cmPlaceholder } from '@codemirror/view';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import type { Awareness } from 'y-protocols/awareness';
 import type { Text as YText } from 'yjs';
@@ -33,7 +33,6 @@ export interface CodeMirrorEditorOptions {
 	awareness: Awareness;
 	readOnly?: boolean;
 	placeholder?: string;
-	showLineNumbers?: boolean;
 	extensions?: Extension[];
 	onDocChange?: (content: string) => void;
 }
@@ -44,8 +43,7 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		ytext,
 		awareness,
 		readOnly = false,
-		placeholder = 'Type / for commands, @ for entities...',
-		showLineNumbers = false,
+		placeholder = 'Start writing, or press / for commands…',
 		extensions: extraExtensions = [],
 		onDocChange,
 	} = options;
@@ -91,11 +89,6 @@ export function createCodeMirrorEditor(options: CodeMirrorEditorOptions): Editor
 		EditorView.editable.of(!readOnly),
 		EditorState.readOnly.of(readOnly),
 	];
-
-	// Optional line numbers gutter
-	if (showLineNumbers) {
-		baseExtensions.push(lineNumbers());
-	}
 
 	// Doc change listener
 	if (onDocChange) {

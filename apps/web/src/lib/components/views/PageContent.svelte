@@ -16,6 +16,7 @@
 	import { Popover } from "$lib/floating";
 	import { createPageShare, getPageShare, deletePageShare } from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
 	import { saveVersion } from "$lib/yjs/versions";
 	import { onDestroy, onMount, untrack } from "svelte";
@@ -58,9 +59,6 @@
 	let icon = $state<string | null>(null);
 	let coverUrl = $state<string | null>(null);
 	let showCoverPicker = $state(false);
-	type WidthMode = "small" | "medium" | "full";
-	let widthMode = $state<WidthMode>("medium");
-	let showDragHandles = $state(true);
 	let loading = $state(false);
 	let saving = $state(false);
 	let hasSaved = $state(false);
@@ -171,9 +169,6 @@
 	// Track the last loaded pageId to avoid reloading the same page
 	let lastLoadedPageId = $state<string | null>(null);
 
-	// Load drag handles preference from localStorage
-	const DRAG_HANDLES_KEY = "virtues-show-drag-handles";
-
 	// beforeunload: warn user about unsaved changes
 	function handleBeforeUnload(e: BeforeUnloadEvent) {
 		if (hasUnsavedChanges) {
@@ -195,12 +190,6 @@
 	}
 
 	onMount(async () => {
-		// Load drag handles preference
-		try {
-			const saved = localStorage.getItem(DRAG_HANDLES_KEY);
-			if (saved !== null) showDragHandles = JSON.parse(saved);
-		} catch {}
-
 		// Register global handlers for content protection
 		window.addEventListener("beforeunload", handleBeforeUnload);
 		document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -215,11 +204,6 @@
 			lastLoadedPageId = pageId;
 			await loadPage();
 		}
-	});
-
-	// Persist drag handles preference
-	$effect(() => {
-		localStorage.setItem(DRAG_HANDLES_KEY, JSON.stringify(showDragHandles));
 	});
 
 	onDestroy(() => {
@@ -561,7 +545,6 @@
 			<PageToolbar
 				{icon}
 				{coverUrl}
-				{widthMode}
 				{copied}
 				{pageId}
 				{yjsDoc}
@@ -580,22 +563,21 @@
 					coverUrl = url;
 					save();
 				}}
-				onWidthCycle={() => {
-					const modes: WidthMode[] = ["small", "medium", "full"];
-					const currentIndex = modes.indexOf(widthMode);
-					widthMode = modes[(currentIndex + 1) % modes.length];
-				}}
 				onCopyMarkdown={copyMarkdown}
 				onDelete={deletePage}
 			/>
 
 			<!-- Main Content Area -->
-			<div class="page-content">
+			<div
+				class="page-content"
+				style:--editor-font-family={pageDisplay.fontFamily}
+				style:--editor-font-size={pageDisplay.fontSize}
+			>
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}
 					<PageCoverImage
 						{coverUrl}
-						{widthMode}
+						widthMode={pageDisplay.widthMode}
 						onChangeCover={() => (showCoverPicker = true)}
 						onRemoveCover={() => {
 							coverUrl = null;
@@ -606,10 +588,9 @@
 
 				<div
 					class="page-inner"
-					class:width-small={widthMode === "small"}
-					class:width-medium={widthMode === "medium"}
-					class:width-full={widthMode === "full"}
-					class:has-line-numbers={showDragHandles}
+					class:width-small={pageDisplay.widthMode === "small"}
+					class:width-medium={pageDisplay.widthMode === "medium"}
+					class:width-full={pageDisplay.widthMode === "full"}
 				>
 					<!-- Header -->
 					<div class="page-header">
@@ -675,12 +656,12 @@
 								<CodeMirrorEditor
 									initialContent={content}
 									onDocChange={handleDocChange}
-									placeholder="Type / for commands, @ for entities..."
+									placeholder="Start writing, or press / for commands…"
 									{yjsDoc}
 									{isConnected}
 									{isSynced}
-									{showDragHandles}
 									{pageId}
+									pageTitle={title}
 								/>
 							{/key}
 						{/if}
@@ -739,18 +720,13 @@
 		max-width: 100%;
 	}
 
-	/* Page Header */
+	/* Page Header — title hugs the body so it reads as one document
+	   (the editor's own .cm-content adds ~8px on top of this). */
 	.page-header {
 		display: flex;
 		align-items: flex-start;
 		gap: 12px;
-		margin-bottom: 1.5rem;
-		transition: padding-left 0.15s ease;
-	}
-
-	/* Match header padding to editor gutter */
-	.has-line-numbers .page-header {
-		padding-left: 2rem;
+		margin-bottom: 0.5rem;
 	}
 
 	.page-title-input {

@@ -5,8 +5,8 @@
 # Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
 
 .DEFAULT_GOAL := help
-.PHONY: help init dev dev-core dev-api dev-web dev-link dev-reset db db-stop \
-        deploy-atlas deploy-virtues-api _ecr-push mac-app
+.PHONY: help init dev dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
+        dev-link dev-reset dev-wipe-mac dev-clean db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app
 
 AWS_REGION ?= us-east-1
 
@@ -24,6 +24,48 @@ DEV_WEB_PORT ?= 5173
 VIRTUES_API_DATABASE_URL ?= postgres://virtues:virtues@localhost:5432/virtues_api
 VIRTUES_API_BEARER ?= dev-local-bearer
 DEV_API_BEARER := $(if $(filter http://localhost%,$(VIRTUES_API_URL)),$(VIRTUES_API_BEARER),)
+
+# Quiet dev logs: warnings/errors only. Override for a noisy session, e.g.
+#   make dev RUST_LOG=info        (or RUST_LOG=virtues=debug for targeted debug)
+RUST_LOG ?= warn
+
+# Auto-rebuild + restart virtues-core on .rs changes: `make dev WATCH=1` (or
+# `make dev-core WATCH=1`). Needs cargo-watch (`cargo install cargo-watch`); if
+# it's missing we print a hint and fall back to a plain one-shot run.
+WATCH ?= 0
+CARGO_WATCH := $(shell command -v cargo-watch 2>/dev/null)
+DEV_CORE_RUN := cargo run -p virtues
+ifeq ($(WATCH),1)
+ifneq ($(CARGO_WATCH),)
+DEV_CORE_RUN := cargo watch -x 'run -p virtues'
+endif
+endif
+
+# Build against the committed `.sqlx` query cache (like CI) instead of probing the
+# live DB at compile time. This decouples the build from DB state — a fresh/empty
+# `virtues` (e.g. right after `make db-reset`) still compiles, then migrations run
+# at runtime. If you EDIT a sqlx query!, regenerate the cache with
+#   cargo sqlx prepare --workspace
+# (or build that one session with `make dev-core SQLX_OFFLINE=` against a migrated DB).
+SQLX_OFFLINE ?= true
+
+# Dev convenience: pre-satisfy the required /setup wizard so `make dev` lands
+# straight in the app shell (the loopback-console auth already logs the dev
+# browser in). Clear it to walk the real wizard: `make dev VIRTUES_DEV_SKIP_SETUP=`.
+VIRTUES_DEV_SKIP_SETUP ?= 1
+
+# Local inference sidecars (`make dev-embed`). Models cache once under .data/
+# (gitignored) and are reused — same GGUFs + llama-server flags the appliance
+# installer pins (see tools/virtues-installer/src/install.rs). `dev-core` points
+# at this dir so `virtues doctor` reports them baked.
+# `make dev` runs the embed/rerank sidecars by default (~2.5–3.5 GB RAM, ~0% CPU
+# idle). Skip them for a UI-only or low-RAM session: `make dev WITH_EMBED=0`.
+WITH_EMBED ?= 1
+VIRTUES_MODELS_DIR ?= $(CURDIR)/.data/models
+EMBED_GGUF  := bge-m3-FP16.gguf
+RERANK_GGUF := bge-reranker-v2-m3-Q8_0.gguf
+EMBED_GGUF_URL  := https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/$(EMBED_GGUF)
+RERANK_GGUF_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/$(RERANK_GGUF)
 
 # Brew Postgres binaries (formula installs to opt/postgresql@17/bin).
 PG_BIN ?= $(shell brew --prefix postgresql@17 2>/dev/null)/bin
@@ -47,10 +89,9 @@ init: ## Create .env with a freshly-generated encryption key (idempotent)
 	fi
 
 # ── Mac dev loop ─────────────────────────────────────────────────────────────
-# `make dev` starts brew Postgres, then you open two terminal tabs:
-#   tab 1:  make dev-core
-#   tab 2:  make dev-web
-#   tab 3:  make dev-link    (when you need a login URL)
+# `make dev` starts brew Postgres and runs virtues-core + web together
+# (Ctrl-C stops both). Use `make dev-info` if you'd rather run them in separate
+# tabs for split logs. `make dev-link` prints a login URL when you need one.
 
 db: ## Ensure brew postgres@17 is installed + running, db exists with pgvector
 	@command -v brew >/dev/null || { echo "error: brew not installed — https://brew.sh"; exit 1; }
@@ -66,7 +107,18 @@ db: ## Ensure brew postgres@17 is installed + running, db exists with pgvector
 db-stop: ## Stop the brew postgres service (preserves data)
 	@brew services stop postgresql@17
 
-dev: db ## Start postgres + print next steps
+dev: db ## Run the full dev stack: postgres + core (:8000) + web + embed sidecars (Ctrl-C stops all)
+	@if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-ensure; fi
+	@echo "→ starting virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181/rerank :18182,). Ctrl-C stops all."
+	@echo "  core points at PROD api by default. 'make dev-link' (other tab) for a login URL."
+	@echo "  lands straight in the app (setup skipped).$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
+	@trap 'kill 0' EXIT INT TERM; \
+	$(MAKE) dev-core & \
+	$(MAKE) dev-web & \
+	if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-run & fi; \
+	wait
+
+dev-info: db ## Print the manual two-tab dev instructions (when you want split logs)
 	@echo ""
 	@echo "Open terminal tabs and run:"
 	@echo "  tab 1:  make dev-core           # points at PROD api by default"
@@ -78,7 +130,13 @@ dev: db ## Start postgres + print next steps
 	@echo "  tab 0:  make dev-api"
 	@echo "  tab 1:  make dev-core VIRTUES_API_URL=http://localhost:9002"
 
-dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seeds)
+dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seeds). WATCH=1 to auto-restart on .rs changes
+	@if [ "$(WATCH)" = "1" ] && [ -z "$(CARGO_WATCH)" ]; then \
+	  echo "→ WATCH=1 but cargo-watch not found — running once. Install: cargo install cargo-watch"; \
+	fi
+	RUST_LOG="$(RUST_LOG)" \
+	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
+	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \
 	ENVIRONMENT=dev \
 	DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
 	VIRTUES_API_URL=$(VIRTUES_API_URL) \
@@ -86,12 +144,14 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	VIRTUES_ATLAS_URL=$(VIRTUES_ATLAS_URL) \
 	VIRTUES_HTTPS_PORT=0 \
 	VIRTUES_WEB_PORT=$(DEV_WEB_PORT) \
-	cargo run -p virtues
+	VIRTUES_MODELS_DIR=$(VIRTUES_MODELS_DIR) \
+	$(DEV_CORE_RUN)
 
 dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
 	@echo "→ local virtues-api on :9002. Point dev-core at it with:"
 	@echo "    make dev-core VIRTUES_API_URL=http://localhost:9002"
 	@echo "  Real upstream spend applies (fake wallet, $$20/day + $$5/call caps)."
+	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	ENVIRONMENT=dev \
 	VIRTUES_API_DATABASE_URL=$(VIRTUES_API_DATABASE_URL) \
 	VIRTUES_API_BEARER=$(VIRTUES_API_BEARER) \
@@ -99,6 +159,35 @@ dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
 
 dev-web: ## Run the SvelteKit dev server on :$(DEV_WEB_PORT)
 	cd apps/web && pnpm dev --port $(DEV_WEB_PORT)
+
+# Ensure the llama-server binary + both GGUFs are present (idempotent; the
+# download runs once, then the `test -s` guards skip it). `make dev` calls this
+# up front so the ~1.8 GB fetch happens before the concurrent stack starts,
+# rather than racing the cargo/vite output.
+_embed-ensure:
+	@command -v llama-server >/dev/null || { echo "→ installing llama.cpp (provides llama-server)"; brew install llama.cpp; }
+	@mkdir -p "$(VIRTUES_MODELS_DIR)"
+	@test -s "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)" || { \
+	  echo "→ downloading $(EMBED_GGUF) (~1.2 GB, one-time)…"; \
+	  curl -fL --progress-bar "$(EMBED_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF).part" \
+	    && mv "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"; }
+	@test -s "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" || { \
+	  echo "→ downloading $(RERANK_GGUF) (~640 MB, one-time)…"; \
+	  curl -fL --progress-bar "$(RERANK_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" \
+	    && mv "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)"; }
+
+# Run the two sidecars (assumes models present; ~2.5–3.5 GB resident, ~0% CPU
+# idle). `-lv 1` quiets llama.cpp's startup spam (device-info/slot/warmup) while
+# keeping the "model loaded / listening" line, warnings, and errors.
+_embed-run:
+	@trap 'kill 0' INT TERM; \
+	  llama-server -lv 1 --embedding --pooling cls -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192 & \
+	  llama-server -lv 1 --rerank                  -m "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192 & \
+	  wait
+
+dev-embed: _embed-ensure ## Run local embed (:18181) + rerank (:18182) llama-server sidecars (models cached in .data/)
+	@echo "→ embed :18181 + rerank :18182 (Ctrl-C stops both)."
+	@$(MAKE) _embed-run
 
 dev-link: ## Print a login URL for the local dev stack (no prompts, no .env writes)
 	ENVIRONMENT=dev \
@@ -116,6 +205,20 @@ dev-reset: ## Drop + recreate the dev dbs (DESTRUCTIVE, dev only)
 	@$(PG_BIN)/createdb virtues_api
 	@$(PG_BIN)/psql -d virtues -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	@echo "✓ fresh dbs. Run 'make dev-core' (+ 'make dev-api') to migrate + seed."
+
+dev-wipe-mac: ## Unpair this Mac (clear keychain bundle + ~/.virtues/bundle.json + proxy LaunchAgent) to restart pairing
+	@echo "→ unpairing this Mac from its box (keychain + bundle.json + LaunchAgent)"
+	@launchctl bootout gui/$$(id -u)/com.virtues.client 2>/dev/null || true
+	@rm -f $$HOME/Library/LaunchAgents/com.virtues.client.plist
+	@pkill -f virtues-client 2>/dev/null || true
+	@for a in default-box default-box-wg-private default-box-device-id default-box-credential-id default-box-server-pin; do \
+		security delete-generic-password -s virtues-client -a "$$a" >/dev/null 2>&1 || true; \
+	done
+	@rm -f $$HOME/.virtues/bundle.json
+	@echo "✓ Mac unpaired — reopen the app to get the code-entry screen"
+
+dev-clean: dev-wipe-mac dev-reset ## Full local reset: unpair this Mac + drop/recreate dev dbs (fresh e2e from scratch)
+	@echo "✓ clean slate — run 'make dev' to bring the local stack back up"
 
 # ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
 

@@ -103,11 +103,10 @@ pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), 
         }
     }
 
-    // Refresh the setup-wizard sudoers rule. The full installer writes it, but
-    // a box that was UPGRADED (or manually binary-swapped) from a pre-rule
-    // version lacks it — so the in-app "name your box" rename fails. We're root
-    // here, so ensure it idempotently. Best-effort: never block the upgrade.
-    ensure_setup_sudoers();
+    // The box keeps its default `virtues.local` name (no in-app rename step),
+    // so the old hostname-rename sudoers grant is dead. Remove it from boxes
+    // that were installed when the rename step still existed. Best-effort.
+    remove_stale_setup_sudoers();
 
     println!("→ starting virtues.service…");
     let status = Command::new("systemctl").arg("start").arg("virtues").status();
@@ -150,37 +149,17 @@ fn running_as_root() -> bool {
     false
 }
 
-/// Ensure `/etc/sudoers.d/virtues-setup` exists so the setup wizard's "name
-/// your box" step can rename the host non-interactively (the box server runs as
-/// the unprivileged `virtues` user and shells out to `sudo -n hostnamectl`).
-/// Idempotent; mirrors the installer's `write_setup_sudoers`. Best-effort —
-/// logs and returns on any error rather than failing the upgrade.
-fn ensure_setup_sudoers() {
+/// Remove the dead `/etc/sudoers.d/virtues-setup` grant from boxes installed
+/// when the in-app "name your box" rename step still existed. The box now keeps
+/// its default `virtues.local` name, so nothing shells out to `sudo hostnamectl`
+/// anymore. Best-effort — a missing file is the common (clean) case.
+fn remove_stale_setup_sudoers() {
     const PATH: &str = "/etc/sudoers.d/virtues-setup";
-    const RULE: &str = "\
-# Written by `virtues upgrade`. Lets the setup wizard's \"name your box\" step
-# rename the host (the mDNS name follows the hostname). Scoped to exactly these
-# commands; the virtues user has no other sudo rights.
-virtues ALL=(root) NOPASSWD: /usr/bin/hostnamectl set-hostname *
-virtues ALL=(root) NOPASSWD: /usr/bin/systemctl reload-or-restart avahi-daemon
-";
-    if fs::read_to_string(PATH).map(|c| c == RULE).unwrap_or(false) {
-        return; // already correct
-    }
-    if let Err(e) = fs::write(PATH, RULE) {
-        eprintln!("→ note: couldn't write {PATH} ({e}); in-app box rename may not work");
-        return;
-    }
-    let _ = fs::set_permissions(PATH, fs::Permissions::from_mode(0o440));
-    // visudo -c validates the fragment; a bad one can lock sudo out, so remove
-    // it if it doesn't parse.
-    match Command::new("visudo").args(["-c", "-f", PATH]).status() {
-        Ok(s) if s.success() => println!("→ ensured box-rename sudoers rule"),
-        Ok(_) => {
-            let _ = fs::remove_file(PATH);
-            eprintln!("→ note: sudoers fragment failed visudo check (removed)");
+    if Path::new(PATH).exists() {
+        match fs::remove_file(PATH) {
+            Ok(()) => println!("→ removed dead box-rename sudoers rule"),
+            Err(e) => eprintln!("→ note: couldn't remove stale {PATH} ({e})"),
         }
-        Err(_) => { /* visudo missing — leave the static, known-good rule */ }
     }
 }
 

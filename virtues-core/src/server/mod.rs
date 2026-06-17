@@ -273,7 +273,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/setup/subscribe/start",   post(crate::api::setup::subscribe_start_handler))
         .route("/api/setup/login/start",       post(crate::api::setup::login_start_handler))
         .route("/api/setup/link/poll",         post(crate::api::setup::link_poll_handler))
-        .route("/api/setup/name",              post(crate::api::setup::name_handler))
         // ─── Source OAuth + API-key connect flows ────────────────────
         // Device pairing (iOS / Mac / sensor) lives at /api/pair/* (above).
         // The legacy /api/pairing/initiate + /api/pairing/complete routes
@@ -711,6 +710,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Chat API (streaming)
         .route("/api/chat", post(api::chat_handler))
         .route("/api/chat/cancel", post(api::cancel_chat_handler))
+        .route("/api/ai/complete", post(api::ai_complete_handler))
         // Chat Edit Permissions API
         .route(
             "/api/chats/:id/permissions",

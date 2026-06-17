@@ -153,7 +153,13 @@ function buildDecorations(view: EditorView): DecorationSet {
 			// --- List markers ---
 			if (name === 'ListMark' && !overlapsActiveLine) {
 				const markerText = view.state.sliceDoc(from, to);
-				if (markerText === '-' || markerText === '*' || markerText === '+') {
+				// Task items (`- [ ]` / `- [x]`) are rendered entirely by the
+				// checkboxes extension (which replaces `- [ ] ` with a checkbox).
+				// Skip the bullet dot here so we don't get BOTH a • and a checkbox.
+				const isTaskItem = /^\s*[-*+]\s+\[[ xX]\]/.test(doc.lineAt(from).text);
+				if (isTaskItem) {
+					// handled by checkboxes.ts — no marker decoration
+				} else if (markerText === '-' || markerText === '*' || markerText === '+') {
 					// Bullet markers → replace with dot character
 					builder.push(
 						Decoration.replace({

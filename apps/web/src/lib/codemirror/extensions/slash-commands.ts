@@ -36,6 +36,21 @@ interface SlashState {
 export function getDefaultSlashCommands(): SlashCommand[] {
 	return [
 		{
+			label: 'Ask AI',
+			description: 'Write or continue with AI',
+			keywords: ['ai', 'write', 'continue', 'generate', 'virtues'],
+			group: 'AI',
+			icon: 'ri:sparkling-2-line',
+			execute: (view, from) => {
+				// Strip the slash, then let the host open the AI prompt popover.
+				const to = view.state.selection.main.head;
+				view.dispatch({ changes: { from, to, insert: '' } });
+				view.dom.dispatchEvent(
+					new CustomEvent('slash-command-ai', { bubbles: true, detail: { pos: from } }),
+				);
+			},
+		},
+		{
 			label: 'Heading 1',
 			description: 'Large section heading',
 			keywords: ['h1', 'title'],

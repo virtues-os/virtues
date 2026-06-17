@@ -411,3 +411,22 @@ h6 {
 [data-sonner-toast] [data-description] {
 	color: var(--foreground-muted) !important;
 }
+
+/* =============================================================================
+   FULL-SCREEN FOCUS MODE
+   Driven by body.focus-mode (toggled from the (app) layout on
+   pageDisplay.focusMode). Hides all peripheral chrome — sidebar + tab bars —
+   and removes the editor frame so only the document remains. A floating exit
+   button lives in the layout. !important guards against Tailwind utilities
+   (m-3 / border / rounded-lg) on <main>.
+   ============================================================================= */
+body.focus-mode .sidebar-container,
+body.focus-mode .tab-bar {
+	display: none !important;
+}
+
+body.focus-mode main {
+	margin: 0 !important;
+	border: none !important;
+	border-radius: 0 !important;
+}

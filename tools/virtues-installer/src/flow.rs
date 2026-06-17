@@ -42,12 +42,6 @@ pub async fn run(cli: Config) -> Result<()> {
     let target = steps::detect()?;
     ui::ok(&format!("Linux {} · {} {}", target.arch, target.distro, target.distro_version));
     let pf = preflight::run().await?;
-    if pf.warnings > 0 {
-        ui::warn(&format!("{} pre-flight issue(s) — continuing in 5s (Ctrl+C to abort)…", pf.warnings));
-        if !cli.dry_run && !cli.assume_yes {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        }
-    }
 
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
