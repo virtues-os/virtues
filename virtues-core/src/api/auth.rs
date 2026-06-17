@@ -71,7 +71,25 @@ pub async fn session_handler(
         }
     }
 
-    // 3. Neither → not paired.
+    // 3. Dev fallback — ENVIRONMENT=dev is a local dev stack; report the console
+    //    owner so `make dev` lands straight in the app without a pairing
+    //    round-trip (complement to VIRTUES_DEV_SKIP_SETUP). Mirrors the AuthUser
+    //    extractor's dev fallback; gated to dev, inert on a real box.
+    if crate::middleware::auth::is_dev() {
+        return (
+            StatusCode::OK,
+            Json(SessionResponse {
+                user: Some(SessionUser {
+                    id: crate::middleware::http::OWNER_USER_ID.to_string(),
+                    device_id: crate::middleware::auth::CONSOLE_DEVICE_ID.to_string(),
+                    device_label: crate::middleware::auth::CONSOLE_DEVICE_LABEL.to_string(),
+                }),
+                expires: None,
+            }),
+        );
+    }
+
+    // 4. Neither → not paired.
     (StatusCode::OK, Json(SessionResponse { user: None, expires: None }))
 }
 
