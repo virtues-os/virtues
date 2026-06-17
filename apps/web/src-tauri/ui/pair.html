@@ -157,11 +157,41 @@
     #status.error { color: var(--error); }
     #status.info  { color: var(--muted); }
     #status.ok    { color: var(--ok); }
+
+    /* Contextual banner — only shows when we arrived here because a prior
+       pairing went stale (box reset) or the box is unreachable. Plain words,
+       no jargon. */
+    #banner {
+      display: none;
+      background: var(--field);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 9px;
+      padding: 12px 14px;
+      margin-bottom: 22px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+    #banner.show { display: block; }
+    #banner .retry {
+      margin-top: 8px;
+      display: inline-block;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 5px 12px;
+      color: var(--accent);
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #banner .retry:hover { border-color: var(--accent); }
   </style>
 </head>
 <body>
   <div class="card">
     <div class="wordmark"><span class="mark">∴</span>Virtues</div>
+    <div id="banner"></div>
     <h1>Connect to your box</h1>
     <p class="subtitle">Run <code>virtues pair</code> on your box and enter the code it prints. On the same Wi-Fi your box is found automatically — otherwise type its address (Tailscale IP, LAN IP, or hostname).</p>
 
@@ -197,6 +227,37 @@
   <script>
     const invoke = window.__TAURI__?.core?.invoke;
     let servers = [];
+
+    // How we got here (set by the launch decision via the URL hash):
+    //   #reset       — box was reset/reinstalled, the old pairing is dead
+    //   #unreachable — box paired but not reachable right now
+    //   (none)       — fresh / first run
+    const arrivalState = location.hash.replace('#', '');
+    const BOX_URL = 'http://localhost:7117';
+
+    function showBanner(html, withRetry) {
+      const b = document.getElementById('banner');
+      b.innerHTML = html + (withRetry ? '<br><button class="retry" onclick="retryReach()">Retry</button>' : '');
+      b.classList.add('show');
+    }
+
+    // Unreachable: quietly re-check in the background so a box that was just
+    // off/asleep reconnects on its own; Retry does the same on demand.
+    let reachTimer = null;
+    async function retryReach() {
+      try {
+        if (await invoke('recheck_box')) { window.location.href = BOX_URL; return true; }
+      } catch (e) { /* ignore */ }
+      return false;
+    }
+    function initArrival() {
+      if (arrivalState === 'reset') {
+        showBanner('Your box was reset, so this Mac needs to reconnect. Enter a fresh code below.', false);
+      } else if (arrivalState === 'unreachable') {
+        showBanner("We can't reach your box right now — it may be off, asleep, or on another network. We'll keep trying.", true);
+        reachTimer = setInterval(retryReach, 4000);
+      }
+    }
 
     async function refresh() {
       setStatus('Searching for your box…', 'info');
@@ -278,6 +339,12 @@
       const btn = document.getElementById('connect-btn');
       btn.textContent = 'Connecting…';
       setStatus('', '');
+      if (reachTimer) { clearInterval(reachTimer); reachTimer = null; }
+
+      // Always start a connect from a clean slate: clears any stale creds + the
+      // TOFU server-pin so re-pairing a RESET box (new identity key) doesn't get
+      // refused by the old pin. A no-op on a truly fresh machine.
+      try { await invoke('forget_pairing'); } catch (e) { /* best-effort */ }
 
       try {
         await invoke('pair_with_code', { server, code });
@@ -309,7 +376,8 @@
 
     document.addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
 
-    // Auto-discover on load
+    // Contextual banner (reset / unreachable) + auto-discover the box.
+    initArrival();
     refresh();
   </script>
 </body>
