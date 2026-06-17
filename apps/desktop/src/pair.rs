@@ -23,7 +23,7 @@ use url::Url;
 use virtues_protocol::PairingBundle;
 
 use crate::keychain;
-use crate::wg_keys::Keypair;
+use virtues_tunnel::generate_keypair;
 
 /// Body the box's `/api/pair/consume` endpoint accepts. The shape is fixed by
 /// `virtues-core::api::pair::ConsumeRequest` — keep these field names in sync.
@@ -90,8 +90,8 @@ pub async fn run_with_code(server_origin: &str, code: &str) -> Result<()> {
 }
 
 async fn consume(origin: String, token: String) -> Result<()> {
-    let keypair = Keypair::generate();
-    let wg_public_b64 = keypair.public_b64();
+    let keypair = generate_keypair();
+    let wg_public_b64 = keypair.public_key_b64.clone();
 
     let device_info = serde_json::json!({
         "device_name": hostname(),
@@ -137,7 +137,7 @@ async fn consume(origin: String, token: String) -> Result<()> {
     // a leftover private key in the keychain (harmless garbage we'll overwrite
     // on retry) — we do NOT want a stored bundle that references a private key
     // we threw away.
-    keychain::save_wg_private(&keypair.private_b64())?;
+    keychain::save_wg_private(&keypair.private_key_b64)?;
     keychain::save_bundle(&bundle)?;
 
     // Save the credential ID — what revoke() sends to DELETE

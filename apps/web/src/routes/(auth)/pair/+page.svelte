@@ -83,7 +83,7 @@
 			const data = await resp.json().catch(() => ({}));
 			errorMessage =
 				data.error === "invalid_or_expired_token"
-					? "This link is invalid or already used. Run `virtues link` on the box to get a new one."
+					? "This link is invalid or already used. Run `virtues pair` on the box to get a new one."
 					: "Could not complete pairing. Try again with a fresh link.";
 			mode = "error";
 		} catch (_e) {
@@ -137,9 +137,9 @@
 					<span class="text-foreground">From the box itself:</span>
 					run
 					<code
-						class="px-1.5 py-0.5 rounded bg-surface-alt border border-border text-xs">virtues link</code
+						class="px-1.5 py-0.5 rounded bg-surface-alt border border-border text-xs">virtues pair</code
 					>
-					and open the URL it prints.
+					and open the URL (or enter the code) it prints.
 				</li>
 				<li>
 					<span class="text-foreground">From an already-paired device:</span>

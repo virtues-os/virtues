@@ -25,10 +25,17 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("Virtues box status");
     println!("──────────────────");
     println!("  identity:");
-    println!("    server CA            {}", yn(s.identity.server_ca));
     println!("    WG server keypair    {}", yn(s.identity.wg_server_keypair));
     if let Some(pk) = &s.identity.wg_public_key {
         println!("      public key         {pk}");
+    }
+    if let Some(fpr) = &s.identity.spki_fingerprint {
+        // The fingerprint a device pins out-of-band (compare against what the
+        // client shows). No CA — this WG-key SPKI is the box's identity.
+        println!("      SPKI fingerprint   {fpr}");
+    }
+    if let Some(ep) = &s.identity.wg_endpoint {
+        println!("      WG endpoint        {ep}");
     }
     println!("    rendezvous identity  {}", yn(s.identity.rendezvous));
     if let Some(pid) = &s.identity.publish_id {

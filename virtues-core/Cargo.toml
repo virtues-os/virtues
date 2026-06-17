@@ -134,10 +134,6 @@ ring = "0.17"
 base64 = "0.22"
 hex = "0.4"
 
-# Per-server CA + virtues.internal leaf (TLS context 1, WS-2).
-# x509-parser: reload a stored CA from PEM to sign leaves after a restart.
-rcgen = { version = "0.13", features = ["x509-parser"] }
-
  # HMAC signing for OAuth state tokens
 hmac = "0.12"
 sha2 = "0.10"

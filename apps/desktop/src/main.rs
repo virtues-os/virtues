@@ -38,7 +38,6 @@ mod keychain;
 mod pair;
 mod proxy;
 mod tunnel;
-mod wg_keys;
 
 #[derive(Parser)]
 #[command(name = "virtues-client")]
@@ -244,24 +243,47 @@ async fn run_up(no_tunnel: bool, upstream: Option<String>) -> Result<()> {
         anyhow::anyhow!("no paired box — run `virtues-client pair` first")
     })?;
 
-    // Bring the WG tunnel up unless the user supplies their own transport.
-    // (Linux only today; macOS / Windows impls follow.) Errors here are honest
-    // fatals — without a tunnel AND without --upstream the proxy can't reach the
-    // box. The handle MUST stay alive for the proxy's lifetime; dropping it
-    // tears the WG state machine down.
-    let tunnel = if no_tunnel {
-        eprintln!("⤳ skipping built-in WireGuard tunnel (--no-tunnel); using your own transport");
-        None
+    // Transport selection. The handle (if any) MUST stay alive for the proxy's
+    // lifetime; dropping it tears the WG state machine down.
+    //  - `--no-tunnel`: forced BYO — skip WG entirely, forward to `--upstream`
+    //    (the box's address on the user's own transport: Tailscale/VPS/IPv6).
+    //  - default: bring up the userspace WireGuard tunnel (SPKI trust). If the
+    //    box's WG endpoint isn't reachable from here (no IPv6 / NAT / hostile
+    //    network) and an `--upstream` was supplied, fall back to BYO so the
+    //    proxy still works; otherwise the WG failure is fatal.
+    let (tunnel, cfg) = if no_tunnel {
+        eprintln!("⤳ --no-tunnel: skipping WireGuard; forwarding over your own transport");
+        let addr = upstream.as_ref().expect("checked above");
+        let cfg = proxy::ProxyConfig::from_bundle_with_upstream(&bundle, addr)
+            .with_context(|| format!("parse --upstream `{addr}`"))?;
+        (None, cfg)
     } else {
-        Some(tunnel::start(&bundle).await.context("bring tunnel up")?)
-    };
-
-    // Start the proxy and run until Ctrl-C / signal. The upstream is either the
-    // BYO address (--upstream) or the box's WG-internal address from the bundle.
-    let cfg = match &upstream {
-        Some(addr) => proxy::ProxyConfig::from_bundle_with_upstream(&bundle, addr)
-            .with_context(|| format!("parse --upstream `{addr}`"))?,
-        None => proxy::ProxyConfig::from_bundle(&bundle)?,
+        match tunnel::start(&bundle).await {
+            Ok(handle) => {
+                // Proxy → the loopback forwarder → over WG → box.
+                let cfg = proxy::ProxyConfig {
+                    upstream_addr: handle.forwarder_addr,
+                    upstream_host: bundle.internal_host.clone(),
+                    bind_port: proxy::LOCAL_PROXY_PORT,
+                    bearer: bundle.bearer.clone(),
+                };
+                (Some(handle), cfg)
+            }
+            Err(e) => match &upstream {
+                Some(addr) => {
+                    eprintln!("⚠ WireGuard tunnel unavailable ({e});");
+                    eprintln!("  falling back to direct upstream {addr}");
+                    let cfg = proxy::ProxyConfig::from_bundle_with_upstream(&bundle, addr)
+                        .with_context(|| format!("parse --upstream `{addr}`"))?;
+                    (None, cfg)
+                }
+                None => {
+                    return Err(e).context(
+                        "WireGuard tunnel failed and no --upstream fallback was given",
+                    )
+                }
+            },
+        }
     };
     let result = tokio::select! {
         result = proxy::run(cfg) => result,
