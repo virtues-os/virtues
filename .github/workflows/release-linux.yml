@@ -152,8 +152,22 @@ jobs:
       # (one CPU binary per arch; the Jetson CUDA flavor is the separate
       # llama-jetson-cuda job). GGML_NATIVE=OFF keeps the build portable
       # across the arch instead of tuned to the runner's CPU; static libs
-      # so the tarball ships one self-contained executable. ~5 min.
+      # so the tarball ships one self-contained executable.
+      #
+      # The binary is byte-determined by (LLAMA_CPP_TAG, arch, cmake flags), so
+      # we cache the OUTPUT keyed on the pinned tag — no source hash. It hits on
+      # every run until LLAMA_CPP_TAG is bumped, then misses exactly once and
+      # rebuilds. Bump the `-vN` suffix by hand if the cmake flags above change.
+      # Saves the ~5 min compile on every cache hit.
+      - name: Cache llama-server (CPU)
+        id: llama_cpu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-bin
+          key: llama-server-${{ env.LLAMA_CPP_TAG }}-${{ matrix.arch }}-cpu-v1
+
       - name: Build llama-server (pinned llama.cpp, CPU)
+        if: steps.llama_cpu.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
             https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
@@ -166,8 +180,13 @@ jobs:
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_SERVER=ON
           cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
-          # Smoke: the binary must at least start and report its version.
-          /tmp/llama.cpp/build/bin/llama-server --version
+          mkdir -p /tmp/llama-bin
+          cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
+
+      # Smoke runs on cache HIT and MISS alike: the binary must start and report
+      # its version (also proves a restored cache isn't corrupt).
+      - name: Smoke llama-server (CPU)
+        run: /tmp/llama-bin/llama-server --version
 
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
@@ -204,7 +223,7 @@ jobs:
           # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
           # (its build step is non-fatal); it's packaged below only if present.
 
-          LLAMA_PATH="/tmp/llama.cpp/build/bin/llama-server"
+          LLAMA_PATH="/tmp/llama-bin/llama-server"
           test -x "$LLAMA_PATH" || (echo "llama-server not built" >&2 && exit 1)
 
           # Layout inside the main tarball:
@@ -348,7 +367,19 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq git cmake build-essential
 
+      # Same output-cache strategy as the CPU build, separate key (CUDA flags +
+      # sm_87 → a different binary). actions/cache@v4 runs fine inside the L4T
+      # container — GitHub mounts the node runtime for container jobs. Skips the
+      # ~5 min CUDA compile on a hit; bump `-vN` if the cmake flags below change.
+      - name: Cache llama-server (CUDA, sm_87)
+        id: llama_cuda
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-bin
+          key: llama-server-${{ env.LLAMA_CPP_TAG }}-aarch64-cuda87-v1
+
       - name: Build llama-server (CUDA, sm_87)
+        if: steps.llama_cuda.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
             https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
@@ -363,15 +394,17 @@ jobs:
             -DLLAMA_BUILD_EXAMPLES=OFF \
             -DLLAMA_BUILD_SERVER=ON
           cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
-          # No --version smoke here: the runner has no GPU, and a CUDA
-          # binary may refuse to initialize without one. Physical-Jetson
-          # verification is the gate (see job comment).
+          mkdir -p /tmp/llama-bin
+          cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
+          # No --version smoke: the runner has no GPU, and a CUDA binary may
+          # refuse to initialize without one. Physical-Jetson verification is
+          # the gate (see job comment).
 
       - name: Package + checksum
         run: |
           mkdir -p dist
           NAME="llama-server-${{ steps.tag.outputs.version }}-aarch64-cuda-linux"
-          cp /tmp/llama.cpp/build/bin/llama-server "dist/${NAME}"
+          cp /tmp/llama-bin/llama-server "dist/${NAME}"
           (cd dist && sha256sum "${NAME}" > "${NAME}.sha256")
 
       - name: Upload to GitHub Release
