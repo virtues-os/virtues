@@ -41,9 +41,12 @@
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 	let completed = $state(false);
 
-	// DONE gate (locked): daemon running + Full Disk Access. Accessibility is a
-	// bonus, not a blocker.
-	const isDone = $derived(!!status?.running && !!status?.hasFullDiskAccess);
+	// DONE gate: daemon running + BOTH permissions. Full Disk Access (Messages,
+	// Mail, etc.) and Accessibility (on-screen context) are both load-bearing
+	// for the collector — neither is optional.
+	const isDone = $derived(
+		!!status?.running && !!status?.hasFullDiskAccess && !!status?.hasAccessibility,
+	);
 
 	$effect(() => {
 		if (isDone && !completed) {
@@ -118,17 +121,9 @@
 	</div>
 {:else}
 	<div class="rounded-lg border border-border p-4 space-y-4">
-		<div>
-			<p class="font-serif text-base text-foreground mb-1">This Mac</p>
-			<p class="text-sm text-foreground-muted">
-				Virtues remembers what happens on this machine so you can ask your box
-				about your own life later. It runs in the background and never leaves
-				this Mac except to sync to your box.
-			</p>
-		</div>
-
 		{#if !status?.running}
-			<!-- Step 1: install + pair the daemon. -->
+			<!-- Step 1: install + pair the daemon. (The step subtitle already says
+			     what this does — no second paragraph here.) -->
 			<Button variant="primary" onclick={turnOn} disabled={installing}>
 				{installing ? "Starting…" : "Turn on this Mac"}
 			</Button>
@@ -159,40 +154,34 @@
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Full Disk Access</span>
-						<span class="text-foreground-subtle">— read your Messages history</span>
+						<span class="text-foreground-subtle">— Messages, read locally, never sent to Virtues</span>
 						{#if !status.hasFullDiskAccess}
-							<p class="text-xs text-foreground-muted mt-1">
-								Your Messages are read locally and stored only on your box —
-								never sent to Virtues. macOS only allows this from System
-								Settings: flip <strong>Virtues</strong> to on, then come back —
-								this updates on its own.
-							</p>
 							<button
-								class="text-xs text-primary hover:underline mt-1"
+								class="text-xs text-primary hover:underline mt-1 block"
 								onclick={() => openFullDiskAccess()}
 							>
-								Open System Settings
+								Open System Settings → flip Virtues on
 							</button>
 						{/if}
 					</div>
 				</li>
 
-				<!-- Accessibility — optional, never blocks. -->
+				<!-- Accessibility — REQUIRED (on-screen context). -->
 				<li class="flex items-start gap-2 text-sm">
 					<Icon
-						icon={status.hasAccessibility ? "ri:checkbox-circle-fill" : "ri:checkbox-blank-circle-line"}
+						icon={status.hasAccessibility ? "ri:checkbox-circle-fill" : "ri:error-warning-line"}
 						width="18"
-						class={`shrink-0 mt-0.5 ${status.hasAccessibility ? "text-success" : "text-foreground-subtle"}`}
+						class={`shrink-0 mt-0.5 ${status.hasAccessibility ? "text-success" : "text-warning"}`}
 					/>
 					<div class="flex-1">
 						<span class="text-foreground">Accessibility</span>
-						<span class="text-foreground-subtle">— see what's on your screen (optional)</span>
+						<span class="text-foreground-subtle">— what's on your screen, stays on your box</span>
 						{#if !status.hasAccessibility}
 							<button
 								class="text-xs text-primary hover:underline mt-1 block"
 								onclick={() => openAccessibilitySettings()}
 							>
-								Open System Settings
+								Open System Settings → flip Virtues on
 							</button>
 						{/if}
 					</div>
@@ -200,10 +189,10 @@
 			</ul>
 
 			{#if isDone}
-				<p class="text-sm text-success">This Mac is collecting. You can move on — add your phone next.</p>
+				<p class="text-sm text-success">This Mac is collecting.</p>
 			{:else}
 				<p class="text-xs text-foreground-muted">
-					Grant Full Disk Access to finish — everything else is optional.
+					Grant both Full Disk Access and Accessibility to finish.
 				</p>
 			{/if}
 		{/if}

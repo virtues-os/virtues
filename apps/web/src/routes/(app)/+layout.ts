@@ -24,11 +24,11 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		}
 
 		// Setup gate: an authenticated device on a box whose REQUIRED core
-		// (account → name; network is informational, not gating) isn't finished
-		// belongs in the /setup wizard, not the app shell. /setup + /get-started
-		// live in the (onboarding) route group with its own layout, so this
-		// can't loop. Without this, a freshly-reinstalled box drops the user
-		// straight into chat with account/naming undone.
+		// (account → name; the rest of onboarding is optional, network is
+		// informational) isn't finished belongs in the unified /setup flow, not
+		// the app shell. /setup lives in the (onboarding) route group with its
+		// own layout, so this can't loop. Without this, a freshly-reinstalled
+		// box drops the user straight into chat with account/naming undone.
 		try {
 			const setupRes = await fetch('/api/setup/state');
 			if (setupRes.ok) {
