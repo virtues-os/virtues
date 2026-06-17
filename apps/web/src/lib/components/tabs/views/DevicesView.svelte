@@ -270,7 +270,7 @@
 			<EmptyState
 				icon="ri:device-line"
 				title="No paired devices"
-				message="Run `virtues link` on the box to pair this browser, or click Add device above."
+				message="Run `virtues pair` on the box to pair this browser, or click Add device above."
 			/>
 		{:else}
 			<ul class="divide-y divide-border rounded-lg border border-border bg-surface">

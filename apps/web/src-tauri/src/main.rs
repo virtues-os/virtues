@@ -48,6 +48,45 @@ fn is_paired() -> bool {
         .unwrap_or(false)
 }
 
+/// Ask the local proxy (`localhost:7117`) whether THIS device's pairing is still
+/// valid with the box, by reading `/auth/session`. `is_paired()` only checks
+/// that a bundle exists on disk — but after a box reinstall/revoke that bundle's
+/// bearer is dead, and loading the box web with it dead-ends the user on the
+/// box's `/pair` page with no way back. This lets the launch path send a
+/// definitively-rejected device to the app's own `pair.html` instead.
+///
+/// `Some(true)` = authenticated; `Some(false)` = box rejected us (re-pair);
+/// `None` = proxy unreachable (can't tell — it may still be starting up, so the
+/// caller should NOT bounce a possibly-valid device on this).
+///
+/// std-only (no HTTP dep): a raw GET with short timeouts, retried a few times to
+/// ride out the LaunchAgent proxy's startup race.
+fn probe_box_session() -> Option<bool> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let addr = "127.0.0.1:7117".parse().ok()?;
+    for _ in 0..5 {
+        if let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) {
+            let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
+            let req = "GET /auth/session HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+            if s.write_all(req.as_bytes()).is_ok() {
+                let mut buf = String::new();
+                let _ = s.read_to_string(&mut buf);
+                if buf.contains("\"user\":null") {
+                    return Some(false);
+                }
+                if buf.contains("\"device_id\"") || buf.contains("\"user\":{") {
+                    return Some(true);
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    None
+}
+
 /// Build a shell `Command` for virtues-client. Resolution order:
 ///   1. `~/.virtues/bin/virtues-client` (system installer's location)
 ///   2. `/usr/local/bin/virtues-client` (alt install location)
@@ -393,7 +432,12 @@ fn main() {
             // own 8000; the proxy listens on 7117 to avoid squatting a common
             // dev port). Keep in sync with LOCAL_PROXY_PORT in
             // apps/desktop/src/proxy.rs, the CSP, and pair.html.
-            let url = if is_paired() {
+            // Paired on disk, but is the bundle still VALID with the box? A
+            // definitively-rejected device (box reinstalled/revoked) goes back
+            // to our own pairing screen instead of the box's dead-end /pair
+            // page. Unknown/unreachable (proxy still starting) → still load the
+            // box, so a valid device isn't bounced on a startup race.
+            let url = if is_paired() && probe_box_session() != Some(false) {
                 WebviewUrl::External("http://localhost:7117".parse().unwrap())
             } else {
                 WebviewUrl::App("pair.html".into())

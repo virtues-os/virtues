@@ -562,7 +562,81 @@ impl Write for TunnelStream {
     }
 }
 
+impl TunnelStream {
+    /// Split into independent read + write halves so an async bridge (e.g. the
+    /// desktop proxy's loopback forwarder) can run reads and writes on separate
+    /// threads concurrently — required for full-duplex traffic like WebSockets.
+    /// The write half owns the close-on-drop (one `Close`, sent when *both*
+    /// halves are gone — the writer is the last logical owner of the socket).
+    pub fn into_split(self) -> (TunnelReadHalf, TunnelWriteHalf) {
+        // Move fields out without firing the bundled `Drop` (which would send a
+        // premature `Close`). SocketHandle is `Copy`; the rest are read once.
+        let me = std::mem::ManuallyDrop::new(self);
+        // SAFETY: each field is read exactly once and the original is forgotten.
+        let write_tx = unsafe { std::ptr::read(&me.write_tx) };
+        let read_rx = unsafe { std::ptr::read(&me.read_rx) };
+        let read_carry = unsafe { std::ptr::read(&me.read_carry) };
+        let cmd_tx = unsafe { std::ptr::read(&me.cmd_tx) };
+        let handle = me.handle;
+        (
+            TunnelReadHalf { read_rx, read_carry },
+            TunnelWriteHalf { write_tx, cmd_tx, handle, closed: false },
+        )
+    }
+}
+
 impl Drop for TunnelStream {
+    fn drop(&mut self) {
+        if !self.closed {
+            self.closed = true;
+            let _ = self.cmd_tx.send(Command::Close(self.handle));
+        }
+    }
+}
+
+/// Read half of a split [`TunnelStream`]. See [`TunnelStream::into_split`].
+pub struct TunnelReadHalf {
+    read_rx: Receiver<Vec<u8>>,
+    read_carry: Vec<u8>,
+}
+
+impl Read for TunnelReadHalf {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if self.read_carry.is_empty() {
+            match self.read_rx.recv() {
+                Ok(bytes) => self.read_carry = bytes,
+                Err(_) => return Ok(0), // sender dropped → clean EOF
+            }
+        }
+        let n = out.len().min(self.read_carry.len());
+        out[..n].copy_from_slice(&self.read_carry[..n]);
+        self.read_carry.drain(..n);
+        Ok(n)
+    }
+}
+
+/// Write half of a split [`TunnelStream`]. Owns the socket close-on-drop.
+pub struct TunnelWriteHalf {
+    write_tx: Sender<Vec<u8>>,
+    cmd_tx: Sender<Command>,
+    handle: SocketHandle,
+    closed: bool,
+}
+
+impl Write for TunnelWriteHalf {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.write_tx
+            .send(data.to_vec())
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "tunnel closed"))?;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for TunnelWriteHalf {
     fn drop(&mut self) {
         if !self.closed {
             self.closed = true;

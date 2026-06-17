@@ -452,7 +452,7 @@ fn print_banner() {
       VF    .JMML..JMML.     `Mbmo  `Mbod"YML.`Mbmmd' M9mmmP'
 "#;
     println!("{WORDMARK}");
-    println!("   This is technology that helps you be the person you want to become.");
+    println!("   This is technology that helps you be the person you ought to become.");
     println!("─────────────────────────────────────────────────────────");
     println!();
 }

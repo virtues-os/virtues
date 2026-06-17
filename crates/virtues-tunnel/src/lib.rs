@@ -1,13 +1,16 @@
 //! # virtues-tunnel
 //!
-//! In-app **userspace** WireGuard for paired Virtues clients.
+//! In-app **userspace** WireGuard — the **one client tunnel engine** for every
+//! paired Virtues device (iOS today; desktop after the gotatun retirement).
 //!
-//! The desktop daemon runs WireGuard over a real kernel/`utun` device. iOS
-//! can't: a `NEPacketTunnelProvider` would seize the single system-VPN slot and
-//! disable the user's iCloud Private Relay / Nord / etc. So this crate runs the
-//! whole tunnel **inside the app process** — no system VPN, no entitlement, no
-//! permission prompt, coexisting with any other VPN — and exposes a tiny
-//! [`dial`](Tunnel::dial) API the app uses to issue plain HTTP to the box.
+//! It runs the whole tunnel **inside the app process** (no kernel module, no
+//! `utun`, no root, no system-VPN slot — coexists with the user's iCloud Private
+//! Relay / other VPN) and exposes a tiny [`dial`](Tunnel::dial) API for issuing
+//! plain HTTP to the box. iOS binds the FFI; desktop uses the native API
+//! directly and bridges [`TunnelStream`] (via [`TunnelStream::into_split`]) to
+//! its async localhost reverse proxy. This is why the previous desktop path
+//! (a kernel/`utun` tunnel via gotatun, needing root) was retired: this engine
+//! is userspace everywhere and avoids seizing iOS's single system-VPN slot.
 //!
 //! Architecture (the [onetun](https://github.com/aramperes/onetun) pattern):
 //!
@@ -39,7 +42,7 @@ uniffi::setup_scaffolding!();
 
 pub use keys::{generate_keypair, Keypair};
 pub use rendezvous::{fetch_endpoint, EndpointBlob};
-pub use tunnel::{Tunnel, TunnelStatus, TunnelStream};
+pub use tunnel::{Tunnel, TunnelReadHalf, TunnelStatus, TunnelStream, TunnelWriteHalf};
 
 // Re-export the shared bundle types so consumers (and the FFI) have one import.
 pub use virtues_protocol::{spki_fingerprint, PairingBundle, RendezvousParams, WgParams};

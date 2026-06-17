@@ -61,23 +61,11 @@ hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "tok
 http-body-util = "0.1"
 bytes = "1.7"
 
-# WireGuard data plane (Mullvad's actively-maintained boringtun fork — see
-# [[remote-access-decision]]). Trait-based TUN/UDP abstraction; we provide
-# the concrete platform layer in `tunnel/<platform>.rs`. MPL 2.0 — used as
-# a normal dep, no patches to its source files.
-#
-# Features:
-#   - device  : the high-level `DeviceBuilder` (gated for embedded crypto-only use)
-#   - tun     : bundled tokio-async TUN device wrapping the `tun` crate
-#   - ring    : ring crypto backend (consistent with the rest of the workspace;
-#               avoids aws-lc-sys cross-compile pain under GCC 11)
-gotatun = { version = "0.7", default-features = false, features = ["device", "tun", "ring"] }
-
-# Tunnel network configuration helper. Routes + IP addr on the TUN device.
-# Used only on the Linux side today. Must track the same major as gotatun's
-# own ipnetwork dep — `Peer::with_allowed_ip` takes gotatun's IpNetwork, and
-# two ipnetwork versions in the graph make the types ununifiable.
-ipnetwork = "0.21"
+# Userspace WireGuard — the ONE shared client tunnel engine (boringtun +
+# smoltcp netstack, no root, no utun/system-VPN). Same crate iOS uses; the
+# desktop dials through it and bridges to the localhost proxy. This replaced
+# the old gotatun/utun path (root-requiring, desktop-only).
+virtues-tunnel = { path = "../../crates/virtues-tunnel" }
 
 # mDNS service discovery — browses _http._tcp.local. for Virtues servers.
 mdns-sd = "0.11"

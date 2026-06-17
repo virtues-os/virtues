@@ -5,12 +5,14 @@
 //! executable into place, generate a plist, `launchctl bootstrap`. The split:
 //!
 //! - **User LaunchAgent** (`com.virtues.client`) — runs the localhost reverse
-//!   proxy (`up --no-tunnel`). No root needed; installed by [`run_user`] via
-//!   `launchctl bootstrap gui/$UID`.
-//! - **Root LaunchDaemon** (`com.virtues.daemon`) — runs the WireGuard tunnel
-//!   + `.virtues` DNS, both of which require root. Installed by [`run_system`],
-//!   which is invoked once via `osascript … with administrator privileges` from
-//!   the Tauri app (the single password prompt).
+//!   proxy (`up --upstream <addr>`): it brings up the userspace WireGuard
+//!   tunnel (SPKI) and, only if the box's WG endpoint is unreachable from here,
+//!   falls back to forwarding directly over `<addr>` (a BYO transport). No root
+//!   needed — the tunnel is fully userspace (boringtun + smoltcp).
+//! - **Root LaunchDaemon** (`com.virtues.daemon`) — legacy system-tunnel +
+//!   `.virtues` DNS path that needs root. Installed by [`run_system`] via
+//!   `osascript … with administrator privileges`. Optional; the userspace
+//!   tunnel above is the default and needs no admin.
 //!
 //! The static plists in `apps/desktop/macos/*.plist` are reference templates;
 //! the authoritative plists are generated here so paths/upstream are derived at
@@ -79,6 +81,14 @@ pub fn run_user(upstream: Option<&str>) -> Result<()> {
 
     let domain = format!("gui/{}", current_uid()?);
     reload_launchd(&domain, &plist_path);
+
+    // Force a fresh restart. On a re-pair/re-install the agent is often already
+    // bootstrapped, so `bootstrap` no-ops ("already loaded") and the OLD process
+    // keeps serving the STALE bundle/bearer (the box-reinstall → dead-bearer
+    // `/pair` loop). `kickstart -k` kills the running instance and starts it
+    // again, guaranteeing the new bundle is loaded. Best-effort.
+    let target = format!("{domain}/{AGENT_LABEL}");
+    let _ = launchctl(&["kickstart", "-k", &target]);
 
     eprintln!("✓ installed LaunchAgent {AGENT_LABEL} (proxy → {upstream})");
     Ok(())
@@ -169,7 +179,6 @@ fn agent_plist(bin: &Path, upstream: &str, logs_dir: &Path) -> String {
     <array>
         <string>{bin}</string>
         <string>up</string>
-        <string>--no-tunnel</string>
         <string>--upstream</string>
         <string>{upstream}</string>
     </array>

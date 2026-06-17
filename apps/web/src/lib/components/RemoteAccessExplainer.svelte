@@ -34,17 +34,20 @@
 			{/if}
 
 			<p class="text-foreground-muted">
-				Office, dorm, and shared networks can't accept direct
-				connections. Your box works fully on its local network —
-				nothing is broken.
+				Office, dorm, and shared (hostile) wifi can't accept inbound
+				connections — there's no way to reach your box from outside,
+				no matter how it's paired. Your box still works fully on this
+				local network; nothing is broken. But this isn't a suitable
+				home for a box you want to reach from your other devices.
 			</p>
 
 			<div class="p-4 rounded-lg bg-surface-alt border border-border">
 				<div class="text-foreground font-medium mb-1">
-					Move the box to a network you control
+					Best fix: move the box to a network you control
 				</div>
 				<p class="text-foreground-muted">
-					It re-checks automatically.
+					Home internet with a normal router (ideally IPv6) just works
+					— it re-checks automatically.
 				</p>
 			</div>
 
@@ -52,13 +55,16 @@
 				<summary
 					class="px-4 py-3 cursor-pointer text-foreground-muted hover:text-foreground transition-colors"
 				>
-					Bring your own network
+					If you must stay on this network: bring your own networking
 				</summary>
 				<div class="px-4 pb-4 space-y-2 text-foreground-muted">
 					<p>
-						You can put the box on an overlay network you run
-						yourself — Tailscale, Headscale, or a WireGuard VPS.
-						Virtues never runs or requires one.
+						Reaching a box on a network you don't control requires an
+						overlay you run yourself — a WireGuard VPS, Headscale, or
+						installing Tailscale on the box and all your devices to
+						form a private mesh. It's real setup, and you'll likely
+						need it for as long as the box lives here. Virtues never
+						runs or requires an overlay — but it works fine over one.
 					</p>
 					<a
 						href="https://github.com/jaces-com/virtues/blob/main/docs/byo-networking.md"
