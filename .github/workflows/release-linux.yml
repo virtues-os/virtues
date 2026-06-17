@@ -53,10 +53,10 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
+            runner: blacksmith-8vcpu-ubuntu-2204
           - arch: aarch64
             target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
+            runner: blacksmith-8vcpu-ubuntu-2204-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -348,7 +348,7 @@ jobs:
   # `virtues warm-models` green), treat the appliance as CPU-inference.
   llama-jetson-cuda:
     name: Build llama-server (Jetson CUDA, sm_87)
-    runs-on: ubuntu-22.04-arm
+    runs-on: blacksmith-8vcpu-ubuntu-2204-arm
     continue-on-error: true
     container:
       image: nvcr.io/nvidia/l4t-jetpack:r36.4.0
@@ -425,7 +425,7 @@ jobs:
     # publish WAIT for it (so its asset lands before the draft flips), it
     # can't block the release.
     needs: [build, llama-jetson-cuda]
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     permissions:
       contents: write
     steps:

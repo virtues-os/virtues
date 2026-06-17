@@ -15,7 +15,7 @@ on:
 
 jobs:
   rust:
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-8vcpu-ubuntu-2204
     # A real Postgres for the #[sqlx::test] tests (action_templates,
     # scheduler) — sqlx spins up throwaway databases per test, so the user
     # must be a superuser. pgvector image because migrations CREATE

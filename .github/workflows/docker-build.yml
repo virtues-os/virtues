@@ -28,15 +28,18 @@ env:
 
 jobs:
   build-virtues-api:
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # Blacksmith's builder + colocated Docker layer cache replaces buildx +
+      # type=gha (the cache-from/to lines below are dropped — layer cache is
+      # automatic on Blacksmith).
+      - name: Set up Docker builder
+        uses: useblacksmith/setup-docker-builder@v1
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -57,20 +60,18 @@ jobs:
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
 
       - name: Build and push virtues-api
-        uses: docker/build-push-action@v5
+        uses: useblacksmith/build-push-action@v2
         with:
           context: .
           file: ./services/virtues-api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   # Notify Atlas of new image version so it can roll the deployment.
   register-version:
     needs: [build-virtues-api]
-    runs-on: ubuntu-22.04
+    runs-on: blacksmith-4vcpu-ubuntu-2204
     if: github.event_name == 'push'
     steps:
       - name: Notify Atlas of new version
