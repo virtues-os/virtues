@@ -401,7 +401,6 @@ pub enum PairWaitOutcome {
 pub async fn wait_for_pair(
     pool: &sqlx::PgPool,
     token_id: &str,
-    token: &str,
 ) -> anyhow::Result<PairWaitOutcome> {
     const HINT_AFTER: std::time::Duration = std::time::Duration::from_secs(90);
     let start = std::time::Instant::now();

@@ -276,7 +276,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     use virtues::cli::link::{wait_for_pair, PairWaitOutcome};
                     println!("  Waiting for the app or browser to connect… (Ctrl+C to exit;");
                     println!("  the code stays valid for 30 minutes either way)");
-                    match wait_for_pair(db.pool(), &minted.id, &minted.token).await {
+                    match wait_for_pair(db.pool(), &minted.id).await {
                         Ok(PairWaitOutcome::Consumed) => {
                             println!();
                             println!("  ✓ connected — finish setup in the app.");
