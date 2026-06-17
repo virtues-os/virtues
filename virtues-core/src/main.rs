@@ -356,8 +356,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
     // restarts. Detailed in `virtues::cli::upgrade`.
-    if let Some(Commands::Upgrade { check, version }) = &cli.command {
-        match virtues::cli::upgrade::run(*check, version.clone()).await {
+    if let Some(Commands::Upgrade { check, version, pre }) = &cli.command {
+        match virtues::cli::upgrade::run(*check, version.clone(), *pre).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: upgrade failed: {e}");

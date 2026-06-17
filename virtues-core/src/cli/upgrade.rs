@@ -21,9 +21,10 @@ const BINARY_PATH: &str = "/usr/local/bin/virtues";
 const RELEASE_REPO: &str = "virtues-os/virtues";
 const USER_AGENT: &str = concat!("virtues-upgrade/", env!("CARGO_PKG_VERSION"));
 
-pub async fn run(check: bool, version: Option<String>) -> Result<(), crate::Error> {
+pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), crate::Error> {
     let target_tag = match version {
         Some(v) => v,
+        None if pre => fetch_latest_prerelease().await?,
         None => fetch_latest_tag().await?,
     };
     let current = env!("CARGO_PKG_VERSION");
@@ -102,6 +103,12 @@ pub async fn run(check: bool, version: Option<String>) -> Result<(), crate::Erro
         }
     }
 
+    // Refresh the setup-wizard sudoers rule. The full installer writes it, but
+    // a box that was UPGRADED (or manually binary-swapped) from a pre-rule
+    // version lacks it — so the in-app "name your box" rename fails. We're root
+    // here, so ensure it idempotently. Best-effort: never block the upgrade.
+    ensure_setup_sudoers();
+
     println!("→ starting virtues.service…");
     let status = Command::new("systemctl").arg("start").arg("virtues").status();
     match status {
@@ -141,6 +148,40 @@ fn running_as_root() -> bool {
         }
     }
     false
+}
+
+/// Ensure `/etc/sudoers.d/virtues-setup` exists so the setup wizard's "name
+/// your box" step can rename the host non-interactively (the box server runs as
+/// the unprivileged `virtues` user and shells out to `sudo -n hostnamectl`).
+/// Idempotent; mirrors the installer's `write_setup_sudoers`. Best-effort —
+/// logs and returns on any error rather than failing the upgrade.
+fn ensure_setup_sudoers() {
+    const PATH: &str = "/etc/sudoers.d/virtues-setup";
+    const RULE: &str = "\
+# Written by `virtues upgrade`. Lets the setup wizard's \"name your box\" step
+# rename the host (the mDNS name follows the hostname). Scoped to exactly these
+# commands; the virtues user has no other sudo rights.
+virtues ALL=(root) NOPASSWD: /usr/bin/hostnamectl set-hostname *
+virtues ALL=(root) NOPASSWD: /usr/bin/systemctl reload-or-restart avahi-daemon
+";
+    if fs::read_to_string(PATH).map(|c| c == RULE).unwrap_or(false) {
+        return; // already correct
+    }
+    if let Err(e) = fs::write(PATH, RULE) {
+        eprintln!("→ note: couldn't write {PATH} ({e}); in-app box rename may not work");
+        return;
+    }
+    let _ = fs::set_permissions(PATH, fs::Permissions::from_mode(0o440));
+    // visudo -c validates the fragment; a bad one can lock sudo out, so remove
+    // it if it doesn't parse.
+    match Command::new("visudo").args(["-c", "-f", PATH]).status() {
+        Ok(s) if s.success() => println!("→ ensured box-rename sudoers rule"),
+        Ok(_) => {
+            let _ = fs::remove_file(PATH);
+            eprintln!("→ note: sudoers fragment failed visudo check (removed)");
+        }
+        Err(_) => { /* visudo missing — leave the static, known-good rule */ }
+    }
 }
 
 fn host_arch() -> &'static str {
@@ -207,6 +248,27 @@ async fn fetch_latest_tag() -> Result<String, crate::Error> {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .ok_or_else(|| crate::Error::Other("no tag_name in github response".to_string()))
+}
+
+/// Newest *prerelease* tag (the staging channel). `releases/latest` only ever
+/// returns the latest non-prerelease, so `--pre` lists releases (newest first)
+/// and picks the first one flagged `prerelease`.
+async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
+    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases?per_page=30");
+    let body: serde_json::Value = send_get(&url)
+        .await
+        .map_err(|e| crate::Error::Other(format!("github api: {e}")))?
+        .json()
+        .await
+        .map_err(|e| crate::Error::Other(format!("parse github json: {e}")))?;
+    body.as_array()
+        .and_then(|rels| {
+            rels.iter()
+                .find(|r| r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false))
+                .and_then(|r| r.get("tag_name").and_then(|v| v.as_str()))
+                .map(|s| s.to_string())
+        })
+        .ok_or_else(|| crate::Error::Other("no prerelease found in the latest 30 releases".to_string()))
 }
 
 async fn fetch_text(url: &str) -> Result<String, crate::Error> {

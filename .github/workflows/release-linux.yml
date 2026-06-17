@@ -85,6 +85,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Stamp the tag version into the crate so `virtues --version` (and the
+      # upgrade self-compare) report the real build, not the static "0.1.0".
+      # No `--locked` is used below, so cargo regenerates the lock freely.
+      - name: Stamp crate version from tag
+        run: |
+          V="${{ steps.tag.outputs.version }}"; V="${V#v}"
+          sed -i "0,/^version = \"[^\"]*\"/s//version = \"$V\"/" virtues-core/Cargo.toml
+          echo "virtues-core version → $(grep -m1 '^version = ' virtues-core/Cargo.toml)"
+
       # Cache cargo registry + target dir — saves ~3-5 min on subsequent runs
       # when only the source changes.
       - uses: Swatinem/rust-cache@v2
