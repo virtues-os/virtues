@@ -118,6 +118,10 @@ wheels/
 # Other
 /target/
 .data/
+# Runtime box data — the data lake (.media blobs), DB scratch, etc. Never
+# tracked: it's per-install state, not source. (The legacy `.data/` rule above
+# missed the real dir, which is `data/`.)
+/data/
 tmp/*
 
 /.pnpm-store
