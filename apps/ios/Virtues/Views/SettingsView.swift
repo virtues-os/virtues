@@ -282,7 +282,7 @@ struct SettingsView: View {
                         Haptics.warning()
                         showingResetAlert = true
                     }) {
-                        Label("Reset App", systemImage: "exclamationmark.triangle")
+                        Label("Unpair & Reset", systemImage: "exclamationmark.triangle")
                             .foregroundColor(.warmError)
                     }
                 }
@@ -291,13 +291,13 @@ struct SettingsView: View {
             .background(Color.warmBackground)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .alert("Reset App?", isPresented: $showingResetAlert) {
+            .alert("Unpair & Reset?", isPresented: $showingResetAlert) {
                 Button("Cancel", role: .cancel) { }
-                Button("Reset", role: .destructive) {
+                Button("Unpair & Reset", role: .destructive) {
                     resetApp()
                 }
             } message: {
-                Text("This will clear all settings and require you to set up the app again. Pending uploads will be lost.")
+                Text("Fully disconnects this phone from your box: wipes its credentials, tunnel, and all settings. You'll set it up again from scratch. Pending uploads will be lost.")
             }
             .sheet(isPresented: $showingStorageDetails) {
                 StorageDetailsView()
@@ -377,18 +377,23 @@ struct SettingsView: View {
         }
     }
     
+    /// Complete unpair: stop collection, tear down the tunnel, and wipe BOTH
+    /// stores — Keychain (bearer, WG bundle, WG private key, server pin) AND
+    /// UserDefaults (endpoint, action IDs, all settings). Previously this cleared
+    /// only UserDefaults, so a dead endpoint / stale tunnel credentials survived
+    /// a "reset" and the app kept dialing a ghost box. One action clears it all.
     private func resetApp() {
-        // Stop all services (this stops all data collection)
+        // Stop all data collection.
         uploadCoordinator.stopPeriodicUploads()
-
-        // Stop individual trackers
         locationManager.stopTracking()
         audioManager.stopRecording()
 
-        // Clear configuration (disconnects from server)
-        deviceManager.clearConfiguration()
+        // Drop the live tunnel + wipe all Keychain secrets.
+        VirtuesTunnelManager.shared.teardown()
+        KeychainStore.shared.wipeAll()
 
-        // Clear UserDefaults
+        // Clear configuration (endpoint, action IDs) + every UserDefaults key.
+        deviceManager.clearConfiguration()
         if let bundleId = Bundle.main.bundleIdentifier {
             UserDefaults.standard.removePersistentDomain(forName: bundleId)
         }

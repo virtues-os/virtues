@@ -1,6 +1,10 @@
 # Stray per-member Cargo.lock — the workspace root lock is canonical.
 /virtues-core/Cargo.lock
 
+# Built XCFramework + raw bindings from build-xcframework.sh (regenerate it;
+# the app vendors the Swift binding under apps/ios/.../Tunnel/).
+/crates/virtues-tunnel/generated/
+
 # Environment variables
 .env
 .env.local
