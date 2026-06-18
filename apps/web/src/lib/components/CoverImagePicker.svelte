@@ -32,7 +32,7 @@
 	let uploadProgress = $state(0);
 	let uploadError = $state<string | null>(null);
 	let dragOver = $state(false);
-	let fileInputEl: HTMLInputElement;
+	let fileInputEl = $state<HTMLInputElement>();
 
 	// Library tab state
 	let libraryImages = $state<DriveFile[]>([]);
@@ -54,7 +54,7 @@
 	let unsplashLoading = $state(false);
 	let unsplashError = $state<string | null>(null);
 	let unsplashSearchTimeout: ReturnType<typeof setTimeout> | null = null;
-	let searchInputEl: HTMLInputElement;
+	let searchInputEl = $state<HTMLInputElement>();
 
 	// Upload handlers
 	async function handleFileSelect(files: FileList | null) {

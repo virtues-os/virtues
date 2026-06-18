@@ -56,7 +56,7 @@ async fn checkout(State(state): State<AppState>) -> axum::response::Response {
         Ok(session) => (StatusCode::OK, Json(json!({ "url": session.url }))).into_response(),
         Err(e) => {
             tracing::warn!("preorder checkout create failed: {e:#}");
-            err(StatusCode::BAD_GATEWAY, "stripe_error", "could not start checkout")
+            err(StatusCode::BAD_GATEWAY, "stripe_error", &format!("could not start checkout: {e}"))
         }
     }
 }

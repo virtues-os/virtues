@@ -96,8 +96,8 @@
     // ============================================
     // Force-directed graph
     // ============================================
-    let graphContainer: HTMLDivElement;
-    let canvas: HTMLCanvasElement;
+    let graphContainer = $state<HTMLDivElement>();
+    let canvas = $state<HTMLCanvasElement>();
     let animationId: number;
 
     interface GraphNode {
@@ -126,7 +126,7 @@
     let dragNode: GraphNode | null = null;
 
     function initGraph() {
-        if (!canvas) return;
+        if (!canvas || !graphContainer) return;
 
         const width = graphContainer.clientWidth;
         const height = 400;

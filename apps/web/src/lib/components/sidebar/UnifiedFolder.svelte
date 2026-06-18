@@ -180,6 +180,14 @@
 		}
 	}
 
+	function handleKeydown(e: KeyboardEvent) {
+		if (isRenaming) return;
+		if (e.key === "Enter" || e.key === " ") {
+			e.preventDefault();
+			toggleExpanded();
+		}
+	}
+
 	function handleMoreClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -597,13 +605,16 @@
 	{#if collapsed}
 		<!-- Collapsed mode: show nothing (handled by parent) -->
 	{:else}
-		<button
+		<div
 			class="sidebar-interactive"
 			class:renaming={isRenaming}
 			class:expand-pending={isExpandPending}
 			class:smart-view={view.view_type === "smart"}
 			class:drop-target={isDragOver}
+			role="button"
+			tabindex="0"
 			onclick={handleClick}
+			onkeydown={handleKeydown}
 			oncontextmenu={handleContextMenu}
 		>
 			<span class="folder-toggle" class:expanded={isExpanded}>
@@ -667,7 +678,7 @@
 					</button>
 				</span>
 			{/if}
-		</button>
+		</div>
 
 		<!-- Folder contents — CSS grid 0fr/1fr handles expand/collapse animation.
 			 Content is always in DOM so there's no Svelte transition measurement on init. -->

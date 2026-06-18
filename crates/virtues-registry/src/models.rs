@@ -65,22 +65,29 @@ impl ModelSlot {
 pub fn default_models() -> Vec<ModelConfig> {
     vec![
         // CHAT: Default conversational model.
-        // NOTE: Gemini 3 (flash/pro) is intentionally NOT a default — via the Vercel AI Gateway's
-        // OpenAI-compatible endpoint it 400s on parallel tool calls (Gemini 3 requires a
-        // thought_signature the gateway doesn't yet pass through; see vercel/ai #11590/#10344).
-        // GLM handles parallel tools cleanly. Revisit Gemini once the gateway ships the fix.
+        // Claude Opus over GLM-5: GLM-5 is a reasoning model that runs a
+        // (non-streamed, ~6s) chain-of-thought before every turn, which stacks
+        // across the agent's tool-call rounds into 20s+ stalls in chat. Opus
+        // answers directly — no reasoning pass, streams immediately — and
+        // handles parallel tool calls cleanly. (Gemini 3 stays out: via the
+        // gateway's OpenAI-compatible endpoint it 400s on parallel tool calls,
+        // needing a thought_signature the gateway doesn't pass through; see
+        // vercel/ai #11590/#10344. GLM 5 / 5.1 remain available as the Lite/
+        // Reasoning slots for users who want them.)
         ModelConfig {
-            model_id: "zai/glm-5".to_string(),
-            display_name: "GLM 5".to_string(),
-            provider: "Z.AI".to_string(),
+            model_id: "anthropic/claude-opus-4.8".to_string(),
+            display_name: "Claude Opus 4.8".to_string(),
+            provider: "Anthropic".to_string(),
             sort_order: 1,
             enabled: true,
-            context_window: 203000,
-            max_output_tokens: 131000,
+            context_window: 200000,
+            max_output_tokens: 32000,
             supports_tools: true,
             is_default: true,
-            input_cost_per_1k: Some(0.001),
-            output_cost_per_1k: Some(0.0032),
+            // Advisory only — Vercel AI Gateway's `usage.cost` is authoritative
+            // for billing (see virtues-api's ai.rs). Kept for picker display.
+            input_cost_per_1k: Some(0.015),
+            output_cost_per_1k: Some(0.075),
         },
         // LITE: Fast model for background tasks (titles, summaries)
         ModelConfig {
@@ -112,8 +119,8 @@ pub fn default_models() -> Vec<ModelConfig> {
         },
         // CODING: Code generation and technical tasks
         ModelConfig {
-            model_id: "anthropic/claude-opus-4.7".to_string(),
-            display_name: "Claude Opus 4.7".to_string(),
+            model_id: "anthropic/claude-opus-4.8".to_string(),
+            display_name: "Claude Opus 4.8".to_string(),
             provider: "Anthropic".to_string(),
             sort_order: 4,
             enabled: true,
@@ -133,10 +140,10 @@ pub fn default_models() -> Vec<ModelConfig> {
 /// Get the default model ID for a given slot
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
-        ModelSlot::Chat => "zai/glm-5",
+        ModelSlot::Chat => "anthropic/claude-opus-4.8",
         ModelSlot::Lite => "zai/glm-4.7-flash",
         ModelSlot::Reasoning => "zai/glm-5.1",
-        ModelSlot::Coding => "anthropic/claude-opus-4.7",
+        ModelSlot::Coding => "anthropic/claude-opus-4.8",
     }
 }
 
