@@ -71,8 +71,16 @@ fn discover_blocking(timeout_secs: u64) -> Vec<FoundServer> {
                 let host = info.get_hostname().trim_end_matches('.').to_string();
                 let port = info.get_port();
                 let origin = format!("http://{host}:{port}");
+                // Friendly name = the box's hostname without the ".local"
+                // suffix (this is the name the owner gives the box). NOT
+                // `get_fullname()` — that's the escaped service-instance fqdn
+                // (`virtues._http._tcp.local.`), which is gibberish to a human.
+                let name = host
+                    .strip_suffix(".local")
+                    .unwrap_or(&host)
+                    .to_string();
                 found.push(FoundServer {
-                    name: info.get_fullname().to_string(),
+                    name,
                     host,
                     port,
                     origin,
