@@ -1,5 +1,5 @@
 #!/bin/sh
-# Virtues bootstrap — the tiny POSIX shell script that `get.virtues.com`
+# Virtues bootstrap — the tiny POSIX shell script that `virtues.com/sh`
 # serves.
 #
 # What this script does:
@@ -12,7 +12,7 @@
 # Everything past this script — TUI, progress, install logic — lives in
 # the installer binary. Keeping bootstrap minimal + POSIX means: works
 # under dash (Debian/Ubuntu's default /bin/sh when invoked via `| sh`),
-# easy to audit via `curl get.virtues.com | less`, fast to download,
+# easy to audit via `curl virtues.com/sh | less`, fast to download,
 # almost nothing to go wrong before we have a real UI to show.
 
 # `pipefail` is bash-only; dash doesn't have it. Stick with -eu and
@@ -37,7 +37,7 @@ esac
 
 die() { printf "  x  %s\n" "$*" >&2; exit 1; }
 
-[ "$(id -u)" -eq 0 ] || die "must be run as root. Try: curl -sSL https://get.virtues.com | sudo sh"
+[ "$(id -u)" -eq 0 ] || die "must be run as root. Try: curl -sSL https://virtues.com/sh | sudo sh"
 
 OS=$(uname -s); ARCH=$(uname -m)
 [ "$OS" = "Linux" ] || die "Linux-only. Detected: $OS"

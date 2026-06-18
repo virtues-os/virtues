@@ -24,11 +24,17 @@ name: Release Linux binaries
 on:
   push:
     tags:
+      # Stable releases: `v0.1.0` (bare semver → prerelease:false, what
+      # virtues.com/sh + `virtues upgrade` serve). Pre-1.0 staging tags
+      # `v0.1.0-staging.N` still work (any `-` identifier → prerelease).
       - 'v*'
+      # Edge channel: the rolling `edge` tag, force-pushed each test build →
+      # one prerelease release that overwrites itself (`virtues upgrade --pre`).
+      - 'edge'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag (e.g. v0.1.0)'
+        description: 'Version tag (e.g. v0.1.0 or edge)'
         required: true
         type: string
 
@@ -70,12 +76,13 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      # Staging tags (v*-staging.*) build the faster `staging` cargo profile
-      # (no LTO, opt-level 2) for quicker turnaround; production v* tags keep
-      # `release`. The profile name == the target/<arch>/<profile>/ output dir.
+      # Edge + pre-1.0 staging tags build the faster `staging` cargo profile (no
+      # LTO, opt-level 2) for quick turnaround; stable `v*` tags keep `release`.
+      # The profile name == the target/<arch>/<profile>/ output dir.
       - name: Select cargo profile
         run: |
-          if [[ "${{ steps.tag.outputs.version }}" == *staging* ]]; then
+          V="${{ steps.tag.outputs.version }}"
+          if [[ "$V" == "edge" || "$V" == *staging* ]]; then
             echo "CARGO_PROFILE=staging" >> "$GITHUB_ENV"
           else
             echo "CARGO_PROFILE=release" >> "$GITHUB_ENV"
@@ -85,14 +92,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Stamp the tag version into the crate so `virtues --version` (and the
-      # upgrade self-compare) report the real build, not the static "0.1.0".
-      # No `--locked` is used below, so cargo regenerates the lock freely.
-      - name: Stamp crate version from tag
-        run: |
-          V="${{ steps.tag.outputs.version }}"; V="${V#v}"
-          sed -i "0,/^version = \"[^\"]*\"/s//version = \"$V\"/" virtues-core/Cargo.toml
-          echo "virtues-core version → $(grep -m1 '^version = ' virtues-core/Cargo.toml)"
+      # No version stamping: virtues-core/Cargo.toml's `version` is the semver
+      # source of truth (bumped by hand at milestones). `virtues --version`
+      # composes it with the codename + git sha + date via build.rs, so the
+      # build is identified without a CI-rewritten counter. The tarball NAME
+      # still carries the tag (`virtues-edge-…` / `virtues-v0.1.0-…`) for stable
+      # per-channel download URLs.
 
       # Cache cargo registry + target dir — saves ~3-5 min on subsequent runs
       # when only the source changes.
@@ -305,7 +310,7 @@ jobs:
           # `prerelease: false, draft: false` once both are uploaded).
           draft: true
 
-      # The bootstrap script ships WITH the release so get.virtues.com can
+      # The bootstrap script ships WITH the release so virtues.com/sh can
       # serve it from the stable `releases/latest/download/bootstrap.sh` URL
       # (Caddy redir on the install host) — the script and the binaries it
       # fetches version together, gated on the same tag, and no server-side
@@ -438,10 +443,17 @@ jobs:
           else
             echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
-      - name: Flip draft → published
+      # Channel = the GitHub `prerelease` flag, derived from the tag:
+      #   • `edge` or any `-` semver identifier (e.g. v0.1.0-staging.5) → edge
+      #     channel, prerelease:true. `releases/latest` skips these; they're
+      #     served by `virtues upgrade --pre` + virtues.com/sh-pre.
+      #   • bare `v0.1.0` → stable, prerelease:false → becomes `releases/latest`,
+      #     served by virtues.com/sh + `virtues upgrade`.
+      - name: Flip draft → published (channel from tag)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release edit "${{ steps.tag.outputs.version }}" \
-            --draft=false \
-            --prerelease=false
+          V="${{ steps.tag.outputs.version }}"
+          if [[ "$V" == "edge" || "$V" == *-* ]]; then PRE=true; else PRE=false; fi
+          echo "tag=$V → prerelease=$PRE"
+          gh release edit "$V" --draft=false --prerelease="$PRE"

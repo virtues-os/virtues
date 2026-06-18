@@ -12,7 +12,7 @@
 
 | Tier | What it is | How it ships | Privilege |
 |---|---|---|---|
-| **Home box** (DIY + appliance) | `virtues` binary + `virtues-wireguard` daemon | `curl -sSL https://get.virtues.com \| sudo sh` → systemd units | App rootless; WG daemon `NET_ADMIN` only |
+| **Home box** (DIY + appliance) | `virtues` binary + `virtues-wireguard` daemon | `curl -sSL https://virtues.com/sh \| sudo sh` → systemd units | App rootless; WG daemon `NET_ADMIN` only |
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on a single EC2 + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
@@ -22,13 +22,14 @@ That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the produ
 
 ## Home box: native install via `tools/bootstrap.sh` + `virtues-installer`
 
-`curl -sSL https://get.virtues.com | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The install host's Caddy 302-redirects the domain to the **latest GitHub Release asset** (`bootstrap.sh`, uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift. The canonical command uses `-sSL` precisely because the endpoint is a redirect (`-L` follows it):
+`curl -sSL https://virtues.com/sh | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The website (`virtues.com`, SvelteKit on Vercel) serves `/sh` as a **302 redirect to the latest stable GitHub Release asset** (`bootstrap.sh`, uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift. The canonical command uses `-sSL` precisely because the endpoint is a redirect (`-L` follows it). The website route (`src/routes/sh/+server.ts`) is just:
 
-```caddyfile
-get.virtues.com {
-    redir https://github.com/virtues-os/virtues/releases/latest/download/bootstrap.sh 302
-}
+```ts
+// virtues.com/sh
+redirect(302, 'https://github.com/virtues-os/virtues/releases/latest/download/bootstrap.sh');
 ```
+
+`releases/latest` resolves to the newest **stable** (non-prerelease) release, so the one-liner never serves an `edge` build. Testers opt into edge with `virtues upgrade --pre` (or `virtues.com/sh-pre`).
 
 Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent and does, in order:
 
