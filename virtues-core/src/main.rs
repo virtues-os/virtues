@@ -485,7 +485,6 @@ fn print_banner() {
 "#;
     println!("{WORDMARK}");
     println!("   This is technology that helps you be the person you ought to become.");
-    println!("─────────────────────────────────────────────────────────");
     println!();
 }
 
@@ -496,7 +495,7 @@ fn print_banner() {
 /// terminals and logs); only the colour is TTY-gated to avoid garbling logs.
 fn print_pair_hero(display: &str) {
     use console::style;
-    const W: usize = 50; // inner width between the borders
+    const W: usize = 54; // inner width between the borders (fits the downloads URL line)
     let tty = console::Term::stdout().is_term();
 
     let top = format!("  ┌{}┐", "─".repeat(W));

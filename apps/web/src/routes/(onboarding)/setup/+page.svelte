@@ -60,9 +60,14 @@
 	const step = $derived(STEPS[current]);
 	const isLast = $derived(current === STEPS.length - 1);
 
-	// Optimistic local flag (flips the phone step the instant the modal succeeds,
-	// before the next poll confirms it).
+	// Optimistic local flags (flip a step the instant the local signal fires,
+	// before the next server poll confirms it). `deviceReady` mirrors the
+	// collector card's own "running + permissions granted" completion — which is
+	// ahead of the server's `device_collecting` (that needs full init-sync), so
+	// without it the step looks done ("This Mac is collecting") but offers no
+	// Continue.
 	let phonePaired = $state(false);
+	let deviceReady = $state(false);
 
 	function setupDone(id: string): boolean {
 		return state_?.setup.find((s) => s.id === id)?.done ?? false;
@@ -73,7 +78,7 @@
 	function stepDone(id: StepId): boolean {
 		switch (id) {
 			case "account": return setupDone("account");
-			case "device": return onboardingDone("device_collecting");
+			case "device": return deviceReady || onboardingDone("device_collecting");
 			case "phone": return phonePaired || onboardingDone("first_phone");
 			case "sources": return onboardingDone("first_source") || onboardingDone("living_source");
 			case "import": return onboardingDone("chat_imported");
@@ -273,7 +278,7 @@
 						{/if}
 					{/if}
 				{:else if step.id === "device"}
-					<CollectorPermissionCard onComplete={() => refreshState()} />
+					<CollectorPermissionCard onComplete={() => { deviceReady = true; refreshState(); }} />
 				{:else if step.id === "phone"}
 					<div class="rounded-lg border border-border p-4 space-y-3">
 						{#if stepDone("phone")}
