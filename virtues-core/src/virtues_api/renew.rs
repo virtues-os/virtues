@@ -12,7 +12,10 @@ use rand::RngCore;
 use sqlx::PgPool;
 use virtues_helpers::auth::vault;
 
-const SOURCE_ID: &str = "virtues_api";
+/// `source_id` of the box's billing/account credential (stores the billing
+/// token + bearer). It is NOT a user-connected data source — onboarding's
+/// source counts must exclude it, just like `__device__` and the BYO key.
+pub const SOURCE_ID: &str = "virtues_api";
 const CREDENTIAL_NAME: &str = "Virtues API";
 
 /// Generate a fresh random bearer. Only its SHA-256 ever leaves the device

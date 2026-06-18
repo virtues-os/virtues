@@ -104,6 +104,7 @@
     #server-input::placeholder { color: var(--faint); }
 
     #refresh-btn {
+      -webkit-app-region: no-drag;
       padding: 9px 14px;
       background: transparent;
       border: 1px solid var(--border);
@@ -138,6 +139,7 @@
        and guides inline if something's missing. Dims slightly until ready, but
        always reads as a live button. */
     #connect-btn {
+      -webkit-app-region: no-drag;
       width: 100%;
       padding: 13px;
       background: var(--accent);
@@ -157,6 +159,21 @@
     #status.error { color: var(--error); }
     #status.info  { color: var(--muted); }
     #status.ok    { color: var(--ok); }
+    #status .secs { color: var(--muted); }
+
+    /* Inline spinner shown while a multi-second step (proxy start) runs, so the
+       wait reads as live work rather than a frozen screen. */
+    .spinner {
+      display: inline-block;
+      width: 11px; height: 11px;
+      margin-right: 7px;
+      vertical-align: -1px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Contextual banner — only shows when we arrived here because a prior
        pairing went stale (box reset) or the box is unreachable. Plain words,
@@ -175,6 +192,7 @@
     }
     #banner.show { display: block; }
     #banner .retry {
+      -webkit-app-region: no-drag;
       margin-top: 8px;
       display: inline-block;
       background: transparent;
@@ -354,18 +372,74 @@
         return;
       }
 
-      setStatus('Paired! Starting the local proxy…', 'ok');
+      // install_helpers + the proxy bind together take several seconds with no
+      // intermediate result — show a spinner + staged copy + elapsed counter so
+      // the wait reads as live work, not a hang.
+      startProgress([
+        { at: 0, msg: 'Paired! Starting the local proxy…' },
+        { at: 3, msg: 'Almost there — bringing the proxy online…' },
+        { at: 8, msg: 'Taking longer than usual — still working…' },
+      ]);
       try {
         await invoke('install_helpers', { server });
       } catch (e) {
+        stopProgress();
         setStatus('Paired, but starting the local proxy failed: ' + e, 'error');
         btn.textContent = 'Connect';
         return;
       }
 
-      setStatus('Loading your box…', 'ok');
-      // Local virtues-client proxy (LOCAL_PROXY_PORT). Keep port in sync.
-      setTimeout(() => { window.location.href = 'http://localhost:7117'; }, 800);
+      // The proxy LaunchAgent starts asynchronously (launchctl kickstart) and
+      // needs a moment to resolve the upstream and bind :7117. Poll until it
+      // actually answers, then navigate — a blind timeout races the bind and
+      // strands us on this page. Local virtues-client proxy (LOCAL_PROXY_PORT).
+      const ready = await waitForProxy(20000);
+      stopProgress();
+      if (!ready) {
+        setStatus('Paired, but the local proxy is taking a while to start. Retrying…', 'info');
+      }
+      window.location.href = 'http://localhost:7117';
+    }
+
+    // Animated, staged status during a multi-second step. `stages` is an
+    // ascending list of {at: seconds, msg}; the latest message whose `at` has
+    // elapsed is shown, prefixed with a spinner and a live (Ns) counter.
+    let progressTimer = null;
+    function startProgress(stages) {
+      stopProgress();
+      const t0 = performance.now();
+      const render = () => {
+        const elapsed = (performance.now() - t0) / 1000;
+        let msg = stages[0].msg;
+        for (const s of stages) { if (elapsed >= s.at) msg = s.msg; }
+        const secs = Math.floor(elapsed);
+        const el = document.getElementById('status');
+        el.className = 'ok';
+        el.innerHTML = '<span class="spinner"></span>' + msg +
+          (secs >= 2 ? ' <span class="secs">(' + secs + 's)</span>' : '');
+      };
+      render();
+      progressTimer = setInterval(render, 1000);
+    }
+    function stopProgress() {
+      if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
+    }
+
+    // Resolve once the local proxy answers on :7117 (any HTTP response — even an
+    // error/redirect — means the listener is up). no-cors so we only test
+    // reachability, not response contents. Returns false if it never came up
+    // within `timeoutMs`.
+    async function waitForProxy(timeoutMs) {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
+        try {
+          await fetch('http://localhost:7117/', { mode: 'no-cors', cache: 'no-store' });
+          return true;
+        } catch (e) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      return false;
     }
 
     function setStatus(msg, cls) {

@@ -299,14 +299,17 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             .unwrap_or(0);
 
     // First source = an active cloud-source credential (OAuth etc.) — not a
-    // paired device's self-credential, not the BYO-key pseudo-source.
+    // paired device's self-credential, not the BYO-key pseudo-source, and not
+    // the `virtues_api` billing credential (which is always present once the
+    // box is subscribed and is NOT a user-connected data source).
     let first_source: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM credentials \
          WHERE status = 'active' AND device_id IS NULL \
-           AND source_id NOT IN ($1, $2)",
+           AND source_id NOT IN ($1, $2, $3)",
     )
     .bind("__device__")
     .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+    .bind(crate::virtues_api::renew::SOURCE_ID)
     .fetch_one(pool)
     .await
     .unwrap_or(0);
@@ -360,10 +363,11 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
            JOIN app_actions a ON a.credential_id = c.id \
            JOIN app_action_runs r ON r.action_id = a.id AND r.status = 'success' \
            WHERE c.status = 'active' AND c.device_id IS NULL \
-             AND c.source_id NOT IN ($1, $2))",
+             AND c.source_id NOT IN ($1, $2, $3))",
     )
     .bind("__device__")
     .bind(crate::api::settings_byo::BYO_SOURCE_ID)
+    .bind(crate::virtues_api::renew::SOURCE_ID)
     .fetch_one(pool)
     .await
     .unwrap_or(false);

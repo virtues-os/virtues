@@ -4,7 +4,7 @@
     1. Account   — sign in / link your Virtues subscription (atlas + virtues-api)   [required]
     2. This Mac  — collector + Full Disk Access + Accessibility                     [skippable]
     3. Phone     — pair your iPhone                                                 [skippable]
-    4. Sources   — connect Calendar & Email (Google)                               [skippable]
+    4. Sources   — connect any catalog source (ConnectionsPanel, same as /sources) [skippable]
     5. Import    — one-time chat-history import                                     [skippable]
 
   No second wizard, no dashboard hand-off: everything lives here, behind one rail.
@@ -27,7 +27,7 @@
 	import CollectorPermissionCard from "$lib/components/onboarding/CollectorPermissionCard.svelte";
 	import ChatImportCard from "$lib/components/onboarding/ChatImportCard.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
-	import { oauthStart } from "$lib/api/client";
+	import ConnectionsPanel from "$lib/components/actions/ConnectionsPanel.svelte";
 	import { onMount, onDestroy } from "svelte";
 
 	type Step = { id: string; title: string; done: boolean; detail?: string };
@@ -89,10 +89,6 @@
 	let email = $state("");
 	let accountError = $state<string | null>(null);
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-	// ── sources step ──
-	let connectingGoogle = $state(false);
-	let sourcesError = $state<string | null>(null);
 
 	// ── skip confirmation ──
 	let skipModalOpen = $state(false);
@@ -167,20 +163,6 @@
 			else if (data.status === "rate_limited") accountError = "Too many attempts for that email — try again in an hour.";
 		} catch {
 			accountError = "Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
-		}
-	}
-
-	async function connectGoogle() {
-		connectingGoogle = true;
-		sourcesError = null;
-		try {
-			const { redirect_url } = await oauthStart("google", {
-				return_url: `${window.location.origin}/setup`,
-			});
-			window.location.assign(redirect_url);
-		} catch (e) {
-			sourcesError = e instanceof Error ? e.message : String(e);
-			connectingGoogle = false;
 		}
 	}
 
@@ -303,16 +285,10 @@
 						{/if}
 					</div>
 				{:else if step.id === "sources"}
-					<div class="rounded-lg border border-border p-4 space-y-3">
-						{#if stepDone("sources")}
-							<p class="text-sm text-success">Google is connected and backfilling.</p>
-						{:else}
-							<Button variant="primary" onclick={connectGoogle} disabled={connectingGoogle}>
-								{connectingGoogle ? "Redirecting…" : "Connect Google"}
-							</Button>
-							{#if sourcesError}<p class="text-sm text-error">{sourcesError}</p>{/if}
-						{/if}
-					</div>
+					<!-- The real sources UI (also at /sources) — lists every source
+					     from the catalog with live sync_state and the right connect
+					     flow per auth kind. No onboarding-only Google shim. -->
+					<ConnectionsPanel />
 				{:else if step.id === "import"}
 					<ChatImportCard />
 				{/if}

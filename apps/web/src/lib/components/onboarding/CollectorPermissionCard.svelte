@@ -160,8 +160,12 @@
 								class="text-xs text-primary hover:underline mt-1 block"
 								onclick={() => openFullDiskAccess()}
 							>
-								Open System Settings → flip Virtues on
+								Open Full Disk Access → turn on Virtues Collector
 							</button>
+							<span class="text-xs text-foreground-subtle mt-0.5 block">
+								Not listed? Click <strong>+</strong> and add
+								<code>~/.virtues/bin/virtues-collector</code>.
+							</span>
 						{/if}
 					</div>
 				</li>
@@ -181,7 +185,7 @@
 								class="text-xs text-primary hover:underline mt-1 block"
 								onclick={() => openAccessibilitySettings()}
 							>
-								Open System Settings → flip Virtues on
+								Open Accessibility → turn on Virtues Collector
 							</button>
 						{/if}
 					</div>
