@@ -57,6 +57,23 @@ pub const ANIMALS: &[&str] = &[
     "tortoise", "terrapin", "turtle", "python", "viper", "adder", "cobra", "mamba", "boa", "krait",
 ];
 
+/// The full `--version` line: semver + codename + build date + short sha, e.g.
+/// `0.1.0 "swift-moorhen" · 2026-06-17 · 759eddc`. `GIT_COMMIT` and `BUILD_TIME`
+/// are baked by build.rs; the codename is derived from the sha so it's stable
+/// per commit. Returned owned so clap can take it at the parse site.
+pub fn long_version() -> String {
+    let sha = env!("GIT_COMMIT");
+    let short = &sha[..sha.len().min(7)];
+    let date = env!("BUILD_TIME").split('T').next().unwrap_or(env!("BUILD_TIME"));
+    format!(
+        "{} \"{}\" · {} · {}",
+        env!("CARGO_PKG_VERSION"),
+        codename(sha),
+        date,
+        short,
+    )
+}
+
 /// Deterministic `adjective-animal` from a git short sha (or any hex string).
 /// Falls back gracefully on non-hex input.
 pub fn codename(sha: &str) -> String {

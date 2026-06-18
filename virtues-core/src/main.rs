@@ -1,6 +1,5 @@
 //! Virtues CLI - Command-line interface for the Virtues personal data platform
 
-use clap::Parser;
 use std::env;
 use virtues::cli::types::{Cli, Commands};
 use virtues::search::Embedder;
@@ -97,7 +96,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let cli = Cli::parse();
+    // Inject the rich version (semver + codename + date + sha) into clap's
+    // `--version`/`-V`. The derive uses CARGO_PKG_VERSION; override it at the
+    // parse site since the codename is computed from the baked git sha.
+    let cli = {
+        use clap::{CommandFactory, FromArgMatches};
+        // clap wants a &'static str; the version is fixed for the process, so
+        // leak the one-time String.
+        let version: &'static str =
+            Box::leak(virtues::codename::long_version().into_boxed_str());
+        let matches = Cli::command().version(version).get_matches();
+        match Cli::from_arg_matches(&matches) {
+            Ok(c) => c,
+            Err(e) => e.exit(),
+        }
+    };
 
     // Handle Doctor early (no database — pure hardware/model resolution report)
     if matches!(cli.command, Some(Commands::Doctor)) {
