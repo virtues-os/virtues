@@ -2,7 +2,7 @@
 //!
 //! Architecture:
 //!
-//!   curl get.virtues.com | sh        ← Caddy 302 → bootstrap.sh
+//!   curl virtues.com/sh | sh        ← Caddy 302 → bootstrap.sh
 //!         ↓
 //!   bootstrap.sh                     ← tiny bash: detects arch, fetches us
 //!         ↓

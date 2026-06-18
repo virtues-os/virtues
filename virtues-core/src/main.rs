@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // token, print the handoff. The account/subscribe conversation lives in
     // the web setup wizard (/setup) — a TTY is the worst possible medium for
     // billing and OAuth, so the interactive middle this command used to have
-    // is gone. The installer execs this at the end of `curl get.virtues.com`;
+    // is gone. The installer execs this at the end of `curl virtues.com/sh`;
     // re-running it by hand is always safe (everything here is idempotent).
     //
     // Power users keep `virtues subscribe` / `account-login` / `migrate` as

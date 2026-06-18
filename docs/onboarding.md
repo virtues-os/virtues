@@ -10,7 +10,7 @@ Four rules everything else follows from:
 
 1. **The channel picks the path — no one is ever asked.**
    Flashed Virtues hardware ⇒ kiosk enabled in the image. `curl
-   get.virtues.com` ⇒ CLI handoff (the user is, by definition, in a shell).
+   virtues.com/sh` ⇒ CLI handoff (the user is, by definition, in a shell).
    There is no "monitor or CLI?" prompt and no separate dev domain.
 
 2. **The web owns onboarding; the CLI owns infra; the screen mirrors state.**
@@ -56,7 +56,7 @@ power on
 The CLI is never seen. The screen is never *required* — it displays the same
 URL/QR any browser on the LAN can reach.
 
-### DIY / headless (`curl get.virtues.com | sudo sh`)
+### DIY / headless (`curl virtues.com/sh | sudo sh`)
 
 ```
 installer: deps → db → user → env → binary → systemd → health check

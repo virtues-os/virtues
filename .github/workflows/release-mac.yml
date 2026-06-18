@@ -20,11 +20,16 @@ name: Release Mac App
 on:
   push:
     tags:
+      # Stable: `mac-v0.1.0` (prerelease:false, updates the rolling `mac-latest`
+      # that virtues.com/downloads/mac serves).
       - 'mac-v*'
+      # Edge: rolling `mac-edge`, force-pushed each test build → one prerelease
+      # release that overwrites itself (mirrors the box's `edge`).
+      - 'mac-edge'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 1.0.0)'
+        description: 'Version (e.g. 0.1.0) or "edge"'
         required: true
         type: string
 
@@ -38,16 +43,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Get version
+      # Resolve version + channel from the tag:
+      #   • `mac-edge` (or dispatch "edge") → edge channel, prerelease, rolling;
+      #     version taken from the crate semver since the tag carries none.
+      #   • `mac-v0.1.0` → stable, prerelease:false, also updates `mac-latest`.
+      - name: Resolve version + channel
         id: version
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
+            RAW="${{ github.event.inputs.version }}"
           else
-            VERSION=${GITHUB_REF#refs/tags/mac-v}
+            RAW="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ "$RAW" == "mac-edge" || "$RAW" == "edge" ]]; then
+            IS_EDGE=true
+            VERSION="$(grep -m1 '^version = ' virtues-core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+            TAG="mac-edge"
+          else
+            IS_EDGE=false
+            VERSION="${RAW#mac-v}"
+            TAG="mac-v${VERSION}"
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION"
+          echo "IS_EDGE=$IS_EDGE" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "channel: edge=$IS_EDGE  version=$VERSION  tag=$TAG"
 
       # Stamp the tag-derived version into tauri.conf.json so the bundler names
       # the DMG `Virtues_<VERSION>_universal.dmg` to match the tag. Without this
@@ -171,13 +191,26 @@ jobs:
           fi
           echo "✓ signed + notarized"
 
-      - name: Create Release (versioned tag)
+      # Stable, version-independent filename so download pages point at a fixed
+      # URL — mac-latest/Virtues.dmg (stable) or mac-edge/Virtues.dmg (edge).
+      - name: Stable-named copy for the download URL
+        id: stable
+        run: |
+          STABLE="$(dirname "${{ steps.dmg.outputs.path }}")/Virtues.dmg"
+          cp "${{ steps.dmg.outputs.path }}" "$STABLE"
+          echo "path=$STABLE" >> "$GITHUB_OUTPUT"
+
+      # The channel release: `mac-v0.1.0` (stable, permanent, prerelease:false)
+      # or `mac-edge` (rolling, prerelease:true). Both carry the versioned DMG
+      # and the stable Virtues.dmg so each channel has a fixed download URL.
+      - name: Publish channel release
         uses: softprops/action-gh-release@v2
         with:
-          name: Virtues for Mac v${{ steps.version.outputs.VERSION }}
-          tag_name: mac-v${{ steps.version.outputs.VERSION }}
+          name: ${{ steps.version.outputs.IS_EDGE == 'true' && 'Virtues for Mac (Edge)' || format('Virtues for Mac v{0}', steps.version.outputs.VERSION) }}
+          tag_name: ${{ steps.version.outputs.TAG }}
+          prerelease: ${{ steps.version.outputs.IS_EDGE == 'true' }}
           body: |
-            ## Virtues for Mac v${{ steps.version.outputs.VERSION }}
+            ## Virtues for Mac ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
 
             Universal (Intel + Apple Silicon) Tauri app. Bundles the
             `virtues-client` (networking) and `virtues-collector` (data) helpers.
@@ -187,21 +220,15 @@ jobs:
             2. Launch it and enter the 6-char code from `virtues pair` on your server.
           files: |
             ${{ steps.dmg.outputs.path }}
+            ${{ steps.stable.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Stable, version-independent filename so the download page / Caddy 302 can
-      # point at a fixed URL:
-      #   https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.dmg
-      - name: Stable-named copy for the download URL
-        id: stable
-        run: |
-          STABLE="$(dirname "${{ steps.dmg.outputs.path }}")/Virtues.dmg"
-          cp "${{ steps.dmg.outputs.path }}" "$STABLE"
-          echo "path=$STABLE" >> "$GITHUB_OUTPUT"
-
-      - name: Update mac-latest
-        if: success()
+      # Stable builds also update the rolling `mac-latest` that
+      # virtues.com/downloads/mac 302s to. Edge skips this — `mac-edge` IS the
+      # rolling edge pointer.
+      - name: Update mac-latest (stable only)
+        if: steps.version.outputs.IS_EDGE == 'false'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mac-latest

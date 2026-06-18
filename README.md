@@ -135,7 +135,7 @@ Extensible: add a new source as an action in `actions/<name>/` with a `manifest.
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-install-in-one-command-dark.svg"><img alt="Install in one command" src=".github/images/headings/h3-install-in-one-command-light.svg" height="22"></picture>
 
 ```bash
-curl -sSL https://get.virtues.com | sudo sh
+curl -sSL https://virtues.com/sh | sudo sh
 ```
 
 That:
@@ -287,7 +287,7 @@ virtues/
 │   ├── ios/                 # iOS companion app (Swift)
 │   └── mac-source/          # macOS data source: HealthKit / EventKit / activity collector
 ├── deploy/                  # Model-fetch + sandbox scripts (cloud Docker lives under services/)
-├── tools/                   # bootstrap.sh + virtues-installer (get.virtues.com)
+├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
 ├── docs/                    # Architecture + concept docs (flat)
 └── .data/                   # Gitignored runtime state (Postgres cluster, drive files)
 ```
