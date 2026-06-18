@@ -215,24 +215,16 @@ async fn send_get(url: &str) -> Result<reqwest::Response, crate::Error> {
         .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))
 }
 
-async fn fetch_latest_tag() -> Result<String, crate::Error> {
-    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases/latest");
-    let body: serde_json::Value = send_get(&url)
-        .await
-        .map_err(|e| crate::Error::Other(format!("github api: {e}")))?
-        .json()
-        .await
-        .map_err(|e| crate::Error::Other(format!("parse github json: {e}")))?;
-    body.get("tag_name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| crate::Error::Other("no tag_name in github response".to_string()))
+/// This repo ships BOTH channels' releases in one list: the Linux box
+/// (`edge`, `vX.Y.Z`) and the macOS app (`mac-edge`, `mac-vX.Y.Z`,
+/// `mac-latest`). The Linux upgrader must ignore the macOS tags — otherwise
+/// `--pre` picks the newest prerelease overall (often `mac-edge`) and then 404s
+/// fetching a Linux asset named after a macOS tag.
+fn is_linux_tag(tag: &str) -> bool {
+    !tag.starts_with("mac-")
 }
 
-/// Newest *prerelease* tag (the staging channel). `releases/latest` only ever
-/// returns the latest non-prerelease, so `--pre` lists releases (newest first)
-/// and picks the first one flagged `prerelease`.
-async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
+async fn list_releases() -> Result<Vec<serde_json::Value>, crate::Error> {
     let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases?per_page=30");
     let body: serde_json::Value = send_get(&url)
         .await
@@ -241,13 +233,43 @@ async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
         .await
         .map_err(|e| crate::Error::Other(format!("parse github json: {e}")))?;
     body.as_array()
-        .and_then(|rels| {
-            rels.iter()
-                .find(|r| r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false))
-                .and_then(|r| r.get("tag_name").and_then(|v| v.as_str()))
-                .map(|s| s.to_string())
+        .cloned()
+        .ok_or_else(|| crate::Error::Other("github releases: expected an array".to_string()))
+}
+
+fn release_tag(r: &serde_json::Value) -> Option<&str> {
+    r.get("tag_name").and_then(|v| v.as_str())
+}
+fn is_prerelease(r: &serde_json::Value) -> bool {
+    r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+fn is_draft(r: &serde_json::Value) -> bool {
+    r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+/// Newest stable (non-prerelease) Linux release tag. The releases list is
+/// newest-first, so the first match wins.
+async fn fetch_latest_tag() -> Result<String, crate::Error> {
+    let rels = list_releases().await?;
+    rels.iter()
+        .filter(|r| !is_draft(r) && !is_prerelease(r))
+        .filter_map(release_tag)
+        .find(|t| is_linux_tag(t))
+        .map(|s| s.to_string())
+        .ok_or_else(|| crate::Error::Other("no stable Linux release found".to_string()))
+}
+
+/// Newest *prerelease* Linux tag (the staging/edge channel). Skips macOS tags.
+async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
+    let rels = list_releases().await?;
+    rels.iter()
+        .filter(|r| !is_draft(r) && is_prerelease(r))
+        .filter_map(release_tag)
+        .find(|t| is_linux_tag(t))
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            crate::Error::Other("no Linux prerelease found in the latest 30 releases".to_string())
         })
-        .ok_or_else(|| crate::Error::Other("no prerelease found in the latest 30 releases".to_string()))
 }
 
 async fn fetch_text(url: &str) -> Result<String, crate::Error> {
