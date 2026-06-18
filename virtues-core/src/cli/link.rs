@@ -452,6 +452,53 @@ pub async fn wait_for_pair(
     }
 }
 
+/// Wait until a NEW device pairs. The universal standing code is multi-use and
+/// never transitions to `consumed`, so we watch for an additional non-revoked
+/// device row rather than a token state change. Mirrors [`wait_for_pair`]'s 90s
+/// client-isolation hint.
+pub async fn wait_for_new_device(pool: &sqlx::PgPool) -> anyhow::Result<()> {
+    const HINT_AFTER: std::time::Duration = std::time::Duration::from_secs(90);
+    let baseline: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
+            .fetch_one(pool)
+            .await?;
+    let start = std::time::Instant::now();
+    let mut hinted = false;
+    let ssh = ssh_context();
+    let host = ssh_forward_host();
+    loop {
+        let current: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM app_device WHERE revoked_at IS NULL")
+                .fetch_one(pool)
+                .await?;
+        if current > baseline {
+            return Ok(());
+        }
+        if !hinted && start.elapsed() >= HINT_AFTER {
+            hinted = true;
+            println!();
+            match &ssh {
+                Some(ctx) => {
+                    let target = forward_target(ctx, &host);
+                    println!("  Still waiting — this network may block device-to-device traffic");
+                    println!("  (common in offices, hotels, WeWork). You're on SSH, so forward");
+                    println!("  the port from your laptop and open it there:");
+                    println!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}");
+                    println!("    then open http://localhost:{INTERNAL_PORT} in the app or browser");
+                }
+                None => {
+                    println!("  Still waiting — if the app or page won't load, this network may");
+                    println!("  block device-to-device traffic (offices, hotels, WeWork).");
+                    println!("  → Use your phone's hotspot, or a network you control.");
+                    println!("  → Or SSH in: ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {host}");
+                    println!("  You can move the server to a different network after setup.");
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

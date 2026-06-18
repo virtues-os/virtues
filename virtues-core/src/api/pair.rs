@@ -61,21 +61,26 @@ const SESSION_TTL_DAYS: i64 = 30;
 
 // ─── Token helpers ──────────────────────────────────────────────────────────
 
-/// Generate a short human-typeable pair code: 6 chars from an unambiguous
-/// uppercase alphabet (A-Z minus I and O, which are indistinguishable from
-/// 1 and 0 in many fonts). 24^6 ≈ 191M combinations; combined with rate
-/// limiting on /api/pair/consume this is unbrutable in the 30-min window.
-/// Displayed as "ABC DEF" in the CLI handoff, entered that way in the app.
+/// Generate a short human-typeable pair code: 6 digits. Digits (not letters)
+/// because the primary surface is someone reading a code off a screen and
+/// typing it on a numeric pad — far less error-prone than a 24-letter
+/// alphabet. 10^6 = 1M combinations: smaller than the old letter space, so the
+/// /api/pair/consume per-IP rate limit is load-bearing, especially for the
+/// multi-use standing code. It holds because the standing code also ROTATES
+/// (~every 20 min, see `STANDING_TTL_MIN`): 10 guesses/30-min/IP against a
+/// target that changes every 20 min makes enumeration of a 1M space
+/// infeasible. (A box-wide lockout was considered and rejected — it hands an
+/// attacker a trivial DoS against the real owner.) Displayed as "123 456".
 fn random_pair_code() -> String {
-    const ALPHA: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ"; // 24 chars
+    const DIGITS: &[u8] = b"0123456789";
     let mut code = String::with_capacity(6);
     let mut buf = [0u8; 1];
     let mut rng = rand::rng();
     while code.len() < 6 {
         rng.fill_bytes(&mut buf);
-        // 240 = 10 * 24; reject 240–255 so every char maps with equal probability.
-        if buf[0] < 240 {
-            code.push(ALPHA[(buf[0] % 24) as usize] as char);
+        // 250 = 10 * 25; reject 250–255 so every digit maps with equal probability.
+        if buf[0] < 250 {
+            code.push(DIGITS[(buf[0] % 10) as usize] as char);
         }
     }
     code
@@ -166,17 +171,118 @@ pub struct MintedToken {
 }
 
 impl MintedToken {
-    /// Human-readable display of the pair code, grouped as "ABC DEF".
+    /// Human-readable display of the pair code, grouped as "123 456".
     /// The raw token (no space) is used in URL fragments and API calls;
     /// the display form is what the user sees in the CLI and types in the app.
     pub fn display_code(&self) -> String {
-        let t = &self.token;
-        if t.len() == 6 {
-            format!("{} {}", &t[..3], &t[3..])
-        } else {
-            t.clone()
-        }
+        group_code(&self.token)
     }
+}
+
+/// Format a 6-char code as "123 456" for display (CLI / panel). The raw,
+/// ungrouped code is what's typed and matched.
+pub fn group_code(code: &str) -> String {
+    if code.len() == 6 {
+        format!("{} {}", &code[..3], &code[3..])
+    } else {
+        code.to_string()
+    }
+}
+
+// ─── Standing rotating code (the universal box code) ─────────────────────────
+//
+// One code pairs everything (phone setup, desktop app, CLI). Unlike a one-off
+// token it is MULTI-use within its window and rotated on a timer (see
+// maintenance::pair_rotator) with an overlap window. The raw value is stored
+// encrypted (display_secret) so box-local surfaces can DISPLAY it; it is never
+// served over the LAN.
+
+/// How often the rotator mints a fresh standing code.
+pub const STANDING_ROTATE_INTERVAL_MIN: i64 = 15;
+/// A rotated-out code stays valid this long after a newer one appears, so a
+/// code read mid-rotation never dies under the user.
+pub const STANDING_GRACE_MIN: i64 = 5;
+/// Total validity of a standing code = interval + grace (~20 min).
+const STANDING_TTL_MIN: i64 = STANDING_ROTATE_INTERVAL_MIN + STANDING_GRACE_MIN;
+
+/// Mint a fresh standing code. Stores SHA-256(code) for matching AND the raw
+/// code encrypted (for box-local display). Multi-use; expires by time. Returns
+/// the row as a `MintedToken` (raw code in `.token`).
+pub async fn mint_standing_code(pool: &PgPool) -> crate::Result<MintedToken> {
+    let token = random_pair_code();
+    let token_hash = hash_token(&token);
+    let id = crate::ids::generate_id(crate::ids::PAIR_TOKEN_PREFIX, &[&token_hash[..16]]);
+    let display_secret = {
+        let enc = crate::crypto::TokenEncryptor::from_env()
+            .map_err(|e| crate::Error::Other(format!("encryptor: {e}")))?;
+        enc.encrypt(&token)
+            .map_err(|e| crate::Error::Other(format!("encrypt standing code: {e}")))?
+    };
+    let expires_at = Utc::now() + Duration::minutes(STANDING_TTL_MIN);
+    sqlx::query(
+        "INSERT INTO app_pair_token \
+         (id, token_hash, minted_via, status, kind, display_secret, authorized_at, expires_at) \
+         VALUES ($1, $2, 'cli', 'authorized', 'standing', $3, now(), $4)",
+    )
+    .bind(&id)
+    .bind(&token_hash)
+    .bind(&display_secret)
+    .bind(expires_at)
+    .execute(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("insert standing code: {e}")))?;
+    Ok(MintedToken {
+        id,
+        token,
+        expires_at,
+        status: "authorized".to_string(),
+    })
+}
+
+/// The current valid standing code as a `MintedToken` (raw code decrypted), if
+/// one exists. BOX-LOCAL ONLY — never expose the raw code over the network.
+pub async fn current_standing(pool: &PgPool) -> crate::Result<Option<MintedToken>> {
+    let row: Option<(String, String, chrono::DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, display_secret, expires_at FROM app_pair_token \
+         WHERE kind = 'standing' AND status = 'authorized' AND expires_at > now() \
+           AND display_secret IS NOT NULL \
+         ORDER BY expires_at DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| crate::Error::Database(format!("read standing code: {e}")))?;
+    match row {
+        Some((id, ciphertext, expires_at)) => {
+            let enc = crate::crypto::TokenEncryptor::from_env()
+                .map_err(|e| crate::Error::Other(format!("encryptor: {e}")))?;
+            let token = enc
+                .decrypt(&ciphertext)
+                .map_err(|e| crate::Error::Other(format!("decrypt standing code: {e}")))?;
+            Ok(Some(MintedToken {
+                id,
+                token,
+                expires_at,
+                status: "authorized".to_string(),
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Return the current standing code (minting one if none is valid). Used by the
+/// CLI and at rotator startup so a fresh box always has a code to show.
+/// (Expired standing rows are pruned by `maintenance::sweeper`.)
+pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
+    if let Some(m) = current_standing(pool).await? {
+        return Ok(m);
+    }
+    mint_standing_code(pool).await
+}
+
+/// Thin wrapper: the current standing code as a raw string, minting if needed.
+/// For surfaces that only need the digits (e.g. the panel render).
+pub async fn ensure_standing_code(pool: &PgPool) -> crate::Result<String> {
+    Ok(ensure_standing(pool).await?.token)
 }
 
 // ─── HTTP handlers ──────────────────────────────────────────────────────────
@@ -571,20 +677,33 @@ pub async fn consume_handler(
         }
     };
 
-    // Atomic claim. UPDATE-RETURNING inside the tx means a concurrent claim
-    // sees `status = 'consumed'` once we commit; before commit, the row is
-    // locked. `consumed_by_device` is left NULL on this claim because the
-    // device row doesn't exist yet — we back-fill it after the INSERT below.
-    // (The FK constraint on consumed_by_device would otherwise reject the
-    // UPDATE.) On error we surface the DB message so a real bug doesn't
-    // masquerade as `invalid_or_expired_token`.
+    // Atomic claim with kind-aware consumption:
+    //   • `matched` locks the valid token row (FOR UPDATE) so concurrent
+    //     redeems of the same one-off token serialize — the second sees no
+    //     'authorized' row after the first commits.
+    //   • `consumed` marks it 'consumed' ONLY for 'oneoff' tokens (single-use).
+    //     'standing' codes are multi-use within their window, so they are
+    //     validated but NOT consumed — they pair many devices over their life.
+    // We RETURN the id from `matched` either way (a standing match is still a
+    // successful pair). `consumed_by_device` is back-filled after the device
+    // INSERT below (the FK would reject it here). On error we surface the DB
+    // message so a real bug doesn't masquerade as `invalid_or_expired_token`.
     let claimed: Option<(String,)> = match sqlx::query_as(
-        "UPDATE app_pair_token \
-         SET status = 'consumed', consumed_at = now() \
-         WHERE token_hash = $1 \
-           AND status = 'authorized' \
-           AND expires_at > now() \
-         RETURNING id",
+        "WITH matched AS ( \
+             SELECT id, kind FROM app_pair_token \
+             WHERE token_hash = $1 \
+               AND status = 'authorized' \
+               AND expires_at > now() \
+             FOR UPDATE \
+         ), \
+         consumed AS ( \
+             UPDATE app_pair_token t \
+             SET status = 'consumed', consumed_at = now() \
+             FROM matched m \
+             WHERE t.id = m.id AND m.kind = 'oneoff' \
+             RETURNING t.id \
+         ) \
+         SELECT id FROM matched",
     )
     .bind(&token_hash)
     .fetch_optional(&mut *tx)
