@@ -137,6 +137,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // ends. See `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(client.database.pool().clone());
 
+    // Pair-code rotator: keeps a fresh universal standing pair code alive at all
+    // times (with an overlap window) so the panel and `virtues pair` always have
+    // a valid code to display. See `crate::maintenance::pair_rotator`.
+    crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
+
     // Rendezvous publish loop: publish the box's current WG endpoint (recorded
     // by the virtues-wireguard daemon) to the blind rendezvous on change, so
     // paired phones can relearn it after an ISP prefix rotation. No-op on a

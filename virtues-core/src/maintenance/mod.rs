@@ -4,4 +4,5 @@
 //! separate service. Each task is a tokio interval loop that runs alongside
 //! the HTTP server and shuts down with it.
 
+pub mod pair_rotator;
 pub mod sweeper;

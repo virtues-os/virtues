@@ -47,14 +47,19 @@ Four rules everything else follows from:
 ```
 power on
   → splash (static image; covers Chromium warm-up)
-  → panel: QR + "open adam-jace.local from any device on your network"
-  → phone scans QR → lands in the setup wizard, already trusted
-  → wizard (on the phone): account → subscribe → name the box → done
+  → panel: a 6-digit code (rotating) + "open adam-jace.local from any device"
+  → on the phone/desktop: open the URL → setup wizard → type the code to pair
+  → wizard: account → subscribe → name the box → done
   → panel ticks each step live, then flips to the ambient dashboard
 ```
 
 The CLI is never seen. The screen is never *required* — it displays the same
-URL/QR any browser on the LAN can reach.
+URL + code any browser on the LAN can reach.
+
+> **Pairing is a typed 6-digit code, not a QR.** The primary client is the
+> desktop app, which has no camera to scan — so the universal mechanism is a
+> short code a human reads off the panel (or the box's terminal) and types. See
+> "The universal rotating code" below.
 
 ### DIY / headless (`curl virtues.com/sh | sudo sh`)
 
@@ -75,24 +80,31 @@ Idiomatic headless-server convention (Proxmox/Home Assistant/Pi-hole): one
 `curl`, one URL. A terminal ANSI QR next to the URL gives parity with the
 appliance (P2).
 
-## The QR / link carries a capability, not just an address
+## The universal rotating code
 
-`http://<LAN-IP>:8000/setup#t=<one-time-token>`
+One short code pairs everything — the desktop app, the phone wizard, the CLI.
+Digits only (6, shown `123 456`): the primary surface is a human reading a code
+off a screen and typing it, so digits beat a letter alphabet on a numeric pad.
 
-- **LAN IP, not mDNS, inside the QR** — phones (especially Android) fumble
-  `.local`. The *printed/displayed* name leads with mDNS for humans.
-- **The token rides in the URL fragment** (never hits logs/referers).
-  Scanning **is** pairing — the phone lands trusted.
-- **Trust-on-first-boot:** the wizard is gated on the token, and the token
-  only exists on the physical screen (appliance) or in the installer's
-  terminal (headless). Proximity = authority — consistent with the
-  `virtues sudo` physical-presence doctrine. A LAN stranger cannot claim an
-  unclaimed box.
+- **It rotates and is always live.** A box-side task (`maintenance::pair_rotator`)
+  mints a fresh code every ~15 min with a ~5-min **overlap window**, so the
+  panel/CLI always show a valid code and a code read mid-rotation never dies
+  under the user. The code is **multi-use within its window** — it can pair
+  several devices over its life (unlike the single-use "+ Add Device" token).
+- **Stored encrypted, shown only on physical surfaces.** Only `SHA-256(code)` is
+  used for matching; the raw code is kept encrypted (vault key) so box-local
+  surfaces — the `/panel` render and `virtues pair` in the box's terminal — can
+  *display* it. It is **never served over the LAN**. Proximity = authority,
+  consistent with the `virtues sudo` physical-presence doctrine: a LAN stranger
+  who cannot see the screen cannot claim the box.
+- **No QR.** The desktop app has no camera; the typed code is the one mechanism.
+  The displayed name still leads with mDNS for humans; the URL is for opening
+  the wizard in a browser, not for carrying the secret.
 
 ## Setup vs onboarding (they are different things)
 
 - **Setup = the wizard. It ends early.** Required core only:
-  **claimed** (token consumed) → **account + subscription** → **named**
+  **claimed** (a device paired) → **account + subscription** → **named**
   (`adam-jace.local`, sets the Avahi hostname) → **on your network ✓**.
   Target: under 5 minutes of human time, minimal input, each step a visible
   win on the panel. The bge-m3 model pull (GBs) runs in the background and is

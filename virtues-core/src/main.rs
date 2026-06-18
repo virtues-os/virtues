@@ -182,16 +182,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
         println!("  {}  {}", console::style("✓").green(), "Database ready");
 
-        // Mint a CLI-origin pair token and print the handoff. The fragment
-        // form (`/pair#t=…`) never leaks the token to server logs or
-        // referers. Opening it lands the browser in the setup wizard, which
-        // owns everything that used to be prompted here.
-        match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
+        // Print the handoff with the box's UNIVERSAL standing code — the same
+        // rotating code the panel shows and `virtues pair` prints. The fragment
+        // form (`/pair#t=…`) never leaks the code to server logs or referers.
+        // Opening it lands the browser in the setup wizard, which owns
+        // everything that used to be prompted here.
+        match virtues::api::pair::ensure_standing(db.pool()).await {
             Ok(minted) => print_link_output(&minted),
             Err(e) => {
                 println!();
-                println!("  ⚠  could not mint pair token: {e}");
-                println!("     Run `virtues pair` later to get a fresh code.");
+                println!("  ⚠  could not produce a pair code: {e}");
+                println!("     Run `virtues pair` later to get one.");
             }
         }
 
@@ -283,21 +284,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        match virtues::api::pair::mint_pair_token(db.pool(), None, Some("browser")).await {
+        // Show the box's UNIVERSAL standing code — the same rotating code the
+        // panel displays — rather than minting a throwaway one. It's multi-use
+        // within its window and rotates (~20 min), so any device can pair with
+        // it. (The rotator keeps it fresh; we mint on the spot if the server
+        // hasn't run yet on this box.)
+        match virtues::api::pair::ensure_standing(db.pool()).await {
             Ok(minted) => {
                 print_link_output(&minted);
                 if !*no_wait {
-                    use virtues::cli::link::{wait_for_pair, PairWaitOutcome};
-                    println!("  Waiting for the app or browser to connect… (Ctrl+C to exit;");
-                    println!("  the code stays valid for 30 minutes either way)");
-                    match wait_for_pair(db.pool(), &minted.id).await {
-                        Ok(PairWaitOutcome::Consumed) => {
+                    use virtues::cli::link::wait_for_new_device;
+                    println!("  Waiting for a device to connect… (Ctrl+C to exit;");
+                    println!("  the code stays valid while shown and rotates automatically)");
+                    match wait_for_new_device(db.pool()).await {
+                        Ok(()) => {
                             println!();
                             println!("  ✓ connected — finish setup in the app.");
-                        }
-                        Ok(PairWaitOutcome::Expired) => {
-                            println!();
-                            println!("  code expired — run `virtues pair` for a fresh one.");
                         }
                         Err(e) => eprintln!("  (stopped waiting: {e})"),
                     }
@@ -305,7 +307,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             Err(e) => {
-                eprintln!("error: could not mint pair token: {e}");
+                eprintln!("error: could not produce a pair code: {e}");
                 eprintln!("hint: is the database reachable? DATABASE_URL={}", database_url);
                 std::process::exit(1);
             }
@@ -524,7 +526,7 @@ fn print_pair_hero(display: &str) {
     println!("  │{prefix}{code}{}│", " ".repeat(pad));
 
     println!("{blank}");
-    println!("{}", line("   Expires in 30 minutes · single use"));
+    println!("{}", line("   Rotates automatically · valid while shown"));
     println!("{blank}");
     println!("{bot}");
 }
