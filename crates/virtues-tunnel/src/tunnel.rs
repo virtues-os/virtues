@@ -10,13 +10,16 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::collections::HashSet;
 use std::sync::mpsc::{SyncSender as MpscSyncSender, TrySendError};
 use std::time::{Duration, Instant as StdInstant};
+
+use virtues_protocol::RendezvousParams;
 
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::socket::tcp;
@@ -44,6 +47,11 @@ const IDLE_POLL: Duration = Duration::from_millis(250);
 /// in-flight buffering before TCP backpressure kicks in (we stop draining the
 /// socket, its window closes, the box stops sending).
 const READ_CHANNEL_DEPTH: usize = 16;
+/// Once the handshake has been down this long, start trying to relearn the box's
+/// endpoint via rendezvous — covers an ISP rotating the box's IPv6 prefix.
+const RELEARN_AFTER: Duration = Duration::from_secs(8);
+/// Minimum spacing between rendezvous relearn attempts.
+const RELEARN_EVERY: Duration = Duration::from_secs(20);
 
 /// Coarse connection state, surfaced to the app's Settings UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +69,11 @@ enum Command {
         reply: SyncSender<Result<TunnelStream, TunnelError>>,
     },
     Close(SocketHandle),
+    /// A rendezvous relearn fetched a new box endpoint — repoint the WG peer.
+    UpdateEndpoint {
+        addr: SocketAddr,
+        ts: i64,
+    },
     Shutdown,
 }
 
@@ -94,11 +107,13 @@ impl Tunnel {
         let (cmd_tx, cmd_rx) = mpsc::channel::<Command>();
         let loop_status = status.clone();
         let loop_cmd_tx = cmd_tx.clone();
+        let rendezvous = bundle.rendezvous.clone();
 
         let join = std::thread::Builder::new()
             .name("virtues-tunnel".into())
             .spawn(move || {
-                EventLoop::new(wg, udp, client_ip, server_ip, loop_status, loop_cmd_tx).run(cmd_rx);
+                EventLoop::new(wg, udp, client_ip, server_ip, loop_status, loop_cmd_tx, rendezvous)
+                    .run(cmd_rx);
             })
             .map_err(TunnelError::from)?;
 
@@ -190,6 +205,16 @@ struct EventLoop {
     /// Local ports currently bound by a live conn — alloc skips these so a wrap
     /// can't reissue a port still in use / lingering in TIME_WAIT.
     used_ports: HashSet<u16>,
+    /// Rendezvous capability (relearn the box's endpoint after a prefix rotation).
+    rendezvous: RendezvousParams,
+    /// Publish-time of the endpoint we're on (reject older blobs on relearn).
+    endpoint_ts: i64,
+    /// When the handshake last went/stayed down (reset on Connected).
+    connecting_since: StdInstant,
+    /// Last relearn attempt (None until the first), for spacing.
+    last_relearn: Option<StdInstant>,
+    /// True while a relearn fetch thread is running (prevents overlap).
+    relearn_inflight: Arc<AtomicBool>,
 }
 
 impl EventLoop {
@@ -200,6 +225,7 @@ impl EventLoop {
         server_ip: IpAddr,
         status: Arc<Mutex<TunnelStatus>>,
         cmd_tx: Sender<Command>,
+        rendezvous: RendezvousParams,
     ) -> Self {
         let mut device = VirtualDevice::new();
         let config = Config::new(HardwareAddress::Ip);
@@ -231,6 +257,11 @@ impl EventLoop {
             cmd_tx,
             next_local_port: 49152,
             used_ports: HashSet::new(),
+            rendezvous,
+            endpoint_ts: 0,
+            connecting_since: StdInstant::now(),
+            last_relearn: None,
+            relearn_inflight: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -270,6 +301,14 @@ impl EventLoop {
                 match cmd {
                     Command::Dial { ip, port, reply } => self.handle_dial(ip, port, reply),
                     Command::Close(h) => self.handle_close(h),
+                    Command::UpdateEndpoint { addr, ts } => match self.wg.update_endpoint(addr) {
+                        Ok(()) => {
+                            self.endpoint_ts = ts;
+                            self.connecting_since = StdInstant::now();
+                            tracing::info!("rendezvous: repointed WG peer to {addr}");
+                        }
+                        Err(e) => tracing::debug!("update_endpoint {addr} failed: {e}"),
+                    },
                     Command::Shutdown => {
                         shutdown = true;
                         break;
@@ -296,11 +335,16 @@ impl EventLoop {
                 }
                 self.wg.tick();
                 self.flush_outbound();
-                self.set_status(if self.wg.is_established() {
-                    TunnelStatus::Connected
+                if self.wg.is_established() {
+                    self.set_status(TunnelStatus::Connected);
+                    // Up → reset the down-timer and relearn spacing.
+                    self.connecting_since = StdInstant::now();
+                    self.last_relearn = None;
                 } else {
-                    TunnelStatus::Connecting
-                });
+                    self.set_status(TunnelStatus::Connecting);
+                    // Down too long → try to relearn the box's endpoint.
+                    self.maybe_relearn();
+                }
                 self.expire_pending_dials();
                 last_tick = StdInstant::now();
             }
@@ -500,6 +544,46 @@ impl EventLoop {
         for h in expired {
             self.teardown_conn(h);
         }
+    }
+
+    /// If the handshake has been down past [`RELEARN_AFTER`], fetch the box's
+    /// current endpoint from the rendezvous (off-thread — the GET blocks) and,
+    /// on success, post an [`Command::UpdateEndpoint`] to repoint the WG peer.
+    /// Throttled to one in-flight fetch and at most one per [`RELEARN_EVERY`].
+    fn maybe_relearn(&mut self) {
+        if self.rendezvous.url.is_empty() {
+            return; // no rendezvous configured (e.g. dev bundle)
+        }
+        if self.connecting_since.elapsed() <= RELEARN_AFTER {
+            return;
+        }
+        if let Some(t) = self.last_relearn {
+            if t.elapsed() <= RELEARN_EVERY {
+                return;
+            }
+        }
+        // Claim the in-flight slot; bail if a fetch is already running.
+        if self.relearn_inflight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.last_relearn = Some(StdInstant::now());
+        let rdv = self.rendezvous.clone();
+        let min_ts = self.endpoint_ts;
+        let cmd_tx = self.cmd_tx.clone();
+        let inflight = self.relearn_inflight.clone();
+        std::thread::spawn(move || {
+            match crate::rendezvous::fetch_endpoint(&rdv, min_ts) {
+                Ok(blob) => match blob.ip.parse::<IpAddr>() {
+                    Ok(ip) => {
+                        let addr = SocketAddr::new(ip, blob.port);
+                        let _ = cmd_tx.send(Command::UpdateEndpoint { addr, ts: blob.ts });
+                    }
+                    Err(e) => tracing::debug!("rendezvous blob bad ip '{}': {e}", blob.ip),
+                },
+                Err(e) => tracing::debug!("rendezvous relearn failed: {e:?}"),
+            }
+            inflight.store(false, Ordering::SeqCst);
+        });
     }
 
     /// Allocate a local TCP port not currently in use, scanning forward and

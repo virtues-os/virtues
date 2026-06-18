@@ -100,7 +100,7 @@ pub async fn run() -> Result<Report> {
                 "Local and LAN access: always work",
                 "Remote from anywhere: depends on your router",
                 "  · You control it  → one port-forward and done",
-                "  · You don't       → you'll need a tunnel you run (Tailscale, Cloudflared, etc.)",
+                "  · You don't       → you'll need a port-forward or a tunnel you run",
             ],
             "This won't block setup. Run `virtues doctor` for a network diagnosis.",
         ),
