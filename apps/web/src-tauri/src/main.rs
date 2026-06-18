@@ -111,6 +111,56 @@ fn classify_session_response(raw: &str) -> Option<bool> {
     None
 }
 
+/// Coarse internet check: can this Mac open a TCP connection to a public
+/// anchor? std-only, short timeout. Distinguishes "this device is offline" from
+/// "the box is unreachable."
+fn device_online() -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+    // Well-known always-on anchors on :443/:53. Any success = online.
+    for anchor in ["1.1.1.1:443", "8.8.8.8:53"] {
+        if let Ok(addrs) = anchor.to_socket_addrs() {
+            for addr in addrs {
+                if TcpStream::connect_timeout(&addr, Duration::from_millis(700)).is_ok() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Diagnose why a paired box can't be reached, for the connect screen's
+/// network-aware callout. Returns one of:
+///   - `"ok"`            — recovered; the caller should load the box.
+///   - `"stale_bearer"`  — box reachable but rejected this device → re-pair.
+///   - `"device_offline"`— this Mac has no usable internet.
+///   - `"box_unreachable"`— box off/asleep OR this network blocks
+///     device-to-device traffic (work/café Wi-Fi). Distinguishing the two
+///     precisely needs a rendezvous probe (future, via virtues-client); the
+///     callout copy covers both honestly for now.
+#[tauri::command]
+async fn diagnose_box() -> String {
+    // Offload the blocking TCP probes to the blocking pool so we never freeze
+    // the UI thread while connecting/timing out.
+    tauri::async_runtime::spawn_blocking(|| {
+        match probe_box_session() {
+            Some(true) => "ok",
+            Some(false) => "stale_bearer",
+            None => {
+                if device_online() {
+                    "box_unreachable"
+                } else {
+                    "device_offline"
+                }
+            }
+        }
+        .to_string()
+    })
+    .await
+    .unwrap_or_else(|_| "box_unreachable".to_string())
+}
+
 #[cfg(test)]
 mod session_probe_tests {
     use super::classify_session_response;
@@ -532,6 +582,7 @@ fn main() {
             uninstall_helpers,
             forget_pairing,
             recheck_box,
+            diagnose_box,
             restart_app,
             get_collector_status,
             install_collector,
