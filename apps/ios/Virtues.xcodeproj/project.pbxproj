@@ -6,7 +6,27 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		563090C22FE4982200EE0CBF /* VirtuesTunnel.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */; };
+		563090C32FE4982200EE0CBF /* VirtuesTunnel.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		563090C42FE4982200EE0CBF /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				563090C32FE4982200EE0CBF /* VirtuesTunnel.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = VirtuesTunnel.xcframework; path = "../../crates/virtues-tunnel/generated/VirtuesTunnel.xcframework"; sourceTree = "<group>"; };
 		5644C5F22E3B03D50043F3CA /* Virtues.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Virtues.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -36,16 +56,26 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				563090C22FE4982200EE0CBF /* VirtuesTunnel.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		563090C02FE4982200EE0CBF /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		5644C5E92E3B03D50043F3CA = {
 			isa = PBXGroup;
 			children = (
 				5644C5F42E3B03D50043F3CA /* Virtues */,
+				563090C02FE4982200EE0CBF /* Frameworks */,
 				5644C5F32E3B03D50043F3CA /* Products */,
 			);
 			sourceTree = "<group>";
@@ -68,6 +98,7 @@
 				5644C5EE2E3B03D50043F3CA /* Sources */,
 				5644C5EF2E3B03D50043F3CA /* Frameworks */,
 				5644C5F02E3B03D50043F3CA /* Resources */,
+				563090C42FE4982200EE0CBF /* Embed Frameworks */,
 			);
 			buildRules = (
 			);

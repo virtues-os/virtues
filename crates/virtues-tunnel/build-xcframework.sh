@@ -22,7 +22,13 @@ DEVICE=aarch64-apple-ios
 SIM_ARM=aarch64-apple-ios-sim
 SIM_X86=x86_64-apple-ios   # used as the x86_64 simulator slice
 
-echo "==> Building staticlib for iOS targets"
+# Pin the min-OS of every object file (Rust + the cc-compiled C in ring/boringtun)
+# to the app's deployment target. Without this they default to the host SDK
+# version and the linker warns "built for newer iOS version than being linked".
+# Keep in sync with the Virtues target's IPHONEOS_DEPLOYMENT_TARGET.
+export IPHONEOS_DEPLOYMENT_TARGET=18.0
+
+echo "==> Building staticlib for iOS targets (min-OS $IPHONEOS_DEPLOYMENT_TARGET)"
 for t in "$DEVICE" "$SIM_ARM" "$SIM_X86"; do
   ( cd "$ROOT" && cargo build --release -p virtues-tunnel --target "$t" )
 done
@@ -34,6 +40,11 @@ echo "==> Generating Swift bindings"
     --library "target/$DEVICE/release/$LIB" \
     --language swift \
     --out-dir "$OUT" )
+
+# uniffi emits bindings for every uniffi component linked into the staticlib —
+# that includes the transitive `defguard_boringtun` crate, which the app never
+# calls. Drop those strays so they can't get added to the Xcode target by mistake.
+rm -f "$OUT"/defguard_boringtun.swift "$OUT"/defguard_boringtunFFI.h "$OUT"/defguard_boringtunFFI.modulemap
 
 # uniffi emits: virtues_tunnel.swift, virtues_tunnelFFI.h, virtues_tunnelFFI.modulemap
 MODMAP="$OUT/virtues_tunnelFFI.modulemap"
