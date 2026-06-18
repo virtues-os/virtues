@@ -10,6 +10,7 @@ pub mod api;
 pub mod services;
 pub mod cli;
 pub mod client;
+pub mod codename;
 pub mod credentials;
 pub mod crypto;
 pub mod database;
