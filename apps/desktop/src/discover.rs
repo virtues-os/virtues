@@ -102,7 +102,28 @@ fn discover_blocking(timeout_secs: u64) -> Vec<FoundServer> {
     // in the picker. Collapse to one entry per origin.
     found.sort_by(|a, b| a.origin.cmp(&b.origin));
     found.dedup_by(|a, b| a.origin == b.origin);
+
+    // Verify reachability before we claim "found". mDNS surfaces STALE/cached
+    // records — e.g. a box that lived on this Wi-Fi last week, or a `.local`
+    // name the OS still resolves to an old LAN IP — on networks where the box
+    // isn't actually reachable (office/café Wi-Fi). A phantom "Found X nearby"
+    // that then times out is worse than finding nothing, so drop anything we
+    // can't open a TCP connection to.
+    found.retain(|s| tcp_reachable(&s.host, s.port));
     found
+}
+
+/// Quick TCP reachability check (resolves the host, tries a short-timeout
+/// connect to any resolved address). Used to filter stale mDNS hits.
+fn tcp_reachable(host: &str, port: u16) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+    match (host, port).to_socket_addrs() {
+        Ok(addrs) => addrs
+            .into_iter()
+            .any(|a| TcpStream::connect_timeout(&a, Duration::from_millis(600)).is_ok()),
+        Err(_) => false,
+    }
 }
 
 /// Print discovered servers to stdout for the CLI `discover` subcommand.

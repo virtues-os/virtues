@@ -52,43 +52,56 @@
       text-align: center;
     }
 
-    /* Beacon: the ∴ mark as a centered hero, continuously emitting faint sonar
-       rings — the app is *listening* for your box on the network (mDNS). The
-       motion means something; it isn't decoration. On connect the rings switch
-       to a faster green "locked on" pulse. */
-    .beacon {
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 54px; height: 44px;
-      margin: 0 auto 12px;
+    /* Network viz: this laptop ⟷ your box, with packets flowing between — a
+       literal picture of the connection (your device talking to YOUR box, no
+       cloud). The motion means something: it carries state.
+         (default)    packets drift toward the box — reaching out / listening
+         .connecting  faster bidirectional flow, both glyphs lit accent
+         .stalled     packets die mid-path + box dims — can't get through
+                      (hostile/blocking network, box off, or this Mac offline) */
+    .netviz { margin: 4px auto 12px; }
+    .netviz svg { display: block; margin: 0 auto; }
+    .netviz .dev { fill: none; stroke: var(--muted); stroke-width: 1.5; transition: stroke .25s, opacity .25s; }
+    .netviz .box circle { fill: var(--muted); stroke: none; transition: fill .25s; }
+    .netviz .wire { stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 3 4; }
+    .netviz .packet { fill: var(--accent); opacity: 0; pointer-events: none; }
+
+    @keyframes flowR {
+      0%   { transform: translateX(0);     opacity: 0; }
+      14%  { opacity: 1; }
+      86%  { opacity: 1; }
+      100% { transform: translateX(126px); opacity: 0; }
     }
-    .mark { display: block; position: relative; z-index: 2; }
-    .mark circle { fill: var(--accent); }
-    .sonar {
-      position: absolute; left: 50%; top: 50%;
-      width: 24px; height: 24px; margin: -12px 0 0 -12px;
-      border: 1px solid var(--accent);
-      border-radius: 50%;
-      opacity: 0;
-      pointer-events: none;   /* decorative — never intercept clicks */
-      animation: sonar 3.2s ease-out infinite;
+    @keyframes flowL {
+      0%   { transform: translateX(126px); opacity: 0; }
+      14%  { opacity: 1; }
+      86%  { opacity: 1; }
+      100% { transform: translateX(0);     opacity: 0; }
     }
-    .sonar:nth-of-type(2) { animation-delay: 1.07s; }
-    .sonar:nth-of-type(3) { animation-delay: 2.14s; }
-    @keyframes sonar {
-      0%   { transform: scale(0.55); opacity: 0.32; }
-      70%  { opacity: 0.06; }
-      100% { transform: scale(3.4);  opacity: 0; }
+    @keyframes flowStall {
+      0%   { transform: translateX(0);    opacity: 0; }
+      18%  { opacity: 1; }
+      55%  { transform: translateX(64px); opacity: 1; }
+      72%  { transform: translateX(72px); opacity: 0; }
+      100% { transform: translateX(72px); opacity: 0; }
     }
-    .beacon.connecting .sonar {
-      animation-duration: 1.1s;
-      border-color: var(--ok);
-    }
-    .beacon.connecting .mark circle { fill: var(--ok); transition: fill .3s; }
+    .netviz .packet { animation: flowR 2.6s linear infinite; }
+    .netviz .p2 { animation-delay: .87s; }
+    .netviz .p3 { animation-delay: 1.74s; }
+    .netviz .back { animation: none; } /* return packets only while connecting */
+
+    #netviz.connecting .packet { animation-duration: 1.15s; }
+    #netviz.connecting .back { animation: flowL 1.15s linear infinite; }
+    #netviz.connecting .back.b2 { animation-delay: .57s; }
+    #netviz.connecting .dev { stroke: var(--accent); }
+    #netviz.connecting .box circle { fill: var(--accent); }
+
+    #netviz.stalled .packet { animation: flowStall 2s linear infinite; }
+    #netviz.stalled .back { animation: none; }
+    #netviz.stalled .box { opacity: .35; }
+
     @media (prefers-reduced-motion: reduce) {
-      .sonar { animation: none; }
+      .netviz .packet { animation: none !important; opacity: 0; }
     }
 
     .wordmark-text {
@@ -324,15 +337,28 @@
 </head>
 <body>
   <div class="card">
-    <div class="beacon" id="beacon">
-      <span class="sonar"></span>
-      <span class="sonar"></span>
-      <span class="sonar"></span>
-      <!-- ∴ therefore: one dot on top, two below (apex up). -->
-      <svg class="mark" width="26" height="21" viewBox="0 0 22 18" aria-hidden="true">
-        <circle cx="11" cy="4" r="2.4"></circle>
-        <circle cx="5" cy="13.5" r="2.4"></circle>
-        <circle cx="17" cy="13.5" r="2.4"></circle>
+    <!-- This laptop ⟷ your box, packets flowing between (state-driven). -->
+    <div class="netviz" id="netviz">
+      <svg viewBox="0 0 224 54" width="200" height="48" aria-hidden="true">
+        <line class="wire" x1="48" y1="27" x2="176" y2="27" />
+        <!-- laptop (this Mac) -->
+        <g class="laptop dev">
+          <rect x="8" y="12" width="34" height="23" rx="2.5" />
+          <path d="M3 40 h44 l-5 -5 h-34 z" />
+        </g>
+        <!-- box (your server): a unit with the ∴ mark -->
+        <g class="box dev">
+          <rect x="182" y="9" width="34" height="34" rx="5" />
+          <circle cx="199" cy="20" r="1.8" />
+          <circle cx="193.5" cy="31" r="1.8" />
+          <circle cx="204.5" cy="31" r="1.8" />
+        </g>
+        <!-- packets: forward (out) + return (only while connecting) -->
+        <circle class="packet p1" cx="52" cy="27" r="2.4" />
+        <circle class="packet p2" cx="52" cy="27" r="2.4" />
+        <circle class="packet p3" cx="52" cy="27" r="2.4" />
+        <circle class="packet back b1" cx="52" cy="27" r="2.4" />
+        <circle class="packet back b2" cx="52" cy="27" r="2.4" />
       </svg>
     </div>
     <div class="wordmark-text">Virtues</div>
@@ -450,6 +476,15 @@
       if (!inProgress && rawCode().length === 6) connect();
     }
 
+    // ── Network viz state ──────────────────────────────────────────────────────
+    // null = idle/searching (reaching out), 'connecting' = bidirectional flow,
+    // 'stalled' = packets die mid-path (can't get through).
+    function netState(s) {
+      const n = document.getElementById('netviz');
+      n.classList.remove('connecting', 'stalled');
+      if (s) n.classList.add(s);
+    }
+
     // ── Callout (diagnose-driven) ──────────────────────────────────────────────
     function showCallout(html, withRetry) {
       const c = document.getElementById('callout');
@@ -485,9 +520,12 @@
         if (v === 'ok') { window.location.href = BOX_URL; return; }
         if (v) state = v;
       } catch (e) { /* command absent — keep the hash-derived state */ }
-      if (!state) { hideCallout(); return; }
+      if (!state) { hideCallout(); netState(null); return; }
       const [msg, retry] = CALLOUT[state] || CALLOUT.box_unreachable;
       showCallout(msg, retry);
+      // A reset box is reachable (just needs re-pair) → idle; the can't-reach
+      // states → stalled (packets die mid-path).
+      netState(state === 'stale_bearer' ? null : 'stalled');
       if (state === 'stale_bearer') focusCell(0);
     }
 
@@ -586,7 +624,7 @@
 
       inProgress = true;
       hideCallout();
-      document.getElementById('beacon').classList.add('connecting'); // sonar → locked-on
+      netState('connecting'); // packets flow both ways
       if (reachTimer) { clearInterval(reachTimer); reachTimer = null; }
       const btn = document.getElementById('connect-btn');
       btn.textContent = 'Connecting…';
@@ -601,11 +639,25 @@
       // the old pin. A no-op on a truly fresh machine.
       try { await invoke('forget_pairing'); } catch (e) { /* best-effort */ }
 
+      // Was this an auto-discovered box (no manual address typed)? If so, a
+      // failure is usually a stale/false mDNS hit on a network where the box
+      // isn't actually reachable (office/café Wi-Fi).
+      const wasAutoDiscovered = !normalizeServer(serverValue());
       try {
         await invoke('pair_with_code', { server, code });
       } catch (e) {
         restoreCells();
-        setStatus(e || 'That code didn\'t work — check it and try again.', 'error');
+        netState('stalled');
+        const host = server.replace(/^https?:\/\//, '');
+        if (wasAutoDiscovered) {
+          // Stop auto-using the bad match; steer to the real address.
+          discoveredOrigin = '';
+          setFound('none');
+          openAdvanced();
+          setStatus("Couldn't reach " + host + " on this network — enter your box's address below (e.g. its Tailscale IP).", 'error');
+        } else {
+          setStatus(e || ("Couldn't reach " + host + ". Check the address and code, then try again."), 'error');
+        }
         btn.textContent = 'Connect';
         inProgress = false;
         return;
@@ -624,6 +676,7 @@
       } catch (e) {
         stopProgress();
         restoreCells();
+        netState('stalled');
         setStatus('Connected, but starting the local link failed: ' + e, 'error');
         btn.textContent = 'Connect';
         inProgress = false;
@@ -663,7 +716,7 @@
       const ctx = canvas.getContext && canvas.getContext('2d');
       if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
       cells.forEach(c => c.style.opacity = '1');
-      document.getElementById('beacon').classList.remove('connecting'); // back to listening
+      netState(null); // back to idle/searching flow
       clearCells();
     }
 
