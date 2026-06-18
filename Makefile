@@ -10,10 +10,20 @@
 
 AWS_REGION ?= us-east-1
 
-# Mac dev points at PROD virtues-api by default — your real bearer + real sub.
-# Override with VIRTUES_API_URL=http://localhost:9002 to run a local api too.
-VIRTUES_API_URL ?= https://api.virtues.com
-VIRTUES_ATLAS_URL ?= https://atlas.virtues.com
+# Mac dev is FULLY LOCAL by default and never touches prod: `make dev` runs a
+# local virtues-api (seeded wallet → AI works with no checkout) and points atlas
+# at localhost (nothing there — so a stray "Connect" can't mint rows in prod).
+#
+# To exercise the real billing/onboarding flow against the deployed staging
+# services: `make dev STAGING=1` (test-mode Stripe, real claim). Or override
+# VIRTUES_API_URL / VIRTUES_ATLAS_URL individually for prod or a custom host.
+ifeq ($(STAGING),1)
+VIRTUES_API_URL   ?= https://api-staging.virtues.com
+VIRTUES_ATLAS_URL ?= https://atlas-staging.virtues.com
+else
+VIRTUES_API_URL   ?= http://localhost:9002
+VIRTUES_ATLAS_URL ?= http://localhost:9100
+endif
 DEV_WEB_PORT ?= 5173
 
 # Local virtues-api (`make dev-api`): its own logical db + a known dev bearer.
@@ -107,28 +117,33 @@ db: ## Ensure brew postgres@17 is installed + running, db exists with pgvector
 db-stop: ## Stop the brew postgres service (preserves data)
 	@brew services stop postgresql@17
 
-dev: db ## Run the full dev stack: postgres + core (:8000) + web + embed sidecars (Ctrl-C stops all)
+# Run a local virtues-api as part of `make dev` whenever core points at a
+# localhost api (the default). Empty when pointing at staging/prod.
+DEV_LOCAL_API := $(filter http://localhost%,$(VIRTUES_API_URL))
+
+dev: db ## Run the full LOCAL dev stack: postgres + api (:9002) + core (:8000) + web + embed (Ctrl-C stops all). `make dev STAGING=1` for the real billing flow.
 	@if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-ensure; fi
-	@echo "→ starting virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181/rerank :18182,). Ctrl-C stops all."
-	@echo "  core points at PROD api by default. 'make dev-link' (other tab) for a login URL."
+	@echo "→ starting$(if $(DEV_LOCAL_API), virtues-api (:9002) +,) virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181/rerank :18182,). Ctrl-C stops all."
+	@echo "  api: $(VIRTUES_API_URL)  atlas: $(VIRTUES_ATLAS_URL)$(if $(DEV_LOCAL_API),  (fully local — AI works, no checkout), (staging/prod — real billing flow))"
 	@echo "  lands straight in the app (setup skipped).$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
 	@trap 'kill 0' EXIT INT TERM; \
+	$(if $(DEV_LOCAL_API),$(MAKE) dev-api & ,) \
 	$(MAKE) dev-core & \
 	$(MAKE) dev-web & \
 	if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-run & fi; \
 	wait
 
-dev-info: db ## Print the manual two-tab dev instructions (when you want split logs)
+dev-info: db ## Print the manual multi-tab dev instructions (when you want split logs)
 	@echo ""
-	@echo "Open terminal tabs and run:"
-	@echo "  tab 1:  make dev-core           # points at PROD api by default"
+	@echo "Fully-local stack (the default — AI works, no checkout):"
+	@echo "  tab 0:  make dev-api            # local virtues-api on :9002 (seeded wallet)"
+	@echo "  tab 1:  make dev-core           # points at localhost api by default"
 	@echo "  tab 2:  make dev-web"
 	@echo ""
 	@echo "Then 'make dev-link' to get a login URL."
 	@echo ""
-	@echo "To exercise a LOCAL virtues-api instead (no real sub, seeded wallet):"
-	@echo "  tab 0:  make dev-api"
-	@echo "  tab 1:  make dev-core VIRTUES_API_URL=http://localhost:9002"
+	@echo "To exercise the real billing/onboarding flow against staging:"
+	@echo "  tab 1:  make dev-core STAGING=1   (real claim, test-mode Stripe; skip dev-api)"
 
 dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seeds). WATCH=1 to auto-restart on .rs changes
 	@if [ "$(WATCH)" = "1" ] && [ -z "$(CARGO_WATCH)" ]; then \
@@ -222,8 +237,22 @@ dev-clean: dev-wipe-mac dev-reset ## Full local reset: unpair this Mac + drop/re
 
 # ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
 
-mac-app: ## Build the macOS DMG (Virtues.app + virtues-client + virtues-collector)
+# Auto-launch the freshly-built app after `make mac-app` (OPEN=0 to skip). We
+# quit any running instance first so `open` launches the NEW binary instead of
+# just foregrounding the stale one.
+OPEN ?= 1
+mac-app: ## Build the macOS app (Virtues.app + sidecars) and open it (OPEN=0 to skip)
 	tools/build-mac-app.sh
+	@if [ "$(OPEN)" = "1" ]; then \
+	  app=$$(find apps/web/src-tauri/target -maxdepth 6 -path '*/bundle/macos/Virtues.app' -print -quit 2>/dev/null); \
+	  if [ -n "$$app" ]; then \
+	    echo "→ opening $$app"; \
+	    osascript -e 'quit app "Virtues"' >/dev/null 2>&1 || true; \
+	    open "$$app"; \
+	  else \
+	    echo "⚠ built .app not found to open (check the build output above)"; \
+	  fi; \
+	fi
 
 # ── Cloud-service deploy (Virtues-operated; not part of self-host) ───────────
 # Build + push services/virtues-{atlas,api} images to ECR :latest. Rolling the
