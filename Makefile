@@ -238,16 +238,19 @@ dev-clean: dev-wipe-mac dev-reset ## Full local reset: unpair this Mac + drop/re
 # ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
 
 # Auto-launch the freshly-built app after `make mac-app` (OPEN=0 to skip). We
-# quit any running instance first so `open` launches the NEW binary instead of
-# just foregrounding the stale one.
+# HARD-KILL any running instance first: the app hides-on-close (doesn't quit),
+# and `open` on a live app just re-activates the OLD in-memory binary — so a
+# polite `osascript quit` left you staring at stale code after every rebuild.
+# pkill -9 guarantees the new binary actually loads.
 OPEN ?= 1
 mac-app: ## Build the macOS app (Virtues.app + sidecars) and open it (OPEN=0 to skip)
 	tools/build-mac-app.sh
 	@if [ "$(OPEN)" = "1" ]; then \
 	  app=$$(find apps/web/src-tauri/target -maxdepth 6 -path '*/bundle/macos/Virtues.app' -print -quit 2>/dev/null); \
 	  if [ -n "$$app" ]; then \
-	    echo "→ opening $$app"; \
-	    osascript -e 'quit app "Virtues"' >/dev/null 2>&1 || true; \
+	    echo "→ relaunching $$app"; \
+	    pkill -9 -f "Virtues.app" >/dev/null 2>&1 || true; \
+	    sleep 1; \
 	    open "$$app"; \
 	  else \
 	    echo "⚠ built .app not found to open (check the build output above)"; \
