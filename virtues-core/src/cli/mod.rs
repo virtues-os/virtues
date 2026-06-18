@@ -5,6 +5,7 @@ pub mod commands;
 pub mod diag;
 pub mod link;
 pub mod report_crash;
+pub mod reset;
 pub mod restore;
 pub mod types;
 pub mod uninstall;
@@ -56,6 +57,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — must work even when the DB pool can't be built;
             // a broken install is uninstall's primary use case.
             unreachable!("Uninstall command should be handled in main.rs");
+        }
+
+        Commands::Reset { .. } => {
+            // Same — destructive schema management against a bare pool,
+            // like Restore/Uninstall.
+            unreachable!("Reset command should be handled in main.rs");
         }
 
         Commands::Migrate => {

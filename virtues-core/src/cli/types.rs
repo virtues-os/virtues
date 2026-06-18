@@ -131,6 +131,25 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Wipe this box back to a fresh state (HIDDEN; testing only).
+    ///
+    /// Destructive: drops the entire database — all data AND the box's
+    /// identity (CA, WireGuard keys, paired devices, subscription link) —
+    /// re-runs migrations to an empty schema, then clears the data lake.
+    /// The encryption key in the env file is kept. Refuses if the service
+    /// is running (unless `--force`); confirmation = typing this box's
+    /// hostname (unless `--yes`). Re-register + re-pair afterward.
+    #[command(hide = true)]
+    Reset {
+        /// Skip the typed-hostname confirmation (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+
+        /// Bypass the "service is running" check.
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Self-update from the latest GitHub Release.
     ///
     /// Stops the service, swaps `/usr/local/bin/virtues` with the new binary

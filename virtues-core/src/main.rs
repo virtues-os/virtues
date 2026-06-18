@@ -75,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("upgrade")
                 | Some("backup")
                 | Some("restore")
+                | Some("reset")
                 | Some("sudo")
                 | Some("warm-models")
         );
@@ -365,6 +366,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues reset` (HIDDEN, testing) ──────────────────────────────────
+    // Destructive: wipes the box (DB + lake) back to fresh state. Handled here
+    // (not in `cli::run`) because it manages the schema itself and runs against
+    // a bare pool, like restore/uninstall.
+    if let Some(Commands::Reset { yes, force }) = &cli.command {
+        match virtues::cli::reset::run(*yes, *force).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: reset failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // ─── `virtues upgrade` ──────────────────────────────────────────────────
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
@@ -495,7 +510,7 @@ fn print_pair_hero(display: &str) {
     println!("{blank}");
     println!("{}", line("   Your server is ready."));
     println!("{blank}");
-    println!("{}", line("   1.  Desktop app     virtues.com/downloads"));
+    println!("{}", line("   1.  Desktop app     https://virtues.com/downloads"));
 
     // The code line: pad on the *visible* length (ANSI is zero-width), then
     // wrap just the code in colour so the right border still aligns.
@@ -580,7 +595,8 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 #[cfg(unix)]
 fn maybe_reexec_as_service_user() {
     const DB_COMMANDS: &[&str] = &[
-        "init", "pair", "link", "login", "subscribe", "sudo", "backup", "status", "migrate", "seed",
+        "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
+        "migrate", "seed",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {
