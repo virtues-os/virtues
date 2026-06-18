@@ -100,7 +100,7 @@
 	// content arrives via Y.Text sync.
 
 	// Editor ref for focusing
-	let editorContainerEl: HTMLDivElement;
+	let editorContainerEl = $state<HTMLDivElement>();
 
 	// Doc stats from CodeMirror (updated via onDocChange callback)
 	let wordCount = $state(0);

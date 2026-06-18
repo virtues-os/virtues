@@ -30,7 +30,6 @@
 
 	// Get session expiry from page data
 	// Note: children is intentionally not rendered - this app uses a custom tab-based routing system
-	// svelte-ignore slot_snippet_conflict
 	const { data, children }: { data: any; children: Snippet } = $props();
 	let sessionExpiryTimer: ReturnType<typeof setInterval> | null = null;
 	let warningShown = false;
@@ -340,7 +339,6 @@
 </Modal>
 
 <!-- Hidden: SvelteKit children are not rendered - using custom tab-based routing instead -->
-<!-- svelte-ignore slot_snippet_conflict -->
 {#if false}
 	{@render children()}
 {/if}

@@ -104,6 +104,13 @@
 		toggleExpanded();
 	}
 
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === "Enter" || e.key === " ") {
+			e.preventDefault();
+			toggleExpanded();
+		}
+	}
+
 	function handleQuickAdd(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -161,9 +168,12 @@
 		</div>
 	{:else}
 	<div class="system-section" class:group-break={section.groupBreak}>
-		<button
+		<div
 			class="sidebar-interactive system"
+			role="button"
+			tabindex="0"
 			onclick={handleClick}
+			onkeydown={handleKeydown}
 		>
 			<span class="folder-toggle" class:expanded={isExpanded}>
 				<span class="folder-toggle-icon">
@@ -215,7 +225,7 @@
 					</button>
 				{/if}
 			</span>
-		</button>
+		</div>
 
 		<!-- Section contents — CSS grid expand/collapse -->
 		<div class="sidebar-expandable-content" class:expanded={isExpanded}>

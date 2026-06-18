@@ -13,6 +13,20 @@ use serde::Deserialize;
 
 const STRIPE_API: &str = "https://api.stripe.com/v1";
 
+/// Pull Stripe's human-readable `error.message` out of an error response body.
+///
+/// Stripe returns errors as `{"error": {"message": "...", "code": "...", …}}`.
+/// We surface only the `message` to callers (which render it on an error page),
+/// while the full body is logged server-side. Falls back to a generic line if
+/// the body isn't the shape we expect (e.g. an HTML 502 from an outage).
+pub fn stripe_error_message(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_owned))
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| "Stripe rejected the request".to_string())
+}
+
 #[derive(Clone)]
 pub struct StripeClient {
     http: Client,
@@ -137,7 +151,10 @@ impl StripeClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("stripe checkout session create failed: {status} — {body}"));
+            // Log the full body server-side; return only Stripe's clean
+            // `error.message` so the caller can show it on the error page.
+            tracing::warn!("stripe checkout session create failed: {status} — {body}");
+            return Err(anyhow!("{}", stripe_error_message(&body)));
         }
 
         resp.json::<CreatedCheckoutSession>()
@@ -217,7 +234,8 @@ impl StripeClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("stripe deposit checkout create failed: {status} — {body}"));
+            tracing::warn!("stripe deposit checkout create failed: {status} — {body}");
+            return Err(anyhow!("{}", stripe_error_message(&body)));
         }
 
         resp.json::<CreatedCheckoutSession>()

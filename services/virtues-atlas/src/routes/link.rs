@@ -194,8 +194,25 @@ async fn verify(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> 
             Redirect::to(&session.url).into_response()
         }
         Err(e) => {
+            // The link is fine — it's live and pending (we got here past the
+            // expiry/not-found checks above). Stripe itself refused to open a
+            // checkout session (bad/missing price id, key mismatch, or a Stripe
+            // outage). Don't send the customer back to the box: the box can't
+            // fix a billing-server problem, and restarting just mints a new link
+            // that hits the same wall. Offer an in-place retry instead.
             tracing::warn!("link checkout create failed: {e:#}");
-            page("Checkout error", "Could not start checkout. Please try again from your box.")
+            let retry = format!("{base}/init?code={code}");
+            let reason = html_escape(&e.to_string());
+            page(
+                "Checkout couldn’t start",
+                &format!(
+                    "Our billing server couldn’t open a Stripe checkout session. This is on \
+                     our end — not a problem with your link or your box. \
+                     <a href=\"{retry}\">Try again</a> in a moment; if it keeps failing, \
+                     email support@virtues.com.<br><br>\
+                     <small style=\"color:#888\">Details: {reason}</small>",
+                ),
+            )
         }
     }
 }
@@ -274,6 +291,15 @@ fn gen_user_code() -> String {
         s.push(USER_CODE_ALPHABET[(*b as usize) % USER_CODE_ALPHABET.len()] as char);
     }
     s
+}
+
+/// Minimal HTML escaping for untrusted text interpolated into a `page()` body
+/// (e.g. a Stripe error message). Covers the characters that could break out of
+/// text context; the messages we render are server-originated, this is hygiene.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn page(title: &str, body: &str) -> axum::response::Response {

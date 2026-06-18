@@ -61,6 +61,19 @@
 		}, intervalMs);
 	}
 
+	// Host the checkout tab will hand off to (e.g. atlas.virtues.com), surfaced
+	// up front so the redirect isn't a surprise.
+	const checkoutHost = $derived.by(() => {
+		if (!linkInfo) return '';
+		try {
+			return new URL(linkInfo.verification_uri).host;
+		} catch {
+			return '';
+		}
+	});
+
+	// Step 1: ask the box to start a link. We do NOT open the checkout tab here —
+	// we show the code + destination first, then the user explicitly continues.
 	async function connectSubscription() {
 		linkLoading = true;
 		linkError = null;
@@ -73,13 +86,19 @@
 				return;
 			}
 			linkInfo = data;
-			window.open(data.verification_uri_complete, '_blank');
+			// Poll from now on: covers both the "continue" button and the manual
+			// enter-the-code path. The link self-expires (15 min) if unused.
 			startPolling(Math.max((data.interval || 5) * 1000, 2000));
 		} catch {
 			linkError = 'Failed to connect to billing service';
 		} finally {
 			linkLoading = false;
 		}
+	}
+
+	// Step 2: explicit hand-off to the Stripe-backed checkout, on user action.
+	function proceedToCheckout() {
+		if (linkInfo) window.open(linkInfo.verification_uri_complete, '_blank', 'noopener');
 	}
 
 	$effect(() => () => stopPolling());
@@ -212,19 +231,32 @@
 				{#if linkDone}
 					<p class="text-success text-sm mb-3">Linked! Finishing setup…</p>
 				{:else if linkInfo}
-					<div class="space-y-2 mb-4 text-sm">
+					<!-- Hand-off announced: what opens, where, and the pairing code,
+					     shown before any tab opens. Continue is an explicit click. -->
+					<div class="space-y-3 mb-4 text-sm">
 						<p class="text-foreground-muted">
-							A checkout tab opened. If it didn't,
-							<a
-								href={linkInfo.verification_uri_complete}
-								target="_blank"
-								rel="noopener"
-								class="text-accent hover:underline">open it here</a
-							>.
+							Continue opens a new tab at
+							<span class="font-medium text-foreground">{checkoutHost || 'the Virtues billing page'}</span>
+							to complete checkout on Stripe, then sends you back here automatically.
 						</p>
-						<p class="text-foreground-muted">
-							Or go to <span class="font-mono">{linkInfo.verification_uri}</span> and enter code
-							<span class="font-mono font-medium text-foreground">{linkInfo.user_code}</span>.
+						<div class="rounded-md border border-border bg-surface-alt p-3">
+							<div class="text-xs text-foreground-muted mb-1">Your pairing code</div>
+							<div class="font-mono text-lg font-medium tracking-wider text-foreground">
+								{linkInfo.user_code}
+							</div>
+							<div class="text-xs text-foreground-muted mt-1">
+								It should match the code shown on the checkout page. Expires in ~15 min.
+							</div>
+						</div>
+						<button
+							onclick={proceedToCheckout}
+							class="px-4 py-2 bg-accent text-on-accent rounded-md text-sm font-medium hover:opacity-90 transition-opacity"
+						>
+							Continue to checkout →
+						</button>
+						<p class="text-foreground-muted text-xs">
+							Prefer to do it by hand? Go to
+							<span class="font-mono">{linkInfo.verification_uri}</span> and enter the code above.
 						</p>
 						{#if linkPolling}
 							<p class="text-foreground-muted">Waiting for checkout to complete…</p>
