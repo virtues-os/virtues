@@ -87,6 +87,26 @@ pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), 
         return Err(e);
     }
 
+    // Refresh the web UI too. The tarball carries `web/` (already unpacked by
+    // extract_binary), but a binary-only swap would leave the browser served a
+    // stale SvelteKit build — so onboarding/UI changes never reached upgraded
+    // boxes. STATIC_DIR is set in the box env file (loaded at startup), so we
+    // know where the installer put it. Best-effort: a web-copy failure must not
+    // abort an otherwise-good binary upgrade.
+    match std::env::var("STATIC_DIR") {
+        Ok(static_dir) if !static_dir.is_empty() => {
+            let extracted = work_path.join("extracted");
+            match find_dir_named(&extracted, "web") {
+                Ok(web_src) => match install_web(&web_src, Path::new(&static_dir)) {
+                    Ok(()) => println!("→ refreshed web UI at {static_dir}"),
+                    Err(e) => eprintln!("  ⚠ web UI not refreshed ({e}); binary upgrade is still in effect"),
+                },
+                Err(e) => eprintln!("  ⚠ no web/ in release tarball ({e}); skipping UI refresh"),
+            }
+        }
+        _ => {} // dev / no STATIC_DIR configured — nothing to refresh
+    }
+
     println!("→ running migrations under new binary…");
     let migrate = Command::new(BINARY_PATH).arg("migrate").status();
     match migrate {
@@ -330,6 +350,66 @@ fn extract_binary(tarball: &Path, work: &Path) -> Result<PathBuf, crate::Error> 
     fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))
         .map_err(|e| crate::Error::Other(format!("chmod: {e}")))?;
     Ok(bin)
+}
+
+/// Like [`find_named`] but for a directory (e.g. the `web` build dir).
+fn find_dir_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
+    for entry in fs::read_dir(dir)
+        .map_err(|e| crate::Error::Other(format!("read {}: {e}", dir.display())))?
+    {
+        let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().and_then(|s| s.to_str()) == Some(name) {
+                return Ok(path);
+            }
+            if let Ok(found) = find_dir_named(&path, name) {
+                return Ok(found);
+            }
+        }
+    }
+    Err(crate::Error::Other(format!(
+        "{name}/ not found inside the release tarball"
+    )))
+}
+
+/// Replace the contents of `static_dir` with the freshly-extracted `web_src`.
+/// Stages into a sibling temp dir and swaps atomically (same parent fs), so a
+/// mid-copy failure can't leave a half-written UI being served.
+fn install_web(web_src: &Path, static_dir: &Path) -> Result<(), crate::Error> {
+    let parent = static_dir
+        .parent()
+        .ok_or_else(|| crate::Error::Other("STATIC_DIR has no parent".to_string()))?;
+    fs::create_dir_all(parent)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", parent.display())))?;
+    let staged = parent.join(".virtues-web.upgrade-tmp");
+    let _ = fs::remove_dir_all(&staged);
+    copy_dir_all(web_src, &staged)?;
+    // Swap: drop the old dir, move the staged one into place.
+    let _ = fs::remove_dir_all(static_dir);
+    fs::rename(&staged, static_dir).map_err(|e| {
+        crate::Error::Other(format!("swap web dir into {}: {e}", static_dir.display()))
+    })?;
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), crate::Error> {
+    fs::create_dir_all(dst)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", dst.display())))?;
+    for entry in
+        fs::read_dir(src).map_err(|e| crate::Error::Other(format!("read {}: {e}", src.display())))?
+    {
+        let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)
+                .map_err(|e| crate::Error::Other(format!("copy {}: {e}", from.display())))?;
+        }
+    }
+    Ok(())
 }
 
 fn find_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
