@@ -358,10 +358,18 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
 async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
     let shell = app.shell();
 
+    // Point the collector at the LOCAL PROXY (:7117), not its built-in
+    // localhost:8000 fallback. The proxy (installed by `install_helpers`) is
+    // already up by the time "Turn on this Mac" runs and tunnels to the box
+    // over WireGuard — so this works whether the box is on this LAN or remote.
+    // Without it the collector pairs against localhost:8000 and a remote-box
+    // user gets "Could not connect" (ECONNREFUSED). The endpoint returned by
+    // pair/consume is persisted, so this also routes ongoing uploads.
     let output = shell
         .sidecar("virtues-collector")
         .map_err(|e| e.to_string())?
         .env("VIRTUES_TOKEN", &token)
+        .env("VIRTUES_API_URL", "http://localhost:7117")
         .args(["install", "--token-from-env"])
         .output()
         .await

@@ -24,6 +24,12 @@ struct StartCommand: ParsableCommand {
         print("Device ID: \(config.deviceId)")
         print("API Endpoint: \(config.apiEndpoint)")
         print("Press Ctrl+C to stop\n")
+
+        // Touch the Messages DB with a real read-open right at startup. A denied
+        // open is how macOS enrolls this binary in System Settings → Full Disk
+        // Access, so the user gets a "virtues-collector" row to toggle on even
+        // before anything is granted. (A stat would not trip TCC.)
+        _ = MessageMonitor.canReadMessagesDB()
         
         // Initialize components
         let queue = try Queue()

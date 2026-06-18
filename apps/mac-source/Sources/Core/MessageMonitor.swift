@@ -82,7 +82,7 @@ class MessageMonitor {
                 } else {
                     if permissionCheckAttempts == 1 {
                         print("⚠️ Cannot read Messages database - Full Disk Access required")
-                        print("   To enable: System Settings → Privacy & Security → Full Disk Access → Add virtues-mac")
+                        print("   To enable: System Settings → Privacy & Security → Full Disk Access → turn on virtues-collector (or click + and add ~/.virtues/bin/virtues-collector)")
                         print("   Virtues will automatically detect when permission is granted (checking every 5 minutes)")
                     } else if permissionCheckAttempts % 12 == 0 { // Log every hour
                         print("⏳ Still waiting for Full Disk Access (checked \(permissionCheckAttempts) times)")
@@ -412,18 +412,9 @@ class MessageMonitor {
 
         // Try multiple times with small delays (WAL mode can cause transient locks)
         for attempt in 1...3 {
-            var db: OpaquePointer?
-            defer {
-                if db != nil {
-                    sqlite3_close(db)
-                }
-            }
-
-            let result = sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil)
-            if result == SQLITE_OK {
+            if MessageMonitor.canReadMessagesDB() {
                 return true
             }
-
             // If not last attempt, wait briefly and retry
             if attempt < 3 {
                 Thread.sleep(forTimeInterval: 0.1)  // 100ms delay
@@ -432,5 +423,24 @@ class MessageMonitor {
 
         print("⚠️ Failed to open Messages database after 3 attempts")
         return false
+    }
+
+    /// One real read-open of the Messages DB. The single source of truth for
+    /// "do we have Full Disk Access?" — shared by the monitor and by
+    /// `status`/daemon startup.
+    ///
+    /// Why an `sqlite3_open_v2` and not `FileManager.isReadableFile`: a stat
+    /// does NOT trip macOS TCC, so it neither reports FDA accurately nor gets
+    /// this binary listed under System Settings → Full Disk Access. A real
+    /// open() attempt does both — a *denied* open is exactly how macOS enrolls
+    /// `virtues-collector` in the FDA list, giving the user a row to toggle on.
+    static func canReadMessagesDB() -> Bool {
+        let path = NSString(string: "~/Library/Messages/chat.db").expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path) else { return false }
+        var db: OpaquePointer?
+        defer {
+            if db != nil { sqlite3_close(db) }
+        }
+        return sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK
     }
 }

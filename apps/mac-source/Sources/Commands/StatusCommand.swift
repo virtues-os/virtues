@@ -57,9 +57,11 @@ struct StatusCommand: ParsableCommand {
             pendingMessages = (try? queue.pendingMessageCount()) ?? 0
         }
 
-        // Check permissions
-        let messagesDbPath = "~/Library/Messages/chat.db".expandingTildeInPath
-        let hasFullDiskAccess = FileManager.default.isReadableFile(atPath: messagesDbPath)
+        // Check permissions. Use a real read-open (not isReadableFile/stat):
+        // a stat doesn't trip TCC, so it both misreports FDA and fails to
+        // enroll this binary in the Full Disk Access list. canReadMessagesDB()
+        // does both correctly. (This is the status the onboarding card polls.)
+        let hasFullDiskAccess = MessageMonitor.canReadMessagesDB()
         let hasAccessibility = checkAccessibility()
 
         // Get last sync time (from log or config)
@@ -113,7 +115,8 @@ struct StatusCommand: ParsableCommand {
         print("  Accessibility: \(status.hasAccessibility ? "\u{2713}" : "\u{2717}")")
         print("  Full Disk Access: \(status.hasFullDiskAccess ? "\u{2713}" : "\u{2717}")")
         if !status.hasFullDiskAccess {
-            print("    \u{2192} System Settings \u{2192} Privacy & Security \u{2192} Full Disk Access")
+            print("    \u{2192} System Settings \u{2192} Privacy & Security \u{2192} Full Disk Access \u{2192} turn on virtues-collector")
+            print("      (not listed? click + and add ~/.virtues/bin/virtues-collector)")
         }
 
         print("")
