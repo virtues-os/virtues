@@ -24,7 +24,12 @@ const SCRATCH: usize = TUNNEL_MTU + 64;
 pub(crate) struct WgTunnel {
     tunn: Tunn,
     udp: UdpSocket,
-    peer: SocketAddr,
+    /// Candidate endpoints to try, best-first (box LAN address(es) + global v6).
+    /// The event loop cycles these until a handshake lands, then locks on; on a
+    /// later expiry it restarts from index 0. Always non-empty.
+    candidates: Vec<SocketAddr>,
+    /// Index into `candidates` of the path we're currently handshaking against.
+    current: usize,
     /// Reusable encrypt/decrypt destination buffer.
     scratch: Box<[u8]>,
     /// Material to rebuild `tunn` after boringtun marks it expired (it can't
@@ -32,6 +37,13 @@ pub(crate) struct WgTunnel {
     priv_bytes: [u8; 32],
     server_pub_bytes: [u8; 32],
     psk: [u8; 32],
+}
+
+/// Whether two endpoints need different socket binds (one v4, one v6). A
+/// same-family switch can re-point the existing socket; a cross-family switch
+/// needs a fresh bind.
+fn family_differs(a: SocketAddr, b: SocketAddr) -> bool {
+    a.is_ipv6() != b.is_ipv6()
 }
 
 /// Build a fresh `Tunn` from raw key material (used at construction and on
@@ -49,39 +61,115 @@ fn new_tunn(priv_bytes: [u8; 32], server_pub_bytes: [u8; 32], psk: [u8; 32]) -> 
 
 impl WgTunnel {
     /// Build the data plane from a pairing bundle + the device's base64 private
-    /// key. Binds a UDP socket (dual-stack v6) and resolves the server
-    /// endpoint, but does not handshake yet — call [`initiate`](Self::initiate).
+    /// key. Binds a UDP socket for the first candidate and resolves the endpoint
+    /// list, but does not handshake yet — call [`initiate`](Self::initiate).
     pub(crate) fn new(wg: &WgParams, private_key_b64: &str) -> Result<Self, TunnelError> {
         let priv_raw = decode_key_b64(private_key_b64)?;
         let server_pub_raw = decode_key_b64(&wg.server_public_key)?;
         let psk = decode_key_b64(&wg.preshared_key)?;
 
-        let peer: SocketAddr = wg
-            .server_endpoint
-            .parse()
-            .map_err(|e| TunnelError::BadBundle(format!("server_endpoint '{}': {e}", wg.server_endpoint)))?;
-
-        // index 0 is fine — single peer, single tunnel per process.
-        let tunn = new_tunn(priv_raw, server_pub_raw, psk);
-
-        // Bind a v6 socket (the box endpoint is IPv6 in the common case). On a
-        // dual-stack host this also reaches v4-mapped endpoints; if the peer is
-        // a plain v4 address, fall back to a v4 bind.
-        let udp = match peer {
-            SocketAddr::V6(_) => UdpSocket::bind("[::]:0")?,
-            SocketAddr::V4(_) => UdpSocket::bind("0.0.0.0:0")?,
+        // Candidate list: prefer the multi-endpoint field, then ensure the
+        // single `server_endpoint` is present as a fallback (older boxes only
+        // set that one). Skip unparseable entries rather than failing the whole
+        // tunnel. Order is preserved (best-first as the box ranked them).
+        let mut candidates: Vec<SocketAddr> = Vec::new();
+        let mut push = |raw: &str| {
+            if raw.is_empty() {
+                return;
+            }
+            match raw.parse::<SocketAddr>() {
+                Ok(addr) if !candidates.contains(&addr) => candidates.push(addr),
+                Ok(_) => {}
+                Err(e) => tracing::debug!("skipping unparseable endpoint '{raw}': {e}"),
+            }
         };
-        udp.connect(peer)?;
+        for ep in &wg.server_endpoints {
+            push(ep);
+        }
+        push(&wg.server_endpoint);
+        if candidates.is_empty() {
+            return Err(TunnelError::BadBundle(format!(
+                "no parseable endpoint in bundle (server_endpoint='{}', server_endpoints={:?})",
+                wg.server_endpoint, wg.server_endpoints
+            )));
+        }
+
+        let tunn = new_tunn(priv_raw, server_pub_raw, psk);
+        let udp = Self::bind_for(&candidates[0])?;
 
         Ok(Self {
             tunn,
             udp,
-            peer,
+            candidates,
+            current: 0,
             scratch: vec![0u8; SCRATCH].into_boxed_slice(),
             priv_bytes: priv_raw,
             server_pub_bytes: server_pub_raw,
             psk,
         })
+    }
+
+    /// Bind a connected UDP socket for one endpoint, matching its address family
+    /// (v6 endpoint → `[::]:0`, v4 endpoint → `0.0.0.0:0`).
+    fn bind_for(addr: &SocketAddr) -> Result<UdpSocket, TunnelError> {
+        let sock = match addr {
+            SocketAddr::V6(_) => UdpSocket::bind("[::]:0")?,
+            SocketAddr::V4(_) => UdpSocket::bind("0.0.0.0:0")?,
+        };
+        sock.connect(addr)?;
+        Ok(sock)
+    }
+
+    /// The endpoint we're currently handshaking against.
+    pub(crate) fn peer(&self) -> SocketAddr {
+        self.candidates[self.current]
+    }
+
+    /// How many candidate endpoints we can cycle through.
+    pub(crate) fn candidate_count(&self) -> usize {
+        self.candidates.len()
+    }
+
+    /// Advance to the next candidate: rebuild `tunn`, re-initiate the handshake,
+    /// and rebind the socket **only if the address family changed** (same-family
+    /// switches re-point the existing socket, so the event loop's clone stays
+    /// valid). Returns `Some(new_clone)` the loop must adopt iff a rebind
+    /// happened, else `None`.
+    pub(crate) fn advance_candidate(&mut self) -> Result<Option<UdpSocket>, TunnelError> {
+        let prev = self.peer();
+        self.current = (self.current + 1) % self.candidates.len();
+        self.repoint(prev)
+    }
+
+    /// Replace the expired `Tunn` with a fresh one and restart cycling from the
+    /// preferred (first) candidate, kicking off a new handshake. Same socket
+    /// hand-off contract as [`advance_candidate`](Self::advance_candidate).
+    pub(crate) fn rehandshake(&mut self) -> Result<Option<UdpSocket>, TunnelError> {
+        let prev = self.peer();
+        self.current = 0;
+        self.repoint(prev)
+    }
+
+    /// Shared body for advance/rehandshake: rebuild `tunn`, point the socket at
+    /// the (already-updated) current candidate, re-initiate. Rebinds only on a
+    /// family change.
+    fn repoint(&mut self, prev: SocketAddr) -> Result<Option<UdpSocket>, TunnelError> {
+        let next = self.peer();
+        self.tunn = new_tunn(self.priv_bytes, self.server_pub_bytes, self.psk);
+
+        let rebound = if family_differs(prev, next) {
+            // Different family → a brand-new socket (and a fresh fd the loop
+            // must read from).
+            self.udp = Self::bind_for(&next)?;
+            Some(self.udp.try_clone()?)
+        } else {
+            // Same family → re-point the connected peer in place; the loop's
+            // existing clone (same fd) follows automatically.
+            self.udp.connect(next)?;
+            None
+        };
+        self.initiate();
+        Ok(rebound)
     }
 
     /// True once a Noise session has been established (handshake completed).
@@ -94,12 +182,6 @@ impl WgTunnel {
     /// dead and must be rebuilt to retry.
     pub(crate) fn is_expired(&self) -> bool {
         self.tunn.is_expired()
-    }
-
-    /// Replace the expired `Tunn` with a fresh one and kick off a new handshake.
-    pub(crate) fn rehandshake(&mut self) {
-        self.tunn = new_tunn(self.priv_bytes, self.server_pub_bytes, self.psk);
-        self.initiate();
     }
 
     /// Clone the UDP socket so the event loop can block on reads with a timeout
@@ -125,7 +207,7 @@ impl WgTunnel {
         // returns `Done` (boringtun's documented drain protocol).
         let mut input: &[u8] = datagram;
         loop {
-            match self.tunn.decapsulate(Some(self.peer.ip()), input, &mut self.scratch) {
+            match self.tunn.decapsulate(Some(self.peer().ip()), input, &mut self.scratch) {
                 TunnResult::Done => break,
                 TunnResult::Err(e) => {
                     tracing::debug!("wg decapsulate error: {e:?}");
