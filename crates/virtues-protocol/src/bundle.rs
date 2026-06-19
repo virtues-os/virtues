@@ -22,7 +22,19 @@ pub struct WgParams {
     /// Box's current public endpoint, `host:port` (IPv6 in brackets). Baked at
     /// pairing time from the box's detected global address; the device dials it
     /// directly. (A prefix rotation requires re-pairing — no auto re-resolve.)
+    ///
+    /// This is the *primary* candidate and the back-compat field: older decoders
+    /// that predate `server_endpoints` still find a working address here. New
+    /// clients prefer `server_endpoints` and treat this as the first fallback.
     pub server_endpoint: String,
+    /// Ordered candidate endpoints (`host:port` each) the device tries, locking
+    /// onto whichever completes the WG handshake — the box's LAN address(es) plus
+    /// its global IPv6, best-first. Lets a device reach the box by *any* working
+    /// path (same-Wi-Fi LAN or off-network global) instead of a single baked
+    /// address with no fallback. Additive + back-compatible: old bundles omit it
+    /// (defaults empty), in which case the tunnel falls back to `server_endpoint`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_endpoints: Vec<String>,
     /// Per-pair pre-shared key, base64 (defense-in-depth on top of Noise IK).
     pub preshared_key: String,
     /// Address assigned to this device inside the box's ULA space (its `/128`).
@@ -64,6 +76,10 @@ mod tests {
             wg: WgParams {
                 server_public_key: "c2VydmVycHVia2V5".into(),
                 server_endpoint: "[2001:db8::1]:51820".into(),
+                server_endpoints: vec![
+                    "[2001:db8::1]:51820".into(),
+                    "192.168.1.50:51820".into(),
+                ],
                 preshared_key: "cHNr".into(),
                 client_address: "fd00:5654::2".into(),
                 server_address: "fd00:5654::1".into(),
@@ -92,6 +108,42 @@ mod tests {
         assert!(json["wg"].get("server_public_key").is_some());
         assert!(json["wg"].get("client_address").is_some());
         assert!(json["wg"].get("server_endpoint").is_some());
+        assert!(json["wg"].get("server_endpoints").is_some());
         assert!(json.get("http_port").is_some());
+    }
+
+    #[test]
+    fn decodes_bundle_without_server_endpoints() {
+        // Back-compat guarantee: a bundle minted by a box that predates the
+        // multi-endpoint field (no `server_endpoints` key) must still decode,
+        // with the field defaulting to empty so the tunnel falls back to the
+        // single `server_endpoint`.
+        let json = r#"{
+            "bearer": "b",
+            "wg": {
+                "server_public_key": "k",
+                "server_endpoint": "[2001:db8::1]:51820",
+                "preshared_key": "p",
+                "client_address": "fd00:5654::2",
+                "server_address": "fd00:5654::1",
+                "allowed_ips": ["fd00:5654::1/128"]
+            },
+            "internal_host": "virtues.internal",
+            "internal_ip": "fd00:5654::1",
+            "http_port": 8000
+        }"#;
+        let b: PairingBundle = serde_json::from_str(json).unwrap();
+        assert!(b.wg.server_endpoints.is_empty());
+        assert_eq!(b.wg.server_endpoint, "[2001:db8::1]:51820");
+    }
+
+    #[test]
+    fn empty_server_endpoints_omitted_from_json() {
+        // `skip_serializing_if` keeps the wire shape unchanged when the box
+        // hasn't populated the list (older box, or single-address case).
+        let mut b = sample();
+        b.wg.server_endpoints.clear();
+        let json = serde_json::to_value(&b).unwrap();
+        assert!(json["wg"].get("server_endpoints").is_none());
     }
 }

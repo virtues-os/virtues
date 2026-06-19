@@ -451,6 +451,7 @@ mod tests {
             wg: WgParams {
                 server_public_key: "spk".into(),
                 server_endpoint: "[2001:db8::1]:51820".into(),
+                server_endpoints: Vec::new(),
                 preshared_key: "psk".into(),
                 client_address: "fd00:5654::2".into(),
                 server_address: "fd00:5654::1".into(),

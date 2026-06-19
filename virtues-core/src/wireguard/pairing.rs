@@ -34,26 +34,49 @@ use super::bundle::PairingBundle;
 /// We NEVER bake a wildcard `[::]` — that's an undiallable placeholder. If the
 /// box has no detectable address at all (no interfaces), we fall back to its
 /// ULA and log loudly; pairing still succeeds so the device can retry later.
+/// The full ordered candidate list (`host:port` each) to bake into the bundle.
+/// The device tries these and locks onto whichever completes the WG handshake,
+/// so it reaches the box by any working path. Best-first:
+///   1. `VIRTUES_WG_ENDPOINT` override — most authoritative.
+///   2. The daemon-detected GLOBAL endpoint — the off-network path.
+///   3. The box's current LAN source address(es), v6 and v4 — the same-network
+///      fast path and the fallback when global v6 hairpin is flaky on-LAN.
+/// Deduped, order preserved. May be empty only if the box has no detectable
+/// address at all (extreme edge); callers fall back to the ULA.
 #[cfg(target_os = "linux")]
-async fn current_endpoint(db: &PgPool) -> String {
+async fn current_endpoints(db: &PgPool) -> Vec<String> {
     let port = super::manager::wg_listen_port();
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |ep: String| {
+        if !ep.is_empty() && !out.contains(&ep) {
+            out.push(ep);
+        }
+    };
 
     // 1. Operator override.
     if let Ok(s) = std::env::var("VIRTUES_WG_ENDPOINT") {
-        if !s.is_empty() {
-            return s;
-        }
+        push(s);
     }
     // 2. Daemon-detected global endpoint (the real internet-routable address).
     if let Ok(Some(ep)) = super::endpoint::read_current(db).await {
-        return format!("{}:{}", bracket_host(&ep.ip), ep.port);
+        push(format!("{}:{}", bracket_host(&ep.ip), ep.port));
     }
-    // 3. Current local address (LAN is acceptable for same-network pairing).
-    if let Some(ip) = local_best_addr() {
-        return format!("{}:{port}", bracket_host(&ip.to_string()));
+    // 3. Current local addresses (LAN is acceptable for same-network pairing).
+    for ip in local_best_addrs() {
+        push(format!("{}:{port}", bracket_host(&ip.to_string())));
     }
-    // 4. No address at all — extreme edge. Bake the ULA (reachable once the
-    //    tunnel is up) and warn; never a wildcard.
+    out
+}
+
+/// The single primary endpoint — the first candidate, or the ULA as a
+/// last-resort placeholder (reachable once the tunnel is up; never a wildcard).
+/// Kept as the bundle's back-compat `server_endpoint` for older decoders.
+#[cfg(target_os = "linux")]
+async fn current_endpoint(db: &PgPool) -> String {
+    if let Some(first) = current_endpoints(db).await.into_iter().next() {
+        return first;
+    }
+    let port = super::manager::wg_listen_port();
     tracing::warn!(
         "current_endpoint: box has no detectable address; baking ULA only — \
          this device won't reach the box until it has a real address"
@@ -71,12 +94,14 @@ fn bracket_host(ip: &str) -> String {
     }
 }
 
-/// Best-effort: the box's current outbound source address (any non-loopback).
-/// Unlike the daemon's `detect_public_ip`, this accepts LAN addresses — it's
-/// only the *initial* bundle target for same-network pairing, not the
-/// published global endpoint.
+/// Best-effort: the box's current outbound source addresses (any non-loopback),
+/// **both** IPv6 and IPv4 when available. Unlike the daemon's `detect_public_ip`,
+/// this accepts LAN addresses — they're same-network candidates, not the
+/// published global endpoint. Returning both families gives a device a LAN v4
+/// path when on-LAN v6 hairpin is flaky (and vice-versa).
 #[cfg(target_os = "linux")]
-fn local_best_addr() -> Option<std::net::IpAddr> {
+fn local_best_addrs() -> Vec<std::net::IpAddr> {
+    let mut addrs: Vec<std::net::IpAddr> = Vec::new();
     for (dest, bind) in [
         ("[2606:4700:4700::1111]:53", "[::]:0"),
         ("1.1.1.1:53", "0.0.0.0:0"),
@@ -85,14 +110,14 @@ fn local_best_addr() -> Option<std::net::IpAddr> {
             if sock.connect(dest).is_ok() {
                 if let Ok(local) = sock.local_addr() {
                     let ip = local.ip();
-                    if !ip.is_loopback() && !ip.is_unspecified() {
-                        return Some(ip);
+                    if !ip.is_loopback() && !ip.is_unspecified() && !addrs.contains(&ip) {
+                        addrs.push(ip);
                     }
                 }
             }
         }
     }
-    None
+    addrs
 }
 
 /// Assemble the full pairing bundle: mint/load the box identity, allocate this
@@ -131,11 +156,20 @@ pub async fn assemble_bundle(
     };
     peers::store_peer(db, credential_id, &peer).await?;
 
+    // Bake every reachable address so the device can lock onto any working path;
+    // keep `server_endpoint` = the primary for back-compat with older decoders.
+    let endpoints = current_endpoints(db).await;
+    let primary = match endpoints.first() {
+        Some(first) => first.clone(),
+        None => current_endpoint(db).await, // ULA last-resort + warn
+    };
+
     Ok(PairingBundle {
         bearer: bearer.to_string(),
         wg: WgParams {
             server_public_key: server_kp.public_key,
-            server_endpoint: current_endpoint(db).await,
+            server_endpoint: primary,
+            server_endpoints: endpoints,
             preshared_key: psk,
             client_address: client_addr.to_string(),
             server_address: server_addr.to_string(),

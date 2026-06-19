@@ -28,7 +28,15 @@ use crate::wg::WgTunnel;
 use crate::{PairingBundle, TunnelError};
 
 /// How long to wait for a dialed TCP socket to reach Established before failing.
+///
+/// Must stay above `candidate_count × CANDIDATE_TIMEOUT` so a dial issued at
+/// connect time survives a full cycle through every candidate endpoint (≤3
+/// candidates × 2.5s ≈ 7.5s, comfortably under 15s).
 const DIAL_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long to wait for a handshake on the current candidate endpoint before
+/// cycling to the next one. The box ranks candidates best-first, so the common
+/// case (first candidate works) never waits.
+const CANDIDATE_TIMEOUT: Duration = Duration::from_millis(2500);
 /// Per-stream socket buffer (64 KiB each direction).
 const SOCK_BUF: usize = 64 * 1024;
 /// WG timer cadence (keepalive, handshake retransmit, expiry check).
@@ -191,6 +199,12 @@ struct EventLoop {
     /// Local ports currently bound by a live conn — alloc skips these so a wrap
     /// can't reissue a port still in use / lingering in TIME_WAIT.
     used_ports: HashSet<u16>,
+    /// When the current candidate's handshake window expires and we cycle to the
+    /// next endpoint. Reset on every advance and on a full rehandshake.
+    candidate_deadline: StdInstant,
+    /// True once a session established — stop cycling and lock onto the winning
+    /// endpoint. Only `is_expired` (the session later died) clears it.
+    locked: bool,
 }
 
 impl EventLoop {
@@ -232,7 +246,18 @@ impl EventLoop {
             cmd_tx,
             next_local_port: 49152,
             used_ports: HashSet::new(),
+            candidate_deadline: StdInstant::now() + CANDIDATE_TIMEOUT,
+            locked: false,
         }
+    }
+
+    /// Adopt a fresh read clone after a cross-family socket rebind, re-arming its
+    /// read timeout (per-fd, so a new clone starts with none). The old clone is
+    /// dropped; the underlying kernel socket died with the `WgTunnel`'s replaced
+    /// handle.
+    fn adopt_socket(&mut self, new_udp: std::net::UdpSocket) {
+        let _ = new_udp.set_read_timeout(Some(self.poll_timeout()));
+        self.udp = new_udp;
     }
 
     fn set_status(&self, s: TunnelStatus) {
@@ -245,6 +270,7 @@ impl EventLoop {
     fn run(mut self, cmd_rx: Receiver<Command>) {
         self.wg.initiate();
         let mut last_tick = StdInstant::now();
+        self.candidate_deadline = StdInstant::now() + CANDIDATE_TIMEOUT;
         let mut buf = vec![0u8; 2048];
 
         loop {
@@ -292,16 +318,41 @@ impl EventLoop {
             // 5) Drive WG timers periodically: re-handshake if boringtun gave up,
             //    tick keepalive/retransmit, and reflect liveness into status.
             if last_tick.elapsed() >= WG_TICK {
-                if self.wg.is_expired() {
-                    self.wg.rehandshake();
-                }
-                self.wg.tick();
-                self.flush_outbound();
                 if self.wg.is_established() {
+                    // A session landed on the current candidate — lock onto it
+                    // and stop cycling. (Checked first so a handshake that
+                    // completes mid-window is never cycled away.)
+                    self.locked = true;
                     self.set_status(TunnelStatus::Connected);
+                } else if self.wg.is_expired() {
+                    // boringtun gave up on this path (or a locked session died).
+                    // Restart cycling from the preferred candidate.
+                    match self.wg.rehandshake() {
+                        Ok(Some(new_udp)) => self.adopt_socket(new_udp),
+                        Ok(None) => {}
+                        Err(e) => tracing::debug!("rehandshake rebind failed: {e:?}"),
+                    }
+                    self.locked = false;
+                    self.candidate_deadline = StdInstant::now() + CANDIDATE_TIMEOUT;
+                    self.set_status(TunnelStatus::Connecting);
+                } else if !self.locked
+                    && self.wg.candidate_count() > 1
+                    && StdInstant::now() >= self.candidate_deadline
+                {
+                    // Handshake on this candidate hasn't landed in time — try the
+                    // next endpoint.
+                    match self.wg.advance_candidate() {
+                        Ok(Some(new_udp)) => self.adopt_socket(new_udp),
+                        Ok(None) => {}
+                        Err(e) => tracing::debug!("advance_candidate rebind failed: {e:?}"),
+                    }
+                    self.candidate_deadline = StdInstant::now() + CANDIDATE_TIMEOUT;
+                    self.set_status(TunnelStatus::Connecting);
                 } else {
                     self.set_status(TunnelStatus::Connecting);
                 }
+                self.wg.tick();
+                self.flush_outbound();
                 self.expire_pending_dials();
                 last_tick = StdInstant::now();
             }
@@ -680,6 +731,7 @@ mod tests {
             wg: WgParams {
                 server_public_key: server.public_key_b64,
                 server_endpoint: endpoint.to_string(),
+                server_endpoints: Vec::new(),
                 preshared_key: b64_32(7),
                 client_address: "fd00:5654::2".into(),
                 server_address: "fd00:5654::1".into(),
@@ -696,5 +748,53 @@ mod tests {
         std::thread::sleep(Duration::from_millis(60));
         // Drop joins the background loop; must return promptly without panic.
         drop(tunnel);
+    }
+
+    /// The tunnel must cycle off a dead first candidate and try the next one.
+    /// Candidate #1 is a black-hole socket (bound, never read → never answers);
+    /// candidate #2 is a recorder. Neither completes a real Noise handshake, so
+    /// after `CANDIDATE_TIMEOUT` the loop advances to #2 and sends the handshake
+    /// initiation there — which the recorder observes, proving the cycle worked.
+    #[test]
+    fn cycles_to_second_candidate_when_first_is_dead() {
+        // Hold both sockets for the test's lifetime so their ports stay reserved.
+        let dead = UdpSocket::bind("[::1]:0").unwrap();
+        let recorder = UdpSocket::bind("[::1]:0").unwrap();
+        let dead_ep = dead.local_addr().unwrap();
+        let rec_ep = recorder.local_addr().unwrap();
+
+        let client = generate_keypair();
+        let server = generate_keypair();
+        let bundle = PairingBundle {
+            bearer: "test".into(),
+            wg: WgParams {
+                server_public_key: server.public_key_b64,
+                // Primary is the dead one; the live recorder is the 2nd candidate.
+                server_endpoint: dead_ep.to_string(),
+                server_endpoints: vec![dead_ep.to_string(), rec_ep.to_string()],
+                preshared_key: b64_32(7),
+                client_address: "fd00:5654::2".into(),
+                server_address: "fd00:5654::1".into(),
+                allowed_ips: vec!["fd00:5654::1/128".into()],
+            },
+            internal_host: "virtues.internal".into(),
+            internal_ip: "fd00:5654::1".into(),
+            http_port: 8000,
+        };
+
+        let tunnel = Tunnel::connect(&bundle, &client.private_key_b64).expect("connect");
+
+        // Within ~CANDIDATE_TIMEOUT + slack the loop should have cycled to the
+        // recorder and sent it the handshake initiation.
+        recorder
+            .set_read_timeout(Some(CANDIDATE_TIMEOUT + Duration::from_secs(2)))
+            .unwrap();
+        let mut buf = [0u8; 2048];
+        let got = recorder.recv(&mut buf);
+        drop(tunnel);
+        assert!(
+            matches!(got, Ok(n) if n > 0),
+            "recorder (2nd candidate) never received a datagram — loop did not cycle: {got:?}"
+        );
     }
 }
