@@ -1136,11 +1136,18 @@ fn format_pair_url(token: &str, fpr: Option<&str>) -> String {
         Ok(url) => url,
         Err(_) if is_secure_environment() => {
             // The box has no TLS surface; pair URLs land on plain HTTP at the
-            // canonical port. On the box itself (loopback) this is auto-authed;
-            // from other devices the URL is consumed by the Virtues client
-            // daemon (v0.2). If your network reaches the box at a different
-            // hostname, set VIRTUES_PUBLIC_URL in /etc/virtues/env.
-            format!("http://localhost:{}", crate::wireguard::INTERNAL_PORT)
+            // canonical port. Use the box's LAN address (not `localhost`) — this
+            // URL is rendered into the QR a *phone* scans, and `localhost` on a
+            // phone points at the phone itself. `forward_host()` is the same
+            // LAN-IP-preferring helper the `virtues pair` CLI QR uses (it falls
+            // back to the mDNS name only when no address is discoverable). If
+            // your network reaches the box at a different hostname, set
+            // VIRTUES_PUBLIC_URL in /etc/virtues/env.
+            format!(
+                "http://{}:{}",
+                crate::cli::link::forward_host(),
+                crate::wireguard::INTERNAL_PORT
+            )
         }
         Err(_) => {
             let port = std::env::var("VIRTUES_WEB_PORT").unwrap_or_else(|_| "5173".to_string());
