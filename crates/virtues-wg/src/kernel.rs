@@ -34,7 +34,7 @@ pub fn kernel_wg_supported() -> WgSupport {
 
     const PROBE_IF: &str = "vwgprobe0";
 
-    let api = match WGApi::<Kernel>::new(PROBE_IF.to_string()) {
+    let mut api = match WGApi::<Kernel>::new(PROBE_IF.to_string()) {
         Ok(api) => api,
         // Opening the netlink handle itself failed — can't tell why; don't guess.
         Err(_) => return WgSupport::Unknown,
