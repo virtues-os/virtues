@@ -116,6 +116,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Handle Doctor early (no database — pure hardware/model resolution report)
     if matches!(cli.command, Some(Commands::Doctor)) {
         print_resolution_report();
+
+        // WireGuard kernel capability — the tunnel that powers remote access.
+        // Stock distro kernels have it; stripped vendor kernels (Jetson/Tegra)
+        // don't, and that's the difference between "remote access works" and
+        // "virtues-wireguard waits forever."
+        use virtues::wireguard::kernel::{kernel_wg_supported, WgSupport};
+        match kernel_wg_supported() {
+            WgSupport::Supported => println!("  wireguard:     ✓ kernel module available"),
+            WgSupport::Unsupported => println!(
+                "  wireguard:     ✗ kernel support missing — remote access disabled; \
+                 see docs/jetson-wg.md"
+            ),
+            WgSupport::Unknown => {
+                println!("  wireguard:     ? could not verify (try: sudo virtues doctor)")
+            }
+        }
+
         // Active inbound-reachability check — only meaningful when the box has a
         // global IPv6 (the direct path). Asks virtues-api to fire a UDP nonce
         // back at us; confirms inbound is actually open (the pinhole worked),
@@ -372,8 +389,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Destructive: wipes the box (DB + lake) back to fresh state. Handled here
     // (not in `cli::run`) because it manages the schema itself and runs against
     // a bare pool, like restore/uninstall.
-    if let Some(Commands::Reset { yes, force }) = &cli.command {
-        match virtues::cli::reset::run(*yes, *force).await {
+    if let Some(Commands::Reset { keep_data, yes, force }) = &cli.command {
+        match virtues::cli::reset::run(*keep_data, *yes, *force).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: reset failed: {e}");

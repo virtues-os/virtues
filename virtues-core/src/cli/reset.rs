@@ -18,8 +18,15 @@
 use std::path::Path;
 use std::process::Command;
 
-pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
+pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::Error> {
     let database_url = crate::database::normalize_database_url()?;
+
+    // `--keep-data`: just re-open onboarding. No schema/lake changes, safe on a
+    // live box — so it skips the service-stopped check entirely.
+    if keep_data {
+        return run_keep_data(&database_url, yes).await;
+    }
+
     // Same precedence the client uses on a box (setup::recommended_config).
     let lake =
         std::env::var("STORAGE_PATH").unwrap_or_else(|_| "/var/lib/virtues/lake".to_string());
@@ -51,26 +58,40 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
         }
     }
 
-    // ── Drop + recreate the `public` schema ─────────────────────────────────
-    // CASCADE takes the migration ledger, every table, and the `vector`
-    // extension with it; re-create gives migrations a clean slate.
+    // ── Drop the app's objects, KEEP extensions + the schema ────────────────
+    // We deliberately do NOT `DROP SCHEMA public` or `DROP OWNED BY` — both can
+    // take the `vector` extension with them, and only a superuser can recreate
+    // it (the installer made it as postgres; `virtues` can't), which would leave
+    // the box unmigratable. Instead drop every table (CASCADE clears sequences +
+    // FKs + the migration ledger) and every user-defined type that isn't part of
+    // an extension. The `vector` extension, its types, and the schema all
+    // survive, so re-migration's `CREATE EXTENSION IF NOT EXISTS` is a no-op.
+    // Works regardless of who owns the schema and needs no superuser.
     println!();
-    println!("→ dropping all database objects…");
+    println!("→ dropping all database objects (keeping extensions)…");
     {
         let db = crate::database::Database::new(&database_url)?;
-        let pool = db.pool();
-        sqlx::query("DROP SCHEMA public CASCADE")
-            .execute(pool)
-            .await
-            .map_err(|e| crate::Error::Other(format!("drop schema: {e}")))?;
-        sqlx::query("CREATE SCHEMA public")
-            .execute(pool)
-            .await
-            .map_err(|e| crate::Error::Other(format!("create schema: {e}")))?;
-        // Restore the default grants Postgres puts on a fresh `public`.
-        let _ = sqlx::query("GRANT ALL ON SCHEMA public TO public")
-            .execute(pool)
-            .await;
+        sqlx::query(
+            "DO $$ \
+             DECLARE r RECORD; \
+             BEGIN \
+               FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP \
+                 EXECUTE format('DROP TABLE IF EXISTS public.%I CASCADE', r.tablename); \
+               END LOOP; \
+               FOR r IN \
+                 SELECT t.typname FROM pg_type t \
+                 JOIN pg_namespace n ON n.oid = t.typnamespace \
+                 WHERE n.nspname = 'public' AND t.typtype IN ('e','c') \
+                   AND NOT EXISTS ( \
+                     SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e') \
+               LOOP \
+                 EXECUTE format('DROP TYPE IF EXISTS public.%I CASCADE', r.typname); \
+               END LOOP; \
+             END $$",
+        )
+        .execute(db.pool())
+        .await
+        .map_err(|e| crate::Error::Other(format!("drop app objects: {e}")))?;
     }
 
     // ── Re-migrate to an empty schema ───────────────────────────────────────
@@ -94,6 +115,63 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("  Next steps:");
     println!("    sudo systemctl start virtues   # seeds defaults on boot");
     println!("    virtues pair                   # re-pair this + other devices");
+    Ok(())
+}
+
+/// `--keep-data`: re-open onboarding without deleting anything. Revoke every
+/// paired device (so `claimed` flips false and the setup wizard reappears) and
+/// revoke their device credentials (so the old bearers can't authenticate until
+/// re-pair). Keeps indexed data, source connections, the subscription, the box
+/// identity, and the schema — and runs fine against a live server (these are the
+/// same UPDATEs the dashboard does when you remove a device).
+async fn run_keep_data(database_url: &str, yes: bool) -> Result<(), crate::Error> {
+    println!();
+    println!("⚠  virtues reset --keep-data — re-opens onboarding, deletes nothing:");
+    println!("     • revokes all paired devices (you'll re-pair the Mac / phone)");
+    println!("   Keeps: your data, connected sources, subscription, box identity.");
+    println!();
+
+    if !yes {
+        let ok = dialoguer::Confirm::new()
+            .with_prompt("Re-open onboarding now (revoke devices, keep data)?")
+            .default(false)
+            .interact()
+            .unwrap_or(false);
+        if !ok {
+            println!("Aborted — nothing was changed.");
+            return Ok(());
+        }
+    }
+
+    let db = crate::database::Database::new(database_url)?;
+    let mut tx = db
+        .pool()
+        .begin()
+        .await
+        .map_err(|e| crate::Error::Database(format!("begin: {e}")))?;
+
+    let devices = sqlx::query("UPDATE app_device SET revoked_at = now() WHERE revoked_at IS NULL")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::Error::Database(format!("revoke devices: {e}")))?
+        .rows_affected();
+
+    let creds = sqlx::query(
+        "UPDATE credentials SET status = 'revoked', updated_at = now() \
+         WHERE device_id IS NOT NULL AND status = 'active'",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::Error::Database(format!("revoke device credentials: {e}")))?
+    .rows_affected();
+
+    tx.commit()
+        .await
+        .map_err(|e| crate::Error::Database(format!("commit: {e}")))?;
+
+    println!();
+    println!("✓ onboarding re-opened — revoked {devices} device(s) + {creds} credential(s).");
+    println!("  Re-pair from the app; your data + subscription are intact.");
     Ok(())
 }
 

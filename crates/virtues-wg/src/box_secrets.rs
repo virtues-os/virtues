@@ -1,7 +1,7 @@
-//! Sealed singleton secrets for this box (the per-server CA, the WG server
-//! keypair, the rendezvous identity). Thin helper over the `box_secrets` table
-//! (migration 0009): the secret material is sealed with the vault master key;
-//! non-secret public parts live in `metadata` in the clear.
+//! Sealed singleton secrets for this box (the WG server keypair). Thin helper
+//! over the `box_secrets` table (migration 0009): the secret material is sealed
+//! with the vault master key; non-secret public parts live in `metadata` in the
+//! clear.
 //!
 //! Cross-platform (DB + crypto only) — no WireGuard/netlink here.
 

@@ -42,16 +42,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to ensure server status: {}", e);
     }
 
-    // Eager identity bringup: mint the box's rendezvous identity and (on Linux)
-    // WG server keypair if absent, so a freshly-booted box reaches identity-ready
-    // without a manual `virtues bringup`. Idempotent and best-effort — a failure
-    // here must not stop the box from serving. Mirrors `handle_bringup`.
+    // Eager identity bringup: mint the box's WG server keypair (on Linux) if
+    // absent, so a freshly-booted box reaches identity-ready without a manual
+    // `virtues bringup`. Idempotent and best-effort — a failure here must not
+    // stop the box from serving. Mirrors `handle_bringup`.
     {
-        use crate::wireguard::pairing;
         let pool = client.database.pool();
-        if let Err(e) = pairing::ensure_rendezvous_identity(pool).await {
-            tracing::warn!("identity bringup: ensure_rendezvous_identity failed: {e}");
-        }
         #[cfg(target_os = "linux")]
         if let Err(e) = crate::wireguard::reconcile::ensure_server_keypair(pool).await {
             tracing::warn!("identity bringup: ensure_server_keypair failed: {e}");
@@ -141,14 +137,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // times (with an overlap window) so the panel and `virtues pair` always have
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
-
-    // Rendezvous publish loop: publish the box's current WG endpoint (recorded
-    // by the virtues-wireguard daemon) to the blind rendezvous on change, so
-    // paired phones can relearn it after an ISP prefix rotation. No-op on a
-    // core-only box (no WG daemon → no endpoint recorded).
-    let _publish_handle = tokio::spawn(crate::wireguard::publisher::run_publish_loop(
-        client.database.pool().clone(),
-    ));
 
     // Create ToolExecutor (optional - fails gracefully if VIRTUES_API_INTERNAL_SECRET not set)
     let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())

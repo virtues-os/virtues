@@ -13,8 +13,8 @@ description = "In-app userspace WireGuard tunnel for paired Virtues clients (bor
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
-# Shared wire types — PairingBundle / WgParams / RendezvousParams / SPKI. Pure,
-# iOS-friendly, no server deps (that's the whole point of that crate).
+# Shared wire types — PairingBundle / WgParams / SPKI. Pure, iOS-friendly, no
+# server deps (that's the whole point of that crate).
 virtues-protocol = { path = "../virtues-protocol" }
 
 # WireGuard Noise core at the packet level (encapsulate/decapsulate). Mullvad's
@@ -39,17 +39,9 @@ smoltcp = { version = "0.13", default-features = false, features = [
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 rand = "0.8"
 
-# AES-256-GCM for the rendezvous blob — same construction as the box
-# (`virtues_helpers::crypto::seal_aes_256_gcm`: ring AES_256_GCM, 12-byte nonce
-# prefix, empty AAD). ring builds for aarch64-apple-ios.
-ring = "0.17"
 base64 = "0.22"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Blocking HTTP for the rendezvous GET. rustls (no OpenSSL) so it cross-compiles
-# to iOS cleanly; blocking keeps the FFI surface free of an async runtime.
-ureq = { version = "2", default-features = false, features = ["tls"] }
 
 tracing = "0.1"
 thiserror = "1.0"
@@ -71,7 +63,3 @@ bindgen = ["uniffi/cli"]
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 required-features = ["bindgen"]
-
-[dev-dependencies]
-# Round-trip the rendezvous blob against the box's exact seal format.
-ring = "0.17"

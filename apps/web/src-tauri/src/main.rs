@@ -137,7 +137,7 @@ fn device_online() -> bool {
 ///   - `"device_offline"`— this Mac has no usable internet.
 ///   - `"box_unreachable"`— box off/asleep OR this network blocks
 ///     device-to-device traffic (work/café Wi-Fi). Distinguishing the two
-///     precisely needs a rendezvous probe (future, via virtues-client); the
+///     precisely needs a reachability probe (future, via virtues-client); the
 ///     callout copy covers both honestly for now.
 #[tauri::command]
 async fn diagnose_box() -> String {

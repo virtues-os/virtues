@@ -141,7 +141,7 @@ That:
 - Downloads the latest `virtues` binary into `/usr/local/bin/`
 - Installs Postgres 18 + pgvector, Avahi (mDNS), and the rest of the system deps via your package manager
 - Configures `/etc/avahi/services/virtues.service` so the box advertises itself on the LAN as `virtues.local`
-- Mints the box's WG identity (its SPKI fingerprint) and rendezvous identity, and enables the `virtues.service` systemd unit
+- Mints the box's WG identity (its SPKI fingerprint) and enables the `virtues.service` systemd unit
 - Prints a one-time URL — open it in Chromium on the Jetson to land in a logged-in session
 
 ```bash

@@ -17,7 +17,7 @@ use crate::wireguard::box_secrets;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BoxStatus {
-    /// True once the box has its identity: WG keypair + rendezvous. (There is no
+    /// True once the box has its identity: a WG server keypair. (There is no
     /// CA — trust is SPKI pinning over the WG Noise handshake; see spki.rs.)
     pub ready: bool,
     pub identity: IdentityStatus,
@@ -37,8 +37,6 @@ pub struct IdentityStatus {
     /// one — useful for BYO-overlay setup. `None` on a box that hasn't detected
     /// a global endpoint yet.
     pub wg_endpoint: Option<String>,
-    pub rendezvous: bool,
-    pub publish_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,7 +56,6 @@ pub struct DeviceStatus {
 /// Compute the box's health snapshot. Shared by the CLI (`virtues status`) and
 /// the HTTP endpoint.
 pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
-    let rdv = box_secrets::get(pool, "rendezvous_identity").await?;
     let wg_key = box_secrets::get(pool, "wg_server_keypair").await?;
     let billing_token = crate::virtues_api::renew::has_billing_token(pool)
         .await
@@ -76,9 +73,6 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
 
     let wg_public_key = wg_key.as_ref().and_then(|(_, m)| {
         m.get("public_key").and_then(|v| v.as_str()).map(String::from)
-    });
-    let publish_id = rdv.as_ref().and_then(|(_, m)| {
-        m.get("publish_id").and_then(|v| v.as_str()).map(String::from)
     });
 
     // The SPKI fingerprint is derived from the WG public key (no CA) — the
@@ -98,14 +92,12 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
         .map(|ep| format!("{}:{}", ep.ip, ep.port));
 
     Ok(BoxStatus {
-        ready: rdv.is_some() && wg_key.is_some(),
+        ready: wg_key.is_some(),
         identity: IdentityStatus {
             wg_server_keypair: wg_key.is_some(),
             wg_public_key,
             spki_fingerprint,
             wg_endpoint,
-            rendezvous: rdv.is_some(),
-            publish_id,
         },
         subscription: SubscriptionStatus { billing_token, bearer },
         devices: DeviceStatus { paired_wg },
@@ -115,7 +107,7 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
 /// `GET /api/box/status` — box health for the phone app's status screen.
 ///
 /// Takes `AuthUser` explicitly (not just relying on the protected-route layer)
-/// so this identity-bearing response — WG pubkey, publish_id, billing state —
+/// so this identity-bearing response — WG pubkey, billing state —
 /// is never served unauthenticated even if the route's layer is ever
 /// reordered. The phone reaches it with its device bearer over any transport.
 pub async fn box_status_handler(
@@ -144,7 +136,7 @@ pub async fn box_status_handler(
 pub struct ReadinessGates {
     /// DB reachable + migrations applied. True if we can answer at all.
     pub infra: bool,
-    /// CA + rendezvous + WG keypair minted (== `BoxStatus::ready`).
+    /// WG server keypair minted (== `BoxStatus::ready`).
     pub identity: bool,
     /// Linked to a Virtues subscription: a `billing_token` is present
     /// (box↔Atlas). This is "claimed" — ownership is the billing relationship.

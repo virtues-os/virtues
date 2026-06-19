@@ -133,19 +133,26 @@ pub enum Commands {
 
     /// Wipe this box back to a fresh state (HIDDEN; testing only).
     ///
-    /// Destructive: drops the entire database — all data AND the box's
-    /// identity (CA, WireGuard keys, paired devices, subscription link) —
-    /// re-runs migrations to an empty schema, then clears the data lake.
-    /// The encryption key in the env file is kept. Refuses if the service
-    /// is running (unless `--force`); confirmation = typing this box's
-    /// hostname (unless `--yes`). Re-register + re-pair afterward.
+    /// Default (full): drops all app tables — all data AND the box's identity
+    /// (CA, WireGuard keys, paired devices, subscription link) — re-runs
+    /// migrations, then clears the data lake. The encryption key + the `vector`
+    /// extension are kept. Refuses if the service is running (unless `--force`);
+    /// confirmation = typing this box's hostname (unless `--yes`).
+    ///
+    /// `--keep-data`: just RE-OPEN onboarding — revoke paired devices so the
+    /// setup wizard reappears and you re-pair. Keeps your indexed data, sources,
+    /// subscription, identity, and schema. Safe to run on a live box.
     #[command(hide = true)]
     Reset {
-        /// Skip the typed-hostname confirmation (scripts/CI).
+        /// Re-open onboarding without deleting data: revoke devices only.
+        #[arg(long)]
+        keep_data: bool,
+
+        /// Skip the confirmation prompt (scripts/CI).
         #[arg(long)]
         yes: bool,
 
-        /// Bypass the "service is running" check.
+        /// Bypass the "service is running" check (full reset only).
         #[arg(long)]
         force: bool,
     },
@@ -189,8 +196,8 @@ pub enum Commands {
     #[command(hide = true)]
     Seed,
 
-    /// Show box health: identity (CA / WG keypair / rendezvous), subscription,
-    /// and paired devices. The deployment substrate's status command.
+    /// Show box health: identity (WG keypair), subscription, and paired devices.
+    /// The deployment substrate's status command.
     ///
     /// `--json` emits a stable machine-readable summary instead of the human
     /// dashboard. Hand someone this output ("paste me `virtues status --json`")

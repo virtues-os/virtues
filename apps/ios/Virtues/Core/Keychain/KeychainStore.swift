@@ -45,8 +45,8 @@ final class KeychainStore {
         case wgPrivateKey = "virtues.wg.privkey"
 
         /// The encrypted-at-rest WG bundle JSON we got back at pair time
-        /// (server pubkey, allowed IPs, endpoint, CA root, rendezvous K).
-        /// Used to bring the tunnel up when needed.
+        /// (server pubkey, allowed IPs, endpoint). Used to bring the tunnel
+        /// up when needed.
         case wgBundle = "virtues.wg.bundle"
 
         /// Trust-on-first-use pin: the box's WG server public key (base64) seen

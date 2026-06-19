@@ -69,6 +69,67 @@ async fn install_deps_dnf() -> Result<()> {
     Ok(())
 }
 
+/// Load the kernel WireGuard module and persist it across reboots. Best-effort
+/// and **never fatal**: on a stripped kernel (Jetson/Tegra) WG is absent, which
+/// the preflight already warned about and the `virtues-wireguard` daemon waits
+/// on gracefully — we don't block an install over remote-access capability.
+pub async fn ensure_wireguard_module() -> Result<()> {
+    // Try to load it as a module. Succeeds on stock distros where WG is `=m`;
+    // fails (harmlessly) when WG is built in (`=y`, no module file) or absent.
+    let loaded = Command::new("modprobe")
+        .arg("wireguard")
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if loaded {
+        // Persist so the module loads eagerly at every boot.
+        fs::write("/etc/modules-load.d/wireguard.conf", "wireguard\n")
+            .context("writing /etc/modules-load.d/wireguard.conf")?;
+        ui::ok("WireGuard module loaded + persisted");
+    } else if wireguard_capable() == Some(true) {
+        // Built into the kernel — always present, nothing to persist.
+        ui::ok("WireGuard built into kernel");
+    } else {
+        // Stripped kernel. Preflight already warned + pointed at docs/jetson-wg.md;
+        // the daemon waits gracefully. Non-fatal.
+        ui::skip("WireGuard kernel support absent — remote access disabled (see preflight)");
+    }
+    Ok(())
+}
+
+/// Can the kernel bring up a WireGuard interface? Best-effort `modprobe` (loads
+/// it if it's a module; no-op if built in) then a create+delete probe. Needs
+/// root — the installer runs as root. `Some(true)` = works, `Some(false)` = no
+/// kernel WG, `None` = couldn't tell (e.g. a permission error, no `NET_ADMIN`).
+/// The single WG-capability probe for the installer (preflight + module step).
+pub(crate) fn wireguard_capable() -> Option<bool> {
+    use std::process::Command as SyncCommand;
+    const PROBE_IF: &str = "vwgprobe0";
+
+    // Autoload if it's a module; ignore failure (built-in kernels have no module).
+    let _ = SyncCommand::new("modprobe").arg("wireguard").status();
+    // Clear any leftover from a crashed probe so "already exists" can't be
+    // mistaken for "unsupported".
+    let _ = SyncCommand::new("ip").args(["link", "del", PROBE_IF]).output();
+
+    let add = SyncCommand::new("ip")
+        .args(["link", "add", PROBE_IF, "type", "wireguard"])
+        .output()
+        .ok()?;
+    if add.status.success() {
+        let _ = SyncCommand::new("ip").args(["link", "del", PROBE_IF]).status();
+        return Some(true);
+    }
+    let err = String::from_utf8_lossy(&add.stderr).to_lowercase();
+    if err.contains("not permitted") || err.contains("permission denied") {
+        return None; // no NET_ADMIN — can't determine
+    }
+    // "unknown device type" / "operation not supported" / "no such device" → no WG.
+    Some(false)
+}
+
 async fn add_pgdg_repo(target: &Target) -> Result<()> {
     // Only add PGDG on Ubuntu versions where default repos ship < PG18.
     let needs_pgdg = matches!(
@@ -704,7 +765,7 @@ WantedBy=multi-user.target
 "#;
 
 /// Privileged WG reconciler — does netlink to `wg0` and records the box's
-/// current public endpoint into `box_secrets` for the rendezvous publisher.
+/// current public endpoint into `box_secrets` for the pairing bundle.
 ///
 /// `After=virtues.service` so the main app has a chance to migrate the DB +
 /// mint the server keypair before reconcile runs. The reconciler is

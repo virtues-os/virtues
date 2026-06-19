@@ -19,7 +19,7 @@ pub struct Report {
     pub warnings: u32,
 }
 
-pub async fn run() -> Result<Report> {
+pub async fn run(local: bool) -> Result<Report> {
     let mut warnings = 0u32;
 
     // Disk space — the GGUFs are ~1.8 GB (bge-m3 F16 ~1.2 GB + reranker
@@ -107,7 +107,47 @@ pub async fn run() -> Result<Report> {
         EgressClass::Unknown => {}
     }
 
+    // WireGuard kernel capability — does this kernel support the tunnel that
+    // powers remote access? Stock Ubuntu/Debian kernels do; stripped vendor
+    // kernels (NVIDIA Jetson/Tegra) ship it disabled. This is the one
+    // remote-access precondition we *gate* on: rather than let someone end up
+    // with a box that silently can't be reached, a missing module stops the
+    // install with instructions — UNLESS they opted into a LAN-only box with
+    // `--local`, in which case it's a warning and we proceed.
+    match crate::install::wireguard_capable() {
+        Some(true) => ui::ok("WireGuard kernel support"),
+        Some(false) => {
+            let tegra_hint = if is_tegra() {
+                " (Jetson/Tegra ship it disabled)"
+            } else {
+                ""
+            };
+            if local {
+                ui::warn(&format!(
+                    "WireGuard kernel module missing{tegra_hint} — remote access \
+                     disabled (--local); LAN + local use will work"
+                ));
+                warnings += 1;
+            } else {
+                ui::die(&format!(
+                    "WireGuard kernel module missing{tegra_hint}.\n\
+                     Remote access can't work on this kernel. Either:\n  \
+                     • build it (see docs/jetson-wg.md) and re-run, or\n  \
+                     • re-run with --local for a LAN-only box (no remote access)."
+                ));
+            }
+        }
+        // Couldn't probe (not root / no NET_ADMIN) — stay quiet; the install
+        // step runs as root and will surface a real failure if WG is absent.
+        None => {}
+    }
+
     Ok(Report { warnings })
+}
+
+/// NVIDIA Jetson/Tegra marker (L4T writes this at flash time).
+fn is_tegra() -> bool {
+    Path::new("/etc/nv_tegra_release").exists()
 }
 
 /// The box's outbound reachability class, for the preflight verdict. Mirrors

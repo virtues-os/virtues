@@ -443,7 +443,7 @@ fn upstream_unreachable(cfg: &ProxyConfig, detail: String) -> Response<ResponseB
 mod tests {
     use super::*;
     use hyper::header::{HeaderName, HeaderValue};
-    use virtues_protocol::{RendezvousParams, WgParams};
+    use virtues_protocol::WgParams;
 
     fn fixture_bundle() -> PairingBundle {
         PairingBundle {
@@ -459,11 +459,6 @@ mod tests {
             internal_host: "virtues.internal".into(),
             internal_ip: "fd00:5654::1".into(),
             http_port: 8000,
-            rendezvous: RendezvousParams {
-                publish_id: "abc".into(),
-                key: "k".into(),
-                url: "https://api/v1/rendezvous/abc".into(),
-            },
         }
     }
 

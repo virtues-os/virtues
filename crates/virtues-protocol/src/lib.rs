@@ -24,9 +24,8 @@
 //!
 //! ## Module layout
 //!
-//! - [`bundle`] — `PairingBundle`, `WgParams`, `RendezvousParams`. The JSON
-//!   shape the box returns from `/api/pair/consume` and the iOS/desktop
-//!   daemons consume.
+//! - [`bundle`] — `PairingBundle`, `WgParams`. The JSON shape the box returns
+//!   from `/api/pair/consume` and the iOS/desktop daemons consume.
 //! - [`spki`] — SPKI fingerprint computation (`sha256(wg_pubkey)` →
 //!   `"sha256-<base64>"`) so every client can verify the box's identity in a
 //!   uniform way.
@@ -39,6 +38,6 @@ pub mod spki;
 
 // Convenience re-exports so consumers can `use virtues_protocol::{PairingBundle,
 // INTERNAL_PORT, spki_fingerprint, ...}` without the inner module dance.
-pub use bundle::{PairingBundle, RendezvousParams, WgParams};
+pub use bundle::{PairingBundle, WgParams};
 pub use constants::{INTERNAL_HOST, INTERNAL_PORT, LAN_HOST};
 pub use spki::{spki_fingerprint, SpkiFingerprint};

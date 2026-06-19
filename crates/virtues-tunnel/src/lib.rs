@@ -32,7 +32,6 @@
 mod ffi;
 mod keys;
 mod netstack;
-mod rendezvous;
 mod tunnel;
 mod wg;
 
@@ -41,11 +40,10 @@ mod wg;
 uniffi::setup_scaffolding!();
 
 pub use keys::{generate_keypair, Keypair};
-pub use rendezvous::{fetch_endpoint, EndpointBlob};
 pub use tunnel::{Tunnel, TunnelReadHalf, TunnelStatus, TunnelStream, TunnelWriteHalf};
 
 // Re-export the shared bundle types so consumers (and the FFI) have one import.
-pub use virtues_protocol::{spki_fingerprint, PairingBundle, RendezvousParams, WgParams};
+pub use virtues_protocol::{spki_fingerprint, PairingBundle, WgParams};
 
 /// Everything that can go wrong bringing up or using the tunnel.
 #[derive(Debug, thiserror::Error)]
@@ -67,9 +65,6 @@ pub enum TunnelError {
 
     #[error("dial {addr} failed: {reason}")]
     Dial { addr: String, reason: String },
-
-    #[error("rendezvous: {0}")]
-    Rendezvous(String),
 
     #[error("wireguard: {0}")]
     WireGuard(String),

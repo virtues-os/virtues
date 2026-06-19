@@ -6,7 +6,7 @@
 //!
 //!   1. **Reconcile** `wg0` to the durable peer set (`reconcile::rebuild_interface`).
 //!   2. **Detect** the box's current public endpoint and record it in the DB
-//!      (`endpoint::write_current`) for the app to publish to the rendezvous.
+//!      (`endpoint::write_current`) for the app to bake into pairing bundles.
 //!   3. Repeat on a tick (later: netlink-event-driven + `LISTEN/NOTIFY`).
 //!
 //! Env: `DATABASE_URL` (the box's local Postgres) + `VIRTUES_ENCRYPTION_KEY`
@@ -31,6 +31,12 @@ async fn main() -> anyhow::Result<()> {
     // Open the inbound pinhole once at startup so a default-deny host is
     // reachable on the WG port. Best-effort + idempotent — see the fn docs.
     ensure_inbound_pinhole(manager::wg_listen_port());
+
+    // Don't touch wg0 until the kernel can actually do WireGuard. On a stripped
+    // kernel (e.g. NVIDIA Jetson/Tegra) the module is absent; rather than
+    // crash-loop on a cryptic `Netlink No such device` every few seconds, this
+    // logs once and slow-retries, self-recovering the moment the module appears.
+    ensure_kernel_wg().await;
 
     // Event-driven reconcile: the box's API fires `NOTIFY wg_reconcile` on
     // pair-consume / revoke (see virtues_wg::signal), so a new peer lands in
@@ -73,6 +79,50 @@ async fn main() -> anyhow::Result<()> {
         if listen_failed {
             eprintln!("[virtues-wireguard] LISTEN recv error; falling back to polling only");
             listener = None;
+        }
+    }
+}
+
+/// Block until the kernel can bring up a WireGuard interface, slow-retrying so a
+/// box whose kernel lacks WG (Jetson/Tegra) waits quietly instead of crash-looping.
+/// Best-effort `modprobe` each round autoloads the module if it's present — or
+/// picks it up the moment it's supplied out-of-band (see `docs/jetson-wg.md`).
+#[cfg(target_os = "linux")]
+async fn ensure_kernel_wg() {
+    use virtues_wg::kernel::{kernel_wg_supported, WgSupport};
+
+    let mut warned = false;
+    loop {
+        // No-op if WG is built in or already loaded; loads it if it's a module.
+        let _ = std::process::Command::new("modprobe").arg("wireguard").status();
+
+        match kernel_wg_supported() {
+            // `Unknown` shouldn't happen here (the daemon holds NET_ADMIN), but
+            // if it does, proceed and let reconcile surface any real error.
+            WgSupport::Supported | WgSupport::Unknown => {
+                if warned {
+                    eprintln!("[virtues-wireguard] kernel WireGuard now available; resuming");
+                }
+                return;
+            }
+            WgSupport::Unsupported => {
+                if !warned {
+                    let kver = std::process::Command::new("uname")
+                        .arg("-r")
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                    eprintln!(
+                        "[virtues-wireguard] kernel WireGuard unavailable (kernel {kver}) — \
+                         remote access disabled until the module is supplied. \
+                         See docs/jetson-wg.md"
+                    );
+                    warned = true;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            }
         }
     }
 }

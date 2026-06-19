@@ -9,7 +9,6 @@ use anyhow::Result;
 
 use crate::api::box_status::BoxStatus;
 use crate::inference_report::{self, ModelSource};
-use crate::wireguard::pairing;
 use crate::Virtues;
 
 /// `virtues status` — a human-readable box health report and the DIY
@@ -37,9 +36,15 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     if let Some(ep) = &s.identity.wg_endpoint {
         println!("      WG endpoint        {ep}");
     }
-    println!("    rendezvous identity  {}", yn(s.identity.rendezvous));
-    if let Some(pid) = &s.identity.publish_id {
-        println!("      publish_id         {pid}");
+    // Kernel WireGuard capability — whether the tunnel can come up at all.
+    {
+        use crate::wireguard::kernel::{kernel_wg_supported, WgSupport};
+        let kwg = match kernel_wg_supported() {
+            WgSupport::Supported => "yes",
+            WgSupport::Unsupported => "no (see docs/jetson-wg.md)",
+            WgSupport::Unknown => "unknown (run as root)",
+        };
+        println!("    kernel WG support    {kwg}");
     }
 
     // Inference resolution (sidecar engine + per-model on-disk/missing).
@@ -131,17 +136,16 @@ fn access_url() -> String {
 }
 
 /// `virtues bringup` — non-interactive first-boot: run migrations and ensure the
-/// box's identity exists (rendezvous identity, WG server keypair). Idempotent,
-/// so it's safe to run on every boot. The appliance runs this headless; DIY runs
-/// it too.
+/// box's identity exists (WG server keypair). Idempotent, so it's safe to run on
+/// every boot. The appliance runs this headless; DIY runs it too.
 pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
+    #[cfg(target_os = "linux")]
     let pool = virtues.database.pool();
 
     println!("running migrations…");
     virtues.database.initialize().await?;
 
     println!("ensuring box identity…");
-    pairing::ensure_rendezvous_identity(pool).await?;
     #[cfg(target_os = "linux")]
     crate::wireguard::reconcile::ensure_server_keypair(pool).await?;
     #[cfg(not(target_os = "linux"))]
