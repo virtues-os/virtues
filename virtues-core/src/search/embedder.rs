@@ -59,6 +59,12 @@ pub struct LocalEmbedder {
 impl LocalEmbedder {
     pub async fn new() -> Result<Self> {
         let base_url = resolve_base_url();
+        // reqwest is `rustls-tls-no-provider`; building any client (even for
+        // loopback HTTP) panics "No provider set" unless the process default
+        // provider was installed first. main.rs does it for the server, but
+        // tests/other entrypoints construct the embedder directly — be self-
+        // sufficient. Idempotent.
+        crate::http_client::ensure_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .build()?;

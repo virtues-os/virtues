@@ -55,6 +55,9 @@ pub struct LocalReranker {
 impl LocalReranker {
     async fn new() -> Result<Self> {
         let base_url = resolve_base_url();
+        // See embedder.rs: reqwest's rustls build panics "No provider set"
+        // without a process default provider. Be self-sufficient. Idempotent.
+        crate::http_client::ensure_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
