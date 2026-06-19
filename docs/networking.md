@@ -40,6 +40,14 @@ reach it from anywhere. If you control no network, that's a real-world problem �
 host it somewhere you control, or run your own overlay. Virtues never runs or
 requires one.
 
+## Kernel requirement
+
+The box needs **kernel WireGuard**. Stock Ubuntu/Debian (and the DIY mini-PC
+floor) ship it; some stripped vendor kernels — notably NVIDIA Jetson/Tegra —
+don't. The installer gates on this: a kernel without WireGuard stops the install
+with instructions (or `--local` for a LAN-only box), and `virtues doctor` reports
+it. To enable WireGuard on a Jetson, see [jetson-wg.md](jetson-wg.md).
+
 ## Opening the inbound pinhole
 
 For a direct connection the box must accept inbound `udp/51820` (the WireGuard
@@ -86,14 +94,17 @@ boolean, no literal addresses) for support tickets.
 
 ## What Virtues *does* run (and what it sees)
 
-Exactly one optional touchpoint: the **blind rendezvous** on `virtues-api`
-(`/v1/rendezvous/:publish_id`). The box publishes its current endpoint there —
-**encrypted under a key only the box and its paired devices hold** — so a device
-can relearn the box's address after a prefix rotation. Virtues stores an opaque
-`publish_id` → ciphertext; it cannot read the endpoint or tie it to a customer.
-And the `/v1/net/probe` echo fires one UDP nonce back at the caller's *own*
-observed address (no reflection, stores nothing). Neither is a coordinator and
-neither is a relay — no traffic ever flows through Virtues.
+Just the `/v1/net/probe` echo: it fires one UDP nonce back at the caller's *own*
+observed address (no reflection, stores nothing) so a box can confirm it's
+reachable from outside. It is not a coordinator and not a relay — no traffic
+ever flows through Virtues.
+
+The box's current global IPv6 is baked directly into the pairing bundle at pair
+time (see `current_endpoint` in `virtues-core/src/wireguard/pairing.rs`); the
+device dials it directly. There is **no rendezvous** in v1: if the ISP rotates
+the box's prefix, the baked endpoint goes stale and the device must re-pair (a
+re-pair on the LAN is instant). The eventual answer for rotation-resilience is
+DDNS (a stable hostname the box keeps current), not a bespoke coordinator.
 
 ## Security baseline
 

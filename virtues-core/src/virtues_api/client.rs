@@ -349,36 +349,6 @@ impl BearerClient {
         }
     }
 
-    /// PUT raw bytes to a virtues-api bearer route (the blind rendezvous).
-    /// Returns the HTTP status. The body is opaque ciphertext, stored verbatim
-    /// server-side. A 402 here is always `bearer_expired` (the rendezvous route
-    /// is not metered), so we renew once and retry, mirroring [`post_json`].
-    pub async fn put_bytes(&self, path: &str, body: Vec<u8>) -> Result<u16> {
-        let bearer = self.ensure_bearer().await?;
-        let status = self.send_put_bytes(path, body.clone(), &bearer).await?;
-
-        if status == 402 {
-            let fresh =
-                renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url).await?;
-            return self.send_put_bytes(path, body, &fresh.bearer).await;
-        }
-        Ok(status)
-    }
-
-    async fn send_put_bytes(&self, path: &str, body: Vec<u8>, bearer: &str) -> Result<u16> {
-        let resp = self
-            .http
-            .put(format!("{}{}", self.api_url.trim_end_matches('/'), path))
-            .header("Authorization", format!("Bearer {}", bearer))
-            .header("X-Virtues-Purpose", self.purpose.as_str())
-            .header("Content-Type", "application/octet-stream")
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("virtues-api put request failed: {e}"))?;
-        Ok(resp.status().as_u16())
-    }
-
     /// Open a streaming POST to a virtues-api bearer route. Renewal/top-up
     /// can only happen *before* the body starts flowing (mid-stream
     /// recovery is impossible), so we ensure a valid bearer up front and,

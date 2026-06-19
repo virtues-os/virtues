@@ -265,10 +265,9 @@ impl TokenEncryptor {
 
 /// AES-256-GCM seal of raw bytes under an explicit 32-byte key — NOT the env
 /// master key. Layout: `nonce(12) || ciphertext || tag(16)`, matching
-/// `TokenEncryptor::encrypt`. Used by the blind rendezvous, where the key K
-/// lives only on the box + its paired devices and is never an environment
-/// secret. A fresh random nonce per call is safe: the box is the sole writer
-/// and publishes rarely.
+/// `TokenEncryptor::encrypt`. A general-purpose seal for bytes under a
+/// caller-supplied key that is never an environment secret. A fresh random
+/// nonce per call is safe: the box is the sole writer and seals rarely.
 pub fn seal_aes_256_gcm(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
     let unbound = UnboundKey::new(&AES_256_GCM, key)
         .map_err(|_| CryptoError::InvalidKey("failed to create AES key".to_string()))?;

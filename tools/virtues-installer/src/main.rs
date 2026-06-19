@@ -47,6 +47,11 @@ struct Cli {
     no_init: bool,
     #[arg(short = 'y', long)]
     yes: bool,
+    /// Set up a LAN-only box: proceed even if the kernel can't do WireGuard
+    /// (remote access will be unavailable). Without this, a kernel missing
+    /// WireGuard stops the install with instructions.
+    #[arg(long)]
+    local: bool,
 }
 
 #[tokio::main]
@@ -73,6 +78,7 @@ async fn main() -> Result<()> {
         dry_run: cli.dry_run,
         no_init: cli.no_init,
         assume_yes: cli.yes,
+        local: cli.local,
     })
     .await;
 

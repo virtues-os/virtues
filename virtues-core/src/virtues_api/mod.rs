@@ -8,7 +8,6 @@
 
 pub mod client;
 pub mod link;
-pub mod rendezvous;
 pub mod renew;
 
 /// Minimum secret length for security (256 bits = 32 bytes)

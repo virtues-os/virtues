@@ -85,18 +85,4 @@ async fn run_once(pool: &PgPool) {
         Ok(_) => {}
         Err(e) => tracing::warn!("blocklist sweep failed: {e:#}"),
     }
-
-    // Expired rendezvous rows (a box that stopped publishing — moved, retired,
-    // unsubscribed). No privacy weight: the row is an opaque ciphertext keyed
-    // by a random capability, with nothing legible to delete.
-    match sqlx::query("DELETE FROM rendezvous WHERE expires_at < now()")
-        .execute(pool)
-        .await
-    {
-        Ok(r) if r.rows_affected() > 0 => {
-            tracing::info!(deleted = r.rows_affected(), "swept expired rendezvous rows")
-        }
-        Ok(_) => {}
-        Err(e) => tracing::warn!("rendezvous sweep failed: {e:#}"),
-    }
 }

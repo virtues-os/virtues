@@ -38,16 +38,12 @@ TLS in-tunnel (same model as the desktop reverse proxy).
 | `wg.rs` | `Tunn` wrapper: IP packets ⇄ encrypted WG datagrams, handshake/keepalive |
 | `netstack.rs` | smoltcp virtual L3 device bridging IP packets to/from `wg.rs` |
 | `tunnel.rs` | event loop + public `Tunnel` / `TunnelStream` (`Read`+`Write`) |
-| `rendezvous.rs` | recover the box endpoint after an IPv6 prefix rotation |
 | `ffi.rs` | uniffi surface the iOS XCFramework binds |
 
-## Rendezvous (prefix-rotation recovery)
-
-The box encrypts its current endpoint under a per-box key `K` (in the bundle's
-`RendezvousParams`) and PUTs it to virtues-api; we GET + AES-256-GCM-decrypt it
-with the same `K`. The blob shape and crypto exactly mirror the box side
-(`virtues_core::virtues_api::rendezvous`) — see the round-trip test, which seals
-with the box's construction and decrypts here.
+The client dials the single `server_endpoint` baked into the pairing bundle.
+There is no endpoint re-resolution: a normal reconnect (app wake / network
+change) re-handshakes to the same endpoint over pure WireGuard, and an ISP
+prefix rotation is handled by re-pairing (v1 — see `docs/networking.md`).
 
 ## Build the iOS XCFramework
 
@@ -64,9 +60,8 @@ Xcode; the headless Linux release CI can't).
 ## Verification status
 
 - ✅ **Compiles** clean (host); workspace member.
-- ✅ **Unit-tested**: key-gen round-trip; rendezvous decrypt against the box's
-  exact seal format + fail-closed cases. `cargo test -p virtues-tunnel`.
+- ✅ **Unit-tested**: key-gen round-trip + bundle decode. `cargo test -p virtues-tunnel`.
 - ⏳ **Needs a live box / device** (cannot be done in headless CI): WG handshake
-  against a real peer, `dial` + HTTP round-trip, throughput, prefix-rotation
-  recovery, and the generated Swift bindings linking in Xcode. These are
-  exercised in Workstream C on a physical device against a real box.
+  against a real peer, `dial` + HTTP round-trip, throughput, and the generated
+  Swift bindings linking in Xcode. These are exercised in Workstream C on a
+  physical device against a real box.

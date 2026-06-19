@@ -11,10 +11,9 @@
 //! `crate::wireguard::{manager, box_secrets, INTERNAL_HOST, PairingBundle, ...}`
 //! keep working unchanged.
 //!
-//! App-side pieces that need core's deps stay here: `pairing` (assembly) and
-//! `publisher` (rendezvous PUT via `BearerClient`).
+//! App-side pieces that need core's deps stay here: `pairing` (bundle assembly).
 
-pub use virtues_wg::{box_secrets, endpoint, peers, signal, ula};
+pub use virtues_wg::{box_secrets, endpoint, kernel, peers, signal, ula};
 
 #[cfg(target_os = "linux")]
 pub use virtues_wg::{manager, reconcile};
@@ -24,4 +23,3 @@ pub use virtues_protocol::{
 };
 
 pub mod pairing;
-pub mod publisher;

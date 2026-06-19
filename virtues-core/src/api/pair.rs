@@ -953,9 +953,9 @@ async fn assemble_action_fanout(
 /// Assemble the WG provisioning bundle on Linux; no-op on the macOS dev
 /// host (the WG engine is Linux-only). When the device supplied a
 /// `wg_public_key`, the box records them as a peer in the durable store and
-/// returns the bundle of (server pubkey, allowed IPs, endpoint, rendezvous
-/// capability) the device needs to dial the tunnel later. (No CA — trust is
-/// SPKI pinning over the WG Noise handshake.)
+/// returns the bundle of (server pubkey, allowed IPs, endpoint) the device
+/// needs to dial the tunnel later. (No CA — trust is SPKI pinning over the WG
+/// Noise handshake.)
 #[cfg(target_os = "linux")]
 async fn assemble_wg_bundle(
     pool: &PgPool,
@@ -984,9 +984,9 @@ async fn assemble_wg_bundle(
     _bearer: &str,
     _pubkey: &str,
 ) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
-    // On the macOS dev host there's no kernel WG and no rendezvous publisher.
-    // The pubkey is recorded in the credential's metadata (in `consume_handler`
-    // above); the iOS app will simply have no bundle to dial from this dev box.
+    // On the macOS dev host there's no kernel WG. The pubkey is recorded in the
+    // credential's metadata (in `consume_handler` above); the iOS app will
+    // simply have no bundle to dial from this dev box.
     tracing::debug!("WG bundle assembly skipped (non-Linux host)");
     Ok(None)
 }

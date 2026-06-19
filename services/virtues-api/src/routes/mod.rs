@@ -20,6 +20,5 @@ pub mod net_probe;
 pub mod oauth;
 pub mod places;
 pub mod redeem;
-pub mod rendezvous;
 pub mod streaming;
 pub mod unsplash;

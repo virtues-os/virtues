@@ -1,9 +1,10 @@
 # netns auto-heal harness (Phase 6)
 
-Validates the transport-level claim behind the blind-rendezvous remote-access
-design: when the box's public endpoint moves, re-pointing the phone's WireGuard
-peer endpoint (what `RendezvousClient` does after a fetch-on-failure) is enough
-to recover a live tunnel — no re-pair, no relay.
+Validates the kernel-WireGuard transport the remote-access design depends on:
+when the box's public endpoint moves, re-pointing a WireGuard peer endpoint is
+enough to recover a live tunnel — no relay. (v1 recovers a moved box by
+re-pairing rather than auto re-pointing; this harness still isolates the raw
+transport behavior so we know kernel WG itself does the right thing.)
 
 ## What it does
 
@@ -17,9 +18,8 @@ asserts: **tunnel up → mutation breaks it → applying the new endpoint heals 
 | `nat-port-change` | reachable UDP port moves | box `listen-port` changes |
 | `isp-swap` | box lands on a different network | new prefix **and** new port |
 
-The rendezvous publish/fetch path itself (box publishes-on-change, phone
-fetches-on-handshake-failure, AES-GCM blob) is covered by Rust tests; this
-harness isolates the WireGuard transport behavior the design depends on.
+This harness isolates the kernel-WireGuard transport behavior the design depends
+on (endpoint re-pointing recovers a live tunnel).
 
 ## Running
 

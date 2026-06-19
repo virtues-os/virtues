@@ -61,7 +61,7 @@ The container trade-off makes sense in the cloud (multi-tenant, immutable infra,
 WireGuard needs `CAP_NET_ADMIN` against the kernel. Rather than make the *whole app* privileged, we isolate WG into a **minimal standalone daemon** so the privileged surface is tiny.
 
 - **`crates/virtues-wg`** — depends only on `defguard_wireguard_rs` + `sqlx` + crypto. No web, no ML, no interpreters.
-- **`virtues-wireguard`** binary (`virtues-wireguard.service`) — runs rootful with `NET_ADMIN` + `/dev/net/tun`. Owns: `wg0` lifecycle, **reconcile loop**, the netlink IPv6-change watcher, the rendezvous publisher, and the mDNS/SSDP multicast functions.
+- **`virtues-wireguard`** binary (`virtues-wireguard.service`) — runs rootful with `NET_ADMIN` + `/dev/net/tun`. Owns: `wg0` lifecycle, **reconcile loop**, the netlink IPv6-change watcher (records the box's current endpoint for the pairing bundle), and the mDNS/SSDP multicast functions. Kernel WireGuard only — the host must have the `wireguard` module (shipped in the Jetson appliance image; stock on DIY mini-PCs).
 - **`virtues`** binary (`virtues.service`) — runs as `User=virtues` (no capabilities). Web UI, API, ingestion, ML. Its only WG involvement is writing peer config rows to the DB.
 
 **The DB is the interface — no IPC.** Pairing writes peers via `pairing::store_peer` (→ `credentials.metadata.wg`); the WG daemon reconciles `wg0` from `pairing::load_all_peers`. Prompt application of new pairings comes from Postgres `LISTEN/NOTIFY`.

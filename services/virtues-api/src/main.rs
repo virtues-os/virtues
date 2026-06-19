@@ -144,9 +144,6 @@ async fn main() -> Result<()> {
         // OAuth proxy (google/notion/strava/plaid) — folded in from the Node
         // oauth-proxy (WS-4). Mounted at root: /{provider}/start|callback|...
         .merge(routes::oauth::router())
-        // Blind rendezvous: PUT (bearer-authed) / GET (capability) endpoint
-        // discovery. The only Virtues touchpoint in direct WireGuard access.
-        .merge(routes::rendezvous::router())
         // Inbound-reachability echo: fires a UDP nonce back at the caller's own
         // observed address so a box can confirm it's reachable from outside.
         .merge(routes::net_probe::router())

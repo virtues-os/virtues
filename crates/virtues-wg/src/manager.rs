@@ -1,9 +1,10 @@
 //! Kernel WireGuard interface management (WS-2) — **Linux only**.
 //!
-//! Drives the in-kernel WireGuard device via `defguard_wireguard_rs` (netlink),
-//! with the bundled userspace backend (`defguard_boringtun`) as the automatic
-//! fallback on hosts without the kernel module. This is the box's side of the
-//! hub-and-spoke tunnel: one `wg0` interface, one peer per paired device.
+//! Drives the in-kernel WireGuard device via `defguard_wireguard_rs` (netlink).
+//! This is the box's side of the hub-and-spoke tunnel: one `wg0` interface, one
+//! peer per paired device. Kernel WireGuard only — the box (Jetson appliance or
+//! DIY mini-PC) must have the `wireguard` kernel module; there is no userspace
+//! fallback. On the Jetson the module ships in the appliance image.
 //!
 //! Confirmed against real kernel WG on the Orange Pi 5 Plus and in the OrbStack
 //! arm64 dev container. The live test below needs `NET_ADMIN` (run it in the

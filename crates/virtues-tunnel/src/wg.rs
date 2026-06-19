@@ -102,20 +102,6 @@ impl WgTunnel {
         self.initiate();
     }
 
-    /// Repoint the WG peer at a freshly-learned endpoint (the box's ISP rotated
-    /// its prefix) and restart the handshake. `connect` on the shared UDP socket
-    /// also redirects the event loop's clone (same underlying fd), so inbound
-    /// datagrams follow the new address too. No-op if the address is unchanged.
-    pub(crate) fn update_endpoint(&mut self, new_peer: SocketAddr) -> std::io::Result<()> {
-        if new_peer == self.peer {
-            return Ok(());
-        }
-        self.udp.connect(new_peer)?;
-        self.peer = new_peer;
-        self.rehandshake();
-        Ok(())
-    }
-
     /// Clone the UDP socket so the event loop can block on reads with a timeout
     /// while this struct handles protocol state.
     pub(crate) fn udp_clone(&self) -> std::io::Result<UdpSocket> {

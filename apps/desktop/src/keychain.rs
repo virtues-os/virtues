@@ -19,7 +19,7 @@ use virtues_protocol::PairingBundle;
 
 const SERVICE: &str = "virtues-client";
 /// Single-box-per-machine for v0.2. When multi-box support lands this becomes
-/// `box-<publish_id>` so multiple bundles can coexist on one device.
+/// per-box-keyed so multiple bundles can coexist on one device.
 const ACCOUNT_BUNDLE: &str = "default-box";
 const ACCOUNT_WG_PRIVATE: &str = "default-box-wg-private";
 /// Legacy entry written by an earlier build (stored the device id, which the

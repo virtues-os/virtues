@@ -49,8 +49,9 @@ Then in `Virtues.xcodeproj`:
    matches what the box prints; "Test Tunnel" succeeds.
 4. **Coexistence**: enable a third-party VPN (or iCloud Private Relay) and
    confirm it stays active while uploads still flow — proves we took no VPN slot.
-5. **Prefix rotation**: force the box's IPv6 to change; confirm uploads resume
-   (rendezvous recovery — this exercises `virtues-tunnel`'s `rendezvous.rs`).
+5. **Prefix rotation (v1)**: if the box's IPv6 prefix changes, the baked endpoint
+   goes stale and the device must re-pair (no auto re-resolution — see
+   `docs/networking.md`).
 
 ## Background behavior — the location-keepalive model (C3 / R4)
 

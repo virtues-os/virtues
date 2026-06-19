@@ -20,8 +20,8 @@ in sync when you add, rename, or retire a doc — orphaned files rot fastest.
 ## Networking & remote access
 
 - [networking.md](networking.md) — **source of truth** for how you reach your
-  box: the IPv6-direct doctrine, the pinhole, `virtues doctor`, the blind
-  rendezvous, and the honest boundary.
+  box: the IPv6-direct doctrine, the pinhole, `virtues doctor`, and the honest
+  boundary.
 - [byo-networking.md](byo-networking.md) — bring-your-own-transport recipes
   (Tailscale / Headscale / plain-WG-VPS / Cloudflare / Tor / dynamic-DNS+IPv6).
 - [deployment.md](deployment.md) — the two shipping shapes (native Linux binary on

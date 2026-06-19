@@ -34,14 +34,10 @@ struct BoxBundle: Decodable {
         let clientAddress: String
         let serverAddress: String
     }
-    struct Rendezvous: Decodable {
-        let url: String
-    }
     let wg: Wg
     let internalHost: String
     let internalIp: String
     let httpPort: UInt16
-    let rendezvous: Rendezvous
 }
 
 final class VirtuesTunnelManager {

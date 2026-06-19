@@ -1,9 +1,9 @@
 //! The box's current public WG endpoint, recorded in `box_secrets`.
 //!
 //! This is the 1b hand-off: the (Linux, privileged) daemon detects the endpoint
-//! and `write_current`s it; the (rootless) app `read_current`s it and publishes
-//! to the rendezvous. The DB is the interface — the daemon never holds the
-//! bearer or talks to the rendezvous. Cross-platform (no netlink here).
+//! and `write_current`s it; the (rootless) app `read_current`s it to bake into
+//! the pairing bundle. The DB is the interface — the daemon never holds the
+//! bearer. Cross-platform (no netlink here).
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -30,8 +30,8 @@ pub async fn write_current(db: &PgPool, ep: &Endpoint) -> Result<()> {
     box_secrets::put(db, CURRENT_ENDPOINT_KEY, &json, &serde_json::json!({})).await
 }
 
-/// App: read the box's current endpoint (to publish to the rendezvous). `None`
-/// until the daemon has recorded one.
+/// App: read the box's current endpoint (to bake into the pairing bundle).
+/// `None` until the daemon has recorded one.
 pub async fn read_current(db: &PgPool) -> Result<Option<Endpoint>> {
     match box_secrets::get(db, CURRENT_ENDPOINT_KEY).await? {
         Some((json, _)) => Ok(Some(

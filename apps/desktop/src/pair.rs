@@ -201,7 +201,6 @@ async fn consume(origin: String, token: String, expected_fpr: Option<String>) ->
 
     println!();
     println!("✓ paired with {origin}");
-    println!("  server ID:     {}", &bundle.rendezvous.publish_id);
     println!("  server addr:   {}", &bundle.internal_ip);
     println!("  device pubkey: {wg_public_b64}");
     println!("  bundle stored: OS keychain (service = 'virtues-client')");

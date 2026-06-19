@@ -11,8 +11,8 @@
 //! ## Subcommands
 //!
 //! - `pair <pair-url>` — consume a one-time pair URL from the server; receive a
-//!   [`virtues_protocol::PairingBundle`] (WG keys, server endpoint, rendezvous
-//!   params, session bearer); store it in the OS keychain.
+//!   [`virtues_protocol::PairingBundle`] (WG keys, server endpoint, session
+//!   bearer); store it in the OS keychain.
 //! - `pair-code <code>` — same, but via the short 6-char code the server prints
 //!   (server discovered over mDNS unless `--server` is given).
 //! - `discover` — list Virtues servers found on the LAN via mDNS (`--json`).
@@ -344,7 +344,6 @@ fn print_status() -> Result<()> {
     let has_wg_private = keychain::load_wg_private()?.is_some();
 
     println!("paired:           yes");
-    println!("box id:           {}", bundle.rendezvous.publish_id);
     if let Some(fp) = &spki {
         println!("box fingerprint:  {fp}");
     }
