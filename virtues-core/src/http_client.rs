@@ -17,7 +17,7 @@ use std::time::Duration;
 /// clients directly — so the constructors below are self-sufficient instead
 /// of relying on every caller remembering. Idempotent: a second install
 /// attempt errors harmlessly and is ignored.
-fn ensure_crypto_provider() {
+pub(crate) fn ensure_crypto_provider() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();
