@@ -5,7 +5,7 @@
 //! checkout page. `start` kicks off a link and stashes the secret `device_code`
 //! in `box_secrets`, so a later `poll` (possibly a separate HTTP request from
 //! the web UI) can resume. `poll` returns the status; on `ready` it stores the
-//! billing token and mints the first bearer, so AI works immediately.
+//! device `api_key` — AI works immediately (atlas funds the wallet at link).
 //!
 //! [RFC 8628]: https://www.rfc-editor.org/rfc/rfc8628
 
@@ -36,7 +36,7 @@ pub struct LinkStart {
 pub enum LinkStatus {
     /// Checkout not completed yet — keep polling.
     Pending,
-    /// Linked: billing token stored + first bearer minted.
+    /// Linked: api_key stored.
     Ready,
     /// The link expired or was denied — start over.
     Expired,
@@ -112,9 +112,9 @@ pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Resu
     })
 }
 
-/// Poll the in-flight link. On `ready`, store the billing token and eagerly
-/// mint the first bearer (best-effort — lazy renew retries on the first AI
-/// call). Clears the in-flight state on any terminal outcome.
+/// Poll the in-flight link. On `ready`, store the api_key (atlas already
+/// registered the device + funded the wallet, so AI works immediately).
+/// Clears the in-flight state on any terminal outcome.
 pub async fn poll(
     db: &PgPool,
     http: &reqwest::Client,

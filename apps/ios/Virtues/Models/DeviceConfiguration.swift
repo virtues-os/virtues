@@ -126,13 +126,15 @@ struct DeviceConfiguration: Codable {
         return URL(string: clean)
     }
 
-    /// Get the webhook URL for a given stream name. Returns nil if the device
-    /// hasn't been repaired since the webhook cutover (actionIds is empty or
-    /// missing an entry for this stream). The caller should refetch via
+    /// Get the webhook URL for a stream. Every iOS stream now posts to the one
+    /// `ios_ingest` action — the backend fans out by the `stream` field in the
+    /// request body — so `streamName` no longer selects the URL; it's kept in
+    /// the signature because callers group uploads by stream. Returns nil if the
+    /// device hasn't paired since the ingest unification (no `ios_ingest` entry
+    /// in `actionIds`); the caller should refetch via
     /// `GET /api/devices/action-ids` and retry.
     func webhookURL(forStream streamName: String) -> URL? {
-        let canonical = DeviceConfiguration.canonicalStreamName(streamName)
-        guard let actionId = actionIds[canonical] else { return nil }
+        guard let actionId = actionIds["ios_ingest"] else { return nil }
         guard let base = baseURL else { return nil }
         return base.appendingPathComponent("webhook").appendingPathComponent(actionId)
     }

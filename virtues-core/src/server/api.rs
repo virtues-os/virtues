@@ -1401,9 +1401,9 @@ pub async fn usage_check_handler(
 // Subscription & Billing API Handlers
 // =============================================================================
 
-/// GET /api/subscription - Local subscription signal (voucher model).
+/// GET /api/subscription - Local subscription signal (api_key present?).
 ///
-/// Derived from the credential vault: reports whether a billing token has
+/// Derived from the credential vault: reports whether an api_key has
 /// been claimed on this box. Gating itself is by bearer expiry, not this
 /// endpoint — see `crate::api::subscription`.
 pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Response {
@@ -1429,9 +1429,9 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
 /// POST /api/billing/portal - Stripe billing portal.
 ///
 /// The portal belongs to Atlas (which holds the Stripe customer). We read the
-/// billing token from the local vault, ask Atlas to mint a Stripe-hosted
+/// api_key from the local vault, ask Atlas to mint a Stripe-hosted
 /// Customer Portal session, and return its `url` for BillingView to open.
-/// Any failure (no billing token yet, inactive subscription, Stripe hiccup)
+/// Any failure (no api_key yet, inactive subscription, Stripe hiccup)
 /// returns a clean `{error}` string the button renders inline — never a 500.
 pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
@@ -1520,7 +1520,7 @@ pub async fn claim_billing_handler(
 
     (
         StatusCode::OK,
-        Json(serde_json::json!({ "claimed": true, "bearer_ready": true })),
+        Json(serde_json::json!({ "claimed": true, "linked": true })),
     )
         .into_response()
 }
@@ -1576,7 +1576,7 @@ pub async fn billing_link_start_handler(State(pool): State<sqlx::PgPool>) -> Res
 }
 
 /// GET /api/billing/link/status — poll the in-flight link. On `ready` this
-/// stores the billing token and mints the first bearer as a side effect.
+/// stores the api_key (atlas registers the device + funds the wallet).
 pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let atlas_url =
         crate::virtues_api::atlas_url();

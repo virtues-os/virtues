@@ -1,0 +1,8 @@
+name = "iOS Ingest"
+description = "Ingest every paired-iPhone stream (health, location, calendar, contacts, audio, finance). The phone tags each push with a `stream` field; one action fans it to the right ontology table."
+owner = "system"
+runtime = "function"
+command = ["ios_ingest"]
+triggers = ["webhook"]
+per_credential = true
+source = { id = "ios" }

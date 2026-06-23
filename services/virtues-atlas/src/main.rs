@@ -1,12 +1,10 @@
-//! atlas - identity and billing for Virtues.
+//! atlas - identity + funding for Virtues (linked prepaid model).
 //!
-//! Atlas holds the Stripe customer side of the wall. It mints a stable
-//! billing token at signup (`/claim`), and a one-time voucher each month
-//! (`/voucher`) that the home server redeems at virtues-api. It never sees
-//! a usage bearer, and the only thing it sends across the wall is a
-//! voucher's *value* — no customer, no bearer.
-//!
-//! See docs/virtues-api.md (the idea) and docs/entitlement.md.
+//! Atlas owns the Stripe customer side. At link/claim it mints the box's
+//! device `api_key` and registers it with virtues-api against an opaque
+//! `account_id`; on subscription renewal (`invoice.paid`) and top-up it credits
+//! that account's wallet via virtues-api `/internal/credit`. It never sees
+//! usage — only identity, plan, and amounts.
 
 use std::time::Duration;
 
@@ -64,8 +62,8 @@ async fn main() -> Result<()> {
         stripe_webhook_secret: cfg.stripe_webhook_secret.clone(),
         stripe_price_id: cfg.stripe_price_id.clone(),
         public_url: cfg.public_url.clone(),
-        voucher: routes::VoucherPolicy {
-            renewal_micros: cfg.voucher_renewal_micros,
+        credit: routes::CreditPolicy {
+            renewal_micros: cfg.renewal_micros,
             auto_topup_micros: cfg.auto_topup_micros,
             topup_min_micros: cfg.topup_min_micros,
             topup_max_micros: cfg.topup_max_micros,

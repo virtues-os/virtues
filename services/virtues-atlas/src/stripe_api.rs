@@ -171,7 +171,7 @@ impl StripeClient {
     ///
     /// A payment-mode session can never satisfy `finalize_paid_session` (which
     /// requires `mode == "subscription"`), so a deposit can never be replayed
-    /// into a billing token.
+    /// into a device api_key.
     pub async fn create_deposit_checkout_session(
         &self,
         price_id: &str,

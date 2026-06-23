@@ -3,9 +3,9 @@
 //! All secrets are injected via environment variables at runtime.
 //! The source code contains no secrets.
 //!
-//! Budget state lives in Postgres (the entitlement schema); the pool is
-//! required at boot. Atlas registers vouchers over the wall but virtues-api
-//! never calls back — there is no hydration mode.
+//! Budget state lives in Postgres (accounts + ledger); the pool is required at
+//! boot. Atlas pushes credits + device registrations in via `/internal/*`;
+//! virtues-api never calls back — there is no hydration mode.
 
 use anyhow::{bail, Context, Result};
 

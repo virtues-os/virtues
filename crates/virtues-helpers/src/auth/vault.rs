@@ -335,10 +335,11 @@ pub async fn mark_credential_status(
     Ok(())
 }
 
-/// Return the per-credential fan-out map: `binary-name → app_actions.id` for
+/// Return the per-credential fan-out map: `command-name → app_actions.id` for
 /// every action row keyed to this credential. The key is `command[0]` (the
-/// action's program name, e.g. `ios_healthkit`), which the device uses to
-/// route each stream flush to `POST /webhook/{action_id}`.
+/// action's program name, e.g. `ios_ingest`), which the device uses to route a
+/// flush to `POST /webhook/{action_id}`. All iOS streams share the single
+/// `ios_ingest` action and disambiguate via the `stream` field in the body.
 pub async fn fanout_action_ids(
     db: &PgPool,
     credential_id: &str,

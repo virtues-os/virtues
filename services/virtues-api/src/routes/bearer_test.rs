@@ -42,11 +42,8 @@ async fn usage(State(state): State<Arc<AppState>>, BearerAuth(acct): BearerAuth)
     }
 }
 
-/// Returns a non-sensitive summary of the resolved entitlement.
-/// Useful for verifying bearer auth + entitlement lookup work end-to-end.
-///
-/// Returns BOTH pools for debugging; iOS should only surface
-/// `wallet_chat_micros` to the user (see project_economic_model memory).
+/// Returns a non-sensitive summary of the resolved account (balance, caps).
+/// Useful for verifying api_key auth + account lookup work end-to-end.
 async fn whoami(BearerAuth(acct): BearerAuth) -> impl IntoResponse {
     Json(json!({
         "balance_micros": acct.balance_micros,

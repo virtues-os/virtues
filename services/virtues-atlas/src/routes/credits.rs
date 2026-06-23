@@ -52,14 +52,13 @@ struct ManualTopupBody {
 }
 
 /// Box-triggered auto-top-up. Fired when virtues-api returned 402 with
-/// `wallet_empty`. Fixed amount (`state.voucher.auto_topup_micros`,
-/// default $10). On success, returns `{voucher_code}` for the box to
-/// redeem.
+/// `wallet_empty`. Fixed amount (`state.credit.auto_topup_micros`,
+/// default $10). On success, credits the wallet and returns `{ok}`.
 async fn auto_topup(
     State(state): State<AppState>,
     Json(body): Json<AutoTopupBody>,
 ) -> axum::response::Response {
-    let amount = state.voucher.auto_topup_micros;
+    let amount = state.credit.auto_topup_micros;
     let (customer_id, account_id) = match resolve_active_customer(&state, &body.api_key).await {
         Ok(c) => c,
         Err(resp) => return resp,
@@ -73,14 +72,14 @@ async fn auto_topup(
 }
 
 /// User-initiated top-up from iOS. Amount must lie in
-/// [`state.voucher.topup_min_micros`, `state.voucher.topup_max_micros`]
+/// [`state.credit.topup_min_micros`, `state.credit.topup_max_micros`]
 /// (defaults $10–$50). Same Stripe flow as auto-top-up.
 async fn manual_topup(
     State(state): State<AppState>,
     Json(body): Json<ManualTopupBody>,
 ) -> axum::response::Response {
-    let min = state.voucher.topup_min_micros;
-    let max = state.voucher.topup_max_micros;
+    let min = state.credit.topup_min_micros;
+    let max = state.credit.topup_max_micros;
     if body.amount_micros < min || body.amount_micros > max {
         return err(
             StatusCode::BAD_REQUEST,

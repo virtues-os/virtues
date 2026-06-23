@@ -1,7 +1,7 @@
 //! HTTP client for the atlas → virtues-api internal surface.
 //!
 //! Two calls, both carrying only an opaque `account_id` + amounts — never a
-//! Stripe id, email, or bearer:
+//! Stripe id, email, or device key:
 //!   - `register_device` — bind (or rotate) a device api key to an account.
 //!   - `credit` — fund an account on renewal (`set`) or top-up (`add`).
 

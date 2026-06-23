@@ -157,17 +157,14 @@ pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
 /// `virtues subscribe` — connect this box to a paid Virtues subscription via the
 /// device-authorization flow.
 ///
-/// Three onboarding paths printed at once — user picks whatever's easiest:
+/// Two onboarding paths printed at once — user picks whatever's easiest:
 ///
 ///   1. Phone scan      → QR code rendered in terminal (unicode half-blocks)
 ///   2. Browser open    → URL printed alongside
-///   3. Manual paste    → if the user already subscribed elsewhere they can
-///                        skip the whole flow by setting `VIRTUES_BILLING_TOKEN`
-///                        before running (we detect it before starting a link)
 ///
-/// All three converge on the same atlas /link/* device-authorization flow.
-/// On success the billing token is stored sealed in the box vault and the
-/// first bearer is minted.
+/// Both converge on the same atlas /init/* device-authorization flow. On
+/// success the device `api_key` is stored in the box vault (atlas registers the
+/// device + funds the wallet at link).
 pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
     use crate::virtues_api::link::{self, LinkStatus};
 
@@ -201,8 +198,7 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
-                // link::poll mints the first voucher internally; don't double-mint
-                // here or atlas's 25-day anti-stacking gate locks the account out.
+                // link::poll stores the api_key; atlas funds the wallet at link.
                 // Lazy renew on the first AI call handles any in-poll renew failure.
                 println!();
                 println!("  Subscribed. AI ready.");
@@ -229,7 +225,7 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
 /// the device_link gets flipped to ready:
 ///   - subscribe: user completes Stripe Checkout → atlas finalizes
 ///   - login:     user clicks magic link in email → atlas finalizes
-/// Same poll loop afterward; same eager renew for the first voucher.
+/// Same poll loop afterward.
 pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     use crate::virtues_api::link::{self, LinkStatus, LoginStart};
 
@@ -273,7 +269,7 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
 
     // Same poll loop as handle_subscribe. The device_link flips to ready
     // when the user clicks the email magic link → atlas marks it ready
-    // → next poll picks up the billing_token.
+    // → next poll picks up the api_key.
     let interval = std::time::Duration::from_secs(5);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15 * 60);
     loop {
@@ -284,8 +280,7 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
         }
         match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
-                // link::poll mints the first voucher internally; don't double-mint
-                // here or atlas's 25-day anti-stacking gate locks the account out.
+                // link::poll stores the api_key; atlas funds the wallet at link.
                 println!();
                 println!("  Logged in. AI ready.");
                 return handle_status(virtues).await;

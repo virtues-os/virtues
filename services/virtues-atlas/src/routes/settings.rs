@@ -3,7 +3,7 @@
 //! `GET /settings`  → current caps + auto-topup toggle
 //! `PUT /settings`  → update caps + auto-topup toggle
 //!
-//! Both bearer-authed via the box's `api_key`. iOS Settings is the
+//! Both authed via the box's `api_key`. iOS Settings is the. iOS Settings is the
 //! primary consumer — pulls current state on open, writes back on change.
 //!
 //! Spend caps are atlas-side because:

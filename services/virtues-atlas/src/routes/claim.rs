@@ -1,17 +1,17 @@
-//! Billing-token claim (customer-facing, once per signup).
+//! api_key claim (customer-facing, once per signup).
 //!
 //! `POST /claim { session_id }`
 //!
 //! After Stripe Checkout, the browser is redirected to
-//! `success_url?session_id=cs_xxx`. The home server posts that session
-//! here. Atlas verifies the payment, creates the customer + subscription,
-//! mints a stable **billing token**, and returns it. The home server
-//! stores the billing token and uses it monthly to fetch vouchers.
+//! `success_url?session_id=cs_xxx`. The home server posts that session here.
+//! Atlas verifies the payment, creates the customer + subscription, assigns an
+//! opaque `account_id`, mints the device **api_key**, registers it with
+//! virtues-api (`/internal/device`) and funds this period's wallet
+//! (`/internal/credit`), then returns the api_key. The box stores it and sends
+//! it on every proxy call.
 //!
-//! The billing token is the identity-side credential — it proves "I'm a
-//! paying customer." It never reaches virtues-api and carries no usage
-//! data. Re-claiming (e.g., a lost token) issues a fresh one, invalidating
-//! the old; recovery is a billing-side concern, which is allowed.
+//! Re-claiming issues a fresh api_key (rotating the stored hash); the wallet is
+//! keyed by the stable `account_id`, so the balance is preserved across it.
 
 use axum::{
     extract::State,
@@ -74,10 +74,10 @@ pub(crate) struct FinalizeErr {
     pub message: String,
 }
 
-/// Verify a paid Stripe Checkout session, mint a fresh billing token, and
+/// Verify a paid Stripe Checkout session, mint a fresh api_key, and
 /// upsert the customer + subscription. Shared by `POST /claim` (success-URL
 /// post-back) and the device-link completion handler — one place that turns a
-/// paid session into a billing token, so the two paths can't drift.
+/// paid session into an api_key, so the two paths can't drift.
 pub(crate) async fn finalize_paid_session(
     state: &AppState,
     session_id: &str,
@@ -92,7 +92,7 @@ pub(crate) async fn finalize_paid_session(
 
     // ── Anti-replay (C1) ──
     // A `cs_*` id can be observed in browser URLs / logs / referrers. Without
-    // this guard, every replay would mint a new billing_token AND rotate the
+    // this guard, every replay would mint a new api_key AND rotate the
     // real owner's token via the customers UPSERT (silent account DoS). Claim
     // each session at most once; subsequent attempts return 409.
     let claimed = sqlx::query(
@@ -147,7 +147,7 @@ pub(crate) async fn finalize_paid_session(
     // Stripe says the session must be a *completed subscription* for OUR price.
     // Without these, a one-off `mode=payment` session, an `expired` session, or
     // a cheap-price-on-the-same-account session would all pass `paid` and yield
-    // a full billing token. (C1 hardening.)
+    // a full api_key. (C1 hardening.)
     if session.mode != "subscription" {
         return Err(FinalizeErr {
             status: StatusCode::BAD_REQUEST,
@@ -281,7 +281,7 @@ pub(crate) async fn finalize_paid_session(
             .virtues_api
             .credit(&Credit {
                 account_id: account_id.clone(),
-                amount_micros: state.voucher.renewal_micros,
+                amount_micros: state.credit.renewal_micros,
                 mode: "set",
                 daily_cap_micros,
                 reference: Some(format!("checkout:{session_id}")),

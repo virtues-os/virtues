@@ -13,7 +13,7 @@
 //!   POST /api/setup/login/start      → {email}: magic-link to an existing
 //!                                      subscription (reuses the same link)
 //!   POST /api/setup/link/poll        → one poll tick; on `ready` the billing
-//!                                      token is stored + first bearer minted
+//!                                      api_key is stored
 //!
 //! The box keeps its default `virtues.local` name — there is no rename
 //! endpoint: the name is cosmetic and reachability is WireGuard/SPKI +
@@ -113,8 +113,8 @@ pub async fn login_start_handler(
 }
 
 /// `POST /api/setup/link/poll` — one poll tick for whichever branch is in
-/// flight. On `ready` the billing token is stored and the first bearer is
-/// minted (inside `link::poll`); the page sees `ready` and advances.
+/// flight. On `ready` the api_key is stored (atlas funds the wallet); the
+/// page sees `ready` and advances.
 pub async fn link_poll_handler(
     _user: AuthUser,
     State(state): State<AppState>,
