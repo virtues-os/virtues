@@ -446,7 +446,12 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
         .await
         .map_err(|e| Error::Other(format!("credential refresh failed for {credential_id}: {e}")))?;
 
-    let row: Option<(String, String, String)> = sqlx::query_as(
+    // `metadata` is a JSONB column — decode it straight into a `Value`, not a
+    // `String`. (Pre-Postgres it was a TEXT JSON string read via `from_str`;
+    // the migration to JSONB made that decode fail with "Rust type String is
+    // not compatible with SQL type JSONB", which silently broke every ingest.)
+    // `secrets_ciphertext` stays TEXT (it's opaque ciphertext, not JSON).
+    let row: Option<(String, String, serde_json::Value)> = sqlx::query_as(
         r#"SELECT source_id, secrets_ciphertext, metadata
              FROM credentials
             WHERE id = $1 AND status = 'active'"#,
@@ -456,7 +461,7 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
     .await
     .map_err(|e| Error::Database(format!("failed to load credential: {e}")))?;
 
-    let Some((source_id, secrets_ciphertext, metadata_raw)) = row else {
+    let Some((source_id, secrets_ciphertext, metadata_value)) = row else {
         return Err(Error::NotFound(format!(
             "credential not found or not active: {credential_id}"
         )));
@@ -471,8 +476,13 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
     let secrets: serde_json::Value = serde_json::from_str(&secrets_plaintext)
         .unwrap_or_else(|_| serde_json::json!({}));
 
-    let metadata: serde_json::Value =
-        serde_json::from_str(&metadata_raw).unwrap_or_else(|_| serde_json::json!({}));
+    // Normalize JSON `null` (or a non-object) to `{}` so downstream always sees
+    // an object, matching the prior `from_str(...).unwrap_or({})` behavior.
+    let metadata = if metadata_value.is_object() {
+        metadata_value
+    } else {
+        serde_json::json!({})
+    };
 
     Ok(serde_json::json!({
         "id": credential_id,
