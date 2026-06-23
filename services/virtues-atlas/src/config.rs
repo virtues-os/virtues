@@ -27,7 +27,7 @@ pub struct Config {
     /// verification URL and the Stripe success/cancel URLs.
     pub public_url: String,
 
-    /// Sub renewal voucher (micros USD). Default $15/mo.
+    /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
     pub voucher_renewal_micros: i64,
     /// Auto-top-up voucher amount (micros USD). Default $10 fixed.
     pub auto_topup_micros: i64,
@@ -111,18 +111,18 @@ impl Config {
         let public_url = std::env::var("VIRTUES_ATLAS_PUBLIC_URL")
             .unwrap_or_else(|_| format!("http://localhost:{port}"));
 
-        // Voucher economics — v3 single-wallet model (locked 2026-06-05).
-        //   * Sub renewal voucher: $15 (overwrites wallet). $20/mo sub
-        //     covers cloud infra + the $15 included credit + ~20% margin.
+        // Wallet economics — linked prepaid model.
+        //   * Monthly renewal credit: $20 (overwrites wallet to the full
+        //     subscription value — "all credit, no haircut"). Margin comes
+        //     entirely from the 20% universal markup: a fully-burned $20 wallet
+        //     is $20/1.2 = $16.67 of real upstream cost, so usage is always
+        //     margin-positive and the per-user floor is ~$2-3 (much higher for
+        //     anyone who doesn't burn the whole wallet). See entitlement.rs::
+        //     apply_markup.
         //   * Auto-top-up: $10 fixed, fires when wallet hits 0.
         //   * Manual top-up: $10–$50 user choice (atlas validates band).
-        //   * Margin comes from 20% universal markup on usage (see
-        //     virtues-api entitlement.rs::apply_markup).
-        //   * Unredeemed vouchers self-expire in 7 days.
-        //   * Anti-stacking on sub renewal: one voucher per 25 days per
-        //     customer (doesn't apply to top-ups — those have their own
-        //     server-side limits via monthly_cap_micros).
-        let voucher_renewal_micros = env_i64("VOUCHER_RENEWAL_MICROS", 15_000_000);
+        //   * Top-ups (add) are bounded by monthly_cap_micros, not anti-stacking.
+        let voucher_renewal_micros = env_i64("VOUCHER_RENEWAL_MICROS", 20_000_000);
         let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 10_000_000);
         let topup_min_micros = env_i64("TOPUP_MIN_MICROS", 10_000_000);
         let topup_max_micros = env_i64("TOPUP_MAX_MICROS", 50_000_000);

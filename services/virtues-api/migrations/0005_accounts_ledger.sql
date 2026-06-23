@@ -29,7 +29,7 @@ CREATE TABLE accounts (
     account_id          text PRIMARY KEY,
 
     -- Spendable balance (micros USD). Renewal SETs it to the monthly
-    -- allotment ($15); top-ups ADD; charges debit. 402 when it can't cover
+    -- allotment ($20); top-ups ADD; charges debit. 402 when it can't cover
     -- the next call.
     balance_micros      bigint NOT NULL DEFAULT 0,
 
