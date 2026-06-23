@@ -144,6 +144,10 @@ sha2 = "0.10"
 tar = "0.4"
 flate2 = "1.0"
 
+# `virtues upgrade` downgrade guard — semver ordering so a stale/hostile
+# "latest" or an explicit older `--version` can't silently roll the box back.
+semver = "1"
+
 # Unicode text segmentation for slug generation
 unicode-segmentation = "1.11"
 
