@@ -346,6 +346,25 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     .await
     .unwrap_or(0);
 
+    // Narrative-identity reveal: ready once there is a non-empty portrait to show
+    // (drafted by the generator or hand-written), generating while a draft run is
+    // in flight. Anchored on content presence (not `updated_at`, which the writer
+    // doesn't bump) so it's drift-free; the run row gives the in-progress state.
+    let nid_ready: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM wiki_narrative_identity \
+         WHERE content IS NOT NULL AND length(trim(content)) > 0)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    let nid_running: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+         WHERE action_id = 'action_narrative_identity_draft' AND status = 'running')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
     // Tier 2: a living (cloud/OAuth) source that has actually synced — i.e. a
     // non-device, non-BYO credential with at least one successful run. Stronger
     // than `first_source` (which only means "connected"): this means data flows.
@@ -502,6 +521,13 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             detail: None,
             kind: None,
         },
+        SetupStep {
+            id: "narrative_identity_ready",
+            title: "Your narrative identity",
+            done: nid_ready,
+            detail: None,
+            kind: narrative_identity_kind(nid_ready, nid_running),
+        },
     ];
 
     Ok(SetupState {
@@ -520,6 +546,20 @@ fn collecting_kind(completed: bool, started: bool) -> Option<&'static str> {
         Some("collecting")
     } else if started {
         Some("syncing")
+    } else {
+        None
+    }
+}
+
+/// Three-state qualifier for the `narrative_identity_ready` step: "ready" once a
+/// portrait exists, "generating" while a draft run is in flight, else none
+/// (not started). Behavior keys off `done`; this is cosmetic for renderers.
+/// Pure so the states are unit-testable without a DB.
+fn narrative_identity_kind(ready: bool, running: bool) -> Option<&'static str> {
+    if ready {
+        Some("ready")
+    } else if running {
+        Some("generating")
     } else {
         None
     }
@@ -633,5 +673,16 @@ mod tests {
         assert_eq!(collecting_kind(false, false), None);
         // Completed wins even if a later sync is mid-flight.
         assert_eq!(collecting_kind(true, true), Some("collecting"));
+    }
+
+    #[test]
+    fn narrative_identity_kind_states() {
+        // A portrait exists → "ready" (wins even if a redraft is running).
+        assert_eq!(narrative_identity_kind(true, false), Some("ready"));
+        assert_eq!(narrative_identity_kind(true, true), Some("ready"));
+        // No portrait yet, a draft in flight → "generating".
+        assert_eq!(narrative_identity_kind(false, true), Some("generating"));
+        // Not started → no qualifier.
+        assert_eq!(narrative_identity_kind(false, false), None);
     }
 }

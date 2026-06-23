@@ -176,6 +176,13 @@ pub enum Commands {
         /// default `latest` follows stable; `--pre` opts into staging.)
         #[arg(long)]
         pre: bool,
+
+        /// Allow installing a version older than the one currently running.
+        /// Without this, a downgrade is refused so a stale or tampered "latest"
+        /// can't roll the box back to a known-vulnerable build. (No effect with
+        /// `--pre`, where the prerelease channel is an explicit opt-in.)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Start the HTTP server
