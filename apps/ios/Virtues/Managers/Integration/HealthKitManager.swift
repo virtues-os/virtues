@@ -45,6 +45,16 @@ class HealthKitManager: ObservableObject {
     var anchors: [String: HKQueryAnchor] = [:]
     private let anchorKeyPrefix = "com.virtues.healthkit.anchor."
 
+    // Re-entrancy guard for collectNewData(). collectNewData() is triggered from
+    // many non-exclusive sources (5-min timer, immediate fire on startMonitoring,
+    // health-check recovery, manual performSync, app-foreground). Without this guard,
+    // two runs can overlap: each queries with the same (not-yet-persisted) anchor,
+    // fetches the same backlog, and concurrently mutates `anchors`/`allMetrics`.
+    // Swift collections are not thread-safe, so the race corrupts their buffers and
+    // crashes later with a garbage-pointer "unrecognized selector" exception.
+    private let collectionGate = NSLock()
+    private var isCollectingNewData = false
+
     // Define all HealthKit types we need
     private let healthKitTypes: Set<HKSampleType> = [
         HKQuantityType.quantityType(forIdentifier: .heartRate)!,
@@ -568,8 +578,26 @@ class HealthKitManager: ObservableObject {
     // MARK: - Buffered Data Collection
     
     private func collectNewData() async {
+        // Atomic test-and-set: if a collection is already in flight, skip this one.
+        // The next timer tick (or trigger) will catch up. This serializes all access
+        // to `anchors` and the metrics buffer, preventing the concurrent-mutation crash.
+        collectionGate.lock()
+        if isCollectingNewData {
+            collectionGate.unlock()
+            print("🏥 HealthKit collection already in progress — skipping overlapping run")
+            return
+        }
+        isCollectingNewData = true
+        collectionGate.unlock()
+
+        defer {
+            collectionGate.lock()
+            isCollectingNewData = false
+            collectionGate.unlock()
+        }
+
         print("🏥 HealthKit timer fired - collecting new data...")
-        
+
         var allMetrics: [HealthKitMetric] = []
         
         // Collect new data for each type using anchored queries
