@@ -34,8 +34,21 @@ pub async fn write_events(db: &PgPool, records: &[Value]) -> Result<usize> {
     let mut pending: Vec<CalendarRow> = Vec::new();
     let mut written = 0;
 
-    for record in records {
-        // Skip reminders — they need a different ontology
+    // iOS sends ONE wrapper record per push: `{ "events": [...], "reminders": [...] }`.
+    // Flatten the events out of each wrapper (reminders belong to a different ontology
+    // and are left untouched). Fall back to treating a bare record as an event for any
+    // flat-shaped producer. Previously this iterated the wrappers directly, so every
+    // `title` was empty and every event was skipped → 0 rows written.
+    let events: Vec<&Value> = records
+        .iter()
+        .flat_map(|rec| match rec.get("events").and_then(|v| v.as_array()) {
+            Some(arr) => arr.iter().collect::<Vec<_>>(),
+            None => vec![rec],
+        })
+        .collect();
+
+    for record in events {
+        // A flat-shaped producer may still tag reminders with record_type; skip those.
         let record_type = record
             .get("record_type")
             .and_then(|v| v.as_str())
