@@ -10,6 +10,41 @@ pub mod client;
 pub mod link;
 pub mod renew;
 
+/// Default cloud endpoints. A real box always has `VIRTUES_API_URL` /
+/// `VIRTUES_ATLAS_URL` set (the installer writes them into `virtues.env`;
+/// `make dev` exports them), so these fallbacks only apply to a
+/// misconfigured/raw invocation — in which case **prod** is the safe default:
+/// a stray request just 401s without a valid bearer, whereas the old split
+/// fallback (BearerClient → `localhost:9002`, main/diag → prod) meant a box
+/// missing the env var would silently bill against localhost in one path and
+/// prod in another. Single source of truth for both now.
+pub const DEFAULT_API_URL: &str = "https://api.virtues.com";
+pub const DEFAULT_ATLAS_URL: &str = "https://atlas.virtues.com";
+
+/// The cloud `virtues-api` base URL: `VIRTUES_API_URL`, else the prod default.
+pub fn api_url() -> String {
+    std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| DEFAULT_API_URL.to_string())
+}
+
+/// The atlas base URL: `VIRTUES_ATLAS_URL`, else the prod default.
+pub fn atlas_url() -> String {
+    std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| DEFAULT_ATLAS_URL.to_string())
+}
+
+/// True when this box is talking to a non-prod cloud (dev or staging) — drives
+/// the "⚠ staging environment" banner. Prefers the explicit `ENVIRONMENT=dev`
+/// marker; falls back to sniffing the atlas URL so a box *manually* pointed at
+/// staging is still flagged (the installer currently always writes
+/// `ENVIRONMENT=production`, so a marker-only check can't see manual staging
+/// until an install-time `--env staging` writer lands).
+pub fn is_nonprod_cloud() -> bool {
+    if std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false) {
+        return true;
+    }
+    let a = atlas_url();
+    a.contains("staging") || a.contains("localhost")
+}
+
 /// Minimum secret length for security (256 bits = 32 bytes)
 /// Must match services/virtues-api/src/config.rs MIN_SECRET_LENGTH
 pub const MIN_SECRET_LENGTH: usize = 32;

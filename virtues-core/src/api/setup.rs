@@ -31,11 +31,11 @@ use crate::server::webhook::AppState;
 use crate::virtues_api::link::{self, LinkStatus, LoginStart};
 
 fn atlas_url() -> String {
-    std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string())
+    crate::virtues_api::atlas_url()
 }
 
 fn api_url() -> String {
-    std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string())
+    crate::virtues_api::api_url()
 }
 
 /// `POST /api/setup/subscribe/start` — begin the create-new-account branch.
