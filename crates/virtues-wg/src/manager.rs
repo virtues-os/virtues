@@ -132,6 +132,40 @@ pub fn bring_up(server_privkey: &str, server_addr: IpAddr, peers: &[PeerConfig])
     wgapi
         .configure_interface(&cfg)
         .context("configure wg interface")?;
+
+    // Install the kernel route for the device ULA pool via wg0. `configure_interface`
+    // applies the server `/128` address and the peers' `allowed-ips`, but those only
+    // drive WireGuard's *crypto*-routing (which peer to encrypt/accept for) — they do
+    // NOT add a kernel route. With a `/128` interface address the kernel has no route
+    // to the device addresses (`fd00:5654::2`, `::3`, …), so in-tunnel *reply* traffic
+    // — e.g. the HTTP SYN-ACK back to a device that dialed `fd00:5654::1:8000` — falls
+    // through to the default route and egresses the WAN instead of wg0. The device's
+    // handshake then completes but every dial times out. Routing the whole pool back
+    // through wg0 fixes both directions. Best-effort + loud on failure: the interface
+    // is already the durable source of truth, and the reconcile loop retries.
+    if let Err(e) = ensure_pool_route() {
+        tracing::error!(
+            "failed to install wg0 ULA pool route ({e:#}); in-tunnel reply traffic \
+             won't route back to devices until this succeeds — tunnels will hang on dial"
+        );
+    }
+    Ok(())
+}
+
+/// Add the device ULA pool (`fd00:5654::/64`) as a kernel route via `wg0`, so the
+/// box's replies to any device address are sent through the tunnel rather than the
+/// default route. Idempotent via `ip route replace`. Shelling out to `ip` matches
+/// the daemon's existing pattern (modprobe / ip6tables) and avoids a netlink-route
+/// dependency; iproute2 is always present where `wg0` exists.
+fn ensure_pool_route() -> Result<()> {
+    let cidr = ula::pool_cidr();
+    let status = std::process::Command::new("ip")
+        .args(["-6", "route", "replace", &cidr, "dev", WG_IFNAME])
+        .status()
+        .with_context(|| format!("spawn `ip -6 route replace {cidr} dev {WG_IFNAME}`"))?;
+    if !status.success() {
+        anyhow::bail!("`ip -6 route replace {cidr} dev {WG_IFNAME}` exited {status}");
+    }
     Ok(())
 }
 
