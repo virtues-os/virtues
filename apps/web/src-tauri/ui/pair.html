@@ -488,7 +488,7 @@
     // ── Callout (diagnose-driven) ──────────────────────────────────────────────
     function showCallout(html, withRetry) {
       const c = document.getElementById('callout');
-      c.innerHTML = html + (withRetry ? '<br><button class="retry" onclick="retryReach()">Retry</button>' : '');
+      c.innerHTML = html + (withRetry ? '<br><button class="retry" onclick="manualRetry()">Retry</button>' : '');
       c.classList.add('show');
     }
     function hideCallout() { document.getElementById('callout').classList.remove('show'); }
@@ -499,7 +499,35 @@
       device_offline: ["This Mac isn't online. Reconnect to Wi-Fi and we'll pick up where we left off.", true],
     };
 
+    // Self-scheduling poll with backoff — NOT setInterval. A fixed interval
+    // fires regardless of whether the previous probe returned, so a slow box
+    // stacks overlapping in-flight calls; and a box that's off all night would
+    // be probed ~900×/hour. We fire, await, then schedule the next tick, and
+    // back off 4s → 8s → 16s. An explicit Retry resets to the fast cadence.
+    const REACH_MIN = 4000, REACH_MAX = 16000;
     let reachTimer = null;
+    let reachDelay = REACH_MIN;
+    let reachInFlight = false;
+
+    function stopReachLoop() { clearTimeout(reachTimer); reachTimer = null; }
+    function scheduleReach() {
+      clearTimeout(reachTimer);
+      reachTimer = setTimeout(tickReach, reachDelay);
+    }
+    async function tickReach() {
+      if (reachInFlight) { scheduleReach(); return; }   // never overlap
+      reachInFlight = true;
+      let navigated = false;
+      try { navigated = await retryReach(); }
+      finally { reachInFlight = false; }
+      if (navigated) return;                              // leaving the page; stop
+      reachDelay = Math.min(reachDelay * 2, REACH_MAX);
+      scheduleReach();
+    }
+    // Begin (or restart) polling from the fast cadence.
+    function startReachLoop() { reachDelay = REACH_MIN; scheduleReach(); }
+
+    // Returns true iff it navigated away (box now reachable + accepting us).
     async function retryReach() {
       try {
         if (await invoke('recheck_box')) { window.location.href = BOX_URL; return true; }
@@ -507,6 +535,12 @@
       // Re-diagnose so the message tracks reality if it changed.
       await diagnoseAndRender();
       return false;
+    }
+    // Manual "Retry" button — reset backoff so an explicit user action probes now.
+    async function manualRetry() {
+      stopReachLoop();
+      const ok = await retryReach();
+      if (!ok) startReachLoop();
     }
 
     // Ask the Rust side WHY the box is unreachable and render the matching copy.
@@ -532,7 +566,9 @@
     function initArrival() {
       if (arrivalState !== 'reset' && arrivalState !== 'unreachable') return;
       diagnoseAndRender();
-      if (arrivalState === 'unreachable') reachTimer = setInterval(retryReach, 4000);
+      // A reset box is reachable (just needs a code) → no polling. An
+      // unreachable box → poll with backoff for recovery, off the UI thread.
+      if (arrivalState === 'unreachable') startReachLoop();
     }
 
     // ── Discovery (auto-fill the box address; surfaced quietly) ─────────────────
