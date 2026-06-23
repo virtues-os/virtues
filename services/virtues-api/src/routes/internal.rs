@@ -1,16 +1,18 @@
-//! Internal routes (internal-secret gated).
+//! Internal routes (internal-secret gated). The entire atlas → virtues-api
+//! surface.
 //!
-//! `POST /internal/voucher` — Atlas registers a freshly minted voucher.
-//! The payload carries ONLY the voucher's value (budget, days, expiry) and
-//! its code hash. No customer, no bearer. This is the entire Atlas →
-//! virtues-api surface: Atlas tells us "a voucher worth X exists"; the
-//! device later redeems it. Atlas never sees a bearer; we never see a
-//! customer.
+//! `POST /internal/device` — atlas registers (or rotates) a device api key
+//! for an account. Carries the key hash, the opaque `account_id`, and the
+//! per-account daily cap. This is the link/recovery primitive: re-pointing an
+//! account to a new key never touches its balance.
 //!
-//! `POST /internal/block` / `POST /internal/unblock` — ops-only behavioral
-//! blocklist control. The caller supplies a `bearer_hash` it learned from
-//! *virtues-api's own* abuse logs (never from Atlas — Atlas has no bearer to
-//! send, by construction). Gated by the same internal secret.
+//! `POST /internal/credit` — atlas credits an account. `set` overwrites the
+//! balance to the monthly allotment (subscription renewal); `add` increments
+//! it (top-up). Each lands a `ledger` row so `balance == SUM(ledger)`.
+//!
+//! `POST /internal/block` / `/internal/unblock` / `GET /internal/blocklist` —
+//! ops-only behavioral blocklist control, keyed by an api-key hash from
+//! virtues-api's own abuse logs.
 
 use axum::{
     extract::State,
@@ -19,26 +21,116 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
 use crate::auth::AuthenticatedRequest;
-use crate::voucher::{self, RegisterVoucher};
+use crate::entitlement::{self, CreditMode};
 use crate::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/internal/voucher", post(register_voucher))
-        .route("/internal/block", post(block_bearer))
-        .route("/internal/unblock", post(unblock_bearer))
+        .route("/internal/device", post(register_device))
+        .route("/internal/credit", post(credit_account))
+        .route("/internal/block", post(block_key))
+        .route("/internal/unblock", post(unblock_key))
         .route("/internal/blocklist", get(blocklist_state))
 }
 
-/// Introspection: current blocks + the rate "watchlist" (bearers that have
-/// exceeded the ceiling). Lets us watch the would-block signal while
-/// enforcement is off. Internal-secret gated.
+#[derive(Debug, Deserialize)]
+struct RegisterDeviceBody {
+    /// Lowercase hex of SHA-256(api_key).
+    api_key_hash: String,
+    /// Opaque per-customer account id (assigned by atlas).
+    account_id: String,
+    /// The customer's daily spend ceiling. Defaults to the $20 floor.
+    #[serde(default = "default_daily_cap")]
+    daily_cap_micros: i64,
+}
+
+async fn register_device(
+    State(state): State<Arc<AppState>>,
+    _auth: AuthenticatedRequest,
+    Json(body): Json<RegisterDeviceBody>,
+) -> impl IntoResponse {
+    let Ok(hash) = hex_decode(&body.api_key_hash) else {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "invalid_hash",
+            "api_key_hash must be lowercase hex",
+        );
+    };
+    match entitlement::register_device(&state.db, &hash, &body.account_id, body.daily_cap_micros)
+        .await
+    {
+        Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response(),
+        Err(e) => {
+            tracing::warn!("register device failed: {e:#}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "register_failed", &e.to_string())
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreditBody {
+    account_id: String,
+    amount_micros: i64,
+    /// "set" = subscription renewal (overwrite balance to amount, fresh
+    /// monthly cohort). "add" = top-up (increment).
+    mode: String,
+    #[serde(default = "default_daily_cap")]
+    daily_cap_micros: i64,
+    /// Optional reference for the ledger row (e.g. a Stripe invoice/PI id).
+    #[serde(default)]
+    reference: Option<String>,
+}
+
+async fn credit_account(
+    State(state): State<Arc<AppState>>,
+    _auth: AuthenticatedRequest,
+    Json(body): Json<CreditBody>,
+) -> impl IntoResponse {
+    let mode = match body.mode.as_str() {
+        "set" => CreditMode::Set,
+        "add" => CreditMode::Add,
+        other => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "invalid_mode",
+                &format!("mode must be 'set' or 'add', got '{other}'"),
+            )
+        }
+    };
+    if body.amount_micros < 0 {
+        return error(StatusCode::BAD_REQUEST, "invalid_amount", "amount_micros must be >= 0");
+    }
+    match entitlement::credit(
+        &state.db,
+        &body.account_id,
+        body.amount_micros,
+        mode,
+        body.daily_cap_micros,
+        body.reference.as_deref(),
+    )
+    .await
+    {
+        Ok(balance) => {
+            (StatusCode::OK, Json(json!({ "ok": true, "balance_micros": balance }))).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("credit account failed: {e:#}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "credit_failed", &e.to_string())
+        }
+    }
+}
+
+fn default_daily_cap() -> i64 {
+    crate::entitlement::DEFAULT_DAILY_CEILING_MICROS
+}
+
+/// Introspection: current blocks + the rate "watchlist". Internal-secret gated.
 async fn blocklist_state(
     State(state): State<Arc<AppState>>,
     _auth: AuthenticatedRequest,
@@ -48,113 +140,43 @@ async fn blocklist_state(
 
 #[derive(Debug, Deserialize)]
 struct BlockBody {
-    /// Lowercase hex of SHA-256(bearer).
-    bearer_hash: String,
+    /// Lowercase hex of SHA-256(api_key).
+    key_hash: String,
     /// Optional cooldown override (seconds). Defaults to the rate-block TTL.
     ttl_seconds: Option<i64>,
 }
 
-async fn block_bearer(
+async fn block_key(
     State(state): State<Arc<AppState>>,
     _auth: AuthenticatedRequest,
     Json(body): Json<BlockBody>,
 ) -> axum::response::Response {
-    let pool = &state.db;
-    let Ok(hash) = hex_decode(&body.bearer_hash) else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "invalid_hash",
-            "bearer_hash must be lowercase hex",
-        );
+    let Ok(hash) = hex_decode(&body.key_hash) else {
+        return error(StatusCode::BAD_REQUEST, "invalid_hash", "key_hash must be lowercase hex");
     };
     let ttl = body.ttl_seconds.map(Duration::seconds);
     state
         .blocklist
-        .block(pool, &hash, crate::blocklist::REASON_MANUAL, ttl)
+        .block(&state.db, &hash, crate::blocklist::REASON_MANUAL, ttl)
         .await;
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 #[derive(Debug, Deserialize)]
 struct UnblockBody {
-    bearer_hash: String,
+    key_hash: String,
 }
 
-async fn unblock_bearer(
+async fn unblock_key(
     State(state): State<Arc<AppState>>,
     _auth: AuthenticatedRequest,
     Json(body): Json<UnblockBody>,
 ) -> axum::response::Response {
-    let pool = &state.db;
-    let Ok(hash) = hex_decode(&body.bearer_hash) else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "invalid_hash",
-            "bearer_hash must be lowercase hex",
-        );
+    let Ok(hash) = hex_decode(&body.key_hash) else {
+        return error(StatusCode::BAD_REQUEST, "invalid_hash", "key_hash must be lowercase hex");
     };
-    state.blocklist.unblock(pool, &hash).await;
+    state.blocklist.unblock(&state.db, &hash).await;
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct RegisterVoucherBody {
-    /// Lowercase hex of SHA-256(voucher_code).
-    voucher_code_hash: String,
-    /// Single voucher amount in micros USD.
-    amount_micros: i64,
-    /// `true` = sub renewal (overwrite wallet to amount). `false` = top-up (add).
-    #[serde(default)]
-    is_renewal: bool,
-    voucher_expires_at: DateTime<Utc>,
-    /// The customer's daily spend ceiling, carried from Atlas. Defaults to the
-    /// $20 floor when an older atlas omits it (forward/backward compatible
-    /// during a rolling deploy).
-    #[serde(default = "default_daily_cap")]
-    daily_cap_micros: i64,
-}
-
-fn default_daily_cap() -> i64 {
-    crate::entitlement::DEFAULT_DAILY_CEILING_MICROS
-}
-
-async fn register_voucher(
-    State(state): State<Arc<AppState>>,
-    _auth: AuthenticatedRequest,
-    Json(body): Json<RegisterVoucherBody>,
-) -> impl IntoResponse {
-    let pool = &state.db;
-
-    let Ok(hash) = hex_decode(&body.voucher_code_hash) else {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "invalid_hash",
-            "voucher_code_hash must be lowercase hex",
-        );
-    };
-
-    match voucher::register(
-        pool,
-        RegisterVoucher {
-            voucher_code_hash: hash,
-            amount_micros: body.amount_micros,
-            is_renewal: body.is_renewal,
-            voucher_expires_at: body.voucher_expires_at,
-            daily_cap_micros: body.daily_cap_micros,
-        },
-    )
-    .await
-    {
-        Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response(),
-        Err(e) => {
-            tracing::warn!("register voucher failed: {e:#}");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "register_failed",
-                &e.to_string(),
-            )
-        }
-    }
 }
 
 fn error(status: StatusCode, code: &str, message: &str) -> axum::response::Response {

@@ -1,24 +1,22 @@
-//! Credit top-up routes (v3, locked 2026-06-05).
+//! Credit top-up routes (linked prepaid model).
 //!
-//! Two device-facing endpoints, both bearer-authed via `billing_token`:
+//! Two device-facing endpoints, both authed via the device `api_key`:
 //!
 //! - `POST /credits/auto-topup` — box hit a 402 with `wallet_empty`. We
-//!   charge the saved card $10 off-session, mint a top-up voucher,
-//!   return the voucher_code so the box can redeem.
+//!   charge the saved card $10 off-session, then credit the account's wallet
+//!   in virtues-api (`/internal/credit` mode `add`).
 //! - `POST /credits/topup { amount_micros }` — user explicitly tapped
-//!   "Add credit" in iOS Settings with a chosen amount in `$10–$50`.
-//!   Same flow, just user-chosen amount.
+//!   "Add credit" with a chosen amount in `$10–$50`. Same flow.
 //!
 //! Both routes enforce:
 //!   1. Active subscription (no auto-charge if sub canceled/past_due).
-//!   2. Monthly cap (`customers.monthly_cap_micros`): refuse if this
-//!      month's total charges + new amount would exceed it.
+//!   2. Monthly cap (`customers.monthly_cap_micros`): refuse if this month's
+//!      total charges + new amount would exceed it.
 //!   3. Amount band ($10 ≤ amount ≤ $50 for manual; fixed $10 for auto).
 //!
-//! Privacy: same wall as sub renewal. We learn the customer paid $N at
-//! time T. We do NOT learn what the box's wallet was used for. The
-//! voucher hash bridges atlas's "charge customer" to virtues-api's
-//! "credit bearer" — then is discarded by both sides (24h sweeper).
+//! Order matters: we charge the card, THEN credit the wallet keyed by the
+//! opaque `account_id`. On a credit failure after a successful charge we 500
+//! for manual reconciliation (the Stripe PaymentIntent id is the ledger ref).
 
 use axum::{
     extract::State,
@@ -27,15 +25,14 @@ use axum::{
     routing::post,
     Router,
 };
-use chrono::{Duration, Utc};
-use rand::RngCore;
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::routes::AppState;
 use crate::stripe_api::OffSessionChargeError;
-use crate::virtues_api_client::RegisterVoucher;
+use crate::virtues_api_client::Credit;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -45,12 +42,12 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 struct AutoTopupBody {
-    billing_token: String,
+    api_key: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct ManualTopupBody {
-    billing_token: String,
+    api_key: String,
     amount_micros: i64,
 }
 
@@ -63,7 +60,7 @@ async fn auto_topup(
     Json(body): Json<AutoTopupBody>,
 ) -> axum::response::Response {
     let amount = state.voucher.auto_topup_micros;
-    let (customer_id, _email) = match resolve_active_customer(&state, &body.billing_token).await {
+    let (customer_id, account_id) = match resolve_active_customer(&state, &body.api_key).await {
         Ok(c) => c,
         Err(resp) => return resp,
     };
@@ -72,7 +69,7 @@ async fn auto_topup(
         return resp;
     }
 
-    do_topup(&state, &customer_id, amount, "Virtues auto top-up", true).await
+    do_topup(&state, &customer_id, &account_id, amount, "Virtues auto top-up", true).await
 }
 
 /// User-initiated top-up from iOS. Amount must lie in
@@ -92,7 +89,7 @@ async fn manual_topup(
         );
     }
 
-    let (customer_id, _email) = match resolve_active_customer(&state, &body.billing_token).await {
+    let (customer_id, account_id) = match resolve_active_customer(&state, &body.api_key).await {
         Ok(c) => c,
         Err(resp) => return resp,
     };
@@ -101,14 +98,15 @@ async fn manual_topup(
         return resp;
     }
 
-    do_topup(&state, &customer_id, body.amount_micros, "Virtues credit", false).await
+    do_topup(&state, &customer_id, &account_id, body.amount_micros, "Virtues credit", false).await
 }
 
-/// Shared body: charge saved card off-session → on success, mint voucher
-/// + register with virtues-api + record month-spend + return voucher_code.
+/// Shared body: charge saved card off-session → on success, credit the
+/// account's wallet in virtues-api + record month-spend.
 async fn do_topup(
     state: &AppState,
     customer_id: &str,
+    account_id: &str,
     amount_micros: i64,
     description: &str,
     is_auto: bool,
@@ -153,17 +151,8 @@ async fn do_topup(
         }
     };
 
-    // Mint voucher + register with virtues-api. Use the same code shape as
-    // sub renewal: 32 random bytes hex-encoded, SHA-256 hash registered.
-    let mut code_bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut code_bytes);
-    let voucher_code = hex::encode(code_bytes);
-    let code_hash_hex = hex::encode(sha256(voucher_code.as_bytes()));
-    let voucher_expires_at = Utc::now() + Duration::days(state.voucher.unredeemed_days);
-
-    // Carry the customer's daily ceiling across the wall so virtues-api keeps
-    // enforcing it after a top-up refresh. Falls back to the $20 default if the
-    // row read hiccups — never block a paid top-up on this.
+    // Carry the customer's daily ceiling so virtues-api keeps enforcing it.
+    // Falls back to the $20 default if the row read hiccups.
     let daily_cap_micros: i64 = sqlx::query_scalar(
         "SELECT daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
     )
@@ -174,31 +163,29 @@ async fn do_topup(
     .flatten()
     .unwrap_or(20_000_000);
 
+    // Credit the account's wallet (ADD). On failure after a successful charge,
+    // log + 500 for manual reconciliation (money is in Stripe, not yet credited).
     if let Err(e) = state
         .virtues_api
-        .register_voucher(&RegisterVoucher {
-            voucher_code_hash: code_hash_hex,
+        .credit(&Credit {
+            account_id: account_id.to_string(),
             amount_micros,
-            is_renewal: false, // top-ups ADD to wallet, not overwrite
-            voucher_expires_at,
+            mode: "add",
             daily_cap_micros,
+            reference: Some(format!("topup:{pi_id}")),
         })
         .await
     {
-        // Refund the Stripe charge? Risk window. For v1, log + 500 so
-        // the operator can investigate. The voucher is unmilled — money
-        // is in your Stripe balance and not yet credited to the user.
-        // Manual refund + retry by support.
         tracing::error!(
             customer = customer_id,
             payment_intent = pi_id,
             error = %e,
-            "voucher registration with virtues-api FAILED after Stripe charge — manual reconciliation needed"
+            "credit with virtues-api FAILED after Stripe charge — manual reconciliation needed"
         );
         return err(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "voucher_register_failed",
-            "voucher registration failed after charge; support has been notified",
+            "credit_failed",
+            "credit failed after charge; support has been notified",
         );
     }
 
@@ -218,36 +205,32 @@ async fn do_topup(
     .await;
 
     (
-        StatusCode::CREATED,
-        Json(json!({
-            "voucher_code": voucher_code,
-            "amount_micros": amount_micros,
-            "voucher_expires_at": voucher_expires_at,
-        })),
+        StatusCode::OK,
+        Json(json!({ "ok": true, "amount_micros": amount_micros })),
     )
         .into_response()
 }
 
-/// Resolve a billing_token → active customer. Errors on unknown token or
-/// inactive subscription.
+/// Resolve an api_key → (active customer id, account id). Errors on unknown
+/// key or inactive subscription.
 async fn resolve_active_customer(
     state: &AppState,
-    billing_token: &str,
+    api_key: &str,
 ) -> Result<(String, String), axum::response::Response> {
-    let token_hash = sha256(billing_token.as_bytes());
+    let key_hash = sha256(api_key.as_bytes());
 
     let row: Option<(String, String, Option<String>)> = sqlx::query_as(
         r#"
-        SELECT c.stripe_customer_id, c.email,
+        SELECT c.stripe_customer_id, c.account_id,
                (SELECT s.status FROM subscriptions s
                 WHERE s.stripe_customer_id = c.stripe_customer_id
                 ORDER BY s.current_period_end DESC NULLS LAST
                 LIMIT 1) AS sub_status
         FROM customers c
-        WHERE c.billing_token_hash = $1
+        WHERE c.api_key_hash = $1
         "#,
     )
-    .bind(&token_hash[..])
+    .bind(&key_hash[..])
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
@@ -259,11 +242,11 @@ async fn resolve_active_customer(
         )
     })?;
 
-    let Some((customer_id, email, sub_status)) = row else {
+    let Some((customer_id, account_id, sub_status)) = row else {
         return Err(err(
             StatusCode::UNAUTHORIZED,
-            "invalid_billing_token",
-            "unknown billing token",
+            "invalid_api_key",
+            "unknown api key",
         ));
     };
 
@@ -275,7 +258,7 @@ async fn resolve_active_customer(
         ));
     }
 
-    Ok((customer_id, email))
+    Ok((customer_id, account_id))
 }
 
 /// Enforce `customers.monthly_cap_micros`. Resets `monthly_charges_micros`

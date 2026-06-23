@@ -35,9 +35,7 @@ pub struct Config {
     pub topup_min_micros: i64,
     pub topup_max_micros: i64,
     /// How long an unredeemed voucher stays valid before self-expiring.
-    pub voucher_unredeemed_days: i64,
     /// Minimum gap between voucher issuances per customer (anti-stacking).
-    pub voucher_min_interval_days: i64,
     /// Surface Stripe's "Add promotion code" field at Checkout AND accept
     /// `payment_status = "no_payment_required"` in `finalize_paid_session`
     /// (so 100%-off coupons settle without a charge). Default false. Cap
@@ -128,8 +126,6 @@ impl Config {
         let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 10_000_000);
         let topup_min_micros = env_i64("TOPUP_MIN_MICROS", 10_000_000);
         let topup_max_micros = env_i64("TOPUP_MAX_MICROS", 50_000_000);
-        let voucher_unredeemed_days = env_i64("VOUCHER_UNREDEEMED_DAYS", 7);
-        let voucher_min_interval_days = env_i64("VOUCHER_MIN_INTERVAL_DAYS", 25);
 
         let allow_promotion_codes = std::env::var("ATLAS_ALLOW_PROMOTION_CODES")
             .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes"))
@@ -193,8 +189,6 @@ impl Config {
             auto_topup_micros,
             topup_min_micros,
             topup_max_micros,
-            voucher_unredeemed_days,
-            voucher_min_interval_days,
             allow_promotion_codes,
             preorder_deposit_amount_cents,
             preorder_deposit_currency,

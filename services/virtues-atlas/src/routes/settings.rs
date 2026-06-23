@@ -3,7 +3,7 @@
 //! `GET /settings`  → current caps + auto-topup toggle
 //! `PUT /settings`  → update caps + auto-topup toggle
 //!
-//! Both bearer-authed via the box's `billing_token`. iOS Settings is the
+//! Both bearer-authed via the box's `api_key`. iOS Settings is the
 //! primary consumer — pulls current state on open, writes back on change.
 //!
 //! Spend caps are atlas-side because:
@@ -45,12 +45,12 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 struct AuthBody {
-    billing_token: String,
+    api_key: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct SettingsUpdate {
-    billing_token: String,
+    api_key: String,
     monthly_cap_micros: Option<i64>,
     daily_cap_micros: Option<i64>,
     auto_topup_enabled: Option<bool>,
@@ -60,14 +60,14 @@ async fn get_settings(
     State(state): State<AppState>,
     Json(body): Json<AuthBody>,
 ) -> axum::response::Response {
-    let token_hash = sha256(body.billing_token.as_bytes());
+    let token_hash = sha256(body.api_key.as_bytes());
 
     let row: Option<(i64, i64, bool, i64, i64)> = sqlx::query_as(
         r#"
         SELECT monthly_cap_micros, daily_cap_micros, auto_topup_enabled,
                monthly_charges_micros, COALESCE(EXTRACT(EPOCH FROM month_reset_at)::bigint, 0)
         FROM customers
-        WHERE billing_token_hash = $1
+        WHERE api_key_hash = $1
         "#,
     )
     .bind(&token_hash[..])
@@ -79,8 +79,8 @@ async fn get_settings(
     let Some((monthly_cap, daily_cap, auto_topup, charges, reset_epoch)) = row else {
         return err(
             StatusCode::UNAUTHORIZED,
-            "invalid_billing_token",
-            "unknown billing token",
+            "invalid_api_key",
+            "unknown api key",
         );
     };
 
@@ -121,7 +121,7 @@ async fn put_settings(
         }
     }
 
-    let token_hash = sha256(body.billing_token.as_bytes());
+    let token_hash = sha256(body.api_key.as_bytes());
 
     // Partial update: only touch fields the client sent.
     let result = sqlx::query(
@@ -130,7 +130,7 @@ async fn put_settings(
         SET monthly_cap_micros   = COALESCE($2, monthly_cap_micros),
             daily_cap_micros     = COALESCE($3, daily_cap_micros),
             auto_topup_enabled   = COALESCE($4, auto_topup_enabled)
-        WHERE billing_token_hash = $1
+        WHERE api_key_hash = $1
         "#,
     )
     .bind(&token_hash[..])
@@ -143,8 +143,8 @@ async fn put_settings(
     match result {
         Ok(r) if r.rows_affected() == 0 => err(
             StatusCode::UNAUTHORIZED,
-            "invalid_billing_token",
-            "unknown billing token",
+            "invalid_api_key",
+            "unknown api key",
         ),
         Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
         Err(e) => {

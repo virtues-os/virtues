@@ -41,11 +41,10 @@ pub struct IdentityStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubscriptionStatus {
-    /// Linked to a subscription: a `billing_token` is present (box↔Atlas).
-    pub billing_token: bool,
-    /// A usage `bearer` has been minted (box↔virtues-api) — i.e. AI is ready.
-    /// Distinct from `billing_token`: linked boxes mint the bearer lazily.
-    pub bearer: bool,
+    /// Linked to a subscription: a device `api_key` is present (box↔atlas↔
+    /// virtues-api). In the linked model this is the only signal — the same key
+    /// authenticates the proxy, and the wallet is credited server-side.
+    pub linked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -57,13 +56,9 @@ pub struct DeviceStatus {
 /// the HTTP endpoint.
 pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
     let wg_key = box_secrets::get(pool, "wg_server_keypair").await?;
-    let billing_token = crate::virtues_api::renew::has_billing_token(pool)
+    let linked = crate::virtues_api::renew::has_api_key(pool)
         .await
         .unwrap_or(false);
-    let bearer = crate::virtues_api::renew::current_bearer(pool)
-        .await
-        .unwrap_or(None)
-        .is_some();
     let paired_wg: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM credentials WHERE (metadata->'wg') IS NOT NULL AND status = 'active'",
     )
@@ -99,7 +94,7 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
             spki_fingerprint,
             wg_endpoint,
         },
-        subscription: SubscriptionStatus { billing_token, bearer },
+        subscription: SubscriptionStatus { linked },
         devices: DeviceStatus { paired_wg },
     })
 }
@@ -138,12 +133,10 @@ pub struct ReadinessGates {
     pub infra: bool,
     /// WG server keypair minted (== `BoxStatus::ready`).
     pub identity: bool,
-    /// Linked to a Virtues subscription: a `billing_token` is present
-    /// (box↔Atlas). This is "claimed" — ownership is the billing relationship.
+    /// Linked to a Virtues subscription: a device `api_key` is present. This is
+    /// "claimed" — ownership is the billing relationship, and the same key makes
+    /// AI ready immediately (the wallet is funded server-side at link).
     pub linked: bool,
-    /// A usage bearer has been minted (box↔virtues-api) — AI is ready. Linked
-    /// boxes mint this lazily, so it can lag `linked` until the first AI call.
-    pub entitled: bool,
     /// At least one device has paired.
     pub paired: bool,
 }
@@ -206,8 +199,7 @@ pub async fn compute_health(pool: &PgPool) -> Result<BoxHealth> {
     let gates = ReadinessGates {
         infra: true,
         identity: s.ready,
-        linked: s.subscription.billing_token,
-        entitled: s.subscription.bearer,
+        linked: s.subscription.linked,
         paired: s.devices.paired_wg > 0,
     };
     let ready = gates.identity && gates.linked && gates.paired;
@@ -432,7 +424,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
         SetupStep {
             id: "account",
             title: "Virtues account",
-            done: s.subscription.billing_token,
+            done: s.subscription.linked,
             detail: None,
             kind: None,
         },

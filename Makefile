@@ -26,14 +26,14 @@ VIRTUES_ATLAS_URL ?= http://localhost:9100
 endif
 DEV_WEB_PORT ?= 5173
 
-# Local virtues-api (`make dev-api`): its own logical db + a known dev bearer.
-# The bearer is funded by the gated seed in virtues-api (ENVIRONMENT=dev), and
-# virtues-core presents it via VIRTUES_API_BEARER — but only when pointing at a
-# LOCAL api. Against prod we must use the real vault bearer, so DEV_API_BEARER
+# Local virtues-api (`make dev-api`): its own logical db + a known dev api_key.
+# The key is funded by the gated seed in virtues-api (ENVIRONMENT=dev), and
+# virtues-core presents it via VIRTUES_API_KEY — but only when pointing at a
+# LOCAL api. Against prod we must use the real vault key, so DEV_API_KEY
 # stays empty there (the client override no-ops on an empty value).
 VIRTUES_API_DATABASE_URL ?= postgres://virtues:virtues@localhost:5432/virtues_api
-VIRTUES_API_BEARER ?= dev-local-bearer
-DEV_API_BEARER := $(if $(filter http://localhost%,$(VIRTUES_API_URL)),$(VIRTUES_API_BEARER),)
+VIRTUES_API_KEY ?= dev-local-key
+DEV_API_KEY := $(if $(filter http://localhost%,$(VIRTUES_API_URL)),$(VIRTUES_API_KEY),)
 
 # Quiet dev logs: warnings/errors only. Override for a noisy session, e.g.
 #   make dev RUST_LOG=info        (or RUST_LOG=virtues=debug for targeted debug)
@@ -155,7 +155,7 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	ENVIRONMENT=dev \
 	DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
 	VIRTUES_API_URL=$(VIRTUES_API_URL) \
-	VIRTUES_API_BEARER=$(DEV_API_BEARER) \
+	VIRTUES_API_KEY=$(DEV_API_KEY) \
 	VIRTUES_ATLAS_URL=$(VIRTUES_ATLAS_URL) \
 	VIRTUES_HTTPS_PORT=0 \
 	VIRTUES_WEB_PORT=$(DEV_WEB_PORT) \
@@ -169,7 +169,7 @@ dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	ENVIRONMENT=dev \
 	VIRTUES_API_DATABASE_URL=$(VIRTUES_API_DATABASE_URL) \
-	VIRTUES_API_BEARER=$(VIRTUES_API_BEARER) \
+	VIRTUES_API_KEY=$(VIRTUES_API_KEY) \
 	cargo run -p virtues-api
 
 dev-web: ## Run the SvelteKit dev server on :$(DEV_WEB_PORT)

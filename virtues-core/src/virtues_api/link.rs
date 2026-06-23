@@ -119,7 +119,6 @@ pub async fn poll(
     db: &PgPool,
     http: &reqwest::Client,
     atlas_url: &str,
-    api_url: &str,
 ) -> Result<LinkStatus> {
     let Some((device_code, _meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
         return Ok(LinkStatus::None);
@@ -140,19 +139,16 @@ pub async fn poll(
     let v: serde_json::Value = resp.json().await?;
     match v["status"].as_str().unwrap_or("pending") {
         "ready" => {
-            let token = v["billing_token"]
+            let api_key = v["api_key"]
                 .as_str()
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| anyhow!("link ready but no billing_token"))?;
-            super::renew::store_billing_token(db, token).await?;
-            if let Err(e) = super::renew::renew(db, http, atlas_url, api_url).await {
-                tracing::warn!("eager bearer mint after link failed (lazy retry later): {e}");
-            }
+                .ok_or_else(|| anyhow!("link ready but no api_key"))?;
+            super::renew::store_api_key(db, api_key).await?;
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)
         }
         // Already retrieved on a prior poll (e.g. crash before clearing) — the
-        // token is stored; just converge.
+        // api_key is stored; just converge.
         "claimed" => {
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)

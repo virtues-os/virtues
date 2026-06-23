@@ -1434,7 +1434,7 @@ pub async fn get_subscription_handler(State(pool): State<sqlx::PgPool>) -> Respo
 /// Any failure (no billing token yet, inactive subscription, Stripe hiccup)
 /// returns a clean `{error}` string the button renders inline — never a 500.
 pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> Response {
-    let billing_token = match crate::virtues_api::renew::read_billing_token(&pool).await {
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
         Ok(Some(t)) => t,
         Ok(None) => {
             return (
@@ -1462,7 +1462,7 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
     // customer after they click "Return to Virtues").
     let http = crate::http_client::virtues_api_client();
 
-    match crate::virtues_api::renew::fetch_portal_session(&http, &atlas_url, &billing_token, "")
+    match crate::virtues_api::renew::fetch_portal_session(&http, &atlas_url, &api_key, "")
         .await
     {
         Ok(url) => (StatusCode::OK, Json(serde_json::json!({ "url": url }))).into_response(),
@@ -1485,12 +1485,10 @@ pub struct ClaimRequest {
 
 /// POST /api/billing/claim — one-time onboarding step.
 ///
-/// Exchanges the Stripe checkout `session_id` for a long-lived billing token
-/// (via Atlas `/claim`) and stores it in the local credential vault. This is
-/// the only place the customer↔device link is established, and it lives only
-/// on this box. We then eagerly mint the first monthly bearer so AI works
-/// immediately; if that renewal fails it's non-fatal — the lazy
-/// `bearer_expired` → renew path will mint one on the first AI call.
+/// Exchanges the Stripe checkout `session_id` for the device api_key (via Atlas
+/// `/claim`) and stores it in the local credential vault. Atlas also registers
+/// the device + funds this period's wallet, so AI works immediately — no
+/// client-side bearer mint.
 pub async fn claim_billing_handler(
     State(pool): State<sqlx::PgPool>,
     Json(req): Json<ClaimRequest>,
@@ -1511,33 +1509,48 @@ pub async fn claim_billing_handler(
         }
     };
 
-    if let Err(e) = crate::virtues_api::renew::store_billing_token(&pool, &claim.billing_token).await
-    {
-        tracing::error!("failed to store billing token: {e}");
+    if let Err(e) = crate::virtues_api::renew::store_api_key(&pool, &claim.api_key).await {
+        tracing::error!("failed to store api_key: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "failed to store billing token" })),
+            Json(serde_json::json!({ "error": "failed to store api_key" })),
         )
             .into_response();
     }
 
-    // Eager first-bearer mint (best-effort).
-    let api_url =
-        crate::virtues_api::api_url();
-    let bearer_ready =
-        match crate::virtues_api::renew::renew(&pool, &http, &atlas_url, &api_url).await {
-            Ok(_) => true,
-            Err(e) => {
-                tracing::warn!("eager bearer mint after claim failed (lazy renew will retry): {e}");
-                false
-            }
-        };
-
     (
         StatusCode::OK,
-        Json(serde_json::json!({ "claimed": true, "bearer_ready": bearer_ready })),
+        Json(serde_json::json!({ "claimed": true, "bearer_ready": true })),
     )
         .into_response()
+}
+
+/// GET /api/billing/usage — wallet balance + recent ledger for BillingView.
+///
+/// Proxies virtues-api `GET /v1/usage` (authenticated with the box's device
+/// api_key). Returns `{ balance_micros, today_spent_micros, daily_cap_micros,
+/// month_to_date_micros, expires_at, entries: [{ ts, micros, kind, real_micros }] }`,
+/// or a clean `{error}` (never a 500) when not linked / the proxy is unreachable.
+pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response {
+    if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "error": "Connect your subscription to see your balance." })),
+        )
+            .into_response();
+    }
+    let client = crate::virtues_api::client::BearerClient::from_env(pool);
+    match client.get_json("/v1/usage").await {
+        Ok(resp) if resp.is_success() => (StatusCode::OK, Json(resp.body)).into_response(),
+        Ok(resp) => {
+            tracing::warn!("billing usage: proxy returned {}", resp.status);
+            (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't load your balance. Try again." }))).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("billing usage: proxy call failed: {e}");
+            (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't load your balance. Try again." }))).into_response()
+        }
+    }
 }
 
 /// POST /api/billing/link/start — begin the device-authorization link flow.
@@ -1567,10 +1580,8 @@ pub async fn billing_link_start_handler(State(pool): State<sqlx::PgPool>) -> Res
 pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let atlas_url =
         crate::virtues_api::atlas_url();
-    let api_url =
-        crate::virtues_api::api_url();
     let http = crate::http_client::virtues_api_client();
-    match crate::virtues_api::link::poll(&pool, &http, &atlas_url, &api_url).await {
+    match crate::virtues_api::link::poll(&pool, &http, &atlas_url).await {
         Ok(status) => (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response(),
         Err(e) => {
             tracing::warn!("billing link status failed: {e}");
@@ -2706,8 +2717,10 @@ pub async fn hydrate_profile_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // In production, require the secret; in dev, allow any request
-    let is_production = std::env::var("RUST_ENV")
+    // In production, require the secret; in dev, allow any request.
+    // Keyed off ENVIRONMENT (what the installer actually sets) — RUST_ENV was never
+    // set, which silently disabled this auth check in production.
+    let is_production = std::env::var("ENVIRONMENT")
         .map(|v| v == "production")
         .unwrap_or(false);
 

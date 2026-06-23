@@ -53,7 +53,7 @@ async fn places_autocomplete(
     let pool = &state.db;
 
     let _ = &headers; // X-Virtues-Purpose accepted (v3 no-op telemetry)
-    let charged = match entitlement::charge(pool, &ent.bearer_hash, PLACES_COST_MICROS).await {
+    let charged = match entitlement::charge(pool, &ent.account_id, PLACES_COST_MICROS).await {
         Ok(c) => c,
         Err(e) => return charge_error_resp(e),
     };
@@ -69,7 +69,7 @@ async fn places_autocomplete(
         .send()
         .await;
 
-    finish_charged(pool, &ent.bearer_hash, charged.billed_micros, upstream).await
+    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
 }
 
 async fn places_details(
@@ -88,7 +88,7 @@ async fn places_details(
     let pool = &state.db;
 
     let _ = &headers; // X-Virtues-Purpose accepted (v3 no-op telemetry)
-    let charged = match entitlement::charge(pool, &ent.bearer_hash, PLACES_COST_MICROS).await {
+    let charged = match entitlement::charge(pool, &ent.account_id, PLACES_COST_MICROS).await {
         Ok(c) => c,
         Err(e) => return charge_error_resp(e),
     };
@@ -107,7 +107,7 @@ async fn places_details(
         .send()
         .await;
 
-    finish_charged(pool, &ent.bearer_hash, charged.billed_micros, upstream).await
+    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
 }
 
 /// Shared tail: pass upstream response through, refund on any upstream
@@ -115,7 +115,7 @@ async fn places_details(
 /// actually decremented (post-markup) and is what we refund.
 async fn finish_charged(
     pool: &sqlx::PgPool,
-    bearer_hash: &[u8],
+    account_id: &str,
     billed_micros: i64,
     upstream: Result<reqwest::Response, reqwest::Error>,
 ) -> axum::response::Response {
@@ -125,7 +125,7 @@ async fn finish_charged(
             let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
 
             if !status.is_success() {
-                if let Err(re) = entitlement::refund(pool, bearer_hash, billed_micros).await {
+                if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
                     tracing::warn!("places refund failed after upstream non-2xx: {re:#}");
                 }
             } else {
@@ -143,7 +143,7 @@ async fn finish_charged(
                 .into_response()
         }
         Err(e) => {
-            if let Err(re) = entitlement::refund(pool, bearer_hash, billed_micros).await {
+            if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
                 tracing::warn!("places refund failed after upstream transport error: {re:#}");
             }
             error_resp(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string())
@@ -155,8 +155,8 @@ fn charge_error_resp(e: ChargeError) -> axum::response::Response {
     let (status, code, message) = match e {
         ChargeError::Expired => (
             StatusCode::PAYMENT_REQUIRED,
-            "bearer_expired",
-            "bearer expired — redeem a fresh voucher".to_string(),
+            "wallet_expired",
+            "subscription wallet expired — reconnect".to_string(),
         ),
         ChargeError::InsufficientBudget => (
             StatusCode::PAYMENT_REQUIRED,
@@ -165,8 +165,8 @@ fn charge_error_resp(e: ChargeError) -> axum::response::Response {
         ),
         ChargeError::NotFound => (
             StatusCode::UNAUTHORIZED,
-            "unknown_bearer",
-            "bearer not recognized".to_string(),
+            "unknown_key",
+            "api key not recognized — reconnect".to_string(),
         ),
         ChargeError::InvalidCost => (
             StatusCode::BAD_REQUEST,

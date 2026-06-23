@@ -22,7 +22,24 @@ use crate::AppState;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/v1/whoami", get(whoami))
+        .route("/v1/usage", get(usage))
         .route("/v1/charge-test", post(charge_test))
+}
+
+/// Balance + recent ledger entries for the authenticated account. Drives the
+/// box's billing/usage surface ("here's your balance, here's where it went").
+async fn usage(State(state): State<Arc<AppState>>, BearerAuth(acct): BearerAuth) -> impl IntoResponse {
+    match entitlement::usage_summary(&state.db, &acct.account_id, 50).await {
+        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
+        Err(e) => {
+            tracing::warn!("usage summary failed: {e:#}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal" } })),
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Returns a non-sensitive summary of the resolved entitlement.
@@ -30,13 +47,13 @@ pub fn router() -> Router<Arc<AppState>> {
 ///
 /// Returns BOTH pools for debugging; iOS should only surface
 /// `wallet_chat_micros` to the user (see project_economic_model memory).
-async fn whoami(BearerAuth(ent): BearerAuth) -> impl IntoResponse {
+async fn whoami(BearerAuth(acct): BearerAuth) -> impl IntoResponse {
     Json(json!({
-        "wallet_micros": ent.wallet_micros,
-        "today_spent_micros": ent.today_spent_micros,
-        "today_reset_at": ent.today_reset_at,
-        "expires_at": ent.expires_at,
-        "daily_cap_micros": ent.daily_cap_micros,
+        "balance_micros": acct.balance_micros,
+        "today_spent_micros": acct.today_spent_micros,
+        "today_reset_at": acct.today_reset_at,
+        "expires_at": acct.expires_at,
+        "daily_cap_micros": acct.daily_cap_micros,
     }))
 }
 
@@ -68,19 +85,19 @@ async fn charge_test(
 
     let _ = &headers; // X-Virtues-Purpose accepted, no-op in v3
 
-    match entitlement::charge(pool, &ent.bearer_hash, cost).await {
+    match entitlement::charge(pool, &ent.account_id, cost).await {
         Ok(ok) => (
             StatusCode::OK,
             Json(json!({
                 "real_cost_micros": ok.real_micros,
                 "billed_micros": ok.billed_micros,
-                "wallet_micros": ok.wallet_micros,
+                "balance_micros": ok.balance_micros,
             })),
         )
             .into_response(),
         Err(ChargeError::Expired) => (
             StatusCode::PAYMENT_REQUIRED,
-            Json(json!({ "error": { "code": "bearer_expired" } })),
+            Json(json!({ "error": { "code": "wallet_expired" } })),
         )
             .into_response(),
         Err(ChargeError::InsufficientBudget) => (
@@ -90,7 +107,7 @@ async fn charge_test(
             .into_response(),
         Err(ChargeError::NotFound) => (
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": { "code": "unknown_bearer" } })),
+            Json(json!({ "error": { "code": "unknown_key" } })),
         )
             .into_response(),
         Err(ChargeError::InvalidCost) => (

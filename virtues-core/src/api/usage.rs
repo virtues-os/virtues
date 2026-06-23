@@ -277,7 +277,7 @@ async fn get_limit(
 ///
 /// Returns remaining usage or error if hard limit exceeded.
 /// For soft limits, returns success with `over_limit: true` when exceeded.
-/// NOTE: This is a read-only check. For atomic check-and-increment, use `check_and_record_usage`.
+/// NOTE: This is a read-only check.
 pub async fn check_limit(
     pool: &PgPool,
     service: Service,
@@ -340,147 +340,10 @@ pub async fn check_limit(
     })
 }
 
-/// Atomically check limit and record usage in a single transaction
-///
-/// This prevents race conditions where multiple concurrent requests could all pass
-/// the limit check before any records usage. Returns the remaining usage after recording,
-/// or an error if a hard limit would be exceeded.
-/// For soft limits, always records usage and returns success with `over_limit: true`.
-pub async fn check_and_record_usage(
-    pool: &PgPool,
-    service: Service,
-    units: i64,
-) -> Result<RemainingUsage, UsageLimitError> {
-    let today = Utc::now().date_naive();
-    let first_day = first_of_month();
-    let (limit, unit, limit_type) = get_limit(pool, service).await.map_err(|e| {
-        tracing::error!("Failed to get limit for {}: {}", service, e);
-        UsageLimitError {
-            service: service.to_string(),
-            used: 0,
-            limit: 0,
-            unit: "unknown".to_string(),
-            resets_at: first_of_next_month(),
-        }
-    })?;
-
-    // For AI gateway, units are tokens; for others, units are requests
-    let (request_delta, token_delta) = match service {
-        Service::AiGateway => (1i64, units),
-        _ => (units, 0i64),
-    };
-
-    // For soft limits, always record usage regardless of limit
-    // For hard limits, only record if within limit
-    let should_enforce = limit_type == LimitType::Hard;
-
-    // Atomic check-and-increment using a single query with RETURNING
-    // This query:
-    // 1. Calculates current monthly usage
-    // 2. Checks if adding new usage would exceed limit
-    // 3. If within limit OR soft limit, inserts/updates the usage record
-    // 4. Returns the new total and whether the operation succeeded
-    let result = sqlx::query_as::<_, (i64, bool)>(
-        r#"
-        WITH current_usage AS (
-            SELECT COALESCE(SUM(
-                CASE
-                    WHEN $1 = 'ai_gateway' THEN token_count
-                    ELSE request_count
-                END
-            ), 0) as total
-            FROM app_api_usage
-            WHERE endpoint = $1
-              AND day_bucket >= $6
-        ),
-        new_usage AS (
-            SELECT
-                total + $5 as projected_total,
-                total + $5 <= $7 as within_limit
-            FROM current_usage
-        ),
-        upsert AS (
-            INSERT INTO app_api_usage (id, endpoint, day_bucket, request_count, token_count)
-            SELECT gen_random_uuid()::text, $1, $2, $3, $4
-            FROM new_usage
-            WHERE within_limit = true OR $8 = false
-            ON CONFLICT (endpoint, day_bucket) DO UPDATE SET
-                request_count = app_api_usage.request_count + $3,
-                token_count = app_api_usage.token_count + $4,
-                updated_at = now()
-            RETURNING 1
-        )
-        SELECT
-            projected_total,
-            within_limit
-        FROM new_usage
-        "#,
-    )
-    .bind(service.as_str()) // $1: endpoint
-    .bind(today) // $2: day_bucket
-    .bind(request_delta) // $3: request_count delta
-    .bind(token_delta) // $4: token_count delta
-    .bind(if service == Service::AiGateway {
-        units
-    } else {
-        units
-    }) // $5: units to check
-    .bind(first_day) // $6: first day of month
-    .bind(limit) // $7: limit
-    .bind(should_enforce) // $8: whether to enforce limit
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Failed to check and record usage for {}: {}", service, e);
-        UsageLimitError {
-            service: service.to_string(),
-            used: 0,
-            limit,
-            unit: unit.clone(),
-            resets_at: first_of_next_month(),
-        }
-    })?;
-
-    let (projected_total, within_limit) = result;
-
-    if !within_limit {
-        match limit_type {
-            LimitType::Hard => {
-                return Err(UsageLimitError {
-                    service: service.to_string(),
-                    used: projected_total - units, // Current usage before this request
-                    limit,
-                    unit,
-                    resets_at: first_of_next_month(),
-                });
-            }
-            LimitType::Soft => {
-                tracing::warn!(
-                    service = %service,
-                    used = projected_total,
-                    limit = limit,
-                    "Soft limit exceeded - recorded usage but over budget"
-                );
-                return Ok(RemainingUsage {
-                    allowed: true,
-                    remaining: limit - projected_total, // Will be negative
-                    over_limit: true,
-                });
-            }
-        }
-    }
-
-    Ok(RemainingUsage {
-        allowed: true,
-        remaining: limit - projected_total,
-        over_limit: false,
-    })
-}
-
 /// Record usage for a service (without limit check)
 ///
 /// Increments the usage counter in daily buckets.
-/// NOTE: Prefer `check_and_record_usage` for atomic limit checking.
+/// 
 /// This function is useful when you want to record usage after an operation
 /// completes successfully, without pre-checking limits.
 pub async fn record_usage(

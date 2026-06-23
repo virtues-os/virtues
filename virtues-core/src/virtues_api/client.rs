@@ -1,12 +1,14 @@
-//! Bearer-authenticated client for the new virtues-api routes.
+//! api_key-authenticated client for the virtues-api routes.
 //!
-//! Attaches the home server's current bearer (from the credential vault)
-//! and auto-renews once on a `bearer_expired` (402) — the OAuth
-//! refresh-token pattern, with `renew::renew` as the refresh.
+//! Attaches the box's device api_key (from the credential vault) on every call.
+//! No renewal — the key is stable; the wallet behind it is credited
+//! server-side. On a `wallet_empty` 402 it triggers one auto-top-up via atlas
+//! (which charges the card + credits the wallet) and retries; other 402s
+//! (wallet_expired, daily_cap_reached) and 401 (unknown_key → re-link) surface
+//! to the caller.
 //!
-//! Use this for the bearer routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
-//! `/v1/unsplash/*`). The legacy `with_*_auth` header helpers remain for
-//! the old `/v1/services/*` routes until every caller migrates.
+//! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
+//! `/v1/unsplash/*`).
 //!
 //! ## Purpose tagging (two-pool wallet model)
 //!
@@ -22,7 +24,6 @@
 //! charge hits the protected OS reserve and chat budget stays untouched.
 
 use anyhow::{anyhow, Result};
-use chrono::Utc;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -263,15 +264,12 @@ impl BearerClient {
         }
         let code = resp.body["error"]["code"].as_str().unwrap_or("");
         match code {
-            "bearer_expired" => {
-                let fresh = renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url)
-                    .await?;
-                self.send(path, body, &fresh.bearer).await
-            }
             "insufficient_budget" | "wallet_empty" => {
                 self.auto_topup_and_retry_post(path, body).await
             }
-            _ => Ok(resp), // daily_cap_reached, call_too_expensive, etc — surface
+            // wallet_expired (sub lapsed), daily_cap_reached, call_too_expensive,
+            // unknown_key (re-link) — not recoverable from the box; surface.
+            _ => Ok(resp),
         }
     }
 
@@ -285,11 +283,6 @@ impl BearerClient {
         }
         let code = resp.body["error"]["code"].as_str().unwrap_or("");
         match code {
-            "bearer_expired" => {
-                let fresh = renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url)
-                    .await?;
-                self.send_get(path, &fresh.bearer).await
-            }
             "insufficient_budget" | "wallet_empty" => {
                 self.auto_topup_and_retry_get(path).await
             }
@@ -315,10 +308,10 @@ impl BearerClient {
         if !auto_topup_allowed(&self.pool).await {
             return Ok(synthesize_topup_disabled());
         }
-        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url, &self.api_url).await? {
-            renew::AutoTopupOutcome::Funded { wallet_micros } => {
+        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
+            renew::AutoTopupOutcome::Funded { amount_micros } => {
                 let _ = record_topup_success(&self.pool).await;
-                tracing::info!(wallet_micros, "auto-top-up funded; retrying request");
+                tracing::info!(amount_micros, "auto-top-up funded; retrying request");
                 let bearer = self.ensure_bearer().await?;
                 self.send(path, body, &bearer).await
             }
@@ -333,10 +326,10 @@ impl BearerClient {
         if !auto_topup_allowed(&self.pool).await {
             return Ok(synthesize_topup_disabled());
         }
-        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url, &self.api_url).await? {
-            renew::AutoTopupOutcome::Funded { wallet_micros } => {
+        match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
+            renew::AutoTopupOutcome::Funded { amount_micros } => {
                 let _ = record_topup_success(&self.pool).await;
-                tracing::info!(wallet_micros, "auto-top-up funded; retrying GET");
+                tracing::info!(amount_micros, "auto-top-up funded; retrying GET");
                 let bearer = self.ensure_bearer().await?;
                 self.send_get(path, &bearer).await
             }
@@ -370,18 +363,10 @@ impl BearerClient {
 
         if resp.status().as_u16() == 402 {
             let err_body = resp.text().await.unwrap_or_default();
-            if err_body.contains("bearer_expired") {
-                let fresh =
-                    renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url).await?;
-                let retry = self.send_stream(path, body, &fresh.bearer).await?;
-                return Ok(Self::classify_stream(retry).await);
-            }
             if err_body.contains("insufficient_budget") || err_body.contains("wallet_empty") {
-                match renew::auto_topup(&self.pool, &self.http, &self.atlas_url, &self.api_url)
-                    .await?
-                {
-                    renew::AutoTopupOutcome::Funded { wallet_micros } => {
-                        tracing::info!(wallet_micros, "auto-top-up funded; retrying stream");
+                match renew::auto_topup(&self.pool, &self.http, &self.atlas_url).await? {
+                    renew::AutoTopupOutcome::Funded { amount_micros } => {
+                        tracing::info!(amount_micros, "auto-top-up funded; retrying stream");
                         let bearer = self.ensure_bearer().await?;
                         let retry = self.send_stream(path, body, &bearer).await?;
                         return Ok(Self::classify_stream(retry).await);
@@ -460,28 +445,23 @@ impl BearerClient {
         Ok(Self::classify_stream(resp).await)
     }
 
-    /// Return a usable bearer: the current one if still valid, otherwise
-    /// renew. Renewal requires a previously-claimed billing token.
+    /// Return the device api_key to authenticate with. No renewal — the key
+    /// is stable; the wallet behind it is credited server-side.
     ///
-    /// Dev override: when `VIRTUES_API_BEARER` is set we present it verbatim
-    /// and skip the vault/renew path entirely. This pairs with the gated
-    /// seed in virtues-api (`ENVIRONMENT=dev`), which funds an entitlement
-    /// keyed by `sha256(VIRTUES_API_BEARER)` — so a local virtues-api accepts
-    /// our calls without a real subscription. Unset in prod → no effect.
+    /// Dev override: when `VIRTUES_API_KEY` is set we present it verbatim and
+    /// skip the vault. Pairs with the gated dev seed in virtues-api
+    /// (`ENVIRONMENT=dev`), which registers a device key keyed by
+    /// `sha256(VIRTUES_API_KEY)` against a funded account. Unset in prod → no
+    /// effect.
     async fn ensure_bearer(&self) -> Result<String> {
-        if let Ok(bearer) = std::env::var("VIRTUES_API_BEARER") {
-            if !bearer.is_empty() {
-                return Ok(bearer);
+        if let Ok(key) = std::env::var("VIRTUES_API_KEY") {
+            if !key.is_empty() {
+                return Ok(key);
             }
         }
-        match renew::current_bearer(&self.pool).await? {
-            Some((bearer, Some(exp))) if exp > Utc::now() => Ok(bearer),
-            _ => {
-                let fresh =
-                    renew::renew(&self.pool, &self.http, &self.atlas_url, &self.api_url).await?;
-                Ok(fresh.bearer)
-            }
-        }
+        renew::read_api_key(&self.pool)
+            .await?
+            .ok_or_else(|| anyhow!("no virtues_api key — link a subscription first"))
     }
 
     async fn send(&self, path: &str, body: &Value, bearer: &str) -> Result<ApiResponse> {

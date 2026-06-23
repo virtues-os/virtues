@@ -1,66 +1,62 @@
-//! Dev-only entitlement seed.
+//! Dev-only account seed.
 //!
-//! Funds a known bearer so a local *standalone* virtues-api accepts calls
-//! without the Atlas voucher → redeem path. Pairs with the virtues-core
-//! client override (`VIRTUES_API_BEARER`): the client presents the raw bearer,
-//! we store an entitlement keyed by its SHA-256 here, and the hashes line up.
+//! Funds a known account + device key so a local *standalone* virtues-api
+//! accepts calls without atlas. Pairs with the virtues-core client override
+//! (`VIRTUES_API_KEY`): the client presents the raw api_key, we register a
+//! device key keyed by its SHA-256 here against a funded account, and the
+//! hashes line up.
 //!
-//! The caller gates this to `ENVIRONMENT=dev` + no-Atlas, so it can never run
-//! in production. The metering path it unlocks is otherwise fully real — the
+//! Gated to `ENVIRONMENT=dev` by the caller, so it can never run in
+//! production. The metering path it unlocks is otherwise fully real — the
 //! `$20/day` ceiling and `$5/call` cap in [`crate::entitlement::charge`] still
-//! apply (guardrails on the real upstream spend a local box still incurs).
+//! apply.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
-/// Default bearer when `VIRTUES_API_BEARER` is unset. Kept in sync with the
+use crate::entitlement::{self, CreditMode, DEFAULT_DAILY_CEILING_MICROS};
+
+/// Default api_key when `VIRTUES_API_KEY` is unset. Kept in sync with the
 /// virtues-core client override and the Makefile's `dev-api`/`dev-core` env.
-const DEFAULT_DEV_BEARER: &str = "dev-local-bearer";
+const DEFAULT_DEV_KEY: &str = "dev-local-key";
 
-/// Wallet to fund the dev entitlement with ($1000 in micros). The per-day and
-/// per-call caps in `entitlement::charge` still bound actual spend — this just
-/// keeps the wallet itself from running dry mid-iteration.
-const DEV_WALLET_MICROS: i64 = 1_000_000_000;
+/// Opaque account id for the dev account.
+const DEV_ACCOUNT_ID: &str = "dev-local-account";
 
-/// Insert a funded entitlement for the dev bearer. Idempotent via
-/// `ON CONFLICT DO NOTHING` so restarts never reset a wallet you've been
-/// spending against.
-pub async fn seed_dev_entitlement(pool: &PgPool) -> Result<()> {
-    let bearer = std::env::var("VIRTUES_API_BEARER")
+/// Balance to fund the dev account with ($1000 in micros). The per-day and
+/// per-call caps still bound actual spend.
+const DEV_BALANCE_MICROS: i64 = 1_000_000_000;
+
+/// Seed a funded account + device key for the dev api_key. Idempotent enough:
+/// re-credits the account to the dev balance on each boot (dev convenience).
+pub async fn seed_dev_account(pool: &PgPool) -> Result<()> {
+    let api_key = std::env::var("VIRTUES_API_KEY")
         .ok()
-        .filter(|b| !b.is_empty())
-        .unwrap_or_else(|| DEFAULT_DEV_BEARER.to_string());
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| DEFAULT_DEV_KEY.to_string());
 
-    let bearer_hash = Sha256::digest(bearer.as_bytes()).to_vec();
-    let now = chrono::Utc::now();
-    // Far-future expiry: dev wallets never lapse. Renewal/sweeper only touch a
-    // row when a real voucher is redeemed, which never happens in standalone.
-    let expires_at = now + chrono::Duration::days(3650);
+    let key_hash = Sha256::digest(api_key.as_bytes()).to_vec();
 
-    let inserted = sqlx::query(
-        "INSERT INTO entitlements \
-            (bearer_hash, wallet_micros, today_spent_micros, today_reset_at, expires_at) \
-         VALUES ($1, $2, 0, $3, $4) \
-         ON CONFLICT (bearer_hash) DO NOTHING",
+    // Fund the account (set), then register the device key against it.
+    entitlement::credit(
+        pool,
+        DEV_ACCOUNT_ID,
+        DEV_BALANCE_MICROS,
+        CreditMode::Set,
+        DEFAULT_DAILY_CEILING_MICROS,
+        Some("dev-seed"),
     )
-    .bind(&bearer_hash)
-    .bind(DEV_WALLET_MICROS)
-    .bind(now)
-    .bind(expires_at)
-    .execute(pool)
-    .await
-    .context("seeding dev entitlement")?;
+    .await?;
+    entitlement::register_device(pool, &key_hash, DEV_ACCOUNT_ID, DEFAULT_DAILY_CEILING_MICROS)
+        .await?;
 
-    if inserted.rows_affected() > 0 {
-        tracing::warn!(
-            "DEV SEED: funded entitlement for bearer '{}' with ${} wallet \
-             (ENVIRONMENT=dev, standalone — never runs in production)",
-            bearer,
-            DEV_WALLET_MICROS / 1_000_000
-        );
-    } else {
-        tracing::info!("DEV SEED: entitlement already present, wallet left untouched");
-    }
+    tracing::warn!(
+        "DEV SEED: funded account '{}' with ${} for api_key '{}' \
+         (ENVIRONMENT=dev, standalone — never runs in production)",
+        DEV_ACCOUNT_ID,
+        DEV_BALANCE_MICROS / 1_000_000,
+        api_key
+    );
     Ok(())
 }

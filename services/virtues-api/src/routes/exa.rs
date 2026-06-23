@@ -47,7 +47,7 @@ async fn exa_search(
     let pool = &state.db;
 
     let _ = &headers;
-    let charged = match entitlement::charge(pool, &ent.bearer_hash, EXA_COST_MICROS).await {
+    let charged = match entitlement::charge(pool, &ent.account_id, EXA_COST_MICROS).await {
         Ok(c) => c,
         Err(e) => return charge_err(e),
     };
@@ -61,7 +61,7 @@ async fn exa_search(
         .send()
         .await;
 
-    finish_charged(pool, &ent.bearer_hash, charged.billed_micros, upstream).await
+    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
 }
 
 async fn exa_contents(
@@ -80,7 +80,7 @@ async fn exa_contents(
     let pool = &state.db;
 
     let _ = &headers;
-    let charged = match entitlement::charge(pool, &ent.bearer_hash, EXA_COST_MICROS).await {
+    let charged = match entitlement::charge(pool, &ent.account_id, EXA_COST_MICROS).await {
         Ok(c) => c,
         Err(e) => return charge_err(e),
     };
@@ -94,12 +94,12 @@ async fn exa_contents(
         .send()
         .await;
 
-    finish_charged(pool, &ent.bearer_hash, charged.billed_micros, upstream).await
+    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
 }
 
 async fn finish_charged(
     pool: &sqlx::PgPool,
-    bearer_hash: &[u8],
+    account_id: &str,
     billed_micros: i64,
     upstream: Result<reqwest::Response, reqwest::Error>,
 ) -> axum::response::Response {
@@ -108,7 +108,7 @@ async fn finish_charged(
             let status = resp.status();
             let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
             if !status.is_success() {
-                if let Err(re) = entitlement::refund(pool, bearer_hash, billed_micros).await {
+                if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
                     tracing::warn!("exa refund failed after non-2xx: {re:#}");
                 }
             } else {
@@ -122,7 +122,7 @@ async fn finish_charged(
                 .into_response()
         }
         Err(e) => {
-            if let Err(re) = entitlement::refund(pool, bearer_hash, billed_micros).await {
+            if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
                 tracing::warn!("exa refund failed after transport error: {re:#}");
             }
             err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string())
@@ -134,8 +134,8 @@ fn charge_err(e: ChargeError) -> axum::response::Response {
     let (status, code, message) = match e {
         ChargeError::Expired => (
             StatusCode::PAYMENT_REQUIRED,
-            "bearer_expired",
-            "bearer expired — redeem a fresh voucher".to_string(),
+            "wallet_expired",
+            "subscription wallet expired — reconnect".to_string(),
         ),
         ChargeError::InsufficientBudget => (
             StatusCode::PAYMENT_REQUIRED,
@@ -144,8 +144,8 @@ fn charge_err(e: ChargeError) -> axum::response::Response {
         ),
         ChargeError::NotFound => (
             StatusCode::UNAUTHORIZED,
-            "unknown_bearer",
-            "bearer not recognized".to_string(),
+            "unknown_key",
+            "api key not recognized — reconnect".to_string(),
         ),
         ChargeError::InvalidCost => (
             StatusCode::BAD_REQUEST,

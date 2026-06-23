@@ -5,9 +5,10 @@
 //! - Enforce per-call cap, daily ceiling, and wallet balance on each charge
 //! - Forward requests upstream (Vercel AI Gateway, Exa, Places, Unsplash)
 //!
-//! Budget state lives entirely in the `entitlements` table (refilled by
-//! voucher redemption). There is no RAM-budget mode and no Atlas hydration —
-//! the Postgres pool is required at boot.
+//! Budget state lives entirely in the `accounts` table (credited by atlas on
+//! subscription renewal + top-up), with the append-only `ledger` as the source
+//! of truth. There is no RAM-budget mode and no Atlas hydration — the Postgres
+//! pool is required at boot.
 //!
 //! This code is open source so users can verify we don't log their data.
 
@@ -22,7 +23,6 @@ mod providers;
 mod proxy;
 mod routes;
 mod sweeper;
-mod voucher;
 
 use anyhow::{Context, Result};
 use axum::{routing::get, Router};
@@ -38,8 +38,8 @@ use crate::config::Config;
 pub struct AppState {
     pub config: Arc<Config>,
     pub http_client: reqwest::Client,
-    /// Postgres pool backing the entitlement/voucher/blocklist tables. The
-    /// only budget store — required at boot (`VIRTUES_API_DATABASE_URL`).
+    /// Postgres pool backing the accounts/ledger/device_keys/blocklist tables.
+    /// The only budget store — required at boot (`VIRTUES_API_DATABASE_URL`).
     pub db: sqlx::PgPool,
     /// Behavioral abuse blocklist (in-memory hot path, DB-snapshotted).
     pub blocklist: Blocklist,
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
         .timeout(std::time::Duration::from_secs(300)) // 5 min for long completions
         .build()?;
 
-    // DB connect + migrate. Required — the entitlement schema is the only
+    // DB connect + migrate. Required — the accounts/ledger schema is the only
     // budget store (there is no RAM-budget fallback), so fail fast at boot
     // rather than silently 503'ing every metered call.
     let db_url = std::env::var("VIRTUES_API_DATABASE_URL")
@@ -113,15 +113,15 @@ async fn main() -> Result<()> {
     blocklist.load_snapshot(&db).await;
     blocklist.spawn_pruner();
 
-    // Background housekeeping: reclaim expired entitlements + dead vouchers.
+    // Background housekeeping: reclaim long-expired accounts.
     sweeper::spawn(db.clone());
 
-    // Dev-only: fund a known bearer so a local virtues-api accepts calls
-    // without the Atlas voucher/redeem path. Gated to ENVIRONMENT=dev so it
-    // can never fire in production.
+    // Dev-only: fund a known account + device key so a local virtues-api
+    // accepts calls without atlas. Gated to ENVIRONMENT=dev so it can never
+    // fire in production.
     let is_dev = std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false);
     if is_dev {
-        dev_seed::seed_dev_entitlement(&db).await?;
+        dev_seed::seed_dev_account(&db).await?;
     }
 
     // Build shared state
@@ -137,10 +137,8 @@ async fn main() -> Result<()> {
         // Health check (no auth required)
         .route("/health", get(routes::health::health_check))
         .route("/ready", get(routes::health::readiness_check))
-        // Internal voucher registration (Atlas → virtues-api)
+        // Internal atlas → virtues-api surface (device register + credit)
         .merge(routes::internal::router())
-        // Device-facing voucher redemption
-        .merge(routes::redeem::router())
         // OAuth proxy (google/notion/strava/plaid) — folded in from the Node
         // oauth-proxy (WS-4). Mounted at root: /{provider}/start|callback|...
         .merge(routes::oauth::router())

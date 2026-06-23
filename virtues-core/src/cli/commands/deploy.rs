@@ -64,8 +64,7 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     }
 
     println!("  subscription:");
-    println!("    billing token        {}", yn(s.subscription.billing_token));
-    println!("    AI ready (bearer)    {}", yn(s.subscription.bearer));
+    println!("    linked (api key)     {}", yn(s.subscription.linked));
     println!("  devices:");
     println!("    paired (WG)          {}", s.devices.paired_wg);
 
@@ -112,7 +111,7 @@ fn next_step(s: &BoxStatus) -> String {
     if !s.ready {
         return "identity incomplete — run `virtues bringup`".to_string();
     }
-    if !s.subscription.billing_token {
+    if !s.subscription.linked {
         return format!("link your Virtues subscription — open {url}");
     }
     if s.devices.paired_wg == 0 {
@@ -175,8 +174,6 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
     let pool = virtues.database.pool();
     let atlas_url =
         crate::virtues_api::atlas_url();
-    let api_url =
-        crate::virtues_api::api_url();
     let http = crate::http_client::virtues_api_client();
 
     print_welcome(&atlas_url);
@@ -202,7 +199,7 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
             println!("  link expired — run `virtues subscribe` again.");
             return Ok(());
         }
-        match link::poll(pool, &http, &atlas_url, &api_url).await {
+        match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
                 // link::poll mints the first voucher internally; don't double-mint
                 // here or atlas's 25-day anti-stacking gate locks the account out.
@@ -239,8 +236,6 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
     let pool = virtues.database.pool();
     let atlas_url =
         crate::virtues_api::atlas_url();
-    let api_url =
-        crate::virtues_api::api_url();
     let http = crate::http_client::virtues_api_client();
 
     // Start a device_link so the atlas /init/login call has something to
@@ -287,7 +282,7 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
             println!("  link expired — run `virtues account-login` again.");
             return Ok(());
         }
-        match link::poll(pool, &http, &atlas_url, &api_url).await {
+        match link::poll(pool, &http, &atlas_url).await {
             Ok(LinkStatus::Ready) => {
                 // link::poll mints the first voucher internally; don't double-mint
                 // here or atlas's 25-day anti-stacking gate locks the account out.

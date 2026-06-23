@@ -34,9 +34,29 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, ChargeError};
+use crate::entitlement::{self, Account};
 use crate::providers::{calculate_cost, get_embeddings_config, get_provider_config};
 use crate::AppState;
+
+/// Pre-flight budget gate. AI cost is only known after the response, so we
+/// charge post-success — but we must still refuse to *start* a call when the
+/// wallet can't plausibly cover it, otherwise a $0 account chats for free
+/// (charges just get logged-and-dropped). BearerAuth already enforced expiry;
+/// here we gate empty balance + daily cap so the box surfaces wallet_empty
+/// ("Add credits") / daily_cap_reached before burning upstream spend.
+fn budget_gate(acct: &Account) -> Option<Response> {
+    if acct.balance_micros <= 0 {
+        return Some(err(StatusCode::PAYMENT_REQUIRED, "wallet_empty", "wallet empty — add credits"));
+    }
+    if acct.today_spent_micros >= acct.daily_cap_micros {
+        return Some(err(
+            StatusCode::PAYMENT_REQUIRED,
+            "daily_cap_reached",
+            "daily spend ceiling reached",
+        ));
+    }
+    None
+}
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -70,9 +90,11 @@ async fn chat_completions(
 ) -> Response {
     let pool = &state.db;
 
-    // A valid (non-expired) bearer can use AI — single $39/mo plan, no
-    // tier check. BearerAuth already enforced expiry; budget is enforced
-    // by charge() after the response.
+    // Pre-flight budget gate (empty wallet / daily cap). The actual charge
+    // happens after the response, since AI cost is only known then.
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
 
     let _ = &headers; // X-Virtues-Purpose accepted but ignored (v3 no-op)
 
@@ -89,16 +111,16 @@ async fn chat_completions(
             tool_choice: request.tool_choice.clone(),
         };
         let pool_clone = pool.clone();
-        let bearer_hash = ent.bearer_hash.clone();
+        let account_id = ent.account_id.clone();
         let result = crate::routes::streaming::create_streaming_response(
             &state.http_client,
             &state.config,
             streaming_req,
             move |cost_micros| async move {
                 if let Err(e) =
-                    entitlement::charge(&pool_clone, &bearer_hash, cost_micros).await
+                    entitlement::settle(&pool_clone, &account_id, cost_micros).await
                 {
-                    tracing::warn!("ai stream charge failed: {e}");
+                    tracing::warn!("ai stream settle failed: {e}");
                 }
             },
         )
@@ -151,20 +173,12 @@ async fn chat_completions(
     if status.is_success() {
         let cost_micros = extract_cost_micros(&body, &model);
         if cost_micros > 0 {
-            match entitlement::charge(pool, &ent.bearer_hash, cost_micros).await {
-                Ok(ok) => {
-                    tracing::debug!(
-                        model = %model,
-                        real_micros = ok.real_micros,
-                        billed_micros = ok.billed_micros,
-                        "ai chat charged"
-                    );
-                }
-                Err(e) => {
-                    // Don't fail the response; the customer already got it. Log
-                    // and let the next call be rejected by budget check.
-                    tracing::warn!("ai chat charge failed (response already returned): {e}");
-                }
+            // Post-paid settle: debit the true cost (the response already went
+            // out). The pre-flight gate refuses the next call if this puts the
+            // wallet in the red.
+            match entitlement::settle(pool, &ent.account_id, cost_micros).await {
+                Ok(balance) => tracing::debug!(model = %model, balance, "ai chat settled"),
+                Err(e) => tracing::warn!("ai chat settle failed (response already returned): {e}"),
             }
         }
     }
@@ -184,6 +198,10 @@ async fn completions(
 ) -> Response {
     let pool = &state.db;
 
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
+
     let model = request
         .get("model")
         .and_then(|v| v.as_str())
@@ -201,7 +219,7 @@ async fn completions(
         .send()
         .await;
 
-    forward_then_charge(pool, &ent.bearer_hash, &model, upstream).await
+    forward_then_charge(pool, &ent.account_id, &model, upstream).await
 }
 
 async fn embeddings(
@@ -211,6 +229,10 @@ async fn embeddings(
     Json(request): Json<Value>,
 ) -> Response {
     let pool = &state.db;
+
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
 
     let provider = get_embeddings_config(&state.config);
     let _ = &headers;
@@ -242,8 +264,8 @@ async fn embeddings(
         let cost_usd = (total_tokens as f64 / 1000.0) * 0.0001;
         let cost_micros = usd_to_micros(cost_usd);
         if cost_micros > 0 {
-            if let Err(e) = entitlement::charge(pool, &ent.bearer_hash, cost_micros).await {
-                tracing::warn!("ai embeddings charge failed: {e}");
+            if let Err(e) = entitlement::settle(pool, &ent.account_id, cost_micros).await {
+                tracing::warn!("ai embeddings settle failed: {e}");
             }
         }
     }
@@ -281,7 +303,7 @@ async fn list_models(BearerAuth(_): BearerAuth) -> Response {
 /// the response.
 async fn forward_then_charge(
     pool: &sqlx::PgPool,
-    bearer_hash: &[u8],
+    account_id: &str,
     model: &str,
     upstream: Result<reqwest::Response, reqwest::Error>,
 ) -> Response {
@@ -295,8 +317,8 @@ async fn forward_then_charge(
     if status.is_success() {
         let cost_micros = extract_cost_micros(&body, model);
         if cost_micros > 0 {
-            if let Err(e) = entitlement::charge(pool, bearer_hash, cost_micros).await {
-                tracing::warn!("ai charge failed: {e}");
+            if let Err(e) = entitlement::settle(pool, account_id, cost_micros).await {
+                tracing::warn!("ai settle failed: {e}");
             }
         }
     }
@@ -349,49 +371,6 @@ fn usd_to_micros(usd: f64) -> i64 {
     (usd * 1_000_000.0).round() as i64
 }
 
-#[allow(dead_code)]
-fn charge_err(e: ChargeError) -> Response {
-    // Currently unused: paid AI calls don't reject on charge failure (charge
-    // happens after a successful response). Kept so future migrations of
-    // pre-flight-charge AI flows can reuse it.
-    let (status, code, message) = match e {
-        ChargeError::Expired => (
-            StatusCode::PAYMENT_REQUIRED,
-            "bearer_expired",
-            "bearer expired — redeem a fresh voucher".to_string(),
-        ),
-        ChargeError::InsufficientBudget => (
-            StatusCode::PAYMENT_REQUIRED,
-            "insufficient_budget",
-            "today's budget exhausted".to_string(),
-        ),
-        ChargeError::NotFound => (
-            StatusCode::UNAUTHORIZED,
-            "unknown_bearer",
-            "bearer not recognized".to_string(),
-        ),
-        ChargeError::InvalidCost => (
-            StatusCode::BAD_REQUEST,
-            "invalid_cost",
-            "cost_micros must be > 0".to_string(),
-        ),
-        ChargeError::CallTooExpensive => (
-            StatusCode::BAD_REQUEST,
-            "call_too_expensive",
-            "single call exceeds per-call cap".to_string(),
-        ),
-        ChargeError::DailyCapReached => (
-            StatusCode::PAYMENT_REQUIRED,
-            "daily_cap_reached",
-            "daily spend ceiling reached".to_string(),
-        ),
-        ChargeError::Db(e) => {
-            tracing::warn!("ai charge db error: {e:#}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "internal", "charge failed".to_string())
-        }
-    };
-    err(status, code, &message)
-}
 
 fn err(status: StatusCode, code: &str, message: &str) -> Response {
     (

@@ -4,6 +4,7 @@
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
+	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -168,6 +169,40 @@
 
 	$effect(() => { void loadLocal(); });
 
+	// ─── Wallet balance + recent ledger (proxied from virtues-api) ─────────
+	type LedgerEntry = { ts: string; micros: number; kind: string; real_micros: number | null };
+	type Usage = {
+		balance_micros: number;
+		today_spent_micros: number;
+		daily_cap_micros: number;
+		month_to_date_micros: number;
+		expires_at: string | null;
+		entries: LedgerEntry[];
+		error?: string;
+	};
+	let usage = $state<Usage | null>(null);
+
+	async function loadUsage() {
+		try {
+			const r = await fetch('/api/billing/usage');
+			if (r.ok) {
+				const data = await r.json();
+				// Ignore error payloads; never trust `entries` to be present.
+				usage = data.error ? null : { ...data, entries: data.entries ?? [] };
+			}
+		} catch { /* swallow — balance panel just hides */ }
+	}
+
+	$effect(() => { void loadUsage(); });
+
+	const kindLabel: Record<string, string> = {
+		grant: 'Monthly credit',
+		topup: 'Top-up',
+		charge: 'Usage',
+		refund: 'Refund',
+		adjust: 'Adjustment',
+	};
+
 	const statusLabel: Record<string, string> = {
 		active: 'Active',
 		trialing: 'Trial',
@@ -215,6 +250,46 @@
 				{/if}
 			</div>
 		</div>
+
+		<!-- Wallet balance + recent activity -->
+		{#if usage}
+			<div class="border border-border rounded-lg p-6 mb-6">
+				<h2 class="text-lg font-medium text-foreground mb-4">Balance</h2>
+				<div class="flex items-baseline gap-2 mb-4">
+					<span class="text-3xl font-semibold text-foreground">{formatMicrosUSD(usage.balance_micros)}</span>
+					<span class="text-foreground-muted text-sm">available</span>
+				</div>
+				<div class="grid grid-cols-2 gap-3 text-sm mb-2">
+					<div class="flex justify-between">
+						<span class="text-foreground-muted">Today</span>
+						<span class="text-foreground">{formatMicrosUSD(usage.today_spent_micros)} / {formatMicrosUSD(usage.daily_cap_micros)}</span>
+					</div>
+					<div class="flex justify-between">
+						<span class="text-foreground-muted">This month</span>
+						<span class="text-foreground">{formatMicrosUSD(usage.month_to_date_micros)}</span>
+					</div>
+				</div>
+
+				{#if usage.entries.length > 0}
+					<div class="mt-4 border-t border-border-subtle pt-3">
+						<div class="text-xs uppercase tracking-wide text-foreground-muted mb-2">Recent activity</div>
+						<div class="divide-y divide-border-subtle">
+							{#each usage.entries.slice(0, 12) as e}
+								<div class="flex justify-between items-center py-1.5 text-sm">
+									<span class="text-foreground">{kindLabel[e.kind] ?? e.kind}</span>
+									<div class="flex items-center gap-3">
+										<span class="text-foreground-muted text-xs">{new Date(e.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+										<span class="tabular-nums {e.micros < 0 ? 'text-foreground' : 'text-success'}">
+											{e.micros < 0 ? '−' : '+'}{formatMicrosPrecise(Math.abs(e.micros))}
+										</span>
+									</div>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- Connect subscription (device-authorization link flow) -->
 		{#if !isSubscribed}
