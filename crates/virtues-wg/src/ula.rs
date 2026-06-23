@@ -34,6 +34,26 @@ pub fn server_address() -> Ipv6Addr {
     ula_addr(SERVER_HOST_ID)
 }
 
+/// The pool's network address (`fd00:5654::`) and prefix length (`64`).
+///
+/// The box installs a kernel route for this whole `/64` via `wg0` so that
+/// in-tunnel *reply* traffic to any device address routes back through the
+/// tunnel. WireGuard's per-peer `allowed-ips` only drive crypto-routing; they
+/// don't add a kernel route, and the interface address is a `/128`, so without
+/// this the kernel sends replies (e.g. an HTTP SYN-ACK to a device) out the
+/// default/WAN route instead of `wg0`.
+pub fn pool_network() -> Ipv6Addr {
+    ula_addr(0)
+}
+
+/// Prefix length of the box's ULA pool (`/64`).
+pub const POOL_PREFIX_LEN: u8 = 64;
+
+/// The pool as a CIDR string (`fd00:5654::/64`) for `ip route` / config.
+pub fn pool_cidr() -> String {
+    format!("{}/{}", pool_network(), POOL_PREFIX_LEN)
+}
+
 /// Allocate the lowest free device address (`::2` and up) not already assigned.
 /// `assigned` is the set of addresses currently handed out to paired devices.
 /// Returns `None` only if the (enormous) `/64` host space is exhausted.
