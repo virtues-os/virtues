@@ -3,6 +3,7 @@
 	import { Page } from '$lib';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
+	import { openExternal } from '$lib/tauri/bridge';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -98,7 +99,7 @@
 
 	// Step 2: explicit hand-off to the Stripe-backed checkout, on user action.
 	function proceedToCheckout() {
-		if (linkInfo) window.open(linkInfo.verification_uri_complete, '_blank', 'noopener');
+		if (linkInfo) openExternal(linkInfo.verification_uri_complete);
 	}
 
 	$effect(() => () => stopPolling());
@@ -110,7 +111,7 @@
 			const res = await fetch('/api/billing/portal', { method: 'POST' });
 			const data = await res.json();
 			if (data.url) {
-				window.open(data.url, '_blank');
+				openExternal(data.url);
 			} else if (data.error) {
 				portalError = typeof data.error === 'string' ? data.error : data.error.message || 'Failed to open billing portal';
 			}

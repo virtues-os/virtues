@@ -15,6 +15,31 @@ async function getInvoke() {
 }
 
 /**
+ * Open a URL in the user's default *system* browser.
+ *
+ * In a plain browser this is just `window.open(url, '_blank')`. But inside the
+ * Tauri desktop shell the webview **silently drops** `window.open`/`target=_blank`
+ * to external origins, so Stripe checkout, the billing portal, social links and
+ * citations never open — the user clicks and nothing happens. Route every
+ * external open through here: under Tauri it calls the opener plugin (granted by
+ * the `opener:default` capability), and falls back to `window.open` everywhere
+ * else (and if the plugin call ever throws).
+ */
+export async function openExternal(url: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke) {
+		window.open(url, '_blank', 'noopener');
+		return;
+	}
+	try {
+		await invoke('plugin:opener|open_url', { url });
+	} catch (e) {
+		console.error('[tauri] openExternal failed; falling back to window.open', e);
+		window.open(url, '_blank', 'noopener');
+	}
+}
+
+/**
  * Collector daemon status
  */
 export interface CollectorStatus {
