@@ -59,17 +59,30 @@ fn is_paired() -> bool {
 /// `None` = proxy unreachable (can't tell — it may still be starting up, so the
 /// caller should NOT bounce a possibly-valid device on this).
 ///
-/// std-only (no HTTP dep): a raw GET with short timeouts, retried a few times to
-/// ride out the LaunchAgent proxy's startup race.
-fn probe_box_session() -> Option<bool> {
+/// std-only (no HTTP dep): a raw GET with short timeouts.
+///
+/// Per-attempt budget. Worst case for one attempt = connect + read timeout.
+/// The retry COUNT is the caller's lever, not baked in: the launch path waits
+/// out the proxy startup race with several attempts, while the connect-screen
+/// poll passes 1 (its 4s `setInterval` IS the retry). Keep the total —
+/// `attempts × (CONNECT + READ + RETRY_GAP)` — well under that poll interval so
+/// a probe can never queue up behind itself.
+const PROBE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+const PROBE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(800);
+const PROBE_RETRY_GAP: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// BLOCKING. Never call on the main/UI thread — use `probe_box_session()`
+/// (the async wrapper) instead, which offloads this to the blocking pool. The
+/// `_blocking` suffix is the warning label: a synchronous Tauri command running
+/// this freezes the webview for up to `attempts × ~1.5s`.
+fn probe_box_session_blocking(attempts: u8) -> Option<bool> {
     use std::io::{Read, Write};
     use std::net::TcpStream;
-    use std::time::Duration;
 
     let addr = "127.0.0.1:7117".parse().ok()?;
-    for _ in 0..5 {
-        if let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) {
-            let _ = s.set_read_timeout(Some(Duration::from_millis(800)));
+    for i in 0..attempts {
+        if let Ok(mut s) = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT) {
+            let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
             let req = "GET /auth/session HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
             if s.write_all(req.as_bytes()).is_ok() {
                 let mut buf = String::new();
@@ -79,9 +92,21 @@ fn probe_box_session() -> Option<bool> {
                 }
             }
         }
-        std::thread::sleep(Duration::from_millis(300));
+        // No gap after the final attempt — we're about to return.
+        if i + 1 < attempts {
+            std::thread::sleep(PROBE_RETRY_GAP);
+        }
     }
     None
+}
+
+/// Async, main-thread-safe wrapper around [`probe_box_session_blocking`]. Use
+/// this from Tauri commands; it runs the blocking probe on the blocking pool so
+/// the webview's UI thread is never parked on a socket read.
+async fn probe_box_session(attempts: u8) -> Option<bool> {
+    tauri::async_runtime::spawn_blocking(move || probe_box_session_blocking(attempts))
+        .await
+        .unwrap_or(None)
 }
 
 /// Classify a raw `/auth/session` HTTP response into rejected (`Some(false)`),
@@ -141,10 +166,12 @@ fn device_online() -> bool {
 ///     callout copy covers both honestly for now.
 #[tauri::command]
 async fn diagnose_box() -> String {
-    // Offload the blocking TCP probes to the blocking pool so we never freeze
-    // the UI thread while connecting/timing out.
-    tauri::async_runtime::spawn_blocking(|| {
-        match probe_box_session() {
+    // A few attempts here: this backs an explicit diagnosis, so it's worth
+    // riding out a transient blip rather than reporting "unreachable" too eagerly.
+    let verdict = probe_box_session(3).await;
+    // device_online() is blocking; keep it off the UI thread too.
+    tauri::async_runtime::spawn_blocking(move || {
+        match verdict {
             Some(true) => "ok",
             Some(false) => "stale_bearer",
             None => {
@@ -340,8 +367,10 @@ async fn forget_pairing(app: AppHandle) -> Result<(), String> {
 /// screen's "Retry" on the unreachable state (box was off/asleep/elsewhere).
 /// `true` → load the box; `false` → still not reachable/accepted.
 #[tauri::command]
-fn recheck_box() -> bool {
-    probe_box_session() == Some(true)
+async fn recheck_box() -> bool {
+    // Single attempt: the connect screen polls this on a timer, so the poll
+    // interval IS the retry. The async wrapper keeps the probe off the UI thread.
+    probe_box_session(1).await == Some(true)
 }
 
 /// Relaunch the app — used after Settings → "Disconnect this Mac" so the window
@@ -607,10 +636,16 @@ fn main() {
             //   box accepts us    → load the box
             //   box rejects us    → #reset      ("your box was reset, reconnect")
             //   box unreachable   → #unreachable ("can't reach it" + Retry)
+            // A SINGLE fast probe (not the multi-retry loop): reachable boxes
+            // reconnect silently with no connect-screen flash (the
+            // silent-reconnect doctrine), and an unreachable box bounds the
+            // pre-window delay to ~1.2s instead of blocking launch for ~7.5s.
+            // We never retry here — the connect screen polls asynchronously off
+            // the UI thread, so recovery doesn't cost main-thread time.
             let url = if !is_paired() {
                 WebviewUrl::App("pair.html".into())
             } else {
-                match probe_box_session() {
+                match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
                     Some(false) => WebviewUrl::App("pair.html#reset".into()),
                     None => WebviewUrl::App("pair.html#unreachable".into()),
