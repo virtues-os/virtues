@@ -147,7 +147,11 @@ struct VerifyQuery {
 
 async fn verify(State(state): State<AppState>, Query(q): Query<VerifyQuery>) -> axum::response::Response {
     let Some(code) = q.code.map(|c| c.trim().to_uppercase()).filter(|c| !c.is_empty()) else {
-        return page("Connect your Virtues box", "Open the link shown on your box (it includes your code), or enter it there.");
+        // No code in the URL — render a form so the user can type the pairing
+        // code shown on their box. (The box's copy says "enter the code here";
+        // previously this page had no input field, a dead end.) The form GETs
+        // back to this same handler with `?code=…`.
+        return connect_page();
     };
 
     // Must be a live pending link.
@@ -311,6 +315,39 @@ fn page(title: &str, body: &str) -> axum::response::Response {
          h1{{font-size:1.4rem}}</style></head>\
          <body><h1>{title}</h1><p>{body}</p></body></html>"
     ))
+    .into_response()
+}
+
+/// The `/init` landing page when no `?code=` is present: a form that lets the
+/// user type the pairing code shown on their box. Submitting GETs `/init?code=…`,
+/// which the same `verify` handler then turns into a Stripe checkout. (The static
+/// version of this page had no input — the box told users to "enter the code
+/// here" with nowhere to enter it.) `method=get` keeps the code in the URL the
+/// handler already reads, and uppercases on submit to match the stored code.
+fn connect_page() -> axum::response::Response {
+    Html(
+        "<!doctype html><html><head><meta charset=utf-8>\
+         <meta name=viewport content='width=device-width,initial-scale=1'>\
+         <title>Connect your Virtues box</title>\
+         <style>body{font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;line-height:1.5}\
+         h1{font-size:1.4rem}\
+         form{display:flex;gap:.5rem;margin-top:1.5rem}\
+         input{flex:1;font:inherit;font-size:1.1rem;letter-spacing:.08em;text-transform:uppercase;\
+         padding:.6rem .75rem;border:1px solid #ccc;border-radius:8px}\
+         button{font:inherit;padding:.6rem 1.1rem;border:0;border-radius:8px;background:#111;color:#fff;cursor:pointer}\
+         </style></head>\
+         <body>\
+         <h1>Connect your Virtues box</h1>\
+         <p>Enter the pairing code shown on your box to continue to checkout.</p>\
+         <form method=get action=/init>\
+         <input name=code placeholder='XXXX-XXXX' autocomplete=off autocapitalize=characters \
+         spellcheck=false autofocus required aria-label='Pairing code'>\
+         <button type=submit>Continue &rarr;</button>\
+         </form>\
+         <p style='margin-top:1rem;color:#666;font-size:.9rem'>Or just open the full link shown on your box.</p>\
+         </body></html>"
+            .to_string(),
+    )
     .into_response()
 }
 
