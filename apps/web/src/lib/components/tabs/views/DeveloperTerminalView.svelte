@@ -93,22 +93,31 @@
             terminal.open(terminalContainer);
             fitAddon.fit();
 
-            // Welcome message with ASCII art
+            // Welcome message — serif "Virtues" wordmark (matches the CLI banner)
             terminal.writeln("");
             terminal.writeln(
-                "\x1b[90m        _      _                   \x1b[0m",
+                "\x1b[90m              ,,                                            \x1b[0m",
             );
             terminal.writeln(
-                "\x1b[90m /\\   /(_)_ __| |_ _   _  ___  ___ \x1b[0m",
+                "\x1b[90m`7MMF'   `7MF'db             mm                             \x1b[0m",
             );
             terminal.writeln(
-                "\x1b[90m \\ \\ / / | '__| __| | | |/ _ \\/ __|\x1b[0m",
+                "\x1b[90m  `MA     ,V                 MM                             \x1b[0m",
             );
             terminal.writeln(
-                "\x1b[90m  \\ V /| | |  | |_| |_| |  __/\\__ \\\x1b[0m",
+                "\x1b[90m   VM:   ,V `7MM  `7Mb,od8 mmMMmm `7MM  `7MM  .gP\"Ya  ,pP\"Ybd\x1b[0m",
             );
             terminal.writeln(
-                "\x1b[90m   \\_/ |_|_|   \\__|\\__,_|\\___||___/\x1b[0m",
+                "\x1b[90m    MM.  M'   MM    MM' \"'   MM     MM    MM ,M'   Yb 8I   `\"\x1b[0m",
+            );
+            terminal.writeln(
+                "\x1b[90m    `MM A'    MM    MM       MM     MM    MM 8M\"\"\"\"\"\" `YMMMa.\x1b[0m",
+            );
+            terminal.writeln(
+                "\x1b[90m     :MM;     MM    MM       MM     MM    MM YM.    , L.   I8\x1b[0m",
+            );
+            terminal.writeln(
+                "\x1b[90m      VF    .JMML..JMML.     `Mbmo  `Mbod\"YML.`Mbmmd' M9mmmP'\x1b[0m",
             );
             terminal.writeln("");
             terminal.writeln("\x1b[1mTerminal\x1b[0m");

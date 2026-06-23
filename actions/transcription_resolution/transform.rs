@@ -5,6 +5,7 @@
 //! recordings are inserted directly with empty text and never hit Gemini.
 
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 use sqlx::{Row, PgPool};
@@ -50,8 +51,8 @@ struct TranscriptionResponse {
 /// One row from the LEFT JOIN selecting untranscribed recordings.
 struct PendingRecording {
     source_stream_id: String,
-    started_at: String,
-    ended_at: Option<String>,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
     duration_seconds: Option<f64>,
     audio_url: String,
     audio_format: String,
@@ -92,7 +93,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
             duration_seconds: row.get("duration_seconds"),
             audio_url: row.get("audio_url"),
             audio_format: row.get("audio_format"),
-            is_silent: row.get::<i64, _>("is_silent") != 0,
+            is_silent: row.get::<bool, _>("is_silent"),
         })
         .collect();
 
@@ -201,16 +202,16 @@ async fn insert_silent_transcript(db: &PgPool, rec: &PendingRecording) -> Result
     .bind("No speech detected")
     .bind("en")
     .bind(rec.duration_seconds)
-    .bind(&rec.started_at)
-    .bind(rec.ended_at.as_deref())
+    .bind(rec.started_at)
+    .bind(rec.ended_at)
     .bind(0i32)
     .bind(0.0f64)
-    .bind("[]")
-    .bind("{}")
+    .bind(serde_json::json!([]))
+    .bind(serde_json::json!({}))
     .bind(&rec.source_stream_id)
     .bind("stream_ios_microphone")
     .bind("ios")
-    .bind("{}")
+    .bind(serde_json::json!({}))
     .execute(db)
     .await
     .context("insert silent transcript")?;
@@ -226,13 +227,12 @@ async fn insert_transcription(
     let tags_json = t
         .tags
         .as_ref()
-        .map(|tags| serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string()))
-        .unwrap_or_else(|| "[]".to_string());
+        .map(|tags| serde_json::json!(tags))
+        .unwrap_or_else(|| serde_json::json!([]));
     let entities_json = t
         .entities
-        .as_ref()
-        .map(|e| serde_json::to_string(e).unwrap_or_else(|_| "{}".to_string()))
-        .unwrap_or_else(|| "{}".to_string());
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({}));
 
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
@@ -254,8 +254,8 @@ async fn insert_transcription(
     .bind(&t.summary)
     .bind(&t.language)
     .bind(rec.duration_seconds)
-    .bind(&rec.started_at)
-    .bind(rec.ended_at.as_deref())
+    .bind(rec.started_at)
+    .bind(rec.ended_at)
     .bind(t.speaker_count)
     .bind(t.confidence)
     .bind(&tags_json)
@@ -263,7 +263,7 @@ async fn insert_transcription(
     .bind(&rec.source_stream_id)
     .bind("stream_ios_microphone")
     .bind("ios")
-    .bind("{}")
+    .bind(serde_json::json!({}))
     .execute(db)
     .await
     .context("insert transcription")?;

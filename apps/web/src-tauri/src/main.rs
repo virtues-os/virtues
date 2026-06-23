@@ -596,6 +596,247 @@ async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
 }
 
 // ============================================================================
+// Menu-bar tray
+// ============================================================================
+
+/// The collector is "installed" iff its LaunchAgent binary exists at the path
+/// `install_collector` writes to. `get_collector_status` returns a default
+/// (all-false) struct both when stopped AND when never installed, so the tray
+/// needs this to tell "off because not set up" from "installed but paused".
+fn collector_installed() -> bool {
+    dirs::home_dir()
+        .map(|h| h.join(".virtues").join("bin").join("virtues-collector").exists())
+        .unwrap_or(false)
+}
+
+/// Status-dot color, drawn as a colored `IconMenuItem` icon (not a template, so
+/// it keeps its color): 🟢 working · 🟡 transient/attention · 🔴 needs action ·
+/// ⚪ inactive — but as real PNG dots, no emoji.
+#[derive(Clone, Copy)]
+enum Dot {
+    Green,
+    Amber,
+    Red,
+    Grey,
+}
+
+/// Decode the bundled dot PNG for a state. `None` only on a decode failure, in
+/// which case the line just shows text with no icon rather than crashing.
+fn dot_image(dot: Dot) -> Option<tauri::image::Image<'static>> {
+    let bytes: &[u8] = match dot {
+        Dot::Green => include_bytes!("../icons/dot-green.png"),
+        Dot::Amber => include_bytes!("../icons/dot-amber.png"),
+        Dot::Red => include_bytes!("../icons/dot-red.png"),
+        Dot::Grey => include_bytes!("../icons/dot-grey.png"),
+    };
+    tauri::image::Image::from_bytes(bytes).ok()
+}
+
+/// First line of the tray menu: where this device stands with the box. Returns
+/// (status dot, label).
+fn box_label() -> (Dot, &'static str) {
+    if !is_paired() {
+        return (Dot::Grey, "Box: not connected");
+    }
+    match probe_box_session_blocking(1) {
+        Some(true) => (Dot::Green, "Box: connected"),
+        Some(false) => (Dot::Red, "Box: needs re-pairing"),
+        None => (Dot::Amber, "Box: unreachable"),
+    }
+}
+
+/// Second line: the collector daemon's state, with the same dot vocabulary.
+fn collector_label(installed: bool, status: &CollectorStatus) -> (Dot, &'static str) {
+    if !installed {
+        (Dot::Grey, "Collector: off")
+    } else if status.paused {
+        (Dot::Amber, "Collector: paused")
+    } else if status.running {
+        (Dot::Green, "Collector: collecting")
+    } else {
+        (Dot::Red, "Collector: stopped")
+    }
+}
+
+/// Third line (a dim subtitle): when the collector last flushed to the box, plus
+/// any backlog. `—` when there's no collector, `never` when it has one but has
+/// not synced yet.
+fn last_sync_label(installed: bool, status: &CollectorStatus) -> String {
+    if !installed {
+        return "Last sync: —".to_string();
+    }
+    let when = match status.last_sync.as_deref() {
+        Some(iso) => format_clock(iso).unwrap_or_else(|| "unknown".to_string()),
+        None => "never".to_string(),
+    };
+    let pending = status.pending_events + status.pending_messages;
+    if pending > 0 {
+        format!("Last sync: {when} · {pending} queued")
+    } else {
+        format!("Last sync: {when}")
+    }
+}
+
+/// Format an RFC3339 timestamp (the workspace's wire format for `DateTime<Utc>`)
+/// as a local clock time — bare "2:34 PM" for today, "Jun 22, 2:34 PM" otherwise.
+/// `None` if it doesn't parse, so the caller can fall back rather than show junk.
+fn format_clock(iso: &str) -> Option<String> {
+    use chrono::{DateTime, Local};
+    let dt = DateTime::parse_from_rfc3339(iso).ok()?.with_timezone(&Local);
+    if dt.date_naive() == Local::now().date_naive() {
+        Some(dt.format("%-I:%M %p").to_string())
+    } else {
+        Some(dt.format("%b %-d, %-I:%M %p").to_string())
+    }
+}
+
+/// The tray's mutable menu items, bundled so the poll loop and the menu-event
+/// handler can each hold a clone and refresh the same lines.
+#[derive(Clone)]
+struct TrayItems {
+    box_status: tauri::menu::IconMenuItem<tauri::Wry>,
+    collector_status: tauri::menu::IconMenuItem<tauri::Wry>,
+    last_sync: tauri::menu::MenuItem<tauri::Wry>,
+    toggle: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+/// Recompute the status lines + toggle and apply them. Spawns its OWN thread
+/// because computing the state BLOCKS (probing the box over TCP, and shelling
+/// out to the collector CLI when installed), then hops to the main thread for
+/// the actual menu mutation — AppKit requires UI changes on the main thread.
+/// Safe to call from anywhere, including the (main-thread) menu-event handler.
+fn refresh_tray(app: &AppHandle, items: TrayItems) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let installed = collector_installed();
+        // Skip the CLI call entirely when nothing's installed: its sidecar
+        // fallback would fork a process on every poll just to hand back defaults.
+        let status = if installed {
+            tauri::async_runtime::block_on(get_collector_status(app.clone())).unwrap_or_default()
+        } else {
+            CollectorStatus::default()
+        };
+        let (box_dot, box_text) = box_label();
+        let (coll_dot, coll_text) = collector_label(installed, &status);
+        let sync_text = last_sync_label(installed, &status);
+        let toggle_text = if status.paused { "Resume collecting" } else { "Pause collecting" };
+
+        let _ = app.run_on_main_thread(move || {
+            let _ = items.box_status.set_text(box_text);
+            let _ = items.box_status.set_icon(dot_image(box_dot));
+            let _ = items.collector_status.set_text(coll_text);
+            let _ = items.collector_status.set_icon(dot_image(coll_dot));
+            let _ = items.last_sync.set_text(sync_text);
+            let _ = items.toggle.set_text(toggle_text);
+            // Disabled when not installed so pause/resume can't be invoked in a
+            // state where the CLI would just error — keeps the user from a
+            // no-op foot-gun.
+            let _ = items.toggle.set_enabled(installed);
+        });
+    });
+}
+
+/// Build the macOS menu-bar item: two colored status lines, a dim last-sync
+/// subtitle, a pause/resume toggle, show, and a real Quit (the window close
+/// button only HIDES — see `on_window_event` — so this is the only way to exit).
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    // Status lines are ENABLED (so the text reads at full strength, not greyed),
+    // carry a colored status dot, and clicking either one opens the app — handy
+    // when it says "needs re-pairing"/"unreachable" and the fix lives in-window.
+    let status_box = IconMenuItem::with_id(
+        app, "status_box", "Box: checking…", true, dot_image(Dot::Grey), None::<&str>,
+    )?;
+    let status_collector = IconMenuItem::with_id(
+        app, "status_collector", "Collector: checking…", true, dot_image(Dot::Grey), None::<&str>,
+    )?;
+    // A dim, non-interactive subtitle (disabled = greyed, which is what we want
+    // for secondary info).
+    let last_sync = MenuItem::with_id(app, "last_sync", "Last sync: —", false, None::<&str>)?;
+    // Starts disabled; the first poll enables it iff the collector is installed.
+    let toggle = MenuItem::with_id(app, "toggle_collector", "Pause collecting", false, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show Virtues", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &status_box,
+            &status_collector,
+            &last_sync,
+            &PredefinedMenuItem::separator(app)?,
+            &toggle,
+            &show,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+
+    let items = TrayItems {
+        box_status: status_box,
+        collector_status: status_collector,
+        last_sync,
+        toggle,
+    };
+
+    // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
+    // to fit light/dark menu bars. The full-color app icon would not adapt and
+    // would look wrong up there.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+        .expect("decode bundled tray icon");
+
+    // Cloned into the menu-event handler so a pause/resume can refresh the menu
+    // at once instead of waiting out the ~10s poll.
+    let event_items = items.clone();
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(icon)
+        .icon_as_template(true)
+        .tooltip("Virtues")
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            // The two status lines double as a shortcut into the app.
+            "show" | "status_box" | "status_collector" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            "toggle_collector" => {
+                // Flip based on the LIVE state, not the (possibly stale) label,
+                // then refresh immediately so the menu shows the new state.
+                let app = app.clone();
+                let items = event_items.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Ok(status) = get_collector_status(app.clone()).await {
+                        let _ = if status.paused {
+                            resume_collector(app.clone()).await
+                        } else {
+                            pause_collector(app.clone()).await
+                        };
+                    }
+                    refresh_tray(&app, items);
+                });
+            }
+            _ => {}
+        })
+        .build(app)?;
+
+    // Keep the labels honest. A poll (not an event subscription) because the
+    // collector is a separate daemon with no push channel back to this app.
+    let app = app.clone();
+    std::thread::spawn(move || loop {
+        refresh_tray(&app, items.clone());
+        std::thread::sleep(std::time::Duration::from_secs(10));
+    });
+
+    Ok(())
+}
+
+// ============================================================================
 // App Setup
 // ============================================================================
 
@@ -665,6 +906,8 @@ fn main() {
             window.open_devtools();
             #[cfg(not(debug_assertions))]
             let _ = window;
+
+            setup_tray(app.handle())?;
 
             Ok(())
         })

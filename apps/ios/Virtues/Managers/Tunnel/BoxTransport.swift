@@ -17,9 +17,47 @@
 
 import Foundation
 
+/// Thrown when a tunnel exchange exceeds `tunnelExchangeTimeout`.
+struct TunnelTimeoutError: LocalizedError {
+    var errorDescription: String? { "tunnel exchange timed out" }
+}
+
+/// Resumes a continuation exactly once — whichever of the work / timeout paths
+/// fires first wins; the loser is a no-op. Needed because the work runs in a
+/// non-cancellable detached task (a blocking FFI call), so the timeout must be
+/// able to resume the caller's continuation *without* waiting for that task.
+private final class ResumeOnce<T> {
+    private let lock = NSLock()
+    private var done = false
+    private let cont: CheckedContinuation<T, Error>
+    init(_ cont: CheckedContinuation<T, Error>) { self.cont = cont }
+    func resume(returning value: T) {
+        lock.lock(); defer { lock.unlock() }
+        guard !done else { return }
+        done = true
+        cont.resume(returning: value)
+    }
+    func resume(throwing error: Error) {
+        lock.lock(); defer { lock.unlock() }
+        guard !done else { return }
+        done = true
+        cont.resume(throwing: error)
+    }
+}
+
 final class BoxTransport {
     static let shared = BoxTransport()
     private init() {}
+
+    /// Hard ceiling on a single tunnel request/response. This is a safety net
+    /// *above* the Rust-side deadlines (15s dial + 30s idle-read), which handle
+    /// the common dead-path case and tear the tunnel down cleanly. This outer
+    /// timeout only fires if the FFI somehow fails to return at all — it frees
+    /// the async caller so `performUpload`'s `defer` runs (releasing the upload
+    /// lock + tearing down the tunnel) instead of wedging all future syncs.
+    /// See the sync-freeze investigation: an unbounded `read` here once froze
+    /// uploads for 30+ minutes until app relaunch.
+    private static let tunnelExchangeTimeout: TimeInterval = 60
 
     /// Send a request to the box. Returns the same shape as
     /// `URLSession.data(for:)`.
@@ -52,15 +90,49 @@ final class BoxTransport {
 
     // MARK: - Tunnel path
 
-    /// Run the blocking FFI exchange off the cooperative pool via a continuation.
+    /// Run the blocking FFI exchange off the cooperative pool via a continuation,
+    /// bounded by `tunnelExchangeTimeout` so a wedged FFI call can never freeze
+    /// the upload coordinator. If the timeout wins, the continuation-bound child
+    /// task is left to resolve on its own (the Rust-side idle-read deadline
+    /// guarantees it returns within ~tens of seconds, after which its tunnel
+    /// handle drops and the loop tears down).
     private func sendViaTunnel(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        try await withCheckedThrowingContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    cont.resume(returning: try Self.tunnelExchange(request))
-                } catch {
-                    cont.resume(throwing: error)
+        try await Self.withTimeout(seconds: Self.tunnelExchangeTimeout) {
+            try await withCheckedThrowingContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        cont.resume(returning: try Self.tunnelExchange(request))
+                    } catch {
+                        cont.resume(throwing: error)
+                    }
                 }
+            }
+        }
+    }
+
+    /// Run `operation`, throwing `TunnelTimeoutError` if it doesn't finish
+    /// within `seconds`.
+    ///
+    /// Deliberately *not* built on `withThrowingTaskGroup`: a task group awaits
+    /// every child before returning, and our operation is suspended on a
+    /// `withCheckedThrowingContinuation` wrapping a blocking FFI call that can't
+    /// observe cancellation — so a group would block until the FFI returns,
+    /// negating the timeout. Instead the work runs in an unstructured task and a
+    /// timer resumes the caller's continuation independently. On timeout the
+    /// caller returns immediately; the orphaned work task resolves on its own
+    /// (bounded by the Rust-side idle-read deadline) and its result is dropped.
+    private static func withTimeout<T>(
+        seconds: TimeInterval,
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+            let gate = ResumeOnce(cont)
+            Task {
+                do { gate.resume(returning: try await operation()) }
+                catch { gate.resume(throwing: error) }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                gate.resume(throwing: TunnelTimeoutError())
             }
         }
     }
