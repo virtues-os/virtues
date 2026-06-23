@@ -12,10 +12,21 @@
 //! the actions crate doesn't run a build-time DB connection.
 
 use anyhow::Result;
+use chrono::{DateTime, NaiveDate};
 use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 use virtues_helpers::ids::{generate_id, WIKI_PERSON_PREFIX};
+
+/// iOS sends a contact birthday as an ISO8601 datetime (or a bare `YYYY-MM-DD`);
+/// `wiki_people.birthday` is a `DATE`, so reduce to a `NaiveDate`. Binding the raw
+/// string failed (TEXT vs DATE) and silently dropped the whole contact row.
+fn parse_birthday(s: &str) -> Option<NaiveDate> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.date_naive())
+        .ok()
+        .or_else(|| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+}
 
 #[derive(Debug)]
 struct ContactRecord {
@@ -183,27 +194,28 @@ async fn merge_into_person(
     .fetch_one(db)
     .await?;
 
-    let existing_emails_str: Option<String> = row.try_get("emails").ok();
-    let existing_phones_str: Option<String> = row.try_get("phones").ok();
-    let existing_birthday: Option<String> = row.try_get("birthday").ok();
-    let existing_metadata_str: Option<String> = row.try_get("metadata").ok();
+    // These columns are JSONB / DATE — read them as native types, not String.
+    // (try_get::<String> on a JSONB/DATE column fails, so the prior code silently
+    //  lost existing data and then bound strings back, failing the UPDATE entirely.)
+    let existing_emails: Option<Value> = row.try_get("emails").ok();
+    let existing_phones: Option<Value> = row.try_get("phones").ok();
+    let existing_birthday: Option<NaiveDate> = row.try_get("birthday").ok();
+    let existing_metadata: Option<Value> = row.try_get("metadata").ok();
 
     // Merge emails
-    let mut emails: Vec<String> = existing_emails_str
-        .as_ref()
-        .and_then(|s| serde_json::from_str(s).ok())
+    let mut emails: Vec<String> = existing_emails
+        .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
     for email in &contact.emails {
         if !emails.contains(email) {
             emails.push(email.clone());
         }
     }
-    let emails_json = serde_json::to_string(&emails)?;
+    let emails_json = serde_json::json!(emails);
 
     // Merge phones
-    let mut phones: Vec<String> = existing_phones_str
-        .as_ref()
-        .and_then(|s| serde_json::from_str(s).ok())
+    let mut phones: Vec<String> = existing_phones
+        .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
     for phone in &contact.phones {
         let normalized = normalize_phone(phone);
@@ -211,16 +223,14 @@ async fn merge_into_person(
             phones.push(phone.clone());
         }
     }
-    let phones_json = serde_json::to_string(&phones)?;
+    let phones_json = serde_json::json!(phones);
 
     // Birthday — only set if not already set
-    let birthday = existing_birthday.or_else(|| contact.birthday.clone());
+    let birthday =
+        existing_birthday.or_else(|| contact.birthday.as_deref().and_then(parse_birthday));
 
     // Metadata — add ios_contact_id and organization
-    let mut metadata: Value = existing_metadata_str
-        .as_ref()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
+    let mut metadata: Value = existing_metadata.unwrap_or_else(|| serde_json::json!({}));
     if let Some(obj) = metadata.as_object_mut() {
         obj.insert(
             "ios_contact_id".to_string(),
@@ -230,8 +240,6 @@ async fn merge_into_person(
             obj.insert("organization".to_string(), serde_json::json!(org));
         }
     }
-    let metadata_json = serde_json::to_string(&metadata)?;
-
     sqlx::query(
         r#"UPDATE wiki_people
            SET emails = $1,
@@ -244,7 +252,7 @@ async fn merge_into_person(
     .bind(emails_json)
     .bind(phones_json)
     .bind(birthday)
-    .bind(metadata_json)
+    .bind(metadata)
     .bind(person_id)
     .execute(db)
     .await?;
@@ -268,15 +276,15 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
         .unwrap_or(&contact.identifier);
     let person_id = generate_id(WIKI_PERSON_PREFIX, &[id_seed]);
 
-    let emails_json = serde_json::to_string(&contact.emails)?;
-    let phones_json = serde_json::to_string(&contact.phones)?;
+    let emails_json = serde_json::json!(contact.emails);
+    let phones_json = serde_json::json!(contact.phones);
+    let birthday = contact.birthday.as_deref().and_then(parse_birthday);
 
     let metadata = serde_json::json!({
         "ios_contact_id": contact.identifier,
         "source": "ios_contacts",
         "organization": contact.organization_name,
     });
-    let metadata_json = serde_json::to_string(&metadata)?;
 
     sqlx::query(
         r#"INSERT INTO wiki_people (id, canonical_name, emails, phones, birthday, metadata)
@@ -292,8 +300,8 @@ async fn create_person(db: &PgPool, contact: &ContactRecord) -> Result<String> {
     .bind(&canonical_name)
     .bind(&emails_json)
     .bind(&phones_json)
-    .bind(&contact.birthday)
-    .bind(&metadata_json)
+    .bind(&birthday)
+    .bind(&metadata)
     .execute(db)
     .await?;
 

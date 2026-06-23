@@ -155,7 +155,7 @@ type TransactionRow = (
     String,         // transaction_id (apple_id)
     i64,            // amount (cents)
     Option<String>, // merchant_name
-    Option<String>, // category
+    Value,          // category (jsonb array)
     Option<String>, // description
     bool,           // is_pending
     DateTime<Utc>,  // timestamp
@@ -190,7 +190,14 @@ pub async fn write_transactions(db: &PgPool, wrapper_records: &[Value]) -> Resul
                 .get("merchantName")
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            let category = tx.get("category").and_then(|v| v.as_str()).map(String::from);
+            // `category` is a JSONB array column. iOS FinanceKit doesn't send a
+            // category, so default to `[]`; wrap a bare string in an array if present.
+            // (Binding an Option<String> here failed: TEXT/NULL vs `NOT NULL JSONB`.)
+            let category = tx
+                .get("category")
+                .and_then(|v| v.as_str())
+                .map(|s| serde_json::json!([s]))
+                .unwrap_or_else(|| serde_json::json!([]));
             let status = tx.get("status").and_then(|v| v.as_str()).unwrap_or("posted");
             let description = tx
                 .get("description")
