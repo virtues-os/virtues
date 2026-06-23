@@ -10,6 +10,7 @@
 	import { onDestroy } from "svelte";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { openExternal } from "$lib/tauri/bridge";
 
 	interface Props {
 		done: boolean;
@@ -148,6 +149,10 @@
 				href={checkoutUrl}
 				target="_blank"
 				rel="noopener"
+				onclick={(e) => {
+					e.preventDefault();
+					openExternal(checkoutUrl);
+				}}
 				class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-surface transition-opacity hover:opacity-90"
 			>
 				<Icon icon="ri:external-link-line" /> Open checkout
