@@ -257,7 +257,7 @@ pub(crate) async fn finalize_paid_session(
     })?;
 
     // Register the device key with virtues-api and fund this period's wallet.
-    // A fresh paid checkout funds the monthly allotment immediately ($15);
+    // A fresh paid checkout funds the monthly allotment immediately ($20);
     // invoice.paid keeps it fresh monthly.
     //
     // CRITICAL: these are the last steps, and they sit downstream of the

@@ -17,7 +17,7 @@ mod webhooks;
 /// Voucher economics, passed into the /voucher handler.
 #[derive(Clone, Copy)]
 pub struct VoucherPolicy {
-    /// Sub renewal voucher amount. Default $15. Env: VOUCHER_RENEWAL_MICROS.
+    /// Monthly renewal credit. Default $20. Env: VOUCHER_RENEWAL_MICROS.
     pub renewal_micros: i64,
     /// Auto-top-up voucher amount (fixed). Default $10. Env: AUTO_TOPUP_MICROS.
     pub auto_topup_micros: i64,
