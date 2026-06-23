@@ -158,7 +158,7 @@ pub fn bring_up(server_privkey: &str, server_addr: IpAddr, peers: &[PeerConfig])
 /// the daemon's existing pattern (modprobe / ip6tables) and avoids a netlink-route
 /// dependency; iproute2 is always present where `wg0` exists.
 fn ensure_pool_route() -> Result<()> {
-    let cidr = ula::pool_cidr();
+    let cidr = crate::ula::pool_cidr();
     let status = std::process::Command::new("ip")
         .args(["-6", "route", "replace", &cidr, "dev", WG_IFNAME])
         .status()
