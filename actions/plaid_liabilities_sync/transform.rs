@@ -5,7 +5,7 @@
 //! each with a different schema. We normalize to a common row shape.
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -19,11 +19,11 @@ type LiabilityRow = (
     Option<i64>,    // principal cents
     Option<f64>,    // interest_rate
     Option<i64>,    // minimum_payment cents
-    Option<String>, // next_payment_due_date
-    Option<String>, // origination_date
-    Option<String>, // maturity_date
+    Option<NaiveDate>, // next_payment_due_date
+    Option<NaiveDate>, // origination_date
+    Option<NaiveDate>, // maturity_date
     String,         // currency
-    String,         // timestamp ISO
+    DateTime<Utc>,  // timestamp
     String,         // source_stream_id
     Value,          // metadata
 );
@@ -31,7 +31,7 @@ type LiabilityRow = (
 pub async fn write_liabilities(db: &PgPool, liabilities: &Value) -> Result<usize> {
     let mut pending: Vec<LiabilityRow> = Vec::new();
     let mut written = 0;
-    let now_iso = Utc::now().to_rfc3339();
+    let now = Utc::now();
 
     let kinds = [
         ("credit", liabilities.get("credit")),
@@ -77,19 +77,21 @@ pub async fn write_liabilities(db: &PgPool, liabilities: &Value) -> Result<usize
                 .and_then(|v| v.as_f64());
             let min_payment = min_payment_dollars.map(|d| (d * 100.0).round() as i64);
 
+            // Plaid sends dates as ISO `YYYY-MM-DD` strings → DATE columns.
+            let parse_date = |s: &str| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok();
             let next_payment = item
                 .get("next_payment_due_date")
                 .and_then(|v| v.as_str())
-                .map(String::from);
+                .and_then(parse_date);
             let origination = item
                 .get("origination_date")
                 .and_then(|v| v.as_str())
-                .map(String::from);
+                .and_then(parse_date);
             let maturity = item
                 .get("expected_payoff_date")
                 .or_else(|| item.get("maturity_date"))
                 .and_then(|v| v.as_str())
-                .map(String::from);
+                .and_then(parse_date);
 
             let stream_id = format!("{kind}:{plaid_account}");
             let id = Uuid::new_v5(
@@ -120,7 +122,7 @@ pub async fn write_liabilities(db: &PgPool, liabilities: &Value) -> Result<usize
                 origination,
                 maturity,
                 "USD".to_string(),
-                now_iso.clone(),
+                now,
                 stream_id,
                 metadata,
             ));

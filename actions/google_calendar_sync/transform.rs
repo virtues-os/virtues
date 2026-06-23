@@ -20,7 +20,7 @@ type EventRow = (
     Option<String>,            // location_name
     DateTime<Utc>,             // start_time
     DateTime<Utc>,             // end_time
-    i32,                       // is_all_day
+    bool,                      // is_all_day
     Option<String>,            // external_id
     Option<String>,            // external_url (htmlLink)
     String,                    // source_stream_id
@@ -74,7 +74,7 @@ pub async fn write_events(
                     .and_then(|v| v.as_str())
                     .and_then(|s| s.parse::<DateTime<Utc>>().ok())
                     .unwrap_or_else(Utc::now);
-                (updated, updated, 0)
+                (updated, updated, false)
             }
             None => continue,
         };
@@ -137,7 +137,7 @@ pub async fn write_events(
     Ok(written)
 }
 
-fn parse_event_times(event: &Value) -> Option<(DateTime<Utc>, DateTime<Utc>, i32)> {
+fn parse_event_times(event: &Value) -> Option<(DateTime<Utc>, DateTime<Utc>, bool)> {
     let start = event.get("start")?;
     let end = event.get("end")?;
 
@@ -148,7 +148,7 @@ fn parse_event_times(event: &Value) -> Option<(DateTime<Utc>, DateTime<Utc>, i32
     ) {
         let st = s.parse::<DateTime<Utc>>().ok()?;
         let et = e.parse::<DateTime<Utc>>().ok()?;
-        return Some((st, et, 0));
+        return Some((st, et, false));
     }
 
     if let (Some(s), Some(e)) = (
@@ -157,7 +157,7 @@ fn parse_event_times(event: &Value) -> Option<(DateTime<Utc>, DateTime<Utc>, i32
     ) {
         let st = format!("{s}T00:00:00Z").parse::<DateTime<Utc>>().ok()?;
         let et = format!("{e}T00:00:00Z").parse::<DateTime<Utc>>().ok()?;
-        return Some((st, et, 1));
+        return Some((st, et, true));
     }
 
     None

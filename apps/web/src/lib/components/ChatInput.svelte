@@ -7,8 +7,6 @@
 	import { createEntityBadgeElement } from "$lib/utils/entityBadge";
 	import AgentModePicker from "./AgentModePicker.svelte";
 	import ContextIndicator from "./ContextIndicator.svelte";
-	import PageEditIndicator from "./chat/PageEditIndicator.svelte";
-	import ToolbarSettingsMenu from "./ToolbarSettingsMenu.svelte";
 	import EntityPicker, { type EntityResult } from "./EntityPicker.svelte";
 
 	interface ContextUsage {
@@ -122,24 +120,11 @@
 	}
 
 
-	// Merge the optional single page binding into the editable-items list.
-	// pageBinding only contributes when the list doesn't already cover it.
-	const effectiveEditableItems = $derived.by(() => {
-		if (editableItems.length > 0) return editableItems;
-		if (pageBinding) {
-			return [{ type: 'page' as const, id: pageBinding.pageId, title: pageBinding.pageTitle }];
-		}
-		return [];
-	});
-
 	// Derive placeholder based on toolbar visibility
 	const placeholderText = $derived(showToolbar ? "What can I do for you?" : "Message...");
 
 	// Derive mode color for border/glow (null means use default primary)
 	const modeColor = $derived(getModeById(selectedAgentMode)?.color || 'var(--color-primary)');
-
-	// Derive whether editing is enabled in current mode (hide edit picker in chat mode)
-	const canEdit = $derived(getModeById(selectedAgentMode)?.tools.edit ?? true);
 
 	// Sync internal focus state with external bindable prop
 	$effect(() => {
@@ -376,10 +361,6 @@
 		}
 	}
 
-	function handleModelSelect(model: ModelOption) {
-		selectedModel = model;
-	}
-
 	function cycleAgentMode() {
 		const nextMode = getNextMode(selectedAgentMode);
 		selectedAgentMode = nextMode.id;
@@ -496,22 +477,6 @@
 				<div>
 					<AgentModePicker
 						bind:value={selectedAgentMode}
-					/>
-				</div>
-				<div>
-					<PageEditIndicator
-						items={effectiveEditableItems}
-						onRemoveItem={onRemoveItem}
-						onSelectEntities={onSelectEntities}
-						visible={canEdit}
-					/>
-				</div>
-				<div>
-					<ToolbarSettingsMenu
-						{selectedModel}
-						{selectedPersona}
-						onModelSelect={handleModelSelect}
-						onPersonaSelect={(id) => selectedPersona = id}
 					/>
 				</div>
 				<div class="relative">

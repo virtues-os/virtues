@@ -52,6 +52,18 @@ const IDLE_POLL: Duration = Duration::from_millis(250);
 /// in-flight buffering before TCP backpressure kicks in (we stop draining the
 /// socket, its window closes, the box stops sending).
 const READ_CHANNEL_DEPTH: usize = 16;
+/// Idle read deadline for a request/response [`TunnelStream`]. If no chunk
+/// arrives within this window the read returns `TimedOut` instead of blocking
+/// forever. This is an *idle* timeout — it resets on every chunk — so it never
+/// penalizes a slow-but-progressing transfer; it only fires when the WG path
+/// has silently gone dead mid-exchange (handshake completed at dial time, then
+/// the session stopped delivering and the loop never drops the read sender).
+/// Without it a dead path wedges the caller indefinitely. Matches the direct
+/// `URLSession` resource timeout on the Swift side. Only applies to the
+/// bundled `TunnelStream` (HTTP request/response); the split half used by the
+/// desktop full-duplex proxy keeps blocking semantics since it legitimately
+/// idles between frames.
+const READ_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Coarse connection state, surfaced to the app's Settings UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -417,6 +429,7 @@ impl EventLoop {
             write_tx,
             read_rx,
             read_carry: Vec::new(),
+            read_idle_timeout: READ_IDLE_TIMEOUT,
             cmd_tx: self.cmd_tx.clone(),
             closed: false,
         };
@@ -581,6 +594,8 @@ pub struct TunnelStream {
     read_rx: Receiver<Vec<u8>>,
     /// Leftover bytes from a recv that didn't fit the caller's buffer.
     read_carry: Vec<u8>,
+    /// Idle deadline applied to each blocking recv (see [`READ_IDLE_TIMEOUT`]).
+    read_idle_timeout: Duration,
     cmd_tx: Sender<Command>,
     closed: bool,
 }
@@ -588,10 +603,19 @@ pub struct TunnelStream {
 impl Read for TunnelStream {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
         if self.read_carry.is_empty() {
-            match self.read_rx.recv() {
+            match self.read_rx.recv_timeout(self.read_idle_timeout) {
                 Ok(bytes) => self.read_carry = bytes,
+                // No data for the whole idle window → the path is dead. Surface
+                // a timeout so the caller unwinds (dropping the stream, which
+                // lets the tunnel tear down) instead of blocking forever.
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "tunnel read idle timeout",
+                    ));
+                }
                 // Sender dropped → clean EOF.
-                Err(_) => return Ok(0),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
             }
         }
         let n = out.len().min(self.read_carry.len());

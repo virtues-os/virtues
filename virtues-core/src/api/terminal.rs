@@ -48,7 +48,10 @@ pub async fn terminal_ws_handler(
 
 /// Handle the established WebSocket connection
 async fn handle_socket(mut socket: WebSocket) {
-    let is_production = std::env::var("RUST_ENV")
+    // The installer writes ENVIRONMENT=production into the prod env file; the rest
+    // of the codebase keys off ENVIRONMENT (== "dev") too. RUST_ENV was never set,
+    // so this gate always fell through to the dev echo loop in production.
+    let is_production = std::env::var("ENVIRONMENT")
         .map(|v| v == "production")
         .unwrap_or(false);
 

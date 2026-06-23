@@ -22,15 +22,15 @@ type EmailRow = (
     Option<String>,         // body_preview
     String,                 // from_email
     Option<String>,         // from_name
-    String,                 // to_emails (JSON)
-    String,                 // to_names (JSON)
-    String,                 // cc_emails (JSON)
-    String,                 // bcc_emails (JSON)
+    Value,                  // to_emails (JSONB)
+    Value,                  // to_names (JSONB)
+    Value,                  // cc_emails (JSONB)
+    Value,                  // bcc_emails (JSONB)
     String,                 // direction
     bool,                   // is_read
     bool,                   // is_starred
     bool,                   // has_attachments
-    String,                 // labels (JSON)
+    Value,                  // labels (JSONB)
     DateTime<Utc>,          // timestamp
     String,                 // source_stream_id
     Value,                  // metadata
@@ -149,15 +149,15 @@ fn shape_one(msg: &Value, user_email: &str) -> Option<EmailRow> {
         body_preview,
         from_email,
         from_name,
-        serde_json::to_string(&to_emails).unwrap_or_else(|_| "[]".into()),
-        serde_json::to_string(&to_names).unwrap_or_else(|_| "[]".into()),
-        serde_json::to_string(&cc_emails).unwrap_or_else(|_| "[]".into()),
-        serde_json::to_string(&bcc_emails).unwrap_or_else(|_| "[]".into()),
+        serde_json::json!(to_emails),
+        serde_json::json!(to_names),
+        serde_json::json!(cc_emails),
+        serde_json::json!(bcc_emails),
         direction.to_string(),
         is_read,
         is_starred,
         has_attachments,
-        serde_json::to_string(&label_ids).unwrap_or_else(|_| "[]".into()),
+        serde_json::json!(label_ids),
         timestamp,
         gid.to_string(),
         metadata,

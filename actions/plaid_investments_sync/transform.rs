@@ -4,7 +4,7 @@
 //! becomes one row keyed by (account_id, security_id).
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -21,7 +21,7 @@ type AssetRow = (
     Option<i64>,    // cost_basis (cents)
     Option<i64>,    // current_value (cents)
     String,         // currency
-    String,         // timestamp ISO
+    DateTime<Utc>,  // timestamp
     String,         // source_stream_id
     Value,          // metadata
 );
@@ -111,7 +111,7 @@ pub async fn write_holdings(
             cost_basis,
             current_value,
             currency,
-            now.to_rfc3339(),
+            now,
             stream_id,
             metadata,
         ));

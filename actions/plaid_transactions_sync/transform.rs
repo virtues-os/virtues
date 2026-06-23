@@ -19,7 +19,7 @@ type TxRow = (
     Option<String>, // merchant_name
     Option<String>, // merchant_category
     Option<String>, // description
-    String,         // category (JSON)
+    Value,          // category (JSONB)
     bool,           // is_pending
     Option<String>, // transaction_type
     Option<String>, // payment_channel
@@ -140,7 +140,7 @@ pub async fn write_transactions(
             merchant_name,
             merchant_category,
             description,
-            serde_json::to_string(&categories).unwrap_or_else(|_| "[]".into()),
+            serde_json::json!(categories),
             is_pending,
             transaction_type,
             payment_channel,
