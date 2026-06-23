@@ -208,10 +208,8 @@ pub struct BearerClient {
 
 impl BearerClient {
     pub fn from_env(pool: PgPool) -> Self {
-        let api_url =
-            std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".into());
-        let atlas_url =
-            std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".into());
+        let api_url = super::api_url();
+        let atlas_url = super::atlas_url();
         Self {
             http: crate::http_client::virtues_api_client(),
             stream_http: crate::http_client::virtues_api_streaming_client(),

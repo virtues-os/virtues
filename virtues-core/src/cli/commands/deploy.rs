@@ -174,9 +174,9 @@ pub async fn handle_subscribe(virtues: &Virtues) -> Result<()> {
 
     let pool = virtues.database.pool();
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::api_url();
     let http = crate::http_client::virtues_api_client();
 
     print_welcome(&atlas_url);
@@ -238,9 +238,9 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
 
     let pool = virtues.database.pool();
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::api_url();
     let http = crate::http_client::virtues_api_client();
 
     // Start a device_link so the atlas /init/login call has something to
@@ -312,8 +312,8 @@ pub async fn handle_login(virtues: &Virtues) -> Result<()> {
 /// Welcome banner + honest privacy framing. The "passes through, never stored"
 /// claim is the v3 marketing line — accurate to what virtues-api actually does
 /// (in-memory proxy, no logging, no DB persistence; verifiable in source).
-fn print_welcome(atlas_url: &str) {
-    let is_staging = atlas_url.contains("staging") || atlas_url.contains("localhost");
+fn print_welcome(_atlas_url: &str) {
+    let is_staging = crate::virtues_api::is_nonprod_cloud();
     println!();
     println!("─────────────────────────────────────────────────────────");
     println!("  Welcome to Virtues.");

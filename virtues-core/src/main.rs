@@ -139,8 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // which the local egress classification alone can't tell us.
         let net = virtues::net_check::compute_net_status();
         if let Some(v6) = net.ipv6_global {
-            let api = std::env::var("VIRTUES_API_URL")
-                .unwrap_or_else(|_| "https://api.virtues.com".to_string());
+            let api = virtues::virtues_api::api_url();
             println!("  checking inbound reachability via virtues-api…");
             match virtues::net_check::verify_inbound(v6, &api).await {
                 virtues::net_check::InboundResult::Reachable => {

@@ -1456,7 +1456,7 @@ pub async fn create_billing_portal_handler(State(pool): State<sqlx::PgPool>) -> 
     };
 
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     // The box has no stable public URL, so we don't supply a return_url —
     // Atlas defaults it to its own public billing page (where Stripe sends the
     // customer after they click "Return to Virtues").
@@ -1496,7 +1496,7 @@ pub async fn claim_billing_handler(
     Json(req): Json<ClaimRequest>,
 ) -> Response {
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
 
     let claim = match crate::virtues_api::renew::claim(&http, &atlas_url, &req.session_id).await {
@@ -1523,7 +1523,7 @@ pub async fn claim_billing_handler(
 
     // Eager first-bearer mint (best-effort).
     let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::api_url();
     let bearer_ready =
         match crate::virtues_api::renew::renew(&pool, &http, &atlas_url, &api_url).await {
             Ok(_) => true,
@@ -1547,7 +1547,7 @@ pub async fn claim_billing_handler(
 /// stays box-side; only the user-facing bits are returned to the browser.
 pub async fn billing_link_start_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let http = crate::http_client::virtues_api_client();
     match crate::virtues_api::link::start(&pool, &http, &atlas_url).await {
         Ok(s) => (StatusCode::OK, Json(serde_json::json!(s))).into_response(),
@@ -1566,9 +1566,9 @@ pub async fn billing_link_start_handler(State(pool): State<sqlx::PgPool>) -> Res
 /// stores the billing token and mints the first bearer as a side effect.
 pub async fn billing_link_status_handler(State(pool): State<sqlx::PgPool>) -> Response {
     let atlas_url =
-        std::env::var("VIRTUES_ATLAS_URL").unwrap_or_else(|_| "http://localhost:9100".to_string());
+        crate::virtues_api::atlas_url();
     let api_url =
-        std::env::var("VIRTUES_API_URL").unwrap_or_else(|_| "http://localhost:9002".to_string());
+        crate::virtues_api::api_url();
     let http = crate::http_client::virtues_api_client();
     match crate::virtues_api::link::poll(&pool, &http, &atlas_url, &api_url).await {
         Ok(status) => (StatusCode::OK, Json(serde_json::json!({ "status": status }))).into_response(),
