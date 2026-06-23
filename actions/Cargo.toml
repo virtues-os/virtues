@@ -46,6 +46,10 @@ name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
 
 [[bin]]
+name = "narrative_identity_draft"
+path = "narrative_identity_draft/main.rs"
+
+[[bin]]
 name = "embedding_index"
 path = "embedding_index/main.rs"
 

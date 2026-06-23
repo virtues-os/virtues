@@ -6564,6 +6564,7 @@ dependencies = [
  "rustls-native-certs 0.8.4",
  "rv",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
