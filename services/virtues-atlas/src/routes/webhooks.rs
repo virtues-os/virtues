@@ -2,14 +2,15 @@
 //!
 //! `POST /webhooks/stripe`
 //!
-//! In the voucher model the webhook's only job is to keep Atlas's own
-//! `subscriptions` table current. It makes NO calls to virtues-api —
-//! revocation happens by expiry: a canceled subscription simply stops
-//! producing vouchers, and the device's bearer runs out.
+//! The webhook keeps Atlas's `subscriptions` table current AND drives renewal:
+//! on `invoice.paid` it credits the account's monthly wallet via virtues-api
+//! `/internal/credit` (set). A canceled/past_due subscription simply stops
+//! renewing, and the wallet runs down (then expires at the cohort boundary).
 //!
 //!   1. Verify the `Stripe-Signature` HMAC.
-//!   2. Idempotency via `stripe_webhook_events`.
-//!   3. Update `subscriptions.status` / `current_period_end`.
+//!   2. Idempotency via `stripe_webhook_events` (released on handler error so
+//!      Stripe retries).
+//!   3. Update `subscriptions.status` / `current_period_end`; credit on renewal.
 
 use axum::{
     body::Bytes,
@@ -84,7 +85,7 @@ async fn handle_webhook(
         // M4: `invoice.paid`'s event object has no top-level `current_period_end`
         // (that lives on the *subscription*). Without retrieving the
         // subscription, renewals silently leave the period in the past and
-        // `/voucher` denies a *paying* customer. Pull the period from the sub.
+        // otherwise a *paying* customer's renewal lands in the past. Pull it from the sub.
         "invoice.paid" => {
             let mut explicit = None;
             if let Some(sid) = event.data.object.get("subscription").and_then(|v| v.as_str()) {
@@ -108,8 +109,8 @@ async fn handle_webhook(
                 Err(e) => Err(e),
             }
         }
-        // H3 partial: handle dunning so `/voucher`'s status gate closes on
-        // failed renewals (otherwise it keeps minting until period lapses).
+        // Handle dunning so the active-sub gate (credits/auto-topup) closes on
+        // failed renewals.
         "invoice.payment_failed" => set_status(&state.pool, &event.data.object, "past_due").await,
         // Pre-order deposit settled. No-op for subscription checkouts (those
         // settle via /claim + invoice.paid); only `metadata.type ==
@@ -173,7 +174,7 @@ async fn renew_wallet(state: &AppState, stripe_customer_id: &str) -> anyhow::Res
         .virtues_api
         .credit(&crate::virtues_api_client::Credit {
             account_id,
-            amount_micros: state.voucher.renewal_micros,
+            amount_micros: state.credit.renewal_micros,
             mode: "set",
             daily_cap_micros,
             reference: Some("renewal".to_string()),

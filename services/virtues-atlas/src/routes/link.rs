@@ -2,12 +2,12 @@
 //!
 //! Connects a box to a paid subscription without the box ever holding a Stripe
 //! key. The box never sees a checkout page or a `customer_id` — it only starts
-//! a link and polls for the resulting billing token.
+//! a link and polls for the resulting api_key.
 //!
 //! ```text
 //!   box  POST /init/start            -> { device_code, user_code, verification_uri… }
 //!   user opens  GET /link?code=…     -> 302 to Stripe Checkout
-//!   Stripe success -> GET /init/done -> finalize: mint billing_token, mark ready
+//!   Stripe success -> GET /init/done -> finalize: mint api_key, mark ready
 //!   box  POST /init/poll {device_code} (loop) -> { status:"ready", billing_token }
 //! ```
 //!
@@ -246,7 +246,7 @@ async fn done(State(state): State<AppState>, Query(q): Query<DoneQuery>) -> axum
     //   (b) the device_link row must already carry this session_id (verify()
     //       writes it just before redirecting to Stripe), so even with a
     //       matching code, only the row that started this checkout finalizes.
-    // Without either, /init/done was a free billing-token write keyed on a
+    // Without either, /init/done was a free api_key write keyed on a
     // 40-bit brute-forceable user_code with no rate limit.
     if finalized.metadata_user_code.as_deref() != Some(code.as_str()) {
         tracing::warn!(code = %code, "link/done: session metadata.user_code mismatch");
@@ -370,7 +370,7 @@ fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Respons
 //           - mark used; flip the bound device_link → status='ready' with billing_token
 //           - render success HTML ("return to your terminal")
 //   box  POST /init/poll {device_code}
-//        └→ existing handler picks up status='ready' + billing_token
+//        └→ existing handler picks up status='ready' + api_key
 //
 // Tokens are 32 random bytes; stored only as sha256. Sender rate-limit:
 // no more than 3 active attempts per email per hour (anti-spam).

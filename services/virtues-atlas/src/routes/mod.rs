@@ -14,12 +14,12 @@ mod preorder;
 mod settings;
 mod webhooks;
 
-/// Voucher economics, passed into the /voucher handler.
+/// Credit/pricing amounts (renewal + top-up bands).
 #[derive(Clone, Copy)]
-pub struct VoucherPolicy {
+pub struct CreditPolicy {
     /// Monthly renewal credit. Default $20. Env: VOUCHER_RENEWAL_MICROS.
     pub renewal_micros: i64,
-    /// Auto-top-up voucher amount (fixed). Default $10. Env: AUTO_TOPUP_MICROS.
+    /// Auto-top-up amount (fixed). Default $10. Env: AUTO_TOPUP_MICROS.
     pub auto_topup_micros: i64,
     /// Manual top-up minimum. Default $10. Env: TOPUP_MIN_MICROS.
     pub topup_min_micros: i64,
@@ -65,7 +65,7 @@ pub struct AppState {
     pub stripe_price_id: String,
     /// Public base URL Atlas is reachable at (for building link/checkout URLs).
     pub public_url: String,
-    pub voucher: VoucherPolicy,
+    pub credit: CreditPolicy,
     pub preorder: PreorderPolicy,
     /// Resend API key for transactional email (the pre-order thank-you note).
     /// Empty → email sends are skipped. See `Config::resend_api_key`.

@@ -11,31 +11,14 @@ description = "Virtues action binaries: one subprocess per data source stream"
 [lib]
 path = "src/lib.rs"
 
-# ── iOS action binaries ─────────────────────────────────────────────────────
+# ── iOS ingest (one binary + one action, all paired-iPhone streams) ─────────
+# Single dispatcher for healthkit/location/eventkit/contacts/microphone/
+# financekit. The phone tags each push with a `stream` field and the dispatcher
+# fans it to the right ontology table; see ios_ingest/main.rs.
 
 [[bin]]
-name = "ios_healthkit"
-path = "ios_healthkit/main.rs"
-
-[[bin]]
-name = "ios_location"
-path = "ios_location/main.rs"
-
-[[bin]]
-name = "ios_eventkit"
-path = "ios_eventkit/main.rs"
-
-[[bin]]
-name = "ios_financekit"
-path = "ios_financekit/main.rs"
-
-[[bin]]
-name = "ios_contacts"
-path = "ios_contacts/main.rs"
-
-[[bin]]
-name = "ios_microphone"
-path = "ios_microphone/main.rs"
+name = "ios_ingest"
+path = "ios_ingest/main.rs"
 
 [[bin]]
 name = "transcription_resolution"

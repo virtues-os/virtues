@@ -1,8 +1,0 @@
-name = "iOS Contacts"
-description = "Ingest the contact graph from a paired iPhone."
-owner = "system"
-runtime = "function"
-command = ["ios_contacts"]
-triggers = ["webhook"]
-per_credential = true
-source = { id = "ios" }

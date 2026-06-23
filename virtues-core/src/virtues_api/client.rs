@@ -10,18 +10,13 @@
 //! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
 //! `/v1/unsplash/*`).
 //!
-//! ## Purpose tagging (two-pool wallet model)
+//! ## Purpose tagging (vestige — no-op)
 //!
-//! Every charged call carries an `X-Virtues-Purpose` header so the server
-//! can route the debit to either the OS reserve or the chat wallet (see
-//! `services/virtues-api/src/entitlement.rs` for the routing semantics).
-//!
-//! Default is [`Purpose::User`] — anything user-initiated (chat, agent
-//! loops, on-demand search, places autocomplete) stays as-is. For
-//! background/system work (nightly summaries, entity resolution,
-//! transcription, embeddings indexing, compaction) call
-//! `BearerClient::from_env(pool).with_purpose(Purpose::System)` so the
-//! charge hits the protected OS reserve and chat budget stays untouched.
+//! Calls still carry an `X-Virtues-Purpose` header (`user`/`system`), but the
+//! server **ignores** it — the old OS-reserve / chat-wallet two-pool split was
+//! removed when billing collapsed to a single wallet. `Purpose` +
+//! `with_purpose()` are kept only so background callers don't have to change;
+//! they have no billing effect and the whole thing is safe to delete later.
 
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -173,18 +168,14 @@ pub enum StreamOutcome {
     Error { status: u16, body: String },
 }
 
-/// What the call is for — drives `X-Virtues-Purpose` and which pool gets
-/// debited server-side.
+/// What the call is for. Sets the `X-Virtues-Purpose` header for telemetry,
+/// but the server ignores it (single wallet now — no per-purpose routing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
-    /// User-initiated work (chat, agent loops, on-demand search). Debits
-    /// `wallet_chat_micros` only; never touches the OS reserve.
+    /// User-initiated work (chat, agent loops, on-demand search).
     User,
-    /// Box-essential background work (transcription, ER, summaries,
-    /// event summaries, embeddings indexing). Debits `os_reserve_micros`
-    /// first; falls back to the chat wallet only if the OS reserve is
-    /// exhausted (heavy-OS users subsidize the OS from their chat credit;
-    /// light users never notice).
+    /// Box-essential background work (transcription, ER, summaries, event
+    /// summaries, embeddings indexing). No billing difference from `User`.
     System,
 }
 
@@ -217,36 +208,30 @@ impl BearerClient {
             pool,
             api_url,
             atlas_url,
-            // Safer default: user calls 402 on chat exhaustion, OS reserve
-            // is never raided. Background callers must explicitly opt into
-            // System via `.with_purpose(Purpose::System)`.
+            // No-op now (single wallet); just the default telemetry tag.
             purpose: Purpose::User,
         }
     }
 
-    /// Override the call purpose. Use `Purpose::System` for background
-    /// box-essential work (nightly summaries, entity resolution,
-    /// transcription, embeddings indexing) so charges hit the protected
-    /// OS reserve and the user's chat budget is preserved.
+    /// Override the call purpose (telemetry only — no billing effect; see
+    /// [`Purpose`]). Background callers tag `Purpose::System`.
     pub fn with_purpose(mut self, purpose: Purpose) -> Self {
         self.purpose = purpose;
         self
     }
 
-    /// POST JSON to a virtues-api bearer route. Two automatic recoveries:
-    ///   * `bearer_expired` (402) → run the voucher renewal, retry once.
-    ///   * `insufficient_budget` (402) → trigger auto-top-up via atlas
-    ///     (`/credits/auto-topup`), redeem the resulting voucher onto the
-    ///     existing bearer, retry once. Surfaces typed errors back to the
-    ///     caller for `card_declined`, `monthly_cap_reached`, etc — these
-    ///     are not retryable from the box's side.
+    /// POST JSON to a virtues-api route, attaching the api_key. On a
+    /// `wallet_empty`/`insufficient_budget` 402 it triggers one auto-top-up via
+    /// atlas (`/credits/auto-topup`) and retries once; typed errors
+    /// (`card_declined`, `monthly_cap_reached`, …) and other 402s surface to the
+    /// caller. A 401 (`unknown_key`) means the box must re-link.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<ApiResponse> {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send(path, body, &bearer).await?;
         self.handle_402_and_retry_post(path, body, resp).await
     }
 
-    /// GET a virtues-api bearer route. Same recovery semantics as `post_json`.
+    /// GET a virtues-api route (api_key attached). Same recovery as `post_json`.
     pub async fn get_json(&self, path: &str) -> Result<ApiResponse> {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send_get(path, &bearer).await?;
@@ -340,14 +325,13 @@ impl BearerClient {
         }
     }
 
-    /// Open a streaming POST to a virtues-api bearer route. Renewal/top-up
-    /// can only happen *before* the body starts flowing (mid-stream
-    /// recovery is impossible), so we ensure a valid bearer up front and,
-    /// if the server still answers 402 at connect time, recover-then-retry
-    /// once. On success the response body is returned untouched for the
-    /// caller to stream; non-recoverable 402s (daily_cap_reached,
-    /// card_declined, etc) come back as `StreamOutcome::Error` with the
-    /// drained body.
+    /// Open a streaming POST to a virtues-api route. Auto-top-up can only
+    /// happen *before* the body starts flowing (mid-stream recovery is
+    /// impossible), so on a `wallet_empty` 402 at connect time we top up and
+    /// retry once. On success the response body is returned untouched for the
+    /// caller to stream; non-recoverable 402s (daily_cap_reached, card_declined,
+    /// wallet_expired, …) come back as `StreamOutcome::Error` with the drained
+    /// body.
     pub async fn stream(&self, path: &str, body: &Value) -> Result<StreamOutcome> {
         // BYO key escape hatch. When the user has set their own provider
         // key, every chat call goes box → upstream directly. virtues-api

@@ -30,7 +30,10 @@ struct ActionLinkRow: View {
     @State private var runUnavailable = false
 
     private var canonical: String { DeviceConfiguration.canonicalStreamName(streamKey) }
-    private var actionId: String? { deviceManager.configuration.actionIds[canonical] }
+    /// All iOS streams now share one backend action (`ios_ingest`); the
+    /// per-stream "Server Action" row points at it. Local sync status stays
+    /// keyed per stream.
+    private var actionId: String? { deviceManager.configuration.actionIds["ios_ingest"] }
     private var sync: StreamSyncState? { uploadCoordinator.streamSync[canonical] }
 
     var body: some View {

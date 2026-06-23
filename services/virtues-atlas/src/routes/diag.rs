@@ -2,7 +2,7 @@
 //!
 //! Two endpoints, both unauthenticated. Box-side runs are best-effort and
 //! never have a session to authenticate with — a crashed box can't read
-//! its DB to fetch a bearer. Instead we rate-limit per `box_id` (the
+//! its DB to fetch a credential. Instead we rate-limit per `box_id` (the
 //! anonymous per-install hash sent in every payload) so a runaway box
 //! can't drown the table. Everything is logged at the application level
 //! for SRE follow-up; we never proxy this to anything else.

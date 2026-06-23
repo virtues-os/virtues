@@ -28,14 +28,12 @@ pub struct Config {
     pub public_url: String,
 
     /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
-    pub voucher_renewal_micros: i64,
-    /// Auto-top-up voucher amount (micros USD). Default $10 fixed.
+    pub renewal_micros: i64,
+    /// Auto-top-up amount (micros USD). Default $10 fixed.
     pub auto_topup_micros: i64,
     /// Manual top-up min/max range (micros USD). Defaults $10–$50.
     pub topup_min_micros: i64,
     pub topup_max_micros: i64,
-    /// How long an unredeemed voucher stays valid before self-expiring.
-    /// Minimum gap between voucher issuances per customer (anti-stacking).
     /// Surface Stripe's "Add promotion code" field at Checkout AND accept
     /// `payment_status = "no_payment_required"` in `finalize_paid_session`
     /// (so 100%-off coupons settle without a charge). Default false. Cap
@@ -122,7 +120,7 @@ impl Config {
         //   * Auto-top-up: $10 fixed, fires when wallet hits 0.
         //   * Manual top-up: $10–$50 user choice (atlas validates band).
         //   * Top-ups (add) are bounded by monthly_cap_micros, not anti-stacking.
-        let voucher_renewal_micros = env_i64("VOUCHER_RENEWAL_MICROS", 20_000_000);
+        let renewal_micros = env_i64("VOUCHER_RENEWAL_MICROS", 20_000_000);
         let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 10_000_000);
         let topup_min_micros = env_i64("TOPUP_MIN_MICROS", 10_000_000);
         let topup_max_micros = env_i64("TOPUP_MAX_MICROS", 50_000_000);
@@ -185,7 +183,7 @@ impl Config {
             stripe_webhook_secret,
             stripe_price_id,
             public_url,
-            voucher_renewal_micros,
+            renewal_micros,
             auto_topup_micros,
             topup_min_micros,
             topup_max_micros,

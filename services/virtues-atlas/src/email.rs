@@ -56,7 +56,7 @@ pub async fn send_preorder_thanks(
 /// Atlas resolves a Stripe customer by email, mints a one-shot token, and
 /// sends this email containing the verification link. Click → atlas looks
 /// up the login_attempt → marks the bound device_link ready with a
-/// billing_token for that customer → the calling box's poll picks it up.
+/// api_key for that customer → the calling box's poll picks it up.
 ///
 /// `link` is the full URL the user clicks. We never expose the raw token
 /// in logs; only sha256(token) hits the database.

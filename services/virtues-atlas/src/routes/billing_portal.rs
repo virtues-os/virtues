@@ -7,8 +7,7 @@
 //!
 //! Privacy: same wall as the other api_key routes. We resolve
 //! api_key → customer to mint the portal session, and learn nothing
-//! about the box's usage. The portal is a billing-plane concern; no bearer or
-//! voucher is involved.
+//! about the box's usage. The portal is a billing-plane concern; no api_key or wallet detail
 
 use axum::{
     extract::State,
