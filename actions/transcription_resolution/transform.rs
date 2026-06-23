@@ -11,7 +11,7 @@ use sqlx::{Row, PgPool};
 use uuid::Uuid;
 use virtues::virtues_api::client::{BearerClient, Purpose};
 
-const MODEL: &str = "google/gemini-2.5-flash-lite";
+const MODEL: &str = "google/gemini-3.1-flash-lite";
 
 const SYSTEM_PROMPT: &str = r#"You are a verbatim audio transcription system. Output ONLY a raw JSON object — no markdown, no code fences, no explanation.
 
