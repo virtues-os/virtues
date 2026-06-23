@@ -1,73 +1,57 @@
 <!--
-  /setup — THE single onboarding flow. One page, one progress rail, every step:
+  /setup — onboarding as ONE editorial document.
 
-    1. Account   — sign in / link your Virtues subscription (atlas + virtues-api)   [required]
-    2. This Mac  — collector + Full Disk Access + Accessibility                     [skippable]
-    3. Phone     — pair your iPhone                                                 [skippable]
-    4. Sources   — connect any catalog source (ConnectionsPanel, same as /sources) [skippable]
-    5. Import    — one-time chat-history import                                     [skippable]
+  Not a wizard of card-screens: a single page you read top to bottom, where
+  each completed action streams the next chapter in. Progress is a left-margin
+  table of contents (Welcome · Account · Your world · You), not a dot-stepper.
+  The form is the argument — Virtues writes a document from your life, and this
+  makes you watch one write itself.
 
-  No second wizard, no dashboard hand-off: everything lives here, behind one rail.
-  Required steps (1) can't be skipped — they gate `setup_complete` and the app.
-  (The box keeps its default `virtues.local` name — there's no rename step: the
-  name is cosmetic and reachability is WireGuard/SPKI + localhost, not mDNS.)
-  Skippable steps show a small corner "Skip" with an "I know what I'm doing"
-  confirm, so people don't bail by accident. The sidebar "Finish setup" entry
-  re-opens this page at the first unfinished step.
+  Two doors: the guided document (default) and a quiet "Set up manually →" that
+  satisfies only the account gate (the one thing that blocks the app) and drops
+  you into the app shell.
 
-  All step state is read from the derived /api/setup/state (setup[] + onboarding[]),
-  so the flow survives refreshes and the OAuth round-trip.
+  Chapters:
+    ① Welcome  — the threshold + the privacy pact          (always)
+    ② Account  — link the wallet (the one required gate)
+    ③ Your world — connect sources (M2)                     (after account)
+    ④ You      — the narrative-identity reveal (M3)         (after first connect)
+
+  All step state is read from the derived /api/setup/state so the flow survives
+  refreshes and the OAuth round-trip.
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
+	import { onMount } from "svelte";
+	import { fade } from "svelte/transition";
 	import { Button } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
+	import { getProfile, updateProfile } from "$lib/api/client";
+	import OnboardingToc from "$lib/components/onboarding/document/OnboardingToc.svelte";
+	import OnboardingSection from "$lib/components/onboarding/document/OnboardingSection.svelte";
+	import Marginalia from "$lib/components/onboarding/document/Marginalia.svelte";
+	import TypesetLines from "$lib/components/onboarding/document/TypesetLines.svelte";
+	import AccountGate from "$lib/components/onboarding/document/AccountGate.svelte";
+	import ConnectWorld from "$lib/components/onboarding/document/ConnectWorld.svelte";
+	import RevealSection from "$lib/components/onboarding/document/RevealSection.svelte";
 	import Modal from "$lib/components/Modal.svelte";
-	import Stepper from "$lib/components/Stepper.svelte";
-	import CollectorPermissionCard from "$lib/components/onboarding/CollectorPermissionCard.svelte";
-	import ChatImportCard from "$lib/components/onboarding/ChatImportCard.svelte";
-	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
-	import ConnectionsPanel from "$lib/components/actions/ConnectionsPanel.svelte";
-	import { onMount, onDestroy } from "svelte";
 
-	type Step = { id: string; title: string; done: boolean; detail?: string };
+	type Step = { id: string; title: string; done: boolean; detail?: string; kind?: string };
 	type SetupState = { setup: Step[]; setup_complete: boolean; onboarding: Step[] };
 
 	let state_ = $state<SetupState | null>(null);
 	let loading = $state(true);
+	let mode = $state<"document" | "manual">("document");
+	let advancedOpen = $state(false);
+	let scrollEl = $state<HTMLElement | null>(null);
+	let reduced = $state(false);
 
-	// ── the one rail ──
-	type StepId = "account" | "device" | "phone" | "sources" | "import";
-	const STEPS: { id: StepId; short: string; title: string; subtitle: string; required: boolean }[] = [
-		{ id: "account", short: "Account", required: true,
-		  title: "Sign in to Virtues",
-		  subtitle: "Link your subscription. It covers the only two things that still need a server — OAuth callbacks and the AI wallet. Your data never leaves the box." },
-		{ id: "device", short: "This Mac", required: false,
-		  title: "Set up this Mac",
-		  subtitle: "Let your box remember what happens on this machine. It all stays on your box." },
-		{ id: "phone", short: "Phone", required: false,
-		  title: "Add your iPhone",
-		  subtitle: "Your richest source — where you go, who you message, your health." },
-		{ id: "sources", short: "Sources", required: false,
-		  title: "Connect calendar & email",
-		  subtitle: "Living sources — they stay current on their own. Read-only." },
-		{ id: "import", short: "Import", required: false,
-		  title: "Bring your chat history",
-		  subtitle: "A one-time import of your past Claude, ChatGPT, or Gemini conversations." },
-	];
-
-	let current = $state(0);
-	const step = $derived(STEPS[current]);
-	const isLast = $derived(current === STEPS.length - 1);
-
-	// Optimistic local flags (flip a step the instant the local signal fires,
-	// before the next server poll confirms it). `deviceReady` mirrors the
-	// collector card's own "running + permissions granted" completion — which is
-	// ahead of the server's `device_collecting` (that needs full init-sync), so
-	// without it the step looks done ("This Mac is collecting") but offers no
-	// Continue.
-	let phonePaired = $state(false);
+	// Optimistic local flags — flip a step the instant the local signal fires,
+	// before the next server poll confirms it (used by the world chapter).
 	let deviceReady = $state(false);
+	let phonePaired = $state(false);
+	// The user chose to move on to the reveal without (or before) connecting.
+	let proceeded = $state(false);
 
 	function setupDone(id: string): boolean {
 		return state_?.setup.find((s) => s.id === id)?.done ?? false;
@@ -75,39 +59,43 @@
 	function onboardingDone(id: string): boolean {
 		return state_?.onboarding.find((s) => s.id === id)?.done ?? false;
 	}
-	function stepDone(id: StepId): boolean {
-		switch (id) {
-			case "account": return setupDone("account");
-			case "device": return deviceReady || onboardingDone("device_collecting");
-			case "phone": return phonePaired || onboardingDone("first_phone");
-			case "sources": return onboardingDone("first_source") || onboardingDone("living_source");
-			case "import": return onboardingDone("chat_imported");
-		}
-	}
 
-	const railSteps = $derived(STEPS.map((s) => ({ id: s.id, label: s.short, done: stepDone(s.id) })));
+	const accountDone = $derived(setupDone("account"));
+	const worldEnough = $derived(
+		onboardingDone("first_source") ||
+			onboardingDone("living_source") ||
+			onboardingDone("first_phone") ||
+			onboardingDone("chat_imported") ||
+			deviceReady,
+	);
+	const narrativeReady = $derived(onboardingDone("narrative_identity_ready"));
+	const narrativeGenerating = $derived(
+		state_?.onboarding.find((s) => s.id === "narrative_identity_ready")?.kind === "generating",
+	);
+	// The reveal is reachable once you've connected something, or chosen to move on.
+	const showReveal = $derived(worldEnough || proceeded);
 
-	// ── account step machine ──
-	type AccountMode = "choose" | "subscribe" | "login" | "waiting";
-	let accountMode = $state<AccountMode>("choose");
-	let checkoutUrl = $state<string | null>(null);
-	let email = $state("");
-	let accountError = $state<string | null>(null);
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-	// ── skip confirmation ──
-	let skipModalOpen = $state(false);
-	let pairModalOpen = $state(false);
+	// The TOC mirrors the document: chapters appear as they become reachable, so
+	// nothing in the rail points at a section that isn't there yet.
+	const chapters = $derived([
+		{ id: "welcome", label: "Welcome" },
+		{ id: "account", label: "Account" },
+		...(accountDone ? [{ id: "world", label: "Your world" }] : []),
+		...(showReveal ? [{ id: "reveal", label: "You" }] : []),
+	]);
+	const completedIds = $derived(
+		[
+			accountDone && "welcome",
+			accountDone && "account",
+			worldEnough && "world",
+			narrativeReady && "reveal",
+		].filter(Boolean) as string[],
+	);
 
 	async function refreshState() {
 		try {
 			const r = await fetch("/api/setup/state");
-			if (r.ok) {
-				state_ = await r.json();
-				if (stepDone("account") && (accountMode === "waiting" || accountMode === "choose")) {
-					stopPolling();
-				}
-			}
+			if (r.ok) state_ = await r.json();
 		} catch {
 			/* box briefly unreachable — keep last state */
 		} finally {
@@ -115,232 +103,231 @@
 		}
 	}
 
-	function stopPolling() {
-		if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-	}
-	function startPolling() {
-		stopPolling();
-		pollTimer = setInterval(async () => {
-			try {
-				const r = await fetch("/api/setup/link/poll", { method: "POST" });
-				const data = await r.json();
-				if (data.status === "ready") {
-					stopPolling();
-					await refreshState();
-				} else if (data.status === "expired" || data.status === "none") {
-					stopPolling();
-					accountMode = "choose";
-					accountError = "That link expired — start again.";
-				}
-			} catch { /* transient; next tick retries */ }
-		}, 3000);
-	}
-
-	async function startSubscribe() {
-		accountError = null;
+	// Invisible capture: set the box's timezone from the browser if it differs.
+	// No UI, never blocks, swallows errors.
+	async function captureTimezone() {
 		try {
-			const r = await fetch("/api/setup/subscribe/start", { method: "POST" });
-			if (!r.ok) throw new Error();
-			const data = await r.json();
-			checkoutUrl = data.verification_uri_complete || data.verification_uri;
-			accountMode = "subscribe";
-			startPolling();
+			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+			if (!tz) return;
+			const p = await getProfile();
+			if (p.timezone !== tz) await updateProfile({ timezone: tz });
 		} catch {
-			accountError = "Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
-		}
-	}
-	async function startLogin() {
-		accountError = null;
-		if (!email.includes("@") || !email.includes(".")) {
-			accountError = "That doesn't look like an email.";
-			return;
-		}
-		try {
-			const r = await fetch("/api/setup/login/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ email }),
-			});
-			if (!r.ok) throw new Error();
-			const data = await r.json();
-			if (data.status === "sent") { accountMode = "waiting"; startPolling(); }
-			else if (data.status === "no_account") accountError = "No Virtues subscription on that email — create a new account instead.";
-			else if (data.status === "rate_limited") accountError = "Too many attempts for that email — try again in an hour.";
-		} catch {
-			accountError = "Couldn't reach the Virtues billing service. Check the box's internet connection and try again.";
+			/* non-essential */
 		}
 	}
 
-	// ── navigation ──
-	let landed = false;
 	onMount(() => {
-		void refreshState().then(() => {
-			if (landed) return;
-			landed = true;
-			const firstUndone = STEPS.findIndex((s) => !stepDone(s.id));
-			current = firstUndone === -1 ? STEPS.length - 1 : firstUndone;
-		});
-		// Light poll so steps completed elsewhere (CLI, OAuth round-trip, the
-		// collector daemon) tick over here too.
+		reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+		void refreshState();
+		void captureTimezone();
+		// Light poll so steps completed elsewhere (OAuth round-trip, the collector
+		// daemon, the CLI) tick over here too.
 		const t = setInterval(refreshState, 4000);
 		return () => clearInterval(t);
 	});
-	onDestroy(stopPolling);
 
-	function next() {
-		if (isLast) { void goto("/"); return; }
-		current += 1;
+	function enterApp() {
+		void goto("/");
 	}
-	function back() { if (current > 0) current -= 1; }
-	function requestSkip() { skipModalOpen = true; }
-	function confirmSkip() { skipModalOpen = false; next(); }
+	function proceedToReveal() {
+		proceeded = true;
+		setTimeout(() => {
+			scrollEl
+				?.querySelector("#reveal")
+				?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+		}, 60);
+	}
+	function confirmAdvanced() {
+		advancedOpen = false;
+		mode = "manual";
+	}
 </script>
 
-<div class="min-h-screen flex items-center justify-center px-6 py-12">
-	<div class="w-full max-w-md">
-		{#if loading}
-			<div class="flex items-center justify-center gap-2 text-foreground-muted text-sm">
-				<Icon icon="ri:loader-4-line" class="animate-spin" />
-				<span>Checking your box…</span>
-			</div>
-		{:else if !state_}
-			<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm">
-				Couldn't reach the box. Make sure you're on the same network, then refresh.
-			</div>
-		{:else}
-			<!-- One rail, every step -->
-			<div class="mb-10">
-				<Stepper steps={railSteps} {current} />
+{#if loading}
+	<div class="flex min-h-screen items-center justify-center gap-2.5 text-sm text-foreground-muted" in:fade>
+		<Icon icon="ri:loader-4-line" class="animate-spin" />
+		<span>Checking your box…</span>
+	</div>
+{:else if !state_}
+	<div class="flex min-h-screen items-center justify-center px-6">
+		<div class="rounded-xl border border-error/20 bg-error-subtle p-4 text-sm text-error" in:fade>
+			Couldn't reach the box. Make sure you're on the same network, then refresh.
+		</div>
+	</div>
+{:else if mode === "manual"}
+	<!-- The advanced door: just the account gate, then into the app. -->
+	<div class="flex min-h-screen items-center justify-center px-6 py-16">
+		<div class="w-full max-w-md">
+			<p class="mb-2 font-mono text-[0.6875rem] uppercase tracking-[0.16em] text-foreground-subtle">Skipped setup</p>
+			<h1 class="mb-6 font-serif text-2xl tracking-tight text-foreground">Sign in to Virtues</h1>
+			<AccountGate done={accountDone} onLinked={refreshState} />
+			{#if accountDone}
+				<div class="mt-8" in:fade>
+					<Button variant="primary" class="w-full justify-center py-2.5" onclick={enterApp}>Enter Virtues →</Button>
+				</div>
+			{/if}
+			<button class="mt-6 font-mono text-xs text-foreground-subtle transition-colors hover:text-foreground" onclick={() => (mode = "document")}>
+				← Back to guided setup
+			</button>
+		</div>
+	</div>
+{:else}
+	<div class="doc-scroll" bind:this={scrollEl}>
+		<div class="doc-inner">
+			<div class="doc-toc">
+				<OnboardingToc {chapters} {completedIds} scrollContainer={scrollEl} {reduced} />
 			</div>
 
-			<div class="space-y-2 mb-5 text-center">
-				<h1 class="text-2xl font-semibold tracking-tight">{step.title}</h1>
-				<p class="text-foreground-muted text-sm">{step.subtitle}</p>
-			</div>
+			<div class="doc-column">
+				<!-- ① Welcome -->
+				<OnboardingSection id="welcome" kicker="Virtues" title="An honest record of your life" {reduced}>
+					<TypesetLines
+						lines={[
+							"Virtues runs on the box in your home. Connect your accounts and devices, and it builds a private record of your life — your messages, calendar, places, health — that you can search, read, and reflect on.",
+							"Nothing leaves the box. Not to a government, not to a tech company, not to us. We can't see what you connect or what it learns, because it's built so we can't.",
+						]}
+						{reduced}
+					/>
+					<p class="mt-10 flex items-center gap-1.5 text-sm text-foreground-subtle">
+						<Icon icon="ri:arrow-down-line" width="15" /> Begin
+					</p>
+				</OnboardingSection>
 
-			<div class="mb-6">
-				{#if step.id === "account"}
-					{#if stepDone("account")}
-						<p class="text-sm text-success text-center">Your Virtues account is connected.</p>
-					{:else}
-						<details class="rounded-lg bg-surface-alt border border-border text-sm mb-4">
-							<summary class="px-4 py-3 cursor-pointer text-foreground-muted hover:text-foreground transition-colors">
-								What stays on your box, and what we see
-							</summary>
-							<div class="px-4 pb-4 space-y-3 text-foreground-muted">
-								<div>
-									<div class="text-foreground font-medium mb-1">Stays on your box</div>
-									<p>Every message, photo, file, note, and prompt. Your encryption keys. Anything semantic about who you are.</p>
-								</div>
-								<div>
-									<div class="text-foreground font-medium mb-1">What we see — the strict minimum</div>
-									<p>A Stripe customer ID, token counts on AI calls (for billing), and OAuth callbacks for ~200ms. Never content, conversations, or who you talk to.</p>
-								</div>
-							</div>
-						</details>
+				<!-- ② Account -->
+				<OnboardingSection id="account" kicker="The one thing that needs a server" title="Sign in to Virtues" {reduced}>
+					<p class="mb-6">
+						Your subscription is the only part of Virtues that uses our servers — it handles sign-in and pays for the AI
+						your box calls on. It's built in two separate halves: one knows you pay us, the other runs your AI requests.
+						The two can't be connected, so we can't link who you are to anything you do. Everything else stays on the box.
+					</p>
+					<AccountGate done={accountDone} onLinked={refreshState} />
+					<Marginalia tone="receipt">sign-in and billing use our servers · your data never does</Marginalia>
+				</OnboardingSection>
 
-						{#if accountError}
-							<div class="p-3 rounded-lg bg-error-subtle border border-error/20 text-error text-sm mb-3">{accountError}</div>
-						{/if}
-
-						{#if accountMode === "choose"}
-							<div class="flex flex-col gap-3">
-								<Button type="button" variant="primary" class="w-full" onclick={startSubscribe}>
-									Create a Virtues account · $20/mo
-								</Button>
-								<button type="button" class="text-sm text-foreground-muted hover:text-foreground transition-colors py-2"
-									onclick={() => { accountMode = "login"; accountError = null; }}>
-									I already have an account
+				<!-- ③ Your world -->
+				{#if accountDone}
+					<OnboardingSection id="world" kicker="Your world" title="Where the record comes from" {reduced}>
+						<ConnectWorld onConnected={refreshState} onDeviceReady={() => (deviceReady = true)} />
+						{#if !showReveal}
+							<div class="world-foot">
+								<button class="continue" onclick={proceedToReveal}>
+									{worldEnough ? "Continue →" : "Skip for now →"}
 								</button>
+								<span class="continue-note">Connecting is optional — you can add sources anytime, from the app.</span>
 							</div>
-						{:else if accountMode === "subscribe"}
-							<div class="space-y-4 text-center">
-								<a href={checkoutUrl} target="_blank" rel="noopener"
-									class="inline-flex items-center gap-2 justify-center w-full px-4 py-2.5 rounded-lg bg-foreground text-surface font-medium text-sm">
-									<Icon icon="ri:external-link-line" /> Open checkout
-								</a>
-								<p class="text-foreground-muted text-xs flex items-center justify-center gap-2">
-									<Icon icon="ri:loader-4-line" class="animate-spin" /> Waiting for checkout — this advances on its own.
-								</p>
-							</div>
-						{:else if accountMode === "login"}
-							<div class="space-y-3">
-								<input type="email" bind:value={email} placeholder="Email on your Virtues subscription"
-									class="w-full px-3 py-2.5 rounded-lg bg-surface-alt border border-border text-sm outline-none focus:border-foreground-muted" />
-								<Button type="button" variant="primary" class="w-full" onclick={startLogin}>Email me a sign-in link</Button>
-								<button type="button" class="w-full text-sm text-foreground-muted hover:text-foreground transition-colors py-1"
-									onclick={() => { accountMode = "choose"; accountError = null; }}>Back</button>
-							</div>
-						{:else if accountMode === "waiting"}
-							<p class="text-foreground-muted text-sm text-center flex items-center justify-center gap-2">
-								<Icon icon="ri:mail-send-line" /> Check your email and click the link — this advances on its own.
-							</p>
 						{/if}
-					{/if}
-				{:else if step.id === "device"}
-					<CollectorPermissionCard onComplete={() => { deviceReady = true; refreshState(); }} />
-				{:else if step.id === "phone"}
-					<div class="rounded-lg border border-border p-4 space-y-3">
-						{#if stepDone("phone")}
-							<p class="text-sm text-success">Your iPhone is connected.</p>
-						{:else}
-							<p class="text-sm text-foreground-muted">Install the Virtues app on your iPhone, then scan the code to pair.</p>
-							<Button variant="primary" onclick={() => (pairModalOpen = true)}>Pair iPhone</Button>
-							<p class="text-xs text-foreground-subtle">Android is coming soon.</p>
-						{/if}
-					</div>
-				{:else if step.id === "sources"}
-					<!-- The real sources UI (also at /sources) — lists every source
-					     from the catalog with live sync_state and the right connect
-					     flow per auth kind. No onboarding-only Google shim. -->
-					<ConnectionsPanel />
-				{:else if step.id === "import"}
-					<ChatImportCard />
+					</OnboardingSection>
+				{/if}
+
+				<!-- ④ You — the reveal -->
+				{#if showReveal}
+					<OnboardingSection id="reveal" kicker="You" title="Meet yourself" {reduced}>
+						<RevealSection ready={narrativeReady} generating={narrativeGenerating} {reduced} onEnter={enterApp} />
+					</OnboardingSection>
 				{/if}
 			</div>
 
-			<!-- Footer: Back · (Skip for optional) · Continue/Finish -->
-			<div class="flex items-center justify-between border-t border-border pt-4">
-				<div>
-					{#if current > 0}
-						<button class="text-sm text-foreground-muted hover:text-foreground" onclick={back}>Back</button>
-					{/if}
-				</div>
-				<div class="flex items-center gap-4">
-					{#if !step.required && !stepDone(step.id)}
-						<button class="text-sm text-foreground-subtle hover:text-foreground" onclick={requestSkip}>Skip</button>
-					{/if}
-					{#if stepDone(step.id)}
-						<Button variant="primary" onclick={next}>{isLast ? "Finish" : "Continue"}</Button>
-					{/if}
-				</div>
-			</div>
-		{/if}
-	</div>
-</div>
+			<div class="doc-gutter"></div>
+		</div>
 
-<!-- Skip-confirmation: discourage bailing on an optional step by accident -->
-<Modal open={skipModalOpen} onClose={() => (skipModalOpen = false)} title="Skip this step?" width="sm">
+		<button class="manual-link" onclick={() => (advancedOpen = true)}>Skip setup →</button>
+	</div>
+{/if}
+
+<!-- The advanced door's confirm — the safe choice (Stay guided) is the loud one. -->
+<Modal open={advancedOpen} onClose={() => (advancedOpen = false)} title="Skip the guided setup?" width="sm">
 	{#snippet children()}
-		<div class="space-y-4 text-sm">
-			<p class="text-foreground-muted">
-				You can finish this later from the sidebar's <strong>Finish setup</strong> entry — but the
-				more you connect now, the more your box knows about your life. Skip <strong>{step.title}</strong> for now?
+		<div class="space-y-5 text-sm">
+			<p class="leading-relaxed text-foreground-muted">
+				The guided path connects your life and ends with a first draft of your narrative identity. Skipping drops you
+				straight into the raw box — sources, tables, and actions, with nothing drafted for you. You'll still link your
+				account (the one thing the app needs), and you can come back to setup anytime from the sidebar.
 			</p>
-			<div class="flex justify-end gap-3">
-				<button class="text-sm text-foreground-muted hover:text-foreground px-3 py-2" onclick={() => (skipModalOpen = false)}>
-					Keep going
+			<div class="flex items-center justify-end gap-4">
+				<button class="text-sm text-foreground-subtle transition-colors hover:text-foreground" onclick={confirmAdvanced}>
+					Skip anyway
 				</button>
-				<Button variant="primary" onclick={confirmSkip}>Skip — I know what I'm doing</Button>
+				<Button variant="primary" class="px-5 py-2.5" onclick={() => (advancedOpen = false)}>Stay guided</Button>
 			</div>
 		</div>
 	{/snippet}
 </Modal>
 
-<DevicePairModal
-	deviceType="ios"
-	displayName="iPhone"
-	open={pairModalOpen}
-	onClose={() => (pairModalOpen = false)}
-	onSuccess={() => { pairModalOpen = false; phonePaired = true; void refreshState(); }}
-/>
+<style>
+	@reference "../../../app.css";
+
+	.doc-scroll {
+		position: relative;
+		height: 100vh;
+		overflow-y: auto;
+	}
+
+	.doc-inner {
+		display: grid;
+		grid-template-columns: 9rem minmax(0, 34rem) 1fr;
+		gap: 2.5rem;
+		max-width: 72rem;
+		margin-inline: auto;
+		padding: 8vh 2rem 16vh;
+	}
+
+	.doc-toc {
+		grid-column: 1;
+	}
+	.doc-column {
+		grid-column: 2;
+	}
+	.doc-gutter {
+		grid-column: 3;
+	}
+
+	/* Below the gutter width, collapse to a single centered reading column. */
+	@media (max-width: 1200px) {
+		.doc-inner {
+			grid-template-columns: minmax(0, 1fr);
+			max-width: 38rem;
+		}
+		.doc-toc,
+		.doc-column,
+		.doc-gutter {
+			grid-column: 1;
+		}
+	}
+
+	.world-foot {
+		margin-top: 2.5rem;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 1rem;
+		border-top: 1px solid var(--color-border-subtle);
+		padding-top: 1.5rem;
+	}
+	.continue {
+		font-size: 0.95rem;
+		font-weight: 500;
+		color: var(--color-foreground);
+		transition: color 0.15s ease;
+	}
+	.continue:hover {
+		color: var(--color-primary);
+	}
+	.continue-note {
+		font-size: 0.8rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.manual-link {
+		position: fixed;
+		top: 1.5rem;
+		right: 1.75rem;
+		font-family: var(--font-mono);
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
+		transition: color 0.15s ease;
+		z-index: 20;
+	}
+	.manual-link:hover {
+		color: var(--color-foreground);
+	}
+</style>

@@ -6,6 +6,7 @@
 	 */
 	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
+	import Icon from "$lib/components/Icon.svelte";
 	import { Button } from "$lib";
 	import * as api from "$lib/api/client";
 	import type { PairingInitResponse } from "$lib/types/device-pairing";
@@ -228,38 +229,49 @@
 			{:else}
 				<!-- QR Code pairing -->
 				<div class="flex flex-col items-center text-center">
-					<div class="mb-4">
-						<p class="text-sm text-foreground-muted mb-1">
-							Open the Virtues app on your iPhone and tap <strong>Scan QR Code</strong>
+					<div class="mb-5">
+						<p class="text-sm leading-relaxed text-foreground-muted">
+							Open the Virtues app on your iPhone and tap <strong class="text-foreground">Scan QR Code</strong>
 						</p>
 					</div>
 
-					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>) -->
-					<div class="bg-white rounded-xl p-4 shadow-sm border border-border mb-3">
-						{#if isInitiating}
-							<div class="w-[240px] h-[240px] flex items-center justify-center">
-								<p class="text-sm text-foreground-muted">Generating...</p>
-							</div>
-						{:else if qrSvg}
-							<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-							<div class="w-[240px] h-[240px] [&>svg]:w-full [&>svg]:h-full">
-								{@html qrSvg}
-							</div>
-						{:else}
-							<div class="w-[240px] h-[240px] flex items-center justify-center">
-								<p class="text-sm text-error">Failed to generate QR</p>
-							</div>
-						{/if}
+					<!-- QR Code (server-rendered SVG encoding /pair#t=<token>), framed
+					     with hairline corner brackets so it reads like a scan target,
+					     not a clip-art box. -->
+					<div class="qr-frame mb-5">
+						<span class="qr-corner qr-corner--tl"></span>
+						<span class="qr-corner qr-corner--tr"></span>
+						<span class="qr-corner qr-corner--bl"></span>
+						<span class="qr-corner qr-corner--br"></span>
+						<div class="rounded-xl bg-white p-4">
+							{#if isInitiating}
+								<div class="w-[232px] h-[232px] flex items-center justify-center">
+									<Icon icon="ri:loader-4-line" width="22" class="animate-spin text-neutral-400" />
+								</div>
+							{:else if qrSvg}
+								<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+								<div class="w-[232px] h-[232px] [&>svg]:w-full [&>svg]:h-full">
+									{@html qrSvg}
+								</div>
+							{:else}
+								<div class="w-[232px] h-[232px] flex items-center justify-center">
+									<p class="text-sm text-error">Failed to generate QR</p>
+								</div>
+							{/if}
+						</div>
 					</div>
 
 					<!-- Status -->
-					<div class="flex items-center gap-2 text-sm text-foreground-muted">
-						{#if isPolling}
-							<span class="inline-block w-2 h-2 bg-primary rounded-full animate-pulse"></span>
+					{#if isPolling}
+						<div class="flex items-center gap-2.5 rounded-full bg-surface-elevated px-3.5 py-1.5 text-sm text-foreground-muted">
+							<span class="relative flex h-2 w-2">
+								<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60"></span>
+								<span class="relative inline-flex h-2 w-2 rounded-full bg-primary"></span>
+							</span>
 							<span>Waiting for your device…</span>
-							<span class="text-foreground-subtle">{formatTime(timeRemaining)}</span>
-						{/if}
-					</div>
+							<span class="font-mono text-xs tabular-nums text-foreground-subtle">{formatTime(timeRemaining)}</span>
+						</div>
+					{/if}
 				</div>
 
 				{#if error}
@@ -321,3 +333,50 @@
 		</div>
 	{/if}
 </Modal>
+
+<style>
+	@reference "../../../app.css";
+
+	/* Scan-target frame: white QR plate with four hairline corner brackets.
+	   Reads as "aim here" rather than a bare clip-art square. */
+	.qr-frame {
+		position: relative;
+		padding: 10px;
+	}
+
+	.qr-corner {
+		position: absolute;
+		width: 16px;
+		height: 16px;
+		border-color: var(--color-foreground);
+		opacity: 0.85;
+	}
+	.qr-corner--tl {
+		top: 0;
+		left: 0;
+		border-top: 2px solid;
+		border-left: 2px solid;
+		border-top-left-radius: 6px;
+	}
+	.qr-corner--tr {
+		top: 0;
+		right: 0;
+		border-top: 2px solid;
+		border-right: 2px solid;
+		border-top-right-radius: 6px;
+	}
+	.qr-corner--bl {
+		bottom: 0;
+		left: 0;
+		border-bottom: 2px solid;
+		border-left: 2px solid;
+		border-bottom-left-radius: 6px;
+	}
+	.qr-corner--br {
+		bottom: 0;
+		right: 0;
+		border-bottom: 2px solid;
+		border-right: 2px solid;
+		border-bottom-right-radius: 6px;
+	}
+</style>
