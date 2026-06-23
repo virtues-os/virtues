@@ -57,10 +57,6 @@ path = "embedding_index/main.rs"
 name = "credential_refresh"
 path = "credential_refresh/main.rs"
 
-[[bin]]
-name = "virtues_api_renew"
-path = "virtues_api_renew/main.rs"
-
 # ── Mac stream (self_issued_bearer like iOS) ────────────────────────────────
 
 [[bin]]
