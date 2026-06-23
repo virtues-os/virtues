@@ -15,13 +15,20 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use semver::Version;
+
 use sha2::{Digest, Sha256};
 
 const BINARY_PATH: &str = "/usr/local/bin/virtues";
 const RELEASE_REPO: &str = "virtues-os/virtues";
 const USER_AGENT: &str = concat!("virtues-upgrade/", env!("CARGO_PKG_VERSION"));
 
-pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), crate::Error> {
+pub async fn run(
+    check: bool,
+    version: Option<String>,
+    pre: bool,
+    force: bool,
+) -> Result<(), crate::Error> {
     let target_tag = match version {
         Some(v) => v,
         None if pre => fetch_latest_prerelease().await?,
@@ -42,12 +49,36 @@ pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), 
         return Ok(());
     }
 
+    // Downgrade guard. A stale or tampered "latest", or an explicit older
+    // `--version`, could otherwise roll the box back to a known-vulnerable
+    // build. Skip when:
+    //  · `--pre` — the prerelease channel is an explicit opt-in, and staging
+    //    builds report the bare `CARGO_PKG_VERSION` (no `-staging.N` suffix),
+    //    so semver would read every prerelease as "older" than stable.
+    //  · `--force` — operator override.
+    // Unparseable versions (dev builds) skip the check rather than block.
+    if !pre && !force {
+        if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
+            if tgt < cur {
+                return Err(crate::Error::Other(format!(
+                    "target {target} is older than current {current} — refusing to \
+                     downgrade (pass --force to override)"
+                )));
+            }
+        }
+    }
+
     // Only root can write to /usr/local/bin or restart the service.
     if !running_as_root() {
         return Err(crate::Error::Other(
             "virtues upgrade must run as root (try with sudo)".to_string(),
         ));
     }
+
+    // Single-flight: two concurrent upgrades interleaving binary swaps would
+    // corrupt the install. Held until `run` returns (RAII). A crashed prior run
+    // leaves a stale lock, which we reclaim once its PID is gone.
+    let _lock = acquire_lock()?;
 
     let arch = host_arch();
     let asset_name = format!("virtues-{target_tag}-{arch}-linux.tar.gz");
@@ -69,42 +100,116 @@ pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), 
     verify_sha(&asset_path, &expected_hex)?;
 
     println!("→ extracting…");
+    // Unpacks the whole tarball under `work_path/extracted/` and returns the
+    // `virtues` binary; the sibling artifacts (sidecars, web/, actions/,
+    // actions-bin/) are pulled out of the same tree below.
     let new_binary = extract_binary(&asset_path, work_path)?;
+    let extracted = work_path.join("extracted");
 
+    // Which artifacts this tarball actually carries. Older releases ship a
+    // subset — every one is optional and best-effort so an upgrade from any
+    // historical tarball still swaps whatever it can. `virtues` itself is the
+    // only mandatory member (already located by `extract_binary`).
+    let new_wg = find_named(&extracted, "virtues-wireguard").ok();
+    let new_llama = find_named(&extracted, "llama-server").ok();
+    let web_src = find_dir_named(&extracted, "web").ok();
+    let actions_src = find_dir_named(&extracted, "actions").ok();
+    let actions_bin_src = find_dir_named(&extracted, "actions-bin").ok();
+
+    let dirs = InstallDirs::resolve();
+
+    // ── Stop affected services ──────────────────────────────────────────────
+    // The main app always. The WG reconciler + inference sidecars only when
+    // we're actually replacing their binaries — restarting the sidecars
+    // reloads multi-GB GGUFs (slow, esp. on Jetson), so don't pay that cost
+    // for a binary-only app upgrade. A running process holds the old inode
+    // until restarted, so the stop→swap→start ordering is what makes the new
+    // bytes take effect.
     println!("→ stopping virtues.service…");
-    let _ = Command::new("systemctl").arg("stop").arg("virtues").status();
-
-    let bak = format!("{BINARY_PATH}.bak");
-    if Path::new(BINARY_PATH).exists() {
-        println!("→ saving rollback copy at {bak}…");
-        let _ = fs::remove_file(&bak);
-        fs::rename(BINARY_PATH, &bak)
-            .map_err(|e| crate::Error::Other(format!("rename to {bak}: {e}")))?;
+    service_stop("virtues");
+    if new_wg.is_some() {
+        service_stop("virtues-wireguard");
+    }
+    if new_llama.is_some() {
+        service_stop("virtues-embed");
+        service_stop("virtues-rerank");
     }
 
-    if let Err(e) = swap_binary(&new_binary, Path::new(BINARY_PATH)) {
-        print_rollback_hint(&bak);
-        return Err(e);
-    }
+    // Bring the sidecars we stopped back up. Called on every abort path below
+    // so a failed upgrade doesn't leave the box with dead search / no remote
+    // access — without this, stopping `virtues-embed`/`-rerank` early then
+    // returning on a migrate or start failure left them down until a manual
+    // `systemctl start`. Idempotent and best-effort.
+    let revive_wg = new_wg.is_some();
+    let revive_llama = new_llama.is_some();
+    let revive_sidecars = move || {
+        if revive_wg {
+            let _ = service_start("virtues-wireguard");
+        }
+        if revive_llama {
+            let _ = service_start("virtues-embed");
+            let _ = service_start("virtues-rerank");
+        }
+    };
 
-    // Refresh the web UI too. The tarball carries `web/` (already unpacked by
-    // extract_binary), but a binary-only swap would leave the browser served a
-    // stale SvelteKit build — so onboarding/UI changes never reached upgraded
-    // boxes. STATIC_DIR is set in the box env file (loaded at startup), so we
-    // know where the installer put it. Best-effort: a web-copy failure must not
-    // abort an otherwise-good binary upgrade.
-    match std::env::var("STATIC_DIR") {
-        Ok(static_dir) if !static_dir.is_empty() => {
-            let extracted = work_path.join("extracted");
-            match find_dir_named(&extracted, "web") {
-                Ok(web_src) => match install_web(&web_src, Path::new(&static_dir)) {
-                    Ok(()) => println!("→ refreshed web UI at {static_dir}"),
-                    Err(e) => eprintln!("  ⚠ web UI not refreshed ({e}); binary upgrade is still in effect"),
-                },
-                Err(e) => eprintln!("  ⚠ no web/ in release tarball ({e}); skipping UI refresh"),
+    // ── Swap the main binary (mandatory; keep .bak for rollback) ────────────
+    let bak = match swap_with_bak(&new_binary, Path::new(BINARY_PATH)) {
+        Ok(b) => b.unwrap_or_else(|| format!("{BINARY_PATH}.bak")),
+        Err(e) => {
+            // Nothing irreversible happened yet (swap_with_bak restores the
+            // original on failure), but be explicit about the manual path.
+            revive_sidecars();
+            print_rollback_hint(&format!("{BINARY_PATH}.bak"));
+            return Err(e);
+        }
+    };
+    println!("→ swapped {BINARY_PATH} (rollback copy at {bak})");
+
+    // ── Swap the sidecar binaries (best-effort; they sit next to `virtues`) ─
+    // A failed sidecar swap must not abort an otherwise-good app upgrade —
+    // swap_with_bak restores the prior binary on failure, so the box keeps a
+    // working sidecar. We warn and continue.
+    if let Some(src) = &new_wg {
+        let dst = dirs.bin_dir.join("virtues-wireguard");
+        match swap_with_bak(src, &dst) {
+            Ok(_) => println!("→ swapped {}", dst.display()),
+            Err(e) => eprintln!("  ⚠ virtues-wireguard not swapped ({e}); prior binary kept"),
+        }
+    }
+    if let Some(src) = &new_llama {
+        let dst = dirs.bin_dir.join("llama-server");
+        match swap_with_bak(src, &dst) {
+            Ok(_) => println!("→ swapped {}", dst.display()),
+            Err(e) => eprintln!("  ⚠ llama-server not swapped ({e}); prior binary kept"),
+        }
+        // Every tarball ships the CPU llama-server. On Jetson the installer
+        // then swaps in the CUDA (sm_87) build from a separate asset — replays
+        // that here, else the upgrade would silently downgrade inference from
+        // GPU to CPU. Best-effort: the CPU build already in place is a valid
+        // fallback if the CUDA asset is missing or the fetch fails.
+        if is_jetson() {
+            match fetch_jetson_cuda_llama(&base, &target_tag, &dst).await {
+                Ok(true) => println!("→ swapped in CUDA llama-server (Jetson, sm_87)"),
+                Ok(false) => println!("  · no CUDA llama-server on this release — sidecars run on CPU"),
+                Err(e) => eprintln!("  ⚠ CUDA llama-server fetch failed ({e}); sidecars run on CPU"),
             }
         }
-        _ => {} // dev / no STATIC_DIR configured — nothing to refresh
+    }
+
+    // ── Refresh the shipped directories (best-effort, atomic per-dir) ───────
+    // web/: a binary-only swap leaves the browser served a stale SvelteKit
+    // build. actions/: manifests + UI the server globs at runtime.
+    // actions-bin/: the compiled per-source action executables the box forks
+    // by name — the one whose staleness caused the rustls "No provider set"
+    // panic that motivated making this path complete.
+    if let Some(src) = &web_src {
+        refresh_named("web UI", src, &dirs.web);
+    }
+    if let Some(src) = &actions_src {
+        refresh_named("actions", src, &dirs.actions);
+    }
+    if let Some(src) = &actions_bin_src {
+        refresh_named("action binaries", src, &dirs.actions_bin);
     }
 
     println!("→ running migrations under new binary…");
@@ -112,12 +217,14 @@ pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), 
     match migrate {
         Ok(s) if s.success() => {}
         Ok(s) => {
+            revive_sidecars();
             print_rollback_hint(&bak);
             return Err(crate::Error::Other(format!(
                 "new binary's `migrate` exited {s}"
             )));
         }
         Err(e) => {
+            revive_sidecars();
             print_rollback_hint(&bak);
             return Err(crate::Error::Other(format!("invoke migrate: {e}")));
         }
@@ -128,25 +235,227 @@ pub async fn run(check: bool, version: Option<String>, pre: bool) -> Result<(), 
     // that were installed when the rename step still existed. Best-effort.
     remove_stale_setup_sudoers();
 
+    // ── Start services back up ──────────────────────────────────────────────
+    // The main app is the one whose failure aborts (and prints the rollback
+    // hint); the sidecars are best-effort restarts that won't undo a good app
+    // upgrade — but a sidecar that won't start means degraded search, so warn
+    // loudly.
     println!("→ starting virtues.service…");
-    let status = Command::new("systemctl").arg("start").arg("virtues").status();
-    match status {
-        Ok(s) if s.success() => {}
-        Ok(s) => {
+    match service_start("virtues") {
+        Ok(true) => {}
+        Ok(false) => {
+            revive_sidecars();
             print_rollback_hint(&bak);
-            return Err(crate::Error::Other(format!(
-                "systemctl start exited {s}"
-            )));
+            return Err(crate::Error::Other(
+                "systemctl start virtues failed".to_string(),
+            ));
         }
         Err(e) => {
+            revive_sidecars();
             print_rollback_hint(&bak);
             return Err(crate::Error::Other(format!("invoke systemctl: {e}")));
+        }
+    }
+    if new_wg.is_some() {
+        if let Ok(false) | Err(_) = service_start("virtues-wireguard") {
+            eprintln!("  ⚠ virtues-wireguard did not start — remote access may be down; check `systemctl status virtues-wireguard`");
+        }
+    }
+    if new_llama.is_some() {
+        for unit in ["virtues-embed", "virtues-rerank"] {
+            if let Ok(false) | Err(_) = service_start(unit) {
+                eprintln!("  ⚠ {unit} did not start — search/embeddings degraded; check `systemctl status {unit}`");
+            }
         }
     }
 
     println!();
     println!("✓ upgraded to {target_tag}. Rollback copy kept at {bak}.");
     Ok(())
+}
+
+/// Resolved on-box install destinations. The binaries live next to
+/// `/usr/local/bin/virtues`; the shipped dirs follow the env vars the
+/// installer writes into the box env file, falling back to the same
+/// `/usr/local` well-known defaults `virtues-installer` uses so a manual
+/// `sudo virtues upgrade` (which doesn't load that env file) still targets the
+/// right paths. Mirrors `InstallConfig` in the installer crate.
+struct InstallDirs {
+    /// Directory holding `virtues`, `virtues-wireguard`, `llama-server`.
+    bin_dir: PathBuf,
+    web: PathBuf,
+    actions: PathBuf,
+    actions_bin: PathBuf,
+}
+
+impl InstallDirs {
+    fn resolve() -> Self {
+        let bin_dir = Path::new(BINARY_PATH)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("/usr/local/bin"));
+        let env_dir = |var: &str, default: &str| {
+            std::env::var(var)
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(default))
+        };
+        Self {
+            bin_dir,
+            web: env_dir("STATIC_DIR", "/usr/local/share/virtues/web"),
+            actions: env_dir("VIRTUES_ACTIONS_DIR", "/usr/local/share/virtues/actions"),
+            actions_bin: env_dir("VIRTUES_ACTIONS_BIN_DIR", "/usr/local/libexec/virtues"),
+        }
+    }
+}
+
+/// Replace `dest` with `new`, keeping the prior file as `dest.bak` for
+/// rollback. Restores the original if the swap fails partway, so a caller that
+/// treats a failure as non-fatal still has a working binary in place. Returns
+/// the `.bak` path when one was created (`None` for a fresh install).
+fn swap_with_bak(new: &Path, dest: &Path) -> Result<Option<String>, crate::Error> {
+    let bak = format!("{}.bak", dest.display());
+    let had_prior = dest.exists();
+    if had_prior {
+        let _ = fs::remove_file(&bak);
+        fs::rename(dest, &bak)
+            .map_err(|e| crate::Error::Other(format!("rename {} to {bak}: {e}", dest.display())))?;
+    }
+    if let Err(e) = swap_binary(new, dest) {
+        if had_prior {
+            let _ = fs::rename(&bak, dest); // put the working binary back
+        }
+        return Err(e);
+    }
+    Ok(had_prior.then_some(bak))
+}
+
+/// Atomically replace a shipped directory, logging a uniform success/skip line.
+/// Best-effort: a copy failure leaves the prior dir untouched (install_web
+/// stages into a sibling and only swaps on success) and never aborts the run.
+fn refresh_named(label: &str, src: &Path, dst: &Path) {
+    match install_web(src, dst) {
+        Ok(()) => println!("→ refreshed {label} → {}", dst.display()),
+        Err(e) => eprintln!("  ⚠ {label} not refreshed ({e}); prior copy still in effect"),
+    }
+}
+
+/// `systemctl stop <unit>` — best-effort (a not-yet-running unit is fine).
+fn service_stop(unit: &str) {
+    let _ = Command::new("systemctl").arg("stop").arg(unit).status();
+}
+
+/// `systemctl start <unit>` — `Ok(true)` on success, `Ok(false)` on non-zero
+/// exit, `Err` if systemctl couldn't be invoked.
+fn service_start(unit: &str) -> std::io::Result<bool> {
+    Command::new("systemctl")
+        .arg("start")
+        .arg(unit)
+        .status()
+        .map(|s| s.success())
+}
+
+/// Exclusive process lock for the duration of an upgrade. Created with
+/// `create_new` (atomic O_EXCL), removed on drop. Lives in `/run` (tmpfs →
+/// auto-cleared on reboot) so a power-loss mid-upgrade never leaves a
+/// permanently-stuck lock.
+const LOCK_PATH: &str = "/run/virtues-upgrade.lock";
+
+struct UpgradeLock;
+impl Drop for UpgradeLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(LOCK_PATH);
+    }
+}
+
+/// Acquire the single-flight lock, reclaiming a stale one left by a crashed
+/// prior run (its recorded PID no longer exists). Returns an RAII guard whose
+/// drop releases the lock.
+fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
+    let path = Path::new(LOCK_PATH);
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(mut f) => {
+                let _ = write!(f, "{}", std::process::id());
+                return Ok(UpgradeLock);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // A live holder keeps the lock; a dead one's PID is gone from
+                // /proc, so we reclaim it and retry. An unreadable/corrupt lock
+                // is treated as held (safer to refuse than to clobber).
+                let holder_alive = fs::read_to_string(path)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .map(|pid| Path::new(&format!("/proc/{pid}")).exists())
+                    .unwrap_or(true);
+                if holder_alive {
+                    return Err(crate::Error::Other(
+                        "another `virtues upgrade` is already running".to_string(),
+                    ));
+                }
+                let _ = fs::remove_file(path); // stale — reclaim and retry
+            }
+            Err(e) => {
+                return Err(crate::Error::Other(format!("acquire upgrade lock: {e}")));
+            }
+        }
+    }
+}
+
+/// L4T's marker file — present on every Jetson, absent everywhere else.
+/// Mirrors `is_jetson()` in `virtues-installer`.
+fn is_jetson() -> bool {
+    Path::new("/etc/nv_tegra_release").exists()
+}
+
+/// Replace the CPU `llama-server` at `dest` with the Jetson CUDA (sm_87) build
+/// attached to the same release. Returns `Ok(false)` when the asset isn't
+/// published for this release (its CI job is allowed to fail); `Err` only on a
+/// real fetch/verify failure. Mirrors the installer's `fetch_jetson_cuda_llama`,
+/// including the mandatory SHA256 sidecar check (this binary runs as a daemon).
+async fn fetch_jetson_cuda_llama(
+    base: &str,
+    tag: &str,
+    dest: &Path,
+) -> Result<bool, crate::Error> {
+    let name = format!("llama-server-{tag}-aarch64-cuda-linux");
+    let url = format!("{base}/{name}");
+
+    let resp = build_client(false)?
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    let bytes = resp
+        .error_for_status()
+        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?
+        .bytes()
+        .await
+        .map_err(|e| crate::Error::Other(format!("read {name}: {e}")))?;
+
+    let expected = fetch_text(&format!("{url}.sha256")).await?;
+    let expected = expected.split_whitespace().next().unwrap_or("");
+    let got = {
+        let mut h = Sha256::new();
+        h.update(&bytes);
+        format!("{:x}", h.finalize())
+    };
+    if !expected.eq_ignore_ascii_case(&got) {
+        return Err(crate::Error::Other(format!(
+            "sha256 mismatch on {name} (expected {expected}, got {got})"
+        )));
+    }
+
+    // Stage next to the destination (same fs → atomic swap) then install.
+    let staged = dest.with_extension("cuda-tmp");
+    fs::write(&staged, &bytes)
+        .map_err(|e| crate::Error::Other(format!("stage CUDA llama-server: {e}")))?;
+    swap_binary(&staged, dest)?;
+    Ok(true)
 }
 
 fn running_as_root() -> bool {
@@ -373,23 +682,51 @@ fn find_dir_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
     )))
 }
 
-/// Replace the contents of `static_dir` with the freshly-extracted `web_src`.
-/// Stages into a sibling temp dir and swaps atomically (same parent fs), so a
-/// mid-copy failure can't leave a half-written UI being served.
-fn install_web(web_src: &Path, static_dir: &Path) -> Result<(), crate::Error> {
-    let parent = static_dir
+/// Replace the contents of `dst` with the freshly-extracted `src` directory.
+/// Copies into a sibling temp dir, then swaps via move-aside + rename so a
+/// failure mid-swap leaves the prior dir recoverable rather than an empty hole.
+/// Used for `web/`, `actions/`, and `actions-bin/` alike — `fs::copy` preserves
+/// the exec bit, so the swapped-in action binaries stay runnable. (Named for
+/// its original web-only use; now generic via `refresh_named`.)
+fn install_web(src: &Path, dst: &Path) -> Result<(), crate::Error> {
+    let parent = dst
         .parent()
-        .ok_or_else(|| crate::Error::Other("STATIC_DIR has no parent".to_string()))?;
+        .ok_or_else(|| crate::Error::Other("target dir has no parent".to_string()))?;
     fs::create_dir_all(parent)
         .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", parent.display())))?;
-    let staged = parent.join(".virtues-web.upgrade-tmp");
+    // Per-destination temp names (derived from the leaf) so refreshing two dirs
+    // that share a parent — `web/` and `actions/` both live under
+    // /usr/local/share/virtues — can't stomp each other's staging area.
+    let leaf = dst
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("dir");
+    let staged = parent.join(format!(".virtues-{leaf}.upgrade-tmp"));
+    let old = parent.join(format!(".virtues-{leaf}.upgrade-old"));
     let _ = fs::remove_dir_all(&staged);
-    copy_dir_all(web_src, &staged)?;
-    // Swap: drop the old dir, move the staged one into place.
-    let _ = fs::remove_dir_all(static_dir);
-    fs::rename(&staged, static_dir).map_err(|e| {
-        crate::Error::Other(format!("swap web dir into {}: {e}", static_dir.display()))
-    })?;
+    let _ = fs::remove_dir_all(&old);
+    copy_dir_all(src, &staged)?;
+
+    // Non-destructive swap: move the live dir ASIDE first, then move the new
+    // one into place. A failure (or a kill) between the two renames leaves the
+    // old dir recoverable at `old` — never an empty hole. Critical for
+    // `actions-bin/`: a destructive remove-then-rename that died mid-swap would
+    // wipe every action executable until a reinstall.
+    let had_prior = dst.exists();
+    if had_prior {
+        fs::rename(dst, &old)
+            .map_err(|e| crate::Error::Other(format!("move aside {}: {e}", dst.display())))?;
+    }
+    if let Err(e) = fs::rename(&staged, dst) {
+        if had_prior {
+            let _ = fs::rename(&old, dst); // restore the working dir
+        }
+        return Err(crate::Error::Other(format!(
+            "swap dir into {}: {e}",
+            dst.display()
+        )));
+    }
+    let _ = fs::remove_dir_all(&old);
     Ok(())
 }
 
@@ -434,7 +771,7 @@ fn find_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
 fn swap_binary(new_binary: &Path, dest: &Path) -> Result<(), crate::Error> {
     // `fs::rename` is atomic when src + dst share a filesystem. The
     // extracted binary may not — fall back to copy + remove.
-    if let Err(_) = fs::rename(new_binary, dest) {
+    if fs::rename(new_binary, dest).is_err() {
         fs::copy(new_binary, dest)
             .map_err(|e| crate::Error::Other(format!("copy new binary to {}: {e}", dest.display())))?;
     }
