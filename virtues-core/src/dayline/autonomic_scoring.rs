@@ -18,6 +18,8 @@
 use chrono::NaiveDate;
 use sqlx::PgPool;
 
+use crate::dayline::embedding_ops::{bytes_to_embedding, cosine_similarity};
+
 /// Recency half-life in days (3-week decay: α ≈ 0.1 EMA equivalent).
 const RECENCY_HALF_LIFE_DAYS: f64 = 21.0;
 
@@ -201,34 +203,6 @@ pub async fn compute_autonomic_for_day(pool: &PgPool, date: NaiveDate) -> anyhow
 // ============================================================================
 // Helpers
 // ============================================================================
-
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let mut dot = 0.0f64;
-    let mut norm_a = 0.0f64;
-    let mut norm_b = 0.0f64;
-    for i in 0..a.len().min(b.len()) {
-        let av = a[i] as f64;
-        let bv = b[i] as f64;
-        dot += av * bv;
-        norm_a += av * av;
-        norm_b += bv * bv;
-    }
-    let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom < 1e-10 {
-        0.0
-    } else {
-        (dot / denom).max(-1.0).min(1.0)
-    }
-}
-
-fn bytes_to_embedding(blob: &[u8]) -> Vec<f32> {
-    if blob.len() % 4 != 0 {
-        return Vec::new();
-    }
-    blob.chunks_exact(4)
-        .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-        .collect()
-}
 
 fn days_between_dates(from: &str, to: &str) -> f64 {
     let from_date = chrono::NaiveDate::parse_from_str(from, "%Y-%m-%d");
