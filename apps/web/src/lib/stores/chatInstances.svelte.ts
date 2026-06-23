@@ -184,8 +184,9 @@ class ChatInstanceStore {
             onError: (error) => {
                 console.error(`[ChatInstances] Error in chat ${conversationId}:`, error);
 
-                // Detect subscription_expired from virtues-api 402 response
-                if (error.message?.includes('subscription_expired')) {
+                // A lapsed subscription / unrecognized key surfaces as these
+                // codes from virtues-api (402/401) — refresh subscription state.
+                if (/wallet_expired|subscription_inactive|unknown_key/.test(error.message ?? '')) {
                     subscriptionStore.check();
                 }
             }

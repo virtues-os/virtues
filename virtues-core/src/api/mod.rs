@@ -39,7 +39,6 @@ pub mod pins;
 pub mod things;
 pub mod places;
 pub mod profile;
-pub mod rate_limit;
 pub mod seed_testing;
 pub mod source_auth;
 pub mod spaces;
@@ -210,10 +209,6 @@ pub use personas::{
     PersonaListResponse, PersonasData, UpdatePersonaRequest,
 };
 pub use profile::{get_display_name, get_profile, update_profile, UpdateProfileRequest};
-pub use rate_limit::{
-    check_rate_limit, get_usage_stats, record_usage, RateLimitError, RateLimits, TokenUsage,
-    UsageStats,
-};
 pub use seed_testing::{
     get_data_quality_metrics, get_pipeline_status, DataQualityMetrics, PipelineStatus,
 };
@@ -225,7 +220,7 @@ pub use token_estimation::{
 };
 pub use tools::{get_tool, list_tools, ListToolsQuery, Tool};
 pub use usage::{
-    check_and_record_usage, check_limit, get_all_usage, init_limits_from_tier,
+    check_limit, get_all_usage, init_limits_from_tier,
     record_usage as record_service_usage, LimitType, RemainingUsage, Service, ServiceUsage,
     UsageLimitError, UsageSummary,
 };

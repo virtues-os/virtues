@@ -21,15 +21,15 @@ use sqlx::PgPool;
 /// ran). The trial fields are always null — the launch plan is a flat
 /// monthly subscription with no trial.
 ///
-/// Fully-local dev (`ENVIRONMENT=dev` + a verbatim `VIRTUES_API_BEARER`, i.e.
+/// Fully-local dev (`ENVIRONMENT=dev` + a verbatim `VIRTUES_API_KEY`, i.e.
 /// the seeded local virtues-api) reports active unconditionally: billing is
 /// bypassed locally, so the box never claims a token, and without this the
 /// frontend would nag "Subscribe to continue using AI" despite AI working.
-/// Pointed at staging/prod (no verbatim bearer) we fall through to the real
+/// Pointed at staging/prod (no verbatim key) we fall through to the real
 /// claimed-token signal so the genuine billing flow can be exercised.
 pub async fn get_subscription_status(pool: &PgPool) -> Result<serde_json::Value> {
     if crate::middleware::auth::is_dev()
-        && std::env::var("VIRTUES_API_BEARER").is_ok_and(|b| !b.is_empty())
+        && std::env::var("VIRTUES_API_KEY").is_ok_and(|b| !b.is_empty())
     {
         return Ok(serde_json::json!({
             "status": "active",
@@ -39,7 +39,7 @@ pub async fn get_subscription_status(pool: &PgPool) -> Result<serde_json::Value>
         }));
     }
 
-    let has_token = crate::virtues_api::renew::has_billing_token(pool)
+    let has_token = crate::virtues_api::renew::has_api_key(pool)
         .await
         .unwrap_or(false);
 

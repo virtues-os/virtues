@@ -1,12 +1,12 @@
 //! Stripe Customer Portal route (billing self-service).
 //!
-//! `POST /billing/portal/sessions { billing_token, return_url }` →
+//! `POST /billing/portal/sessions { api_key, return_url }` →
 //! `{ url }`. Backs core's `POST /api/billing/portal`. The customer manages
 //! their card, invoices, and cancellation entirely on Stripe's hosted portal,
 //! so Atlas implements no billing UI of its own.
 //!
-//! Privacy: same wall as the other billing_token routes. We resolve
-//! billing_token → customer to mint the portal session, and learn nothing
+//! Privacy: same wall as the other api_key routes. We resolve
+//! api_key → customer to mint the portal session, and learn nothing
 //! about the box's usage. The portal is a billing-plane concern; no bearer or
 //! voucher is involved.
 
@@ -29,7 +29,7 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Debug, Deserialize)]
 struct PortalSessionBody {
-    billing_token: String,
+    api_key: String,
     /// Where Stripe sends the customer when they leave the portal. Core
     /// supplies the box's own URL; we fall back to atlas's public URL.
     #[serde(default)]
@@ -40,7 +40,7 @@ async fn create_portal_session(
     State(state): State<AppState>,
     Json(body): Json<PortalSessionBody>,
 ) -> axum::response::Response {
-    let customer_id = match resolve_active_customer(&state, &body.billing_token).await {
+    let customer_id = match resolve_active_customer(&state, &body.api_key).await {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -69,13 +69,13 @@ async fn create_portal_session(
     (StatusCode::OK, Json(json!({ "url": session.url }))).into_response()
 }
 
-/// Resolve a billing_token → active customer's `stripe_customer_id`. Errors on
+/// Resolve a api_key → active customer's `stripe_customer_id`. Errors on
 /// unknown token or inactive subscription. Mirrors `credits::resolve_active_customer`.
 async fn resolve_active_customer(
     state: &AppState,
-    billing_token: &str,
+    api_key: &str,
 ) -> Result<String, axum::response::Response> {
-    let token_hash = sha256(billing_token.as_bytes());
+    let token_hash = sha256(api_key.as_bytes());
 
     let row: Option<(String, Option<String>)> = sqlx::query_as(
         r#"
@@ -85,7 +85,7 @@ async fn resolve_active_customer(
                 ORDER BY s.current_period_end DESC NULLS LAST
                 LIMIT 1) AS sub_status
         FROM customers c
-        WHERE c.billing_token_hash = $1
+        WHERE c.api_key_hash = $1
         "#,
     )
     .bind(&token_hash[..])
@@ -103,8 +103,8 @@ async fn resolve_active_customer(
     let Some((customer_id, sub_status)) = row else {
         return Err(err(
             StatusCode::UNAUTHORIZED,
-            "invalid_billing_token",
-            "unknown billing token",
+            "invalid_api_key",
+            "unknown api key",
         ));
     };
 

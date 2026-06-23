@@ -16,12 +16,33 @@
 		return m ? Number(m[1]) : undefined;
 	});
 
-	const isRateLimitError = $derived(
-		status === 429 ||
-			// Fall back to text only when there's no status code to read.
-			(status === undefined &&
-				/rate limit|too many requests|\b429\b/i.test(error?.message ?? ""))
+	// The box embeds the virtues-api / atlas error code in the message body.
+	// Classify billing states explicitly so a 402 "wallet empty" is never
+	// mislabeled "Rate Limit Reached" (that mislabel sent us chasing the wrong
+	// cause for hours).
+	const raw = $derived(error?.message ?? "");
+	const has = (re: RegExp) => re.test(raw);
+
+	// Distinct billing kinds, in priority order.
+	const kind = $derived.by((): string => {
+		if (has(/wallet_empty|insufficient_budget/i)) return "wallet_empty";
+		if (has(/card_declined/i)) return "card_declined";
+		if (has(/monthly_cap_reached/i)) return "monthly_cap";
+		if (has(/daily_cap_reached/i)) return "daily_cap";
+		if (has(/topup_disabled/i)) return "topup_disabled";
+		if (has(/wallet_expired|subscription_inactive/i)) return "subscription";
+		if (has(/unknown_key|missing_key|malformed_key/i) || status === 401) return "reconnect";
+		// Genuine upstream rate limit (the shared gateway 429s), not a billing 402.
+		if (status === 429 || (status === undefined && /rate limit|too many requests|\b429\b/i.test(raw)))
+			return "rate_limit";
+		return "generic";
+	});
+
+	const isBilling = $derived(
+		["wallet_empty", "card_declined", "monthly_cap", "daily_cap", "topup_disabled", "subscription"].includes(kind)
 	);
+	// "Warning" styling (amber) for soft, user-fixable states; hard error (red) otherwise.
+	const isSoft = $derived(isBilling || kind === "rate_limit" || kind === "reconnect");
 
 	// Strip our "LLM error (status NNN): " wrapper and, when the remainder is the
 	// provider's JSON error, surface just its human-readable message.
@@ -38,24 +59,56 @@
 		return msg;
 	});
 
+	const COPY: Record<string, { title: string; message: string }> = {
+		wallet_empty: {
+			title: "Out of credits",
+			message: "Your Virtues wallet is empty. Add credits to keep going — your monthly allotment refreshes on renewal.",
+		},
+		card_declined: {
+			title: "Card declined",
+			message: "We couldn't charge your card for an auto top-up. Update your payment method in Billing, then retry.",
+		},
+		monthly_cap: {
+			title: "Monthly cap reached",
+			message: "You've hit your monthly spend cap. Raise it in Settings → Billing, or wait until it resets.",
+		},
+		daily_cap: {
+			title: "Daily limit reached",
+			message: "You've hit today's spend ceiling (a safety limit). It resets at midnight UTC, or raise it in Settings.",
+		},
+		topup_disabled: {
+			title: "Auto top-up off",
+			message: "Auto top-up is disabled. Add credits manually in Billing, or set your own provider key.",
+		},
+		subscription: {
+			title: "Subscription inactive",
+			message: "Your subscription isn't active. Reconnect or update billing to continue.",
+		},
+		reconnect: {
+			title: "Reconnect needed",
+			message: "This box isn't recognized by billing. Reconnect your subscription to continue.",
+		},
+		rate_limit: {
+			title: "Rate limit reached",
+			message: "The AI provider is briefly rate-limiting. Wait a moment and retry.",
+		},
+	};
+
 	const title = $derived(
-		isRateLimitError
-			? "Rate Limit Reached"
-			: status
-				? `Request failed (HTTP ${status})`
-				: "An error occurred"
+		COPY[kind]?.title ?? (status ? `Request failed (HTTP ${status})` : "An error occurred")
 	);
+	const billingMessage = $derived(COPY[kind]?.message);
 </script>
 
 {#if error}
 	<div class="flex justify-start">
 		<div
 			class="error-container"
-			class:rate-limit-error={isRateLimitError}
+			class:rate-limit-error={isSoft}
 		>
 			<div class="error-icon">
 				<Icon
-					icon={isRateLimitError ? "ri:time-line" : "ri:error-warning-line"}
+					icon={isBilling ? "ri:wallet-3-line" : kind === "rate_limit" ? "ri:time-line" : kind === "reconnect" ? "ri:link" : "ri:error-warning-line"}
 					width="20"
 				/>
 			</div>
@@ -64,17 +117,18 @@
 					{title}
 				</div>
 				<div class="error-message">
-					{#if isRateLimitError}
-						You've reached your API usage limit. Please wait for the limit to reset or check your usage dashboard for details.
-					{:else}
-						{cleanMessage}
-					{/if}
+					{billingMessage ?? cleanMessage}
 				</div>
 				<div class="error-actions">
-					{#if isRateLimitError}
-						<a href="/usage" class="usage-link">
-							<Icon icon="ri:bar-chart-line" width="16" />
-							View Usage Dashboard
+					{#if isBilling}
+						<a href="/billing" class="usage-link">
+							<Icon icon="ri:wallet-3-line" width="16" />
+							{kind === "wallet_empty" || kind === "topup_disabled" ? "Add credits" : "Manage billing"}
+						</a>
+					{:else if kind === "reconnect" || kind === "subscription"}
+						<a href="/setup" class="usage-link">
+							<Icon icon="ri:link" width="16" />
+							Reconnect subscription
 						</a>
 					{:else}
 						<button

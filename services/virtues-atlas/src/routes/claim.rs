@@ -20,6 +20,7 @@ use axum::{
     routing::post,
     Router,
 };
+use anyhow::Context as _;
 use chrono::{TimeZone, Utc};
 use rand::RngCore;
 use serde::Deserialize;
@@ -27,6 +28,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::routes::AppState;
+use crate::virtues_api_client::{Credit, RegisterDevice};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/claim", post(claim))
@@ -42,7 +44,7 @@ async fn claim(State(state): State<AppState>, Json(body): Json<ClaimBody>) -> ax
         Ok(f) => (
             StatusCode::CREATED,
             Json(json!({
-                "billing_token": f.billing_token,
+                "api_key": f.api_key,
                 "current_period_end": f.period_end,
             })),
         )
@@ -53,7 +55,8 @@ async fn claim(State(state): State<AppState>, Json(body): Json<ClaimBody>) -> ax
 
 /// The minted credential for a verified paid session.
 pub(crate) struct Finalized {
-    pub billing_token: String,
+    /// The device api_key the box stores + sends to the proxy.
+    pub api_key: String,
     pub period_end: chrono::DateTime<Utc>,
     /// The session id we just consumed — for `/link/done` to match against the
     /// `device_link.stripe_session_id` it stamped, so a session for code A
@@ -200,11 +203,9 @@ pub(crate) async fn finalize_paid_session(
         .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
         .unwrap_or_else(|| Utc::now() + chrono::Duration::days(30));
 
-    // Mint a fresh billing token.
-    let mut token_bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut token_bytes);
-    let billing_token = hex::encode(token_bytes);
-    let token_hash = sha256(billing_token.as_bytes());
+    // Mint a fresh device api_key (the box's single credential).
+    let api_key = random_token();
+    let api_key_hash = sha256(api_key.as_bytes());
 
     let internal = |what: &str| FinalizeErr {
         status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -212,26 +213,24 @@ pub(crate) async fn finalize_paid_session(
         message: what.to_string(),
     };
 
-    // Upsert customer with the new billing token (reissue on re-claim).
-    //
-    // We also NULL `last_voucher_issued_at` on the conflict path: a customer
-    // re-claiming has paid for a fresh subscription period and the previous
-    // gate timestamp is no longer the right limiter — leaving it stale would
-    // 429 their first /voucher call for up to 25 days after cancel + resub.
-    sqlx::query(
+    // Upsert customer with the new api_key hash (rotate on re-claim). The
+    // opaque `account_id` is assigned once and kept on conflict, so re-claiming
+    // re-points the device to the SAME account — the wallet is preserved.
+    let candidate_account_id = new_account_id();
+    let (account_id, daily_cap_micros): (String, i64) = sqlx::query_as(
         r#"
-        INSERT INTO customers (stripe_customer_id, email, billing_token_hash)
-        VALUES ($1, $2, $3)
+        INSERT INTO customers (stripe_customer_id, email, api_key_hash, account_id)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (stripe_customer_id)
-        DO UPDATE SET billing_token_hash = $3,
-                      email = $2,
-                      last_voucher_issued_at = NULL
+        DO UPDATE SET api_key_hash = $3, email = $2
+        RETURNING account_id, daily_cap_micros
         "#,
     )
     .bind(&stripe_customer_id)
     .bind(&email)
-    .bind(&token_hash[..])
-    .execute(&state.pool)
+    .bind(&api_key_hash[..])
+    .bind(&candidate_account_id)
+    .fetch_one(&state.pool)
     .await
     .map_err(|e| {
         tracing::warn!("claim upsert customer failed: {e:#}");
@@ -257,6 +256,50 @@ pub(crate) async fn finalize_paid_session(
         internal("subscription upsert failed")
     })?;
 
+    // Register the device key with virtues-api and fund this period's wallet.
+    // A fresh paid checkout funds the monthly allotment immediately ($15);
+    // invoice.paid keeps it fresh monthly.
+    //
+    // CRITICAL: these are the last steps, and they sit downstream of the
+    // already-committed anti-replay `claimed_sessions` row. If either fails
+    // (transient virtues-api blip) we must RELEASE the claim — otherwise the
+    // box gets a 500, never received the api_key, and its retry would hit
+    // `session_already_claimed` forever (bricked checkout). Both calls are
+    // idempotent (register replaces the account's key; credit `set` overwrites),
+    // so re-running the whole finalize on the box's retry is safe.
+    let provision = async {
+        state
+            .virtues_api
+            .register_device(&RegisterDevice {
+                api_key_hash: hex::encode(&api_key_hash),
+                account_id: account_id.clone(),
+                daily_cap_micros,
+            })
+            .await
+            .context("register_device")?;
+        state
+            .virtues_api
+            .credit(&Credit {
+                account_id: account_id.clone(),
+                amount_micros: state.voucher.renewal_micros,
+                mode: "set",
+                daily_cap_micros,
+                reference: Some(format!("checkout:{session_id}")),
+            })
+            .await
+            .context("initial credit")?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = provision {
+        tracing::warn!("provisioning failed, releasing claim for retry: {e:#}");
+        let _ = sqlx::query("DELETE FROM claimed_sessions WHERE stripe_session_id = $1")
+            .bind(session_id)
+            .execute(&state.pool)
+            .await;
+        return Err(internal("provisioning failed — please retry"));
+    }
+
     let metadata_user_code = session
         .metadata
         .get("user_code")
@@ -264,11 +307,25 @@ pub(crate) async fn finalize_paid_session(
         .map(|s| s.to_string());
 
     Ok(Finalized {
-        billing_token,
+        api_key,
         period_end,
         session_id: session_id.to_string(),
         metadata_user_code,
     })
+}
+
+/// A random 32-byte hex token (api_key / device_code shape).
+pub(crate) fn random_token() -> String {
+    let mut b = [0u8; 32];
+    rand::rng().fill_bytes(&mut b);
+    hex::encode(b)
+}
+
+/// A fresh opaque account id (`acct_<hex>`).
+pub(crate) fn new_account_id() -> String {
+    let mut b = [0u8; 16];
+    rand::rng().fill_bytes(&mut b);
+    format!("acct_{}", hex::encode(b))
 }
 
 pub(crate) fn sha256(data: &[u8]) -> Vec<u8> {

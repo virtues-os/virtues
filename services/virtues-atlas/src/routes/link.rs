@@ -113,7 +113,7 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
         }
     };
 
-    let Some((status, billing_token, expires_at)) = row else {
+    let Some((status, api_key, expires_at)) = row else {
         return Json(json!({ "status": "expired" })).into_response();
     };
     if Utc::now() > expires_at && status == "pending" {
@@ -122,7 +122,7 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
 
     match status.as_str() {
         "ready" => {
-            // One-time delivery: hand the token over, then clear it.
+            // One-time delivery: hand the api_key over, then clear it.
             let _ = sqlx::query(
                 "UPDATE device_link SET status = 'claimed', billing_token = NULL \
                  WHERE device_code_hash = $1 AND status = 'ready'",
@@ -130,7 +130,7 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
             .bind(&hash[..])
             .execute(&state.pool)
             .await;
-            Json(json!({ "status": "ready", "billing_token": billing_token })).into_response()
+            Json(json!({ "status": "ready", "api_key": api_key })).into_response()
         }
         "claimed" => Json(json!({ "status": "claimed" })).into_response(),
         "denied" => Json(json!({ "status": "denied" })).into_response(),
@@ -258,7 +258,7 @@ async fn done(State(state): State<AppState>, Query(q): Query<DoneQuery>) -> axum
          WHERE user_code = $1 AND stripe_session_id = $3 AND status = 'pending'",
     )
     .bind(&code)
-    .bind(&finalized.billing_token)
+    .bind(&finalized.api_key)
     .bind(&finalized.session_id)
     .execute(&state.pool)
     .await;
@@ -528,41 +528,76 @@ async fn login_verify(
         );
     };
 
-    // Mint a fresh billing_token. The mint + customers-row update + device_link
-    // flip mirrors `finalize_paid_session`'s tail end but skips its Stripe API
-    // calls (we trust our own customers table since we looked them up by email
-    // and verified email ownership via the magic link).
-    let mut token_bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut token_bytes);
-    let billing_token = hex::encode(token_bytes);
-    let new_token_hash = sha256(billing_token.as_bytes());
+    // Re-link recovery: mint a fresh api_key and re-point the device to the
+    // existing customer. We trust our own customers table (looked up by email +
+    // verified via the magic link), so no Stripe call. We re-point to the SAME
+    // `account_id` and do NOT re-credit — the wallet is preserved (the recovery
+    // win).
+    //
+    // Ordering matters: register the new key with virtues-api FIRST, and only
+    // rotate `customers.api_key_hash` once that succeeds. If register fails, the
+    // customers row keeps the OLD hash — which still matches what virtues-api
+    // holds — so the box's old key stays consistent across the proxy AND atlas
+    // billing-auth, and the user can just retry. (The opposite order would
+    // leave a split-brain: atlas on the new hash, virtues-api on the old.)
+    let api_key = super::claim::random_token();
+    let api_key_hash = sha256(api_key.as_bytes());
 
-    // Rotate the customer's billing_token_hash to the new value. Re-claim
-    // semantics: existing devices using the old token continue to work
-    // until their next renew, then re-mint against this new token.
-    let upsert = sqlx::query(
-        "UPDATE customers SET billing_token_hash = $2 WHERE stripe_customer_id = $1",
+    let lookup: Result<(String, i64), _> = sqlx::query_as(
+        "SELECT account_id, daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
     )
     .bind(&customer_id)
-    .bind(&new_token_hash[..])
-    .execute(&state.pool)
+    .fetch_one(&state.pool)
     .await;
-    if let Err(e) = upsert {
-        tracing::warn!("customers update failed: {e:#}");
+    let (account_id, daily_cap_micros) = match lookup {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("customers lookup failed: {e:#}");
+            return page(
+                "Something went wrong",
+                "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
+            );
+        }
+    };
+
+    if let Err(e) = state
+        .virtues_api
+        .register_device(&crate::virtues_api_client::RegisterDevice {
+            api_key_hash: hex::encode(&api_key_hash),
+            account_id,
+            daily_cap_micros,
+        })
+        .await
+    {
+        tracing::warn!("re-link register_device failed: {e:#}");
         return page(
             "Something went wrong",
             "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
         );
     }
 
-    // Flip the bound device_link to ready with the billing_token so the
-    // box's existing poll handler picks it up on the next /init/poll.
+    // Device registered — now rotate the stored hash to match.
+    if let Err(e) = sqlx::query("UPDATE customers SET api_key_hash = $2 WHERE stripe_customer_id = $1")
+        .bind(&customer_id)
+        .bind(&api_key_hash[..])
+        .execute(&state.pool)
+        .await
+    {
+        tracing::warn!("customers api_key_hash update failed: {e:#}");
+        return page(
+            "Something went wrong",
+            "We verified your link but couldn't finish attaching the box. Try again, or reach out to support@virtues.com.",
+        );
+    }
+
+    // Flip the bound device_link to ready with the api_key so the box's
+    // existing poll handler picks it up on the next /init/poll.
     let flip = sqlx::query(
         "UPDATE device_link SET status = 'ready', billing_token = $2 \
          WHERE device_code_hash = $1 AND status = 'pending'",
     )
     .bind(&device_code_hash[..])
-    .bind(&billing_token)
+    .bind(&api_key)
     .execute(&state.pool)
     .await;
     match flip {

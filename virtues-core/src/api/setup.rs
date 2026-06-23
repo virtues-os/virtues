@@ -34,10 +34,6 @@ fn atlas_url() -> String {
     crate::virtues_api::atlas_url()
 }
 
-fn api_url() -> String {
-    crate::virtues_api::api_url()
-}
-
 /// `POST /api/setup/subscribe/start` — begin the create-new-account branch.
 /// Returns the user-facing checkout bits; the secret device_code stays sealed
 /// box-side. The page then polls `/api/setup/link/poll`.
@@ -124,7 +120,7 @@ pub async fn link_poll_handler(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
     let http = crate::http_client::virtues_api_client();
-    match link::poll(state.db.pool(), &http, &atlas_url(), &api_url()).await {
+    match link::poll(state.db.pool(), &http, &atlas_url()).await {
         Ok(status) => {
             let s = match status {
                 LinkStatus::Pending => "pending",

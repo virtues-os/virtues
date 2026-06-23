@@ -1,12 +1,12 @@
-//! Bearer-token authentication (WS-6b).
+//! Device api-key authentication.
 //!
-//! Replaces the legacy `X-User-Id` model: every gated call presents
-//! `Authorization: Bearer <token>` where `<token>` is whatever opaque
-//! string Atlas minted at activation. We SHA-256 the raw header bytes
-//! and look up the entitlement row by hash.
+//! Every gated call presents `Authorization: Bearer <api_key>` where
+//! `<api_key>` is the rotatable device key atlas minted at link. We SHA-256
+//! the raw header bytes, resolve `device_keys → accounts`, and carry the
+//! account.
 //!
-//! The raw bearer is never stored — only the hash lives in
-//! `entitlements.bearer_hash`. A leaked DB yields no usable credentials.
+//! The raw key is never stored — only the hash lives in
+//! `device_keys.api_key_hash`. A leaked DB yields no usable credentials.
 
 use axum::{
     extract::FromRequestParts,
@@ -15,11 +15,11 @@ use axum::{
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-use crate::entitlement::{self, Entitlement};
+use crate::entitlement::{self, Account};
 use crate::AppState;
 
-/// Successful bearer auth carries the resolved entitlement row.
-pub struct BearerAuth(pub Entitlement);
+/// Successful auth carries the resolved account.
+pub struct BearerAuth(pub Account);
 
 pub enum BearerError {
     MissingHeader,
@@ -41,10 +41,10 @@ impl virtues_helpers::error::StructuredError for BearerError {
     }
     fn code(&self) -> &str {
         match self {
-            Self::MissingHeader => "missing_bearer",
-            Self::MalformedHeader => "malformed_bearer",
-            Self::NotFound => "unknown_bearer",
-            Self::Expired => "bearer_expired",
+            Self::MissingHeader => "missing_key",
+            Self::MalformedHeader => "malformed_key",
+            Self::NotFound => "unknown_key",
+            Self::Expired => "wallet_expired",
             Self::Blocked => "blocked",
             Self::Internal(_) => "internal",
         }
@@ -52,10 +52,10 @@ impl virtues_helpers::error::StructuredError for BearerError {
     fn message(&self) -> String {
         match self {
             Self::MissingHeader => "Authorization: Bearer header required".into(),
-            Self::MalformedHeader => "expected `Authorization: Bearer <token>`".into(),
-            Self::NotFound => "bearer not recognized".into(),
-            Self::Expired => "bearer expired — redeem a fresh voucher".into(),
-            Self::Blocked => "bearer is on the behavioral blocklist".into(),
+            Self::MalformedHeader => "expected `Authorization: Bearer <api_key>`".into(),
+            Self::NotFound => "api key not recognized — reconnect subscription".into(),
+            Self::Expired => "subscription wallet expired — reconnect".into(),
+            Self::Blocked => "key is on the behavioral blocklist".into(),
             Self::Internal(m) => m.clone(),
         }
     }
@@ -75,24 +75,24 @@ impl FromRequestParts<Arc<AppState>> for BearerAuth {
             .get(header::AUTHORIZATION)
             .ok_or(BearerError::MissingHeader)?;
         let header_str = raw.to_str().map_err(|_| BearerError::MalformedHeader)?;
-        let bearer = header_str
+        let api_key = header_str
             .strip_prefix("Bearer ")
             .ok_or(BearerError::MalformedHeader)?
             .trim();
-        if bearer.is_empty() {
+        if api_key.is_empty() {
             return Err(BearerError::MalformedHeader);
         }
 
-        let hash = sha256(bearer.as_bytes());
+        let hash = sha256(api_key.as_bytes());
 
         let pool = &state.db;
 
-        let ent = entitlement::get_by_bearer_hash(pool, &hash)
+        let acct = entitlement::resolve_account_by_key(pool, &hash)
             .await
             .map_err(|e| BearerError::Internal(e.to_string()))?
             .ok_or(BearerError::NotFound)?;
 
-        if ent.expires_at < chrono::Utc::now() {
+        if acct.expires_at < chrono::Utc::now() {
             return Err(BearerError::Expired);
         }
 
@@ -113,7 +113,7 @@ impl FromRequestParts<Arc<AppState>> for BearerAuth {
             return Err(BearerError::Blocked);
         }
 
-        Ok(BearerAuth(ent))
+        Ok(BearerAuth(acct))
     }
 }
 

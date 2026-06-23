@@ -1,10 +1,10 @@
 //! virtues-api client.
 //!
-//! Auth is **bearer + voucher** (`renew` submodule): the home server holds a
-//! `billing_token` (stable, ≈OAuth refresh token) and a monthly `bearer`
-//! (≈access token), both in the credential vault. `renew` runs the voucher
-//! dance (Atlas `/voucher` → virtues-api `/v1/redeem`) to mint a fresh bearer.
-//! The customer↔bearer link lives only here, on the box.
+//! Auth is a single rotatable device **api_key** (`renew` submodule, kept for
+//! its name): the box holds the key in the credential vault and sends it on
+//! every proxy call. atlas mints it at link, registers it with virtues-api, and
+//! credits the wallet server-side (renewal via Stripe webhook, top-ups via
+//! card). No vouchers, no bearer rotation, no client-side renewal.
 
 pub mod client;
 pub mod link;

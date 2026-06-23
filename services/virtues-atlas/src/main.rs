@@ -69,8 +69,6 @@ async fn main() -> Result<()> {
             auto_topup_micros: cfg.auto_topup_micros,
             topup_min_micros: cfg.topup_min_micros,
             topup_max_micros: cfg.topup_max_micros,
-            unredeemed_days: cfg.voucher_unredeemed_days,
-            min_interval_days: cfg.voucher_min_interval_days,
         },
         preorder: routes::PreorderPolicy {
             amount_cents: cfg.preorder_deposit_amount_cents,

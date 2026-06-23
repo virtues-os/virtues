@@ -1,11 +1,11 @@
-//! HTTP client for registering vouchers with virtues-api.
+//! HTTP client for the atlas → virtues-api internal surface.
 //!
-//! Per WS-6a/7, this is the ONLY thing Atlas sends across the wall, and
-//! it carries only a voucher's *value* — its code hash, budget, validity.
-//! No customer, no bearer. virtues-api never calls back.
+//! Two calls, both carrying only an opaque `account_id` + amounts — never a
+//! Stripe id, email, or bearer:
+//!   - `register_device` — bind (or rotate) a device api key to an account.
+//!   - `credit` — fund an account on renewal (`set`) or top-up (`add`).
 
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::Serialize;
 
@@ -18,24 +18,26 @@ pub struct VirtuesApiClient {
     internal_secret: String,
 }
 
-/// v3 single-amount voucher payload. Atlas mints a single value;
-/// virtues-api stores it as the `wallet_micros` refill on redeem.
-/// - Sub renewal: `amount_micros = $15`, `is_renewal = true` (overwrite).
-/// - Top-up (manual or auto): `amount_micros = $10–$50`, `is_renewal = false` (add).
 #[derive(Debug, Serialize)]
-pub struct RegisterVoucher {
-    /// Lowercase hex of SHA-256(voucher_code).
-    pub voucher_code_hash: String,
-    /// Voucher amount in micros USD.
-    pub amount_micros: i64,
-    /// Whether this voucher overwrites the wallet (sub renewal) or adds to it (top-up).
-    pub is_renewal: bool,
-    pub voucher_expires_at: DateTime<Utc>,
-    /// The customer's user-tunable daily spend ceiling (`customers.daily_cap_micros`),
-    /// carried across the wall so virtues-api can enforce it per-bearer without
-    /// ever learning the customer. Lands on the entitlement at redeem; a cap
-    /// change takes effect at the customer's next voucher / top-up.
+pub struct RegisterDevice {
+    /// Lowercase hex of SHA-256(api_key).
+    pub api_key_hash: String,
+    /// Opaque per-customer account id.
+    pub account_id: String,
+    /// The customer's user-tunable daily spend ceiling.
     pub daily_cap_micros: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Credit {
+    pub account_id: String,
+    pub amount_micros: i64,
+    /// "set" = subscription renewal (overwrite). "add" = top-up (increment).
+    pub mode: &'static str,
+    pub daily_cap_micros: i64,
+    /// Optional ledger reference (e.g. a Stripe invoice/PI id).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
 }
 
 impl VirtuesApiClient {
@@ -50,10 +52,8 @@ impl VirtuesApiClient {
         }
     }
 
-    /// Register a freshly minted voucher with virtues-api so it can be
-    /// redeemed by the device.
-    pub async fn register_voucher(&self, payload: &RegisterVoucher) -> Result<()> {
-        let url = format!("{}/internal/voucher", self.base_url.trim_end_matches('/'));
+    async fn post<T: Serialize>(&self, path: &str, payload: &T) -> Result<()> {
+        let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
         let resp = self
             .http
             .post(&url)
@@ -61,13 +61,23 @@ impl VirtuesApiClient {
             .json(payload)
             .send()
             .await
-            .context("posting register voucher")?;
-
+            .with_context(|| format!("posting {path}"))?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("register voucher failed: {status} — {body}"));
+            return Err(anyhow!("{path} failed: {status} — {body}"));
         }
         Ok(())
+    }
+
+    /// Bind (or rotate) a device api key to an account. Idempotent recovery
+    /// primitive — re-pointing an account never touches its balance.
+    pub async fn register_device(&self, payload: &RegisterDevice) -> Result<()> {
+        self.post("/internal/device", payload).await
+    }
+
+    /// Credit an account: `set` (renewal overwrite) or `add` (top-up).
+    pub async fn credit(&self, payload: &Credit) -> Result<()> {
+        self.post("/internal/credit", payload).await
     }
 }

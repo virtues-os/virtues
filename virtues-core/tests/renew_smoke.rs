@@ -1,79 +1,63 @@
-//! Manual smoke test for the virtues-api voucher renewal (WS-6b).
+//! Manual smoke test for the linked prepaid model (device api_key).
 //!
 //! Requires running services + databases. Run with:
 //!
 //!   DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
 //!   VIRTUES_ENCRYPTION_KEY=<base64-32-bytes> \
-//!   VIRTUES_ATLAS_URL=http://localhost:9100 \
 //!   VIRTUES_API_URL=http://localhost:9002 \
-//!   BILLING_TOKEN=<token-also-seeded-into-atlas> \
+//!   VIRTUES_API_KEY=<key-registered-against-a-funded-account-in-virtues-api> \
 //!   cargo test -p virtues --test renew_smoke -- --ignored --nocapture
 //!
-//! The caller must seed Atlas with a customer + active subscription whose
-//! billing_token_hash = sha256(BILLING_TOKEN) before running.
+//! The caller must register the api_key with virtues-api (POST /internal/device)
+//! against a funded account before running.
 
 #[tokio::test]
 #[ignore]
-async fn renew_end_to_end() {
-    let billing_token = std::env::var("BILLING_TOKEN").expect("BILLING_TOKEN");
-    let atlas_url = std::env::var("VIRTUES_ATLAS_URL").expect("VIRTUES_ATLAS_URL");
-    let api_url = std::env::var("VIRTUES_API_URL").expect("VIRTUES_API_URL");
+async fn api_key_store_roundtrip() {
+    let api_key = std::env::var("VIRTUES_API_KEY").expect("VIRTUES_API_KEY");
 
-    let pool = virtues_helpers::connect_from_env("renew-smoke")
+    let pool = virtues_helpers::connect_from_env("api-key-smoke")
         .await
         .expect("connect");
 
-    // Seed the billing token into the local vault (the real claim store path).
-    virtues::virtues_api::renew::store_billing_token(&pool, &billing_token)
-        .await
-        .expect("store_billing_token");
+    // Before storing, no key is linked.
+    assert!(
+        !virtues::virtues_api::renew::has_api_key(&pool)
+            .await
+            .expect("has_api_key"),
+        "expected no api_key before store"
+    );
 
-    // Before renewal there is no bearer.
-    let before = virtues::virtues_api::renew::current_bearer(&pool)
+    // Store the key into the vault (the real link store path).
+    virtues::virtues_api::renew::store_api_key(&pool, &api_key)
         .await
-        .expect("current_bearer");
-    assert!(before.is_none(), "expected no bearer before renewal");
+        .expect("store_api_key");
 
-    let http = reqwest::Client::new();
-
-    // Run the voucher dance.
-    let res = virtues::virtues_api::renew::renew(&pool, &http, &atlas_url, &api_url)
+    let read = virtues::virtues_api::renew::read_api_key(&pool)
         .await
-        .expect("renew");
-    println!("renewed: bearer_len={} expires_at={}", res.bearer.len(), res.expires_at);
-    assert_eq!(res.bearer.len(), 64, "bearer should be 32 bytes hex");
-    assert!(res.expires_at > chrono::Utc::now(), "expiry should be future");
-
-    // After renewal the vault has the bearer.
-    let after = virtues::virtues_api::renew::current_bearer(&pool)
-        .await
-        .expect("current_bearer after");
-    let (bearer, expiry) = after.expect("expected a bearer after renewal");
-    assert_eq!(bearer, res.bearer, "stored bearer should match returned");
-    assert!(expiry.is_some(), "expiry should be recorded");
-    println!("vault now holds bearer with expiry {:?}", expiry);
+        .expect("read_api_key")
+        .expect("expected a stored api_key");
+    assert_eq!(read, api_key, "stored api_key should round-trip");
 }
 
-/// BearerClient should auto-renew when no bearer exists yet, then make a
-/// real AI call. Requires the same seeded billing token + a virtues-api
-/// with AI_GATEWAY_API_KEY configured.
+/// BearerClient should attach the stored api_key and make a real AI call (the
+/// wallet behind the key must be funded in virtues-api). No renewal happens —
+/// the key is stable.
 #[tokio::test]
 #[ignore]
-async fn bearer_client_auto_renews_and_calls() {
-    let billing_token = std::env::var("BILLING_TOKEN").expect("BILLING_TOKEN");
+async fn bearer_client_calls_with_api_key() {
+    let api_key = std::env::var("VIRTUES_API_KEY").expect("VIRTUES_API_KEY");
 
     let pool = virtues_helpers::connect_from_env("bearer-client-smoke")
         .await
         .expect("connect");
 
-    // Seed billing token; no bearer minted yet.
-    virtues::virtues_api::renew::store_billing_token(&pool, &billing_token)
+    virtues::virtues_api::renew::store_api_key(&pool, &api_key)
         .await
-        .expect("store_billing_token");
+        .expect("store_api_key");
 
     let client = virtues::virtues_api::client::BearerClient::from_env(pool.clone());
 
-    // First call: no bearer → BearerClient auto-renews, then makes the call.
     let resp = client
         .post_json(
             "/v1/ai/chat/completions",
@@ -86,17 +70,15 @@ async fn bearer_client_auto_renews_and_calls() {
         .await
         .expect("post_json");
 
-    println!("status={} body_keys={:?}", resp.status, resp.body.as_object().map(|o| o.keys().collect::<Vec<_>>()));
+    println!(
+        "status={} body_keys={:?}",
+        resp.status,
+        resp.body.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
     assert!(resp.is_success(), "expected 2xx, got {}: {}", resp.status, resp.body);
     assert!(
         resp.body["choices"][0]["message"]["content"].is_string(),
         "expected a chat completion"
     );
-
-    // The bearer should now be present in the vault.
-    let after = virtues::virtues_api::renew::current_bearer(&pool)
-        .await
-        .expect("current_bearer");
-    assert!(after.is_some(), "bearer should be minted after auto-renew");
-    println!("auto-renew + AI call succeeded; cost charged to device bearer");
+    println!("AI call succeeded; cost charged to the account wallet via the device api_key");
 }

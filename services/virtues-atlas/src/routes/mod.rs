@@ -12,7 +12,6 @@ mod health;
 mod link;
 mod preorder;
 mod settings;
-mod voucher;
 mod webhooks;
 
 /// Voucher economics, passed into the /voucher handler.
@@ -26,8 +25,6 @@ pub struct VoucherPolicy {
     pub topup_min_micros: i64,
     /// Manual top-up maximum. Default $50. Env: TOPUP_MAX_MICROS.
     pub topup_max_micros: i64,
-    pub unredeemed_days: i64,
-    pub min_interval_days: i64,
 }
 
 /// Pre-order deposit parameters, passed into the /preorder/checkout handler.
@@ -84,7 +81,6 @@ pub fn router() -> Router<AppState> {
         .merge(claim::router())
         .merge(link::router())
         .merge(preorder::router())
-        .merge(voucher::router())
         .merge(credits::router())
         .merge(billing_portal::router())
         .merge(settings::router())

@@ -93,7 +93,20 @@ async fn handle_webhook(
                     Err(e) => tracing::warn!(subscription_id = %sid, "retrieve_subscription on invoice.paid failed: {e:#}"),
                 }
             }
-            set_period_and_status(&state.pool, &event.data.object, Some("active"), explicit).await
+            let r = set_period_and_status(&state.pool, &event.data.object, Some("active"), explicit).await;
+            // Renewal: SET the wallet to the monthly allotment. If the credit
+            // fails (transient virtues-api blip), propagate the error so the
+            // webhook 500s and Stripe retries (the idempotency row is released
+            // above). `renew_wallet` returns Ok when the customer hasn't claimed
+            // yet, so the first-invoice-before-claim race doesn't retry forever
+            // (claim funds the wallet itself).
+            match r {
+                Ok(()) => match event.data.object.get("customer").and_then(|v| v.as_str()) {
+                    Some(cust) => renew_wallet(&state, cust).await,
+                    None => Ok(()),
+                },
+                Err(e) => Err(e),
+            }
         }
         // H3 partial: handle dunning so `/voucher`'s status gate closes on
         // failed renewals (otherwise it keeps minting until period lapses).
@@ -125,10 +138,47 @@ async fn handle_webhook(
     match result {
         Ok(()) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
         Err(e) => {
-            tracing::warn!(event_id = %event.id, "handler failed: {e:#}");
+            // The idempotency row was recorded BEFORE the handler ran. If the
+            // handler failed (e.g. a transient virtues-api blip during a
+            // renewal credit), release that row so Stripe's retry re-processes
+            // the event instead of seeing a duplicate and skipping it. Every
+            // handler is idempotent (UPSERT period / credit `set` / preorder
+            // upsert), so re-running on retry is safe.
+            let _ = sqlx::query("DELETE FROM stripe_webhook_events WHERE stripe_event_id = $1")
+                .bind(&event.id)
+                .execute(&state.pool)
+                .await;
+            tracing::warn!(event_id = %event.id, "handler failed (released for retry): {e:#}");
             err(StatusCode::INTERNAL_SERVER_ERROR, "handler_failed", &e.to_string())
         }
     }
+}
+
+/// On subscription renewal (`invoice.paid`), set the account's wallet to the
+/// monthly allotment via virtues-api. Looks up the customer's opaque
+/// `account_id` + daily cap; the api side overwrites the balance + bumps the
+/// cohort expiry (use-it-or-lose-it).
+async fn renew_wallet(state: &AppState, stripe_customer_id: &str) -> anyhow::Result<()> {
+    let row: Option<(String, i64)> = sqlx::query_as(
+        "SELECT account_id, daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
+    )
+    .bind(stripe_customer_id)
+    .fetch_optional(&state.pool)
+    .await?;
+    let Some((account_id, daily_cap_micros)) = row else {
+        // Customer hasn't claimed/linked yet — nothing to credit.
+        return Ok(());
+    };
+    state
+        .virtues_api
+        .credit(&crate::virtues_api_client::Credit {
+            account_id,
+            amount_micros: state.voucher.renewal_micros,
+            mode: "set",
+            daily_cap_micros,
+            reference: Some("renewal".to_string()),
+        })
+        .await
 }
 
 async fn record_event(pool: &PgPool, event_id: &str, event_type: &str) -> anyhow::Result<bool> {
