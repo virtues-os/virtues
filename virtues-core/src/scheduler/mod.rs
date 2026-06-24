@@ -12,11 +12,20 @@
 //!
 //! - `0 0 */6 * * *`  every 6 hours
 //! - `0 */15 * * * *` every 15 minutes
-//! - `0 0 0 * * *`    daily at midnight UTC
+//! - `0 0 0 * * *`    daily at midnight (the box's local time — see below)
 //! - `0 0 9 * * 1`    every Monday at 9:00 AM
+//!
+//! ## Timezone
+//!
+//! Schedules are interpreted in the box owner's local timezone (from the
+//! profile), not UTC — so "9am daily" means 9am where the user is. This is a
+//! single-tenant appliance, so there is one timezone per box. If no timezone is
+//! set we fall back to UTC. (Note: the offset is captured when jobs register, so
+//! a DST change is picked up on the next restart/reschedule.)
 
 pub mod actions;
 
+use chrono_tz::Tz;
 use sqlx::PgPool;
 use tokio_cron_scheduler::{Job, JobScheduler};
 
@@ -66,7 +75,10 @@ impl Scheduler {
             return Ok(());
         }
 
-        tracing::info!("Scheduling {} cron actions", rows.len());
+        // Single-tenant box → one timezone for every schedule. Resolve it once
+        // so "9am daily" fires at 9am local rather than 9am UTC.
+        let tz = resolve_schedule_tz(&self.db).await;
+        tracing::info!("Scheduling {} cron actions in {}", rows.len(), tz);
 
         for (action_id, name, cron_expr) in rows {
             let db = self.db.clone();
@@ -75,7 +87,7 @@ impl Scheduler {
             let name_for_log = name.clone();
             let cron_for_log = cron_expr.clone();
 
-            let job = Job::new_async(cron_expr.as_str(), move |_uuid, _lock| {
+            let job = Job::new_async_tz(cron_expr.as_str(), tz, move |_uuid, _lock| {
                 let deps = RunnerDeps {
                     db: db.clone(),
                     yjs: yjs.clone(),
@@ -165,6 +177,25 @@ pub struct ScheduledAction {
     pub name: String,
     pub cron_schedule: String,
     pub last_success_at: Option<Timestamp>,
+}
+
+/// Resolve the timezone cron schedules are interpreted in: the box owner's
+/// profile timezone, falling back to UTC if unset or unrecognized.
+async fn resolve_schedule_tz(db: &PgPool) -> Tz {
+    match crate::api::profile::get_timezone(db).await {
+        Ok(Some(name)) => match name.parse::<Tz>() {
+            Ok(tz) => tz,
+            Err(_) => {
+                tracing::warn!(timezone = %name, "unrecognized profile timezone; scheduling in UTC");
+                Tz::UTC
+            }
+        },
+        Ok(None) => Tz::UTC,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to read profile timezone; scheduling in UTC");
+            Tz::UTC
+        }
+    }
 }
 
 #[cfg(test)]
