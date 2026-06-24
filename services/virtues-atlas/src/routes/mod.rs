@@ -17,7 +17,7 @@ mod webhooks;
 /// Credit/pricing amounts (renewal + top-up bands).
 #[derive(Clone, Copy)]
 pub struct CreditPolicy {
-    /// Monthly renewal credit. Default $20. Env: VOUCHER_RENEWAL_MICROS.
+    /// Monthly renewal credit. Default $20. Env: RENEWAL_MICROS.
     pub renewal_micros: i64,
     /// Auto-top-up amount (fixed). Default $10. Env: AUTO_TOPUP_MICROS.
     pub auto_topup_micros: i64,

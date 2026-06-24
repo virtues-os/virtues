@@ -100,7 +100,7 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
     let hash = sha256(body.device_code.as_bytes());
 
     let row: Option<(String, Option<String>, chrono::DateTime<Utc>)> = match sqlx::query_as(
-        "SELECT status, billing_token, expires_at FROM device_link WHERE device_code_hash = $1",
+        "SELECT status, api_key, expires_at FROM device_link WHERE device_code_hash = $1",
     )
     .bind(&hash[..])
     .fetch_optional(&state.pool)
@@ -124,7 +124,7 @@ async fn poll(State(state): State<AppState>, Json(body): Json<PollBody>) -> axum
         "ready" => {
             // One-time delivery: hand the api_key over, then clear it.
             let _ = sqlx::query(
-                "UPDATE device_link SET status = 'claimed', billing_token = NULL \
+                "UPDATE device_link SET status = 'claimed', api_key = NULL \
                  WHERE device_code_hash = $1 AND status = 'ready'",
             )
             .bind(&hash[..])
@@ -254,7 +254,7 @@ async fn done(State(state): State<AppState>, Query(q): Query<DoneQuery>) -> axum
     }
 
     let res = sqlx::query(
-        "UPDATE device_link SET status = 'ready', billing_token = $2 \
+        "UPDATE device_link SET status = 'ready', api_key = $2 \
          WHERE user_code = $1 AND stripe_session_id = $3 AND status = 'pending'",
     )
     .bind(&code)
@@ -368,7 +368,6 @@ fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Respons
 //        └→ GET /init/login/verify?token=…
 //           - hash + lookup login_attempt
 //           - mark used; flip the bound device_link → status='ready' with the api_key
-//             (carried in the legacy-named `billing_token` transport column)
 //           - render success HTML ("return to your terminal")
 //   box  POST /init/poll {device_code}
 //        └→ existing handler picks up status='ready' + api_key
@@ -594,7 +593,7 @@ async fn login_verify(
     // Flip the bound device_link to ready with the api_key so the box's
     // existing poll handler picks it up on the next /init/poll.
     let flip = sqlx::query(
-        "UPDATE device_link SET status = 'ready', billing_token = $2 \
+        "UPDATE device_link SET status = 'ready', api_key = $2 \
          WHERE device_code_hash = $1 AND status = 'pending'",
     )
     .bind(&device_code_hash[..])
