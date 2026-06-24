@@ -17,7 +17,7 @@
 //! with `category = 'project'`. Same shape, generalized.
 
 use crate::error::{Error, Result};
-use crate::ids::{generate_id, THING_PIN_PREFIX, THING_PREFIX};
+use crate::ids::{generate_id, THING_PREFIX};
 use crate::types::Timestamp;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -34,9 +34,6 @@ pub struct Thing {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub cover_image: Option<String>,
-    pub current_status: Option<String>,
-    pub current_status_at: Option<Timestamp>,
-    pub current_status_edited_by: String,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -49,29 +46,8 @@ pub struct ThingSummary {
     pub icon: Option<String>,
     pub description: Option<String>,
     pub cover_image: Option<String>,
-    pub current_status: Option<String>,
-    pub current_status_at: Option<Timestamp>,
-    pub pin_count: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct ThingPin {
-    pub id: String,
-    pub thing_id: String,
-    pub url: String,
-    pub name: Option<String>,
-    pub description: Option<String>,
-    pub sort_order: i32,
-    pub added_at: Timestamp,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ThingDetail {
-    #[serde(flatten)]
-    pub thing: Thing,
-    pub pins: Vec<ThingPin>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,18 +72,6 @@ pub struct UpdateThingRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddThingPinRequest {
-    pub url: String,
-    pub name: Option<String>,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReorderThingPinsRequest {
-    pub urls: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListThingsParams {
     pub category: Option<String>,
 }
@@ -126,8 +90,6 @@ pub async fn list_things(
             r#"
             SELECT
                 t.id, t.name, t.category, t.icon, t.description, t.cover_image,
-                t.current_status, t.current_status_at,
-                COALESCE((SELECT COUNT(*) FROM wiki_thing_pins WHERE thing_id = t.id), 0) AS pin_count,
                 t.created_at, t.updated_at
             FROM wiki_things t
             WHERE t.category = $1
@@ -142,8 +104,6 @@ pub async fn list_things(
             r#"
             SELECT
                 t.id, t.name, t.category, t.icon, t.description, t.cover_image,
-                t.current_status, t.current_status_at,
-                COALESCE((SELECT COUNT(*) FROM wiki_thing_pins WHERE thing_id = t.id), 0) AS pin_count,
                 t.created_at, t.updated_at
             FROM wiki_things t
             ORDER BY t.updated_at DESC
@@ -157,12 +117,11 @@ pub async fn list_things(
     Ok(ThingListResponse { things })
 }
 
-/// Get a single thing with its pins (ordered).
-pub async fn get_thing(pool: &PgPool, id: &str) -> Result<ThingDetail> {
+/// Get a single thing.
+pub async fn get_thing(pool: &PgPool, id: &str) -> Result<Thing> {
     let thing = sqlx::query_as::<_, Thing>(
         r#"
         SELECT id, name, category, icon, description, cover_image,
-               current_status, current_status_at, current_status_edited_by,
                created_at, updated_at
         FROM wiki_things
         WHERE id = $1
@@ -174,20 +133,7 @@ pub async fn get_thing(pool: &PgPool, id: &str) -> Result<ThingDetail> {
     .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", id)))?;
 
-    let pins = sqlx::query_as::<_, ThingPin>(
-        r#"
-        SELECT id, thing_id, url, name, description, sort_order, added_at
-        FROM wiki_thing_pins
-        WHERE thing_id = $1
-        ORDER BY sort_order ASC, added_at ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get thing pins: {}", e)))?;
-
-    Ok(ThingDetail { thing, pins })
+    Ok(thing)
 }
 
 /// Create a new thing.
@@ -205,7 +151,6 @@ pub async fn create_thing(pool: &PgPool, req: CreateThingRequest) -> Result<Thin
         INSERT INTO wiki_things (id, name, category, icon, description)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, name, category, icon, description, cover_image,
-                  current_status, current_status_at, current_status_edited_by,
                   created_at, updated_at
         "#,
     )
@@ -230,7 +175,6 @@ pub async fn update_thing(
     let existing = sqlx::query_as::<_, Thing>(
         r#"
         SELECT id, name, category, icon, description, cover_image,
-               current_status, current_status_at, current_status_edited_by,
                created_at, updated_at
         FROM wiki_things WHERE id = $1
         "#,
@@ -265,7 +209,6 @@ pub async fn update_thing(
         SET name = $2, category = $3, icon = $4, description = $5
         WHERE id = $1
         RETURNING id, name, category, icon, description, cover_image,
-                  current_status, current_status_at, current_status_edited_by,
                   created_at, updated_at
         "#,
     )
@@ -295,145 +238,3 @@ pub async fn delete_thing(pool: &PgPool, id: &str) -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Thing Pins
-// ============================================================================
-
-/// Add a pin to a thing. Idempotent on (thing_id, url) — pinning twice
-/// returns the existing row.
-pub async fn add_thing_pin(
-    pool: &PgPool,
-    thing_id: &str,
-    req: AddThingPinRequest,
-) -> Result<ThingPin> {
-    let url = req.url.trim();
-    if url.is_empty() {
-        return Err(Error::InvalidInput("Pin url cannot be empty".into()));
-    }
-
-    let thing_exists: Option<String> =
-        sqlx::query_scalar(r#"SELECT id FROM wiki_things WHERE id = $1"#)
-            .bind(thing_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| Error::Database(format!("Failed to verify thing: {}", e)))?;
-
-    if thing_exists.is_none() {
-        return Err(Error::NotFound(format!("Thing not found: {}", thing_id)));
-    }
-
-    if let Some(existing) = sqlx::query_as::<_, ThingPin>(
-        r#"
-        SELECT id, thing_id, url, name, description, sort_order, added_at
-        FROM wiki_thing_pins
-        WHERE thing_id = $1 AND url = $2
-        "#,
-    )
-    .bind(thing_id)
-    .bind(url)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to check existing pin: {}", e)))?
-    {
-        return Ok(existing);
-    }
-
-    let timestamp = chrono::Utc::now().to_rfc3339();
-    let id = generate_id(THING_PIN_PREFIX, &[thing_id, url, &timestamp]);
-
-    let next_sort: i64 = sqlx::query_scalar(
-        r#"SELECT COALESCE(MAX(sort_order), -1) + 1 FROM wiki_thing_pins WHERE thing_id = $1"#,
-    )
-    .bind(thing_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to compute sort_order: {}", e)))?;
-
-    let pin = sqlx::query_as::<_, ThingPin>(
-        r#"
-        INSERT INTO wiki_thing_pins (id, thing_id, url, name, description, sort_order)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, thing_id, url, name, description, sort_order, added_at
-        "#,
-    )
-    .bind(&id)
-    .bind(thing_id)
-    .bind(url)
-    .bind(&req.name)
-    .bind(&req.description)
-    .bind(next_sort)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to add thing pin: {}", e)))?;
-
-    sqlx::query(r#"UPDATE wiki_things SET updated_at = now() WHERE id = $1"#)
-        .bind(thing_id)
-        .execute(pool)
-        .await
-        .ok();
-
-    Ok(pin)
-}
-
-/// Remove a pin from a thing (by URL).
-pub async fn remove_thing_pin(pool: &PgPool, thing_id: &str, url: &str) -> Result<()> {
-    let result = sqlx::query(
-        r#"DELETE FROM wiki_thing_pins WHERE thing_id = $1 AND url = $2"#,
-    )
-    .bind(thing_id)
-    .bind(url)
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to remove thing pin: {}", e)))?;
-
-    if result.rows_affected() == 0 {
-        return Err(Error::NotFound(format!(
-            "Pin not found on thing: {} / {}",
-            thing_id, url
-        )));
-    }
-
-    sqlx::query(r#"UPDATE wiki_things SET updated_at = now() WHERE id = $1"#)
-        .bind(thing_id)
-        .execute(pool)
-        .await
-        .ok();
-
-    Ok(())
-}
-
-/// Reorder pins on a thing. Unknown URLs are ignored.
-pub async fn reorder_thing_pins(
-    pool: &PgPool,
-    thing_id: &str,
-    req: ReorderThingPinsRequest,
-) -> Result<()> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| Error::Database(format!("Failed to start transaction: {}", e)))?;
-
-    for (idx, url) in req.urls.iter().enumerate() {
-        sqlx::query(
-            r#"UPDATE wiki_thing_pins SET sort_order = $1 WHERE thing_id = $2 AND url = $3"#,
-        )
-        .bind(idx as i64)
-        .bind(thing_id)
-        .bind(url)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to reorder thing pins: {}", e)))?;
-    }
-
-    sqlx::query(r#"UPDATE wiki_things SET updated_at = now() WHERE id = $1"#)
-        .bind(thing_id)
-        .execute(&mut *tx)
-        .await
-        .ok();
-
-    tx.commit()
-        .await
-        .map_err(|e| Error::Database(format!("Failed to commit reorder: {}", e)))?;
-
-    Ok(())
-}

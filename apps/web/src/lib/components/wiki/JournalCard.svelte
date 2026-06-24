@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { getReflectionsForDate, createReflection, type Page } from '$lib/api/client';
 
 	let { date }: { date: string } = $props();
@@ -18,13 +18,13 @@
 	});
 
 	function openReflection(pageId: string) {
-		spaceStore.openTabFromRoute(`/page/${pageId}`);
+		windowShellStore.openTabFromRoute(`/page/${pageId}`);
 	}
 
 	async function addReflection() {
 		const page = await createReflection(date);
 		reflections = [...reflections, page];
-		spaceStore.openTabFromRoute(`/page/${page.id}`);
+		windowShellStore.openTabFromRoute(`/page/${page.id}`);
 	}
 </script>
 

@@ -11,7 +11,7 @@
 
 <script lang="ts">
 	import { type Tab, routeToEntityId } from '$lib/tabs/types';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
@@ -125,7 +125,7 @@
 	}
 
 	function backToSources() {
-		spaceStore.openTabFromRoute('/sources');
+		windowShellStore.openTabFromRoute('/sources');
 	}
 </script>
 

@@ -3,7 +3,7 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import LogsPanel from '$lib/components/actions/LogsPanel.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { routeToEntityId } from '$lib/tabs/types';
 	import type { Tab } from '$lib/tabs/types';
 	import {
@@ -83,7 +83,7 @@
 				memory: a.memory ?? ''
 			};
 			isDirty = false;
-			spaceStore.updateTab(tab.id, { label: a.name });
+			windowShellStore.updateTab(tab.id, { label: a.name });
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -127,7 +127,7 @@
 				memory: updated.memory ?? ''
 			};
 			isDirty = false;
-			spaceStore.updateTab(tab.id, { label: updated.name });
+			windowShellStore.updateTab(tab.id, { label: updated.name });
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -169,7 +169,7 @@
 		err = null;
 		try {
 			await deleteAction(action.id);
-			spaceStore.closeTab(tab.id);
+			windowShellStore.closeTab(tab.id);
 		} catch (e) {
 			err = e instanceof Error ? e.message : String(e);
 		} finally {

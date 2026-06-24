@@ -1,6 +1,6 @@
 <script lang="ts">
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { listActions, type Action } from '$lib/api/client';
 	import { describeSchedule, relativeTime } from '$lib/actions/palette';
 	import { descriptionFor } from '$lib/actions/descriptions';
@@ -33,7 +33,7 @@
 	const templates = $derived(actions.filter((a) => a.owner === 'user'));
 
 	function openCard(a: Action) {
-		spaceStore.openAside({
+		windowShellStore.openAside({
 			type: 'action',
 			label: a.name,
 			route: `/action/${a.id}`,

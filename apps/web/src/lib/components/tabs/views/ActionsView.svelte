@@ -5,7 +5,7 @@
 	import ActionsPanel from '$lib/components/actions/ActionsPanel.svelte';
 	import TemplatesPanel from '$lib/components/actions/TemplatesPanel.svelte';
 	import HistoryPanel from '$lib/components/actions/HistoryPanel.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -22,7 +22,7 @@
 	function switchTo(next: SubTab) {
 		const route = next === 'actions' ? '/actions' : `/actions/${next}`;
 		if (tab.route === route) return;
-		spaceStore.updateTab(tab.id, { route });
+		windowShellStore.updateTab(tab.id, { route });
 	}
 
 	const tabs: { id: SubTab; label: string }[] = [

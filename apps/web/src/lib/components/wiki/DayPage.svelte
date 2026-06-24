@@ -24,7 +24,7 @@
 	import { apiToDayEvent } from "$lib/wiki/converters";
 	import { getOntologyName } from "$lib/wiki/ontology";
 	import { getLocalDateSlug } from "$lib/utils/dateUtils";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import EventTimeline from "./EventTimeline.svelte";
 	import DaylineChart from "./DaylineChart.svelte";
 	import DayToolbar from "./DayToolbar.svelte";
@@ -109,7 +109,7 @@
 	function navigateToDay(date: Date) {
 		const slug = getLocalDateSlug(date);
 		if (slug === currentDateSlug) return;
-		spaceStore.openTabFromRoute(`/day/day_${slug}`);
+		windowShellStore.openTabFromRoute(`/day/day_${slug}`);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -324,7 +324,7 @@
 	}
 
 	function openChat(chatId: string) {
-		spaceStore.openTabFromRoute(`/chat/${chatId}`);
+		windowShellStore.openTabFromRoute(`/chat/${chatId}`);
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────

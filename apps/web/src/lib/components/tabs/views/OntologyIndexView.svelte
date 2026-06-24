@@ -8,7 +8,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getOntologiesOverview, type OntologyOverview } from '$lib/api/client';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { Page, EmptyState, LoadingState, ErrorState } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 
@@ -50,7 +50,7 @@
 	}
 
 	function openOntology(name: string) {
-		spaceStore.openTabFromRoute(`/ontologies/${name}`);
+		windowShellStore.openTabFromRoute(`/ontologies/${name}`);
 	}
 
 	onMount(async () => {

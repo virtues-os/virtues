@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { createPlainEditor } from '$lib/codemirror/plainEditor';
 	import type { EditorView } from '@codemirror/view';
 
@@ -79,7 +79,7 @@
 	}
 
 	function goBack() {
-		spaceStore.updateTab(tabId, { route: `/chat/${conversationId}` });
+		windowShellStore.updateTab(tabId, { route: `/chat/${conversationId}` });
 	}
 
 	$effect(() => {

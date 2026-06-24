@@ -10,9 +10,10 @@
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { thingsStore } from "$lib/stores/things.svelte";
 	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import { subscriptionStore } from "$lib/stores/subscription.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
@@ -68,19 +69,20 @@
 		chatSessions.load();
 		thingsStore.load('project');
 		pinsStore.load();
+		spaceStore.load();
 		initTheme();
 
 		// Initialize workspace store (loads workspaces, tree, and tabs)
-		await spaceStore.init();
+		await windowShellStore.init();
 
 		// Handle deep link from URL (e.g., /pages/page_abc123 or /wiki/rome)
 		// Note: searchParams.get() already decodes the value, no need for decodeURIComponent
 		const urlPath = $page.url.pathname;
 		const rightParam = $page.url.searchParams.get("right");
-		spaceStore.handleDeepLink(urlPath, rightParam);
+		windowShellStore.handleDeepLink(urlPath, rightParam);
 
 		// Enable URL sync for future navigation
-		spaceStore.initUrlSync();
+		windowShellStore.initUrlSync();
 
 		// Mark as initialized
 		initialized = true;
@@ -108,7 +110,7 @@
 					action: {
 						label: "Details",
 						onClick: () =>
-							spaceStore.openTabFromRoute("/virtues/system", {
+							windowShellStore.openTabFromRoute("/virtues/system", {
 								label: "System",
 								preferEmptyPane: true,
 							}),
@@ -184,7 +186,7 @@
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}
-		spaceStore.destroyUrlSync();
+		windowShellStore.destroyUrlSync();
 		subscriptionStore.stop();
 		setupStateStore.stop();
 
@@ -211,7 +213,7 @@
 		if (trialToastShownForDay === days) return;
 
 		const openBilling = () =>
-			spaceStore.openTabFromRoute("/virtues/billing", {
+			windowShellStore.openTabFromRoute("/virtues/billing", {
 				label: "Billing",
 				preferEmptyPane: true,
 			});
@@ -256,7 +258,7 @@
 				action: {
 					label: "Subscribe",
 					onClick: () =>
-						spaceStore.openTabFromRoute("/virtues/billing", {
+						windowShellStore.openTabFromRoute("/virtues/billing", {
 							label: "Billing",
 							preferEmptyPane: true,
 						}),
@@ -297,11 +299,11 @@
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground m-3 overflow-hidden
 			border rounded-lg transition-[border-color,background-color] duration-150"
-		class:bg-surface={!spaceStore.isSplit}
-		class:bg-transparent={spaceStore.isSplit}
-		class:border-border={!spaceStore.isSplit}
-		class:border-transparent={spaceStore.isSplit}
-		style="background-image: {spaceStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
+		class:bg-surface={!windowShellStore.isSplit}
+		class:bg-transparent={windowShellStore.isSplit}
+		class:border-border={!windowShellStore.isSplit}
+		class:border-transparent={windowShellStore.isSplit}
+		style="background-image: {windowShellStore.isSplit ? 'none' : 'var(--background-image)'}; background-blend-mode: multiply;"
 	>
 		{#if initialized}
 			<!-- SplitContainer handles both split and mono modes -->

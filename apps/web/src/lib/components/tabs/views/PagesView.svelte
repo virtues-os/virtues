@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
 	import type { PageSummary } from "$lib/api/client";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -60,7 +60,7 @@
 	function handlePageClick(page: PageSummary, e?: MouseEvent) {
 		pagesStore.markAsRecent(page.id);
 		const forceNew = !!(e && (e.metaKey || e.ctrlKey));
-		spaceStore.openTabFromRoute(`/page/${page.id}`, {
+		windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 			forceNew,
 			label: page.title,
 			preferEmptyPane: true,
@@ -75,7 +75,7 @@
 				label: "Open in New Tab",
 				icon: "ri:external-link-line",
 				action: () => {
-					spaceStore.openTabFromRoute(`/page/${page.id}`, {
+					windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 						forceNew: true,
 						label: page.title,
 						preferEmptyPane: true,
@@ -106,7 +106,7 @@
 			const page = await pagesStore.createNewPage("Untitled");
 			pagesStore.addPage(page);
 			pagesStore.markAsRecent(page.id);
-			spaceStore.openTabFromRoute(`/page/${page.id}`, {
+			windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 				label: page.title,
 				preferEmptyPane: true,
 			});

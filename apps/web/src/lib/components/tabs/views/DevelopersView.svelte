@@ -2,7 +2,7 @@
 	import { tick } from 'svelte';
 	import { animate } from 'motion';
 	import type { Tab } from '$lib/tabs/types';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import DeveloperSqlView from './DeveloperSqlView.svelte';
 	import DeveloperTerminalView from './DeveloperTerminalView.svelte';
 	import DeveloperLakeView from './DeveloperLakeView.svelte';
@@ -22,7 +22,7 @@
 	function switchTo(next: SubTab) {
 		const route = `/developers/${next}`;
 		if (tab.route === route) return;
-		spaceStore.updateTab(tab.id, { route });
+		windowShellStore.updateTab(tab.id, { route });
 	}
 
 	const tabs: { id: SubTab; label: string }[] = [

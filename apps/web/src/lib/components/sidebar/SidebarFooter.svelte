@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarTooltip from "./SidebarTooltip.svelte";
 	import SidebarSetupItem from "./SidebarSetupItem.svelte";
@@ -27,9 +27,9 @@
 
 	// Tab-system-based active detection (works in split view)
 	const isSettingsActive = $derived.by(() => {
-		const _activeTabId = spaceStore.activeTabId;
-		const _splitEnabled = spaceStore.isSplit;
-		const activeTabs = spaceStore.getActiveTabsForSidebar();
+		const _activeTabId = windowShellStore.activeTabId;
+		const _splitEnabled = windowShellStore.isSplit;
+		const activeTabs = windowShellStore.getActiveTabsForSidebar();
 		return activeTabs.some(t => t.route.startsWith('/virtues/') || t.route === '/sources' || t.route.startsWith('/sources/') || t.route === '/tools');
 	});
 
@@ -41,7 +41,7 @@
 		try {
 			const response = await fetch("/auth/signout", { method: "POST" });
 			if (response.ok) {
-				spaceStore.closeAllTabs();
+				windowShellStore.closeAllTabs();
 				await goto("/pair");
 			} else {
 				console.error("[Logout] Failed to sign out:", response.status);

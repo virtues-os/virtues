@@ -19,6 +19,7 @@ export type TabType =
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'thing' // Wiki things (projects, pets, goals, ...): /things, /thing/thg_{id}
+	| 'space' // Spaces (rooms a chat lives in): /spaces, /space/space_{id}
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
@@ -31,8 +32,6 @@ export type TabType =
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}
 	| 'trash' // Drive trash: /trash
-	// View namespace
-	| 'view' // Folder/view pages: /view/view_{id}
 	// System namespace
 	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap}
 	// Easter eggs

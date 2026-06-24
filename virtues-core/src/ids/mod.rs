@@ -83,7 +83,6 @@ pub const PAGE_SHARE_PREFIX: &str = "share";
 
 // Wiki Things — long-running named anchors (projects, pets, goals, topics, ...)
 pub const THING_PREFIX: &str = "thg";
-pub const THING_PIN_PREFIX: &str = "thgpin";
 
 // Sidebar pins (user's globally-pinned URLs, distinct from thing membership)
 pub const PIN_PREFIX: &str = "pin";

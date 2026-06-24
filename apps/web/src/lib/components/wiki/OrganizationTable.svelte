@@ -7,7 +7,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { listOrganizations, type WikiOrganizationListItem } from "$lib/wiki/api";
 	import UniversalDataGrid, { type Column } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 	import Icon from "$lib/components/Icon.svelte";
@@ -78,7 +78,7 @@
 
 	function handleItemClick(org: WikiOrganizationListItem) {
 		const route = `/org/${org.id}`;
-		spaceStore.openTabFromRoute(route);
+		windowShellStore.openTabFromRoute(route);
 	}
 </script>
 

@@ -1077,7 +1077,7 @@ export async function createChat(
  */
 export async function updateChat(
 	chatId: string,
-	updates: { title?: string; icon?: string | null }
+	updates: { title?: string; icon?: string | null; spaceId?: string | null }
 ): Promise<{ conversation_id: string; title: string; icon?: string | null; updated_at: string }> {
 	const res = await fetch(`${API_BASE}/chats/${chatId}`, {
 		method: 'PATCH',
@@ -1110,115 +1110,108 @@ export async function deleteChat(chatId: string): Promise<{ deleted: boolean }> 
 }
 
 // =============================================================================
-// Spaces API
+// Spaces API — the "room" a chat lives in
+//
+// A Space is a manual collection the user returns to: a project, pet, hobby,
+// goal, or topic. It gathers entities, chats, and pages as URL-native members
+// and carries a single accent tint plus a catch-up memo (`current_status`).
+// A chat lives in at most one Space (see `updateChat`'s `spaceId`).
 // =============================================================================
 
+/** Core Space row (no counts). Returned by create/update. */
 export interface Space {
 	id: string;
 	name: string;
 	icon: string | null;
-	is_system: boolean;
-	sort_order: number;
-	theme_id: string;
 	accent_color: string | null;
-	active_tab_state_json: string | null;
+	current_status: string | null;
+	current_status_at: string | null;
+	sort_order: number;
 	created_at: string;
 	updated_at: string;
 }
 
-export interface SpaceSummary {
-	id: string;
-	name: string;
-	icon: string | null;
-	is_system: boolean;
+/** List-view summary — adds member and chat counts. */
+export interface SpaceSummary extends Space {
+	item_count: number;
+	chat_count: number;
+}
+
+/** A single URL-native member of a Space. */
+export interface SpaceItem {
+	url: string;
 	sort_order: number;
-	theme_id: string;
-	accent_color: string | null;
-	created_at: string;
-	updated_at: string;
+	added_at: string;
 }
 
-export interface SpaceListResponse {
-	spaces: SpaceSummary[];
+/** GET /api/spaces/:id — a Space plus its ordered members. */
+export interface SpaceDetail extends Space {
+	items: SpaceItem[];
 }
 
-/**
- * List all spaces
- */
-export async function listSpaces(): Promise<SpaceListResponse> {
+/** GET /api/spaces — all Spaces with counts. */
+export async function listSpaces(): Promise<{ spaces: SpaceSummary[] }> {
 	const res = await fetch(`${API_BASE}/spaces`);
 	if (!res.ok) throw new Error(`Failed to list spaces: ${res.statusText}`);
 	return res.json();
 }
 
-/**
- * Get a single space by ID
- */
-export async function getSpace(id: string): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces/${id}`);
+/** GET /api/spaces/:id — a Space with its ordered members. */
+export async function getSpace(id: string): Promise<SpaceDetail> {
+	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`Failed to get space: ${res.statusText}`);
 	return res.json();
 }
 
-// createSpace removed — single workspace model
+/** POST /api/spaces — create a Space. */
+export async function createSpace(body: {
+	name: string;
+	icon?: string | null;
+	accent_color?: string | null;
+}): Promise<Space> {
+	const res = await fetch(`${API_BASE}/spaces`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	if (!res.ok) throw new Error(`Failed to create space: ${res.statusText}`);
+	return res.json();
+}
 
 /**
- * Update an existing space
+ * PUT /api/spaces/:id — update a Space. For the nullable fields
+ * (`icon`/`accent_color`/`current_status`): omit the key to leave unchanged,
+ * send `null` to clear, send a value to set.
  */
 export async function updateSpace(
 	id: string,
-	updates: {
+	patch: {
 		name?: string;
-		icon?: string;
+		icon?: string | null;
+		accent_color?: string | null;
+		current_status?: string | null;
 		sort_order?: number;
-		theme_id?: string;
-		accent_color?: string;
 	}
 ): Promise<Space> {
-	const res = await fetch(`${API_BASE}/spaces/${id}`, {
+	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(id)}`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
+		body: JSON.stringify(patch)
 	});
 	if (!res.ok) throw new Error(`Failed to update space: ${res.statusText}`);
 	return res.json();
 }
 
-// deleteSpace + saveSpaceTabState removed — single workspace model
+/** DELETE /api/spaces/:id */
+export async function deleteSpace(id: string): Promise<void> {
+	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(id)}`, { method: 'DELETE' });
+	if (!res.ok) throw new Error(`Failed to delete space: ${res.statusText}`);
+}
 
 // =============================================================================
-// Views API (replaces Explorer Nodes)
+// View Entity (sidebar smart-section rows — resolved client-side from
+// /api/chats and listPages; the folder/view CRUD API was removed.)
 // =============================================================================
-
-export interface View {
-	id: string;
-	space_id: string;
-	parent_view_id: string | null;
-	name: string;
-	icon: string | null;
-	sort_order: number;
-	view_type: 'manual' | 'smart';
-	query_config: string | null;
-	is_system: boolean;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface ViewSummary {
-	id: string;
-	space_id: string;
-	parent_view_id: string | null;
-	name: string;
-	icon: string | null;
-	sort_order: number;
-	view_type: 'manual' | 'smart';
-	query_config: string | null;
-	is_system: boolean;
-}
-
-export interface ViewListResponse {
-	views: ViewSummary[];
-}
 
 export interface ViewEntity {
 	id: string;
@@ -1226,163 +1219,6 @@ export interface ViewEntity {
 	namespace: string;
 	icon: string;
 	updated_at?: string;
-}
-
-/** Space item entity — ViewEntity with sort_order for unified ordering with folders */
-export interface SpaceItemEntity extends ViewEntity {
-	sort_order: number;
-}
-
-export interface ViewResolutionResponse {
-	entities: ViewEntity[];
-	total: number;
-	has_more: boolean;
-}
-
-export interface CreateViewRequest {
-	name: string;
-	icon?: string;
-	view_type: 'manual' | 'smart';
-	parent_view_id?: string;
-	query_config?: object;
-}
-
-/**
- * List all views for a space
- */
-export async function listViews(spaceId: string): Promise<ViewListResponse> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/views`);
-	if (!res.ok) throw new Error(`Failed to list views: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Get a single view by ID
- */
-export async function getView(viewId: string): Promise<View> {
-	const res = await fetch(`${API_BASE}/views/${viewId}`);
-	if (!res.ok) throw new Error(`Failed to get view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Create a new view in a space
- */
-export async function createView(
-	spaceId: string,
-	request: CreateViewRequest
-): Promise<View> {
-	const res = await fetch(`${API_BASE}/views`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			space_id: spaceId,
-			...request
-		})
-	});
-	if (!res.ok) throw new Error(`Failed to create view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Update an existing view
- */
-export async function updateView(
-	viewId: string,
-	updates: {
-		name?: string;
-		icon?: string;
-		sort_order?: number;
-		query_config?: object;
-	}
-): Promise<View> {
-	const res = await fetch(`${API_BASE}/views/${viewId}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(updates)
-	});
-	if (!res.ok) throw new Error(`Failed to update view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Delete a view by ID
- */
-export async function deleteView(viewId: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/views/${viewId}`, { method: 'DELETE' });
-	if (!res.ok) throw new Error(`Failed to delete view: ${res.statusText}`);
-}
-
-/**
- * Resolve a view to its entities
- */
-export async function resolveView(viewId: string): Promise<ViewResolutionResponse> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/resolve`, {
-		method: 'POST'
-	});
-	if (!res.ok) throw new Error(`Failed to resolve view: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Add an item to a manual view
- * @param viewId - The view to add the item to
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
- */
-export async function addViewItem(viewId: string, url: string): Promise<void> {
-	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/views/${viewId}/items`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url: sanitizedUrl })
-	});
-	if (!res.ok) throw new Error(`Failed to add item to view: ${res.statusText}`);
-}
-
-/**
- * Remove an item from a manual view
- * @param viewId - The view to remove the item from
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
- */
-export async function removeViewItem(viewId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/items`, {
-		method: 'DELETE',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url })
-	});
-	if (!res.ok) throw new Error(`Failed to remove item from view: ${res.statusText}`);
-}
-
-/**
- * View item as stored in the database
- */
-export interface ViewItem {
-	id: number;
-	view_id: string;
-	url: string;
-	sort_order: number;
-	created_at: string;
-}
-
-/**
- * List items in a manual view
- */
-export async function listViewItems(viewId: string): Promise<ViewItem[]> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/items`);
-	if (!res.ok) throw new Error(`Failed to list view items: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Reorder items in a manual view
- */
-export async function reorderViewItems(viewId: string, urlOrder: string[]): Promise<void> {
-	const res = await fetch(`${API_BASE}/views/${viewId}/items/reorder`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url_order: urlOrder })
-	});
-	if (!res.ok) throw new Error(`Failed to reorder view items: ${res.statusText}`);
 }
 
 // =============================================================================
@@ -1412,42 +1248,27 @@ export async function executeSql(sql: string): Promise<SqlResult> {
 }
 
 // =============================================================================
-// Space Items API (root-level items at space level, not in any folder)
+// Space Items API — the URL-native members of a Space
+//
+// (Listing comes back inside `getSpace(id)` as `SpaceDetail.items`; there is
+// no separate GET.)
 // =============================================================================
 
-/**
- * List items at space root level (not inside any folder)
- * @param spaceId - The space ID
- * @returns Resolved entities for the space's root items
- */
-export async function listSpaceItems(spaceId: string): Promise<SpaceItemEntity[]> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`);
-	if (!res.ok) throw new Error(`Failed to list space items: ${res.statusText}`);
-	return res.json();
-}
-
-/**
- * Add an item to space root level
- * @param spaceId - The space ID
- * @param url - The URL of the item (e.g., '/page/page_xyz', '/person/person_abc')
- */
-export async function addSpaceItem(spaceId: string, url: string): Promise<void> {
+/** POST /api/spaces/:id/items — add a member URL to a Space. */
+export async function addSpaceItem(spaceId: string, url: string): Promise<SpaceItem> {
 	const sanitizedUrl = sanitizeUrl(url);
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`, {
+	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(spaceId)}/items`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url: sanitizedUrl })
 	});
 	if (!res.ok) throw new Error(`Failed to add space item: ${res.statusText}`);
+	return res.json();
 }
 
-/**
- * Remove an item from space root level
- * @param spaceId - The space ID
- * @param url - The URL of the item to remove
- */
+/** DELETE /api/spaces/:id/items — remove a member URL from a Space. */
 export async function removeSpaceItem(spaceId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items`, {
+	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(spaceId)}/items`, {
 		method: 'DELETE',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ url })
@@ -1455,19 +1276,12 @@ export async function removeSpaceItem(spaceId: string, url: string): Promise<voi
 	if (!res.ok) throw new Error(`Failed to remove space item: ${res.statusText}`);
 }
 
-/**
- * Reorder items at space root level
- * @param spaceId - The space ID
- * @param urlOrder - Array of URLs in the new desired order
- */
-export async function reorderSpaceItems(
-	spaceId: string,
-	items: Array<{ url: string; sort_order: number }>
-): Promise<void> {
-	const res = await fetch(`${API_BASE}/spaces/${spaceId}/items/reorder`, {
+/** PUT /api/spaces/:id/items/reorder — set the member order by URL. */
+export async function reorderSpaceItems(spaceId: string, urls: string[]): Promise<void> {
+	const res = await fetch(`${API_BASE}/spaces/${encodeURIComponent(spaceId)}/items/reorder`, {
 		method: 'PUT',
 		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ items })
+		body: JSON.stringify({ urls })
 	});
 	if (!res.ok) throw new Error(`Failed to reorder space items: ${res.statusText}`);
 }
@@ -1666,11 +1480,9 @@ export async function createReflection(date: string): Promise<Page> {
 // ============================================================================
 // Things API
 //
-// A "thing" is a folder you can re-enter — a project, pet, goal, topic,
-// anything you want to keep loosely organized. A Thing has a list of
-// pinned URLs it accumulates over time. The `current_status*` fields back
-// the catch-up memo at the top of the detail view. The `category` column
-// exists on the row but is not surfaced in v1 UX.
+// A "thing" is a plain entity — a project, pet, goal, topic, anything you want
+// to name and keep around. Membership/organization now lives in Spaces, not on
+// the Thing. The `category` column exists on the row but is not surfaced in v1.
 // ============================================================================
 
 export interface Thing {
@@ -1680,9 +1492,6 @@ export interface Thing {
 	icon: string | null;
 	description: string | null;
 	cover_image: string | null;
-	current_status: string | null;
-	current_status_at: string | null;
-	current_status_edited_by: 'ai' | 'human';
 	created_at: string;
 	updated_at: string;
 }
@@ -1694,25 +1503,8 @@ export interface ThingSummary {
 	icon: string | null;
 	description: string | null;
 	cover_image: string | null;
-	current_status: string | null;
-	current_status_at: string | null;
-	pin_count: number;
 	created_at: string;
 	updated_at: string;
-}
-
-export interface ThingPin {
-	id: string;
-	thing_id: string;
-	url: string;
-	name: string | null;
-	description: string | null;
-	sort_order: number;
-	added_at: string;
-}
-
-export interface ThingDetail extends Thing {
-	pins: ThingPin[];
 }
 
 export interface ThingListResponse {
@@ -1726,7 +1518,7 @@ export async function listThings(category?: string): Promise<ThingListResponse> 
 	return res.json();
 }
 
-export async function getThing(id: string): Promise<ThingDetail> {
+export async function getThing(id: string): Promise<Thing> {
 	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`);
 	if (!res.ok) throw new Error(`Failed to get thing: ${res.statusText}`);
 	return res.json();
@@ -1775,45 +1567,6 @@ export async function updateThing(
 export async function deleteThing(id: string): Promise<void> {
 	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(id)}`, { method: 'DELETE' });
 	if (!res.ok) throw new Error(`Failed to delete thing: ${res.statusText}`);
-}
-
-export async function addThingPin(
-	thingId: string,
-	url: string,
-	options?: { name?: string | null; description?: string | null }
-): Promise<ThingPin> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(thingId)}/pins`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({
-			url,
-			name: options?.name ?? null,
-			description: options?.description ?? null
-		})
-	});
-	if (!res.ok) throw new Error(`Failed to add thing pin: ${res.statusText}`);
-	return res.json();
-}
-
-export async function removeThingPin(thingId: string, url: string): Promise<void> {
-	const res = await fetch(`${API_BASE}/things/${encodeURIComponent(thingId)}/pins`, {
-		method: 'DELETE',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ url })
-	});
-	if (!res.ok) throw new Error(`Failed to remove thing pin: ${res.statusText}`);
-}
-
-export async function reorderThingPins(thingId: string, urls: string[]): Promise<void> {
-	const res = await fetch(
-		`${API_BASE}/things/${encodeURIComponent(thingId)}/pins/reorder`,
-		{
-			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ urls })
-		}
-	);
-	if (!res.ok) throw new Error(`Failed to reorder thing pins: ${res.statusText}`);
 }
 
 // ============================================================================

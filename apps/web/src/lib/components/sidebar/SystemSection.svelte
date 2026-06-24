@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { listPages, type ViewEntity } from "$lib/api/client";
 	import type { SystemSection } from "$lib/sidebar/sections";
@@ -18,7 +18,8 @@
 		accentColor = null,
 	}: Props = $props();
 
-	const isExpanded = $derived(spaceStore.isViewExpanded(section.id));
+	// Local expand state (folder/view expansion no longer lives in the window shell store)
+	let isExpanded = $state(false);
 
 	// Smart section data
 	let smartItems = $state<ViewEntity[]>([]);
@@ -27,17 +28,17 @@
 
 	// Seed from cache on mount
 	{
-		const cached = spaceStore.smartSectionCache.get(section.id);
+		const cached = windowShellStore.smartSectionCache.get(section.id);
 		if (cached) {
 			smartItems = cached;
-			lastCacheVersion = spaceStore.viewCacheVersion;
+			lastCacheVersion = windowShellStore.viewCacheVersion;
 		}
 	}
 
 	// Fetch smart section items when expanded or cache invalidated
 	$effect.pre(() => {
 		if (section.type !== 'smart') return;
-		const currentVersion = spaceStore.viewCacheVersion;
+		const currentVersion = windowShellStore.viewCacheVersion;
 		if (isExpanded && lastCacheVersion !== currentVersion) {
 			const forceRefresh = lastCacheVersion !== -1;
 			fetchSmartItems(currentVersion, forceRefresh);
@@ -48,7 +49,7 @@
 		if (smartLoading) return;
 
 		if (!forceRefresh) {
-			const cached = spaceStore.smartSectionCache.get(section.id);
+			const cached = windowShellStore.smartSectionCache.get(section.id);
 			if (cached) {
 				smartItems = cached;
 				lastCacheVersion = cacheVersion;
@@ -86,7 +87,7 @@
 			}
 
 			smartItems = entities;
-			spaceStore.updateSmartSectionCache(section.id, entities);
+			windowShellStore.updateSmartSectionCache(section.id, entities);
 		} catch (e) {
 			console.error(`[SystemSection] Failed to fetch ${section.namespace} items:`, e);
 		} finally {
@@ -95,7 +96,7 @@
 	}
 
 	function toggleExpanded() {
-		spaceStore.toggleViewExpanded(section.id);
+		isExpanded = !isExpanded;
 	}
 
 	function handleClick(e: MouseEvent) {
@@ -119,7 +120,7 @@
 	}
 
 	function handleNewChat() {
-		spaceStore.openTabFromRoute("/", {
+		windowShellStore.openTabFromRoute("/", {
 			label: "New Chat",
 			forceNew: true,
 			preferEmptyPane: true,
@@ -129,7 +130,7 @@
 	async function handleNewPage() {
 		try {
 			const page = await pagesStore.createNewPage();
-			spaceStore.openTabFromRoute(`/page/${page.id}`, {
+			windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 				label: page.title,
 				forceNew: true,
 				preferEmptyPane: true,
@@ -143,7 +144,7 @@
 		e.preventDefault();
 		e.stopPropagation();
 		if (section.moreRoute) {
-			spaceStore.openTabFromRoute(section.moreRoute);
+			windowShellStore.openTabFromRoute(section.moreRoute);
 		}
 	}
 </script>

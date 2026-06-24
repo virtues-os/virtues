@@ -1,13 +1,12 @@
 /**
  * Things Store
  *
- * A "thing" is a folder you can re-enter — a project, pet, goal, topic,
- * anything you want to keep loosely organized. Things accumulate pinned
- * URLs (pages, chats, entities, files, external links). The catch-up
- * memo (`current_status`) sits at the top of every detail view.
+ * A "thing" is a plain entity — a project, pet, goal, topic, anything you want
+ * to name and keep around. Organization/membership now lives in Spaces, not on
+ * the Thing itself.
  *
- * The `category` column exists on the DB row but is intentionally not
- * surfaced in v1 UX — kept for future use and AI-generated tagging.
+ * The `category` column exists on the DB row but is intentionally not surfaced
+ * in v1 UX — kept for future use and AI-generated tagging.
  */
 
 import {
@@ -16,13 +15,8 @@ import {
 	createThing,
 	updateThing,
 	deleteThing,
-	addThingPin as apiAddThingPin,
-	removeThingPin as apiRemoveThingPin,
-	reorderThingPins as apiReorderThingPins,
 	type Thing,
-	type ThingSummary,
-	type ThingDetail,
-	type ThingPin
+	type ThingSummary
 } from '$lib/api/client';
 
 class ThingsStore {
@@ -30,7 +24,7 @@ class ThingsStore {
 	loading = $state(false);
 	error = $state<string | null>(null);
 
-	private detailCache = $state<Map<string, ThingDetail>>(new Map());
+	private detailCache = $state<Map<string, Thing>>(new Map());
 
 	async load(category?: string): Promise<void> {
 		this.loading = true;
@@ -47,7 +41,7 @@ class ThingsStore {
 		}
 	}
 
-	async loadDetail(id: string, force = false): Promise<ThingDetail> {
+	async loadDetail(id: string, force = false): Promise<Thing> {
 		if (!force) {
 			const cached = this.detailCache.get(id);
 			if (cached) return cached;
@@ -59,7 +53,7 @@ class ThingsStore {
 		return detail;
 	}
 
-	getCachedDetail(id: string): ThingDetail | undefined {
+	getCachedDetail(id: string): Thing | undefined {
 		return this.detailCache.get(id);
 	}
 
@@ -73,10 +67,7 @@ class ThingsStore {
 	): Promise<Thing> {
 		const thing = await createThing(name, options);
 		// Add to top of list (most-recently-updated)
-		this.things = [
-			{ ...thing, pin_count: 0 } as ThingSummary,
-			...this.things
-		];
+		this.things = [thing as ThingSummary, ...this.things];
 		return thing;
 	}
 
@@ -90,9 +81,7 @@ class ThingsStore {
 		}
 	): Promise<Thing> {
 		const updated = await updateThing(id, updates);
-		this.things = this.things.map((t) =>
-			t.id === id ? { ...t, ...updated } : t
-		);
+		this.things = this.things.map((t) => (t.id === id ? { ...t, ...updated } : t));
 		const cached = this.detailCache.get(id);
 		if (cached) {
 			const next = new Map(this.detailCache);
@@ -108,44 +97,6 @@ class ThingsStore {
 		if (this.detailCache.has(id)) {
 			const next = new Map(this.detailCache);
 			next.delete(id);
-			this.detailCache = next;
-		}
-	}
-
-	async addPin(
-		thingId: string,
-		url: string,
-		options?: { name?: string | null; description?: string | null }
-	): Promise<ThingPin> {
-		const pin = await apiAddThingPin(thingId, url, options);
-		if (this.detailCache.has(thingId)) {
-			const next = new Map(this.detailCache);
-			next.delete(thingId);
-			this.detailCache = next;
-		}
-		this.things = this.things.map((t) =>
-			t.id === thingId ? { ...t, pin_count: t.pin_count + 1 } : t
-		);
-		return pin;
-	}
-
-	async removePin(thingId: string, url: string): Promise<void> {
-		await apiRemoveThingPin(thingId, url);
-		if (this.detailCache.has(thingId)) {
-			const next = new Map(this.detailCache);
-			next.delete(thingId);
-			this.detailCache = next;
-		}
-		this.things = this.things.map((t) =>
-			t.id === thingId ? { ...t, pin_count: Math.max(0, t.pin_count - 1) } : t
-		);
-	}
-
-	async reorderPins(thingId: string, urls: string[]): Promise<void> {
-		await apiReorderThingPins(thingId, urls);
-		if (this.detailCache.has(thingId)) {
-			const next = new Map(this.detailCache);
-			next.delete(thingId);
 			this.detailCache = next;
 		}
 	}
