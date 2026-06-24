@@ -27,3 +27,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 # host; the daemon + this dep build + run on the Linux box / OrbStack.
 [target.'cfg(target_os = "linux")'.dependencies]
 defguard_wireguard_rs = "0.9"
+libc = "0.2"

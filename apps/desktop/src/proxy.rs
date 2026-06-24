@@ -33,7 +33,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONNECTION, HOST, UPGRADE};
+use hyper::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONNECTION, HOST, ORIGIN, UPGRADE};
 use hyper::server::conn::http1 as server_http1;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
@@ -336,6 +336,19 @@ fn rewrite_request_headers(req: &mut Request<Incoming>, cfg: &ProxyConfig, is_up
     }
 
     if is_upgrade {
+        // Carry `Origin` along with the `Host` rewrite above. The box's
+        // /ws/terminal CSWSH guard rejects an upgrade whose Origin-authority
+        // doesn't match Host; since we just forced Host to `upstream_host`, an
+        // Origin still pointing at the loopback proxy origin (localhost:7117)
+        // would never match and the shell socket would 403. Rewrite it in
+        // lockstep so the box sees a coherent same-origin upgrade. Only when
+        // present — a missing Origin is already allowed by the guard.
+        if req.headers().contains_key(ORIGIN) {
+            if let Ok(ov) = HeaderValue::from_str(&format!("http://{host_value}")) {
+                req.headers_mut().insert(ORIGIN, ov);
+            }
+        }
+
         // Capture the Upgrade value before the strip wipes it; re-insert
         // after along with a clean `Connection: upgrade`.
         let upgrade_val = req.headers().get(UPGRADE).cloned();

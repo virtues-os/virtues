@@ -110,7 +110,18 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             end_timestamp_column: None,
             embedding: None,
             temporal_type: TemporalType::Continuous,
-            day_source: None,
+            // Continuous streams surface as individual day-source rows too, so the
+            // day page can list every data point. They are high-frequency, so the
+            // UI hides them behind a filter by default (keyed off `temporal_type`).
+            day_source: Some(DaySourceConfig {
+                source_type: "heart_rate",
+                source_type_sql: None,
+                label_sql: "'Heart rate'",
+                preview_sql: "CAST(t.bpm AS TEXT) || ' bpm'",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
             continuous_agg: Some(ContinuousAggConfig {
                 summary_template: "Heart rate: avg {avg} bpm ({min}-{max})",
                 value_sql: "t.bpm",
@@ -130,7 +141,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             end_timestamp_column: None,
             embedding: None,
             temporal_type: TemporalType::Continuous,
-            day_source: None,
+            day_source: Some(DaySourceConfig {
+                source_type: "hrv",
+                source_type_sql: None,
+                label_sql: "'HRV'",
+                preview_sql: "CAST(ROUND(t.hrv_ms) AS INT) || ' ms'",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
             continuous_agg: Some(ContinuousAggConfig {
                 summary_template: "HRV: avg {avg}ms ({min}-{max})",
                 value_sql: "t.hrv_ms",
@@ -150,7 +169,15 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             end_timestamp_column: None,
             embedding: None,
             temporal_type: TemporalType::Continuous,
-            day_source: None,
+            day_source: Some(DaySourceConfig {
+                source_type: "steps",
+                source_type_sql: None,
+                label_sql: "'Steps'",
+                preview_sql: "CAST(t.step_count AS TEXT) || ' steps'",
+                id_sql: "t.id",
+                extra_where: None,
+                use_date_filter: false,
+            }),
             continuous_agg: Some(ContinuousAggConfig {
                 summary_template: "Steps: {sum} total",
                 value_sql: "t.count",

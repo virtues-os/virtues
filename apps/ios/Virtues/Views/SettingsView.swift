@@ -187,11 +187,34 @@ struct SettingsView: View {
                             .foregroundColor(.warmForegroundMuted)
                     }
 
-                    if let lastUpload = uploadCoordinator.lastUploadDate {
+                    // Last *successful* sync is the signal that matters — data
+                    // actually reached the box. Shown in green so it reads as the
+                    // health indicator.
+                    if let lastSuccess = uploadCoordinator.lastSuccessfulSyncDate {
                         HStack {
-                            Text("Last Upload")
+                            Text("Last Successful Sync")
                             Spacer()
-                            Text(lastUpload, style: .relative)
+                            Text(lastSuccess, style: .relative)
+                                .foregroundColor(.warmSuccess)
+                        }
+                    } else {
+                        HStack {
+                            Text("Last Successful Sync")
+                            Spacer()
+                            Text("Never")
+                                .foregroundColor(.warmForegroundMuted)
+                        }
+                    }
+
+                    // Last *attempt* is a separate, weaker signal — a recent
+                    // attempt can still have failed, so it is never shown as the
+                    // success line (that conflation is what hid broken syncs).
+                    if let lastAttempt = uploadCoordinator.lastUploadDate,
+                       lastAttempt != uploadCoordinator.lastSuccessfulSyncDate {
+                        HStack {
+                            Text("Last Attempt")
+                            Spacer()
+                            Text(lastAttempt, style: .relative)
                                 .foregroundColor(.warmForegroundMuted)
                         }
                     }

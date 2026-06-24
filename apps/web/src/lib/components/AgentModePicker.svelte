@@ -28,7 +28,7 @@
 	bind:value
 	items={AGENT_MODES}
 	{disabled}
-	width="w-44"
+	width="w-80"
 	getKey={getModeKey}
 	getValue={getModeValue}
 	{onSelect}
@@ -49,20 +49,20 @@
 	{/snippet}
 
 	{#snippet item(mode: AgentMode, isSelected: boolean)}
-		<div class="px-2.5 py-1.5 flex items-center gap-2">
+		<div class="px-3 py-2 flex items-center gap-2.5 whitespace-nowrap">
 			<Icon
 				icon={mode.icon}
-				width="14"
+				width="16"
+				class="shrink-0 {mode.color ? '' : 'text-foreground-muted'}"
 				style={mode.color ? `color: ${mode.color}` : ''}
-				class={mode.color ? '' : 'text-foreground-muted'}
 			/>
-			<span class="text-xs font-medium {isSelected ? 'text-primary' : 'text-foreground'}">
+			<span class="text-sm font-medium shrink-0 {isSelected ? 'text-primary' : 'text-foreground'}">
 				{mode.name}
 			</span>
-			<span class="text-[10px] text-foreground-subtle">{mode.description}</span>
+			<span class="text-xs text-foreground-subtle truncate">{mode.description}</span>
 			<span class="flex-1"></span>
 			{#if isSelected}
-				<Icon icon="ri:check-line" class="text-primary shrink-0" width="12" />
+				<Icon icon="ri:check-line" class="text-primary shrink-0" width="14" />
 			{/if}
 		</div>
 	{/snippet}

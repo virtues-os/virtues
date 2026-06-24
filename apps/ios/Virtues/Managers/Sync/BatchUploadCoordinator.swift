@@ -551,6 +551,17 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
                 #endif
                 return
 
+            case .notProcessed(let status):
+                // Box accepted the request but did NOT durably ingest the batch
+                // (skipped: previous run still active / falsy condition). Keep
+                // the data and retry; this is not a server fault, so it must not
+                // count toward the circuit breaker.
+                storageProvider.incrementRetry(id: event.id)
+                #if DEBUG
+                print("⚠️ Not processed (status: \(status)) - keeping data, will retry")
+                #endif
+                return
+
             case .serverError, .timeout:
                 // Transient server issues - retry with backoff, count toward circuit breaker
                 storageProvider.incrementRetry(id: event.id)
@@ -728,6 +739,7 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
             guard let self = self else { return }
             var state = self.streamSync[key] ?? StreamSyncState()
             state.lastAttempt = now
+            state.appendOutcome(success)
             if success {
                 state.lastSuccess = now
                 state.consecutiveFailures = 0

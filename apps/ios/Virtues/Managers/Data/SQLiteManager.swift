@@ -127,12 +127,15 @@ class SQLiteManager {
         return queue.sync {
             var resetCount = 0
 
+            // `last_attempt_date IS NULL` covers any legacy in-flight row that
+            // predates the dequeue-time stamping above — without it, a NULL
+            // timestamp never satisfies `< ?` and the row stays stuck forever.
             let resetSQL = """
                 UPDATE upload_queue
                 SET status = 'pending',
                     upload_attempts = upload_attempts + 1
                 WHERE status = 'uploading'
-                AND last_attempt_date < ?
+                AND (last_attempt_date < ? OR last_attempt_date IS NULL)
             """
 
             var statement: OpaquePointer?
@@ -404,20 +407,35 @@ class SQLiteManager {
 
             sqlite3_finalize(statement)
 
-            // Immediately mark selected events as 'uploading' within the same atomic block
-            for id in eventIds {
+            // Immediately mark selected events as 'uploading' within the same
+            // atomic block. Two correctness points:
+            //  1. Stamp last_attempt_date = now. A brand-new event has a NULL
+            //     timestamp; if its first upload is interrupted (app killed
+            //     mid-flight) it would be stuck in 'uploading' forever, because
+            //     resetStaleUploads() keys off `last_attempt_date < ?` and NULL
+            //     never matches. Stamping here guarantees every in-flight row is
+            //     recoverable.
+            //  2. One UPDATE ... WHERE id IN (...) instead of a per-row loop, so
+            //     the whole selection flips together — the old loop could leave
+            //     some rows 'uploading' and others not if a statement failed.
+            if !eventIds.isEmpty {
+                let placeholders = eventIds.map { _ in "?" }.joined(separator: ", ")
                 let updateSQL = """
                     UPDATE upload_queue
-                    SET status = 'uploading'
-                    WHERE id = ?
+                    SET status = 'uploading',
+                        last_attempt_date = ?
+                    WHERE id IN (\(placeholders))
                 """
 
                 var updateStatement: OpaquePointer?
 
                 if sqlite3_prepare_v2(db, updateSQL, -1, &updateStatement, nil) == SQLITE_OK {
-                    sqlite3_bind_int64(updateStatement, 1, id)
+                    sqlite3_bind_double(updateStatement, 1, Date().timeIntervalSince1970)
+                    for (index, id) in eventIds.enumerated() {
+                        sqlite3_bind_int64(updateStatement, Int32(index + 2), id)
+                    }
                     if sqlite3_step(updateStatement) != SQLITE_DONE {
-                        print("⚠️ Failed to mark event \(id) as uploading")
+                        print("⚠️ Failed to mark \(eventIds.count) event(s) as uploading")
                     }
                 }
 

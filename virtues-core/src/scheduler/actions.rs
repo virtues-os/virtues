@@ -234,7 +234,7 @@ pub async fn create_user_action(
     for attempt in 1u32..=MAX_ATTEMPTS {
         let result = sqlx::query(
             r#"INSERT INTO app_actions (id, name, owner, agent, cron_schedule, enabled, config, triggers)
-               VALUES ($1, $2, 'user', $3, $4, 1, $5, $6)"#,
+               VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
         )
         .bind(&action_id)
         .bind(name)
@@ -339,39 +339,49 @@ pub async fn update_action(
 
     // Build the UPDATE statement. SQL has no "set only these keys" shortcut;
     // we use conditional per-field binds. The SET-clause loop and the bind
-    // loop walk the fields in the same fixed order so the `?` placeholders
-    // line up 1-to-1 with the bind values.
-    let mut sets: Vec<&str> = Vec::new();
-    let mut query = String::from("UPDATE app_actions SET ");
+    // loop walk the fields in the same fixed order so the `$N` placeholders
+    // line up 1-to-1 with the bind values. `config`/`triggers` are JSONB
+    // columns, so their placeholders are cast (`::jsonb`); the string we bind
+    // is a JSON document, mirroring the template upsert in `action_templates`.
+    let mut sets: Vec<String> = Vec::new();
+    let mut bind_idx = 0u32;
+    let mut next = || {
+        bind_idx += 1;
+        bind_idx
+    };
 
     if obj.contains_key("name") {
-        sets.push("name = ?");
+        sets.push(format!("name = ${}", next()));
     }
     if obj.contains_key("agent") {
-        sets.push("agent = ?");
+        sets.push(format!("agent = ${}", next()));
     }
     if obj.contains_key("cron_schedule") {
-        sets.push("cron_schedule = ?");
+        sets.push(format!("cron_schedule = ${}", next()));
     }
     if obj.contains_key("enabled") {
-        sets.push("enabled = ?");
+        sets.push(format!("enabled = ${}", next()));
     }
     if obj.contains_key("config") {
-        sets.push("config = ?");
+        sets.push(format!("config = ${}::jsonb", next()));
     }
     if obj.contains_key("condition") {
-        sets.push("condition = ?");
+        sets.push(format!("condition = ${}", next()));
     }
     if obj.contains_key("triggers") {
-        sets.push("triggers = ?");
+        sets.push(format!("triggers = ${}::jsonb", next()));
     }
     if obj.contains_key("memory") {
-        sets.push("memory = ?");
+        sets.push(format!("memory = ${}", next()));
     }
 
-    sets.push("updated_at = now()");
-    query.push_str(&sets.join(", "));
-    query.push_str(" WHERE id = $1");
+    sets.push("updated_at = now()".to_string());
+    let id_param = next();
+    let query = format!(
+        "UPDATE app_actions SET {} WHERE id = ${}",
+        sets.join(", "),
+        id_param
+    );
 
     // Now bind in the same order.
     let mut q = sqlx::query(&query);
@@ -406,7 +416,7 @@ pub async fn update_action(
         let b = v
             .as_bool()
             .ok_or_else(|| Error::InvalidInput("enabled must be a bool".into()))?;
-        q = q.bind(b as i64);
+        q = q.bind(b);
     }
     if let Some(v) = obj.get("config") {
         if !v.is_object() {

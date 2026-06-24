@@ -16,8 +16,9 @@ pub async fn build_hourly_context(
     window_start: DateTime<Utc>,
     window_end: DateTime<Utc>,
 ) -> String {
-    let start = window_start.to_rfc3339();
-    let end = window_end.to_rfc3339();
+    // Bind `window_start`/`window_end` (DateTime<Utc>) directly — sqlx encodes
+    // them as TIMESTAMPTZ natively. Binding RFC3339 *strings* here would send a
+    // `text` param and fail with `operator does not exist: timestamptz >= text`.
     let today = window_start.format("%Y-%m-%d").to_string();
 
     let mut sections: Vec<String> = Vec::new();
@@ -39,8 +40,8 @@ pub async fn build_hourly_context(
            WHERE start_time >= $1 AND start_time < $2
            ORDER BY start_time"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -81,8 +82,8 @@ pub async fn build_hourly_context(
            WHERE v.arrival_time >= $1 AND v.arrival_time < $2
            ORDER BY v.arrival_time"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -107,8 +108,8 @@ pub async fn build_hourly_context(
            ORDER BY duration_minutes DESC
            LIMIT 10"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -136,8 +137,8 @@ pub async fn build_hourly_context(
            ORDER BY timestamp
            LIMIT 15"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -162,8 +163,8 @@ pub async fn build_hourly_context(
            ORDER BY start_time
            LIMIT 5"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -185,8 +186,8 @@ pub async fn build_hourly_context(
     if let Ok(row) = sqlx::query(
         "SELECT COUNT(*) as cnt, AVG(bpm) as avg_bpm FROM data_health_heart_rate WHERE timestamp >= $1 AND timestamp < $2",
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_optional(pool)
     .await
     {
@@ -204,8 +205,8 @@ pub async fn build_hourly_context(
     if let Ok(row) = sqlx::query(
         "SELECT SUM(step_count) as total FROM data_health_steps WHERE timestamp >= $1 AND timestamp < $2",
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_optional(pool)
     .await
     {
@@ -227,8 +228,8 @@ pub async fn build_hourly_context(
            ORDER BY visit_duration_seconds DESC
            LIMIT 5"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -256,8 +257,8 @@ pub async fn build_hourly_context(
            ORDER BY played_at
            LIMIT 5"#,
     )
-    .bind(&start)
-    .bind(&end)
+    .bind(window_start)
+    .bind(window_end)
     .fetch_all(pool)
     .await
     {
@@ -280,7 +281,7 @@ pub async fn build_hourly_context(
         r#"SELECT e.id, e.start_time, e.end_time, e.auto_label, e.event_summary, e.agent_action
            FROM wiki_events e
            JOIN wiki_days d ON e.day_id = d.id
-           WHERE d.date = $1
+           WHERE d.date = $1::date
              AND e.is_unknown = FALSE
              AND e.user_hidden = FALSE
            ORDER BY e.start_time"#,
@@ -291,8 +292,8 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let id: String = r.try_get("id").ok()?;
-            let start: String = r.try_get("start_time").ok()?;
-            let end: String = r.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = r.try_get("start_time").ok()?;
+            let end: DateTime<Utc> = r.try_get("end_time").ok()?;
             let label: Option<String> = r.try_get("auto_label").ok().flatten();
             let summary: Option<String> = r.try_get("event_summary").ok().flatten();
             let action: Option<String> = r.try_get("agent_action").ok().flatten();
@@ -300,8 +301,8 @@ pub async fn build_hourly_context(
             Some(format!(
                 "- [{}] {} to {}: {} ({})",
                 id,
-                time_hhmm(&start),
-                time_hhmm(&end),
+                start.format("%H:%M"),
+                end.format("%H:%M"),
                 display,
                 action.unwrap_or_else(|| "legacy".to_string())
             ))
@@ -365,16 +366,6 @@ pub async fn build_eod_context(
     }
 
     context
-}
-
-/// Extract HH:MM from an ISO 8601 timestamp (e.g., "2026-04-01T14:30:00Z" → "14:30").
-/// Returns "??:??" if the string is too short or malformed.
-fn time_hhmm(ts: &str) -> &str {
-    if ts.len() >= 16 && ts.as_bytes().get(10) == Some(&b'T') {
-        &ts[11..16]
-    } else {
-        "??:??"
-    }
 }
 
 fn truncate(s: &str, max: usize) -> String {
