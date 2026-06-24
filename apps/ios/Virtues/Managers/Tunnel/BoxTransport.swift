@@ -157,11 +157,20 @@ final class BoxTransport {
             offset += Int(n)
         }
 
-        // Read until the server closes (we sent Connection: close).
+        // Read the response. Terminate on Content-Length once the header block
+        // has arrived, rather than waiting for the connection to close: if the
+        // box's FIN/EOF never surfaces over the tunnel stream (keep-alive, or the
+        // userspace tunnel not propagating the close), a read-until-empty loop
+        // blocks until the idle deadline and then DISCARDS a response we already
+        // fully received — which is exactly the "box got the data + ran the
+        // action, but the phone never acks so everything stays Pending and
+        // re-uploads" failure. Fall back to read-until-EOF only when there's no
+        // Content-Length (e.g. a chunked response).
         var raw = Data()
         while true {
+            if let total = Self.expectedResponseLength(raw), raw.count >= total { break }
             let chunk = try stream.read(maxLen: 65536)
-            if chunk.isEmpty { break }
+            if chunk.isEmpty { break } // EOF — server closed
             raw.append(chunk)
             if raw.count > 64 * 1024 * 1024 { break } // hard cap, defensive
         }
@@ -243,5 +252,24 @@ final class BoxTransport {
             throw NetworkError.unknown(NSError(domain: "could not build HTTPURLResponse", code: 0))
         }
         return (body, response)
+    }
+
+    /// Total expected response size (header block + Content-Length body) once the
+    /// `\r\n\r\n` terminator has arrived; nil if the headers are incomplete or
+    /// carry no Content-Length (the caller then reads until EOF). Lets the read
+    /// loop stop as soon as the full response is in hand, without depending on
+    /// the box closing the connection.
+    private static func expectedResponseLength(_ raw: Data) -> Int? {
+        let sep = Data("\r\n\r\n".utf8)
+        guard let r = raw.range(of: sep) else { return nil }
+        let headerBytes = raw.distance(from: raw.startIndex, to: r.upperBound)
+        let headerText = String(decoding: raw.subdata(in: raw.startIndex..<r.lowerBound), as: UTF8.self)
+        for line in headerText.components(separatedBy: "\r\n") {
+            guard line.lowercased().hasPrefix("content-length:"),
+                  let colon = line.firstIndex(of: ":") else { continue }
+            let v = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            if let len = Int(v) { return headerBytes + len }
+        }
+        return nil
     }
 }

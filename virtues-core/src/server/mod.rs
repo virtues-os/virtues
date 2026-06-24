@@ -138,6 +138,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // a valid code to display. See `crate::maintenance::pair_rotator`.
     crate::maintenance::pair_rotator::spawn(client.database.pool().clone());
 
+    // Entity resolver: periodically turns raw lake primitives (location points,
+    // transactions, calendar attendees) into ontology surfaces (visits/places,
+    // merchant orgs, people) via `entity_resolution::resolve_entities`. Without
+    // this the resolution only ran from the CLI, so the day page / timeline had
+    // nothing to show even while the lake filled. See `maintenance::entity_resolver`.
+    crate::maintenance::entity_resolver::spawn(client.database.clone());
+
     // Create ToolExecutor (optional - fails gracefully if VIRTUES_API_INTERNAL_SECRET not set)
     let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())
         .map(Arc::new)
@@ -630,14 +637,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
                 .patch(api::update_thing_handler)
                 .delete(api::delete_thing_handler),
         )
-        .route(
-            "/api/things/:id/pins",
-            post(api::add_thing_pin_handler).delete(api::remove_thing_pin_handler),
-        )
-        .route(
-            "/api/things/:id/pins/reorder",
-            put(api::reorder_thing_pins_handler),
-        )
         // Sidebar pins API
         .route(
             "/api/pins",
@@ -648,23 +647,21 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pins/:id",
             patch(api::update_pin_handler).delete(api::delete_pin_handler),
         )
-        // Spaces API (single system workspace — create/delete/tabs removed)
+        // Spaces API (the "room" a chat lives in)
         .route(
             "/api/spaces",
-            get(api::list_spaces_handler),
+            get(api::list_spaces_handler).post(api::create_space_handler),
         )
         .route(
             "/api/spaces/:id",
             get(api::get_space_handler)
-                .put(api::update_space_handler),
+                .put(api::update_space_handler)
+                .delete(api::delete_space_handler),
         )
-        .route("/api/spaces/:id/views", get(api::list_space_views_handler))
-        // Space Items API (root-level items at space level, not in any folder)
+        // Space membership (items come back inside GET /api/spaces/:id)
         .route(
             "/api/spaces/:id/items",
-            get(api::list_space_items_handler)
-                .post(api::add_space_item_handler)
-                .delete(api::remove_space_item_handler),
+            post(api::add_space_item_handler).delete(api::remove_space_item_handler),
         )
         .route(
             "/api/spaces/:id/items/reorder",
@@ -673,25 +670,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // Namespaces API
         .route("/api/namespaces", get(api::list_namespaces_handler))
         .route("/api/namespaces/:name", get(api::get_namespace_handler))
-        // Views API
-        .route("/api/views", post(api::create_view_handler))
-        .route(
-            "/api/views/:id",
-            get(api::get_view_handler)
-                .put(api::update_view_handler)
-                .delete(api::delete_view_handler),
-        )
-        .route("/api/views/:id/resolve", post(api::resolve_view_handler))
-        .route(
-            "/api/views/:id/items",
-            get(api::list_view_items_handler)
-                .post(api::add_view_item_handler)
-                .delete(api::remove_view_item_handler),
-        )
-        .route(
-            "/api/views/:id/items/reorder",
-            put(api::reorder_view_items_handler),
-        )
         // Chats API
         .route(
             "/api/chats",

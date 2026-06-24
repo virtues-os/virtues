@@ -160,11 +160,24 @@ async fn find_by_email(db: &PgPool, email: &str) -> Result<Option<String>> {
 }
 
 async fn find_by_phone(db: &PgPool, phone: &str) -> Result<Option<String>> {
-    let pattern = format!("%{}%", phone);
+    // `phones` is JSONB (a string array), so the old `phones LIKE $1` errored
+    // (`operator does not exist: jsonb ~~ text`) and counted EVERY phone-only
+    // contact as a failure. Unnest the array and compare digit-only forms so
+    // formatting differences ("(512) 555-1234" vs "+15125551234") still match —
+    // mirrors `normalize_phone`, since stored numbers are raw.
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return Ok(None);
+    }
     let row = sqlx::query(
-        r#"SELECT id FROM wiki_people WHERE phones LIKE $1 LIMIT 1"#,
+        r#"SELECT id FROM wiki_people
+           WHERE EXISTS (
+               SELECT 1 FROM jsonb_array_elements_text(phones) AS p
+               WHERE regexp_replace(p, '[^0-9]', '', 'g') LIKE '%' || $1 || '%'
+           )
+           LIMIT 1"#,
     )
-    .bind(&pattern)
+    .bind(&digits)
     .fetch_optional(db)
     .await?;
     Ok(row.and_then(|r| r.try_get::<Option<String>, _>("id").ok().flatten()))
