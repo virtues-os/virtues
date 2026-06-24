@@ -5,6 +5,7 @@
 	import { spaceStore } from '$lib/stores/space.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
+	import Icon from '$lib/components/Icon.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -202,6 +203,33 @@
 		refund: 'Refund',
 		adjust: 'Adjustment',
 	};
+	const kindIcon: Record<string, string> = {
+		grant: 'ri:refresh-line',
+		topup: 'ri:add-circle-line',
+		charge: 'ri:sparkling-2-line',
+		refund: 'ri:arrow-go-back-line',
+		adjust: 'ri:equalizer-line',
+	};
+
+	// Daily-cap progress (0–100), and a human "renews" date from expiry.
+	const dailyPct = $derived(
+		usage && usage.daily_cap_micros > 0
+			? Math.min(100, Math.round((usage.today_spent_micros / usage.daily_cap_micros) * 100))
+			: 0
+	);
+	const renewsLabel = $derived(
+		usage?.expires_at
+			? new Date(usage.expires_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })
+			: null
+	);
+	function entryDate(ts: string): string {
+		const d = new Date(ts);
+		const today = new Date();
+		const sameDay = d.toDateString() === today.toDateString();
+		return sameDay
+			? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+			: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	}
 
 	const statusLabel: Record<string, string> = {
 		active: 'Active',
@@ -254,31 +282,53 @@
 		<!-- Wallet balance + recent activity -->
 		{#if usage}
 			<div class="border border-border rounded-lg p-6 mb-6">
-				<h2 class="text-lg font-medium text-foreground mb-4">Balance</h2>
-				<div class="flex items-baseline gap-2 mb-4">
-					<span class="text-3xl font-semibold text-foreground">{formatMicrosUSD(usage.balance_micros)}</span>
+				<div class="flex items-baseline justify-between mb-1">
+					<h2 class="text-lg font-medium text-foreground">Balance</h2>
+					{#if renewsLabel}
+						<span class="text-xs text-foreground-muted">Renews {renewsLabel}</span>
+					{/if}
+				</div>
+				<div class="flex items-baseline gap-2 mb-5">
+					<span class="text-3xl font-semibold text-foreground tabular-nums">{formatMicrosUSD(usage.balance_micros)}</span>
 					<span class="text-foreground-muted text-sm">available</span>
 				</div>
-				<div class="grid grid-cols-2 gap-3 text-sm mb-2">
-					<div class="flex justify-between">
+
+				<!-- Daily spend progress -->
+				<div class="mb-4">
+					<div class="flex justify-between text-xs mb-1.5">
 						<span class="text-foreground-muted">Today</span>
-						<span class="text-foreground">{formatMicrosUSD(usage.today_spent_micros)} / {formatMicrosUSD(usage.daily_cap_micros)}</span>
+						<span class="text-foreground-muted tabular-nums">
+							{formatMicrosUSD(usage.today_spent_micros)} <span class="opacity-60">/ {formatMicrosUSD(usage.daily_cap_micros)} daily limit</span>
+						</span>
 					</div>
-					<div class="flex justify-between">
-						<span class="text-foreground-muted">This month</span>
-						<span class="text-foreground">{formatMicrosUSD(usage.month_to_date_micros)}</span>
+					<div class="h-1.5 w-full rounded-full bg-surface-elevated overflow-hidden">
+						<div
+							class="h-full rounded-full transition-all duration-500 {dailyPct >= 100 ? 'bg-warning' : 'bg-foreground'}"
+							style="width: {Math.max(dailyPct, usage.today_spent_micros > 0 ? 2 : 0)}%"
+						></div>
 					</div>
+				</div>
+				<div class="flex justify-between text-sm">
+					<span class="text-foreground-muted">Spent this month</span>
+					<span class="text-foreground tabular-nums">{formatMicrosUSD(usage.month_to_date_micros)}</span>
 				</div>
 
 				{#if usage.entries.length > 0}
-					<div class="mt-4 border-t border-border-subtle pt-3">
+					<div class="mt-5 border-t border-border-subtle pt-4">
 						<div class="text-xs uppercase tracking-wide text-foreground-muted mb-2">Recent activity</div>
 						<div class="divide-y divide-border-subtle">
-							{#each usage.entries.slice(0, 12) as e}
-								<div class="flex justify-between items-center py-1.5 text-sm">
-									<span class="text-foreground">{kindLabel[e.kind] ?? e.kind}</span>
-									<div class="flex items-center gap-3">
-										<span class="text-foreground-muted text-xs">{new Date(e.ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+							{#each usage.entries.slice(0, 15) as e}
+								<div class="flex justify-between items-center py-2 text-sm">
+									<div class="flex items-center gap-2.5 min-w-0">
+										<Icon
+											icon={kindIcon[e.kind] ?? 'ri:circle-line'}
+											width="15"
+											class={e.micros < 0 ? 'text-foreground-muted shrink-0' : 'text-success shrink-0'}
+										/>
+										<span class="text-foreground truncate">{kindLabel[e.kind] ?? e.kind}</span>
+									</div>
+									<div class="flex items-center gap-3 shrink-0">
+										<span class="text-foreground-muted text-xs tabular-nums">{entryDate(e.ts)}</span>
 										<span class="tabular-nums {e.micros < 0 ? 'text-foreground' : 'text-success'}">
 											{e.micros < 0 ? '−' : '+'}{formatMicrosPrecise(Math.abs(e.micros))}
 										</span>
@@ -286,6 +336,10 @@
 								</div>
 							{/each}
 						</div>
+					</div>
+				{:else}
+					<div class="mt-5 border-t border-border-subtle pt-4 text-sm text-foreground-muted">
+						No activity yet — your usage will show up here.
 					</div>
 				{/if}
 			</div>
