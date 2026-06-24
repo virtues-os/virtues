@@ -195,6 +195,10 @@
 
         try {
             webSocket = new WebSocket(WS_URL);
+            // Receive PTY output as raw bytes so xterm.js decodes UTF-8 itself
+            // (a multibyte glyph can straddle two frames; decoding per-frame
+            // would corrupt it).
+            webSocket.binaryType = "arraybuffer";
 
             webSocket.onopen = () => {
                 connectionStatus = "connected";
@@ -202,7 +206,13 @@
 
             webSocket.onmessage = (event) => {
                 // Backend sends raw terminal output (ANSI escape sequences etc.)
-                terminal?.write(event.data);
+                // as binary frames; control messages (e.g. the exit notice) as
+                // text. xterm.js accepts both Uint8Array and string.
+                if (event.data instanceof ArrayBuffer) {
+                    terminal?.write(new Uint8Array(event.data));
+                } else {
+                    terminal?.write(event.data);
+                }
             };
 
             webSocket.onclose = () => {

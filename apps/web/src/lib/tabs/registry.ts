@@ -44,7 +44,8 @@ import PagesView from '$lib/components/tabs/views/PagesView.svelte';
 import PageDetailView from '$lib/components/tabs/views/PageDetailView.svelte';
 import ThingsView from '$lib/components/tabs/views/ThingsView.svelte';
 import ThingDetailView from '$lib/components/tabs/views/ThingDetailView.svelte';
-import FolderView from '$lib/components/tabs/views/FolderView.svelte';
+import SpacesListView from '$lib/components/tabs/views/SpacesListView.svelte';
+import SpaceDetailView from '$lib/components/tabs/views/SpaceDetailView.svelte';
 import NarrativeIdentityView from '$lib/components/tabs/views/NarrativeIdentityView.svelte';
 import EntitiesView from '$lib/components/tabs/views/EntitiesView.svelte';
 import ToolsView from '$lib/components/tabs/views/ToolsView.svelte';
@@ -341,6 +342,47 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		defaultLabel: 'Things',
 		component: ThingsView,
 		detailComponent: ThingDetailView,
+	},
+
+	// ========================================================================
+	// SPACE NAMESPACE: /spaces (list), /space/space_{id} (detail)
+	//
+	// A Space is the "room" a chat lives in — a manual collection (project, pet,
+	// hobby, goal) of chats, entities, and pages.
+	// ========================================================================
+	space: {
+		match: (path) =>
+			path === '/spaces' ||
+			path === '/space' ||
+			/^\/space\/[^/]+$/.test(path),
+		parse: (path) => {
+			if (path === '/spaces' || path === '/space') {
+				return {
+					type: 'space',
+					label: 'Spaces',
+					icon: 'ri:layout-masonry-line',
+					normalizedRoute: '/spaces',
+				};
+			}
+			const match = path.match(/^\/space\/([^/]+)$/);
+			return {
+				type: 'space',
+				label: 'Space',
+				icon: 'ri:layout-masonry-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => id || 'spaces',
+		deserialize: (serialized) => {
+			if (serialized && serialized !== 'spaces' && serialized !== 'space') {
+				return `/space/${serialized}`;
+			}
+			return '/spaces';
+		},
+		icon: 'ri:layout-masonry-line',
+		defaultLabel: 'Spaces',
+		component: SpacesListView,
+		detailComponent: SpaceDetailView,
 	},
 
 	// ========================================================================
@@ -687,33 +729,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// VIEW NAMESPACE: /view/view_{id}
-	// Folder/view pages (smart + manual folder detail views)
-	// ========================================================================
-	view: {
-		match: (path) => /^\/view\/view_[^/]+$/.test(path),
-		parse: (path) => {
-			const match = path.match(/^\/view\/(view_[^/]+)$/);
-			return {
-				type: 'view',
-				label: 'Folder',
-				icon: 'ri:folder-line',
-				entityId: match?.[1],
-			};
-		},
-		serialize: (id) => (id ? `view_${id}` : 'view'),
-		deserialize: (serialized) => {
-			if (serialized.startsWith('view_')) {
-				return `/view/${serialized}`;
-			}
-			return '/view';
-		},
-		icon: 'ri:folder-line',
-		defaultLabel: 'Folder',
-		component: FolderView,
-	},
-
-	// ========================================================================
 	// EASTER EGGS
 	// ========================================================================
 	conway: {
@@ -799,7 +814,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'action', // Action detail page
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
-		'view', // View/folder detail pages
 		'virtues', // Has /virtues/* pattern
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
@@ -813,6 +827,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'thing',
+		'space',
 		'day',
 		'year',
 		'narrative-identity',

@@ -13,8 +13,7 @@
 
 import { TRIGGERS } from 'svelte-dnd-action';
 import type { DndEvent } from 'svelte-dnd-action';
-import { spaceStore, type Tab } from '$lib/stores/space.svelte';
-import { reorderViewItems } from '$lib/api/client';
+import { windowShellStore, type Tab } from '$lib/stores/window-shell.svelte';
 
 // ============================================================================
 // Zone Types
@@ -176,60 +175,25 @@ class DndManager {
 
 		// Tab → Split Overlay
 		if (source.type === 'tab-bar' && target.type === 'split-overlay') {
-			if (!spaceStore.isSplit) {
-				spaceStore.enableSplit();
+			if (!windowShellStore.isSplit) {
+				windowShellStore.enableSplit();
 			}
-			spaceStore.moveTabToPane(item.tab.id, target.paneId as 'left' | 'right');
+			windowShellStore.moveTabToPane(item.tab.id, target.paneId as 'left' | 'right');
 			return;
 		}
 
 		// Cross-pane tab move
 		if (source.type === 'tab-bar' && target.type === 'tab-bar') {
-			spaceStore.moveTabToPane(item.tab.id, target.paneId as 'left' | 'right');
+			windowShellStore.moveTabToPane(item.tab.id, target.paneId as 'left' | 'right');
 		}
 	}
 
 	private executeReorder(items: DndTabItem[], zone: ZoneId): void {
 		if (zone.type === 'tab-bar') {
 			const tabIds = items.filter((i) => i.tab).map((i) => i.tab.id);
-			spaceStore.setTabOrder(tabIds, zone.paneId);
+			windowShellStore.setTabOrder(tabIds, zone.paneId);
 		}
 	}
-}
-
-// ============================================================================
-// Sidebar DnD Helpers (used by sidebar components with SortableJS)
-// ============================================================================
-
-export interface SidebarDndItem {
-	id: string;
-	url: string;
-	label: string;
-	icon?: string;
-}
-
-/**
- * Persist sidebar reorder to backend.
- * Called directly by sidebar components after dnd finalize.
- */
-export async function persistSidebarReorder(
-	items: SidebarDndItem[],
-	workspaceId: string
-): Promise<void> {
-	const sortedItems = items.map((item, i) => ({ url: item.url, sort_order: i }));
-	await spaceStore.reorderSpaceItems(sortedItems, workspaceId);
-}
-
-/**
- * Persist folder reorder to backend.
- */
-export async function persistFolderReorder(
-	items: SidebarDndItem[],
-	folderId: string
-): Promise<void> {
-	const urls = items.map((i) => i.url);
-	await reorderViewItems(folderId, urls);
-	spaceStore.invalidateViewCache();
 }
 
 // ============================================================================

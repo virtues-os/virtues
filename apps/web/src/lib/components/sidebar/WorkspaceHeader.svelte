@@ -1,12 +1,5 @@
 <script lang="ts">
-	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
-	import {
-		DEFAULT_FOLDER_PATH,
-		VIRTUES_LOGO_PATH,
-		getIconPath,
-	} from "$lib/utils/svgPaths";
-	import { onMount, untrack } from "svelte";
+	import { VIRTUES_LOGO_PATH } from "$lib/utils/svgPaths";
 
 	interface Props {
 		collapsed?: boolean;
@@ -18,141 +11,8 @@
 		animationDelay = 0,
 	}: Props = $props();
 
-	// GSAP (dynamically loaded)
-	let gsapLib: typeof import("gsap").default | null = $state(null);
-	let morphReady = $state(false);
-
-	// Morph icon ref — GSAP owns the `d` attribute after first render
-	let morphPathEl: SVGPathElement | null = $state(null);
-	let prevSpaceId = $state("");
-	let prevTargetPath = $state<string | null>(null);
-	let tweenRef: { kill: () => void } | null = null;
-
-	// Track emoji state for crossfade
-	let isEmojiActive = $state(false);
-	let emojiValue = $state("");
-
-	onMount(async () => {
-		try {
-			const gsapModule = await import("gsap");
-			const { MorphSVGPlugin } = await import("gsap/MorphSVGPlugin");
-			gsapLib = gsapModule.default;
-			if (gsapLib && MorphSVGPlugin) {
-				gsapLib.registerPlugin(MorphSVGPlugin);
-				morphReady = true;
-			}
-		} catch (e) {
-			console.warn("[WorkspaceHeader] GSAP/MorphSVG load failed:", e);
-		}
-	});
-
-	function isEmoji(val: string | null): boolean {
-		if (!val) return false;
-		return !val.includes(":");
-	}
-
-	function getTargetPath(
-		space: (typeof spaceStore.spaces)[0] | undefined | null,
-	): string | null {
-		if (!space) return DEFAULT_FOLDER_PATH;
-		if (space.is_system) return VIRTUES_LOGO_PATH;
-		if (space.icon && !isEmoji(space.icon)) {
-			return getIconPath(space.icon) || DEFAULT_FOLDER_PATH;
-		}
-		if (!space.icon) return DEFAULT_FOLDER_PATH;
-		return null; // Emoji — no SVG path
-	}
-
-	// Active space label
-	const activeLabel = $derived.by(() => {
-		const space = spaceStore.activeSpace;
-		if (!space) return "Workspace";
-		return space.is_system ? "Virtues" : space.name;
-	});
-
-	// Accent color from active space
-	const accentColor = $derived(spaceStore.activeSpace?.accent_color ?? null);
-
-	// Derive target path reactively (triggers the $effect below)
-	const targetPath = $derived.by(() => {
-		const space = spaceStore.activeSpace;
-		return getTargetPath(space);
-	});
-
-	// Morph the title icon when active space changes.
-	// CRITICAL: GSAP owns the <path d="..."> attribute — we never bind it reactively.
-	// NOTE: morphPathEl is read OUTSIDE untrack() so bind:this triggers a re-run.
-	$effect(() => {
-		const newSpaceId = spaceStore.activeSpaceId;
-		const newTargetPath = targetPath;
-		const el = morphPathEl; // Subscribe to element binding
-
-		untrack(() => {
-			if (!newSpaceId || !el) return;
-
-			const spaceChanged = newSpaceId !== prevSpaceId;
-			const pathChanged = newTargetPath !== prevTargetPath;
-
-			if (!spaceChanged && !pathChanged) return;
-
-			const space = spaceStore.activeSpace;
-			const isFirstRender = !prevSpaceId;
-
-			if (tweenRef) {
-				tweenRef.kill();
-				tweenRef = null;
-			}
-
-			if (newTargetPath === null) {
-				// Emoji — crossfade
-				isEmojiActive = true;
-				emojiValue = space?.icon || "";
-				if (morphReady && gsapLib) {
-					tweenRef = gsapLib.to(el, {
-						opacity: 0,
-						duration: 0.15,
-						ease: "power2.out",
-					});
-				}
-			} else {
-				const wasEmoji = isEmojiActive;
-				isEmojiActive = false;
-				emojiValue = "";
-
-				if (isFirstRender || !spaceChanged) {
-					// First render or late-arriving space data — set immediately
-					el.setAttribute("d", newTargetPath);
-				} else if (morphReady && gsapLib) {
-					if (wasEmoji) {
-						el.setAttribute("d", newTargetPath);
-						tweenRef = gsapLib.fromTo(
-							el,
-							{ opacity: 0 },
-							{ opacity: 1, duration: 0.15 },
-						);
-					} else {
-						tweenRef = gsapLib.to(el, {
-							morphSVG: newTargetPath,
-							duration: 0.4,
-							ease: "power2.inOut",
-						});
-					}
-				} else {
-					el.setAttribute("d", newTargetPath);
-				}
-			}
-
-			prevSpaceId = newSpaceId;
-			prevTargetPath = newTargetPath;
-		});
-
-		return () => {
-			if (tweenRef) {
-				tweenRef.kill();
-				tweenRef = null;
-			}
-		};
-	});
+	// Single-workspace model: the shell is always the system "Virtues" workspace.
+	const activeLabel = "Virtues";
 </script>
 
 <div class="header-container" class:collapsed>
@@ -160,24 +20,18 @@
 		class="title-row animate-row"
 		style="animation-delay: {animationDelay}ms; --stagger-delay: {animationDelay}ms"
 	>
-		<!-- Morphing icon -->
-		<div class="title-icon" style:color={accentColor}>
-			{#if isEmojiActive}
-				<span class="title-emoji">{emojiValue}</span>
-			{/if}
+		<div class="title-icon">
 			<svg
 				class="title-svg"
-				class:hidden={isEmojiActive}
 				width="16"
 				height="16"
 				viewBox="0 0 24 24"
 			>
-				<!-- d is set imperatively by GSAP — NOT a reactive binding -->
-				<path bind:this={morphPathEl} fill="currentColor" />
+				<path d={VIRTUES_LOGO_PATH} fill="currentColor" />
 			</svg>
 		</div>
 
-		<span class="title-label" style:color={accentColor}>{activeLabel}</span>
+		<span class="title-label">{activeLabel}</span>
 	</div>
 </div>
 
@@ -249,16 +103,6 @@
 		transition: opacity 0.15s ease;
 	}
 
-	.title-svg.hidden {
-		opacity: 0;
-		position: absolute;
-	}
-
-	.title-emoji {
-		font-size: 14px;
-		line-height: 1;
-	}
-
 	.title-label {
 		flex: 1;
 		overflow: hidden;
@@ -269,48 +113,5 @@
 		font-family: var(--font-serif, serif);
 		color: var(--color-foreground);
 		line-height: 1.4;
-	}
-
-	/* Hidden by default, shown on title row hover */
-	.title-actions {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		opacity: 0;
-		transition: opacity 150ms ease;
-	}
-
-	.title-row:hover .title-actions {
-		opacity: 1;
-	}
-
-	.title-action {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		border-radius: 4px;
-		border: none;
-		background: transparent;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		padding: 0;
-		transition:
-			background-color 150ms ease,
-			color 150ms ease;
-	}
-
-	.title-action:hover {
-		background: color-mix(
-			in srgb,
-			var(--color-foreground) 7%,
-			transparent
-		);
-		color: var(--color-foreground);
-	}
-
-	.title-action:active {
-		transform: scale(0.95);
 	}
 </style>

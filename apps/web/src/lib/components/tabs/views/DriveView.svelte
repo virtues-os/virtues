@@ -13,7 +13,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import { onMount } from "svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -312,7 +312,7 @@
 	}
 
 	function navigateToTrash() {
-		spaceStore.openTabFromRoute("/trash");
+		windowShellStore.openTabFromRoute("/trash");
 	}
 
 	// Context menu for files/folders

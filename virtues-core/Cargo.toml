@@ -199,9 +199,8 @@ indicatif = "0.17"
 # Sandboxing
 tempfile = "3.12"
 
-# SSH
-russh = "0.48"
-russh-keys = "0.48"
+# Terminal: in-process PTY for the developer terminal websocket
+portable-pty = "0.9"
 
 # Yjs/CRDT support
 yrs = "0.18"

@@ -18,10 +18,14 @@ CREATE TABLE app_chats (
     last_compacted_at     TIMESTAMPTZ,
     icon                  TEXT,
     action_instruction    TEXT,
+    -- The Space (room) this chat lives in. At most one; cleared, not deleted,
+    -- if the Space is removed. See app_spaces in 0003.
+    space_id              TEXT REFERENCES app_spaces(id) ON DELETE SET NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_chats_updated ON app_chats(updated_at DESC);
+CREATE INDEX idx_chats_space   ON app_chats(space_id) WHERE space_id IS NOT NULL;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON app_chats
     FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
 

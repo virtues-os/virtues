@@ -30,9 +30,6 @@ where
     Ok(Some(Option::deserialize(deserializer)?))
 }
 
-// System space ID - pages created here don't get auto-added
-const SYSTEM_SPACE_ID: &str = "space_system";
-
 // ============================================================================
 // Types
 // ============================================================================
@@ -263,14 +260,18 @@ pub async fn create_page(pool: &PgPool, req: CreatePageRequest) -> Result<Page> 
     .await
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
 
-    // Auto-add to space_items if space_id provided and not system space
+    // Auto-add the page as a member of the Space it was created in.
     if let Some(space_id) = &req.space_id {
-        if space_id != SYSTEM_SPACE_ID {
-            let url = format!("/page/{}", page.id);
-            if let Err(e) = crate::api::views::add_space_item(pool, space_id, &url).await {
-                tracing::warn!("Failed to auto-add page to space {}: {}", space_id, e);
-                // Don't fail page creation if auto-add fails
-            }
+        let url = format!("/page/{}", page.id);
+        if let Err(e) = crate::api::spaces::add_space_item(
+            pool,
+            space_id,
+            crate::api::spaces::AddSpaceItemRequest { url },
+        )
+        .await
+        {
+            tracing::warn!("Failed to auto-add page to space {}: {}", space_id, e);
+            // Don't fail page creation if auto-add fails
         }
     }
 
@@ -338,7 +339,7 @@ pub async fn delete_page(pool: &PgPool, id: &str) -> Result<()> {
 
     // Clean up all space_items references
     let url = format!("/page/{}", id);
-    if let Err(e) = crate::api::views::remove_items_by_url(pool, &url).await {
+    if let Err(e) = crate::api::spaces::remove_items_by_url(pool, &url).await {
         tracing::warn!("Failed to clean up space_items for page {}: {}", id, e);
         // Don't fail deletion if cleanup fails
     }
@@ -429,6 +430,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "year" => format!("/year/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
+        "thing" => format!("/thing/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
     }
@@ -455,7 +457,6 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
 
     // Search across multiple tables with UNION
     // Relevance: 0 = prefix match (highest), 1 = contains match
-    // Note: wiki_things table doesn't exist yet, so we skip it
     let raw_results = sqlx::query_as::<_, RawEntitySearchResult>(
         r#"
         SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
@@ -463,6 +464,12 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
                CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_people
         WHERE canonical_name LIKE $1
+        UNION ALL
+        SELECT id, name, 'thing' as entity_type, 'ri:lightbulb-line' as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN name LIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM wiki_things
+        WHERE name LIKE $1
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
                NULL as mime_type, updated_at,

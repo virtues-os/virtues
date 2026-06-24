@@ -3,7 +3,7 @@
 
     import { Page } from "$lib";
     import Icon from "$lib/components/Icon.svelte";
-    import { spaceStore } from "$lib/stores/space.svelte";
+    import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
     type ViewMode = 'tree' | 'graph';
     let viewMode = $state<ViewMode>('tree');
@@ -90,7 +90,7 @@
 
     function handleNavigate(route: string, label: string) {
         if (route.includes('{')) return;
-        spaceStore.openTabFromRoute(route, { label });
+        windowShellStore.openTabFromRoute(route, { label });
     }
 
     // ============================================

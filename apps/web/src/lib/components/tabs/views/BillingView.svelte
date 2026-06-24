@@ -2,7 +2,7 @@
 	import type { Tab } from '$lib/tabs/types';
 	import { Page } from '$lib';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
 	import Icon from '$lib/components/Icon.svelte';
@@ -125,11 +125,11 @@
 	}
 
 	function openUsage() {
-		spaceStore.openTabFromRoute('/virtues/usage', { label: 'Usage', preferEmptyPane: true });
+		windowShellStore.openTabFromRoute('/virtues/usage', { label: 'Usage', preferEmptyPane: true });
 	}
 
 	function openByoKey() {
-		spaceStore.openTabFromRoute('/virtues/byo-key', { label: 'AI Provider Key', preferEmptyPane: true });
+		windowShellStore.openTabFromRoute('/virtues/byo-key', { label: 'AI Provider Key', preferEmptyPane: true });
 	}
 
 	// ─── Local billing-state (auto-top-up + BYO) ──────────────────────────

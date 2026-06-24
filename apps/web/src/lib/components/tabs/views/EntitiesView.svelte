@@ -12,7 +12,7 @@
 	import { Page } from '$lib';
 	import { PersonTable, PlaceTable, OrganizationTable, ThingTable } from '$lib/components/wiki';
 	import Icon from '$lib/components/Icon.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import {
 		listPeople,
 		listPlaces,
@@ -135,7 +135,7 @@
 	});
 
 	function handleEntityClick(entity: UnifiedEntity) {
-		spaceStore.openTabFromRoute(entity.route);
+		windowShellStore.openTabFromRoute(entity.route);
 	}
 
 	function handleCountClick(type: EntityFilter) {

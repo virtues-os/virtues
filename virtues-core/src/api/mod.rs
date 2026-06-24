@@ -50,7 +50,6 @@ pub mod token_estimation;
 pub mod tools;
 pub mod unsplash;
 pub mod usage;
-pub mod views;
 pub mod wiki;
 
 // Re-export all functions for convenience
@@ -184,18 +183,14 @@ pub use pins::{
 // with `wiki::get_thing` / `wiki::list_things` (which return the basic
 // entity row used by the Wiki browser surface).
 pub use things::{
-    AddThingPinRequest, CreateThingRequest, ListThingsParams, ReorderThingPinsRequest, Thing,
-    ThingDetail, ThingListResponse, ThingPin, ThingSummary, UpdateThingRequest,
+    CreateThingRequest, ListThingsParams, Thing, ThingListResponse, ThingSummary,
+    UpdateThingRequest,
 };
 pub use spaces::{
-    get_space, list_spaces, update_space,
-    CreateSpaceRequest, SaveTabStateRequest, Space, SpaceListResponse, SpaceSummary,
-    UpdateSpaceRequest,
-};
-pub use views::{
-    add_item_to_view, create_view, delete_view, get_view, list_views, remove_item_from_view,
-    resolve_view, update_view, CreateViewRequest, QueryConfig, UpdateViewRequest, View, ViewEntity,
-    ViewListResponse, ViewResolutionResponse, ViewSummary,
+    add_space_item, create_space, delete_space, get_space, list_spaces, remove_space_item,
+    reorder_space_items, set_chat_space, touch_space, update_space, AddSpaceItemRequest,
+    CreateSpaceRequest, ReorderSpaceItemsRequest, Space, SpaceDetail, SpaceItem, SpaceListResponse,
+    SpaceSummary, UpdateSpaceRequest,
 };
 
 pub use chat_usage::{

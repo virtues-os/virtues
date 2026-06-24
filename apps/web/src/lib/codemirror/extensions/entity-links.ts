@@ -22,8 +22,8 @@ import { contextMenu } from '$lib/stores/contextMenu.svelte';
 // =============================================================================
 
 const ENTITY_PREFIXES = [
-	'/person/', '/page/', '/org/', '/place/',
-	'/day/', '/year/', '/source/', '/chat/', '/drive/',
+	'/person/', '/page/', '/org/', '/place/', '/thing/',
+	'/day/', '/year/', '/source/', '/chat/', '/drive/', '/space/',
 ] as const;
 
 const ENTITY_ICON_MAP: Record<string, string> = {
@@ -31,11 +31,13 @@ const ENTITY_ICON_MAP: Record<string, string> = {
 	'/page/': 'ri:file-text-line',
 	'/org/': 'ri:building-line',
 	'/place/': 'ri:map-pin-line',
+	'/thing/': 'ri:shapes-line',
 	'/day/': 'ri:calendar-line',
 	'/year/': 'ri:calendar-2-line',
 	'/source/': 'ri:database-2-line',
 	'/chat/': 'ri:chat-3-line',
 	'/drive/': 'ri:file-line',
+	'/space/': 'ri:layout-masonry-line',
 };
 
 function getEntityIcon(url: string): string {

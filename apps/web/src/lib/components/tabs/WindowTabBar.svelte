@@ -3,8 +3,8 @@
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
-	import type { Tab } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {
 		dndManager,
 		type DndTabItem,
@@ -46,23 +46,23 @@
 	const tabs = $derived(
 		paneId
 			? (paneId === "left"
-					? spaceStore.leftPane?.tabs
-					: spaceStore.rightPane?.tabs) || []
-			: spaceStore.tabs,
+					? windowShellStore.leftPane?.tabs
+					: windowShellStore.rightPane?.tabs) || []
+			: windowShellStore.tabs,
 	);
 
 	const activeTabId = $derived(
 		paneId
 			? paneId === "left"
-				? spaceStore.leftPane?.activeTabId
-				: spaceStore.rightPane?.activeTabId
-			: spaceStore.activeTabId,
+				? windowShellStore.leftPane?.activeTabId
+				: windowShellStore.rightPane?.activeTabId
+			: windowShellStore.activeTabId,
 	);
 
 	const isActivePane = $derived(
-		paneId ? spaceStore.activePaneId === paneId : true,
+		paneId ? windowShellStore.activePaneId === paneId : true,
 	);
-	const isSplitMode = $derived(spaceStore.isSplit);
+	const isSplitMode = $derived(windowShellStore.isSplit);
 
 	// Build DnD items from tabs with source information
 	function buildDndItems(): DndTabItem[] {
@@ -84,36 +84,36 @@
 
 	function handleTabClick(id: string) {
 		if (paneId) {
-			spaceStore.setActiveTabInPane(id, paneId);
+			windowShellStore.setActiveTabInPane(id, paneId);
 		} else {
-			spaceStore.setActiveTab(id);
+			windowShellStore.setActiveTab(id);
 		}
 	}
 
 	function handleTabClose(e: MouseEvent, id: string) {
 		e.stopPropagation();
 		if (paneId) {
-			spaceStore.closeTabInPane(id, paneId);
+			windowShellStore.closeTabInPane(id, paneId);
 		} else {
-			spaceStore.closeTab(id);
+			windowShellStore.closeTab(id);
 		}
 	}
 
 	function handleToggleSplit() {
-		spaceStore.toggleSplit();
+		windowShellStore.toggleSplit();
 	}
 
 	function handleMergePanes() {
-		spaceStore.disableSplit();
+		windowShellStore.disableSplit();
 	}
 
 	function handleMiddleClick(e: MouseEvent, id: string) {
 		if (e.button === 1) {
 			e.preventDefault();
 			if (paneId) {
-				spaceStore.closeTabInPane(id, paneId);
+				windowShellStore.closeTabInPane(id, paneId);
 			} else {
-				spaceStore.closeTab(id);
+				windowShellStore.closeTab(id);
 			}
 		}
 	}
@@ -142,7 +142,7 @@
 				icon: tab.pinned
 					? "ri:expand-left-right-line"
 					: "ri:contract-left-right-line",
-				action: () => spaceStore.togglePin(tabId),
+				action: () => windowShellStore.togglePin(tabId),
 			},
 			// Rename
 			{
@@ -172,7 +172,7 @@
 								await updateChat(tabEntityId, { icon });
 								chatSessions.updateSessionIcon(tabEntityId, icon);
 							}
-							spaceStore.invalidateViewCache();
+							windowShellStore.invalidateViewCache();
 						} catch (err) {
 							console.error("[WindowTabBar] Failed to change icon:", err);
 						}
@@ -211,9 +211,9 @@
 			dividerBefore: true,
 			action: () => {
 				if (paneId) {
-					spaceStore.closeTabInPane(tabId, paneId);
+					windowShellStore.closeTabInPane(tabId, paneId);
 				} else {
-					spaceStore.closeTab(tabId);
+					windowShellStore.closeTab(tabId);
 				}
 			},
 		});
@@ -223,7 +223,7 @@
 			items.push({
 				id: "close-others",
 				label: "Close Others",
-				action: () => spaceStore.closeOtherTabs(tabId, paneId),
+				action: () => windowShellStore.closeOtherTabs(tabId, paneId),
 			});
 		}
 
@@ -232,7 +232,7 @@
 			items.push({
 				id: "close-to-right",
 				label: "Close to the Right",
-				action: () => spaceStore.closeTabsToRight(tabId, paneId),
+				action: () => windowShellStore.closeTabsToRight(tabId, paneId),
 			});
 		}
 
@@ -250,7 +250,7 @@
 			return;
 		}
 		const newLabel = renameValue.trim();
-		spaceStore.updateTab(renamingTabId, { label: newLabel });
+		windowShellStore.updateTab(renamingTabId, { label: newLabel });
 		renamingTabId = null;
 		renameValue = "";
 	}

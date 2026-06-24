@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
 	import {
 		getSelectedModel,
@@ -18,7 +18,8 @@
 	import { onMount, onDestroy, tick } from "svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
-	import { thingsStore } from "$lib/stores/things.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
+	import ChatSpaceBreadcrumb from "$lib/components/chat/ChatSpaceBreadcrumb.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
 	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
@@ -121,25 +122,42 @@
 	let citationPanelOpen = $state(false);
 	let selectedCitation = $state<Citation | null>(null);
 
-	// Attached things (context lens) — IDs are sent with each message so the agent
-	// sees the project's items as salience hints. Persisted per-tab only (ephemeral).
-	let attachedThingIds = $state<string[]>([]);
+	// The Space (room) this chat lives in — at most one. Its id is sent with each
+	// message (drives the agent's active-space context + server-side binding), and
+	// the breadcrumb at the top lets the user enter / file / create a room.
+	let chatSpaceId = $state<string | null>(null);
+	// Which conversation chatSpaceId was seeded for. Seeding happens ONCE per
+	// conversation (when its session row is available, or once the session list
+	// has finished loading and confirms there's no row yet) so a later session
+	// refresh can never clobber a room the user just picked locally.
+	let seededSpaceFor = $state<string | null>(null);
 
-	function attachThing(thingId: string) {
-		if (!attachedThingIds.includes(thingId)) {
-			attachedThingIds = [...attachedThingIds, thingId];
+	$effect(() => {
+		const id = conversationId;
+		if (seededSpaceFor === id) return;
+		const session = chatSessions.sessions.find((s) => s.conversation_id === id);
+		if (session) {
+			chatSpaceId = session.space_id ?? null;
+			seededSpaceFor = id;
+		} else if (!chatSessions.isLoading) {
+			// Sessions are loaded and this chat has no row yet (brand-new, not yet
+			// persisted) — start unfiled; the create path binds it from the first
+			// message's spaceId.
+			chatSpaceId = null;
+			seededSpaceFor = id;
+		}
+	});
+
+	async function setChatSpace(spaceId: string | null) {
+		chatSpaceId = spaceId; // locally authoritative
+		seededSpaceFor = conversationId; // don't let a later seed override this pick
+		// Persist only if the chat already exists server-side; a brand-new chat
+		// has no row yet and is bound by the create path from getSpaceId().
+		const persisted = chatSessions.sessions.some((s) => s.conversation_id === conversationId);
+		if (persisted) {
+			await spaceStore.setChatSpace(conversationId, spaceId);
 		}
 	}
-
-	function detachThing(thingId: string) {
-		attachedThingIds = attachedThingIds.filter((id) => id !== thingId);
-	}
-
-	const attachedThings = $derived.by(() =>
-		attachedThingIds
-			.map((id) => thingsStore.things.find((p) => p.id === id))
-			.filter((p): p is NonNullable<typeof p> => p !== undefined),
-	);
 
 	// Open citation panel with selected citation
 	function openCitationPanel(citation: Citation) {
@@ -254,11 +272,10 @@
 		// which races with the server's Y.Text initialization.
 		editAllowListStore.addPage(pageId, title);
 
-		if (!spaceStore.isSplit) {
-			spaceStore.enableSplit();
+		if (!windowShellStore.isSplit) {
+			windowShellStore.enableSplit();
 		}
-		spaceStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
-		spaceStore.refreshViews();
+		windowShellStore.openTabFromRoute(`/page/${pageId}`, { paneId: 'right' });
 	}
 
 	// Effect to handle create_page side effects (auto-open new pages)
@@ -345,8 +362,8 @@
 
 	// Handle context indicator click - open context tab in split view
 	function handleContextClick() {
-		const currentPane = spaceStore.findTabPane(tab.id);
-		spaceStore.openChatContext(conversationId, currentPane);
+		const currentPane = windowShellStore.findTabPane(tab.id);
+		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
 	// Handle compaction completion from ContextViewPanel - refresh messages
@@ -436,11 +453,10 @@
 		return selectedModelValue?.id || getDefaultModel()?.id || "";
 	}
 
-	// Getter for current space ID - used by Chat transport for auto-add
-	// Returns null for system space (Virtues) so chats don't get auto-added
+	// Getter for the chat's Space (room) ID — sent with each message so the agent
+	// gets the active-space context block and the server keeps the binding fresh.
 	function getSpaceId(): string | null {
-		if (spaceStore.isSystemSpace) return null;
-		return spaceStore.activeSpaceId;
+		return chatSpaceId;
 	}
 
 	// Get or create chat instance for the current conversationId
@@ -470,7 +486,6 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
-				getThingIds: () => attachedThingIds,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -587,6 +602,8 @@
 
 	// Load conversation data on mount
 	onMount(() => {
+		// Load Spaces so the room breadcrumb can resolve name/accent immediately.
+		spaceStore.load();
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
 			await getInitializationPromise();
@@ -833,7 +850,7 @@
 				titleGenerated = true;
 				// Update tab label with the new title
 				if (data.title) {
-					spaceStore.updateTab(tab.id, { label: data.title });
+					windowShellStore.updateTab(tab.id, { label: data.title });
 				}
 			}
 		} catch (error) {
@@ -891,8 +908,8 @@
 		// Update tab route to reflect the new chat
 		const newRoute = `/chat/${conversationId}`;
 		previousTabRoute = newRoute;
-		spaceStore.updateTab(tab.id, { route: newRoute });
-		spaceStore.invalidateViewCache('chat');
+		windowShellStore.updateTab(tab.id, { route: newRoute });
+		windowShellStore.invalidateViewCache('chat');
 	}
 
 	async function handleChatSubmit(value: string) {
@@ -939,18 +956,13 @@
 							newRoute,
 						},
 					);
-					spaceStore.updateTab(tab.id, {
+					windowShellStore.updateTab(tab.id, {
 						route: newRoute,
 					});
 					// Ensure chat is marked as created (may already be done above if hasItems)
 					await editAllowListStore.markChatCreated();
 					// Invalidate the Chats view cache so it refreshes with the new chat
-					spaceStore.invalidateViewCache('chat');
-					// Reload space items so new chat appears in sidebar
-					// (Backend already added it via chat.rs auto-add logic)
-					if (!spaceStore.isSystemSpace) {
-						await spaceStore.loadSpaceItems();
-					}
+					windowShellStore.invalidateViewCache('chat');
 				}
 				await chatSessions.refresh();
 			}
@@ -980,6 +992,10 @@
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area">
+				<!-- Room breadcrumb — the Space this chat lives in (top chrome) -->
+				<div class="chat-topbar">
+					<ChatSpaceBreadcrumb spaceId={chatSpaceId} onChange={setChatSpace} />
+				</div>
 				<div class="page-container" class:is-empty={isEmpty}>
 					<!-- Messages area -->
 					<div
@@ -1120,10 +1136,10 @@
 														title={output.title}
 														pageId={output.page_id}
 														onOpenPage={(id) => {
-													if (!spaceStore.isSplit) {
-														spaceStore.enableSplit();
+													if (!windowShellStore.isSplit) {
+														windowShellStore.enableSplit();
 													}
-													spaceStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' });
+													windowShellStore.openTabFromRoute(`/page/${id}`, { paneId: 'right' });
 												}}
 														onBindPage={handlePageSelect}
 													/>
@@ -1146,10 +1162,10 @@
 														replace={output.edit.replace || ''}
 														isFullReplace={!output.edit.find}
 														onViewPage={editPageId ? () => {
-															if (!spaceStore.isSplit) {
-																spaceStore.enableSplit();
+															if (!windowShellStore.isSplit) {
+																windowShellStore.enableSplit();
 															}
-															spaceStore.openTabFromRoute(`/page/${editPageId}`, { paneId: 'right', forceNew: true });
+															windowShellStore.openTabFromRoute(`/page/${editPageId}`, { paneId: 'right', forceNew: true });
 														} : undefined}
 													/>
 												{/if}
@@ -1240,10 +1256,6 @@
 							onContextClick={handleContextClick}
 							editableItems={editAllowListStore.items.filter((i) => i.type !== 'action')}
 							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
-							attachedThings={attachedThings}
-							allThings={thingsStore.things}
-							onAttachThing={attachThing}
-							onDetachThing={detachThing}
 							onPageClear={handlePageClear}
 							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}
@@ -1310,6 +1322,20 @@
 		height: 100%;
 		position: relative;
 		overflow: hidden;
+	}
+
+	.chat-topbar {
+		position: absolute;
+		top: 8px;
+		left: 12px;
+		z-index: 5;
+		display: flex;
+		align-items: center;
+		padding: 2px;
+		border-radius: 9px;
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
 	}
 
 	.page-container {

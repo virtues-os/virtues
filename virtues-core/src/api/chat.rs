@@ -121,8 +121,9 @@ pub struct ChatRequest {
     /// Optional client-generated message ID for idempotency
     #[serde(rename = "messageId")]
     pub message_id: Option<String>,
-    /// Optional space ID for auto-add to space_items (not stored on chat)
-    #[serde(rename = "spaceId")]
+    /// The Space (room) this chat lives in. Stored on the chat and inlined into
+    /// the system prompt as a salience lens (name + memo + member URLs).
+    #[serde(rename = "spaceId", default)]
     pub space_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
@@ -139,11 +140,6 @@ pub struct ChatRequest {
     /// Agent mode controlling tool availability (agent, chat, research)
     #[serde(rename = "agentMode", default = "default_agent_mode")]
     pub agent_mode: String,
-    /// Attached thing IDs — each is expanded to its pinned-URL list and
-    /// inlined into the system prompt as a salience lens for the agent.
-    /// Things are long-running named anchors (projects, pets, goals, etc.).
-    #[serde(rename = "thingIds", alias = "projectIds", default)]
-    pub thing_ids: Vec<String>,
 }
 
 fn default_agent() -> String {
@@ -631,7 +627,7 @@ async fn build_system_prompt(
     agent_mode: &str,
     persona_id: &str,
     is_new_user: bool,
-    thing_ids: &[String],
+    space_id: Option<&str>,
 ) -> String {
     use crate::agent::prompt::build_personalized_prompt;
     use crate::api::assistant_profile::get_assistant_name;
@@ -707,11 +703,10 @@ async fn build_system_prompt(
         prompt.push_str(&user_context);
     }
 
-    // Inline attached thing context blocks. Each block lists the thing's
-    // pinned URLs (label, url) as salience hints. Full content is fetched on
-    // demand via the get_thing_pin tool.
-    if !thing_ids.is_empty() {
-        if let Some(block) = build_things_context(pool, thing_ids).await {
+    // Inline the active Space (room) as a salience lens: its name, catch-up
+    // memo, and member URLs. This is the room the chat lives in.
+    if let Some(space_id) = space_id {
+        if let Some(block) = build_space_context(pool, space_id).await {
             prompt.push_str(&block);
         }
     }
@@ -753,80 +748,46 @@ async fn build_system_prompt(
     prompt
 }
 
-/// Maximum pins to inline per thing before truncating.
-/// Things with more pins still work — the agent can page through via the
-/// get_thing_pin tool — but the metadata block stays bounded.
-const MAX_THING_PINS_INLINED: usize = 100;
+/// Maximum member URLs to inline for a Space before truncating.
+const MAX_SPACE_ITEMS_INLINED: usize = 100;
 
-/// Build a context block for all attached things. Returns None if no
-/// things are found (silently ignores missing/invalid IDs).
-async fn build_things_context(pool: &PgPool, thing_ids: &[String]) -> Option<String> {
+/// Build a context block for the active Space (room) the chat lives in.
+/// Returns None if the Space can't be loaded.
+async fn build_space_context(pool: &PgPool, space_id: &str) -> Option<String> {
+    let detail = match crate::api::spaces::get_space(pool, space_id).await {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("[chat] failed to load active space {}: {}", space_id, e);
+            return None;
+        }
+    };
+
     let mut out = String::new();
-    let mut any_rendered = false;
+    out.push_str(&format!(
+        "\n\n<active_space name=\"{}\">",
+        escape_attr(&detail.space.name),
+    ));
 
-    for thing_id in thing_ids {
-        let detail = match crate::api::things::get_thing(pool, thing_id).await {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!("[chat] failed to load attached thing {}: {}", thing_id, e);
-                continue;
-            }
-        };
+    if let Some(memo) = detail.space.current_status.as_deref() {
+        if !memo.is_empty() {
+            out.push_str(&format!("\n  <memo>{}</memo>", escape_attr(memo)));
+        }
+    }
 
-        any_rendered = true;
-
-        let category_attr = detail
-            .thing
-            .category
-            .as_deref()
-            .map(|c| format!(" category=\"{}\"", escape_attr(c)))
-            .unwrap_or_default();
-        let description_attr = detail
-            .thing
-            .description
-            .as_deref()
-            .map(|d| format!(" description=\"{}\"", escape_attr(d)))
-            .unwrap_or_default();
-
+    let total = detail.items.len();
+    for item in detail.items.iter().take(MAX_SPACE_ITEMS_INLINED) {
+        out.push_str(&format!("\n  <member url=\"{}\"/>", escape_attr(&item.url)));
+    }
+    if total > MAX_SPACE_ITEMS_INLINED {
         out.push_str(&format!(
-            "\n\n<attached_thing id=\"{}\" name=\"{}\"{}{}>",
-            detail.thing.id,
-            escape_attr(&detail.thing.name),
-            category_attr,
-            description_attr,
+            "\n  <!-- {} more members not shown -->",
+            total - MAX_SPACE_ITEMS_INLINED
         ));
-
-        let total = detail.pins.len();
-        let inlined: Vec<_> = detail.pins.iter().take(MAX_THING_PINS_INLINED).collect();
-
-        for pin in &inlined {
-            let name = pin.name.as_deref().unwrap_or(&pin.url);
-            let desc_attr = pin.description.as_deref()
-                .map(|d| format!(" description=\"{}\"", escape_attr(d)))
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "\n  <pin url=\"{}\" name=\"{}\"{}/>",
-                escape_attr(&pin.url),
-                escape_attr(name),
-                desc_attr,
-            ));
-        }
-
-        if total > MAX_THING_PINS_INLINED {
-            out.push_str(&format!(
-                "\n  <!-- {} more pins not shown; use get_thing_pin to page through -->",
-                total - MAX_THING_PINS_INLINED
-            ));
-        }
-
-        out.push_str("\n</attached_thing>");
     }
 
-    if !any_rendered {
-        return None;
-    }
+    out.push_str("\n</active_space>");
 
-    let preamble = "\n\n<attached_things_preamble>\nThe user has attached the following thing(s) as a context lens — long-running named anchors (projects, pets, goals, topics, ...). Treat the listed pins as high-salience: they are the user's actively curated focus. You may fetch a pin's full content on demand with the get_thing_pin tool.\n</attached_things_preamble>";
+    let preamble = "\n\n<active_space_preamble>\nThis chat lives in the Space (room) below — a collection the user returns to (a project, pet, hobby, goal, or topic). Treat its members as high-salience: they are the user's actively curated focus for this room. The memo, if present, is a catch-up note about the room's current state.\n</active_space_preamble>";
 
     Some(format!("{}{}", preamble, out))
 }
@@ -949,15 +910,13 @@ pub async fn chat_handler(
         }
     };
 
-    // Auto-add to space_items if chat was just created and space_id provided (not system space)
+    // Bind the chat to its Space on first creation (stores space_id + folds
+    // the chat into the Space's membership).
     if chat_was_created {
-        if let Some(space_id) = &request.space_id {
-            if space_id != "space_system" {
-                let url = format!("/chat/{}", chat_id_str);
-                if let Err(e) = crate::api::views::add_space_item(&pool, space_id, &url).await {
-                    tracing::warn!("Failed to auto-add chat to space {}: {}", space_id, e);
-                }
-            }
+        if let Err(e) =
+            crate::api::spaces::set_chat_space(&pool, &chat_id_str, request.space_id.as_deref()).await
+        {
+            tracing::warn!("Failed to set chat space: {}", e);
         }
     }
 
@@ -1111,9 +1070,21 @@ pub async fn chat_handler(
         })
         .collect();
 
+    // Resolve the chat's room from the persisted row (single source of truth) so
+    // the active-space context always matches the binding, even if a stale client
+    // sends a different per-message spaceId. The create path above already bound a
+    // new chat from request.space_id, so the row is current by now.
+    let effective_space_id: Option<String> =
+        sqlx::query_scalar(r#"SELECT space_id FROM app_chats WHERE id = $1"#)
+            .bind(&chat_id_str)
+            .fetch_optional(&pool)
+            .await
+            .ok()
+            .flatten();
+
     // Build system prompt with active page context, timezone, personalization, and agent mode
     // is_onboarding keeps the onboarding prompt active until set_user_name completes
-    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, &request.thing_ids).await;
+    let system_prompt = build_system_prompt(&pool, request.active_page.as_ref(), request.timezone.as_deref(), &request.agent_mode, &request.persona, is_onboarding, effective_space_id.as_deref()).await;
 
     // Flip 'new' → 'onboarding' after the first synthetic message (NOT to 'active').
     // The onboarding prompt stays active. set_user_name flips 'onboarding' → 'active'.

@@ -28,13 +28,6 @@
 		icon?: string;
 	}
 
-	interface AttachedThingSummary {
-		id: string;
-		name: string;
-		icon: string | null;
-		item_count?: number;
-	}
-
 	let {
 		value = $bindable(""),
 		disabled = false,
@@ -51,10 +44,6 @@
 		onContextClick = (() => {}) as () => void,
 		pageBinding = undefined as PageBinding | undefined,
 		editableItems = [] as EditableItem[],
-		attachedThings = [] as AttachedThingSummary[],
-		allThings = [] as AttachedThingSummary[],
-		onAttachThing = ((_id: string) => {}) as (id: string) => void,
-		onDetachThing = ((_id: string) => {}) as (id: string) => void,
 		onRemoveItem = ((_type: string, _id: string) => {}) as (type: string, id: string) => void,
 		onSelectEntities = undefined as ((entities: EntityResult[]) => void) | undefined,
 	}: {
@@ -73,10 +62,6 @@
 		onContextClick?: () => void;
 		pageBinding?: PageBinding;
 		editableItems?: EditableItem[];
-		attachedThings?: AttachedThingSummary[];
-		allThings?: AttachedThingSummary[];
-		onAttachThing?: (id: string) => void;
-		onDetachThing?: (id: string) => void;
 		onRemoveItem?: (type: string, id: string) => void;
 		onSelectEntities?: (entities: EntityResult[]) => void;
 	} = $props();
@@ -102,22 +87,6 @@
 
 	// Store entity references by ID for expansion on submit
 	let entityMentions = $state<Map<string, EntityResult>>(new Map());
-
-	// Thing picker dropdown
-	let showProjectPicker = $state(false);
-	const unattachedThings = $derived.by(() => {
-		const attachedIds = new Set(attachedThings.map((p) => p.id));
-		return allThings.filter((p) => !attachedIds.has(p.id));
-	});
-
-	function toggleProjectPicker() {
-		showProjectPicker = !showProjectPicker;
-	}
-
-	function pickProject(id: string) {
-		onAttachThing(id);
-		showProjectPicker = false;
-	}
 
 
 	// Derive placeholder based on toolbar visibility
@@ -393,25 +362,6 @@
 	>
 		<label for="chat-input" class="sr-only">Message</label>
 
-		{#if attachedThings.length > 0}
-			<div class="project-chip-bar">
-				{#each attachedThings as project (project.id)}
-					<div class="project-chip">
-						<Icon icon={project.icon || 'ri:folder-open-line'} width="12" />
-						<span class="project-chip-name">{project.name}</span>
-						<button
-							type="button"
-							class="project-chip-remove"
-							title="Detach thing"
-							onclick={() => onDetachThing(project.id)}
-						>
-							<Icon icon="ri:close-line" width="12" />
-						</button>
-					</div>
-				{/each}
-			</div>
-		{/if}
-
 		<div class="input-row relative flex items-start w-full">
 			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 			<div
@@ -478,55 +428,6 @@
 					<AgentModePicker
 						bind:value={selectedAgentMode}
 					/>
-				</div>
-				<div class="relative">
-					<button
-						type="button"
-						class="project-picker-btn"
-						title="Attach a thing as context"
-						onclick={toggleProjectPicker}
-						aria-haspopup="menu"
-						aria-expanded={showProjectPicker}
-					>
-						<Icon icon="ri:folder-open-line" width="12" />
-						<span>Thing</span>
-					</button>
-					{#if showProjectPicker}
-						<!-- svelte-ignore a11y_click_events_have_key_events -->
-						<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-						<div
-							class="project-picker-backdrop"
-							onclick={() => (showProjectPicker = false)}
-							role="presentation"
-						></div>
-						<div class="project-picker-menu" role="menu">
-							{#if allThings.length === 0}
-								<div class="project-picker-empty">
-									No things yet. Create one in the Things sidebar.
-								</div>
-							{:else if unattachedThings.length === 0}
-								<div class="project-picker-empty">All things attached.</div>
-							{:else}
-								{#each unattachedThings as project (project.id)}
-									<button
-										type="button"
-										class="project-picker-item"
-										onclick={() => pickProject(project.id)}
-										role="menuitem"
-									>
-										<Icon
-											icon={project.icon || 'ri:folder-open-line'}
-											width="14"
-										/>
-										<span class="project-picker-name">{project.name}</span>
-										{#if project.item_count != null}
-											<span class="project-picker-count">{project.item_count}</span>
-										{/if}
-									</button>
-								{/each}
-							{/if}
-						</div>
-					{/if}
 				</div>
 				{#if conversationId && contextUsage}
 					<div>
@@ -657,133 +558,4 @@
 		display: flex;
 	}
 
-	/* Attached project chips (above the textarea) */
-	.project-chip-bar {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.375rem;
-		padding: 0.5rem 0.75rem 0;
-	}
-
-	.project-chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0.125rem 0.375rem 0.125rem 0.5rem;
-		font-size: 0.6875rem;
-		font-weight: 500;
-		color: var(--color-foreground, inherit);
-		background: var(--color-surface-raised, #f3f4f6);
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 999px;
-		line-height: 1;
-	}
-
-	.project-chip-name {
-		max-width: 14ch;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.project-chip-remove {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 14px;
-		height: 14px;
-		padding: 0;
-		color: var(--color-foreground-subtle, #9ca3af);
-		background: transparent;
-		border: none;
-		border-radius: 50%;
-		cursor: pointer;
-	}
-
-	.project-chip-remove:hover {
-		color: var(--color-foreground, inherit);
-		background: var(--color-surface-hover, #e5e7eb);
-	}
-
-	/* Toolbar "Project" button */
-	.project-picker-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		padding: 0.25rem 0.5rem;
-		font-size: 0.6875rem;
-		font-weight: 500;
-		color: var(--color-foreground-muted, #6b7280);
-		background: transparent;
-		border: 1px solid transparent;
-		border-radius: 6px;
-		cursor: pointer;
-	}
-
-	.project-picker-btn:hover {
-		color: var(--color-foreground, inherit);
-		background: var(--color-surface-hover, #f3f4f6);
-	}
-
-	.project-picker-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 50;
-	}
-
-	.project-picker-menu {
-		position: absolute;
-		bottom: calc(100% + 4px);
-		left: 0;
-		min-width: 200px;
-		max-width: 280px;
-		max-height: 280px;
-		overflow-y: auto;
-		padding: 0.25rem;
-		background: var(--color-surface, #fff);
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 8px;
-		box-shadow:
-			0 10px 15px -3px rgb(0 0 0 / 0.1),
-			0 4px 6px -4px rgb(0 0 0 / 0.1);
-		z-index: 51;
-	}
-
-	.project-picker-empty {
-		padding: 0.625rem 0.75rem;
-		font-size: 0.75rem;
-		color: var(--color-foreground-subtle, #9ca3af);
-	}
-
-	.project-picker-item {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		width: 100%;
-		padding: 0.375rem 0.5rem;
-		font-size: 0.8125rem;
-		color: var(--color-foreground, inherit);
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		cursor: pointer;
-		text-align: left;
-	}
-
-	.project-picker-item:hover {
-		background: var(--color-surface-hover, #f3f4f6);
-	}
-
-	.project-picker-name {
-		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.project-picker-count {
-		font-size: 0.6875rem;
-		color: var(--color-foreground-subtle, #9ca3af);
-		font-variant-numeric: tabular-nums;
-	}
 </style>

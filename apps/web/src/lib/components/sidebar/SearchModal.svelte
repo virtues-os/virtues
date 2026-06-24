@@ -2,7 +2,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { fade, fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import {
@@ -47,7 +47,7 @@
 	// Create new page action
 	async function createNewPage() {
 		const page = await pagesStore.createNewPage();
-		spaceStore.openTabFromRoute(`/page/${page.id}`, {
+		windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 			label: page.title,
 			preferEmptyPane: true,
 		});
@@ -92,7 +92,7 @@
 			label: "New Chat",
 			icon: "ri:add-line",
 			shortcut: "⌘N",
-			action: () => spaceStore.openTabFromRoute("/"),
+			action: () => windowShellStore.openTabFromRoute("/"),
 		},
 		{
 			id: "new-page",
@@ -106,13 +106,13 @@
 			label: "Go to Wiki",
 			icon: "ri:book-2-line",
 			shortcut: "⌘W",
-			action: () => spaceStore.openTabFromRoute("/wiki"),
+			action: () => windowShellStore.openTabFromRoute("/wiki"),
 		},
 		{
 			id: "sources",
 			label: "Go to Sources",
 			icon: "ri:device-line",
-			action: () => spaceStore.openTabFromRoute("/sources"),
+			action: () => windowShellStore.openTabFromRoute("/sources"),
 		},
 		{
 			id: "change-theme",
@@ -125,7 +125,7 @@
 			id: "settings",
 			label: "Open Settings",
 			icon: "ri:settings-4-line",
-			action: () => spaceStore.openTabFromRoute("/virtues/account"),
+			action: () => windowShellStore.openTabFromRoute("/virtues/account"),
 		},
 	];
 
@@ -228,7 +228,7 @@
 			const chatIndex = selectedIndex - actionsCount;
 			const chat = filteredResults.chats[chatIndex];
 			if (chat) {
-				spaceStore.openTabFromRoute(
+				windowShellStore.openTabFromRoute(
 					`/chat/${chat.conversation_id}`,
 					{
 						label: chat.title || "Chat",
@@ -241,7 +241,7 @@
 			const pageIndex = selectedIndex - actionsCount - chatsCount;
 			const page = filteredResults.pages[pageIndex];
 			if (page) {
-				spaceStore.openTabFromRoute(`/page/${page.id}`, {
+				windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 					label: page.title || "Untitled",
 				});
 				onClose();
@@ -410,7 +410,7 @@
 								class:selected={selectedIndex === index}
 								data-result-index={index}
 								onclick={() => {
-									spaceStore.openTabFromRoute(
+									windowShellStore.openTabFromRoute(
 										`/chat/${chat.conversation_id}`,
 										{
 											label: chat.title || "Chat",
@@ -443,7 +443,7 @@
 								class:selected={selectedIndex === index}
 								data-result-index={index}
 								onclick={() => {
-									spaceStore.openTabFromRoute(`/page/${page.id}`, {
+									windowShellStore.openTabFromRoute(`/page/${page.id}`, {
 										label: page.title || "Untitled",
 									});
 									onClose();

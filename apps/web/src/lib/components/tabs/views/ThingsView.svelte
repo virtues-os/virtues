@@ -6,7 +6,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import UniversalDataGrid, { type Column } from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { thingsStore } from '$lib/stores/things.svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 
@@ -39,14 +39,13 @@
 
 	const columns: Column<ThingSummary>[] = [
 		{ key: 'name', label: 'Name', icon: 'ri:folder-open-line', width: '30%', minWidth: '160px' },
-		{ key: 'description', label: 'Description', icon: 'ri:text', width: '40%', minWidth: '200px', hideOnMobile: true },
-		{ key: 'pin_count', label: 'Items', icon: 'ri:hashtag', width: '12%', minWidth: '80px' },
+		{ key: 'description', label: 'Description', icon: 'ri:text', width: '52%', minWidth: '200px', hideOnMobile: true },
 		{ key: 'updated_at', label: 'Updated', icon: 'ri:time-line', width: '18%', minWidth: '120px', hideOnMobile: true, getValue: (t) => formatDate(t.updated_at) },
 	];
 
 	function openThing(thing: ThingSummary, e?: MouseEvent) {
 		const forceNew = !!(e && (e.metaKey || e.ctrlKey));
-		spaceStore.openTabFromRoute(`/thing/${thing.id}`, {
+		windowShellStore.openTabFromRoute(`/thing/${thing.id}`, {
 			forceNew,
 			label: thing.name,
 			preferEmptyPane: true,
@@ -68,7 +67,7 @@
 			const thing = await thingsStore.create(name);
 			creating = false;
 			newName = '';
-			openThing({ ...thing, pin_count: 0 });
+			openThing(thing);
 		} catch (e) {
 			console.error('[ThingsView] Failed to create thing:', e);
 		}
@@ -88,7 +87,7 @@
 				label: 'Open in New Tab',
 				icon: 'ri:external-link-line',
 				action: () => {
-					spaceStore.openTabFromRoute(`/thing/${thing.id}`, {
+					windowShellStore.openTabFromRoute(`/thing/${thing.id}`, {
 						forceNew: true,
 						label: thing.name,
 						preferEmptyPane: true,
@@ -118,7 +117,7 @@
 				action: async () => {
 					if (!confirm(`Delete thing "${thing.name}"? Items are detached, not deleted.`)) return;
 					try {
-						spaceStore.closeTabsByRoute(`/thing/${thing.id}`);
+						windowShellStore.closeTabsByRoute(`/thing/${thing.id}`);
 						await thingsStore.remove(thing.id);
 					} catch (err) {
 						console.error('[ThingsView] Failed to delete thing:', err);
@@ -181,7 +180,6 @@
 			</td>
 			<td class="col-name">{thing.name}</td>
 			<td class="col-desc">{thing.description ?? ''}</td>
-			<td class="col-count">{thing.pin_count}</td>
 			<td class="col-updated">{formatDate(thing.updated_at)}</td>
 		{/snippet}
 	</UniversalDataGrid>
@@ -223,13 +221,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		padding: 0.625rem 0.75rem;
-	}
-	.col-count {
-		width: 80px;
-		text-align: right;
-		color: var(--color-foreground-muted);
-		font-variant-numeric: tabular-nums;
 		padding: 0.625rem 0.75rem;
 	}
 	.col-updated {

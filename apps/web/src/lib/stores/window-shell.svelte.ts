@@ -1,8 +1,8 @@
 /**
- * Space Store
+ * Window Shell Store
  *
- * UNIFIED state management for the Knowledge OS. This is the SINGLE source of truth.
- * All components should import from here.
+ * The tab/window/navigation shell. SINGLE source of truth for panes, splits,
+ * tabs, URL sync, and the entity metadata registry.
  *
  * Architecture: Always-Panes Model
  * - Every tab lives in a pane
@@ -10,28 +10,12 @@
  * - This eliminates 30+ conditional checks for split mode
  *
  * Features:
- * - Spaces (swipeable contexts like Arc browser)
- * - Views (manual lists or smart queries)
  * - Tabs (with full split-screen support)
  * - Entity metadata registry (lazy-loaded cache)
  */
 
 import {
-	listSpaces,
-	listViews,
-	createView as apiCreateView,
-	deleteView as apiDeleteView,
-	resolveView as apiResolveView,
-	listSpaceItems as apiListSpaceItems,
-	addSpaceItem as apiAddSpaceItem,
-	removeSpaceItem as apiRemoveSpaceItem,
-	reorderSpaceItems as apiReorderSpaceItems,
-	type Space,
-	type SpaceSummary,
-	type View,
-	type ViewSummary,
-	type ViewEntity,
-	type SpaceItemEntity
+	type ViewEntity
 } from '$lib/api/client';
 import {
 	type Tab,
@@ -42,7 +26,6 @@ import {
 } from '$lib/tabs/types';
 import { parseRoute } from '$lib/tabs/registry';
 import { pushState, replaceState } from '$app/navigation';
-import { LEGACY_ID_MAP } from '$lib/sidebar/sections';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -86,7 +69,8 @@ const ENTITY_TYPE_MAP: Record<string, { type: string; icon: string; routePrefix:
 	day: { type: 'day', icon: 'ri:calendar-line', routePrefix: '/day' },
 	year: { type: 'year', icon: 'ri:calendar-line', routePrefix: '/year' },
 	source: { type: 'source', icon: 'ri:database-2-line', routePrefix: '/sources' },
-	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' }
+	file: { type: 'drive', icon: 'ri:file-line', routePrefix: '/drive' },
+	space: { type: 'space', icon: 'ri:layout-masonry-line', routePrefix: '/space' }
 };
 
 /**
@@ -111,22 +95,12 @@ export function getRouteFromEntityId(entityId: string): string {
 const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
 const TAB_STORAGE_VERSION = 9; // System sections moved from DB to frontend constants
 const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace'; // Legacy — only used by migration cleanup
-const EXPANDED_STORAGE_KEY = 'virtues-expanded-views';
 
-class SpaceStore {
+class WindowShellStore {
 	// ============================================================================
-	// Space State (single workspace — always space_system)
+	// Shell scope key (single workspace — always space_system)
 	// ============================================================================
-	spaces = $state<SpaceSummary[]>([]);
-	activeSpaceId = $state<string>('space_system');
-
-	// Views for each workspace
-	views = $state<Map<string, ViewSummary[]>>(new Map());
-	expandedViewIds = $state<Set<string>>(new Set());
-
-	get spaceViews(): ViewSummary[] {
-		return this.views.get(this.activeSpaceId) || [];
-	}
+	activeShellId = $state<string>('space_system');
 
 	// ============================================================================
 	// Tab State - Always Panes Model
@@ -187,28 +161,20 @@ class SpaceStore {
 	// With a single space there's nothing to swipe to, so this never changes.
 	swipeProgress = $state(0);
 
-	viewCache = $state<Map<string, ViewEntity[]>>(new Map());
 	smartSectionCache = $state<Map<string, ViewEntity[]>>(new Map());
 	viewCacheVersion = $state<number>(0); // Incremented when cache is invalidated
-	spaceItems = $state<Map<string, SpaceItemEntity[]>>(new Map()); // Root-level items per workspace
 	registry = $state<Map<string, EntityMetadata>>(new Map());
-
-	loading = $state(false);
-	viewsLoading = $state(false);
 
 	private initialized = false;
 	private urlSyncEnabled = false;
 	private _skipUrlSync = false;
 
 	// ============================================================================
-	// Space Getters
+	// Shell scope getters
 	// ============================================================================
-	get activeSpace(): SpaceSummary | undefined {
-		return this.spaces.find((w) => w.id === this.activeSpaceId);
-	}
-
+	// Single-workspace model: the shell is always scoped to space_system.
 	get isSystemSpace(): boolean {
-		return this.activeSpaceId === 'space_system';
+		return this.activeShellId === 'space_system';
 	}
 
 	// ============================================================================
@@ -222,16 +188,9 @@ class SpaceStore {
 		this.initialized = true;
 
 		try {
-			await this.loadSpaces();
-			await this.loadAllViews();
-			await this.loadAllSpaceItems();
-			this.restoreExpandedState();
 			this.restoreTabState();
-
-			// Fire-and-forget: prefetch all folder contents so expand is instant
-			this.prefetchViewEntities();
 		} catch (e) {
-			console.error('[SpaceStore] Failed to initialize:', e);
+			console.error('[WindowShellStore] Failed to initialize:', e);
 		}
 	}
 
@@ -322,235 +281,23 @@ class SpaceStore {
 	};
 
 	// ============================================================================
-	// Space Management
+	// Smart Section Cache (sidebar Chats/Pages live links)
 	// ============================================================================
-
-	async loadSpaces(): Promise<void> {
-		this.loading = true;
-		try {
-			const response = await listSpaces();
-			this.spaces = response.spaces;
-
-			if (!this.spaces.find((w) => w.id === this.activeSpaceId)) {
-				this.activeSpaceId = 'space_system';
-			}
-		} catch (e) {
-			console.error('[SpaceStore] Failed to load spaces:', e);
-		} finally {
-			this.loading = false;
-		}
-	}
-
-	// Multi-space carousel collapsed — stubs kept to avoid breaking dead-code references.
-	// These will be fully removed in a dead-code cleanup pass.
-	async switchSpace(_spaceId: string, _usePush: boolean = false): Promise<void> {
-		// No-op: single workspace model
-	}
-
-	navigateSpace(_direction: 'prev' | 'next', _usePush: boolean = false): void {
-		// No-op: single workspace model
-	}
-
-	async createSpace(_name: string): Promise<null> {
-		console.warn('[SpaceStore] createSpace is disabled — single workspace model');
-		return null;
-	}
-
-	async updateSpace(
-		id: string,
-		updates: { name?: string; icon?: string; accent_color?: string }
-	): Promise<void> {
-		try {
-			const { updateSpace: apiUpdateSpace } = await import('$lib/api/client');
-			await apiUpdateSpace(id, updates);
-			await this.loadSpaces();
-		} catch (e) {
-			console.error('[SpaceStore] Failed to update workspace:', e);
-		}
-	}
-
-	async deleteSpace(_id: string): Promise<void> {
-		console.warn('[SpaceStore] deleteSpace is disabled — single workspace model');
-	}
-
-	// ============================================================================
-	// Views Management
-	// ============================================================================
-
-	async loadViews(spaceId: string): Promise<void> {
-		this.viewsLoading = true;
-		try {
-			const response = await listViews(spaceId);
-			const newViews = new Map(this.views);
-			newViews.set(spaceId, response.views);
-			this.views = newViews;
-		} catch (e) {
-			console.error('[SpaceStore] Failed to load views:', e);
-			const newViews = new Map(this.views);
-			newViews.set(spaceId, []);
-			this.views = newViews;
-		} finally {
-			this.viewsLoading = false;
-		}
-	}
-
-	async loadAllViews(): Promise<void> {
-		await Promise.all(this.spaces.map(ws => this.loadViews(ws.id)));
-	}
-
-	async refreshViews(): Promise<void> {
-		await this.loadViews(this.activeSpaceId);
-	}
-
-	getViewsForSpace(spaceId: string): ViewSummary[] {
-		return this.views.get(spaceId) || [];
-	}
-
-	toggleViewExpanded(viewId: string): void {
-		const newSet = new Set(this.expandedViewIds);
-		if (newSet.has(viewId)) {
-			newSet.delete(viewId);
-		} else {
-			newSet.add(viewId);
-		}
-		this.expandedViewIds = newSet;
-		this.persistExpandedState();
-	}
-
-	isViewExpanded(viewId: string): boolean {
-		return this.expandedViewIds.has(viewId);
-	}
-
-	expandView(viewId: string): void {
-		if (this.expandedViewIds.has(viewId)) return;
-		const newSet = new Set(this.expandedViewIds);
-		newSet.add(viewId);
-		this.expandedViewIds = newSet;
-		this.persistExpandedState();
-	}
-
-	private persistExpandedState(): void {
-		if (typeof window === 'undefined') return;
-		try {
-			localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify([...this.expandedViewIds]));
-		} catch {}
-	}
-
-	private restoreExpandedState(): void {
-		if (typeof window === 'undefined') return;
-		try {
-			const stored = localStorage.getItem(EXPANDED_STORAGE_KEY);
-			if (stored) {
-				const ids: string[] = JSON.parse(stored);
-				// Migrate legacy DB view IDs to new constant IDs
-				const migrated = ids.map((id: string) => LEGACY_ID_MAP[id] ?? id).filter(Boolean);
-				this.expandedViewIds = new Set(migrated);
-				// Persist migrated IDs if any changed
-				if (migrated.some((id: string, i: number) => id !== ids[i])) {
-					localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(migrated));
-				}
-				return;
-			}
-		} catch {}
-		// First run defaults — system sections are all flat links now, nothing to expand
-		this.expandedViewIds = new Set();
-	}
-
-
-	// ============================================================================
-	// View CRUD
-	// ============================================================================
-
-	async createManualView(name: string, icon?: string): Promise<View | null> {
-		const space = this.activeSpace;
-		if (space?.is_system) return null;
-
-		try {
-			const view = await apiCreateView(this.activeSpaceId, {
-				name,
-				icon,
-				view_type: 'manual'
-			});
-			await this.refreshViews();
-			return view;
-		} catch (e) {
-			console.error('[SpaceStore] Failed to create manual view:', e);
-			return null;
-		}
-	}
-
-	async createSmartView(name: string, queryConfig?: object, icon?: string): Promise<View | null> {
-		const space = this.activeSpace;
-		if (space?.is_system) return null;
-
-		try {
-			const view = await apiCreateView(this.activeSpaceId, {
-				name,
-				icon,
-				view_type: 'smart',
-				query_config: queryConfig ?? { raw_sql: "" }
-			});
-			await this.refreshViews();
-			return view;
-		} catch (e) {
-			console.error('[SpaceStore] Failed to create smart view:', e);
-			return null;
-		}
-	}
-
-	async deleteView(viewId: string): Promise<void> {
-		const space = this.activeSpace;
-		if (space?.is_system) return;
-
-		try {
-			await apiDeleteView(viewId);
-			await this.refreshViews();
-		} catch (e) {
-			console.error('[SpaceStore] Failed to delete view:', e);
-		}
-	}
-
-	// ============================================================================
-	// View Resolution
-	// ============================================================================
-
-	async resolveView(viewId: string, forceRefresh = false): Promise<ViewEntity[]> {
-		if (!forceRefresh) {
-			const cached = this.viewCache.get(viewId);
-			if (cached) return cached;
-		}
-
-		try {
-			const response = await apiResolveView(viewId);
-
-			const newCache = new Map(this.viewCache);
-			newCache.set(viewId, response.entities);
-			this.viewCache = newCache;
-
-			return response.entities;
-		} catch (e) {
-			console.error('[SpaceStore] Failed to resolve view:', e);
-			return [];
-		}
-	}
 
 	/**
-	 * Invalidate view cache for specific views or by namespace.
-	 * Use this when entities are created/updated/deleted to refresh smart views.
-	 * @param namespace - Optional namespace to invalidate (e.g., 'chat', 'page')
-	 *                    If not provided, clears entire cache.
+	 * Invalidate the smart section cache.
+	 * Use this when entities are created/updated/deleted to refresh smart sections.
+	 * @param namespace - Optional namespace (e.g., 'chat', 'page'). When omitted,
+	 *                    clears the entire smart section cache.
 	 */
 	invalidateViewCache(namespace?: string): void {
 		if (!namespace) {
-			// Clear entire cache
-			this.viewCache = new Map();
 			this.smartSectionCache = new Map();
 			this.viewCacheVersion++;
 			return;
 		}
 
-		// System sections are flat links now — no smart section cache to invalidate.
-		// User-created smart views still bump via viewCacheVersion.
+		// System sections re-fetch on version bump.
 		this.viewCacheVersion++;
 	}
 
@@ -563,124 +310,9 @@ class SpaceStore {
 		this.smartSectionCache = newCache;
 	}
 
-	/**
-	 * Prefetch entities for all non-section views across all spaces.
-	 * Called once after init — warms the viewCache so folder expand is instant.
-	 */
-	private async prefetchViewEntities(): Promise<void> {
-		const viewIds: string[] = [];
-		for (const [, spaceViews] of this.views) {
-			for (const v of spaceViews) {
-				viewIds.push(v.id);
-			}
-		}
-		// Resolve all in parallel (resolveView caches internally)
-		await Promise.all(viewIds.map(id => this.resolveView(id)));
-	}
-
-	// ============================================================================
-	// Space Items (root-level items at workspace level, not in folders)
-	// ============================================================================
-
-	/**
-	 * Get cached workspace items for current workspace
-	 */
-	getSpaceItems(spaceId?: string): SpaceItemEntity[] {
-		const wsId = spaceId ?? this.activeSpaceId;
-		return this.spaceItems.get(wsId) || [];
-	}
-
-	/**
-	 * Load workspace items from backend
-	 */
-	async loadSpaceItems(spaceId?: string): Promise<SpaceItemEntity[]> {
-		const wsId = spaceId ?? this.activeSpaceId;
-		try {
-			const items = await apiListSpaceItems(wsId);
-			const newMap = new Map(this.spaceItems);
-			newMap.set(wsId, items);
-			this.spaceItems = newMap;
-			return items;
-		} catch (e) {
-			console.error('[SpaceStore] Failed to load workspace items:', e);
-			return [];
-		}
-	}
-
-	/**
-	 * Load workspace items for all spaces (parallel)
-	 * Prevents CLS when switching spaces
-	 */
-	async loadAllSpaceItems(): Promise<void> {
-		await Promise.all(this.spaces.map(ws => this.loadSpaceItems(ws.id)));
-	}
-
-	/**
-	 * Add an item to workspace root level
-	 */
-	async addSpaceItem(url: string, spaceId?: string): Promise<void> {
-		const wsId = spaceId ?? this.activeSpaceId;
-		try {
-			await apiAddSpaceItem(wsId, url);
-			// Reload to get resolved entity
-			await this.loadSpaceItems(wsId);
-		} catch (e) {
-			console.error('[SpaceStore] Failed to add workspace item:', e);
-		}
-	}
-
-	/**
-	 * Remove an item from workspace root level
-	 */
-	async removeSpaceItem(url: string, spaceId?: string): Promise<void> {
-		const wsId = spaceId ?? this.activeSpaceId;
-		try {
-			await apiRemoveSpaceItem(wsId, url);
-			// Reload to ensure reactive update (matches addSpaceItem pattern)
-			await this.loadSpaceItems(wsId);
-		} catch (e) {
-			console.error('[SpaceStore] Failed to remove workspace item:', e);
-		}
-	}
-
-	/**
-	 * Reorder workspace root items
-	 */
-	async reorderSpaceItems(items: Array<{ url: string; sort_order: number }>, spaceId?: string): Promise<void> {
-		const wsId = spaceId ?? this.activeSpaceId;
-		try {
-			await apiReorderSpaceItems(wsId, items);
-			await this.loadSpaceItems(wsId);
-		} catch (e) {
-			console.error('[SpaceStore] Failed to reorder workspace items:', e);
-		}
-	}
-
 	// ============================================================================
 	// Entity Registry
 	// ============================================================================
-
-	async getEntityMetadata(entityId: string): Promise<EntityMetadata | null> {
-		const cached = this.registry.get(entityId);
-		if (cached) return cached;
-
-		const { type, icon } = getEntityTypeFromId(entityId);
-		const route = getRouteFromEntityId(entityId);
-
-		const metadata: EntityMetadata = {
-			id: entityId,
-			name: entityId,
-			type,
-			icon,
-			route
-		};
-
-		const newRegistry = new Map(this.registry);
-		newRegistry.set(entityId, metadata);
-		this.registry = newRegistry;
-
-		return metadata;
-	}
 
 	updateEntityMetadata(entityId: string, updates: Partial<EntityMetadata>): void {
 		const existing = this.registry.get(entityId);
@@ -712,7 +344,7 @@ class SpaceStore {
 		try {
 			localStorage.setItem(this.getTabStorageKey(), JSON.stringify(data));
 		} catch (e) {
-			console.warn('[SpaceStore] Failed to persist tab state:', e);
+			console.warn('[WindowShellStore] Failed to persist tab state:', e);
 		}
 	}
 
@@ -740,7 +372,7 @@ class SpaceStore {
 						const seenIds = new Set<string>();
 						const uniqueTabs = pane.tabs.filter((tab: Tab) => {
 							if (seenIds.has(tab.id)) {
-								console.warn(`[SpaceStore] Removing duplicate tab: ${tab.id}`);
+								console.warn(`[WindowShellStore] Removing duplicate tab: ${tab.id}`);
 								return false;
 							}
 							seenIds.add(tab.id);
@@ -758,7 +390,7 @@ class SpaceStore {
 				localStorage.removeItem(storageKey);
 			}
 		} catch (e) {
-			console.warn('[SpaceStore] Failed to restore tab state:', e);
+			console.warn('[WindowShellStore] Failed to restore tab state:', e);
 		}
 
 		// Default: single pane with no tabs
@@ -1342,10 +974,8 @@ class SpaceStore {
 	// ============================================================================
 
 	debug(): void {
-		console.log('[SpaceStore Debug]', {
-			spaces: this.spaces,
-			activeSpaceId: this.activeSpaceId,
-			views: Object.fromEntries(this.views),
+		console.log('[WindowShellStore Debug]', {
+			activeShellId: this.activeShellId,
 			panes: this.panes,
 			activePaneId: this.activePaneId,
 			isSplit: this.isSplit,
@@ -1359,9 +989,9 @@ class SpaceStore {
 // Export singleton
 // ============================================================================
 
-export const spaceStore = new SpaceStore();
+export const windowShellStore = new WindowShellStore();
 
 // Expose to window for debugging
 if (typeof window !== 'undefined') {
-	(window as unknown as { spaceStore: SpaceStore }).spaceStore = spaceStore;
+	(window as unknown as { windowShellStore: WindowShellStore }).windowShellStore = windowShellStore;
 }

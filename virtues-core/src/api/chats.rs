@@ -128,6 +128,8 @@ pub struct ChatListItem {
     pub message_count: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub space_id: Option<String>,
     pub first_message_at: Timestamp,
     pub last_updated: Timestamp,
 }
@@ -185,10 +187,11 @@ pub struct MessageResponse {
 pub struct UpdateChatRequest {
     pub title: Option<String>,
     pub icon: Option<Option<String>>,
+    /// Tri-state: absent = leave, null = detach from Space, value = set Space.
+    /// Routed through `spaces::set_chat_space` (also folds chat into membership).
+    #[serde(default, rename = "spaceId")]
+    pub space_id: Option<Option<String>>,
 }
-
-// System space ID - chats created here don't get auto-added
-const SYSTEM_SPACE_ID: &str = "space_system";
 
 /// Request to create a new chat with initial messages
 #[derive(Debug, Deserialize)]
@@ -258,6 +261,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             id,
             title,
             icon,
+            space_id,
             message_count,
             created_at,
             updated_at
@@ -277,6 +281,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let id: String = row.get("id");
             let title: String = row.get("title");
             let icon: Option<String> = row.get("icon");
+            let space_id: Option<String> = row.get("space_id");
             let message_count: i64 = row.get("message_count");
             let first_message_at: Timestamp = row.get("created_at");
             let last_updated: Timestamp = row.get("updated_at");
@@ -285,6 +290,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 title,
                 message_count: message_count as i32,
                 icon,
+                space_id,
                 first_message_at,
                 last_updated,
             })
@@ -512,15 +518,10 @@ pub async fn create_chat_from_request(
 ) -> Result<CreateChatResponse> {
     let chat = create_chat(pool, &request.title, request.messages).await?;
 
-    // Auto-add to space_items if space_id provided and not system space
-    if let Some(space_id) = &request.space_id {
-        if space_id != SYSTEM_SPACE_ID {
-            let url = format!("/chat/{}", chat.id);
-            if let Err(e) = crate::api::views::add_space_item(pool, space_id, &url).await {
-                tracing::warn!("Failed to auto-add chat to space {}: {}", space_id, e);
-                // Don't fail chat creation if auto-add fails
-            }
-        }
+    // Bind the chat to its Space (stores space_id + folds into membership).
+    if let Err(e) = crate::api::spaces::set_chat_space(pool, &chat.id, request.space_id.as_deref()).await {
+        tracing::warn!("Failed to set chat space: {}", e);
+        // Don't fail chat creation if the binding fails
     }
 
     Ok(CreateChatResponse {
@@ -566,6 +567,11 @@ pub async fn update_chat(
 
     let row = query.fetch_optional(pool).await?;
     let row = row.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
+
+    // Bind/unbind the chat's Space if the field was provided.
+    if let Some(ref space_id) = request.space_id {
+        crate::api::spaces::set_chat_space(pool, &chat_id, space_id.as_deref()).await?;
+    }
 
     use sqlx::Row;
     let id: String = row.get("id");
@@ -762,7 +768,7 @@ pub async fn delete_chat(pool: &PgPool, chat_id: String) -> Result<DeleteChatRes
 
     // Clean up all space_items references
     let url = format!("/chat/{}", id);
-    if let Err(e) = crate::api::views::remove_items_by_url(pool, &url).await {
+    if let Err(e) = crate::api::spaces::remove_items_by_url(pool, &url).await {
         tracing::warn!("Failed to clean up space_items for chat {}: {}", id, e);
         // Don't fail deletion if cleanup fails
     }

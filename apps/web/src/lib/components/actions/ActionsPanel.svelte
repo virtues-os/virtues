@@ -9,7 +9,7 @@
 		type Action,
 		type ActionRun
 	} from '$lib/api/client';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { describeSchedule, relativeTime } from '$lib/actions/palette';
 	import ActionCard from './ActionCard.svelte';
 	import GitImportModal from './GitImportModal.svelte';
@@ -27,7 +27,7 @@
 
 	function startChatFlow() {
 		newMenuOpen = false;
-		spaceStore.openTabFromRoute('/chat', { forceNew: true });
+		windowShellStore.openTabFromRoute('/chat', { forceNew: true });
 	}
 
 	function startGitImportFlow() {
@@ -83,7 +83,7 @@
 	});
 
 	function openCard(a: Action) {
-		spaceStore.openAside({
+		windowShellStore.openAside({
 			type: 'action',
 			label: a.name,
 			route: `/action/${a.id}`,

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "$lib/tabs/types";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import { onMount } from "svelte";
@@ -96,7 +96,7 @@
 	const groupedSessions = $derived(groupByDate(sessions));
 
 	function handleChatClick(conversationId: string, title: string | null) {
-		spaceStore.openTabFromRoute(`/chat/${conversationId}`, {
+		windowShellStore.openTabFromRoute(`/chat/${conversationId}`, {
 			label: title || "Chat",
 		});
 	}

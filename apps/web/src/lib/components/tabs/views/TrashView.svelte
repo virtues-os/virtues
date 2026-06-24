@@ -11,7 +11,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import { onMount } from "svelte";
-	import { spaceStore } from "$lib/stores/space.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -234,7 +234,7 @@
 	}
 
 	function navigateToDrive() {
-		spaceStore.openTabFromRoute("/drive");
+		windowShellStore.openTabFromRoute("/drive");
 	}
 </script>
 

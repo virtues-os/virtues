@@ -12,7 +12,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { spaceStore } from '$lib/stores/space.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import type { Pin } from '$lib/api/client';
@@ -35,7 +35,7 @@
 			window.open(pin.url, '_blank', 'noopener,noreferrer');
 			return;
 		}
-		spaceStore.openTabFromRoute(pin.url);
+		windowShellStore.openTabFromRoute(pin.url);
 	}
 
 	function showContextMenu(e: MouseEvent, pin: Pin) {

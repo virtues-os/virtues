@@ -182,39 +182,26 @@ CREATE INDEX idx_wiki_orgs_type ON wiki_orgs(organization_type) WHERE organizati
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON wiki_orgs
     FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
 
+-- A "thing" is a first-class entity that isn't a person, place, or org —
+-- a dog, a car, a hobby, a goal. It is @-linkable like any other entity. The
+-- folder/collection role it used to play (pins + catch-up memo) now belongs to
+-- Spaces (see app_spaces in 0003); a thing carries only entity attributes.
 CREATE TABLE wiki_things (
-    id                        TEXT PRIMARY KEY,
-    name                      TEXT NOT NULL,
-    category                  TEXT,
-    description               TEXT,
-    icon                      TEXT,
-    current_status            TEXT,
-    current_status_at         TIMESTAMPTZ,
-    current_status_edited_by  TEXT NOT NULL DEFAULT 'ai'
-                                  CHECK (current_status_edited_by IN ('ai', 'human')),
-    metadata                  JSONB NOT NULL DEFAULT '{}'::jsonb,
-    content                   TEXT,
-    cover_image               TEXT,
-    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    category     TEXT,
+    description  TEXT,
+    icon         TEXT,
+    metadata     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    content      TEXT,
+    cover_image  TEXT,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_wiki_things_name     ON wiki_things(name);
 CREATE INDEX idx_wiki_things_category ON wiki_things(category) WHERE category IS NOT NULL;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON wiki_things
     FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
-
-CREATE TABLE wiki_thing_pins (
-    id           TEXT PRIMARY KEY,
-    thing_id     TEXT NOT NULL REFERENCES wiki_things(id) ON DELETE CASCADE,
-    url          TEXT NOT NULL,
-    name         TEXT,
-    description  TEXT,
-    sort_order   INTEGER NOT NULL DEFAULT 0,
-    added_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(thing_id, url)
-);
-CREATE INDEX idx_wiki_thing_pins_thing ON wiki_thing_pins(thing_id, sort_order);
-CREATE INDEX idx_wiki_thing_pins_url   ON wiki_thing_pins(url);
 
 -- ---------------------------------------------------------------------------
 -- Days and events (the dayline)

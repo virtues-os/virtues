@@ -6,59 +6,63 @@
  */
 
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-import { thingsStore } from '$lib/stores/things.svelte';
+import { spaceStore } from '$lib/stores/space.svelte';
 import { toast } from 'svelte-sonner';
 
 /**
- * Get "Add to Thing" menu items — a submenu of all things plus a
- * "New Thing…" action that creates one and pins this URL immediately.
+ * Get "Add to Space" menu items — a submenu of all spaces plus a "New Space…"
+ * action that creates one and adds this URL to it immediately.
+ *
+ * Organization moved from Things (folders) to Spaces; the menu now binds the
+ * item as a Space member.
+ *
  * @param url - The URL of the item (e.g., '/page/page_xyz', 'https://...')
- * @param name - Optional display name for the item
+ * @param _name - Reserved for a future display label (membership is URL-native).
  */
-export function getAddToThingMenuItems(
+export function getAddToSpaceMenuItems(
 	url: string,
-	name?: string | null,
+	_name?: string | null,
 ): ContextMenuItem[] {
-	const things = thingsStore.things;
+	const spaces = spaceStore.spaces;
 
-	const submenu: ContextMenuItem[] = things.map((t) => ({
-		id: `thing-${t.id}`,
-		label: t.name,
-		icon: t.icon || 'ri:folder-open-line',
+	const submenu: ContextMenuItem[] = spaces.map((s) => ({
+		id: `space-${s.id}`,
+		label: s.name,
+		icon: s.icon || 'ri:folder-open-line',
 		action: async () => {
 			try {
-				await thingsStore.addPin(t.id, url, { name });
-				toast(`Added to ${t.name}`);
+				await spaceStore.addItem(s.id, url);
+				toast(`Added to ${s.name}`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to add to thing:', e);
-				toast.error('Failed to add to thing');
+				console.error('[contextMenuItems] Failed to add to space:', e);
+				toast.error('Failed to add to space');
 			}
 		},
 	}));
 
 	submenu.push({
-		id: 'new-thing-with-item',
-		label: things.length > 0 ? 'New Thing…' : 'Create First Thing…',
+		id: 'new-space-with-item',
+		label: spaces.length > 0 ? 'New Space…' : 'Create First Space…',
 		icon: 'ri:add-line',
-		dividerBefore: things.length > 0,
+		dividerBefore: spaces.length > 0,
 		action: async () => {
-			const thingName = prompt('Thing name:');
-			if (!thingName || !thingName.trim()) return;
+			const spaceName = prompt('Space name:');
+			if (!spaceName || !spaceName.trim()) return;
 			try {
-				const thing = await thingsStore.create(thingName.trim());
-				await thingsStore.addPin(thing.id, url, { name });
-				toast(`Created "${thing.name}" and added item`);
+				const space = await spaceStore.create(spaceName.trim());
+				await spaceStore.addItem(space.id, url);
+				toast(`Created "${space.name}" and added item`);
 			} catch (e) {
-				console.error('[contextMenuItems] Failed to create thing:', e);
-				toast.error('Failed to create thing');
+				console.error('[contextMenuItems] Failed to create space:', e);
+				toast.error('Failed to create space');
 			}
 		},
 	});
 
 	return [
 		{
-			id: 'add-to-thing',
-			label: 'Add to Thing',
+			id: 'add-to-space',
+			label: 'Add to Space',
 			icon: 'ri:folder-add-line',
 			dividerBefore: true,
 			submenu,
@@ -67,14 +71,14 @@ export function getAddToThingMenuItems(
 }
 
 /**
- * Get organization-related menu items (Add to Thing).
- * Used by tab context menus. "Move to Workspace" removed — single workspace.
+ * Get organization-related menu items (Add to Space).
+ * Used by tab/sidebar/page context menus.
  */
 export function getWorkspaceMenuItems(
 	url: string,
 	name?: string | null,
 ): ContextMenuItem[] {
-	return getAddToThingMenuItems(url, name);
+	return getAddToSpaceMenuItems(url, name);
 }
 
 /**
