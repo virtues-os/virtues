@@ -459,6 +459,9 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     }
 
     let mut upserted = 0usize;
+    // Every action id the current catalog expands to. Used by the template-GC
+    // pass below to drop system rows whose template no longer exists.
+    let mut live_ids: Vec<String> = Vec::new();
 
     for template in &templates.action {
         // The loader fills `id_prefix` from the folder name when missing, so
@@ -526,11 +529,50 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
             for (cred_id,) in credential_ids {
                 let action_id = format!("{}_{}", id_prefix, cred_id);
                 upsert_row(db, template, &action_id, Some(&cred_id)).await?;
+                live_ids.push(action_id);
                 upserted += 1;
             }
         } else {
             upsert_row(db, template, id_prefix, None).await?;
+            live_ids.push(id_prefix.to_string());
             upserted += 1;
+        }
+    }
+
+    // GC pass 2: delete system (template-managed) action rows that the current
+    // catalog no longer produces — a manifest that was removed or renamed (e.g.
+    // the six `ios_*` actions collapsed into `ios_ingest`). Without this, a
+    // deleted template leaves dead rows pointing at a binary that no longer
+    // ships: legacy cruft, and a 404 surface if a stale client still posts to
+    // it. `user`-owned rows are never touched, and the pass is guarded on a
+    // non-empty catalog so a load failure can't wipe the table. Run-history FKs
+    // are nullified first so the history survives under `action_id = NULL`.
+    if !live_ids.is_empty() {
+        sqlx::query(
+            r#"UPDATE app_action_runs SET action_id = NULL
+               WHERE action_id IN (
+                   SELECT id FROM app_actions
+                   WHERE owner = 'system' AND id <> ALL($1::text[])
+               )"#,
+        )
+        .bind(&live_ids)
+        .execute(db)
+        .await?;
+
+        let removed = sqlx::query(
+            r#"DELETE FROM app_actions
+               WHERE owner = 'system' AND id <> ALL($1::text[])"#,
+        )
+        .bind(&live_ids)
+        .execute(db)
+        .await?
+        .rows_affected();
+
+        if removed > 0 {
+            tracing::info!(
+                removed,
+                "reconcile GC: removed system actions with no matching template"
+            );
         }
     }
 

@@ -21,9 +21,14 @@ import AVFoundation
 
 /// SwiftUI view that presents a full-screen camera QR scanner
 struct QRScannerView: View {
-    /// Called when a v1 pair-flow QR is successfully decoded. Hands the
-    /// caller `(endpoint, pairToken)` ready for `consumePairToken(...)`.
+    /// Called when a token-flow QR is decoded (same-LAN direct pairing). Hands
+    /// the caller `(endpoint, pairToken, fpr)` ready for `consumePairToken(...)`.
     let onScanned: (String, String, String?) -> Void
+    /// Called when a desktop-RELAYED provision QR is decoded — a
+    /// `virtues-bundle:<base64-json>` blob carrying a complete bundle the device
+    /// imports directly (no consume call). The payload is the base64-decoded
+    /// envelope JSON `{ bundle, action_ids }`.
+    let onBundleScanned: (Data) -> Void
     let onCancel: () -> Void
 
     @State private var cameraPermissionGranted = false
@@ -186,6 +191,16 @@ struct QRScannerView: View {
     }
 
     private func handleScannedCode(_ code: String) {
+        // Desktop-relayed provision blob: `virtues-bundle:<base64-json>`. The
+        // device imports the bundle directly — no consume round-trip — then
+        // dials the box over the tunnel. Checked before the token-URL path.
+        if let envelope = QRScannerView.parseBundleBlob(code) {
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+            onBundleScanned(envelope)
+            return
+        }
+
         guard let parsed = QRScannerView.parsePairURL(code) else {
             // Detect legacy `{"e":..., "s":...}` payloads so we can show a
             // useful error rather than a generic "invalid code" toast.
@@ -263,6 +278,18 @@ struct QRScannerView: View {
             endpoint += ":\(port)"
         }
         return (endpoint, token, fpr)
+    }
+
+    /// Decode a `virtues-bundle:<base64-json>` provision blob into its envelope
+    /// JSON (`{ bundle, action_ids }`). Returns `nil` for anything without the
+    /// prefix or with an undecodable payload, so the caller falls through to the
+    /// token-URL path.
+    static func parseBundleBlob(_ raw: String) -> Data? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "virtues-bundle:"
+        guard trimmed.hasPrefix(prefix) else { return nil }
+        let b64 = String(trimmed.dropFirst(prefix.count))
+        return Data(base64Encoded: b64)
     }
 
     private static func extractFragmentValue(named name: String, from fragment: String) -> String? {

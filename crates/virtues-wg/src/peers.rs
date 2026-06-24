@@ -40,9 +40,14 @@ pub async fn store_peer(db: &PgPool, credential_id: &str, peer: &PeerRecord) -> 
 /// Load every active device's WG peer config — the source of truth the daemon
 /// reconciles `wg0` against.
 pub async fn load_all_peers(db: &PgPool) -> Result<Vec<PeerRecord>> {
+    // `expires_at` is the provision claim deadline (NULL for every normal
+    // credential). Exclude a provisioned-but-never-claimed credential whose
+    // deadline lapsed so its peer is reconciled out of `wg0` — it can no longer
+    // authenticate anyway (see `credentials::validate_device_token`).
     let rows: Vec<(serde_json::Value,)> = sqlx::query_as(
         "SELECT metadata->'wg' FROM credentials
-          WHERE (metadata->'wg') IS NOT NULL AND status = 'active'",
+          WHERE (metadata->'wg') IS NOT NULL AND status = 'active'
+            AND (expires_at IS NULL OR expires_at > now())",
     )
     .fetch_all(db)
     .await

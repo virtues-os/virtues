@@ -43,8 +43,8 @@ path = "credential_refresh/main.rs"
 # ── Mac stream (self_issued_bearer like iOS) ────────────────────────────────
 
 [[bin]]
-name = "mac_activity"
-path = "mac_activity/main.rs"
+name = "mac_ingest"
+path = "mac_ingest/main.rs"
 
 # ── Google syncs (via_proxy) ────────────────────────────────────────────────
 

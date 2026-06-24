@@ -172,9 +172,15 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // Capture the WG pubkey before clearing the credential's lookup hash.
+    // Capture the WG pubkey before clearing the credential's lookup hash. Two
+    // storage shapes: the consume path records it top-level as `wg_public_key`
+    // (the device supplied its own pubkey), while the relay/provision path only
+    // has the peer record at `wg.device_public_key` (the box generated the
+    // keypair). COALESCE both so a provisioned device's revoke also triggers an
+    // immediate reconcile + logs `had_wg_peer` accurately — otherwise its peer
+    // lingers until the daemon's next backstop poll.
     let wg_pubkey: Option<String> = sqlx::query_scalar(
-        "SELECT metadata->>'wg_public_key' \
+        "SELECT COALESCE(metadata->>'wg_public_key', metadata->'wg'->>'device_public_key') \
          FROM credentials \
          WHERE device_id = $1 AND status = 'active' \
          LIMIT 1",

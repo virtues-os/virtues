@@ -59,6 +59,15 @@ const CLI_REDEEM_TTL_MIN: i64 = 30;
 /// middleware via `last_used_at`).
 const SESSION_TTL_DAYS: i64 = 30;
 
+/// Claim deadline for a desktop-relayed `provision` credential. Unlike the
+/// consume path (the credential is minted only when the device redeems a
+/// token), provision mints the credential live *before* the new device scans
+/// the QR — so an unclaimed one carries this deadline and lapses if the device
+/// never comes online. Generous vs the QR's on-screen TTL (~2 min) so a code
+/// scanned at the last second still completes its tunnel bring-up + first call.
+/// Cleared to NULL on first authenticated use (`credentials::update_last_seen`).
+const PROVISION_CLAIM_TTL_MIN: i64 = 15;
+
 // ─── Token helpers ──────────────────────────────────────────────────────────
 
 /// Generate a short human-typeable pair code: 6 digits. Digits (not letters)
@@ -372,7 +381,7 @@ pub struct MintCollectorResponse {
 /// round-trip is friction with no security gain — the caller IS the owner on
 /// this host. The raw token is handed straight to `installCollector(token)` via
 /// the Tauri bridge; the collector redeems it at `/api/pair/consume` declaring
-/// `source="mac"` to receive its `mac_activity` action fan-out.
+/// `source="mac"` to receive its `mac_ingest` action fan-out.
 pub async fn mint_collector_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
@@ -450,6 +459,42 @@ pub async fn status_handler(
             }),
         )
             .into_response(),
+        None => (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response(),
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProvisionStatusResponse {
+    /// True once the provisioned device's tunnel is live — it has made an
+    /// authenticated call, bumping `last_seen_at` past `paired_at`.
+    pub online: bool,
+}
+
+/// `GET /api/pair/provision-status/:device_id` — auth'd. Polled by the relay UI
+/// after `provision` to know when the new device's tunnel is ACTUALLY live (the
+/// phone scanned the bundle QR + brought up WG), not merely when the box
+/// accepted the provision. The signal is `last_seen_at > paired_at` (with a
+/// small guard against the provision-time `now()` jitter); `last_seen_at` is
+/// touched on every authenticated request via `validate_bearer`.
+pub async fn provision_status_handler(
+    State(pool): State<PgPool>,
+    _user: AuthUser,
+    Path(device_id): Path<String>,
+) -> impl IntoResponse {
+    let row: Option<(bool,)> = sqlx::query_as(
+        "SELECT (last_seen_at IS NOT NULL \
+                 AND last_seen_at > paired_at + interval '5 seconds') \
+         FROM app_device WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(&device_id)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    match row {
+        Some((online,)) => {
+            (StatusCode::OK, Json(ProvisionStatusResponse { online })).into_response()
+        }
         None => (StatusCode::NOT_FOUND, Json(json!({"error": "not_found"}))).into_response(),
     }
 }
@@ -731,20 +776,7 @@ pub async fn consume_handler(
         }
     };
 
-    if let Err(e) = sqlx::query(
-        "INSERT INTO app_device \
-         (id, user_id, kind, label, device_info, paired_from_ip, last_seen_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, now())",
-    )
-    .bind(&device_id)
-    .bind(OWNER_USER_ID)
-    .bind(kind)
-    .bind(&label)
-    .bind(&device_info)
-    .bind(&ip)
-    .execute(&mut *tx)
-    .await
-    {
+    if let Err(e) = insert_device_row(&mut tx, &device_id, kind, &label, &device_info, ip.as_deref()).await {
         tracing::warn!("pair consume: device insert failed: {e:#}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -793,22 +825,9 @@ pub async fn consume_handler(
         }
     } else {
         let bp = bearer_pack.as_ref().expect("bearer_pack for non-browser");
-        if let Err(e) = sqlx::query(
-            "INSERT INTO credentials \
-             (id, source_id, name, device_id, status, secrets_ciphertext, \
-              secret_lookup_hash, metadata, last_seen_at) \
-             VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, now())",
-        )
-        .bind(&bp.credential_id)
-        .bind(&source_id)
-        .bind(&label)
-        .bind(&device_id)
-        .bind(&bp.ciphertext)
-        .bind(&bp.lookup_hash)
-        .bind(&bp.metadata)
-        .execute(&mut *tx)
-        .await
-        {
+        // No claim deadline on the consume path — the credential is minted only
+        // when the device itself redeems the token, so it's permanent.
+        if let Err(e) = insert_credential_row(&mut tx, bp, &source_id, &label, &device_id, None).await {
             tracing::warn!("pair consume: credential insert failed: {e:#}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -929,6 +948,175 @@ pub async fn consume_handler(
         .into_response()
 }
 
+// ─── Provision (desktop-relayed off-LAN pairing) ───────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ProvisionRequest {
+    /// Defaults to `mobile_app` (the iOS off-LAN case this exists for).
+    pub kind: Option<String>,
+    pub label: Option<String>,
+    pub device_info: Option<Value>,
+    /// The data source this device represents (see [`ConsumeRequest::source`]).
+    /// Absent + `mobile_app` → `"ios"`.
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProvisionResponse {
+    pub device_id: String,
+    pub credential_id: String,
+    pub bearer: String,
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
+    pub action_ids: std::collections::HashMap<String, String>,
+    /// The full WG provisioning bundle, INCLUDING the box-generated device
+    /// private key (`wg.client_private_key`). Absent on a non-WG host (macOS dev).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<crate::wireguard::bundle::PairingBundle>,
+    /// SVG QR encoding the bundle blob (`virtues-bundle:<base64-json>`) the new
+    /// device scans. Empty when there's no bundle to hand off (non-WG host).
+    pub qr_svg: String,
+}
+
+/// `POST /api/pair/provision` — AUTHENTICATED. An already-paired device (reached
+/// here over its WG tunnel, e.g. the desktop relay) provisions a brand-new
+/// device on its behalf and gets back a COMPLETE bundle to hand off out-of-band
+/// (one QR, Mac → phone). No pair token: the caller is already a trusted owner
+/// device, so the mint→consume token dance (which exists to authorize an
+/// *untrusted* device) is unnecessary. The box generates the new device's WG
+/// keypair (returned once in the bundle, never persisted) so the new device
+/// never has to speak to the box first — see `pairing::assemble_bundle_generated`.
+pub async fn provision_handler(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ProvisionRequest>,
+) -> axum::response::Response {
+    let kind = match body.kind.as_deref().unwrap_or("mobile_app") {
+        // `browser` is excluded: a browser's credential is a session cookie with
+        // no WG bundle, so there's nothing to hand off via QR.
+        k @ ("mobile_app" | "desktop_app" | "sensor") => k,
+        _ => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
+                .into_response()
+        }
+    };
+
+    let source_id = match resolve_source_id(kind, body.source.as_deref()) {
+        Ok(s) => s,
+        Err(()) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_source"})))
+                .into_response()
+        }
+    };
+
+    let ip = client_ip(&headers);
+    let device_id = crate::ids::generate_id(
+        crate::ids::DEVICE_PREFIX,
+        &[&user.device_id, &Utc::now().to_rfc3339()],
+    );
+    let label = body
+        .label
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_label_for(kind, None, &body.device_info));
+    let device_info = body.device_info.clone().unwrap_or_else(|| json!({}));
+
+    // The box generates the device's keypair (relay path), so no wg_public_key
+    // is supplied to the bearer pack — the pubkey is recorded on the peer record
+    // by `assemble_bundle_generated` instead.
+    let bp = match build_bearer_pack(kind, &label, &body.device_info, None) {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("pair provision: tx begin failed: {e:#}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"})))
+                .into_response();
+        }
+    };
+    if let Err(e) = insert_device_row(&mut tx, &device_id, kind, &label, &device_info, ip.as_deref()).await {
+        tracing::warn!("pair provision: device insert failed: {e:#}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "device_insert_failed"})))
+            .into_response();
+    }
+    // Live-minted before the new device scans the QR → carry a claim deadline
+    // so an unclaimed credential (abandoned QR, browser closed) lapses on its
+    // own. Cleared to NULL on the device's first authenticated call.
+    let claim_deadline = Utc::now() + Duration::minutes(PROVISION_CLAIM_TTL_MIN);
+    if let Err(e) = insert_credential_row(&mut tx, &bp, &source_id, &label, &device_id, Some(claim_deadline)).await {
+        tracing::warn!("pair provision: credential insert failed: {e:#}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "credential_insert_failed"})))
+            .into_response();
+    }
+    if let Err(e) = tx.commit().await {
+        tracing::warn!("pair provision: tx commit failed: {e:#}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"})))
+            .into_response();
+    }
+
+    let _ = log_event(
+        &pool,
+        Some(&device_id),
+        "provisioned_via_relay",
+        json!({
+            "kind": kind,
+            "label": &label,
+            "relayed_by_device": &user.device_id,
+            "credential_id": &bp.credential_id,
+        }),
+        ip,
+        None,
+    )
+    .await;
+
+    let action_ids = match assemble_action_fanout(&pool, &bp.credential_id).await {
+        Ok(map) => map,
+        Err(e) => {
+            tracing::warn!(
+                "pair provision: action fanout failed for credential {}: {e:#}; \
+                 device provisioned but actions not wired",
+                bp.credential_id
+            );
+            std::collections::HashMap::new()
+        }
+    };
+
+    let bundle = match assemble_wg_bundle_generated(&pool, &bp.credential_id, &bp.bearer).await {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(
+                "pair provision: WG bundle assembly failed for credential {}: {e:#}; \
+                 device provisioned without tunnel",
+                bp.credential_id
+            );
+            None
+        }
+    };
+
+    let qr_svg = bundle
+        .as_ref()
+        .and_then(|b| provision_qr_payload(b, &action_ids))
+        .map(|payload| render_qr_svg(&payload))
+        .unwrap_or_default();
+
+    (
+        StatusCode::OK,
+        Json(ProvisionResponse {
+            device_id,
+            credential_id: bp.credential_id,
+            bearer: bp.bearer,
+            action_ids,
+            bundle,
+            qr_svg,
+        }),
+    )
+        .into_response()
+}
+
 // ─── Post-commit fan-out + WG bundle assembly ──────────────────────────────
 //
 // Both run AFTER the consume transaction commits — failure logs but doesn't
@@ -989,6 +1177,111 @@ async fn assemble_wg_bundle(
     // simply have no bundle to dial from this dev box.
     tracing::debug!("WG bundle assembly skipped (non-Linux host)");
     Ok(None)
+}
+
+/// Like [`assemble_wg_bundle`], but the BOX generates the device keypair (the
+/// relay/provision path) and the returned bundle carries the device private key.
+#[cfg(target_os = "linux")]
+async fn assemble_wg_bundle_generated(
+    pool: &PgPool,
+    credential_id: &str,
+    bearer: &str,
+) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
+    let bundle = crate::wireguard::pairing::assemble_bundle_generated(pool, credential_id, bearer)
+        .await
+        .map_err(|e| crate::Error::Other(format!("assemble_bundle_generated: {e}")))?;
+    if let Err(e) = crate::wireguard::signal::notify_reconcile(pool).await {
+        tracing::warn!(error = %e, "wg reconcile notify failed (poll backstop will catch up)");
+    }
+    Ok(Some(bundle))
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn assemble_wg_bundle_generated(
+    _pool: &PgPool,
+    _credential_id: &str,
+    _bearer: &str,
+) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
+    tracing::debug!("WG bundle assembly skipped (non-Linux host)");
+    Ok(None)
+}
+
+/// Encode a finished provision as the QR payload the new device scans:
+/// `virtues-bundle:<base64(JSON)>`, where the JSON is an envelope
+/// `{ "bundle": <PairingBundle>, "action_ids": {…} }`. Carrying `action_ids`
+/// here means the device is fully configured from one scan — it needn't fetch
+/// the webhook map over its not-yet-established tunnel. Returns `None` if the
+/// envelope can't be serialized (never expected). The QR carries the bearer +
+/// device private key — see the on-screen-secret caveats on the provision flow.
+fn provision_qr_payload(
+    bundle: &crate::wireguard::bundle::PairingBundle,
+    action_ids: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    use base64::Engine as _;
+    let envelope = json!({ "bundle": bundle, "action_ids": action_ids });
+    let json = serde_json::to_vec(&envelope).ok()?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(json);
+    Some(format!("virtues-bundle:{b64}"))
+}
+
+/// Insert the `app_device` row for a freshly-paired/provisioned device. Shared
+/// by `consume_handler` and `provision_handler`.
+async fn insert_device_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    device_id: &str,
+    kind: &str,
+    label: &str,
+    device_info: &Value,
+    ip: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO app_device \
+         (id, user_id, kind, label, device_info, paired_from_ip, last_seen_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, now())",
+    )
+    .bind(device_id)
+    .bind(OWNER_USER_ID)
+    .bind(kind)
+    .bind(label)
+    .bind(device_info)
+    .bind(ip)
+    .execute(&mut **tx)
+    .await
+    .map(|_| ())
+}
+
+/// Insert the `credentials` row (encrypted bearer) for a non-browser device.
+/// Shared by `consume_handler` and `provision_handler`.
+///
+/// `expires_at` is the claim deadline: `None` for the consume path (the
+/// credential is minted at claim time and is permanent), `Some(deadline)` for
+/// the provision path (minted live before the device scans, so it must lapse if
+/// never claimed — see `credentials::validate_device_token` / `update_last_seen`).
+async fn insert_credential_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    bp: &BearerPack,
+    source_id: &str,
+    label: &str,
+    device_id: &str,
+    expires_at: Option<chrono::DateTime<Utc>>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO credentials \
+         (id, source_id, name, device_id, status, secrets_ciphertext, \
+          secret_lookup_hash, metadata, last_seen_at, expires_at) \
+         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, now(), $8)",
+    )
+    .bind(&bp.credential_id)
+    .bind(source_id)
+    .bind(label)
+    .bind(device_id)
+    .bind(&bp.ciphertext)
+    .bind(&bp.lookup_hash)
+    .bind(&bp.metadata)
+    .bind(expires_at)
+    .execute(&mut **tx)
+    .await
+    .map(|_| ())
 }
 
 // ─── Bearer pack builder (extracted from consume_handler for tx hygiene) ────
@@ -1254,14 +1547,14 @@ mod source_resolution_tests {
     #[test]
     fn desktop_app_without_source_is_sentinel_no_fanout() {
         // The WG desktop daemon pairs as desktop_app with NO source — it must
-        // get "__device__" so mac_activity never fans out to it.
+        // get "__device__" so mac_ingest never fans out to it.
         assert_eq!(resolve_source_id("desktop_app", None).unwrap(), "__device__");
     }
 
     #[test]
     fn collector_declares_explicit_source() {
         // mac-source sends source="mac" → its credential matches the
-        // mac_activity template's source and fans out.
+        // mac_ingest template's source and fans out.
         assert_eq!(resolve_source_id("desktop_app", Some("mac")).unwrap(), "mac");
     }
 

@@ -241,6 +241,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // ─── Pair-only auth: "+ Add device" from a paired session ─────
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
         .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
+        // Desktop-relayed off-LAN pairing: an already-paired device provisions a
+        // new device on its behalf (box generates the keypair) and gets a full
+        // bundle + QR to hand off out-of-band. Auth'd (the relay's injected bearer).
+        .route("/api/pair/provision",     post(crate::api::pair::provision_handler))
+        .route("/api/pair/provision-status/:device_id", get(crate::api::pair::provision_status_handler))
         .route("/api/pair/status/:id",    get(crate::api::pair::status_handler))
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
         // ─── Devices: unified list + revoke ───────────────────────────

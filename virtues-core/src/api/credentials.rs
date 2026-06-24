@@ -63,9 +63,17 @@ pub async fn validate_device_token(db: &PgPool, token: &str) -> Result<String> {
     let encryptor = TokenEncryptor::from_env()?;
     let lookup_hash = encryptor.lookup_hash(token)?;
 
+    // `expires_at` is a CLAIM DEADLINE, used only by the desktop-relayed
+    // provision path: that credential is minted live *before* the new device
+    // scans the QR, so it carries a short deadline to bound the window in which
+    // an unclaimed (secret-displayed) credential is usable. It is cleared to
+    // NULL on first authenticated use (see `update_last_seen` — "promote on
+    // claim"). Every other credential has `expires_at = NULL` (= permanent), so
+    // the guard is a no-op for them.
     let row: Option<(String,)> = sqlx::query_as(
         r#"SELECT id FROM credentials
-           WHERE secret_lookup_hash = $1 AND status = 'active'"#,
+           WHERE secret_lookup_hash = $1 AND status = 'active'
+             AND (expires_at IS NULL OR expires_at > now())"#,
     )
     .bind(&lookup_hash)
     .fetch_optional(db)
@@ -75,9 +83,14 @@ pub async fn validate_device_token(db: &PgPool, token: &str) -> Result<String> {
         .ok_or_else(|| Error::Unauthorized("Invalid or revoked device token".to_string()))
 }
 
-/// Touch `last_seen_at` on a credential.
+/// Touch `last_seen_at` on a credential and, for a provision-claimed credential,
+/// clear its claim deadline so it becomes permanent ("promote on claim"). This
+/// runs only after `validate_device_token` has already accepted the token, so a
+/// credential whose deadline already passed is rejected *before* reaching here —
+/// no resurrection. Clearing `expires_at` is a no-op for the common case (it's
+/// already NULL).
 pub async fn update_last_seen(db: &PgPool, credential_id: &str) -> Result<()> {
-    sqlx::query("UPDATE credentials SET last_seen_at = now() WHERE id = $1")
+    sqlx::query("UPDATE credentials SET last_seen_at = now(), expires_at = NULL WHERE id = $1")
         .bind(credential_id)
         .execute(db)
         .await?;
