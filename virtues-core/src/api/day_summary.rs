@@ -1122,10 +1122,20 @@ async fn store_structured_events(
 /// Returns the place name with the longest visit duration, or None if no location data.
 async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option<String> {
     use sqlx::Row;
+    // `data_location_visit.place_name` is never populated by entity resolution —
+    // the resolved name lives in `wiki_places`, linked via `wiki_entity_refs`
+    // (same shape the timeline reader uses). JOIN through to get the real name;
+    // selecting the visit's own `place_name` column always returned NULL.
     let row: Option<sqlx::postgres::PgRow> = sqlx::query(
-        "SELECT place_name FROM data_location_visit \
-         WHERE arrival_time >= $1 AND arrival_time <= $2 \
-         ORDER BY duration_minutes DESC LIMIT 1",
+        "SELECT p.name AS place_name \
+         FROM data_location_visit v \
+         JOIN wiki_entity_refs er \
+           ON er.source_table = 'data_location_visit' \
+          AND er.source_id = v.id \
+          AND er.entity_type = 'place' \
+         JOIN wiki_places p ON p.id = er.entity_id \
+         WHERE v.arrival_time >= $1 AND v.arrival_time <= $2 \
+         ORDER BY v.duration_minutes DESC LIMIT 1",
     )
     .bind(start)
     .bind(end)

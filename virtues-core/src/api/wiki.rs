@@ -1875,14 +1875,15 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
     use sqlx::Row;
     use virtues_registry::ontologies::registered_ontologies;
 
-    // UTC bounds: midnight to noon next day (covers all timezones)
-    let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-    let end_of_day = date
-        .succ_opt()
-        .unwrap()
-        .and_hms_opt(12, 0, 0)
-        .unwrap()
-        .and_utc();
+    // Day window in the user's timezone, converted to UTC — the SAME boundaries
+    // `day_summary` uses for its health/messages sections. Previously this
+    // hard-coded a UTC midnight→noon window, so records near the local-day edge
+    // landed on a different day here than in the tz-aware health snapshot. Falls
+    // back to the wide UTC window when no timezone is configured.
+    // (The `use_date_filter` branch below still keys on the UTC `date(...)`; that
+    // discrete-source path is a smaller, separate inconsistency left for later.)
+    let timezone = super::profile::get_timezone(pool).await.unwrap_or(None);
+    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, timezone.as_deref());
     let mut sources: Vec<DaySource> = Vec::new();
 
     for ont in registered_ontologies() {
@@ -1938,8 +1939,8 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
                 .await
         } else {
             sqlx::query(&query)
-                .bind(start_of_day)
-                .bind(end_of_day)
+                .bind(&start_str)
+                .bind(&end_str)
                 .fetch_all(pool)
                 .await
         };

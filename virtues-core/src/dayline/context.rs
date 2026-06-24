@@ -28,9 +28,13 @@ pub async fn build_hourly_context(
         window_end.format("%H:%M")
     ));
 
-    // Calendar events
+    // Calendar events. Columns are `location_name` and `attendee_identifiers`
+    // (JSONB) — the prior query named them `location`/`attendees`, which don't
+    // exist, so it errored and the calendar section was always empty. Decode the
+    // timestamps as `DateTime<Utc>` directly (the prior `try_get::<String>` on a
+    // timestamptz column would also have failed).
     if let Ok(rows) = sqlx::query(
-        r#"SELECT title, start_time, end_time, location, attendees
+        r#"SELECT title, start_time, end_time, location_name, attendee_identifiers
            FROM data_calendar_event
            WHERE start_time >= $1 AND start_time < $2
            ORDER BY start_time"#,
@@ -42,16 +46,18 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let title: String = r.try_get("title").ok()?;
-            let start: String = r.try_get("start_time").ok()?;
-            let end: String = r.try_get("end_time").ok()?;
-            let loc: Option<String> = r.try_get("location").ok().flatten();
-            let attendees: Option<String> = r.try_get("attendees").ok().flatten();
-            let mut s = format!("- {} ({} to {})", title, time_hhmm(&start), time_hhmm(&end));
+            let start: DateTime<Utc> = r.try_get("start_time").ok()?;
+            let end: DateTime<Utc> = r.try_get("end_time").ok()?;
+            let loc: Option<String> = r.try_get("location_name").ok().flatten();
+            let attendees: Option<serde_json::Value> = r.try_get("attendee_identifiers").ok();
+            let mut s = format!("- {} ({} to {})", title, start.format("%H:%M"), end.format("%H:%M"));
             if let Some(l) = loc {
                 if !l.is_empty() { s.push_str(&format!(" at {l}")); }
             }
-            if let Some(a) = attendees {
-                if !a.is_empty() { s.push_str(&format!(" with {a}")); }
+            if let Some(serde_json::Value::Array(arr)) = attendees {
+                let names: Vec<String> =
+                    arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+                if !names.is_empty() { s.push_str(&format!(" with {}", names.join(", "))); }
             }
             Some(s)
         }).collect();
@@ -60,12 +66,20 @@ pub async fn build_hourly_context(
         }
     }
 
-    // Location visits
+    // Location visits. The resolved place name lives in `wiki_places` (linked
+    // via `wiki_entity_refs`); `data_location_visit.place_name` is never
+    // populated, so the prior query returned NULL names and the section was
+    // empty. JOIN through to the place, and decode the timestamp as DateTime.
     if let Ok(rows) = sqlx::query(
-        r#"SELECT place_name, arrival_time, departure_time, duration_minutes
-           FROM data_location_visit
-           WHERE arrival_time >= $1 AND arrival_time < $2
-           ORDER BY arrival_time"#,
+        r#"SELECT p.name AS place_name, v.arrival_time, v.duration_minutes
+           FROM data_location_visit v
+           JOIN wiki_entity_refs er
+             ON er.source_table = 'data_location_visit'
+            AND er.source_id = v.id
+            AND er.entity_type = 'place'
+           JOIN wiki_places p ON p.id = er.entity_id
+           WHERE v.arrival_time >= $1 AND v.arrival_time < $2
+           ORDER BY v.arrival_time"#,
     )
     .bind(&start)
     .bind(&end)
@@ -74,9 +88,9 @@ pub async fn build_hourly_context(
     {
         let items: Vec<String> = rows.iter().filter_map(|r| {
             let name: String = r.try_get::<Option<String>, _>("place_name").ok().flatten()?;
-            let arrival: String = r.try_get("arrival_time").ok()?;
+            let arrival: DateTime<Utc> = r.try_get("arrival_time").ok()?;
             let dur: Option<i32> = r.try_get("duration_minutes").ok().flatten();
-            let mut s = format!("- {} (arrived {})", name, time_hhmm(&arrival));
+            let mut s = format!("- {} (arrived {})", name, arrival.format("%H:%M"));
             if let Some(d) = dur { s.push_str(&format!(", {}min", d)); }
             Some(s)
         }).collect();
