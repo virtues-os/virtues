@@ -120,7 +120,7 @@ impl Config {
         //   * Auto-top-up: $10 fixed, fires when wallet hits 0.
         //   * Manual top-up: $10–$50 user choice (atlas validates band).
         //   * Top-ups (add) are bounded by monthly_cap_micros, not anti-stacking.
-        let renewal_micros = env_i64("VOUCHER_RENEWAL_MICROS", 20_000_000);
+        let renewal_micros = env_i64("RENEWAL_MICROS", 20_000_000);
         let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 10_000_000);
         let topup_min_micros = env_i64("TOPUP_MIN_MICROS", 10_000_000);
         let topup_max_micros = env_i64("TOPUP_MAX_MICROS", 50_000_000);
