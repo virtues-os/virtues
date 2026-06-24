@@ -2138,8 +2138,8 @@ pub async fn wiki_get_day_streams_handler(
 /// Execute Python code in a sandboxed environment
 ///
 /// Used by the AI agent's code_interpreter tool.
-/// On Linux, uses nsjail for process isolation.
-/// On dev machines (macOS/Windows), runs Python directly.
+/// On the appliance (Linux), isolates each run in a transient systemd-run unit.
+/// On dev machines (macOS/Windows, debug builds), runs Python directly.
 pub async fn execute_code_handler(Json(request): Json<crate::api::ExecuteCodeRequest>) -> Response {
     let response = crate::api::execute_code(request).await;
     (StatusCode::OK, Json(response)).into_response()
@@ -3021,7 +3021,7 @@ pub async fn list_things_handler(
     )
 }
 
-/// GET /api/things/:id — single thing with pins.
+/// GET /api/things/:id — single thing.
 pub async fn get_thing_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -3056,47 +3056,6 @@ pub async fn delete_thing_handler(
 ) -> Response {
     match crate::api::things::delete_thing(state.db.pool(), &id).await {
         Ok(_) => success_message("Thing deleted"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// POST /api/things/:id/pins — add a pin (dedupes on url).
-pub async fn add_thing_pin_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::AddThingPinRequest>,
-) -> Response {
-    match crate::api::things::add_thing_pin(state.db.pool(), &id, request).await {
-        Ok(pin) => (StatusCode::CREATED, Json(pin)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RemoveThingPinRequest {
-    pub url: String,
-}
-
-/// DELETE /api/things/:id/pins — remove a pin by url.
-pub async fn remove_thing_pin_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<RemoveThingPinRequest>,
-) -> Response {
-    match crate::api::things::remove_thing_pin(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Pin removed from thing"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// PUT /api/things/:id/pins/reorder — reorder pins.
-pub async fn reorder_thing_pins_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::ReorderThingPinsRequest>,
-) -> Response {
-    match crate::api::things::reorder_thing_pins(state.db.pool(), &id, request).await {
-        Ok(_) => success_message("Thing pins reordered"),
         Err(e) => error_response(e),
     }
 }
@@ -3166,9 +3125,20 @@ pub async fn list_spaces_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::spaces::list_spaces(state.db.pool()).await)
 }
 
-/// GET /api/spaces/:id - Get a single space
+/// GET /api/spaces/:id - Get a single space with its members
 pub async fn get_space_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::spaces::get_space(state.db.pool(), &id).await)
+}
+
+/// POST /api/spaces - Create a space
+pub async fn create_space_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::spaces::CreateSpaceRequest>,
+) -> Response {
+    match crate::api::spaces::create_space(state.db.pool(), request).await {
+        Ok(space) => (StatusCode::CREATED, Json(space)).into_response(),
+        Err(e) => error_response(e),
+    }
 }
 
 /// PUT /api/spaces/:id - Update a space
@@ -3180,59 +3150,53 @@ pub async fn update_space_handler(
     api_response(crate::api::spaces::update_space(state.db.pool(), &id, request).await)
 }
 
-/// GET /api/spaces/:id/views - Get views for a space
-pub async fn list_space_views_handler(
+/// DELETE /api/spaces/:id - Delete a space
+pub async fn delete_space_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    api_response(crate::api::views::list_views(state.db.pool(), &id).await)
+    match crate::api::spaces::delete_space(state.db.pool(), &id).await {
+        Ok(_) => success_message("Space deleted"),
+        Err(e) => error_response(e),
+    }
 }
 
-/// GET /api/spaces/:id/items - Get root-level items for a space
-pub async fn list_space_items_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::views::resolve_space_items(state.db.pool(), &id).await)
-}
-
-/// POST /api/spaces/:id/items - Add item to space root level
+/// POST /api/spaces/:id/items - Add a member URL to a space
 pub async fn add_space_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
+    Json(request): Json<crate::api::spaces::AddSpaceItemRequest>,
 ) -> Response {
-    match crate::api::views::add_space_item(state.db.pool(), &id, &request.url).await {
+    match crate::api::spaces::add_space_item(state.db.pool(), &id, request).await {
         Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// DELETE /api/spaces/:id/items - Remove item from space root level
+#[derive(Debug, Deserialize)]
+pub struct RemoveSpaceItemRequest {
+    pub url: String,
+}
+
+/// DELETE /api/spaces/:id/items - Remove a member URL from a space
 pub async fn remove_space_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
+    Json(request): Json<RemoveSpaceItemRequest>,
 ) -> Response {
-    match crate::api::views::remove_space_item(state.db.pool(), &id, &request.url).await {
+    match crate::api::spaces::remove_space_item(state.db.pool(), &id, &request.url).await {
         Ok(_) => success_message("Item removed from space"),
         Err(e) => error_response(e),
     }
 }
 
-/// Request to reorder space items with explicit sort_order values
-#[derive(serde::Deserialize)]
-pub struct ReorderSpaceItemsRequest {
-    pub items: Vec<crate::api::views::ItemSortOrder>,
-}
-
-/// PUT /api/spaces/:id/items/reorder - Reorder space root items
+/// PUT /api/spaces/:id/items/reorder - Reorder space members
 pub async fn reorder_space_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<ReorderSpaceItemsRequest>,
+    Json(request): Json<crate::api::spaces::ReorderSpaceItemsRequest>,
 ) -> Response {
-    match crate::api::views::reorder_space_items(state.db.pool(), &id, request.items).await {
+    match crate::api::spaces::reorder_space_items(state.db.pool(), &id, request).await {
         Ok(_) => success_message("Space items reordered"),
         Err(e) => error_response(e),
     }
@@ -3253,113 +3217,6 @@ pub async fn get_namespace_handler(
     Path(name): Path<String>,
 ) -> Response {
     api_response(crate::api::namespaces::get_namespace(state.db.pool(), &name).await)
-}
-
-// ============================================================================
-// Views Handlers
-// ============================================================================
-
-/// POST /api/views - Create a new view
-pub async fn create_view_handler(
-    State(state): State<AppState>,
-    Json(request): Json<crate::api::views::CreateViewRequest>,
-) -> Response {
-    match crate::api::views::create_view(state.db.pool(), request).await {
-        Ok(view) => (StatusCode::CREATED, Json(view)).into_response(),
-        Err(e) => error_response(e),
-    }
-}
-
-/// GET /api/views/:id - Get a view
-pub async fn get_view_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::views::get_view(state.db.pool(), &id).await)
-}
-
-/// PUT /api/views/:id - Update a view
-pub async fn update_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::views::UpdateViewRequest>,
-) -> Response {
-    api_response(crate::api::views::update_view(state.db.pool(), &id, request).await)
-}
-
-/// DELETE /api/views/:id - Delete a view
-pub async fn delete_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    match crate::api::views::delete_view(state.db.pool(), &id).await {
-        Ok(_) => success_message("View deleted successfully"),
-        Err(e) => error_response(e),
-    }
-}
-
-/// Request for resolve view with optional pagination
-#[derive(serde::Deserialize)]
-pub struct ResolveViewQuery {
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
-}
-
-/// POST /api/views/:id/resolve - Resolve a view to its entities
-pub async fn resolve_view_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(query): Query<ResolveViewQuery>,
-) -> Response {
-    api_response(
-        crate::api::views::resolve_view(state.db.pool(), &id, query.limit, query.offset).await,
-    )
-}
-
-/// Request to add/remove item from view
-#[derive(serde::Deserialize)]
-pub struct ViewItemRequest {
-    pub url: String,
-}
-
-/// POST /api/views/:id/items - Add an item to a manual view
-pub async fn add_view_item_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
-) -> Response {
-    api_response(crate::api::views::add_item_to_view(state.db.pool(), &id, &request.url).await)
-}
-
-/// DELETE /api/views/:id/items - Remove an item from a manual view
-pub async fn remove_view_item_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ViewItemRequest>,
-) -> Response {
-    api_response(crate::api::views::remove_item_from_view(state.db.pool(), &id, &request.url).await)
-}
-
-/// GET /api/views/:id/items - List items in a manual view
-pub async fn list_view_items_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::views::list_view_items(state.db.pool(), &id).await)
-}
-
-/// Request to reorder view items
-#[derive(serde::Deserialize)]
-pub struct ReorderViewItemsRequest {
-    pub url_order: Vec<String>,
-}
-
-/// PUT /api/views/:id/items/reorder - Reorder items in a manual view
-pub async fn reorder_view_items_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<ReorderViewItemsRequest>,
-) -> Response {
-    api_response(
-        crate::api::views::reorder_view_items(state.db.pool(), &id, request.url_order).await,
-    )
 }
 
 // ============================================================================

@@ -1,25 +1,42 @@
-//! Code execution API for AI sandbox
+//! Code execution API for the AI `code_interpreter` tool.
 //!
-//! Provides secure Python code execution with platform-specific sandboxing:
+//! This runs Python the LLM wrote at runtime, so it is the path most exposed to
+//! prompt injection. On the appliance we isolate it with **systemd-run** — a
+//! transient unit per execution, which gives us, declaratively:
 //!
-//! - **Production (Linux + gVisor)**: Uses bubblewrap for process isolation within
-//!   the tenant's gVisor container. The container provides tenant isolation, and
-//!   bubblewrap provides filesystem isolation for the Python process.
+//! - `PrivateNetwork=yes`  — no network (the exfil channel); calc/stats/charts
+//!   don't need it. (Actions, which *do* need egress, run on a different path and
+//!   are intentionally left alone.)
+//! - `MemoryMax` / `MemorySwapMax=0` — cgroup-enforced; an OOM kills the exec,
+//!   not the box (important on an 8GB Jetson shared with the ML sidecars).
+//! - `RuntimeMaxSec` — hard timeout enforced by systemd.
+//! - `ProtectSystem=strict` + `ProtectHome` + `PrivateTmp` + `DynamicUser` —
+//!   no access to `/etc/virtues` secrets, app data, WG keys, or a real home.
+//! - `NoNewPrivileges` + `SystemCallFilter` — seccomp.
 //!
-//! - **Development (macOS)**: Uses Docker/OrbStack to run code in a Linux container
-//!   with bubblewrap. This allows testing the same sandboxing approach on macOS.
+//! The code is fed on stdin (`python3 -`), so no file needs to be readable by
+//! the ephemeral `DynamicUser`.
 //!
-//! Used by the AI agent's code_interpreter tool.
+//! ## Refusal vs. dev fallback
+//!
+//! In a release build (the appliance) we **refuse to run** if systemd-run is
+//! unavailable rather than silently dropping the sandbox. In a debug build
+//! (dev/CI, incl. macOS which has no systemd) we run the code directly — that's
+//! the developer's own trusted machine.
+//!
+//! ## Deployment requirements
+//!
+//! - The appliance Python (`python3` on PATH) must carry the data-science
+//!   packages (numpy/pandas/scipy/numpy-financial) — they used to live in the
+//!   now-removed sandbox Docker image and must be baked into the appliance image.
+//! - virtues-core must run with rights to the system service manager (root or an
+//!   appropriately-privileged unit) for `systemd-run` to set these properties.
 
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
-use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
-
-/// Sandbox image name for Docker-based execution (dev mode)
-const SANDBOX_IMAGE: &str = "virtues-sandbox:latest";
 
 /// Request to execute Python code
 #[derive(Debug, Deserialize)]
@@ -51,27 +68,31 @@ pub struct ExecuteCodeResponse {
     pub execution_time_ms: u64,
 }
 
-/// Execute Python code
+/// Execute Python code for the `code_interpreter` tool.
 ///
-/// Security model:
-/// - Production (Linux + gVisor): bubblewrap provides filesystem isolation within
-///   the tenant's gVisor container
-/// - Development (macOS): Docker container with bubblewrap provides equivalent isolation
+/// Appliance (Linux): isolated in a transient `systemd-run` unit. Dev/CI (any
+/// debug build, incl. macOS): run directly on the trusted developer machine.
 pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
     let start = std::time::Instant::now();
-
-    // Clamp timeout to valid range
     let timeout_secs = request.timeout.clamp(5, 120);
 
-    // Choose execution strategy based on platform
-    let output = if cfg!(target_os = "macos") {
-        // macOS: Use Docker/OrbStack with sandbox container
-        execute_with_docker(&request.code, timeout_secs).await
-    } else if cfg!(target_os = "linux") {
-        // Linux: Use bubblewrap directly (or fallback to direct execution)
-        execute_with_bubblewrap(&request.code, timeout_secs).await
+    let output = if cfg!(target_os = "linux") {
+        match execute_with_systemd_run(&request.code, timeout_secs).await {
+            // systemd-run missing: refuse in release (appliance) so we never run
+            // LLM code unsandboxed; allow a direct run only in debug (dev/CI).
+            Err(SandboxError::Unavailable) if cfg!(debug_assertions) => {
+                tracing::warn!("systemd-run unavailable; running directly (debug build only)");
+                execute_directly(&request.code, timeout_secs).await
+            }
+            Err(SandboxError::Unavailable) => Err(
+                "code execution sandbox (systemd-run) is unavailable; refusing to run unsandboxed"
+                    .to_string(),
+            ),
+            Err(SandboxError::Other(e)) => Err(e),
+            Ok(triple) => Ok(triple),
+        }
     } else {
-        // Fallback: Direct execution (not recommended for untrusted code)
+        // No systemd off Linux — this is only ever a developer machine.
         execute_directly(&request.code, timeout_secs).await
     };
 
@@ -97,178 +118,130 @@ pub async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
     }
 }
 
-/// Execute Python code via Docker container (macOS development)
-///
-/// Uses the virtues-sandbox Docker image which contains:
-/// - Python 3.12 with common packages
-/// - bubblewrap for process isolation
-///
-/// The container runs with --privileged to allow bubblewrap's namespace operations.
-/// This is acceptable for development; in production, gVisor provides the isolation.
-async fn execute_with_docker(
+enum SandboxError {
+    /// systemd-run is not installed/on PATH.
+    Unavailable,
+    /// Any other failure (spawn/io/timeout).
+    Other(String),
+}
+
+/// Run code in a hardened transient systemd unit. Code is fed on stdin.
+async fn execute_with_systemd_run(
     code: &str,
     timeout_secs: u32,
-) -> Result<(String, String, bool), String> {
-    let mut cmd = Command::new("docker");
+) -> Result<(String, String, bool), SandboxError> {
+    let mut cmd = Command::new("systemd-run");
     cmd.args([
-        "run",
-        "--rm",
-        "-i",
-        "--privileged",
-        "--network=none", // No network access for sandboxed code
-        SANDBOX_IMAGE,
+        "--pipe",    // wire the unit's stdio to ours
+        "--wait",    // block and propagate the exit status
+        "--collect", // garbage-collect the transient unit when done
+        "--quiet",   // keep systemd-run's own chatter off our stderr
+        "-p",
+        "PrivateNetwork=yes",
+        "-p",
+        &format!("MemoryMax={MEMORY_MAX}"),
+        "-p",
+        "MemorySwapMax=0",
+        "-p",
+        &format!("RuntimeMaxSec={timeout_secs}"),
+        "-p",
+        "ProtectSystem=strict",
+        "-p",
+        "ProtectHome=yes",
+        "-p",
+        "PrivateTmp=yes",
+        "-p",
+        "PrivateDevices=yes",
+        "-p",
+        "NoNewPrivileges=yes",
+        "-p",
+        "DynamicUser=yes",
+        "-p",
+        "SystemCallFilter=@system-service",
+        "-p",
+        "SystemCallErrorNumber=EPERM",
+        // Give libs (e.g. matplotlib) a writable home inside the private /tmp.
+        "-E",
+        "HOME=/tmp",
+        "-E",
+        "MPLCONFIGDIR=/tmp",
+        "--",
+        "python3",
+        "-I", // isolated mode: ignore env + user site-packages
+        "-",  // read the program from stdin
     ]);
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true); // backstop timeout drops the future → kills the unit
 
-    let timeout_duration = Duration::from_secs(timeout_secs as u64);
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(SandboxError::Unavailable)
+        }
+        Err(e) => return Err(SandboxError::Other(format!("failed to start systemd-run: {e}"))),
+    };
 
-    // Spawn the process and write code to stdin
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to start Docker: {}", e))?;
-
-    // Write code to stdin
     if let Some(mut stdin) = child.stdin.take() {
         stdin
             .write_all(code.as_bytes())
             .await
-            .map_err(|e| format!("Failed to write to stdin: {}", e))?;
-        // Close stdin to signal EOF
-        drop(stdin);
+            .map_err(|e| SandboxError::Other(format!("failed to write code to stdin: {e}")))?;
+        drop(stdin); // EOF
     }
 
-    // Wait for output with timeout
-    match timeout(timeout_duration, child.wait_with_output()).await {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Ok((stdout, stderr, output.status.success()))
-        }
-        Ok(Err(e)) => Err(format!("Process error: {}", e)),
-        Err(_) => {
-            // Timeout - kill the container
-            let _ = Command::new("docker")
-                .args(["kill", "--signal=KILL"])
-                .output()
-                .await;
-            Err("Execution timed out".to_string())
-        }
+    // systemd enforces RuntimeMaxSec; this is a backstop in case it hangs.
+    let backstop = Duration::from_secs(timeout_secs as u64 + 10);
+    match timeout(backstop, child.wait_with_output()).await {
+        Ok(Ok(output)) => Ok((
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+            output.status.success(),
+        )),
+        Ok(Err(e)) => Err(SandboxError::Other(format!("process error: {e}"))),
+        Err(_) => Err(SandboxError::Other("Execution timed out".to_string())),
     }
 }
 
-/// Execute Python code with bubblewrap isolation (Linux production)
-///
-/// Uses bubblewrap to create an isolated filesystem namespace:
-/// - Read-only access to Python and system libraries
-/// - Writable /tmp for temporary files
-/// - No access to application data directories
-async fn execute_with_bubblewrap(
-    code: &str,
-    timeout_secs: u32,
-) -> Result<(String, String, bool), String> {
-    // Create a temporary file for the code
-    let workspace = TempDir::new().map_err(|e| format!("Failed to create workspace: {}", e))?;
-    let code_path = workspace.path().join("code.py");
-    tokio::fs::write(&code_path, code)
-        .await
-        .map_err(|e| format!("Failed to write code: {}", e))?;
-
-    let mut cmd = Command::new("bwrap");
-    cmd.args([
-        "--ro-bind",
-        "/usr",
-        "/usr",
-        "--ro-bind",
-        "/lib",
-        "/lib",
-        "--ro-bind-try",
-        "/lib64",
-        "/lib64",
-        "--symlink",
-        "usr/bin",
-        "/bin",
-        "--symlink",
-        "usr/sbin",
-        "/sbin",
-        "--proc",
-        "/proc",
-        "--dev",
-        "/dev",
-        "--tmpfs",
-        "/tmp",
-        "--tmpfs",
-        "/home",
-        "--bind",
-        code_path.to_str().unwrap(),
-        "/tmp/code.py",
-        "--chdir",
-        "/tmp",
-        "--unshare-all",
-        "--share-net", // Can be removed to disable network
-        "--die-with-parent",
-        "--new-session",
-        "--",
-        "python3",
-        "/tmp/code.py",
-    ]);
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-
-    let timeout_duration = Duration::from_secs(timeout_secs as u64);
-
-    match timeout(timeout_duration, cmd.output()).await {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Ok((stdout, stderr, output.status.success()))
-        }
-        Ok(Err(e)) => {
-            // bubblewrap not available, fall back to direct execution
-            if e.kind() == std::io::ErrorKind::NotFound {
-                tracing::warn!("bubblewrap not found, falling back to direct execution");
-                execute_directly(code, timeout_secs).await
-            } else {
-                Err(format!("Process error: {}", e))
-            }
-        }
-        Err(_) => Err("Execution timed out".to_string()),
-    }
-}
-
-/// Execute Python code directly (fallback, less secure)
-///
-/// Used when:
-/// - bubblewrap is not available
-/// - Running in a trusted environment
+/// Run code directly, unsandboxed. Debug builds only (dev/CI on a trusted box).
 async fn execute_directly(
     code: &str,
     timeout_secs: u32,
 ) -> Result<(String, String, bool), String> {
-    // Create a temporary file for the code
-    let workspace = TempDir::new().map_err(|e| format!("Failed to create workspace: {}", e))?;
-    let code_path = workspace.path().join("code.py");
-    tokio::fs::write(&code_path, code)
-        .await
-        .map_err(|e| format!("Failed to write code: {}", e))?;
-
     let mut cmd = Command::new("python3");
-    cmd.arg(&code_path);
+    cmd.args(["-I", "-"]);
+    cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    cmd.current_dir(workspace.path());
+    cmd.kill_on_drop(true);
 
-    let timeout_duration = Duration::from_secs(timeout_secs as u64);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to start python3: {e}"))?;
 
-    match timeout(timeout_duration, cmd.output()).await {
-        Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            Ok((stdout, stderr, output.status.success()))
-        }
-        Ok(Err(e)) => Err(format!("Process error: {}", e)),
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(code.as_bytes())
+            .await
+            .map_err(|e| format!("failed to write code to stdin: {e}"))?;
+        drop(stdin);
+    }
+
+    match timeout(Duration::from_secs(timeout_secs as u64), child.wait_with_output()).await {
+        Ok(Ok(output)) => Ok((
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+            output.status.success(),
+        )),
+        Ok(Err(e)) => Err(format!("process error: {e}")),
         Err(_) => Err("Execution timed out".to_string()),
     }
 }
+
+/// Per-exec memory ceiling. Generous enough for numpy/pandas, small enough to
+/// protect the ML sidecars' share of an 8GB box.
+const MEMORY_MAX: &str = "512M";
 
 #[cfg(test)]
 mod tests {

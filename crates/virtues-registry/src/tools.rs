@@ -525,24 +525,24 @@ Use this tool when you need to:
 - Perform calculations, math, statistics, or numerical analysis
 - Process, transform, or analyze data (CSV, JSON, etc.)
 - Financial calculations (loans, mortgages, investments, IRR, NPV)
-- Generate charts and visualizations
 - Work with dates, times, or complex logic
+
+Only stdout is returned, so print() your results. There is no way to return
+files or images — describe results in text rather than saving charts.
 
 Available packages:
 - Python 3.12 standard library (math, statistics, datetime, json, csv, re, decimal, etc.)
 - numpy - numerical computing, arrays, linear algebra
 - numpy-financial - financial functions: pmt, fv, pv, irr, npv, nper, rate
 - pandas - data analysis, DataFrames, CSV/JSON loading
-- matplotlib - charts and visualizations (use plt.savefig('/tmp/chart.png'))
 - scipy - scientific computing, statistics, optimization
-- requests - HTTP client
 - python-dateutil - date parsing
 - pytz - timezones
 
 The code runs in an isolated sandbox with:
-- No filesystem access (except /tmp for temporary files)
+- No filesystem access (except a private /tmp for temporary files)
 - No network access
-- 60 second timeout (max 120 seconds)
+- A memory limit and a timeout (default 60s, max 120s)
 
 IMPORTANT: Use print() to output your results. The stdout will be returned to you.
 
