@@ -308,6 +308,7 @@ struct SettingsView: View {
             .fullScreenCover(isPresented: $showQRScanner) {
                 QRScannerView(
                     onScanned: handleQRScanResult,
+                    onBundleScanned: handleBundleScanResult,
                     onCancel: { showQRScanner = false }
                 )
             }
@@ -357,6 +358,82 @@ struct SettingsView: View {
                     isCompletingPairing = false
                     Haptics.success()
                 }
+            } catch {
+                await MainActor.run {
+                    isCompletingPairing = false
+                    if let networkError = error as? NetworkError {
+                        pairingError = networkError.errorDescription
+                    } else {
+                        pairingError = error.localizedDescription
+                    }
+                    Haptics.error()
+                }
+            }
+        }
+    }
+
+    /// Desktop-RELAYED off-LAN pairing: the QR is a `virtues-bundle:` blob whose
+    /// envelope is `{ bundle, action_ids }`. The box already generated this
+    /// device's WG keypair, so there's no consume round-trip — we import the
+    /// bundle (bearer + private key + WG params), pin the box's key (TOFU; no
+    /// out-of-band fpr needed since the QR came from the user's own already-paired
+    /// device), set the tunnel endpoint, persist `action_ids`, and ping the box
+    /// over the fresh tunnel so the relaying device's UI flips to "paired".
+    private func handleBundleScanResult(_ envelope: Data) {
+        showQRScanner = false
+        isCompletingPairing = true
+        pairingError = nil
+
+        Task {
+            do {
+                guard
+                    let root = try JSONSerialization.jsonObject(with: envelope) as? [String: Any],
+                    let bundle = root["bundle"] as? [String: Any],
+                    let bundleData = try? JSONSerialization.data(withJSONObject: bundle)
+                else {
+                    throw NetworkError.decodingError
+                }
+
+                let bearer = bundle["bearer"] as? String
+                let wg = bundle["wg"] as? [String: Any]
+                let privKey = wg?["client_private_key"] as? String
+                guard let bearer, !bearer.isEmpty, let privKey, !privKey.isEmpty else {
+                    throw NetworkError.badRequest(
+                        message: "This pairing QR is missing tunnel credentials. "
+                            + "Regenerate it from + Add Device on your other device."
+                    )
+                }
+
+                // Store secrets + bundle. `verifyAndStoreBundle` pins the server
+                // key (TOFU) and tears down any stale tunnel; nil fingerprint =
+                // trust the bundle from the user's own paired device.
+                try KeychainStore.shared.saveBearer(bearer)
+                try KeychainStore.shared.saveWgPrivateKey(privKey)
+                try VirtuesTunnelManager.shared.verifyAndStoreBundle(
+                    bundleData,
+                    expectedFingerprint: nil
+                )
+
+                let actionIds = (root["action_ids"] as? [String: String]) ?? [:]
+                let internalHost = (bundle["internal_host"] as? String) ?? "virtues.internal"
+                let httpPort = (bundle["http_port"] as? Int) ?? 8000
+                let endpoint = "http://\(internalHost):\(httpPort)"
+
+                await MainActor.run {
+                    deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    deviceManager.updateActionIds(actionIds)
+                    deviceManager.isConfigured = true
+                    deviceManager.configurationState = .configured
+                    isCompletingPairing = false
+                    Haptics.success()
+                }
+
+                // Best-effort, non-blocking: reach the box over the new tunnel so
+                // its `last_seen_at` advances and the relaying device shows
+                // "paired" now (not on the first scheduled upload minutes later).
+                // Detached so a slow/unreachable tunnel never stalls the UI — the
+                // first upload registers liveness regardless.
+                Task.detached { await NetworkManager.shared.confirmPairOnline() }
             } catch {
                 await MainActor.run {
                     isCompletingPairing = false

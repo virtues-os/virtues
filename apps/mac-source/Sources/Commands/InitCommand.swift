@@ -43,8 +43,8 @@ struct InitCommand: ParsableCommand {
 
                 try config.save()
 
-                if config.actionIds["mac_activity"] == nil {
-                    print("⚠️ Warning: the box returned no 'mac_activity' action — uploads")
+                if config.actionIds["mac_ingest"] == nil {
+                    print("⚠️ Warning: the box returned no 'mac_ingest' action — uploads")
                     print("   won't work until the box is updated. Re-run `init` after upgrading.")
                 }
 

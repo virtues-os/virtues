@@ -252,6 +252,25 @@ class NetworkManager: ObservableObject {
         }
     }
 
+    /// Best-effort: make one authenticated call to the box over the freshly-built
+    /// tunnel right after a relayed-bundle import. Its only job is to bump the
+    /// box's `last_seen_at` so the relaying device's "+ Add Device" UI flips from
+    /// "waiting" to "paired" immediately (the box's `provision-status` poll keys
+    /// off `last_seen_at > paired_at`). Never throws — if the tunnel isn't up yet
+    /// the next scheduled upload will register liveness anyway.
+    func confirmPairOnline() async {
+        guard let bundle = VirtuesTunnelManager.shared.boxBundle(),
+              let bearer = KeychainStore.shared.loadBearer(),
+              let url = URL(string: "http://\(bundle.internalHost):\(bundle.httpPort)/api/devices/action-ids")
+        else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        _ = try? await BoxTransport.shared.send(request, session: session)
+    }
+
     // MARK: - Action runs (server-side outcome, 2B)
 
     /// Fetch recent server-side run history for one of this device's actions via

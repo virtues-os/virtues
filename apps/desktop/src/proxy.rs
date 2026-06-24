@@ -456,6 +456,7 @@ mod tests {
                 client_address: "fd00:5654::2".into(),
                 server_address: "fd00:5654::1".into(),
                 allowed_ips: vec!["fd00:5654::1/128".into()],
+                client_private_key: None,
             },
             internal_host: "virtues.internal".into(),
             internal_ip: "fd00:5654::1".into(),

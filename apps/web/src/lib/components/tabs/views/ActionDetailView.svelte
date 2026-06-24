@@ -282,7 +282,10 @@
 							Delete action
 						</Button>
 					{:else}
-						<span></span>
+						<span class="system-note">
+							<Icon icon="ri:lock-line" width="12" />
+							System action — managed automatically. Disable it to stop it running; it can't be deleted (reconcile would recreate it).
+						</span>
 					{/if}
 					<Button variant="primary" onclick={save} disabled={!isDirty || saving}>
 						{saving ? 'Saving…' : 'Save changes'}
@@ -537,6 +540,15 @@
 		padding-top: 0.5rem;
 		border-top: 1px solid var(--color-border-subtle, #f3f4f6);
 		margin-top: 0.5rem;
+	}
+	.system-note {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		max-width: 60ch;
+		font-size: 0.6875rem;
+		line-height: 1.4;
+		color: var(--color-foreground-subtle, #9ca3af);
 	}
 
 	.runs {

@@ -15,12 +15,12 @@ async fn main() -> Result<()> {
     virtues_actions::init_tracing();
 
     let input = read_input()?;
-    let pool = connect_from_env("virtues-action-mac_activity").await?;
+    let pool = connect_from_env("virtues-action-mac_ingest").await?;
 
     let payload = input
         .payload
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("mac_activity requires a payload"))?;
+        .ok_or_else(|| anyhow::anyhow!("mac_ingest requires a payload"))?;
 
     let app_events: Vec<Value> = payload
         .get("app_events")

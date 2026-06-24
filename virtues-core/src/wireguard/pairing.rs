@@ -131,6 +131,38 @@ pub async fn assemble_bundle(
     bearer: &str,
     device_wg_pubkey: &str,
 ) -> Result<PairingBundle> {
+    // Device-generated keypair → the box never sees the private half.
+    assemble_bundle_inner(db, credential_id, bearer, device_wg_pubkey, None).await
+}
+
+/// Like [`assemble_bundle`], but the BOX generates the device's WG keypair and
+/// returns the private half inside the bundle (`wg.client_private_key`). For the
+/// desktop-relayed `/api/pair/provision` path: the new device never speaks to
+/// the box directly, so it can't supply its own pubkey first. Standard
+/// `wg-quick` practice — the config you hand a client already contains its
+/// private key. The private key is returned ONCE and never persisted box-side
+/// (the kernel only needs the public half to accept the peer).
+#[cfg(target_os = "linux")]
+pub async fn assemble_bundle_generated(
+    db: &PgPool,
+    credential_id: &str,
+    bearer: &str,
+) -> Result<PairingBundle> {
+    let kp = super::manager::generate_keypair();
+    assemble_bundle_inner(db, credential_id, bearer, &kp.public_key, Some(kp.private_key)).await
+}
+
+/// Shared core for both pairing paths. `client_private_key` is `Some` only when
+/// the box generated the keypair (relay path) — it is placed in the bundle and
+/// NOT stored anywhere on the box.
+#[cfg(target_os = "linux")]
+async fn assemble_bundle_inner(
+    db: &PgPool,
+    credential_id: &str,
+    bearer: &str,
+    device_wg_pubkey: &str,
+    client_private_key: Option<String>,
+) -> Result<PairingBundle> {
     use super::bundle::WgParams;
     use super::{manager, peers, reconcile, ula, INTERNAL_HOST, INTERNAL_PORT};
     use std::net::Ipv6Addr;
@@ -148,7 +180,9 @@ pub async fn assemble_bundle(
     let psk = manager::generate_psk();
 
     // Persist the peer; the virtues-wireguard daemon reconciles wg0 from the DB.
-    // (No in-process kernel install here — the app stays unprivileged.)
+    // (No in-process kernel install here — the app stays unprivileged.) Only the
+    // PUBLIC key is stored — even on the box-generated path the private half is
+    // returned in the bundle and immediately forgotten.
     let peer = peers::PeerRecord {
         device_public_key: device_wg_pubkey.to_string(),
         preshared_key: psk.clone(),
@@ -174,6 +208,7 @@ pub async fn assemble_bundle(
             client_address: client_addr.to_string(),
             server_address: server_addr.to_string(),
             allowed_ips: vec![format!("{server_addr}/128")],
+            client_private_key,
         },
         internal_host: INTERNAL_HOST.to_string(),
         internal_ip: server_addr.to_string(),
@@ -188,6 +223,16 @@ pub async fn assemble_bundle(
     _credential_id: &str,
     _bearer: &str,
     _device_wg_pubkey: &str,
+) -> Result<PairingBundle> {
+    anyhow::bail!("WireGuard pairing is only supported on the Linux appliance")
+}
+
+/// Non-Linux stub: WG pairing only runs on the Linux appliance.
+#[cfg(not(target_os = "linux"))]
+pub async fn assemble_bundle_generated(
+    _db: &PgPool,
+    _credential_id: &str,
+    _bearer: &str,
 ) -> Result<PairingBundle> {
     anyhow::bail!("WireGuard pairing is only supported on the Linux appliance")
 }

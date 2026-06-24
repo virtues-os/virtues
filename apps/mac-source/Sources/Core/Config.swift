@@ -8,7 +8,7 @@ struct Config: Codable {
     let deviceId: String
     let apiEndpoint: String
     /// `function_name → action_id` map from pair-consume — the webhook targets.
-    /// mac-source posts to `actionIds["mac_activity"]`.
+    /// mac-source posts to `actionIds["mac_ingest"]`.
     let actionIds: [String: String]
     let createdAt: Date
 
@@ -176,7 +176,7 @@ struct Config: Codable {
     /// the `action_ids` map + the box endpoint.
     ///
     /// We declare `source = "mac"` so the box sets the credential's `source_id`
-    /// to "mac" and `reconcile_templates` fans out the `mac_activity` webhook
+    /// to "mac" and `reconcile_templates` fans out the `mac_ingest` webhook
     /// action — the key we then POST uploads to. The box URL comes from
     /// `VIRTUES_API_URL` (the installer sets it), defaulting to the box's
     /// localhost port.

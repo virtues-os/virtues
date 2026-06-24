@@ -80,6 +80,15 @@ pub struct WgParams {
     /// AUXILIARY: defaults empty.
     #[serde(default)]
     pub allowed_ips: Vec<String>,
+    /// The device's WG private key, base64 — present ONLY when the box generated
+    /// the keypair on the device's behalf (the desktop-relayed `/api/pair/provision`
+    /// path, where the new device never speaks to the box directly). For the normal
+    /// `/api/pair/consume` path the device generates its own keypair and supplies
+    /// only the public key, so this stays `None` and is omitted from the wire.
+    /// AUXILIARY: defaults absent. Carries a secret — see the relay flow's on-screen
+    /// QR caveats in `docs/wireguard-pairing.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_private_key: Option<String>,
 }
 
 /// The complete provisioning bundle handed to a device at pairing.
@@ -125,6 +134,7 @@ mod tests {
                 client_address: "fd00:5654::2".into(),
                 server_address: "fd00:5654::1".into(),
                 allowed_ips: vec!["fd00:5654::1/128".into()],
+                client_private_key: None,
             },
             internal_host: "virtues.internal".into(),
             internal_ip: "fd00:5654::1".into(),
@@ -176,6 +186,24 @@ mod tests {
         let b: PairingBundle = serde_json::from_str(json).unwrap();
         assert!(b.wg.server_endpoints.is_empty());
         assert_eq!(b.wg.server_endpoint, "[2001:db8::1]:51820");
+    }
+
+    #[test]
+    fn client_private_key_round_trips_and_is_omitted_when_absent() {
+        // Box-generated (relayed) pairings carry the device's private key in the
+        // bundle; normal device-generated pairings don't. Both must round-trip,
+        // and the absent case must stay off the wire (`skip_serializing_if`) so
+        // the common path's bundle shape is unchanged.
+        let mut b = sample();
+        assert!(b.wg.client_private_key.is_none());
+        let json = serde_json::to_value(&b).unwrap();
+        assert!(json["wg"].get("client_private_key").is_none());
+
+        b.wg.client_private_key = Some("ZGV2aWNlLXByaXZrZXk".into());
+        let json = serde_json::to_string(&b).unwrap();
+        let back: PairingBundle = serde_json::from_str(&json).unwrap();
+        assert_eq!(b, back);
+        assert_eq!(back.wg.client_private_key.as_deref(), Some("ZGV2aWNlLXByaXZrZXk"));
     }
 
     #[test]

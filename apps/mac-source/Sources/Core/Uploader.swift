@@ -5,7 +5,7 @@ class Uploader {
     private let config: Config
     private var timer: DispatchSourceTimer?
 
-    /// Resolved `mac_activity` webhook action id. Normally comes from
+    /// Resolved `mac_ingest` webhook action id. Normally comes from
     /// `config.actionIds`; cached here if a one-shot refetch was needed.
     private var cachedActionId: String?
 
@@ -107,7 +107,7 @@ class Uploader {
         var totalUploaded = 0
         var totalFailed = 0
 
-        // One combined batch → the single `mac_activity` webhook action.
+        // One combined batch → the single `mac_ingest` webhook action.
         let result = await uploadBatch()
         totalUploaded += result.uploaded
         totalFailed += result.failed
@@ -126,9 +126,9 @@ class Uploader {
     }
 
     /// Upload all pending app events + iMessages as ONE batch to the
-    /// `mac_activity` webhook action, authenticated with the device bearer.
+    /// `mac_ingest` webhook action, authenticated with the device bearer.
     /// The action expects a flat payload with top-level `app_events` /
-    /// `browser_history` / `imessages` arrays (see `actions/mac_activity`).
+    /// `browser_history` / `imessages` arrays (see `actions/mac_ingest`).
     private func uploadBatch() async -> (uploaded: Int, failed: Int) {
         do {
             let eventsWithIds = try queue.getPendingEvents()
@@ -140,7 +140,7 @@ class Uploader {
 
             // Resolve the webhook target (from pair, else a one-shot refetch).
             guard let actionId = await macActivityActionId() else {
-                print("⚠️ No 'mac_activity' action id — re-pair this collector " +
+                print("⚠️ No 'mac_ingest' action id — re-pair this collector " +
                       "(`virtues-collector init <token>`). Skipping upload.")
                 return (0, pending)
             }
@@ -232,11 +232,11 @@ class Uploader {
         }
     }
 
-    /// The `mac_activity` action id: from the paired config, else a cached
+    /// The `mac_ingest` action id: from the paired config, else a cached
     /// value, else a one-shot refetch from `/api/devices/action-ids` (covers a
     /// config that predates the box-side fanout fix).
     private func macActivityActionId() async -> String? {
-        if let id = config.actionIds["mac_activity"] {
+        if let id = config.actionIds["mac_ingest"] {
             return id
         }
         if let id = cachedActionId {
@@ -263,13 +263,13 @@ class Uploader {
                   let ids = json["action_ids"] as? [String: String] else {
                 return nil
             }
-            return ids["mac_activity"]
+            return ids["mac_ingest"]
         } catch {
             return nil
         }
     }
 
-    /// Rename the iMessage record keys to the `mac_activity` action's contract
+    /// Rename the iMessage record keys to the `mac_ingest` action's contract
     /// (`message_id`→`guid`, `handle_id`→`from_handle`). The action drops any
     /// message with an empty `guid`, so the rename is required.
     private func mapMessageForWebhook(_ dict: [String: Any]) -> [String: Any] {

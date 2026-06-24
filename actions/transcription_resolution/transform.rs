@@ -1,4 +1,4 @@
-//! Drain logic for the ios_microphone_transcribe cron action.
+//! Drain logic for the transcription_resolution cron action.
 //!
 //! Selects untranscribed recordings via LEFT JOIN, calls Gemini for each one,
 //! and INSERTs the result into `data_communication_transcription`. Silent
@@ -59,6 +59,22 @@ struct PendingRecording {
     is_silent: bool,
 }
 
+/// Decode one queried row into a `PendingRecording`, surfacing a column-decode
+/// failure as an `Err` instead of panicking — `Row::get` unwraps internally, so
+/// any schema/type drift would otherwise abort the whole drain. Callers count a
+/// failure here as a failed record and move on.
+fn decode_pending(row: &sqlx::postgres::PgRow) -> Result<PendingRecording> {
+    Ok(PendingRecording {
+        source_stream_id: row.try_get("source_stream_id")?,
+        started_at: row.try_get("started_at")?,
+        ended_at: row.try_get("ended_at")?,
+        duration_seconds: row.try_get("duration_seconds")?,
+        audio_url: row.try_get("audio_url")?,
+        audio_format: row.try_get("audio_format")?,
+        is_silent: row.try_get("is_silent")?,
+    })
+}
+
 /// Drain up to `batch_size` untranscribed recordings.
 ///
 /// Returns `(transcribed_via_gemini, skipped_silent, failed)`.
@@ -84,25 +100,30 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         return Ok((0, 0, 0));
     }
 
-    let pending: Vec<PendingRecording> = rows
-        .iter()
-        .map(|row| PendingRecording {
-            source_stream_id: row.get("source_stream_id"),
-            started_at: row.get("started_at"),
-            ended_at: row.get("ended_at"),
-            duration_seconds: row.get("duration_seconds"),
-            audio_url: row.get("audio_url"),
-            audio_format: row.get("audio_format"),
-            is_silent: row.get::<bool, _>("is_silent"),
-        })
-        .collect();
+    let mut transcribed = 0usize;
+    let mut skipped = 0usize;
+    let mut failed = 0usize;
+
+    // Decode each queried row into a PendingRecording. A column-decode failure
+    // (a schema/type drift, like the stale `started_at: String` decoder after
+    // the SQLite→Postgres migration) used to panic via `Row::get` and take down
+    // the whole batch before a single record was processed — surfacing only as
+    // an opaque subprocess crash. `try_get` degrades the one bad row instead:
+    // log it, count it failed, and keep draining the rest.
+    let mut pending: Vec<PendingRecording> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        match decode_pending(row) {
+            Ok(rec) => pending.push(rec),
+            Err(e) => {
+                tracing::warn!(error = %e, "skipping recording: failed to decode row");
+                failed += 1;
+            }
+        }
+    }
 
     // Build the virtues-api client lazily — only if we have at least one
     // non-silent recording to process.
     let mut virtues_api: Option<BearerClient> = None;
-    let mut transcribed = 0usize;
-    let mut skipped = 0usize;
-    let mut failed = 0usize;
 
     for rec in &pending {
         // Silent recordings: insert an empty transcript directly, no Gemini call
@@ -121,9 +142,8 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
             continue;
         }
 
-        // Lazy-init the bearer client. System purpose → the device's own
-        // bearer funds this background call against the OS reserve, not the
-        // user's chat wallet (auto-renews on a 402 via the voucher dance).
+        // Lazy-init the api_key client. The device's own key funds this
+        // background call, with one auto-top-up-and-retry on a 402 wallet_empty.
         if virtues_api.is_none() {
             virtues_api = Some(BearerClient::from_env(db.clone()).with_purpose(Purpose::System));
         }

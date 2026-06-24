@@ -89,10 +89,12 @@ actions/
 ├── Cargo.toml                       # [[bin]] entries for Rust function/service actions
 ├── MANIFEST_SCHEMA.json             # JSON Schema for manifest.toml — LLM-validatable
 ├── AUTHORING.md                     # practical guide (link target)
-├── ios_healthkit/
+├── ios_ingest/                      # one binary for all paired-iPhone streams
 │   ├── manifest.toml
-│   ├── main.rs
-│   └── transform.rs
+│   ├── main.rs                       # dispatches on the body `stream` field
+│   ├── healthkit.rs                  # one module per stream
+│   ├── location.rs
+│   └── …
 ├── morning_examen/
 │   └── manifest.toml                # agent-only; no binary
 ├── echo_app/
@@ -134,7 +136,7 @@ child reads stdin, does work, writes stdout = ActionOutput JSON, exits 0
 runner reads stdout, completes run row with summary
 ```
 
-`command = [...]` is the argv to spawn. A bare `command[0]` (e.g. `["ios_healthkit"]`) resolves to a Cargo-built action binary under `target/{debug,release}/`; anything else runs via `PATH` (e.g. `["python3", "main.py"]`, `["node", "server.js"]`). The contract is language-agnostic.
+`command = [...]` is the argv to spawn. A bare `command[0]` (e.g. `["ios_ingest"]`) resolves to a Cargo-built action binary under `target/{debug,release}/`; anything else runs via `PATH` (e.g. `["python3", "main.py"]`, `["node", "server.js"]`). The contract is language-agnostic.
 
 ### `service` runtime
 

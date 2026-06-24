@@ -24,11 +24,19 @@
 	// Shared state
 	let error = $state<string | null>(null);
 
-	// iOS QR pairing state — qrSvg is the server-rendered SVG that encodes the
-	// `/pair#t=<token>` URL the iOS app scans (the box renders it so the token
-	// never touches a third-party QR service).
+	// iOS QR pairing state. The iOS QR is a desktop-RELAYED provision: this
+	// already-paired session asks the box (over its tunnel) to provision the new
+	// device — box generates its WG keypair — and renders the COMPLETE bundle as
+	// `qrSvg`. The phone scans once and dials the box directly afterward. The QR
+	// carries secrets (bearer + private key), so it has a short TTL and the
+	// provisioned device is revoked if the user cancels/regenerates before the
+	// phone comes online. (The Mac flow below is unchanged: token → consume.)
 	let qrSvg = $state<string>("");
 	let qrSourceId = $state<string>("");
+	/** The provisioned device's id — polled for liveness; revoked on cancel. */
+	let provisionedDeviceId = $state<string>("");
+	/** Shorter TTL than the Mac token flow: the QR shows secrets on screen. */
+	const IOS_QR_TTL_SECS = 120;
 	// Shared polling state (used by both iOS QR and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
 	let isInitiating = $state(false);
@@ -61,14 +69,13 @@
 		error = null;
 
 		try {
-			const response = await api.initiatePairing(deviceType, displayName);
-			pairingData = response;
-			qrSourceId = response.source_id;
+			const response = await api.pairProvision("mobile_app");
+			provisionedDeviceId = response.device_id;
+			qrSourceId = response.device_id;
 			qrSvg = response.qr_svg ?? "";
 			startPolling();
-			// Client-side 10 minute timer (server enforces actual expiry)
-			timeRemaining = 600;
-			startTimer();
+			// Shorter window than the Mac flow — the QR shows secrets on screen.
+			startTimer(IOS_QR_TTL_SECS);
 		} catch (err) {
 			error = err instanceof Error ? err.message : "Failed to initiate pairing";
 		} finally {
@@ -76,13 +83,19 @@
 		}
 	}
 
-	function retryQRPairing() {
+	async function retryQRPairing() {
+		// Regenerating shows a fresh secret-bearing QR, so the previously
+		// provisioned (unclaimed) device must be revoked FIRST — await it so the
+		// old QR's credential is dead before a new one is displayed (otherwise the
+		// stale QR stays scannable until the in-flight revoke lands).
+		const stale = provisionedDeviceId;
+		provisionedDeviceId = "";
 		hasTimedOut = false;
 		pairingData = null;
 		qrSourceId = "";
 		qrSvg = "";
 		error = null;
-		timeRemaining = 600;
+		if (stale) await api.deleteDevice(stale);
 		initiateQRPairing();
 	}
 
@@ -108,23 +121,39 @@
 		hasTimedOut = false;
 		pairingData = null;
 		error = null;
-		timeRemaining = 600;
 		initiateMacPairing();
 	}
 
 	// --- Shared Polling & Timer ---
 
 	async function checkPairingStatus() {
-		const sourceId = pairingData?.source_id || qrSourceId;
-		if (!sourceId) return;
-
 		try {
-			const status = await api.getPairingStatus(sourceId);
+			// iOS: relayed provision — the device row already exists; we poll its
+			// liveness (tunnel up) rather than a token-redemption status.
+			if (deviceType === "ios") {
+				if (!provisionedDeviceId) return;
+				const { online } = await api.pairProvisionStatus(provisionedDeviceId);
+				if (online) {
+					stopPolling();
+					stopTimer();
+					pairingSucceeded = true;
+					const id = provisionedDeviceId;
+					resetLocalState();
+					onSuccess(id);
+					onClose();
+				}
+				return;
+			}
 
+			// Mac: token → consume lifecycle.
+			const sourceId = pairingData?.source_id || qrSourceId;
+			if (!sourceId) return;
+			const status = await api.getPairingStatus(sourceId);
 			if (status.status === "active") {
 				stopPolling();
 				stopTimer();
 				pairingSucceeded = true;
+				resetLocalState();
 				onSuccess(sourceId);
 				onClose();
 			} else if (status.status === "revoked") {
@@ -152,11 +181,13 @@
 		isPolling = false;
 	}
 
-	function startTimer() {
+	function startTimer(seconds = 600) {
 		if (timerInterval) return;
 
-		// Client-side 10 minute timer (server enforces actual expiry)
-		timeRemaining = 600;
+		// Caller picks the window: the iOS QR carries secrets so it's short
+		// (IOS_QR_TTL_SECS); the Mac token uses the default. Previously this
+		// hard-coded 600 and silently overwrote the iOS preset.
+		timeRemaining = seconds;
 
 		timerInterval = setInterval(() => {
 			timeRemaining--;
@@ -164,6 +195,9 @@
 				hasTimedOut = true;
 				stopTimer();
 				stopPolling();
+				// Don't leave the displayed secret/token live just because the
+				// user walked away — revoke/deny it now (server TTL is the backstop).
+				cleanupPending();
 			}
 		}, 1000);
 	}
@@ -181,19 +215,38 @@
 		return `${mins}:${secs.toString().padStart(2, "0")}`;
 	}
 
+	/** Clear iOS/Mac flow state so the next open starts a fresh pairing. */
+	function resetLocalState() {
+		provisionedDeviceId = "";
+		qrSourceId = "";
+		qrSvg = "";
+		pairingData = null;
+		hasTimedOut = false;
+		error = null;
+	}
+
+	/** Revoke/deny the outstanding (unclaimed) pairing artifact. Called when the
+	 *  user cancels AND when the QR times out — in both cases a displayed
+	 *  secret-bearing credential (iOS) or pending token (Mac) must not stay live.
+	 *  Idempotent + best-effort; the server-side claim deadline is the backstop. */
+	function cleanupPending() {
+		if (pairingSucceeded) return;
+		if (deviceType === "ios") {
+			// iOS relayed-provision created a live credential whose bundle QR (with
+			// secrets) was shown — revoke it so it can't be claimed later.
+			if (provisionedDeviceId) void api.deleteDevice(provisionedDeviceId);
+		} else {
+			// Mac: deny the pending token (no credential exists until consume).
+			const pendingId = pairingData?.source_id || qrSourceId;
+			if (pendingId) void api.pairDeny(pendingId);
+		}
+	}
+
 	function handleClose() {
 		stopPolling();
 		stopTimer();
-
-		// Cancel mid-flow: deny the pending pair token so it can't be redeemed
-		// later. No credential exists yet (the new device creates it at
-		// `/api/pair/consume`), so we deny the token rather than revoke a row.
-		// No-op server-side if the token was already consumed/expired.
-		const pendingId = pairingData?.source_id || qrSourceId;
-		if (pendingId && !pairingSucceeded) {
-			void api.pairDeny(pendingId);
-		}
-
+		cleanupPending();
+		resetLocalState();
 		onClose();
 	}
 
