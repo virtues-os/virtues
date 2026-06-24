@@ -10,7 +10,7 @@
 //!   - Last applied schema migration ID
 //!   - Action subprocess health (running / errored / stopped per action)
 //!   - Last 10 `app_auth_event` rows (paired / revoked / sudo events)
-//!   - Voucher state (subscription active? bearer expiry?)
+//!   - Subscription link state (api_key present? account linked?)
 //!   - Wallet snapshot (read locally — full wallet balance lives in
 //!     virtues-api but we expose what we know from the last 402/200)
 //!   - BYO key status (provider + model — never the key itself)

@@ -898,9 +898,8 @@ async fn detect_ontology_presence(
 async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
     let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
 
-    // Bearer-auth path: the device's own bearer funds this background call,
-    // auto-renewing via the voucher dance on a 402 bearer_expired.
-    // System purpose — debits the OS reserve, not the user's chat budget.
+    // api_key-auth path: the device's own key funds this background call,
+    // with one auto-top-up-and-retry on a 402 wallet_empty.
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System);
     let response = client

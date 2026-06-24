@@ -8,7 +8,7 @@
 //!   box  POST /init/start            -> { device_code, user_code, verification_uri… }
 //!   user opens  GET /link?code=…     -> 302 to Stripe Checkout
 //!   Stripe success -> GET /init/done -> finalize: mint api_key, mark ready
-//!   box  POST /init/poll {device_code} (loop) -> { status:"ready", billing_token }
+//!   box  POST /init/poll {device_code} (loop) -> { status:"ready", api_key }
 //! ```
 //!
 //! The `device_code` (secret) is the poll capability; the `user_code` (short,
@@ -367,7 +367,8 @@ fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Respons
 //   user opens magic link
 //        └→ GET /init/login/verify?token=…
 //           - hash + lookup login_attempt
-//           - mark used; flip the bound device_link → status='ready' with billing_token
+//           - mark used; flip the bound device_link → status='ready' with the api_key
+//             (carried in the legacy-named `billing_token` transport column)
 //           - render success HTML ("return to your terminal")
 //   box  POST /init/poll {device_code}
 //        └→ existing handler picks up status='ready' + api_key

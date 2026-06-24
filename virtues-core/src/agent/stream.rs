@@ -12,9 +12,9 @@ use super::protocol::{AgentEvent, StepReason};
 
 /// Configuration for the LLM client.
 ///
-/// Streams through the device bearer (`BearerClient`), which auto-renews the
-/// monthly voucher when expired. The client itself is cheap to clone (it
-/// wraps an `Arc`-backed `reqwest::Client` + `PgPool`).
+/// Streams through the device api_key (`BearerClient`); a 402 on an empty
+/// wallet triggers one auto-top-up-and-retry. The client itself is cheap to
+/// clone (it wraps an `Arc`-backed `reqwest::Client` + `PgPool`).
 #[derive(Debug, Clone)]
 pub struct LlmConfig {
     pub client: crate::virtues_api::client::BearerClient,
@@ -97,8 +97,8 @@ where
         body["thought_signature"] = serde_json::json!(sig);
     }
 
-    // Stream through the device bearer. Renewal (if the monthly voucher has
-    // expired) happens before the body opens; mid-stream renewal is impossible.
+    // Stream through the device api_key. Any auto-top-up-and-retry on a 402
+    // happens before the body opens; mid-stream top-up is impossible.
     let response = match config
         .client
         .stream("/v1/ai/chat/completions", &body)
