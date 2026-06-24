@@ -20,6 +20,9 @@ pub enum SearchType {
     Auto,
     Keyword,
     Neural,
+    /// Comprehensive multi-step search: query expansion + an agent per search.
+    /// Higher cost/latency — escalation tier for hard or thin-result queries.
+    Deep,
 }
 
 /// Category filter for search results
@@ -75,6 +78,11 @@ pub struct SearchRequest {
     /// Filter results published before this date (ISO 8601)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_published_date: Option<String>,
+
+    /// Freshness control: max age of a cached result before Exa re-crawls live.
+    /// `1` ≈ near-real-time (news/sports/odds), `24` daily; omit for stable info.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_age_hours: Option<u32>,
 }
 
 /// A single search result
@@ -128,6 +136,8 @@ struct ExaSearchRequest {
     start_published_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     end_published_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_age_hours: Option<u32>,
     contents: ExaContents,
 }
 
@@ -183,6 +193,7 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
         SearchType::Auto => "auto",
         SearchType::Keyword => "keyword",
         SearchType::Neural => "neural",
+        SearchType::Deep => "deep",
     };
 
     let exa_request = ExaSearchRequest {
@@ -206,6 +217,7 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
         exclude_domains: request.exclude_domains,
         start_published_date: request.start_published_date,
         end_published_date: request.end_published_date,
+        max_age_hours: request.max_age_hours,
         contents: ExaContents {
             text: ExaTextOptions {
                 max_characters: 1000,
@@ -280,6 +292,7 @@ mod tests {
             exclude_domains: None,
             start_published_date: None,
             end_published_date: None,
+            max_age_hours: None,
         };
         let json = serde_json::to_string(&request).unwrap();
         assert!(json.contains("test query"));
