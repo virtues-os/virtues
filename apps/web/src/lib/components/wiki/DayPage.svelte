@@ -274,6 +274,58 @@
 		},
 	];
 
+	// Filter chips: one per ontology present that day. Continuous streams
+	// (heart rate, steps, HRV) are high-frequency, so they default OFF — the
+	// person toggles them on, or filters discrete ontologies off, per chip.
+	type SourceTypeChip = {
+		type: string;
+		name: string;
+		count: number;
+		continuous: boolean;
+	};
+
+	const sourceTypeChips = $derived.by<SourceTypeChip[]>(() => {
+		const map = new Map<string, SourceTypeChip>();
+		for (const s of dataSources) {
+			const existing = map.get(s.source_type);
+			if (existing) existing.count++;
+			else
+				map.set(s.source_type, {
+					type: s.source_type,
+					name: getOntologyName(s.source_type),
+					count: 1,
+					continuous: s.continuous,
+				});
+		}
+		return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+	});
+
+	// Which ontology types are currently shown. Re-defaults whenever the day's
+	// sources change: discrete on, continuous off.
+	let activeSourceTypes = $state<Set<string>>(new Set());
+	$effect(() => {
+		const next = new Set<string>();
+		for (const chip of sourceTypeChips) if (!chip.continuous) next.add(chip.type);
+		activeSourceTypes = next;
+	});
+
+	function toggleSourceType(type: string) {
+		const next = new Set(activeSourceTypes);
+		if (next.has(type)) next.delete(type);
+		else next.add(type);
+		activeSourceTypes = next;
+	}
+
+	const visibleSourceRows = $derived(
+		sourceRows.filter((r) => activeSourceTypes.has(r.source_type)),
+	);
+
+	const sourcesEmptyMessage = $derived(
+		dataSources.length === 0
+			? "No data points recorded for this day."
+			: "No data points match the active filters.",
+	);
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Events (timeline)
 	// ─────────────────────────────────────────────────────────────────────────
@@ -406,7 +458,7 @@
 		if (hasAnyContent) h.push({ id: "writing", text: "Your Writing", level: 2 });
 		if (showChats) h.push({ id: "chats", text: "AI Chats", level: 2 });
 		if (showEntities) h.push({ id: "entities", text: "Entities", level: 2 });
-		if (showSources) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
+		if (hasAnyContent) h.push({ id: "ontologies", text: "Data Ontologies", level: 2 });
 		if (hasAnyContent) h.push({ id: "metadata", text: "Metadata", level: 3 });
 		return h;
 	});
@@ -565,25 +617,39 @@
 						</section>
 					{/if}
 
-					<!-- Ontologies: one chronological table -->
-					{#if showSources}
-						<section class="section" id="ontologies">
-							<h2 class="section-title">Data Ontologies</h2>
-							<div class="sources-table-wrapper">
-								<UniversalDataGrid
-									items={sourceRows}
-									columns={sourceColumns}
-									entityType="day-sources"
-									loading={sourcesLoading}
-									emptyIcon="ri:database-2-line"
-									emptyMessage="No source data"
-									loadingMessage="Loading sources..."
-									searchPlaceholder="Filter sources..."
-									pageSize={8}
-								/>
+					<!-- Ontologies: one chronological table of every data point -->
+					<section class="section" id="ontologies">
+						<h2 class="section-title">Data Ontologies</h2>
+						{#if sourceTypeChips.length > 0}
+							<div class="source-filters" role="group" aria-label="Filter data points by ontology">
+								{#each sourceTypeChips as chip (chip.type)}
+									<button
+										type="button"
+										class="source-chip"
+										class:active={activeSourceTypes.has(chip.type)}
+										aria-pressed={activeSourceTypes.has(chip.type)}
+										onclick={() => toggleSourceType(chip.type)}
+									>
+										{chip.name}
+										<span class="source-chip-count">{chip.count}</span>
+									</button>
+								{/each}
 							</div>
-						</section>
-					{/if}
+						{/if}
+						<div class="sources-table-wrapper">
+							<UniversalDataGrid
+								items={visibleSourceRows}
+								columns={sourceColumns}
+								entityType="day-sources"
+								loading={sourcesLoading}
+								emptyIcon="ri:database-2-line"
+								emptyMessage={sourcesEmptyMessage}
+								loadingMessage="Loading sources..."
+								searchPlaceholder="Filter sources..."
+								pageSize={8}
+							/>
+						</div>
+					</section>
 
 					<!-- Metadata: audit trail + ambient day context -->
 					<section class="section" id="metadata">
@@ -985,6 +1051,52 @@
 	/* Sources table */
 	.sources-table-wrapper {
 		margin: 0 -2rem;
+	}
+
+	/* Ontology filter chips */
+	.source-filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.375rem;
+		margin-bottom: 0.875rem;
+	}
+
+	.source-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.25rem 0.625rem;
+		font-size: 0.75rem;
+		font-weight: 500;
+		line-height: 1.4;
+		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		border-radius: 9999px;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		opacity: 0.6;
+		transition:
+			opacity 0.12s ease,
+			background 0.12s ease,
+			border-color 0.12s ease,
+			color 0.12s ease;
+	}
+
+	.source-chip:hover {
+		opacity: 0.9;
+	}
+
+	.source-chip.active {
+		opacity: 1;
+		color: var(--color-primary);
+		border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	}
+
+	.source-chip-count {
+		font-variant-numeric: tabular-nums;
+		font-size: 0.6875rem;
+		opacity: 0.75;
 	}
 
 	/* Metadata grid */

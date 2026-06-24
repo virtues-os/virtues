@@ -32,6 +32,18 @@ pub enum WgSupport {
 pub fn kernel_wg_supported() -> WgSupport {
     use defguard_wireguard_rs::{Kernel, WGApi, WireguardInterfaceApi};
 
+    // Creating an interface needs NET_ADMIN (effectively root). Unprivileged, the
+    // create fails with EPERM — which says nothing about whether the kernel has
+    // WireGuard. Decide that *here*, from euid, rather than from the error: in
+    // practice defguard's returned error doesn't reliably carry the word
+    // "permitted" (it logs that internally but hands back a coarser variant), so
+    // the string match below mislabeled an unprivileged EPERM as "missing" and
+    // `virtues doctor` cried `✗ kernel support missing` when run without sudo.
+    // SAFETY: `geteuid` takes no args, has no preconditions, and can't fail.
+    if unsafe { libc::geteuid() } != 0 {
+        return WgSupport::Unknown;
+    }
+
     const PROBE_IF: &str = "vwgprobe0";
 
     let mut api = match WGApi::<Kernel>::new(PROBE_IF.to_string()) {

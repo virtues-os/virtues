@@ -373,7 +373,7 @@ async fn build_health_snapshot(
         r#"
         SELECT MIN(bpm), MAX(bpm), ROUND(AVG(bpm)), COUNT(*)
         FROM data_health_heart_rate
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -397,7 +397,7 @@ async fn build_health_snapshot(
         r#"
         SELECT SUM(step_count)
         FROM data_health_steps
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
         "#,
     )
     .bind(start_str)
@@ -435,7 +435,7 @@ async fn build_messages_section(
         r#"
         SELECT from_name, body, channel, timestamp
         FROM data_communication_message
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
         ORDER BY timestamp ASC
         LIMIT 30
         "#,
@@ -502,7 +502,7 @@ async fn build_transcription_section(
         r#"
         SELECT text, title, start_time
         FROM data_communication_transcription
-        WHERE start_time >= $1 AND start_time <= $2
+        WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz
         ORDER BY start_time ASC
         LIMIT 20
         "#,
@@ -569,7 +569,7 @@ async fn build_app_usage_section(
                    EXTRACT(EPOCH FROM (end_time - start_time))
                ) AS BIGINT) as total_seconds
         FROM data_activity_app_usage
-        WHERE start_time >= $1 AND start_time <= $2
+        WHERE start_time >= $1::timestamptz AND start_time <= $2::timestamptz
           AND app_name IS NOT NULL
         GROUP BY app_name
         ORDER BY total_seconds DESC
@@ -620,7 +620,7 @@ async fn build_web_browsing_section(
         r#"
         SELECT page_title, url, visit_duration_seconds
         FROM data_activity_web_browsing
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
           AND page_title IS NOT NULL
         ORDER BY visit_duration_seconds DESC
         LIMIT 10
@@ -682,7 +682,7 @@ async fn build_content_section(
         r#"
         SELECT title, document_type
         FROM data_content_document
-        WHERE created_time >= $1 AND created_time <= $2
+        WHERE created_time >= $1::timestamptz AND created_time <= $2::timestamptz
           AND title IS NOT NULL
         ORDER BY created_time ASC
         LIMIT 10
@@ -711,7 +711,7 @@ async fn build_content_section(
         SELECT conversation_id, model,
                MIN(CASE WHEN role = 'user' THEN content END) as first_user_msg
         FROM data_content_conversation
-        WHERE timestamp >= $1 AND timestamp <= $2
+        WHERE timestamp >= $1::timestamptz AND timestamp <= $2::timestamptz
         GROUP BY conversation_id
         ORDER BY MIN(timestamp) ASC
         LIMIT 10
@@ -764,9 +764,9 @@ async fn build_chat_section(
         SELECT c.title, c.message_count,
                (SELECT content FROM app_chat_messages
                 WHERE chat_id = c.id AND role = 'user'
-                ORDER BY rowid ASC LIMIT 1) as first_msg
+                ORDER BY sequence_num ASC LIMIT 1) as first_msg
         FROM app_chats c
-        WHERE c.created_at >= $1 AND c.created_at <= $2
+        WHERE c.created_at >= $1::timestamptz AND c.created_at <= $2::timestamptz
         ORDER BY c.created_at ASC
         LIMIT 10
         "#,
@@ -818,9 +818,9 @@ async fn build_page_section(
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT title,
-               CASE WHEN created_at >= $1 AND created_at <= $2 THEN 'created' ELSE 'edited' END as action
+               CASE WHEN created_at >= $1::timestamptz AND created_at <= $2::timestamptz THEN 'created' ELSE 'edited' END as action
         FROM app_pages
-        WHERE updated_at >= $1 AND updated_at <= $2
+        WHERE updated_at >= $1::timestamptz AND updated_at <= $2::timestamptz
         ORDER BY updated_at ASC
         LIMIT 15
         "#,
@@ -872,7 +872,7 @@ async fn detect_ontology_presence(
         let ts_col = ont.timestamp_column;
         let table = ont.table_name;
         let query = format!(
-            "SELECT COUNT(*) as cnt FROM {} WHERE {} >= $1 AND {} <= $2 LIMIT 1",
+            "SELECT COUNT(*) as cnt FROM {} WHERE {} >= $1::timestamptz AND {} <= $2::timestamptz LIMIT 1",
             table, ts_col, ts_col
         );
 
@@ -1134,7 +1134,7 @@ async fn extract_event_location(pool: &PgPool, start: &str, end: &str) -> Option
           AND er.source_id = v.id \
           AND er.entity_type = 'place' \
          JOIN wiki_places p ON p.id = er.entity_id \
-         WHERE v.arrival_time >= $1 AND v.arrival_time <= $2 \
+         WHERE v.arrival_time >= $1::timestamptz AND v.arrival_time <= $2::timestamptz \
          ORDER BY v.duration_minutes DESC LIMIT 1",
     )
     .bind(start)

@@ -4,7 +4,7 @@
 //! `data_health_sleep` records. Sleep belongs to the day you wake up on.
 //! Called as a deterministic pre-step in the EOD maintenance flow.
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use sqlx::PgPool;
 
 /// Resolve sleep events for a date and the day before it.
@@ -31,8 +31,8 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
     let sleep_row: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"SELECT id, start_time, end_time, duration_minutes
            FROM data_health_sleep
-           WHERE end_time >= $1 || 'T00:00:00Z'
-             AND end_time < $2 || 'T00:00:00Z'
+           WHERE end_time >= ($1 || 'T00:00:00Z')::timestamptz
+             AND end_time < ($2 || 'T00:00:00Z')::timestamptz
            ORDER BY end_time DESC LIMIT 1"#,
     )
     .bind(&date_str)
@@ -47,21 +47,29 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         None => return, // No sleep data for this date
     };
 
-    let sleep_start: String = sleep_row.try_get("start_time").unwrap_or_default();
-    let sleep_end: String = sleep_row.try_get("end_time").unwrap_or_default();
+    // `start_time`/`end_time` are TIMESTAMPTZ — decode them as DateTime<Utc>,
+    // not String (a String decode silently fails → empty string → garbage).
+    let sleep_start: DateTime<Utc> = match sleep_row.try_get("start_time") {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let sleep_end: DateTime<Utc> = match sleep_row.try_get("end_time") {
+        Ok(v) => v,
+        Err(_) => return,
+    };
     let duration_mins: Option<i64> = sleep_row.try_get("duration_minutes").ok();
 
-    // Clamp start_time to midnight of this date (the day page's boundary)
-    let day_midnight = format!("{}T00:00:00Z", date_str);
+    // Clamp start_time to UTC midnight of this date (the day page's boundary).
+    let day_midnight: DateTime<Utc> = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let event_start = if sleep_start < day_midnight {
         day_midnight
     } else {
-        sleep_start.clone()
+        sleep_start
     };
 
     // Get day_id
     let day_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM wiki_days WHERE date = $1",
+        "SELECT id FROM wiki_days WHERE date = $1::date",
     )
     .bind(&date_str)
     .fetch_optional(pool)
@@ -80,8 +88,8 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
            FROM data_health_heart_rate
            WHERE timestamp >= $1 AND timestamp < $2"#,
     )
-    .bind(&sleep_start)
-    .bind(&sleep_end)
+    .bind(sleep_start)
+    .bind(sleep_end)
     .fetch_optional(pool)
     .await
     .ok()
@@ -108,8 +116,8 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
                SET start_time = $1, end_time = $2, avg_hr = $3, event_summary = $4
                WHERE id = $5"#,
         )
-        .bind(&event_start)
-        .bind(&sleep_end)
+        .bind(event_start)
+        .bind(sleep_end)
         .bind(avg_hr)
         .bind(&summary)
         .bind(&event_id)
@@ -130,8 +138,8 @@ async fn resolve_sleep_for_date(pool: &PgPool, date: NaiveDate) {
         )
         .bind(&event_id)
         .bind(&day_id)
-        .bind(&event_start)
-        .bind(&sleep_end)
+        .bind(event_start)
+        .bind(sleep_end)
         .bind(&summary)
         .bind(avg_hr)
         .execute(pool)

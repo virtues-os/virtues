@@ -6,6 +6,7 @@
 	Renders nothing-but-the-header affordance when there are no rooms yet.
 -->
 <script lang="ts">
+	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -15,17 +16,57 @@
 
 	const spaces = $derived(spaceStore.spaces);
 
+	// Inline create flow — `prompt()` is a no-op in the Tauri/WKWebView shell, so
+	// we draft the name with an in-sidebar input instead.
+	let drafting = $state(false);
+	let draftName = $state('');
+	let saving = $state(false);
+	let inputEl = $state<HTMLInputElement | null>(null);
+
+	onMount(() => {
+		// The sidebar owns its data — don't rely on a chat/list view mounting first.
+		spaceStore.load();
+	});
+
 	function openList() {
 		windowShellStore.openTabFromRoute('/spaces');
 	}
 	function open(id: string) {
 		windowShellStore.openTabFromRoute(`/space/${id}`);
 	}
-	async function create() {
-		const name = prompt('Name your Space');
-		if (!name?.trim()) return;
-		const space = await spaceStore.create(name.trim());
-		if (space) open(space.id);
+	async function startDraft() {
+		drafting = true;
+		draftName = '';
+		await tick();
+		inputEl?.focus();
+	}
+	function cancelDraft() {
+		drafting = false;
+		draftName = '';
+	}
+	async function commitDraft() {
+		const name = draftName.trim();
+		if (!name || saving) {
+			if (!name) cancelDraft();
+			return;
+		}
+		saving = true;
+		try {
+			const space = await spaceStore.create(name);
+			cancelDraft();
+			if (space) open(space.id);
+		} finally {
+			saving = false;
+		}
+	}
+	function onDraftKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			commitDraft();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelDraft();
+		}
 	}
 	function menu(e: MouseEvent, id: string, name: string) {
 		e.preventDefault();
@@ -45,13 +86,28 @@
 	{#if !collapsed}
 		<div class="section-header">
 			<button class="header-label" onclick={openList} title="All Spaces">Spaces</button>
-			<button class="header-add" onclick={create} title="New Space"><Icon icon="ri:add-line" width="14" /></button>
+			<button class="header-add" onclick={startDraft} title="New Space"><Icon icon="ri:add-line" width="14" /></button>
+		</div>
+	{/if}
+
+	{#if drafting && !collapsed}
+		<div class="draft-row">
+			<Icon icon="ri:layout-masonry-line" width="14" />
+			<input
+				bind:this={inputEl}
+				bind:value={draftName}
+				class="draft-input"
+				placeholder="Name your Space"
+				disabled={saving}
+				onkeydown={onDraftKeydown}
+				onblur={commitDraft}
+			/>
 		</div>
 	{/if}
 
 	{#if spaces.length === 0}
-		{#if !collapsed}
-			<button class="empty-row" onclick={create}>
+		{#if !collapsed && !drafting}
+			<button class="empty-row" onclick={startDraft}>
 				<Icon icon="ri:add-circle-line" width="14" />
 				<span>New Space</span>
 			</button>
@@ -124,4 +180,15 @@
 		cursor: pointer; font: inherit; font-size: 0.8125rem; color: var(--color-foreground-subtle, #9ca3af); text-align: left;
 	}
 	.empty-row:hover { background: var(--color-background-hover, #f3f4f6); color: var(--color-foreground); }
+
+	.draft-row {
+		display: flex; align-items: center; gap: 0.5rem; width: 100%;
+		padding: 0.3125rem 0.5rem; color: var(--color-foreground-subtle, #9ca3af);
+	}
+	.draft-input {
+		flex: 1; min-width: 0; border: none; background: transparent; padding: 0;
+		font: inherit; font-size: 0.8125rem; color: var(--color-foreground, inherit); outline: none;
+	}
+	.draft-input::placeholder { color: var(--color-foreground-subtle, #9ca3af); }
+	.draft-input:disabled { opacity: 0.6; }
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { spaceStore } from '$lib/stores/space.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -7,6 +7,10 @@
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
 
 	let creating = $state(false);
+	// Inline draft — `prompt()` is a no-op in the Tauri/WKWebView shell.
+	let drafting = $state(false);
+	let draftName = $state('');
+	let inputEl = $state<HTMLInputElement | null>(null);
 
 	onMount(() => {
 		spaceStore.load();
@@ -18,15 +22,38 @@
 		windowShellStore.openTabFromRoute(`/space/${id}`);
 	}
 
-	async function createSpace() {
-		const name = prompt('Name your Space');
-		if (!name?.trim() || creating) return;
+	async function startDraft() {
+		drafting = true;
+		draftName = '';
+		await tick();
+		inputEl?.focus();
+	}
+	function cancelDraft() {
+		drafting = false;
+		draftName = '';
+	}
+	async function commitDraft() {
+		const name = draftName.trim();
+		if (!name || creating) {
+			if (!name) cancelDraft();
+			return;
+		}
 		creating = true;
 		try {
-			const space = await spaceStore.create(name.trim());
+			const space = await spaceStore.create(name);
+			cancelDraft();
 			if (space) open(space.id);
 		} finally {
 			creating = false;
+		}
+	}
+	function onDraftKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			commitDraft();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			cancelDraft();
 		}
 	}
 </script>
@@ -37,16 +64,30 @@
 			<h1>Spaces</h1>
 			<p class="sub">Rooms you return to — a project, pet, hobby, or goal. Each chat lives in one.</p>
 		</div>
-		<button class="new-btn" onclick={createSpace} disabled={creating}>
-			<Icon icon="ri:add-line" width="16" /> New Space
-		</button>
+		{#if drafting}
+			<input
+				bind:this={inputEl}
+				bind:value={draftName}
+				class="name-input"
+				placeholder="Name your Space"
+				disabled={creating}
+				onkeydown={onDraftKeydown}
+				onblur={commitDraft}
+			/>
+		{:else}
+			<button class="new-btn" onclick={startDraft} disabled={creating}>
+				<Icon icon="ri:add-line" width="16" /> New Space
+			</button>
+		{/if}
 	</header>
 
 	{#if spaces.length === 0}
 		<div class="empty">
 			<Icon icon="ri:layout-masonry-line" width="28" />
 			<p>No Spaces yet.</p>
-			<button class="new-btn ghost" onclick={createSpace}>Create your first Space</button>
+			{#if !drafting}
+				<button class="new-btn ghost" onclick={startDraft}>Create your first Space</button>
+			{/if}
 		</div>
 	{:else}
 		<div class="grid">
@@ -86,6 +127,12 @@
 	}
 	.new-btn:hover { background: var(--color-surface); }
 	.new-btn.ghost { background: transparent; margin-top: 10px; }
+	.name-input {
+		padding: 7px 12px; border: 1px solid var(--color-border); border-radius: 8px;
+		background: var(--color-surface-elevated); color: var(--color-foreground);
+		font-size: 13px; outline: none; min-width: 200px;
+	}
+	.name-input:focus { border-color: var(--color-primary, var(--color-foreground-muted)); }
 
 	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
 	.card {

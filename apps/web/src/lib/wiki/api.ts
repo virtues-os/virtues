@@ -676,6 +676,9 @@ export interface DaySourceApi {
 	timestamp: string;
 	label: string;
 	preview: string | null;
+	/** High-frequency measurement streams (heart rate, steps, HRV). Hidden by
+	 *  default on the day page behind a filter, since a day holds thousands. */
+	continuous: boolean;
 }
 
 /**

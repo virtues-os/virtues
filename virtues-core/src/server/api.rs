@@ -254,14 +254,16 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let agent: Option<String> = r.try_get("agent").unwrap_or(None);
                     let cron: Option<String> = r.try_get("cron_schedule").unwrap_or(None);
                     let enabled: bool = r.try_get("enabled").unwrap_or(false);
-                    let config_raw: String = r.try_get("config").unwrap_or_else(|_| "{}".into());
+                    // `config`/`triggers` are JSONB — decode straight to a Value
+                    // (decoding to String fails and the `unwrap_or` swallowed it,
+                    // so every action came back with empty config/triggers).
                     let config: serde_json::Value =
-                        serde_json::from_str(&config_raw).unwrap_or(serde_json::json!({}));
+                        r.try_get("config").unwrap_or_else(|_| serde_json::json!({}));
                     let condition: Option<String> = r.try_get("condition").unwrap_or(None);
-                    let triggers_raw: String =
-                        r.try_get("triggers").unwrap_or_else(|_| "[]".into());
+                    let triggers_val: serde_json::Value =
+                        r.try_get("triggers").unwrap_or_else(|_| serde_json::json!([]));
                     let triggers: Vec<String> =
-                        serde_json::from_str(&triggers_raw).unwrap_or_default();
+                        serde_json::from_value(triggers_val).unwrap_or_default();
                     let memory: Option<String> = r.try_get("memory").unwrap_or(None);
                     let credential_id: Option<String> = r.try_get("credential_id").unwrap_or(None);
                     let runtime: String = r
@@ -271,13 +273,18 @@ pub async fn list_actions_handler(State(state): State<AppState>) -> Response {
                     let command: Option<Vec<String>> = command_raw
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok());
-                    let created: String = r.try_get("created_at").unwrap_or_default();
-                    let updated: String = r.try_get("updated_at").unwrap_or_default();
+                    // TIMESTAMPTZ columns decode to DateTime<Utc>; serde emits
+                    // RFC3339 in the JSON. Reading them as String failed (empty).
+                    let created: chrono::DateTime<chrono::Utc> =
+                        r.try_get("created_at").unwrap_or_else(|_| chrono::Utc::now());
+                    let updated: chrono::DateTime<chrono::Utc> =
+                        r.try_get("updated_at").unwrap_or_else(|_| chrono::Utc::now());
 
                     let last_run_status: Option<String> =
                         r.try_get("last_run_status").unwrap_or(None);
                     let last_run = last_run_status.map(|s| {
-                        let at: Option<String> = r.try_get("last_run_at").unwrap_or(None);
+                        let at: Option<chrono::DateTime<chrono::Utc>> =
+                            r.try_get("last_run_at").unwrap_or(None);
                         let records: Option<i64> = r.try_get("last_run_records").unwrap_or(None);
                         let err: Option<String> = r.try_get("last_run_error").unwrap_or(None);
                         let sum: Option<String> = r.try_get("last_run_summary").unwrap_or(None);

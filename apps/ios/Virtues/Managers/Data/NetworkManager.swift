@@ -18,6 +18,7 @@ enum NetworkError: LocalizedError {
     case rateLimited(retryAfter: TimeInterval)  // 429 - back off, don't break circuit
     case badRequest(message: String)            // 400 - permanent fail, don't retry
     case forbidden                              // 403 - permanent fail, don't retry
+    case notProcessed(status: String)           // 2xx/409 but not a durable success - retry, keep data
     case unknown(Error)
 
     var errorDescription: String? {
@@ -40,6 +41,8 @@ enum NetworkError: LocalizedError {
             return "Bad request: \(message) (E005)"
         case .forbidden:
             return "Access forbidden (E006)"
+        case .notProcessed(let status):
+            return "Upload not processed (status: \(status)) — will retry"
         case .unknown(let error):
             return "Unknown error: \(error.localizedDescription)"
         }
@@ -82,7 +85,22 @@ class NetworkManager: ObservableObject {
 
             switch httpResponse.statusCode {
             case 200...299:
-                return try JSONDecoder().decode(UploadResponse.self, from: data)
+                let resp = try JSONDecoder().decode(UploadResponse.self, from: data)
+                // A 2xx alone does NOT mean the batch was ingested. The box
+                // returns 200 only for status "success"; any other status that
+                // somehow arrives with a 2xx (e.g. "running", or a "skipped"
+                // from an older server) means the records were NOT durably
+                // written. Treat anything but "success" as retryable so the
+                // caller keeps the data in its queue instead of deleting it.
+                guard (resp.status ?? "") == "success" else {
+                    throw NetworkError.notProcessed(status: resp.status ?? "unknown")
+                }
+                return resp
+            case 409:
+                // Box skipped the run (concurrency gate / falsy condition).
+                // The payload was not ingested — retryable, keep the data.
+                let status = (try? JSONDecoder().decode(UploadResponse.self, from: data))?.status ?? "skipped"
+                throw NetworkError.notProcessed(status: status)
             case 401:
                 throw NetworkError.invalidToken
             case 400:

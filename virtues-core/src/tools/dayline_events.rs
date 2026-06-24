@@ -80,7 +80,7 @@ async fn create_event(
 
     // Get or create the day
     let day_id: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM wiki_days WHERE date = $1",
+        "SELECT id FROM wiki_days WHERE date = $1::date",
     )
     .bind(&date_str)
     .fetch_optional(pool)
@@ -91,7 +91,7 @@ async fn create_event(
         Some(id) => id,
         None => {
             let id = format!("day_{}", date_str);
-            sqlx::query("INSERT INTO wiki_days (id, date) VALUES ($1, $2)")
+            sqlx::query("INSERT INTO wiki_days (id, date) VALUES ($1, $2::date)")
                 .bind(&id)
                 .bind(&date_str)
                 .execute(pool)
@@ -113,7 +113,7 @@ async fn create_event(
             id, day_id, start_time, end_time,
             auto_label, event_summary, topics, source_ontologies,
             agent_action
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'NEW')
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7::jsonb, $8::jsonb, 'NEW')
         "#,
     )
     .bind(&event_id)
@@ -171,23 +171,43 @@ async fn continue_event(
 
     let topics = args.get("topics");
 
-    let mut query = String::from("UPDATE wiki_events SET end_time = $1, agent_action = 'CONTINUE'");
-    let mut binds: Vec<String> = vec![end_time.to_string()];
+    // Build the SET clause with `$N` placeholders (Postgres). `start_time`/
+    // `end_time` are TIMESTAMPTZ and `topics` is JSONB, so the placeholders we
+    // bind string values to are cast; `WHERE id` takes the final placeholder.
+    let mut sets: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    let mut idx = 0u32;
+    let mut next = || {
+        idx += 1;
+        idx
+    };
+
+    sets.push(format!("end_time = ${}::timestamptz", next()));
+    binds.push(end_time.to_string());
+    sets.push("agent_action = 'CONTINUE'".to_string());
 
     if let Some(summary) = event_summary {
-        query.push_str(", event_summary = ?");
+        sets.push(format!("event_summary = ${}", next()));
         binds.push(summary.to_string());
     }
 
     if let Some(t) = topics {
         let topics_json = serde_json::to_string(t).unwrap_or_else(|_| "[]".to_string());
-        query.push_str(", topics = ?");
+        sets.push(format!("topics = ${}::jsonb", next()));
         binds.push(topics_json);
     }
 
     // Also reset novelty so it gets recomputed with the updated summary
-    query.push_str(", novelty_z = NULL, embedding = NULL");
-    query.push_str(", updated_at = now() WHERE id = $1");
+    sets.push("novelty_z = NULL".to_string());
+    sets.push("embedding = NULL".to_string());
+    sets.push("updated_at = now()".to_string());
+
+    let id_param = next();
+    let query = format!(
+        "UPDATE wiki_events SET {} WHERE id = ${}",
+        sets.join(", "),
+        id_param
+    );
     binds.push(event_id.to_string());
 
     // Build and execute the dynamic query
@@ -264,36 +284,43 @@ async fn revise_event(
 
     let mut sets: Vec<String> = vec!["agent_action = 'REVISE'".to_string()];
     let mut binds: Vec<String> = Vec::new();
+    let mut idx = 0u32;
+    let mut next = || {
+        idx += 1;
+        idx
+    };
 
     if let Some(v) = event_summary {
-        sets.push("event_summary = ?".to_string());
+        sets.push(format!("event_summary = ${}", next()));
         binds.push(v.to_string());
         // Reset novelty for recomputation
         sets.push("novelty_z = NULL".to_string());
         sets.push("embedding = NULL".to_string());
     }
     if let Some(v) = start_time {
-        sets.push("start_time = ?".to_string());
+        sets.push(format!("start_time = ${}::timestamptz", next()));
         binds.push(v.to_string());
     }
     if let Some(v) = end_time {
-        sets.push("end_time = ?".to_string());
+        sets.push(format!("end_time = ${}::timestamptz", next()));
         binds.push(v.to_string());
     }
     if let Some(v) = auto_label {
-        sets.push("auto_label = ?".to_string());
+        sets.push(format!("auto_label = ${}", next()));
         binds.push(v.to_string());
     }
     if let Some(t) = topics {
-        sets.push("topics = ?".to_string());
+        sets.push(format!("topics = ${}::jsonb", next()));
         binds.push(serde_json::to_string(t).unwrap_or_else(|_| "[]".to_string()));
     }
 
     sets.push("updated_at = now()".to_string());
 
+    let id_param = next();
     let query = format!(
-        "UPDATE wiki_events SET {} WHERE id = $1",
-        sets.join(", ")
+        "UPDATE wiki_events SET {} WHERE id = ${}",
+        sets.join(", "),
+        id_param
     );
     binds.push(event_id.to_string());
 
@@ -321,7 +348,7 @@ async fn revise_event(
         } else {
             // No time params provided — look up the event's existing start_time
             sqlx::query_scalar::<_, String>(
-                "SELECT start_time FROM wiki_events WHERE id = $1"
+                "SELECT start_time::text FROM wiki_events WHERE id = $1"
             )
             .bind(event_id)
             .fetch_optional(pool)
@@ -376,7 +403,7 @@ async fn mark_no_data(
     let prev_unknown: Option<String> = sqlx::query_scalar(
         r#"SELECT e.id FROM wiki_events e
            JOIN wiki_days d ON e.day_id = d.id
-           WHERE d.date = $1 AND e.is_unknown = TRUE AND e.end_time = $2
+           WHERE d.date = $1::date AND e.is_unknown = TRUE AND e.end_time = $2::timestamptz
            ORDER BY e.end_time DESC LIMIT 1"#,
     )
     .bind(&date_str)
@@ -387,7 +414,7 @@ async fn mark_no_data(
 
     if let Some(prev_id) = prev_unknown {
         // Extend the existing unknown event
-        sqlx::query("UPDATE wiki_events SET end_time = $1, updated_at = now() WHERE id = $2")
+        sqlx::query("UPDATE wiki_events SET end_time = $1::timestamptz, updated_at = now() WHERE id = $2")
             .bind(end_time)
             .bind(&prev_id)
             .execute(pool)
@@ -404,7 +431,7 @@ async fn mark_no_data(
     // No existing unknown event — create a new one
 
     // Get or create day
-    let day_id: Option<String> = sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1")
+    let day_id: Option<String> = sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1::date")
         .bind(&date_str)
         .fetch_optional(pool)
         .await
@@ -414,7 +441,7 @@ async fn mark_no_data(
         Some(id) => id,
         None => {
             let id = format!("day_{}", date_str);
-            sqlx::query("INSERT INTO wiki_days (id, date) VALUES ($1, $2)")
+            sqlx::query("INSERT INTO wiki_days (id, date) VALUES ($1, $2::date)")
                 .bind(&id)
                 .bind(&date_str)
                 .execute(pool)
@@ -431,7 +458,7 @@ async fn mark_no_data(
         INSERT INTO wiki_events (
             id, day_id, start_time, end_time,
             auto_label, is_unknown, agent_action
-        ) VALUES ($1, $2, $3, $4, 'Unknown', 1, 'NO_DATA')
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, 'Unknown', TRUE, 'NO_DATA')
         "#,
     )
     .bind(&event_id)

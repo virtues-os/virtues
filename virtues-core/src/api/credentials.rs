@@ -331,7 +331,7 @@ pub async fn check_pairing_status(
     credential_id: String,
 ) -> Result<PairingStatus> {
     let row: Option<(String, String)> =
-        sqlx::query_as("SELECT status, metadata FROM credentials WHERE id = $1")
+        sqlx::query_as("SELECT status, metadata::text FROM credentials WHERE id = $1")
             .bind(&credential_id)
             .fetch_optional(db)
             .await?;

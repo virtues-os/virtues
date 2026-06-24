@@ -48,6 +48,7 @@ struct DataView: View {
     @ObservedObject private var contactsManager = ContactsManager.shared
     @ObservedObject private var financeKitManager = FinanceKitManager.shared
     @ObservedObject private var eventKitManager = EventKitManager.shared
+    @ObservedObject private var uploadCoordinator = BatchUploadCoordinator.shared
 
     // Tab selection
     @State private var selectedTab: DataTab = .streams
@@ -145,8 +146,7 @@ struct DataView: View {
                         Task { await toggleLocation(enabled) }
                     },
                     onInfoTap: { showLocationInfo = true },
-                    permissionState: locationPermissionState,
-                    onPermissionTap: locationPermissionState == .denied ? openSettings : nil
+                    status: rowStatus(enabled: locationEnabled, permission: locationPermissionState, canonical: "ios_location")
                 )
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -174,8 +174,7 @@ struct DataView: View {
                         Task { await toggleAudio(enabled) }
                     },
                     onInfoTap: { showAudioInfo = true },
-                    permissionState: audioPermissionState,
-                    onPermissionTap: audioPermissionState == .denied ? openSettings : nil
+                    status: rowStatus(enabled: audioEnabled, permission: audioPermissionState, canonical: "ios_microphone")
                 )
 
                 StreamToggleRow(
@@ -188,8 +187,7 @@ struct DataView: View {
                         Task { await toggleHealthKit(enabled) }
                     },
                     onInfoTap: { showHealthKitInfo = true },
-                    permissionState: healthKitPermissionState,
-                    onPermissionTap: healthKitPermissionState == .denied ? openSettings : nil
+                    status: rowStatus(enabled: healthKitEnabled, permission: healthKitPermissionState, canonical: "ios_healthkit")
                 )
 
                 StreamToggleRow(
@@ -202,8 +200,7 @@ struct DataView: View {
                         Task { await toggleContacts(enabled) }
                     },
                     onInfoTap: { showContactsInfo = true },
-                    permissionState: contactsPermissionState,
-                    onPermissionTap: contactsPermissionState == .denied ? openSettings : nil
+                    status: rowStatus(enabled: contactsEnabled, permission: contactsPermissionState, canonical: "ios_contacts")
                 )
 
                 StreamToggleRow(
@@ -216,8 +213,7 @@ struct DataView: View {
                         Task { await toggleFinanceKit(enabled) }
                     },
                     onInfoTap: { showFinanceKitInfo = true },
-                    permissionState: financeKitPermissionState,
-                    onPermissionTap: financeKitPermissionState == .denied ? openSettings : nil
+                    status: rowStatus(enabled: financeKitEnabled, permission: financeKitPermissionState, canonical: "ios_financekit")
                 )
 
                 StreamToggleRow(
@@ -230,8 +226,7 @@ struct DataView: View {
                         Task { await toggleEventKit(enabled) }
                     },
                     onInfoTap: { showEventKitInfo = true },
-                    permissionState: eventKitPermissionState,
-                    onPermissionTap: eventKitPermissionState == .denied ? openSettings : nil
+                    status: rowStatus(enabled: eventKitEnabled, permission: eventKitPermissionState, canonical: "ios_eventkit")
                 )
 
             } header: {
@@ -338,6 +333,82 @@ struct DataView: View {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             UIApplication.shared.open(url)
         }
+    }
+
+    // MARK: - Row Status (the three signals, fused)
+
+    /// A successful send older than this — with nothing since — means the stream
+    /// has quietly stalled (e.g. uploads paused on an auth error, or the
+    /// collector stopped). Without this it would read green "Synced" forever.
+    private static let staleThreshold: TimeInterval = 15 * 60
+
+    /// Fuse the three signals into one row status: toggled on/off, permission,
+    /// and whether the last sends actually reached the box. The cascade is
+    /// deliberately ordered most-fundamental first — a permission blocker trumps
+    /// sync state, because "waiting for sync" is noise when the real problem is
+    /// a revoked permission. Reads from `BatchUploadCoordinator.streamSync`
+    /// (real upload outcome), NOT from whether the collector is running.
+    private func rowStatus(enabled: Bool, permission: PermissionState, canonical: String) -> StreamStatusInfo {
+        // Toggled off — dim dot, no status line (the toggle says it all).
+        guard enabled else {
+            return StreamStatusInfo(dotColor: .warmForegroundSubtle, icon: "", text: "",
+                                    textColor: .warmForegroundMuted, recentOutcomes: [], onTap: nil)
+        }
+
+        // 1. Permission blockers trump everything.
+        switch permission {
+        case .denied:
+            return StreamStatusInfo(dotColor: .warmError, icon: "exclamationmark.triangle.fill",
+                                    text: "Permission needed", textColor: .warmError,
+                                    recentOutcomes: [], onTap: openSettings)
+        case .partial:
+            return StreamStatusInfo(dotColor: .warmWarning, icon: "exclamationmark.circle.fill",
+                                    text: "Limited — only while app is open", textColor: .warmWarning,
+                                    recentOutcomes: [], onTap: openSettings)
+        case .undetermined:
+            return StreamStatusInfo(dotColor: .warmWarning, icon: "questionmark.circle.fill",
+                                    text: "Permission not granted yet", textColor: .warmWarning,
+                                    recentOutcomes: [], onTap: nil)
+        case .granted, .notRequired:
+            break
+        }
+
+        let state = uploadCoordinator.streamSync[canonical]
+        let outcomes = state?.recentOutcomes ?? []
+
+        // 2. A sync cycle is in flight.
+        if uploadCoordinator.isUploading {
+            return StreamStatusInfo(dotColor: .warmInfo, icon: "arrow.triangle.2.circlepath",
+                                    text: "Syncing…", textColor: .warmInfo,
+                                    recentOutcomes: outcomes, onTap: nil)
+        }
+
+        // 3. Actively failing.
+        if let state = state, state.consecutiveFailures > 0 {
+            let suffix = state.consecutiveFailures > 1 ? " (\(state.consecutiveFailures)×)" : ""
+            return StreamStatusInfo(dotColor: .warmError, icon: "exclamationmark.triangle.fill",
+                                    text: "Not reaching box\(suffix) — retrying", textColor: .warmError,
+                                    recentOutcomes: outcomes, onTap: nil)
+        }
+
+        // 4. Last send succeeded — but guard against a stalled-yet-not-failing
+        // stream masquerading as healthy.
+        if let last = state?.lastSuccess {
+            let rel = last.formatted(.relative(presentation: .named))
+            if Date().timeIntervalSince(last) > Self.staleThreshold {
+                return StreamStatusInfo(dotColor: .warmWarning, icon: "clock.badge.exclamationmark",
+                                        text: "Last reached box \(rel)", textColor: .warmWarning,
+                                        recentOutcomes: outcomes, onTap: nil)
+            }
+            return StreamStatusInfo(dotColor: .warmSuccess, icon: "checkmark.circle.fill",
+                                    text: "Synced \(rel)", textColor: .warmSuccess,
+                                    recentOutcomes: outcomes, onTap: nil)
+        }
+
+        // 5. On, permission OK, nothing sent yet.
+        return StreamStatusInfo(dotColor: .warmForegroundMuted, icon: "clock",
+                                text: "Waiting for first sync", textColor: .warmForegroundMuted,
+                                recentOutcomes: outcomes, onTap: nil)
     }
 
     // MARK: - Toggle Actions
@@ -536,6 +607,22 @@ struct LocationUpgradeBanner: View {
     }
 }
 
+// MARK: - Stream Status Info
+
+/// The fused per-row status: a leading health-dot color, an adaptive status
+/// line (icon + text + color), an optional "last X sends" outcome history, and
+/// an optional tap action (e.g. a permission line that opens Settings).
+struct StreamStatusInfo {
+    let dotColor: Color
+    let icon: String
+    let text: String
+    let textColor: Color
+    /// Recent upload outcomes (true = reached the box), newest last. Empty hides
+    /// the strip — e.g. when off or blocked on a permission.
+    let recentOutcomes: [Bool]
+    let onTap: (() -> Void)?
+}
+
 // MARK: - Stream Toggle Row
 
 struct StreamToggleRow: View {
@@ -546,18 +633,23 @@ struct StreamToggleRow: View {
     let isEnabled: Bool
     let onToggle: (Bool) -> Void
     var onInfoTap: (() -> Void)? = nil
-    var permissionState: PermissionState? = nil
-    var onPermissionTap: (() -> Void)? = nil
+    /// The three signals, fused: on/off (the toggle), permission, and delivery.
+    let status: StreamStatusInfo
 
     var body: some View {
         HStack(spacing: 12) {
-            // Icon
+            // Leading health dot — scannable as a column down the whole tab.
+            Circle()
+                .fill(status.dotColor)
+                .frame(width: 8, height: 8)
+
+            // Source icon
             Image(systemName: icon)
                 .font(.title2)
                 .foregroundColor(iconColor)
                 .frame(width: 32)
 
-            // Title and subtitle
+            // Title, subtitle, and the adaptive status line
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body)
@@ -566,11 +658,20 @@ struct StreamToggleRow: View {
                 Text(subtitle)
                     .font(.caption)
                     .foregroundColor(.warmForegroundMuted)
+
+                if !status.text.isEmpty {
+                    statusLine
+                        .padding(.top, 1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Info button + Toggle grouped together
+            // Trailing: "last X sends" strip + info button + toggle
             HStack(spacing: 8) {
+                if !status.recentOutcomes.isEmpty {
+                    RecentOutcomesStrip(outcomes: status.recentOutcomes)
+                }
+
                 if let onInfoTap = onInfoTap {
                     Button(action: {
                         Haptics.light()
@@ -595,6 +696,55 @@ struct StreamToggleRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        let content = HStack(spacing: 4) {
+            Image(systemName: status.icon)
+                .font(.caption2)
+            Text(status.text)
+                .font(.caption2)
+                .fontWeight(.medium)
+            // A chevron hints the line is actionable (e.g. opens Settings).
+            if status.onTap != nil {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+        }
+        .foregroundColor(status.textColor)
+
+        if let onTap = status.onTap {
+            Button(action: {
+                Haptics.light()
+                onTap()
+            }) {
+                content
+            }
+            .buttonStyle(PlainButtonStyle())
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - Recent Outcomes Strip
+
+/// The "last X sends" dot strip. Filled = reached the box, hollow = didn't.
+/// Makes a flapping connection visible where a single latest-state line can't.
+struct RecentOutcomesStrip: View {
+    let outcomes: [Bool]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(outcomes.enumerated()), id: \.offset) { _, reached in
+                Circle()
+                    .fill(reached ? Color.warmSuccess : Color.warmError)
+                    .frame(width: 5, height: 5)
+                    .opacity(reached ? 1.0 : 0.85)
+            }
+        }
+        .accessibilityLabel("Last \(outcomes.count) sends, \(outcomes.filter { $0 }.count) reached the box")
     }
 }
 

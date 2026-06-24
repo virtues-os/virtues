@@ -155,8 +155,15 @@ pub async fn webhook(
                 }),
             )
                 .into_response(),
+            // A skipped run did NOT durably ingest the payload (concurrency
+            // gate — a previous run still active — or a falsy condition). It
+            // must NOT look like success: a 2xx here makes the device delete
+            // the batch from its queue (silent data loss). Return a retryable
+            // 409 so the client keeps the records and resends on the next
+            // cycle. `skipped` is not a 5xx, so it never trips the device's
+            // server-error circuit breaker.
             ActionRunStatus::Skipped => (
-                StatusCode::OK,
+                StatusCode::CONFLICT,
                 Json(WebhookResponse {
                     run_id: result.run_id,
                     status: "skipped",

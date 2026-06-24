@@ -101,12 +101,12 @@ pub async fn execute(
             id, name, owner, agent, cron_schedule, enabled, config,
             condition, triggers
         )
-        VALUES ($1, $2, 'user', $3, $4, 1, $5, $6, $7)
+        VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6, $7::jsonb)
         ON CONFLICT(id) DO UPDATE SET
             name          = excluded.name,
             agent         = excluded.agent,
             cron_schedule = excluded.cron_schedule,
-            enabled       = 1,
+            enabled       = TRUE,
             config        = excluded.config,
             condition     = excluded.condition,
             triggers      = excluded.triggers,

@@ -6226,6 +6226,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "defguard_wireguard_rs",
+ "libc",
  "ring",
  "serde",
  "serde_json",

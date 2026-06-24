@@ -739,7 +739,7 @@ pub struct NarrativeIdentity {
 
 /// Get the narrative identity (singleton row, always exists).
 pub async fn get_narrative_identity(pool: &PgPool) -> Result<NarrativeIdentity> {
-    let row = sqlx::query_as::<_, (String, String, String, String)>(
+    let row = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>)>(
         "SELECT id, content, updated_at, created_at FROM wiki_narrative_identity LIMIT 1"
     )
     .fetch_one(pool)
@@ -749,12 +749,8 @@ pub async fn get_narrative_identity(pool: &PgPool) -> Result<NarrativeIdentity> 
     Ok(NarrativeIdentity {
         id: row.0,
         content: row.1,
-        updated_at: DateTime::parse_from_rfc3339(&row.2)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        created_at: DateTime::parse_from_rfc3339(&row.3)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
+        updated_at: row.2,
+        created_at: row.3,
     })
 }
 
@@ -1247,12 +1243,12 @@ async fn get_day_novelty_counts(pool: &PgPool, date_str: &str) -> Result<(i64, i
     let new_entities: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(DISTINCT r.entity_id)
            FROM wiki_entity_refs r
-           WHERE r.timestamp >= $1 || 'T00:00:00Z'
-             AND r.timestamp < $2 || 'T00:00:00Z'
+           WHERE r.timestamp >= ($1 || 'T00:00:00Z')::timestamptz
+             AND r.timestamp < ($2 || 'T00:00:00Z')::timestamptz
              AND NOT EXISTS (
                SELECT 1 FROM wiki_entity_refs r2
                WHERE r2.entity_id = r.entity_id
-                 AND r2.timestamp < $1 || 'T00:00:00Z'
+                 AND r2.timestamp < ($1 || 'T00:00:00Z')::timestamptz
              )"#,
     )
     .bind(date_str)
@@ -1536,19 +1532,19 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
 
     // Fetch entity timestamps for the day: for each event's window, the earliest
     // timestamp each entity appears in wiki_entity_refs.
-    let event_windows: Vec<(String, String, String)> = rows
+    let event_windows: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = rows
         .iter()
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
-            let start: String = row.try_get("start_time").ok()?;
-            let end: String = row.try_get("end_time").ok()?;
+            let start: DateTime<Utc> = row.try_get("start_time").ok()?;
+            let end: DateTime<Utc> = row.try_get("end_time").ok()?;
             Some((id, start, end))
         })
         .collect();
 
     let mut entity_ts_by_event: HashMap<String, serde_json::Value> = HashMap::new();
     for (event_id, start, end) in &event_windows {
-        let ref_rows: Vec<(String, String)> = sqlx::query_as(
+        let ref_rows: Vec<(String, DateTime<Utc>)> = sqlx::query_as(
             r#"
             SELECT entity_id, MIN(timestamp) as earliest
             FROM wiki_entity_refs
@@ -1558,8 +1554,8 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
             GROUP BY entity_id
             "#,
         )
-        .bind(start)
-        .bind(end)
+        .bind(*start)
+        .bind(*end)
         .fetch_all(pool)
         .await
         .unwrap_or_default();
@@ -1567,7 +1563,7 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         if !ref_rows.is_empty() {
             let map: serde_json::Map<String, serde_json::Value> = ref_rows
                 .into_iter()
-                .map(|(id, ts)| (id, serde_json::Value::String(ts)))
+                .map(|(id, ts)| (id, serde_json::Value::String(ts.to_rfc3339())))
                 .collect();
             entity_ts_by_event.insert(event_id.clone(), serde_json::Value::Object(map));
         }
@@ -1578,68 +1574,49 @@ pub async fn get_day_events(pool: &PgPool, day_id: String) -> Result<Vec<Tempora
         .filter_map(|row| {
             let id: String = row.try_get("id").ok()?;
             let day_id: String = row.try_get("day_id").ok()?;
-            let start_time: String = row.try_get("start_time").ok()?;
-            let end_time: String = row.try_get("end_time").ok()?;
-            let created_at: String = row.try_get("created_at").ok()?;
-            let updated_at: String = row.try_get("updated_at").ok()?;
+            // TIMESTAMPTZ columns decode directly into DateTime<Utc>; the prior
+            // `try_get::<String>` + parse_from_rfc3339 failed at the decode step
+            // (timestamptz is not text), so `.ok()?` dropped every row and the
+            // timeline came back empty. JSONB decodes into serde_json::Value and
+            // BOOLEAN into bool — no string round-trip, no `!= 0`.
+            let start_time: DateTime<Utc> = row.try_get("start_time").ok()?;
+            let end_time: DateTime<Utc> = row.try_get("end_time").ok()?;
+            let created_at: DateTime<Utc> = row.try_get("created_at").ok()?;
+            let updated_at: DateTime<Utc> = row.try_get("updated_at").ok()?;
             let entity_timestamps = entity_ts_by_event.get(&id).cloned();
 
             Some(TemporalEvent {
                 id,
                 day_id,
-                start_time: DateTime::parse_from_rfc3339(&start_time)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                end_time: DateTime::parse_from_rfc3339(&end_time)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                start_time,
+                end_time,
                 auto_label: row.try_get::<Option<String>, _>("auto_label").ok().flatten(),
                 auto_location: row.try_get::<Option<String>, _>("auto_location").ok().flatten(),
                 user_label: row.try_get::<Option<String>, _>("user_label").ok().flatten(),
                 user_location: row.try_get::<Option<String>, _>("user_location").ok().flatten(),
                 user_notes: row.try_get::<Option<String>, _>("user_notes").ok().flatten(),
-                source_ontologies: row
-                    .try_get::<Option<String>, _>("source_ontologies")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                is_unknown: row.try_get::<Option<i32>, _>("is_unknown").ok().flatten().map(|v| v != 0),
-                is_transit: row.try_get::<Option<i32>, _>("is_transit").ok().flatten().map(|v| v != 0),
-                is_user_added: row.try_get::<Option<i32>, _>("is_user_added").ok().flatten().map(|v| v != 0),
-                is_user_edited: row.try_get::<Option<i32>, _>("is_user_edited").ok().flatten().map(|v| v != 0),
+                source_ontologies: row.try_get::<Option<serde_json::Value>, _>("source_ontologies").ok().flatten(),
+                is_unknown: row.try_get::<Option<bool>, _>("is_unknown").ok().flatten(),
+                is_transit: row.try_get::<Option<bool>, _>("is_transit").ok().flatten(),
+                is_user_added: row.try_get::<Option<bool>, _>("is_user_added").ok().flatten(),
+                is_user_edited: row.try_get::<Option<bool>, _>("is_user_edited").ok().flatten(),
                 novelty_z: row.try_get::<Option<f64>, _>("novelty_z").ok().flatten(),
                 avg_hr: row.try_get::<Option<f64>, _>("avg_hr").ok().flatten(),
                 autonomic_z: row.try_get::<Option<f64>, _>("autonomic_z").ok().flatten(),
                 hr_z: row.try_get::<Option<f64>, _>("hr_z").ok().flatten(),
                 hrv_z: row.try_get::<Option<f64>, _>("hrv_z").ok().flatten(),
-                topics: row.try_get::<Option<String>, _>("topics")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
+                topics: row.try_get::<Option<serde_json::Value>, _>("topics").ok().flatten(),
                 event_summary: row.try_get::<Option<String>, _>("event_summary").ok().flatten(),
                 agent_action: row.try_get::<Option<String>, _>("agent_action").ok().flatten(),
-                is_sleep: row.try_get::<Option<i32>, _>("is_sleep").ok().flatten().map(|v| v != 0),
-                user_hidden: row.try_get::<Option<i32>, _>("user_hidden").ok().flatten().map(|v| v != 0),
-                user_created: row.try_get::<Option<i32>, _>("user_created").ok().flatten().map(|v| v != 0),
-                entities: row.try_get::<Option<String>, _>("entities")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                topic_novelty: row.try_get::<Option<String>, _>("topic_novelty")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
-                entity_novelty: row.try_get::<Option<String>, _>("entity_novelty")
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok()),
+                is_sleep: row.try_get::<Option<bool>, _>("is_sleep").ok().flatten(),
+                user_hidden: row.try_get::<Option<bool>, _>("user_hidden").ok().flatten(),
+                user_created: row.try_get::<Option<bool>, _>("user_created").ok().flatten(),
+                entities: row.try_get::<Option<serde_json::Value>, _>("entities").ok().flatten(),
+                topic_novelty: row.try_get::<Option<serde_json::Value>, _>("topic_novelty").ok().flatten(),
+                entity_novelty: row.try_get::<Option<serde_json::Value>, _>("entity_novelty").ok().flatten(),
                 entity_timestamps,
-                created_at: DateTime::parse_from_rfc3339(&created_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
-                updated_at: DateTime::parse_from_rfc3339(&updated_at)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(|_| Utc::now()),
+                created_at,
+                updated_at,
             })
         })
         .collect())
@@ -1676,7 +1653,7 @@ pub async fn create_temporal_event(
             id, day_id, start_time, end_time,
             auto_label, auto_location, user_label, user_location, user_notes,
             source_ontologies, is_unknown, is_transit, is_user_added, event_summary
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ) VALUES ($1, $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
         RETURNING
             id, is_user_edited, created_at, updated_at
         "#,
@@ -1702,11 +1679,11 @@ pub async fn create_temporal_event(
     let id: String = row
         .try_get("id")
         .map_err(|e| Error::Database(format!("Missing event ID: {}", e)))?;
-    let is_user_edited: Option<i32> = row.try_get("is_user_edited").ok().flatten();
-    let created_at: String = row
+    let is_user_edited: Option<bool> = row.try_get("is_user_edited").ok().flatten();
+    let created_at: DateTime<Utc> = row
         .try_get("created_at")
         .map_err(|e| Error::Database(format!("Missing created_at: {}", e)))?;
-    let updated_at: String = row
+    let updated_at: DateTime<Utc> = row
         .try_get("updated_at")
         .map_err(|e| Error::Database(format!("Missing updated_at: {}", e)))?;
 
@@ -1724,7 +1701,7 @@ pub async fn create_temporal_event(
         is_unknown: req.is_unknown,
         is_transit: req.is_transit,
         is_user_added: req.is_user_added,
-        is_user_edited: is_user_edited.map(|v| v != 0),
+        is_user_edited,
         novelty_z: None,
         avg_hr: None,
         autonomic_z: None,
@@ -1740,12 +1717,8 @@ pub async fn create_temporal_event(
         topic_novelty: None,
         entity_novelty: None,
         entity_timestamps: None,
-        created_at: DateTime::parse_from_rfc3339(&created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        updated_at: DateTime::parse_from_rfc3339(&updated_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
+        created_at,
+        updated_at,
     })
 }
 
@@ -1864,6 +1837,10 @@ pub struct DaySource {
     pub timestamp: DateTime<Utc>,
     pub label: String,
     pub preview: Option<String>,
+    /// True for high-frequency measurement streams (heart rate, steps, HRV).
+    /// The day page hides these behind a filter by default since a single day
+    /// can hold thousands of them.
+    pub continuous: bool,
 }
 
 /// Get all ontology data sources for a specific date (registry-driven).
@@ -1918,7 +1895,7 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
             format!(
                 "SELECT {id} as src_id, {ts} as src_ts, {label} as src_label, {preview} as src_preview, {st} \
                  FROM {table} t \
-                 WHERE t.{ts_col} >= $1 AND t.{ts_col} <= $2 \
+                 WHERE t.{ts_col} >= $1::timestamptz AND t.{ts_col} <= $2::timestamptz \
                  {extra} \
                  ORDER BY t.{ts_col} ASC",
                 id = cfg.id_sql,
@@ -1967,7 +1944,10 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
                 Ok(v) => v,
                 Err(_) => continue,
             };
-            let ts_str: String = match row.try_get("src_ts") {
+            // `src_ts` aliases a TIMESTAMPTZ column — decode it directly. Reading
+            // it as String (then re-parsing) failed at the decode step and
+            // `continue`d past every row, so these ontologies never appeared.
+            let ts: DateTime<Utc> = match row.try_get("src_ts") {
                 Ok(v) => v,
                 Err(_) => continue,
             };
@@ -1975,23 +1955,14 @@ pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySo
             let preview: Option<String> = row.try_get("src_preview").ok().flatten();
             let source_type: String = row.try_get("source_type_dyn").unwrap_or_else(|_| cfg.source_type.to_string());
 
-            // Parse timestamp: try RFC3339 first, fall back to "YYYY-MM-DD HH:MM:SS"
-            let ts = if let Ok(parsed) = DateTime::parse_from_rfc3339(&ts_str) {
-                parsed.with_timezone(&Utc)
-            } else if let Ok(naive) =
-                chrono::NaiveDateTime::parse_from_str(&ts_str, "%Y-%m-%d %H:%M:%S")
-            {
-                naive.and_utc()
-            } else {
-                continue;
-            };
-
             sources.push(DaySource {
                 source_type,
                 id,
                 timestamp: ts,
                 label,
                 preview,
+                continuous: ont.temporal_type
+                    == virtues_registry::ontologies::TemporalType::Continuous,
             });
         }
     }
@@ -2295,19 +2266,15 @@ pub async fn get_day_streams(pool: &PgPool, date: NaiveDate) -> Result<DayStream
                 continue;
             }
 
-            // Get timestamp
-            let ts_str: String = row.try_get("ts").unwrap_or_default();
-            let timestamp = match DateTime::parse_from_rfc3339(&ts_str) {
-                Ok(ts) => ts.with_timezone(&Utc),
+            // Get timestamp — `ts` aliases a TIMESTAMPTZ column, decode directly.
+            let timestamp: DateTime<Utc> = match row.try_get("ts") {
+                Ok(ts) => ts,
                 Err(_) => continue,
             };
 
             // Get end timestamp if present
             let end_timestamp = if ontology.end_timestamp_column.is_some() {
-                row.try_get::<String, _>("end_ts")
-                    .ok()
-                    .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
-                    .map(|ts| ts.with_timezone(&Utc))
+                row.try_get::<Option<DateTime<Utc>>, _>("end_ts").ok().flatten()
             } else {
                 None
             };
@@ -2595,13 +2562,12 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
         let role: String = row.try_get("role").unwrap_or_default();
         let content: String = row.try_get("content").unwrap_or_default();
         let provider: Option<String> = row.try_get("provider").ok();
-        let ts_str: String = match row.try_get("timestamp") {
+        // `timestamp` is a TIMESTAMPTZ column — decode directly. Reading it as
+        // String failed at decode and `continue`d past every message, so
+        // external AI conversations never showed up on the day page.
+        let ts: DateTime<Utc> = match row.try_get("timestamp") {
             Ok(v) => v,
             Err(_) => continue,
-        };
-        let ts = match parse_db_timestamp(&ts_str) {
-            Some(t) => t,
-            None => continue,
         };
 
         let entry = groups.entry(conv_id).or_insert(ExtAccum {
@@ -2647,17 +2613,6 @@ pub async fn get_day_chats(pool: &PgPool, date: NaiveDate) -> Result<Vec<DayChat
 
     chats.sort_by(|a, b| a.started_at.cmp(&b.started_at));
     Ok(chats)
-}
-
-/// Parse a timestamp stored as RFC3339 or "YYYY-MM-DD HH:MM:SS" (UTC).
-fn parse_db_timestamp(s: &str) -> Option<DateTime<Utc>> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(s) {
-        return Some(parsed.with_timezone(&Utc));
-    }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Some(naive.and_utc());
-    }
-    None
 }
 
 /// Truncate the first user message to a short, single-line title.
