@@ -19,6 +19,14 @@ pub struct WebSearchArgs {
     /// Search type: auto, keyword, neural
     #[serde(default)]
     pub search_type: Option<String>,
+    /// Escalate to comprehensive multi-step "deep" search for hard or
+    /// thin-result queries. Higher cost/latency — off by default.
+    #[serde(default)]
+    pub deep: Option<bool>,
+    /// Freshness: max age (hours) of a cached result before re-crawling live.
+    /// Use `1` for news/sports/odds/live data; omit for stable information.
+    #[serde(default)]
+    pub max_age_hours: Option<u32>,
 }
 
 /// Web search result for LLM
@@ -58,11 +66,16 @@ impl WebSearchTool {
             ));
         }
 
-        // Map search type
-        let search_type = match args.search_type.as_deref() {
-            Some("keyword") => Some(exa::SearchType::Keyword),
-            Some("neural") => Some(exa::SearchType::Neural),
-            _ => Some(exa::SearchType::Auto),
+        // Map search type. An explicit `deep: true` wins over `search_type`,
+        // since it's the escalation tier the model reaches for deliberately.
+        let search_type = if args.deep.unwrap_or(false) {
+            Some(exa::SearchType::Deep)
+        } else {
+            match args.search_type.as_deref() {
+                Some("keyword") => Some(exa::SearchType::Keyword),
+                Some("neural") => Some(exa::SearchType::Neural),
+                _ => Some(exa::SearchType::Auto),
+            }
         };
 
         // Build request
@@ -75,6 +88,7 @@ impl WebSearchTool {
             exclude_domains: None,
             start_published_date: None,
             end_published_date: None,
+            max_age_hours: args.max_age_hours,
         };
 
         // Execute search via the shared Exa client (bearer-auth + charge).

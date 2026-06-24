@@ -180,7 +180,33 @@ cargo run
 
 ## Deployment
 
-Production deployment is managed by Atlas. Images are built and pushed to GHCR by CI on every push to `main` or `staging`.
+Images are built and pushed to **ECR** by `make deploy-virtues-api` (and to GHCR by
+CI on push to `main`/`staging`). The CI `register-version` step only POSTs a version
+string to Atlas for display — **Atlas does not roll the container.** Rolling the
+running service is a manual step on the EC2 host (reached via SSM RunCommand).
+
+Environment is **not** passed inline at `docker run` time. It lives in a root-only
+env-file on the host, mirroring `atlas.env`:
+
+- prod    → `/etc/virtues/api.env`
+- staging → `/etc/virtues/api-staging.env`
+
+Both containers run with `--network host` (prod on `:9002`, staging on `:9003`), so
+the old container must be stopped before the new one can bind. Canonical roll:
+
+```bash
+# on the EC2 host, as root (via: aws ssm start-session / RunShellScript)
+img=<ECR repo>/virtues-api:latest
+docker pull "$img"
+docker rm -f virtues-api
+docker run -d --name virtues-api --network host --restart unless-stopped \
+  --env-file /etc/virtues/api.env "$img"
+docker logs --tail 5 virtues-api    # expect: "External services: Exa=true" + "listening on 0.0.0.0:9002"
+```
+
+To add or change a secret (e.g. `EXA_API_KEY`), edit the env-file and re-run the
+roll above — the file is the durable source of truth, so the value survives the next
+image roll. Keep a timestamped `.bak` as `atlas.env` does.
 
 ## License
 

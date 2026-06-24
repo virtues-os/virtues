@@ -61,6 +61,14 @@ pub fn apply_markup(real_micros: i64) -> i64 {
     real_micros.saturating_mul(10_000 + bp) / 10_000
 }
 
+/// Convert a USD float (as upstreams report it — e.g. Exa's `costDollars.total`,
+/// the AI gateway's `usage.cost`) into integer micros. Shared so every paid
+/// proxy resolves real cost the same way before `charge`/`settle`.
+#[inline]
+pub fn usd_to_micros(usd: f64) -> i64 {
+    (usd * 1_000_000.0).round() as i64
+}
+
 /// Resolved account, carried by bearer-auth on every gated request.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Account {

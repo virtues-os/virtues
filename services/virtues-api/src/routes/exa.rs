@@ -1,22 +1,37 @@
-//! Exa (web search) via bearer-auth + entitlement::charge().
+//! Exa (web search) via bearer-auth + post-paid settlement.
+//!
+//! Cost model: Exa returns the authoritative `costDollars.total` (USD float) in
+//! every 2.0 response. We mirror the AI path (`routes/ai.rs`): a read-only
+//! pre-flight budget gate, fire the call, then `entitlement::settle()` the real
+//! cost. This auto-scales billing across search types — a default `/search`
+//! (~$0.005) and a `type: "deep"` search (~$0.015) settle whatever Exa reports,
+//! with no per-type constant to maintain. Deep is a body param on `/search`, so
+//! it needs no separate route.
+//!
+//! Bodies are passed through verbatim (`Json<Value>`), so caller-set fields like
+//! `type`, `maxAgeHours`, and `contents` reach Exa untouched.
 
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Json},
+    http::StatusCode,
+    response::{IntoResponse, Json, Response},
     routing::post,
     Router,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, ChargeError};
+use crate::entitlement::{self, Account};
 use crate::AppState;
 
-/// Exa: ~$0.003 per search or contents request. Tracked as 3,000 micros.
-const EXA_COST_MICROS: i64 = 3_000;
+/// Fallback real-cost floors (micros), used only if Exa omits `costDollars`
+/// (it shouldn't on the 2.0 API). Chosen to over- rather than under-bill: a
+/// search-with-contents is ~$0.007, a deep search ~$0.015, a contents call
+/// ~$0.0015. `settle()` applies the markup on top.
+const SEARCH_FLOOR_MICROS: i64 = 7_000;
+const DEEP_FLOOR_MICROS: i64 = 15_000;
+const CONTENTS_FLOOR_MICROS: i64 = 1_500;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -24,52 +39,43 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/v1/exa/contents", post(exa_contents))
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct SearchRequest {
-    query: String,
-    #[serde(flatten)]
-    other: Value,
-}
-
 async fn exa_search(
     State(state): State<Arc<AppState>>,
     BearerAuth(ent): BearerAuth,
-    headers: HeaderMap,
-    Json(request): Json<SearchRequest>,
-) -> axum::response::Response {
-    let Some(api_key) = state.config.exa_api_key.as_ref() else {
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "service_not_configured",
-            "Exa API key not set",
-        );
+    Json(request): Json<Value>,
+) -> Response {
+    // A `type: "deep"` (or "deep-reasoning") search costs more; pick the floor to
+    // match in case Exa ever omits `costDollars`.
+    let floor = match request.get("type").and_then(|t| t.as_str()) {
+        Some("deep") | Some("deep-reasoning") => DEEP_FLOOR_MICROS,
+        _ => SEARCH_FLOOR_MICROS,
     };
-    let pool = &state.db;
-
-    let _ = &headers;
-    let charged = match entitlement::charge(pool, &ent.account_id, EXA_COST_MICROS).await {
-        Ok(c) => c,
-        Err(e) => return charge_err(e),
-    };
-
-    let upstream = state
-        .http_client
-        .post("https://api.exa.ai/search")
-        .header("x-api-key", api_key)
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await;
-
-    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
+    proxy_and_settle(&state, &ent, "https://api.exa.ai/search", &request, floor).await
 }
 
 async fn exa_contents(
     State(state): State<Arc<AppState>>,
     BearerAuth(ent): BearerAuth,
-    headers: HeaderMap,
     Json(request): Json<Value>,
-) -> axum::response::Response {
+) -> Response {
+    proxy_and_settle(
+        &state,
+        &ent,
+        "https://api.exa.ai/contents",
+        &request,
+        CONTENTS_FLOOR_MICROS,
+    )
+    .await
+}
+
+/// Shared proxy tail: gate, forward to Exa, settle the real cost on success.
+async fn proxy_and_settle(
+    state: &AppState,
+    ent: &Account,
+    url: &str,
+    request: &Value,
+    floor_micros: i64,
+) -> Response {
     let Some(api_key) = state.config.exa_api_key.as_ref() else {
         return err(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -77,107 +83,120 @@ async fn exa_contents(
             "Exa API key not set",
         );
     };
-    let pool = &state.db;
 
-    let _ = &headers;
-    let charged = match entitlement::charge(pool, &ent.account_id, EXA_COST_MICROS).await {
-        Ok(c) => c,
-        Err(e) => return charge_err(e),
-    };
+    // Pre-flight gate. Like AI, cost is only known after the response, so we
+    // refuse to *start* a call the wallet can't plausibly cover; the actual
+    // debit happens post-success via settle().
+    if let Some(resp) = budget_gate(ent) {
+        return resp;
+    }
 
     let upstream = state
         .http_client
-        .post("https://api.exa.ai/contents")
+        .post(url)
         .header("x-api-key", api_key)
         .header("Content-Type", "application/json")
-        .json(&request)
+        .json(request)
         .send()
         .await;
 
-    finish_charged(pool, &ent.account_id, charged.billed_micros, upstream).await
-}
-
-async fn finish_charged(
-    pool: &sqlx::PgPool,
-    account_id: &str,
-    billed_micros: i64,
-    upstream: Result<reqwest::Response, reqwest::Error>,
-) -> axum::response::Response {
     match upstream {
         Ok(resp) => {
             let status = resp.status();
             let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
-            if !status.is_success() {
-                if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
-                    tracing::warn!("exa refund failed after non-2xx: {re:#}");
+            if status.is_success() {
+                let cost = extract_exa_cost_micros(&body, floor_micros);
+                if cost > 0 {
+                    // Post-paid: the response already went out, so debit
+                    // unconditionally. The pre-flight gate refuses the next
+                    // call if this puts the wallet in the red.
+                    if let Err(e) = entitlement::settle(&state.db, &ent.account_id, cost).await {
+                        tracing::warn!("exa settle failed (response already returned): {e:#}");
+                    }
                 }
-            } else {
-                tracing::info!(billed_micros, "exa upstream success — charge retained");
             }
+            // Non-2xx: nothing was charged, so nothing to refund — pass the
+            // upstream error body straight back.
             (
-                StatusCode::from_u16(status.as_u16())
-                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
                 Json(body),
             )
                 .into_response()
         }
-        Err(e) => {
-            if let Err(re) = entitlement::refund(pool, account_id, billed_micros).await {
-                tracing::warn!("exa refund failed after transport error: {re:#}");
-            }
-            err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string())
-        }
+        Err(e) => err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string()),
     }
 }
 
-fn charge_err(e: ChargeError) -> axum::response::Response {
-    let (status, code, message) = match e {
-        ChargeError::Expired => (
-            StatusCode::PAYMENT_REQUIRED,
-            "wallet_expired",
-            "subscription wallet expired — reconnect".to_string(),
-        ),
-        ChargeError::InsufficientBudget => (
-            StatusCode::PAYMENT_REQUIRED,
-            "insufficient_budget",
-            "today's budget exhausted".to_string(),
-        ),
-        ChargeError::NotFound => (
-            StatusCode::UNAUTHORIZED,
-            "unknown_key",
-            "api key not recognized — reconnect".to_string(),
-        ),
-        ChargeError::InvalidCost => (
-            StatusCode::BAD_REQUEST,
-            "invalid_cost",
-            "cost_micros must be > 0".to_string(),
-        ),
-        ChargeError::CallTooExpensive => (
-            StatusCode::BAD_REQUEST,
-            "call_too_expensive",
-            "single call exceeds per-call cap".to_string(),
-        ),
-        ChargeError::DailyCapReached => (
-            StatusCode::PAYMENT_REQUIRED,
-            "daily_cap_reached",
-            "daily spend ceiling reached".to_string(),
-        ),
-        ChargeError::Db(e) => {
-            tracing::warn!("exa charge db error: {e:#}");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal",
-                "charge failed".to_string(),
-            )
+/// Resolve real cost from Exa's authoritative `costDollars.total` (USD float).
+/// Falls back to the per-endpoint floor if the field is absent.
+fn extract_exa_cost_micros(body: &Value, floor_micros: i64) -> i64 {
+    if let Some(total) = body
+        .get("costDollars")
+        .and_then(|c| c.get("total"))
+        .and_then(|t| t.as_f64())
+    {
+        let micros = entitlement::usd_to_micros(total);
+        if micros > 0 {
+            return micros;
         }
-    };
-    err(status, code, &message)
+    }
+    floor_micros
 }
 
-fn err(status: StatusCode, code: &str, message: &str) -> axum::response::Response {
+/// Read-only pre-flight gate, mirroring `routes/ai.rs::budget_gate`. BearerAuth
+/// already enforced expiry; here we surface empty wallet / daily cap before
+/// burning upstream spend.
+fn budget_gate(acct: &Account) -> Option<Response> {
+    if acct.balance_micros <= 0 {
+        return Some(err(
+            StatusCode::PAYMENT_REQUIRED,
+            "wallet_empty",
+            "wallet empty — add credits",
+        ));
+    }
+    if acct.today_spent_micros >= acct.daily_cap_micros {
+        return Some(err(
+            StatusCode::PAYMENT_REQUIRED,
+            "daily_cap_reached",
+            "daily spend ceiling reached",
+        ));
+    }
+    None
+}
+
+fn err(status: StatusCode, code: &str, message: &str) -> Response {
     (
         status,
         Json(json!({ "error": { "code": code, "message": message } })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_from_cost_dollars() {
+        let body = json!({ "costDollars": { "total": 0.0123 }, "results": [] });
+        assert_eq!(extract_exa_cost_micros(&body, SEARCH_FLOOR_MICROS), 12_300);
+    }
+
+    #[test]
+    fn cost_falls_back_to_floor_when_missing() {
+        let body = json!({ "results": [] });
+        assert_eq!(
+            extract_exa_cost_micros(&body, DEEP_FLOOR_MICROS),
+            DEEP_FLOOR_MICROS
+        );
+    }
+
+    #[test]
+    fn cost_falls_back_when_zero() {
+        let body = json!({ "costDollars": { "total": 0.0 } });
+        assert_eq!(
+            extract_exa_cost_micros(&body, SEARCH_FLOOR_MICROS),
+            SEARCH_FLOOR_MICROS
+        );
+    }
 }
