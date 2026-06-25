@@ -233,8 +233,10 @@ jobs:
             exit 1
           fi
           DIR="$(dirname "$TARGZ")"
-          cp "$TARGZ" "$DIR/Virtues.app.tar.gz"
-          cp "$SIG"   "$DIR/Virtues.app.tar.gz.sig"
+          # tauri already names these `Virtues.app.tar.gz`/`.sig`; only copy when
+          # a rename is actually needed (cp onto itself errors under `set -e`).
+          [ "$TARGZ" = "$DIR/Virtues.app.tar.gz" ] || cp "$TARGZ" "$DIR/Virtues.app.tar.gz"
+          [ "$SIG" = "$DIR/Virtues.app.tar.gz.sig" ] || cp "$SIG" "$DIR/Virtues.app.tar.gz.sig"
           URL="https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.app.tar.gz"
           jq -n \
             --arg version "${{ steps.version.outputs.VERSION }}" \
