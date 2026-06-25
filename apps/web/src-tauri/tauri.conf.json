@@ -18,6 +18,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["dmg", "app"],
     "externalBin": ["binaries/virtues-collector", "binaries/virtues-client"],
     "icon": [
@@ -30,6 +31,14 @@
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.plist",
       "signingIdentity": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDREQzdBMzVDNDVCN0ZCOEQKUldTTis3ZEZYS1BIVGRJRGk3R2hBMWU3TUZiR0FSQlZHVXdIWjNVYjRvUUt3Y3k3ZE9EM0RkS2wK",
+      "endpoints": [
+        "https://github.com/virtues-os/virtues/releases/download/mac-latest/latest.json"
+      ]
     }
   }
 }
