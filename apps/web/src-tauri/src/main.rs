@@ -614,6 +614,86 @@ async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
 }
 
 // ============================================================================
+// Self-updater
+// ============================================================================
+
+/// A detected, ready-to-apply app update, surfaced *ambiently* — one native
+/// notification + a tray "Restart to update" line. We never force a relaunch
+/// (the Chrome model): the user applies it when convenient. Apply re-checks and
+/// runs download+install, so we never stash a non-Send `Update` across threads.
+#[derive(Default)]
+struct UpdateState {
+    ready: Option<ReadyUpdate>,
+}
+
+struct ReadyUpdate {
+    version: String,
+    /// When we first saw it ready — drives the escalating amber→red tray nudge.
+    ready_at: std::time::Instant,
+}
+
+/// Check the **stable** channel (mac-latest `latest.json`) for a newer version.
+/// On a hit: record it + fire ONE native notification; the tray's own poll then
+/// surfaces the "Restart to update" line. Silent best-effort — `None`/errors are
+/// no-ops (up to date, or offline; retried next tick). The actual download runs
+/// on the user's click ([`apply_update`]) so we don't hold an `Update` in state.
+async fn check_for_update(app: &AppHandle) {
+    use tauri_plugin_notification::NotificationExt;
+    use tauri_plugin_updater::UpdaterExt;
+
+    let Ok(updater) = app.updater() else { return };
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        _ => return,
+    };
+    let version = update.version.clone();
+    let note = update
+        .body
+        .as_deref()
+        .and_then(|b| b.lines().map(str::trim).find(|l| !l.is_empty()))
+        .unwrap_or("")
+        .to_string();
+
+    // Record + dedupe so we notify at most once per version.
+    {
+        let state = app.state::<std::sync::Mutex<UpdateState>>();
+        let mut g = state.lock().unwrap();
+        if g.ready.as_ref().map(|r| r.version.as_str()) == Some(version.as_str()) {
+            return;
+        }
+        g.ready = Some(ReadyUpdate {
+            version: version.clone(),
+            ready_at: std::time::Instant::now(),
+        });
+    }
+
+    let body = if note.is_empty() {
+        "Restart Virtues to apply.".to_string()
+    } else {
+        format!("{note}\n\nRestart Virtues to apply.")
+    };
+    let _ = app
+        .notification()
+        .builder()
+        .title(format!("Virtues {version} is ready"))
+        .body(body)
+        .show();
+}
+
+/// Apply a pending update: re-check (cheap), download + install, then relaunch.
+/// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
+/// `app.restart()` never returns.
+async fn apply_update(app: AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    let Ok(updater) = app.updater() else { return };
+    if let Ok(Some(update)) = updater.check().await {
+        if update.download_and_install(|_, _| {}, || {}).await.is_ok() {
+            app.restart();
+        }
+    }
+}
+
+// ============================================================================
 // Menu-bar tray
 // ============================================================================
 
@@ -717,6 +797,9 @@ struct TrayItems {
     collector_status: tauri::menu::IconMenuItem<tauri::Wry>,
     last_sync: tauri::menu::MenuItem<tauri::Wry>,
     toggle: tauri::menu::MenuItem<tauri::Wry>,
+    /// "Restart to update (vX)" when an update is staged, else a disabled
+    /// "Virtues is up to date". Driven by [`UpdateState`] on each poll.
+    update: tauri::menu::IconMenuItem<tauri::Wry>,
 }
 
 /// Recompute the status lines + toggle and apply them. Spawns its OWN thread
@@ -740,6 +823,22 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         let sync_text = last_sync_label(installed, &status);
         let toggle_text = if status.paused { "Resume collecting" } else { "Pause collecting" };
 
+        // Update line: amber "Restart to update (vX)" when staged, escalating to
+        // red after ~3 days unapplied (Chrome's green→orange→red nudge); a
+        // disabled "up to date" otherwise.
+        let update = {
+            let st = app.state::<std::sync::Mutex<UpdateState>>();
+            let g = st.lock().unwrap();
+            g.ready.as_ref().map(|r| {
+                let dot = if r.ready_at.elapsed() > std::time::Duration::from_secs(3 * 24 * 3600) {
+                    Dot::Red
+                } else {
+                    Dot::Amber
+                };
+                (dot, format!("Restart to update ({})", r.version))
+            })
+        };
+
         let _ = app.run_on_main_thread(move || {
             let _ = items.box_status.set_text(box_text);
             let _ = items.box_status.set_icon(dot_image(box_dot));
@@ -751,6 +850,18 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
             // state where the CLI would just error — keeps the user from a
             // no-op foot-gun.
             let _ = items.toggle.set_enabled(installed);
+            match &update {
+                Some((dot, text)) => {
+                    let _ = items.update.set_text(text);
+                    let _ = items.update.set_icon(dot_image(*dot));
+                    let _ = items.update.set_enabled(true);
+                }
+                None => {
+                    let _ = items.update.set_text("Virtues is up to date");
+                    let _ = items.update.set_icon(dot_image(Dot::Grey));
+                    let _ = items.update.set_enabled(false);
+                }
+            }
         });
     });
 }
@@ -777,6 +888,11 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     // Starts disabled; the first poll enables it iff the collector is installed.
     let toggle = MenuItem::with_id(app, "toggle_collector", "Pause collecting", false, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Virtues", true, None::<&str>)?;
+    // Update line: disabled "up to date" until the check loop stages one, then
+    // the poll flips it to an enabled amber "Restart to update (vX)".
+    let update = IconMenuItem::with_id(
+        app, "update_item", "Virtues is up to date", false, dot_image(Dot::Grey), None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -789,6 +905,8 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             &toggle,
             &show,
             &PredefinedMenuItem::separator(app)?,
+            &update,
+            &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
     )?;
@@ -798,6 +916,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         collector_status: status_collector,
         last_sync,
         toggle,
+        update,
     };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
@@ -824,6 +943,13 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => app.exit(0),
+            // "Restart to update" — re-check, download+install, relaunch. The
+            // item is only enabled once an update is staged, so a click here
+            // always has something to apply.
+            "update_item" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move { apply_update(app).await });
+            }
             "toggle_collector" => {
                 // Flip based on the LIVE state, not the (possibly stale) label,
                 // then refresh immediately so the menu shows the new state.
@@ -970,6 +1096,8 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             get_client_status,
             discover_servers,
@@ -998,6 +1126,9 @@ fn main() {
             if reconcile_helpers() {
                 std::thread::sleep(std::time::Duration::from_millis(700));
             }
+
+            // Shared state for the self-updater (read by the tray poll).
+            app.manage(std::sync::Mutex::new(UpdateState::default()));
 
             // Paired → the local virtues-client proxy on :7117 (NOT the box's
             // own 8000; the proxy listens on 7117 to avoid squatting a common
@@ -1044,6 +1175,20 @@ fn main() {
             let _ = window;
 
             setup_tray(app.handle())?;
+
+            // Self-update check loop: first pass ~5s after launch (off the
+            // critical path, after reconcile), then every 6h. The stable channel
+            // (mac-latest latest.json) is the source; download is deferred to the
+            // user's "Restart to update" click. The tray's own poll surfaces the
+            // staged state within its interval.
+            let updater_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                loop {
+                    tauri::async_runtime::block_on(check_for_update(&updater_handle));
+                    std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+                }
+            });
 
             Ok(())
         })

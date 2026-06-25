@@ -145,6 +145,12 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Self-updater signing (minisign) — orthogonal to Apple codesigning.
+          # With `bundle.createUpdaterArtifacts: true`, tauri also emits a signed
+          # `Virtues.app.tar.gz` + `.sig` here. Notarization does NOT invalidate
+          # this signature (tauri#7703).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build --target universal-apple-darwin
 
       - name: Locate DMG
@@ -189,6 +195,15 @@ jobs:
             echo "::error::DMG is not notarized/stapled"
             exit 1
           fi
+          # externalBin / #11992 guard: both sidecars must be validly signed
+          # inside the bundle, or the updater would ship a broken app that
+          # Gatekeeper rejects on relaunch. (--deep above already walks them;
+          # this asserts each explicitly so a regression fails loudly.)
+          echo "== sidecars signed (externalBin guard) =="
+          for s in virtues-client virtues-collector; do
+            codesign --verify --strict "$APP/Contents/MacOS/$s" \
+              || { echo "::error::sidecar $s is not validly signed"; exit 1; }
+          done
           echo "✓ signed + notarized"
 
       # Stable, version-independent filename so download pages point at a fixed
@@ -199,6 +214,40 @@ jobs:
           STABLE="$(dirname "${{ steps.dmg.outputs.path }}")/Virtues.dmg"
           cp "${{ steps.dmg.outputs.path }}" "$STABLE"
           echo "path=$STABLE" >> "$GITHUB_OUTPUT"
+
+      # Updater manifest (STABLE only). `tauri build` already emitted a signed
+      # `*.app.tar.gz` + `.sig` (createUpdaterArtifacts + TAURI_SIGNING_*). We
+      # copy them to fixed names and compose `latest.json` pointing at the
+      # `mac-latest` download URL — the endpoint the app's updater polls. Edge
+      # never produces these, so the updater can't pull a rolling test build.
+      # One universal artifact serves both arches.
+      - name: Generate updater manifest (latest.json)
+        if: steps.version.outputs.IS_EDGE == 'false'
+        id: updater
+        run: |
+          BUNDLE="apps/web/src-tauri/target/universal-apple-darwin/release/bundle"
+          TARGZ=$(find "$BUNDLE" -name '*.app.tar.gz' | head -1)
+          SIG=$(find "$BUNDLE" -name '*.app.tar.gz.sig' | head -1)
+          if [ -z "$TARGZ" ] || [ -z "$SIG" ]; then
+            echo "::error::updater artifacts (.app.tar.gz/.sig) missing — check createUpdaterArtifacts + TAURI_SIGNING_PRIVATE_KEY"
+            exit 1
+          fi
+          DIR="$(dirname "$TARGZ")"
+          cp "$TARGZ" "$DIR/Virtues.app.tar.gz"
+          cp "$SIG"   "$DIR/Virtues.app.tar.gz.sig"
+          URL="https://github.com/virtues-os/virtues/releases/download/mac-latest/Virtues.app.tar.gz"
+          jq -n \
+            --arg version "${{ steps.version.outputs.VERSION }}" \
+            --arg notes "Performance, reliability, and self-update improvements." \
+            --arg pubdate "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg sig "$(cat "$DIR/Virtues.app.tar.gz.sig")" \
+            --arg url "$URL" \
+            '{version:$version, notes:$notes, pub_date:$pubdate, platforms:{"darwin-aarch64":{signature:$sig,url:$url},"darwin-x86_64":{signature:$sig,url:$url}}}' \
+            > "$DIR/latest.json"
+          echo "targz=$DIR/Virtues.app.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sig=$DIR/Virtues.app.tar.gz.sig" >> "$GITHUB_OUTPUT"
+          echo "manifest=$DIR/latest.json" >> "$GITHUB_OUTPUT"
+          echo "== latest.json =="; cat "$DIR/latest.json"
 
       # The channel release: `mac-v0.1.0` (stable, permanent, prerelease:false)
       # or `mac-edge` (rolling, prerelease:true). Both carry the versioned DMG
@@ -238,8 +287,12 @@ jobs:
             Current version: v${{ steps.version.outputs.VERSION }}
 
             Stable download: `Virtues.dmg` (same file, version-independent URL).
+            Self-update manifest: `latest.json` (+ `Virtues.app.tar.gz`/`.sig`).
           files: |
             ${{ steps.dmg.outputs.path }}
             ${{ steps.stable.outputs.path }}
+            ${{ steps.updater.outputs.targz }}
+            ${{ steps.updater.outputs.sig }}
+            ${{ steps.updater.outputs.manifest }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
