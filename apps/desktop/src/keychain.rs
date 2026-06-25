@@ -38,6 +38,43 @@ fn entry(account: &str) -> Result<keyring::Entry> {
     keyring::Entry::new(SERVICE, account).context("open keyring entry")
 }
 
+/// `~/.virtues` — the on-disk home for the bundle + WG-key file fallbacks.
+fn virtues_dir() -> Result<std::path::PathBuf> {
+    let home = std::env::var("HOME").context("$HOME not set")?;
+    Ok(std::path::PathBuf::from(home).join(".virtues"))
+}
+
+/// `~/.virtues/wg-private.key` — the authoritative WG private key store.
+fn wg_private_file() -> Result<std::path::PathBuf> {
+    Ok(virtues_dir()?.join("wg-private.key"))
+}
+
+/// Atomic 0600 write (temp file → rename), mirroring `pair::write_daemon_bundle`.
+fn write_secret_file(path: &std::path::Path, contents: &str) -> Result<()> {
+    let dir = path.parent().context("secret file has no parent dir")?;
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let tmp = path.with_extension("tmp");
+    {
+        use std::io::Write as _;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts
+            .open(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
+        f.write_all(contents.as_bytes())
+            .with_context(|| format!("write {}", tmp.display()))?;
+        f.sync_all().ok();
+    }
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Pairing bundle
 // ────────────────────────────────────────────────────────────────────────
@@ -66,18 +103,39 @@ pub fn load_bundle() -> Result<Option<PairingBundle>> {
 // WG private key
 // ────────────────────────────────────────────────────────────────────────
 
+/// Persist the WG private key. The authoritative store is a 0600 file
+/// (`~/.virtues/wg-private.key`); the keychain write is best-effort on top.
+///
+/// Why a file at all: `keyring` v3 on macOS targets the data-protection
+/// keychain, which silently NO-OPS for a Developer-ID binary without a
+/// `keychain-access-groups` entitlement — `set_password` returns Ok but the key
+/// never persists, so the tunnel can never read it and falls back to a direct
+/// upstream forever. The bundle already uses this exact file fallback, and the
+/// bearer it holds is equally sensitive, so the key on disk at 0600 doesn't
+/// widen the threat model. (Cross-platform bonus: Linux/Windows hit the same
+/// keyring quirks; the file works everywhere.) Keychain stays a best-effort
+/// primary so an entitled build would still prefer it on read.
 pub fn save_wg_private(b64: &str) -> Result<()> {
-    entry(ACCOUNT_WG_PRIVATE)?
-        .set_password(b64)
-        .context("write WG private to keyring")?;
+    write_secret_file(&wg_private_file()?, b64).context("write WG private file")?;
+    let _ = entry(ACCOUNT_WG_PRIVATE).and_then(|e| {
+        e.set_password(b64)
+            .map_err(|e| anyhow::Error::new(e).context("write WG private to keyring"))
+    });
     Ok(())
 }
 
 pub fn load_wg_private() -> Result<Option<String>> {
-    match entry(ACCOUNT_WG_PRIVATE)?.get_password() {
-        Ok(s) => Ok(Some(s)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(anyhow::Error::new(e).context("read WG private from keyring")),
+    // Keychain primary (if entitled / working), else the 0600 file fallback.
+    // Any keychain hiccup falls through to the file rather than erroring.
+    if let Ok(entry) = entry(ACCOUNT_WG_PRIVATE) {
+        if let Ok(s) = entry.get_password() {
+            return Ok(Some(s));
+        }
+    }
+    match std::fs::read_to_string(wg_private_file()?) {
+        Ok(s) => Ok(Some(s.trim().to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(anyhow::Error::new(e).context("read WG private file")),
     }
 }
 
@@ -124,13 +182,20 @@ pub fn load_server_pin() -> Result<Option<String>> {
 // ────────────────────────────────────────────────────────────────────────
 
 pub fn delete_bundle() -> Result<()> {
-    delete_entry(ACCOUNT_BUNDLE)?;
-    // Best-effort: also drop the WG private key, device ID, and credential ID.
-    // Don't error if absent.
+    // All best-effort — a revoke/reset must produce a clean slate even if the
+    // keychain is flaky (the file fallbacks below are what actually held state).
+    let _ = delete_entry(ACCOUNT_BUNDLE);
     let _ = delete_entry(ACCOUNT_WG_PRIVATE);
     let _ = delete_entry(ACCOUNT_DEVICE_ID);
     let _ = delete_entry(ACCOUNT_CREDENTIAL_ID);
     let _ = delete_entry(ACCOUNT_SERVER_PIN);
+    // Also remove the on-disk fallbacks so reset is a TRUE clean slate, not just
+    // the keychain. Without this, a stale bundle.json / wg-private.key would let
+    // the next `up` keep using revoked creds.
+    if let Ok(dir) = virtues_dir() {
+        let _ = std::fs::remove_file(dir.join("bundle.json"));
+        let _ = std::fs::remove_file(wg_private_file()?);
+    }
     Ok(())
 }
 

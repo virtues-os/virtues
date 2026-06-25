@@ -114,6 +114,11 @@ enum Command {
     Status,
 
     /// Clear local creds + remove this device's WG peer from the box.
+    ///
+    /// Aliased as `reset` — the one-step "my tunnel is wedged, start clean"
+    /// command: wipes the keychain entries AND the on-disk fallbacks
+    /// (`bundle.json`, `wg-private.key`), then re-pair to reconnect.
+    #[command(alias = "reset")]
     Revoke,
 
     /// Install the user-level LaunchAgent (localhost proxy). No root needed.
