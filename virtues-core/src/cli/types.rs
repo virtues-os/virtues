@@ -41,12 +41,6 @@ pub enum Commands {
     /// HTTP server on the box).
     #[command(alias = "login", alias = "link")]
     Pair {
-        /// What to provision. Omit for the normal flow (print a code + URL/QR
-        /// to enter in the app, then wait). `raw` instead mints a box-generated
-        /// WireGuard peer and prints a ready `wg-quick` config for a plain,
-        /// non-Virtues client — e.g. ssh over the tunnel. Box-side only.
-        #[arg(value_name = "TARGET")]
-        target: Option<String>,
         /// Print the code/URL and exit immediately instead of waiting for it
         /// to be used (scripts, copy-paste workflows).
         #[arg(long)]

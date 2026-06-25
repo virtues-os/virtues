@@ -297,53 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // box-side signal for a network that blocks device-to-device traffic).
     // The URL puts the token in a `#t=` fragment, so it never hits server
     // logs or referer headers.
-    if let Some(Commands::Pair { target, no_wait }) = &cli.command {
-        // ─── `virtues pair raw` ─────────────────────────────────────────────
-        // Box-side: provision a box-generated WireGuard peer and print a ready
-        // `wg-quick` config for a plain (non-Virtues) client — e.g. ssh over
-        // the tunnel. No code, no wait: the box mints everything in one shot.
-        if let Some(t) = target.as_deref() {
-            if t != "raw" {
-                eprintln!("error: unknown pair target `{t}` (did you mean `raw`?)");
-                eprintln!("usage: virtues pair [raw]   (omit for the normal pairing code)");
-                std::process::exit(1);
-            }
-            let database_url = virtues::database::normalize_database_url()?;
-            let db = virtues::database::Database::new(&database_url)?;
-            match virtues::api::pair::provision_raw_peer(db.pool(), None).await {
-                Ok(p) => {
-                    let conf = virtues::api::pair::render_wg_quick_conf(&p.bundle);
-                    // The config carries this peer's PRIVATE KEY, so it goes to
-                    // stdout ONLY (pipeable to a file, never logged); all the
-                    // human guidance goes to stderr so `> peer.conf` is clean.
-                    eprintln!();
-                    eprintln!("  ✓ raw WireGuard peer provisioned");
-                    eprintln!("    device:     {}", p.device_id);
-                    eprintln!("    credential: {}", p.credential_id);
-                    eprintln!("    address:    {}", p.bundle.wg.client_address);
-                    eprintln!();
-                    eprintln!("  Save the config below on the client and `wg-quick up` it.");
-                    eprintln!("  It contains the peer's PRIVATE KEY — treat it as a secret.");
-                    eprintln!("  ──────────────────────────────────────────────────────────");
-                    println!("{conf}");
-                    eprintln!("  ──────────────────────────────────────────────────────────");
-                    eprintln!(
-                        "  Once up, ssh over the tunnel reaches the box at {} (== virtues.internal).",
-                        p.bundle.wg.server_address
-                    );
-                    eprintln!(
-                        "  Revoke later from the Devices page, or DELETE /api/credentials/{}.",
-                        p.credential_id
-                    );
-                    return Ok(());
-                }
-                Err(e) => {
-                    eprintln!("error: could not provision raw peer: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-
+    if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
         // Show the box's UNIVERSAL standing code — the same rotating code the
@@ -634,6 +588,15 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     println!("  No app yet? Open in a browser on your network:");
     for url in &urls {
         println!("    {}", url.url);
+    }
+
+    // The box's global IPv6 — what to type into the app's Advanced "enter its
+    // address" field when mDNS doesn't carry (off-network, isolated wifi). The
+    // box is reached directly here; only shown when it actually has a global v6.
+    if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
+        println!();
+        println!("  Box IPv6 (Advanced → \"enter its address\" if it isn't found):");
+        println!("    {v6}");
     }
 
     println!("─────────────────────────────────────────────────────────");
