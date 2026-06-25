@@ -48,6 +48,22 @@ fn is_paired() -> bool {
         .unwrap_or(false)
 }
 
+/// Paired, but the WG private key file is gone — so the tunnel can't
+/// authenticate and the fix is **re-pair**, not "retry the network." This is the
+/// exact state that masqueraded as a generic "unreachable" and sent us chasing
+/// network ghosts. File-based (no keychain, no shell-out): `~/.virtues/bundle.json`
+/// present + `~/.virtues/wg-private.key` absent. The key file is the reliable
+/// store the standalone tunnel reads (the macOS keychain silently no-ops for
+/// it), so its absence is the truthful signal.
+fn wg_key_missing() -> bool {
+    dirs::home_dir()
+        .map(|h| {
+            let d = h.join(".virtues");
+            d.join("bundle.json").exists() && !d.join("wg-private.key").exists()
+        })
+        .unwrap_or(false)
+}
+
 /// Ask the local proxy (`localhost:7117`) whether THIS device's pairing is still
 /// valid with the box, by reading `/auth/session`. `is_paired()` only checks
 /// that a bundle exists on disk — but after a box reinstall/revoke that bundle's
@@ -175,7 +191,9 @@ async fn diagnose_box() -> String {
             Some(true) => "ok",
             Some(false) => "stale_bearer",
             None => {
-                if device_online() {
+                if wg_key_missing() {
+                    "needs_repair"
+                } else if device_online() {
                     "box_unreachable"
                 } else {
                     "device_offline"
@@ -641,6 +659,7 @@ fn box_label() -> (Dot, &'static str) {
     match probe_box_session_blocking(1) {
         Some(true) => (Dot::Green, "Box: connected"),
         Some(false) => (Dot::Red, "Box: needs re-pairing"),
+        None if wg_key_missing() => (Dot::Red, "Box: needs re-pairing"),
         None => (Dot::Amber, "Box: unreachable"),
     }
 }
@@ -1005,6 +1024,7 @@ fn main() {
                 match probe_box_session_blocking(1) {
                     Some(true) => WebviewUrl::External("http://localhost:7117".parse().unwrap()),
                     Some(false) => WebviewUrl::App("pair.html#reset".into()),
+                    None if wg_key_missing() => WebviewUrl::App("pair.html#repair".into()),
                     None => WebviewUrl::App("pair.html#unreachable".into()),
                 }
             };
