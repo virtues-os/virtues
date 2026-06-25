@@ -800,6 +800,21 @@ struct TrayItems {
     /// "Restart to update (vX)" when an update is staged, else a disabled
     /// "Virtues is up to date". Driven by [`UpdateState`] on each poll.
     update: tauri::menu::IconMenuItem<tauri::Wry>,
+    /// "Check for Updates…" — a manual trigger for [`check_for_update`]. Its
+    /// label flips to "Checking…" then "Up to date ✓" for transient feedback.
+    check_now: tauri::menu::MenuItem<tauri::Wry>,
+}
+
+/// Set the "Check for Updates…" item's label + enabled state on the main
+/// thread (AppKit requires UI mutation there). Used for the transient
+/// "Checking…" / "Up to date ✓" feedback on a manual check.
+fn set_check_label(app: &AppHandle, item: &tauri::menu::MenuItem<tauri::Wry>, text: &str, enabled: bool) {
+    let item = item.clone();
+    let text = text.to_string();
+    let _ = app.run_on_main_thread(move || {
+        let _ = item.set_text(&text);
+        let _ = item.set_enabled(enabled);
+    });
 }
 
 /// Recompute the status lines + toggle and apply them. Spawns its OWN thread
@@ -893,6 +908,18 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let update = IconMenuItem::with_id(
         app, "update_item", "Virtues is up to date", false, dot_image(Dot::Grey), None::<&str>,
     )?;
+    // A dim, non-interactive line showing the running version — so a glance at
+    // the menu answers "am I current?" without opening anything.
+    let version_label = MenuItem::with_id(
+        app,
+        "version_label",
+        format!("Virtues v{}", app.package_info().version),
+        false,
+        None::<&str>,
+    )?;
+    // Manual "check now" — runs the same check the 6h poll runs, for the
+    // impatient/debugging case. Its label gives transient feedback on click.
+    let check_now = MenuItem::with_id(app, "check_now", "Check for Updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -905,6 +932,8 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             &toggle,
             &show,
             &PredefinedMenuItem::separator(app)?,
+            &version_label,
+            &check_now,
             &update,
             &PredefinedMenuItem::separator(app)?,
             &quit,
@@ -917,6 +946,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         last_sync,
         toggle,
         update,
+        check_now,
     };
 
     // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
@@ -949,6 +979,38 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "update_item" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move { apply_update(app).await });
+            }
+            // Manual update check. Flip the label to "Checking…" while it runs,
+            // then either let the staged-update path take over (refresh_tray
+            // surfaces the amber "Restart to update" line) or flash "Up to date
+            // ✓" for a couple seconds before reverting.
+            "check_now" => {
+                let app = app.clone();
+                let items = event_items.clone();
+                tauri::async_runtime::spawn(async move {
+                    set_check_label(&app, &items.check_now, "Checking…", false);
+                    check_for_update(&app).await;
+                    let staged = {
+                        let st = app.state::<std::sync::Mutex<UpdateState>>();
+                        let staged = st.lock().unwrap().ready.is_some();
+                        staged
+                    };
+                    refresh_tray(&app, items.clone());
+                    if staged {
+                        // Amber "Restart to update" line now carries the signal;
+                        // just restore the trigger label.
+                        set_check_label(&app, &items.check_now, "Check for Updates…", true);
+                    } else {
+                        set_check_label(&app, &items.check_now, "Up to date ✓", false);
+                        let app = app.clone();
+                        let item = items.check_now.clone();
+                        // Revert to the actionable label after a brief beat.
+                        std::thread::spawn(move || {
+                            std::thread::sleep(std::time::Duration::from_secs(3));
+                            set_check_label(&app, &item, "Check for Updates…", true);
+                        });
+                    }
+                });
             }
             "toggle_collector" => {
                 // Flip based on the LIVE state, not the (possibly stale) label,
