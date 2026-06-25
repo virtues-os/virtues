@@ -57,8 +57,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Last applied peer count — we log a reconcile line only when it CHANGES, so
+    // the journal shows pair/revoke activity without a line every 15s tick.
+    let mut last_peer_count: Option<usize> = None;
+
     loop {
-        reconcile_once(&db).await;
+        reconcile_once(&db, &mut last_peer_count).await;
 
         // Wait for a reconcile notification OR the backstop tick, whichever
         // comes first. A recv error means the LISTEN connection dropped — fall
@@ -67,7 +71,12 @@ async fn main() -> anyhow::Result<()> {
         let listen_failed = match listener.as_mut() {
             Some(l) => {
                 tokio::select! {
-                    res = l.recv() => res.is_err(),
+                    res = l.recv() => {
+                        if res.is_ok() {
+                            eprintln!("[virtues-wireguard] reconcile notification received");
+                        }
+                        res.is_err()
+                    }
                     _ = tokio::time::sleep(POLL_INTERVAL) => false,
                 }
             }
@@ -129,12 +138,39 @@ async fn ensure_kernel_wg() {
 
 /// One reconcile pass: make `wg0` match the durable peer set, then detect and
 /// record the box's current public endpoint. Both steps are idempotent.
+///
+/// `last_peer_count` carries across ticks so we log a reconcile line only when
+/// the applied peer set changes (and re-log after any failure). A 20s timeout
+/// bounds the netlink reconcile — `rebuild_interface` runs it on the blocking
+/// pool, so on a wedge the timeout fires, we log, and the next tick retries on a
+/// fresh blocking thread instead of the loop hanging forever (silent).
 #[cfg(target_os = "linux")]
-async fn reconcile_once(db: &sqlx::PgPool) {
+async fn reconcile_once(db: &sqlx::PgPool, last_peer_count: &mut Option<usize>) {
     use virtues_wg::{endpoint, manager, reconcile};
 
-    if let Err(e) = reconcile::rebuild_interface(db).await {
-        eprintln!("[virtues-wireguard] reconcile failed: {e:#}");
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        reconcile::rebuild_interface(db),
+    )
+    .await
+    {
+        Ok(Ok(n)) => {
+            if *last_peer_count != Some(n) {
+                eprintln!("[virtues-wireguard] wg0 reconciled: {n} peer(s)");
+                *last_peer_count = Some(n);
+            }
+        }
+        Ok(Err(e)) => {
+            eprintln!("[virtues-wireguard] reconcile failed: {e:#}");
+            *last_peer_count = None; // re-log on next success
+        }
+        Err(_) => {
+            eprintln!(
+                "[virtues-wireguard] reconcile timed out after 20s (netlink wedged?); \
+                 retrying next tick"
+            );
+            *last_peer_count = None;
+        }
     }
 
     match detect_public_ip() {
