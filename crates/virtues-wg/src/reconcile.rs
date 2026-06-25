@@ -51,8 +51,10 @@ async fn load_server_keypair(db: &PgPool) -> Result<Option<manager::KeyPair>> {
 
 /// Reconcile `wg0` to the durable peer store: bring the interface up with the
 /// box's keypair and the current active peers. Idempotent — safe to call at boot
-/// and on every change (a new pairing, a revoke).
-pub async fn rebuild_interface(db: &PgPool) -> Result<()> {
+/// and on every change (a new pairing, a revoke). Returns the number of peers
+/// applied, so the daemon can log reconcile activity (a silent daemon is how a
+/// stuck reconcile once went unnoticed for hours).
+pub async fn rebuild_interface(db: &PgPool) -> Result<usize> {
     let server_kp = ensure_server_keypair(db).await?;
     let peers = peers::load_all_peers(db).await?;
     let configs: Vec<manager::PeerConfig> = peers
@@ -68,9 +70,21 @@ pub async fn rebuild_interface(db: &PgPool) -> Result<()> {
                 })
         })
         .collect();
-    manager::bring_up(
-        &server_kp.private_key,
-        IpAddr::V6(ula::server_address()),
-        &configs,
-    )
+    let n = configs.len();
+
+    // `manager::bring_up` is SYNCHRONOUS netlink I/O (defguard). Run it on the
+    // blocking pool, never the async executor: a netlink syscall that wedges must
+    // not freeze the daemon's reconcile loop. The symptom of that wedge was a
+    // freshly-paired peer never landing in `wg0` until a manual
+    // `systemctl restart` — the loop stuck inside this call, the daemon alive but
+    // silent, so even the 15s backstop poll never ran. Off the executor, the
+    // caller can also bound it with a timeout and recover on the next tick.
+    let server_privkey = server_kp.private_key;
+    tokio::task::spawn_blocking(move || {
+        manager::bring_up(&server_privkey, IpAddr::V6(ula::server_address()), &configs)
+    })
+    .await
+    .map_err(|e| anyhow!("wg reconcile task failed to join: {e}"))??;
+
+    Ok(n)
 }
