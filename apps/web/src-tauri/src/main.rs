@@ -837,6 +837,113 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 // ============================================================================
+// Helper reconcile — keep installed helpers matching the app's bundled ones
+// ============================================================================
+
+/// On launch, make the installed background helpers (`virtues-client`,
+/// `virtues-collector` in `~/.virtues/bin/`) match the versions THIS app bundle
+/// ships. The app and its helpers are built + signed together, but the helpers
+/// are *copied* into `~/.virtues/bin` at install/pair time and run as
+/// LaunchAgents — so a plain app update leaves the OLD helper running. That bit
+/// us hard: after updating the app, a stale proxy couldn't read a freshly-paired
+/// WG key and silently fell back to a relay forever. Reconciling here turns
+/// "install a new app" into "all its parts update," with zero user action.
+///
+/// Only touches helpers that are ALREADY installed — first-run install (which
+/// needs a paired upstream / permission grants) stays with the pair/opt-in flow.
+/// A no-op once everything's in sync, so it's safe to run on every launch.
+///
+/// Returns true if anything was actually redeployed (the caller pauses briefly
+/// so a just-restarted proxy can settle before the launch probe).
+fn reconcile_helpers() -> bool {
+    let mut changed = false;
+    for (name, agent) in [
+        ("virtues-client", "com.virtues.client"),
+        ("virtues-collector", "com.virtues.collector"),
+    ] {
+        match reconcile_one(name, agent) {
+            Ok(true) => {
+                changed = true;
+                eprintln!("[reconcile] {name}: redeployed to match app bundle + restarted {agent}");
+            }
+            Ok(false) => {}
+            Err(e) => eprintln!("[reconcile] {name}: {e}"),
+        }
+    }
+    changed
+}
+
+/// Reconcile one helper. `Ok(true)` = it was stale and got redeployed.
+fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
+    let installed = dirs::home_dir()
+        .ok_or("no home dir")?
+        .join(".virtues")
+        .join("bin")
+        .join(name);
+    // Not installed → nothing to reconcile (the pair / "turn on this Mac" flow
+    // installs it fresh, with the upstream/permissions it needs).
+    if !installed.exists() {
+        return Ok(false);
+    }
+    // The bundled helper sits next to this app binary in `Contents/MacOS/`.
+    let bundled = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .ok_or("no exe dir")?
+        .join(name);
+    // Dev build / sidecar not alongside → nothing we can reconcile against.
+    if !bundled.exists() || !files_differ(&bundled, &installed) {
+        return Ok(false);
+    }
+    copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
+    // Kick the LaunchAgent so launchd drops the old process and runs the new
+    // binary now (rename-over-running is fine on macOS; the live process holds
+    // the old inode until this restart). Best-effort: if the agent isn't loaded
+    // the next login / install picks it up.
+    let uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if !uid.is_empty() {
+        let _ = std::process::Command::new("/bin/launchctl")
+            .args(["kickstart", "-k", &format!("gui/{uid}/{agent}")])
+            .output();
+    }
+    Ok(true)
+}
+
+/// Byte-equal? Cheap size check first, content compare only if sizes match (the
+/// up-to-date case). Any IO error → treat as "differ" so we err toward refresh.
+fn files_differ(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.metadata(), b.metadata()) {
+        (Ok(ma), Ok(mb)) if ma.len() == mb.len() => {
+            match (std::fs::read(a), std::fs::read(b)) {
+                (Ok(x), Ok(y)) => x != y,
+                _ => true,
+            }
+        }
+        _ => true,
+    }
+}
+
+/// Atomic replace of an executable (temp copy → chmod 0755 → rename). Renaming
+/// over a running binary is safe on macOS; the kickstart that follows restarts
+/// the process onto the new file.
+fn copy_executable(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    let tmp = dst.with_extension("new");
+    std::fs::copy(src, &tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    }
+    std::fs::rename(&tmp, dst)
+}
+
+// ============================================================================
 // App Setup
 // ============================================================================
 
@@ -864,6 +971,15 @@ fn main() {
             open_accessibility_settings,
         ])
         .setup(|app| {
+            // Keep the installed background helpers matching what this app
+            // bundle ships, BEFORE we probe the proxy below — otherwise a stale
+            // helper (e.g. a proxy that can't read a freshly-paired key) would
+            // skew the launch decision. If anything was actually swapped, give
+            // the just-restarted proxy a moment to bind :7117 before probing.
+            if reconcile_helpers() {
+                std::thread::sleep(std::time::Duration::from_millis(700));
+            }
+
             // Paired → the local virtues-client proxy on :7117 (NOT the box's
             // own 8000; the proxy listens on 7117 to avoid squatting a common
             // dev port). Keep in sync with LOCAL_PROXY_PORT in
