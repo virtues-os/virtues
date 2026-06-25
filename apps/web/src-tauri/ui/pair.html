@@ -495,6 +495,7 @@
 
     const CALLOUT = {
       stale_bearer: ["Your box was reset, so this Mac needs a fresh introduction. Type the new code below.", false],
+      needs_repair: ["This Mac's secure key is missing, so the private tunnel can't connect. Re-pair to restore it — type the code from your box below.", false],
       box_unreachable: ["We can't reach your box — it may be off or asleep, or this network may be blocking it (common on work or café Wi-Fi). Try from home; you can move the box afterward.", true],
       device_offline: ["This Mac isn't online. Reconnect to Wi-Fi and we'll pick up where we left off.", true],
     };
@@ -547,6 +548,7 @@
     // Falls back to the arrival-hash copy if the command isn't available.
     async function diagnoseAndRender() {
       let state = arrivalState === 'reset' ? 'stale_bearer'
+                : arrivalState === 'repair' ? 'needs_repair'
                 : arrivalState === 'unreachable' ? 'box_unreachable'
                 : null;
       try {
@@ -559,12 +561,15 @@
       showCallout(msg, retry);
       // A reset box is reachable (just needs re-pair) → idle; the can't-reach
       // states → stalled (packets die mid-path).
-      netState(state === 'stale_bearer' ? null : 'stalled');
-      if (state === 'stale_bearer') focusCell(0);
+      // A reset box or a key-repair are both fixed right here by re-pairing
+      // (the box is reachable) → idle; the can't-reach states → stalled.
+      const repairable = state === 'stale_bearer' || state === 'needs_repair';
+      netState(repairable ? null : 'stalled');
+      if (repairable) focusCell(0);
     }
 
     function initArrival() {
-      if (arrivalState !== 'reset' && arrivalState !== 'unreachable') return;
+      if (arrivalState !== 'reset' && arrivalState !== 'unreachable' && arrivalState !== 'repair') return;
       diagnoseAndRender();
       // A reset box is reachable (just needs a code) → no polling. An
       // unreachable box → poll with backoff for recovery, off the UI thread.
