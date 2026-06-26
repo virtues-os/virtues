@@ -112,7 +112,7 @@ async fn resolve_user_yesterday(pool: &sqlx::PgPool) -> NaiveDate {
 /// Defaults: UTC timezone, 8 for maintenance hour.
 async fn load_user_maintenance(pool: &sqlx::PgPool) -> (chrono_tz::Tz, i32) {
     let row: Option<(Option<String>, Option<i32>)> = sqlx::query_as(
-        "SELECT timezone, update_check_hour FROM app_user_profile LIMIT 1",
+        "SELECT home_timezone, update_check_hour FROM app_user_profile LIMIT 1",
     )
     .fetch_optional(pool)
     .await

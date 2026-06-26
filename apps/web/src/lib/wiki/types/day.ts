@@ -193,7 +193,6 @@ export interface DayPage extends WikiPageBase {
 	date: Date;
 	dayOfWeek: string;
 	startTimezone: string | null;
-	endTimezone: string | null;
 
 	// ─────────────────────────────────────────────────────────────
 	// LAYER 1: Data (always additive, no conflict)

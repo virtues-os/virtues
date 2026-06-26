@@ -314,7 +314,7 @@ pub async fn build_hourly_context(
 
     // User profile (brief)
     if let Ok(row) = sqlx::query(
-        "SELECT preferred_name, occupation, employer, timezone FROM app_user_profile LIMIT 1",
+        "SELECT preferred_name, occupation, employer, home_timezone FROM app_user_profile LIMIT 1",
     )
     .fetch_optional(pool)
     .await
@@ -323,7 +323,7 @@ pub async fn build_hourly_context(
             let name: Option<String> = r.try_get("preferred_name").ok().flatten();
             let occ: Option<String> = r.try_get("occupation").ok().flatten();
             let emp: Option<String> = r.try_get("employer").ok().flatten();
-            let tz: Option<String> = r.try_get("timezone").ok().flatten();
+            let tz: Option<String> = r.try_get("home_timezone").ok().flatten();
             let mut parts: Vec<String> = Vec::new();
             if let Some(n) = name { parts.push(n); }
             if let Some(o) = occ {

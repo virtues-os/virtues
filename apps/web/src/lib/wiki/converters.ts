@@ -229,7 +229,6 @@ export function apiToDayPage(api: WikiDayApi): DayPage {
 		date,
 		dayOfWeek: dayNames[date.getDay()],
 		startTimezone: api.start_timezone,
-		endTimezone: api.end_timezone,
 
 		// Layers (will be populated from separate queries)
 		linkedEntities: emptyLinkedEntities(),

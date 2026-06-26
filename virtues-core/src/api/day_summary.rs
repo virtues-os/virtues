@@ -141,12 +141,14 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
         }
     }
 
-    // Fallback: existing wide UTC window for backward compatibility
+    // Fallback: a true 24h UTC day when no/invalid timezone is available. (This
+    // should rarely execute — home_timezone is seeded from the server's own
+    // system clock; see docs/timezone-model.md.)
     let start = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
     let end = date
         .succ_opt()
         .unwrap()
-        .and_hms_opt(12, 0, 0)
+        .and_hms_opt(0, 0, 0)
         .unwrap()
         .and_utc();
     (start.to_rfc3339(), end.to_rfc3339())
@@ -157,11 +159,18 @@ pub fn day_boundaries_utc(date: NaiveDate, timezone: Option<&str>) -> (String, S
 /// Generate a daily summary from the day's data and save it as the autobiography.
 pub async fn generate_day_summary(pool: &PgPool, date: NaiveDate) -> Result<WikiDay> {
     // 1. Gather structured sources (calendar, locations, transactions, chats, pages, etc.)
-    let sources = get_day_sources(pool, date).await?;
+    let sources = get_day_sources(pool, date, None).await?;
 
-    // 2. Compute date boundaries using profile timezone
-    let timezone = super::profile::get_timezone(pool).await.unwrap_or(None);
-    let (start_str, end_str) = day_boundaries_utc(date, timezone.as_deref());
+    // 2. Compute date boundaries using the per-day "where the owner was" timezone
+    //    (fixed at the day's start), falling back to the box's home_timezone.
+    //    See docs/timezone-model.md.
+    let home_tz = super::profile::get_timezone(pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "UTC".to_string());
+    let day_tz = crate::timezone::resolve_day_timezone(pool, date, &home_tz).await;
+    let (start_str, end_str) = day_boundaries_utc(date, Some(&day_tz));
+    let timezone: Option<String> = Some(day_tz);
 
     // 2b. Early exit if zero ontology data exists for this day
     let ontology_presence = detect_ontology_presence(pool, &start_str, &end_str).await;
