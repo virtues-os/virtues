@@ -254,12 +254,21 @@ jobs:
       # The channel release: `mac-v0.1.0` (stable, permanent, prerelease:false)
       # or `mac-edge` (rolling, prerelease:true). Both carry the versioned DMG
       # and the stable Virtues.dmg so each channel has a fixed download URL.
+      #
+      # make_latest:false is load-bearing: the repo-global `releases/latest`
+      # pointer belongs exclusively to the Linux box's bare `v*` stable (it's
+      # what virtues.com/sh + bootstrap.sh + virtues-installer resolve). The Mac
+      # app has its OWN rolling pointer (`mac-latest`, below) that its updater +
+      # virtues.com/downloads/mac use — it never needs the global flag. Without
+      # this, a `prerelease:false` mac-v* would auto-grab `releases/latest` and
+      # `curl virtues.com/sh` 404s (no bootstrap.sh on a mac DMG release).
       - name: Publish channel release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ steps.version.outputs.IS_EDGE == 'true' && 'Virtues for Mac (Edge)' || format('Virtues for Mac v{0}', steps.version.outputs.VERSION) }}
           tag_name: ${{ steps.version.outputs.TAG }}
           prerelease: ${{ steps.version.outputs.IS_EDGE == 'true' }}
+          make_latest: false
           body: |
             ## Virtues for Mac ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
 
@@ -283,6 +292,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: mac-latest
+          make_latest: false
           name: Virtues for Mac (Latest)
           body: |
             Automatically tracks the latest stable Mac build.

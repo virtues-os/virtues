@@ -310,17 +310,38 @@ jobs:
           # `prerelease: false, draft: false` once both are uploaded).
           draft: true
 
-      # The bootstrap script ships WITH the release so virtues.com/sh can
-      # serve it from the stable `releases/latest/download/bootstrap.sh` URL
-      # (Caddy redir on the install host) — the script and the binaries it
-      # fetches version together, gated on the same tag, and no server-side
-      # copy exists to drift. Arch-independent → one matrix leg uploads it.
+      # The bootstrap script ships WITH the release so virtues.com/sh (stable,
+      # → releases/latest/download/bootstrap.sh) and virtues.com/sh-pre (edge,
+      # → releases/download/edge/bootstrap.sh) each serve the copy bundled with
+      # the matching binaries — they version together, gated on the same tag,
+      # no server-side copy to drift. Arch-independent → one matrix leg ships it.
+      #
+      # Channel stamping: a release's bundled script should default to installing
+      # ITS OWN binaries. Bare stable `v*` keeps the source default `latest` so it
+      # auto-tracks the newest stable via the API. Pre-release tags (`edge`, any
+      # `-` semver like v0.1.0-staging.N) pin VIRTUES_VERSION to their own tag, so
+      # `curl virtues.com/sh-pre | sh` installs edge — not stable, which a bare
+      # `latest` default would otherwise resolve to.
+      - name: Stamp channel into bootstrap.sh (x86_64 leg only)
+        if: matrix.arch == 'x86_64'
+        run: |
+          V="${{ steps.tag.outputs.version }}"
+          mkdir -p dist
+          if [ "$V" = "edge" ] || printf '%s' "$V" | grep -q -- '-'; then
+            sed "s/{VIRTUES_VERSION:-latest}/{VIRTUES_VERSION:-$V}/" tools/bootstrap.sh > dist/bootstrap.sh
+            grep -q "{VIRTUES_VERSION:-$V}" dist/bootstrap.sh \
+              || (echo "channel stamp failed for $V — placeholder not found" >&2 && exit 1)
+          else
+            cp tools/bootstrap.sh dist/bootstrap.sh
+          fi
+          echo "bootstrap.sh default channel:"; grep 'VIRTUES_VERSION:-' dist/bootstrap.sh
+
       - name: Upload bootstrap.sh (x86_64 leg only)
         if: matrix.arch == 'x86_64'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.version }}
-          files: tools/bootstrap.sh
+          files: dist/bootstrap.sh
           fail_on_unmatched_files: true
           draft: true
 
@@ -447,13 +468,19 @@ jobs:
       #   • `edge` or any `-` semver identifier (e.g. v0.1.0-staging.5) → edge
       #     channel, prerelease:true. `releases/latest` skips these; they're
       #     served by `virtues upgrade --pre` + virtues.com/sh-pre.
-      #   • bare `v0.1.0` → stable, prerelease:false → becomes `releases/latest`,
+      #   • bare `v0.1.0` → stable, prerelease:false → CLAIMS `releases/latest`,
       #     served by virtues.com/sh + `virtues upgrade`.
+      #
+      # --latest is claimed EXPLICITLY (not left to GitHub's auto algorithm) so
+      # this is the sole owner of the repo-global pointer. The Mac app uploads
+      # with make_latest:false (see release-mac.yml) precisely so a newer mac-v*
+      # can't drift the pointer onto a DMG release that has no bootstrap.sh →
+      # `curl virtues.com/sh` 404. Edge/staging stay prerelease and never claim it.
       - name: Flip draft → published (channel from tag)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           V="${{ steps.tag.outputs.version }}"
-          if [[ "$V" == "edge" || "$V" == *-* ]]; then PRE=true; else PRE=false; fi
-          echo "tag=$V → prerelease=$PRE"
-          gh release edit "$V" --draft=false --prerelease="$PRE"
+          if [[ "$V" == "edge" || "$V" == *-* ]]; then PRE=true; LATEST=false; else PRE=false; LATEST=true; fi
+          echo "tag=$V → prerelease=$PRE latest=$LATEST"
+          gh release edit "$V" --draft=false --prerelease="$PRE" --latest="$LATEST"

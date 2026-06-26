@@ -65,6 +65,14 @@ if [ "$VIRTUES_VERSION" = "latest" ]; then
         || die "could not resolve latest release. Pass VIRTUES_VERSION=vX.Y.Z to pin."
 fi
 
+# Hand the resolved tag down to the installer so it fetches the SAME release's
+# tarball — not whatever its own `releases/latest` lookup would pick. This is
+# what makes the pre channel work: the edge copy of this script defaults
+# VIRTUES_VERSION to `edge` (stamped at release time, see release-linux.yml), so
+# `curl virtues.com/sh-pre | sh` installs edge binaries instead of stable. The
+# installer reads VIRTUES_VERSION from the env (see download.rs resolve_version).
+export VIRTUES_VERSION
+
 BASE="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${VIRTUES_VERSION}"
 NAME="virtues-installer-${VIRTUES_VERSION}-${ARCH}-linux"
 INSTALLER_URL="${BASE}/${NAME}"
