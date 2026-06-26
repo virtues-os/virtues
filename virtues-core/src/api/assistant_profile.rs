@@ -141,13 +141,13 @@ pub async fn update_assistant_profile(
 
 /// Helper to get the assistant's name for system prompts
 ///
-/// Returns assistant_name if set, otherwise "Assistant"
+/// Returns assistant_name if set, otherwise the default "Ari"
 pub async fn get_assistant_name(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
 
     Ok(profile
         .assistant_name
-        .unwrap_or_else(|| "Assistant".to_string()))
+        .unwrap_or_else(|| "Ari".to_string()))
 }
 
 /// Helper to get the lite/background model for cheap tasks (titles, summaries)

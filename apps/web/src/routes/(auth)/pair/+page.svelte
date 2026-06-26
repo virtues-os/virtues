@@ -40,7 +40,9 @@
 			user_agent: navigator.userAgent,
 			screen: `${window.screen.width}x${window.screen.height}`,
 			lang: navigator.language,
-			tz: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "",
+			// IANA timezone — read by the box's home_timezone cross-check in
+			// pair.rs. See docs/timezone-model.md.
+			timezone: Intl.DateTimeFormat().resolvedOptions().timeZone ?? "",
 		};
 	}
 

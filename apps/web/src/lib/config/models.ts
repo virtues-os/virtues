@@ -12,6 +12,9 @@ export interface ModelOption {
 	contextWindow: number | null;
 	maxOutputTokens: number | null;
 	supportsTools: boolean | null;
+	supportsVision: boolean | null;
+	supportsPdf: boolean | null;
+	supportsAudio: boolean | null;
 	enabled: boolean;
 	sortOrder: number;
 	isDefault?: boolean;
@@ -39,6 +42,9 @@ export async function fetchModels(): Promise<ModelOption[]> {
 		contextWindow: model.context_window,
 		maxOutputTokens: model.max_output_tokens,
 		supportsTools: model.supports_tools,
+		supportsVision: model.supports_vision ?? null,
+		supportsPdf: model.supports_pdf ?? null,
+		supportsAudio: model.supports_audio ?? null,
 		enabled: model.enabled,
 		sortOrder: model.sort_order,
 		isDefault: model.is_default || false
@@ -67,6 +73,9 @@ export async function getModelById(modelId: string): Promise<ModelOption | null>
 		contextWindow: model.context_window,
 		maxOutputTokens: model.max_output_tokens,
 		supportsTools: model.supports_tools,
+		supportsVision: model.supports_vision ?? null,
+		supportsPdf: model.supports_pdf ?? null,
+		supportsAudio: model.supports_audio ?? null,
 		enabled: model.enabled,
 		sortOrder: model.sort_order,
 		isDefault: model.is_default || false

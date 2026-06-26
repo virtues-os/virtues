@@ -632,6 +632,32 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: false,
         },
         OntologyDescriptor {
+            name: "app_chat_message",
+            display_name: "Chat Messages",
+            description: "Individual messages from Virtues AI conversations (search artifact)",
+            domain: "app",
+            table_name: "app_chat_messages",
+            source_streams: vec![],
+            timestamp_column: "created_at",
+            end_timestamp_column: None,
+            embedding: Some(EmbeddingConfig {
+                // Skip compaction checkpoints and onboarding triggers: NULL embed
+                // text makes the indexer insert a skip placeholder instead of
+                // embedding them. User + assistant turns are both embedded.
+                embed_text_sql: "CASE WHEN t.role = 'checkpoint' OR t.subject = 'onboarding_synthetic' THEN NULL ELSE t.content END",
+                content_type: "chat_message",
+                title_sql: None,
+                preview_sql: "SUBSTR(t.content, 1, 200)",
+                author_sql: Some("t.role"),
+                timestamp_sql: "t.created_at",
+            }),
+            temporal_type: TemporalType::Discrete,
+            day_source: None,
+            continuous_agg: None,
+            //                    who  whom what when where why  how
+            is_activation_signal: false,
+        },
+        OntologyDescriptor {
             name: "app_page",
             display_name: "Page Edits",
             description: "Wiki page creations and modifications",

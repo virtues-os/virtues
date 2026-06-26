@@ -153,7 +153,6 @@ pub struct WikiDay {
     pub id: String,
     pub date: NaiveDate,
     pub start_timezone: Option<String>,
-    pub end_timezone: Option<String>,
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
     pub epigraph: Option<String>,
@@ -1000,7 +999,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
     let existing: Option<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone, autobiography, autobiography_sections,
             epigraph, (illustration IS NOT NULL) as has_illustration,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1027,7 +1026,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         INSERT INTO wiki_days (id, date)
         VALUES ($1, $2)
         RETURNING
-            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone, autobiography, autobiography_sections,
             epigraph, (illustration IS NOT NULL) as has_illustration,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1057,7 +1056,6 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         id,
         date,
         start_timezone: row.try_get("start_timezone").ok().flatten(),
-        end_timezone: row.try_get("end_timezone").ok().flatten(),
         autobiography: row.try_get("autobiography").ok().flatten(),
         autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
         epigraph: row.try_get("epigraph").ok().flatten(),
@@ -1335,7 +1333,7 @@ pub async fn list_days(
     let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(
         r#"
         SELECT
-            id, date, start_timezone, end_timezone, autobiography, autobiography_sections,
+            id, date, start_timezone, autobiography, autobiography_sections,
             epigraph, (illustration IS NOT NULL) as has_illustration,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
@@ -1843,24 +1841,89 @@ pub struct DaySource {
     pub continuous: bool,
 }
 
+/// Resolve the timezone a given day should be rendered/windowed in —
+/// "the timezone you woke up in", fixed at the day's start:
+///   1. the locked `wiki_days.start_timezone` if a summary already ran (past days
+///      keep the zone they were lived in), else
+///   2. `tzf-rs(first located point of the day)` — the same "where you woke up"
+///      signal the EOD lock uses, so live-today and locked-history agree even on
+///      a travel day (a move surfaces as *tomorrow*, not a mid-day re-anchor), else
+///   3. the viewing device's zone, but ONLY for an in-progress today with no
+///      located points yet (web-only / location off), else
+///   4. `home_timezone`.
+/// See docs/timezone-model.md.
+async fn resolve_render_timezone(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> String {
+    use sqlx::Row;
+    // 1. Locked per-day zone from a prior summary.
+    if let Ok(Some(row)) =
+        sqlx::query("SELECT start_timezone FROM wiki_days WHERE date = $1")
+            .bind(date)
+            .fetch_optional(pool)
+            .await
+    {
+        if let Ok(Some(tz)) = row.try_get::<Option<String>, _>("start_timezone") {
+            if !tz.is_empty() {
+                return tz;
+            }
+        }
+    }
+
+    let home_tz = super::profile::get_timezone(pool)
+        .await
+        .unwrap_or(None)
+        .unwrap_or_else(|| "UTC".to_string());
+
+    // 2. Where the owner woke up that day (first located point). Authoritative and
+    //    consistent with the EOD lock — does NOT drift to where the viewer is now.
+    if let Some(tz) = crate::timezone::first_point_timezone(pool, date, &home_tz).await {
+        return tz;
+    }
+
+    // 3. No location for the day — for an in-progress *today* only, fall back to the
+    //    viewing device's zone (best available "where are you" for a web-only/
+    //    location-off owner). Never applied to a past day. "Today" is in home_tz.
+    let today_in_home = home_tz
+        .parse::<chrono_tz::Tz>()
+        .ok()
+        .map(|tz| Utc::now().with_timezone(&tz).date_naive());
+    if today_in_home == Some(date) {
+        if let Some(tz) = client_tz {
+            if !tz.is_empty() {
+                return tz.to_string();
+            }
+        }
+    }
+
+    // 4. Home.
+    home_tz
+}
+
 /// Get all ontology data sources for a specific date (registry-driven).
 ///
 /// Iterates over all registered ontologies that have a `DaySourceConfig` and builds
 /// dynamic SQL queries from the config. No arbitrary LIMITs — all data included
 /// with a sanity check for overflow.
-pub async fn get_day_sources(pool: &PgPool, date: NaiveDate) -> Result<Vec<DaySource>> {
+pub async fn get_day_sources(
+    pool: &PgPool,
+    date: NaiveDate,
+    client_tz: Option<&str>,
+) -> Result<Vec<DaySource>> {
     use sqlx::Row;
     use virtues_registry::ontologies::registered_ontologies;
 
-    // Day window in the user's timezone, converted to UTC — the SAME boundaries
-    // `day_summary` uses for its health/messages sections. Previously this
-    // hard-coded a UTC midnight→noon window, so records near the local-day edge
-    // landed on a different day here than in the tz-aware health snapshot. Falls
-    // back to the wide UTC window when no timezone is configured.
-    // (The `use_date_filter` branch below still keys on the UTC `date(...)`; that
-    // discrete-source path is a smaller, separate inconsistency left for later.)
-    let timezone = super::profile::get_timezone(pool).await.unwrap_or(None);
-    let (start_str, end_str) = super::day_summary::day_boundaries_utc(date, timezone.as_deref());
+    // Day window in the per-day "where the owner was" timezone, fixed at the
+    // day's start ("the timezone you woke up in"). Resolution order:
+    //   1. the locked wiki_days.start_timezone for this day (past days), else
+    //   2. the viewing device's zone for an in-progress today (client_tz), else
+    //   3. tzf-rs(first located point of the day) → home_timezone fallback.
+    // See docs/timezone-model.md.
+    let timezone = resolve_render_timezone(pool, date, client_tz).await;
+    let (start_str, end_str) =
+        super::day_summary::day_boundaries_utc(date, Some(&timezone));
     let mut sources: Vec<DaySource> = Vec::new();
 
     for ont in registered_ontologies() {

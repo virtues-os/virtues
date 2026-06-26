@@ -2,6 +2,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import ChatInput from "$lib/components/ChatInput.svelte";
+	import MediaLightbox from "$lib/components/MediaLightbox.svelte";
 	import {
 		getSelectedModel,
 		getDefaultModel,
@@ -9,6 +10,11 @@
 		getInitializationPromise,
 	} from "$lib/stores/models.svelte";
 	import CitedMarkdown from "$lib/components/CitedMarkdown.svelte";
+	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
+	import Icon from "$lib/components/Icon.svelte";
+	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
+	import { fetchModels, type ModelOption } from "$lib/config/models";
+	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
 	import type { Citation } from "$lib/types/Citation";
@@ -93,6 +99,277 @@
 	let enableTransitions = $state(false);
 	let isLoading = $state(true);
 	let isAwaitingResponse = $state(false);
+	// Track C: messages typed while the assistant is still streaming are queued
+	// and sent automatically when the turn finishes (Cursor-style chips above the
+	// composer). Local to the view — a tab drag-away mid-queue is an accepted edge.
+	let queuedMessages = $state<string[]>([]);
+
+	// Track D: highlight-to-reference. Select text in a message → comment bar →
+	// stage a reference chip above the composer that scopes the next message.
+	// Empty note = quote; typed note = quote + comment. Ephemeral. The in-text
+	// mark uses the app's own --color-highlight token (one warm marker, not a
+	// per-ref rainbow) — references are distinguished by being listed, not colored.
+	type StagedRef = {
+		id: string;
+		messageId: string;
+		text: string;
+		comment: string;
+		range: Range;
+	};
+	type SelectionDraft = {
+		text: string;
+		messageId: string;
+		rect: { top: number; left: number; bottom: number; width: number };
+		range: Range;
+	};
+	let stagedRefs = $state<StagedRef[]>([]);
+	let selectionDraft = $state<SelectionDraft | null>(null);
+
+	function handleWindowMouseup(e: MouseEvent) {
+		const sel = window.getSelection();
+		const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
+		if (text && sel && sel.rangeCount > 0) {
+			const range = sel.getRangeAt(0);
+			const node = range.commonAncestorContainer;
+			const el = (node.nodeType === 1 ? node : node.parentElement) as HTMLElement | null;
+			const wrapper = el?.closest(".message-wrapper") as HTMLElement | null;
+			// Only chat messages; ignore selections inside the popover itself.
+			if (!wrapper || el?.closest(".vref-bar")) return;
+			const rect = range.getBoundingClientRect();
+			selectionDraft = {
+				text,
+				messageId: wrapper.getAttribute("data-message-id") || "",
+				rect: { top: rect.top, left: rect.left, bottom: rect.bottom, width: rect.width },
+				range: range.cloneRange(),
+			};
+			return;
+		}
+		// Collapsed selection = a click → dismiss the popover if clicking outside it.
+		if (selectionDraft && !(e.target as HTMLElement)?.closest(".vref-bar")) {
+			selectionDraft = null;
+		}
+	}
+
+	function addStagedRef(comment: string) {
+		if (!selectionDraft) return;
+		const d = selectionDraft;
+		stagedRefs = [
+			...stagedRefs,
+			{
+				id: crypto?.randomUUID?.() ?? `ref-${stagedRefs.length}-${d.text.length}`,
+				messageId: d.messageId,
+				text: d.text,
+				comment,
+				range: d.range,
+			},
+		];
+		selectionDraft = null;
+		window.getSelection()?.removeAllRanges();
+		repaintHighlights();
+	}
+
+	function removeStagedRef(id: string) {
+		stagedRefs = stagedRefs.filter((r) => r.id !== id);
+		repaintHighlights();
+	}
+
+	function clearStagedRefs() {
+		stagedRefs = [];
+		repaintHighlights();
+	}
+
+	function copySelectionDraft() {
+		if (selectionDraft) navigator.clipboard?.writeText(selectionDraft.text).catch(() => {});
+	}
+
+	// Paint staged refs + the pending selection with the CSS Custom Highlight API
+	// under one name — no DOM mutation, no reflow, themed via --color-highlight.
+	// Painting the pending range keeps the highlight visible after the comment
+	// field steals focus (which collapses the native browser selection).
+	function repaintHighlights() {
+		const cssAny = CSS as any;
+		if (typeof CSS === "undefined" || !cssAny.highlights || typeof (window as any).Highlight === "undefined") return;
+		const ranges = stagedRefs.map((r) => r.range);
+		if (selectionDraft) ranges.push(selectionDraft.range);
+		if (ranges.length === 0) {
+			cssAny.highlights.delete("vref");
+			return;
+		}
+		try {
+			cssAny.highlights.set("vref", new (window as any).Highlight(...ranges));
+		} catch {
+			/* range invalidated by a re-render — drop silently */
+		}
+	}
+
+	// Repaint whenever the staged set or the pending selection changes.
+	$effect(() => {
+		void stagedRefs;
+		void selectionDraft;
+		repaintHighlights();
+	});
+
+	function serializeRef(r: StagedRef): string {
+		const quote = `> ${r.text.replace(/\s*\n\s*/g, " ")}`;
+		return r.comment ? `${quote}\n\n${r.comment}` : quote;
+	}
+
+	// Track E1: multimodal attachments. Files are read to base64 data URLs (so they
+	// round-trip to the provider and render on reload) and sent as AI SDK file parts.
+	type Attachment = {
+		id: string;
+		mediaType: string;
+		url: string; // data URL
+		filename: string;
+		size: number;
+		kind: "image" | "pdf" | "audio" | "text";
+		width?: number;
+		height?: number;
+	};
+
+	function formatFileSize(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	}
+	let attachments = $state<Attachment[]>([]);
+	let dragActive = $state(false);
+
+	// Click an in-message image to open it in a shared-element lightbox.
+	let lightbox = $state<{ src: string; alt: string; rect: DOMRect } | null>(null);
+	function openLightbox(e: MouseEvent, src: string, alt: string) {
+		const el = e.currentTarget as HTMLImageElement;
+		lightbox = { src, alt, rect: el.getBoundingClientRect() };
+	}
+	let availableModels = $state<ModelOption[]>([]);
+
+	onMount(() => {
+		fetchModels()
+			.then((m) => (availableModels = m))
+			.catch(() => {});
+	});
+
+	// Text/code/doc extensions — MIME is unreliable for these, so check the name too.
+	const TEXT_EXT =
+		/\.(md|markdown|txt|text|csv|tsv|json|html?|xml|ya?ml|toml|ini|env|log|ts|tsx|js|jsx|mjs|cjs|py|rb|rs|go|java|c|h|cpp|cc|cs|php|swift|kt|sh|bash|zsh|sql|css|scss)$/i;
+
+	function attachmentKind(file: File): Attachment["kind"] | null {
+		const mt = (file.type || "").toLowerCase();
+		if (mt.startsWith("image/")) return "image";
+		if (mt === "application/pdf") return "pdf";
+		if (mt.startsWith("audio/")) return "audio";
+		if (mt.startsWith("text/") || mt === "application/json" || TEXT_EXT.test(file.name))
+			return "text";
+		return null;
+	}
+
+	function readAsDataURL(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const r = new FileReader();
+			r.onload = () => resolve(r.result as string);
+			r.onerror = () => reject(r.error);
+			r.readAsDataURL(file);
+		});
+	}
+
+	function readAsText(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const r = new FileReader();
+			r.onload = () => resolve(r.result as string);
+			r.onerror = () => reject(r.error);
+			r.readAsText(file);
+		});
+	}
+
+	function base64Utf8(s: string): string {
+		const bytes = new TextEncoder().encode(s);
+		let bin = "";
+		for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+		return btoa(bin);
+	}
+
+	async function addFiles(files: File[]) {
+		const MAX = 100 * 1024 * 1024; // 100 MB, matches the media backend cap
+		const MAX_TEXT = 100 * 1024; // inline-text cap (~25k tokens) before truncating
+		for (const file of files) {
+			const kind = attachmentKind(file);
+			if (!kind || file.size > MAX) continue;
+			try {
+				let mediaType = file.type || "application/octet-stream";
+				let url: string;
+				let width: number | undefined;
+				let height: number | undefined;
+
+				if (kind === "image") {
+					const norm = await normalizeImage(file);
+					url = norm.dataUrl;
+					mediaType = norm.mediaType;
+					width = norm.width || undefined;
+					height = norm.height || undefined;
+				} else if (kind === "text") {
+					let text = await readAsText(file);
+					if (text.length > MAX_TEXT) text = text.slice(0, MAX_TEXT) + "\n…[truncated]";
+					mediaType = "text/plain";
+					url = `data:text/plain;base64,${base64Utf8(text)}`;
+				} else {
+					url = await readAsDataURL(file);
+				}
+
+				attachments = [
+					...attachments,
+					{
+						id: crypto?.randomUUID?.() ?? `att-${attachments.length}-${file.size}`,
+						mediaType,
+						url,
+						filename: file.name,
+						size: file.size,
+						kind,
+						width,
+						height,
+					},
+				];
+			} catch {
+				/* unreadable / undecodable file — skip */
+			}
+		}
+	}
+
+	function removeAttachment(id: string) {
+		attachments = attachments.filter((a) => a.id !== id);
+	}
+
+	// Capability gate: does the active model support every attached modality? If not,
+	// surface a switch to a model that does (or note none is available).
+	const capabilityIssue = $derived.by(() => {
+		if (attachments.length === 0) return null;
+		const model =
+			availableModels.find((m) => m.id === selectedModelValue?.id) ??
+			selectedModelValue ??
+			null;
+		const needs = {
+			image: attachments.some((a) => a.kind === "image"),
+			pdf: attachments.some((a) => a.kind === "pdf"),
+			audio: attachments.some((a) => a.kind === "audio"),
+		};
+		const lacks: string[] = [];
+		if (needs.image && !model?.supportsVision) lacks.push("images");
+		if (needs.pdf && !model?.supportsPdf) lacks.push("PDFs");
+		if (needs.audio && !model?.supportsAudio) lacks.push("audio");
+		if (lacks.length === 0) return null;
+		const candidate =
+			availableModels.find(
+				(m) =>
+					(!needs.image || m.supportsVision) &&
+					(!needs.pdf || m.supportsPdf) &&
+					(!needs.audio || m.supportsAudio),
+			) ?? null;
+		return { lacks, modelName: model?.displayName ?? "This model", candidate };
+	});
+
+	function switchToCapableModel() {
+		const candidate = capabilityIssue?.candidate;
+		if (candidate) selectedModelValue = candidate;
+	}
 	let loadedMessages = $state<any[]>([]);
 
 	// Track tab route to reset state when switching conversations
@@ -115,7 +392,7 @@
 
 	// Keep a map of message metadata (agentId, provider, etc.) for rendering
 	let messageMetadata = $state<
-		Map<string, { agentId?: string; provider?: string }>
+		Map<string, { agentId?: string; provider?: string; stopped?: boolean }>
 	>(new Map());
 
 	// Citation panel state
@@ -383,10 +660,14 @@
 
 	// Helper function to convert database messages to Chat parts
 	function convertMessageToParts(msg: any) {
-		if (msg.agentId || msg.provider) {
+		// Carry agent/provider + the user-stopped flag (subject='cancelled') so the
+		// "Stopped" notice survives a reload.
+		const stopped = msg.subject === "cancelled";
+		if (msg.agentId || msg.provider || stopped) {
 			messageMetadata.set(msg.id, {
 				agentId: msg.agentId,
 				provider: msg.provider,
+				stopped,
 			});
 		}
 
@@ -711,6 +992,9 @@
 		if (currentChatConversationId) {
 			chatInstances.release(currentChatConversationId);
 		}
+		// Clear any staged highlight ranges from the global CSS highlight registry.
+		stagedRefs = [];
+		repaintHighlights();
 	});
 
 	// Derive thinking state from chat status
@@ -871,6 +1155,16 @@
 		// Stop the client-side stream
 		chat.stop();
 
+		// Mark the in-flight assistant message as user-stopped so the "Stopped"
+		// notice shows immediately (reload reads the persisted subject='cancelled').
+		const stoppedId = lastAssistantMessage?.id;
+		if (stoppedId) {
+			const existing = messageMetadata.get(stoppedId) ?? {};
+			messageMetadata.set(stoppedId, { ...existing, stopped: true });
+			// $state(Map) doesn't track .set() — reassign so the chip re-renders live.
+			messageMetadata = new Map(messageMetadata);
+		}
+
 		// Also notify the backend to cancel the agent loop
 		try {
 			await fetch('/api/chat/cancel', {
@@ -913,13 +1207,39 @@
 	}
 
 	async function handleChatSubmit(value: string) {
-		const messageToSend = value.trim();
-		if (!messageToSend) return;
+		let messageToSend = value.trim();
+
+		// Track D: prepend any staged highlight references as quoted context +
+		// comments. Only present on a direct send (cleared before queue-drain).
+		if (stagedRefs.length > 0) {
+			const refsBlock = stagedRefs.map(serializeRef).join("\n\n");
+			messageToSend = refsBlock + (messageToSend ? `\n\n${messageToSend}` : "");
+			clearStagedRefs();
+		}
+
+		// Track E1: block sending if an attachment isn't supported by the active
+		// model — the capability banner prompts a switch instead.
+		if (capabilityIssue) return;
+
+		if (!messageToSend && attachments.length === 0) return;
 
 		if (chat.status !== "ready") {
+			// Queue text; attachments stay staged and ride along when the drain
+			// effect re-sends this once the current turn finishes.
+			queuedMessages = [...queuedMessages, messageToSend];
+			input = "";
 			return;
 		}
 		input = "";
+
+		// Capture + clear attachments as AI SDK file parts.
+		const files = attachments.map((a) => ({
+			type: "file" as const,
+			mediaType: a.mediaType,
+			url: a.url,
+			filename: a.filename,
+		}));
+		attachments = [];
 
 		// New turn → clear any leftover Deep Research panel from the previous turn.
 		chatInstances.clearSubagents(conversationId);
@@ -938,7 +1258,9 @@
 				await editAllowListStore.markChatCreated();
 			}
 
-			await chat.sendMessage({ text: messageToSend });
+			await chat.sendMessage(
+				files.length > 0 ? { text: messageToSend, files } : { text: messageToSend },
+			);
 
 			if (chat.messages.length === 2) {
 				await generateTitle();
@@ -981,14 +1303,92 @@
 			isAwaitingResponse = false;
 		}
 	}
+
+	// Track C: drain the queue when the assistant goes idle.
+	$effect(() => {
+		if (
+			chat.status === "ready" &&
+			queuedMessages.length > 0 &&
+			!isAwaitingResponse
+		) {
+			const [next, ...rest] = queuedMessages;
+			queuedMessages = rest;
+			handleChatSubmit(next);
+		}
+	});
+
+	function removeQueued(index: number) {
+		queuedMessages = queuedMessages.filter((_, i) => i !== index);
+	}
 </script>
+
+<svelte:window onmouseup={handleWindowMouseup} />
+
+{#if selectionDraft}
+	<SelectionPopover
+		rect={selectionDraft.rect}
+		onAdd={addStagedRef}
+		onCopy={copySelectionDraft}
+		onClose={() => (selectionDraft = null)}
+	/>
+{/if}
+
+{#if lightbox}
+	<MediaLightbox
+		src={lightbox.src}
+		alt={lightbox.alt}
+		originRect={lightbox.rect}
+		onClose={() => (lightbox = null)}
+	/>
+{/if}
 
 {#if !chat}
 	<!-- wait for chat to initialize -->
 {:else if isContextView}
 	<ContextViewPanel {conversationId} {active} onCompacted={handleCompacted} />
 {:else}
-	<div class="chat-root">
+	<div
+		class="chat-root"
+		role="presentation"
+		ondragover={(e) => {
+			if (e.dataTransfer?.types.includes("Files")) {
+				e.preventDefault();
+				dragActive = true;
+			}
+		}}
+		ondragleave={(e) => {
+			// Only clear when leaving the root, not when crossing child boundaries.
+			if (!e.relatedTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
+				dragActive = false;
+			}
+		}}
+		ondrop={(e) => {
+			e.preventDefault();
+			dragActive = false;
+			if (e.dataTransfer?.files?.length) addFiles(Array.from(e.dataTransfer.files));
+		}}
+	>
+		{#snippet renderFilePart(part: any, compact = false)}
+			{@const mt = part.mediaType || ""}
+			{#if mt.startsWith("image/")}
+				<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+				<img
+					src={part.url}
+					alt={part.filename || "image"}
+					class="msg-image"
+					class:compact-img={compact}
+					onclick={(e) => openLightbox(e, part.url, part.filename || "image")}
+				/>
+			{:else if mt.startsWith("audio/")}
+				<audio src={part.url} controls class="msg-audio"></audio>
+			{:else}
+				<a class="msg-file" href={part.url} download={part.filename || "file"}>
+					<Icon icon={mt === "application/pdf" ? "ri:file-pdf-fill" : "ri:file-text-line"} width="16" />
+					<span>{part.filename || "Document"}</span>
+				</a>
+			{/if}
+		{/snippet}
+
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area">
@@ -1020,6 +1420,9 @@
 								>
 									<div
 										class="message-wrapper"
+										class:user-has-attachment={isUserMessage &&
+											message.parts.some((p: any) => p.type === "file")}
+										data-message-id={message.id}
 										data-role={message.role}
 										data-agent-id={messageMetadata.get(
 											message.id,
@@ -1116,6 +1519,8 @@
 															onCitationClick={openCitationPanel}
 														/>
 													</div>
+											{:else if part.type === "file"}
+												{@render renderFilePart(part as any)}
 											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
 												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
 												{@const output = (part as any).output}
@@ -1178,6 +1583,28 @@
 													code={toolPart.input?.code || ''}
 													output={toolPart.output}
 												/>
+											{:else if part.type === "tool-generate_image"}
+												{@const gen = part as any}
+												{#if gen.state === "output-available" && gen.output?.url}
+													<figure class="generated-image">
+														<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+														<img
+															src={gen.output.url}
+															alt={gen.output.prompt || gen.input?.prompt || "Generated image"}
+															class="msg-image"
+															onclick={(e) => openLightbox(e, gen.output.url, gen.output.prompt || gen.input?.prompt || "Generated image")}
+														/>
+													</figure>
+												{:else if gen.state === "output-error"}
+													<div class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg">
+														Image generation failed{gen.errorText ? ` — ${gen.errorText}` : ""}.
+													</div>
+												{:else}
+													<div class="generating-image">
+														<Icon icon="ri:image-add-line" width="16" />
+														<span>Generating image…</span>
+													</div>
+												{/if}
 												{:else if part.type.startsWith("tool-") && (part as any).state === "output-error"}
 													<div
 														class="tool-error mb-3 text-sm text-error p-3 bg-error-subtle rounded-lg"
@@ -1195,16 +1622,25 @@
 													</div>
 												{/if}
 											{/each}
+											{#if messageMetadata.get(message.id)?.stopped}
+												<StoppedNotice />
+											{/if}
 										{:else}
-											<UserMessage
-												text={message.parts
-													.filter(
-														(p) =>
-															p.type === "text",
-													)
-													.map((p) => p.text)
-													.join("")}
-											/>
+											{@const fileParts = message.parts.filter((p: any) => p.type === "file")}
+											{#if fileParts.length > 0}
+												<div class="msg-attachments">
+													{#each fileParts as fp, i (i)}
+														{@render renderFilePart(fp as any, true)}
+													{/each}
+												</div>
+											{/if}
+											{@const userText = message.parts
+												.filter((p) => p.type === "text")
+												.map((p) => p.text)
+												.join("")}
+											{#if userText.trim()}
+												<UserMessage text={userText} />
+											{/if}
 										{/if}
 									</div>
 								</div>
@@ -1239,8 +1675,109 @@
 						class:has-messages={!isEmpty}
 						class:transitions-enabled={enableTransitions}
 						class:focused={inputFocused}
+						class:drag-active={dragActive}
 					>
+						{#if dragActive}
+							<div class="drop-hint">
+								<Icon icon="ri:download-2-line" width="15" />
+								<span>Drop to attach &middot; images, PDFs, or audio</span>
+							</div>
+						{/if}
+						{#if attachments.length > 0}
+							<div class="attachments">
+								{#each attachments as a (a.id)}
+									<div class="attachment">
+										{#if a.kind === "image"}
+											<img src={a.url} alt={a.filename} class="attachment-thumb" />
+										{:else}
+											<span class="attachment-icon">
+												<Icon
+													icon={a.kind === "pdf"
+														? "ri:file-pdf-fill"
+														: a.kind === "audio"
+															? "ri:music-2-line"
+															: "ri:file-text-line"}
+													width="18"
+												/>
+											</span>
+										{/if}
+										<div class="attachment-meta">
+											<span class="attachment-name">{a.filename}</span>
+											<span class="attachment-size">{formatFileSize(a.size)}</span>
+										</div>
+										<button
+											type="button"
+											class="attachment-remove"
+											aria-label="Remove attachment"
+											onclick={() => removeAttachment(a.id)}
+										>
+											<Icon icon="ri:close-line" width="13" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{#if capabilityIssue}
+							<div class="capability-banner">
+								<span>
+									{capabilityIssue.modelName} can't read {capabilityIssue.lacks.join(" or ")}.
+								</span>
+								{#if capabilityIssue.candidate}
+									<button type="button" class="capability-switch" onclick={switchToCapableModel}>
+										Switch to {capabilityIssue.candidate.displayName}
+									</button>
+								{:else}
+									<span class="capability-none">No available model can read {capabilityIssue.lacks.join(" or ")} yet.</span>
+								{/if}
+							</div>
+						{/if}
+						{#if stagedRefs.length > 0}
+							<div class="staged-refs">
+								{#each stagedRefs as r (r.id)}
+									<div class="staged-ref">
+										<Icon
+											icon="ri:double-quotes-l"
+											width="13"
+											class="staged-ref-mark"
+										/>
+										<div class="staged-ref-body">
+											<span class="staged-ref-quote">{r.text}</span>
+											{#if r.comment}
+												<span class="staged-ref-comment">{r.comment}</span>
+											{/if}
+										</div>
+										<button
+											type="button"
+											class="queued-remove"
+											aria-label="Remove reference"
+											onclick={() => removeStagedRef(r.id)}
+										>
+											<Icon icon="ri:close-line" width="13" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+						{#if queuedMessages.length > 0}
+							<div class="queued-messages">
+								{#each queuedMessages as q, i (i)}
+									<div class="queued-chip">
+										<span class="queued-text">{q}</span>
+										<button
+											type="button"
+											class="queued-remove"
+											aria-label="Remove queued message"
+											onclick={() => removeQueued(i)}
+										>
+											<Icon icon="ri:close-line" width="13" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
 						<ChatInput
+							allowEmptySubmit={stagedRefs.length > 0 || attachments.length > 0}
+							onAttach={addFiles}
 							bind:value={input}
 							bind:focused={inputFocused}
 							bind:selectedModel={selectedModelValue}
@@ -1260,11 +1797,7 @@
 							onRemoveItem={handleRemoveItem}
 							onPageSelect={handlePageSelect}
 							onSelectEntities={handleSelectEntities}
-							on:submit={(e) => {
-								if (chat.status === "ready") {
-									handleChatSubmit(e.detail);
-								}
-							}}
+							on:submit={(e) => handleChatSubmit(e.detail)}
 							on:stop={() => handleChatStop()}
 						/>
 
@@ -1308,6 +1841,62 @@
 		height: 100%;
 		width: 100%;
 		display: flex;
+		position: relative;
+	}
+
+	/* Track D in-text reference mark — the app's own warm highlight token, one
+	   marker for every staged reference. Painted via the CSS Custom Highlight API
+	   (no DOM mutation, no reflow), so it's theme-aware for free. */
+	:global(::highlight(vref)) {
+		background-color: var(--color-highlight);
+		color: var(--color-highlight-foreground);
+	}
+
+	.staged-refs {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.staged-ref {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4375rem;
+		padding: 0.375rem 0.5rem 0.375rem 0.625rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+	}
+
+	.staged-ref :global(.staged-ref-mark) {
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
+		transform: translateY(1px);
+	}
+
+	.staged-ref-body {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.0625rem;
+	}
+
+	.staged-ref-quote {
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.staged-ref-comment {
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.chat-container {
@@ -1350,6 +1939,8 @@
 		transition: opacity 0.2s ease-in-out;
 		position: relative;
 		z-index: 1;
+		/* Keep scroll position stable as streamed content grows above the fold */
+		overflow-anchor: auto;
 		/* Use standard scrollbar styling — preserves overlay scrollbar behavior on macOS
 		   (unlike ::-webkit-scrollbar which forces classic scrollbars that steal layout space) */
 		scrollbar-width: thin;
@@ -1371,6 +1962,10 @@
 		gap: 1rem;
 		position: relative;
 		z-index: 1;
+		/* Stop a growing streamed message from reflowing/repainting the whole list.
+		   Safe here: the sticky .chat-input-wrapper is a sibling of the scroller,
+		   not a descendant, so layout containment doesn't affect it. */
+		contain: layout paint;
 	}
 
 	.chat-input-wrapper {
@@ -1387,6 +1982,252 @@
 		background-blend-mode: multiply;
 		box-sizing: border-box;
 		z-index: 10;
+	}
+
+	.queued-messages {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.queued-chip {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+
+	.queued-text {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.queued-remove {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.125rem;
+		border-radius: 0.375rem;
+		color: var(--color-foreground-muted);
+		transition: background-color 0.15s ease;
+	}
+
+	.queued-remove:hover {
+		background: var(--color-border);
+	}
+
+	/* Track E1 — composer attachment previews */
+	.attachments {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.attachment {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.375rem 0.5rem 0.375rem 0.375rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		max-width: 15rem;
+	}
+
+	.attachment-thumb {
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 0.4rem;
+		object-fit: cover;
+		flex-shrink: 0;
+		display: block;
+	}
+
+	.attachment-icon {
+		width: 2.25rem;
+		height: 2.25rem;
+		border-radius: 0.4rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: var(--color-surface);
+		color: var(--color-foreground-muted);
+		flex-shrink: 0;
+	}
+
+	.attachment-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.0625rem;
+		min-width: 0;
+	}
+
+	.attachment-name {
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.attachment-size {
+		font-size: 0.6875rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.attachment-remove {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.125rem;
+		border-radius: 0.375rem;
+		color: var(--color-foreground-muted);
+		transition: background-color 0.15s ease;
+	}
+
+	.attachment-remove:hover {
+		background: var(--color-border);
+	}
+
+	.capability-banner {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--color-warning, var(--color-border));
+		border-radius: 0.625rem;
+		background: var(--color-warning-subtle, var(--color-surface-elevated));
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+	}
+
+	.capability-switch {
+		color: var(--color-primary);
+		font-weight: 500;
+	}
+
+	.capability-switch:hover {
+		text-decoration: underline;
+	}
+
+	.capability-none {
+		color: var(--color-foreground-muted);
+	}
+
+	/* Track E1 — in-message media */
+	.msg-attachments {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.msg-image {
+		max-width: min(420px, 100%);
+		max-height: 420px;
+		border-radius: 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		display: block;
+		cursor: zoom-in;
+	}
+
+	.msg-audio {
+		width: min(420px, 100%);
+	}
+
+	.msg-file {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.875rem;
+		color: var(--color-foreground);
+		text-decoration: none;
+	}
+
+	.msg-file:hover {
+		border-color: var(--color-border-strong);
+	}
+
+	/* Track E2 — generated image */
+	.generated-image {
+		margin: 0.5rem 0;
+	}
+
+	.generating-image {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin: 0.5rem 0;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border-subtle);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
+
+	/* Track E1 — in-place drag affordance: the composer becomes the dropzone
+	   (no full-screen scrim — context stays visible, the cue points at the
+	   exact landing spot). Drop still works anywhere over the chat root. */
+	.drop-hint {
+		position: absolute;
+		left: 50%;
+		bottom: calc(100% - 0.5rem);
+		transform: translateX(-50%);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.3rem 0.7rem;
+		border-radius: 999px;
+		background: var(--color-primary);
+		color: var(--color-on-primary, #fff);
+		font-size: 0.75rem;
+		font-weight: 500;
+		white-space: nowrap;
+		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-primary) 60%, transparent);
+		pointer-events: none;
+		z-index: 11;
+		animation: drop-hint-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	@keyframes drop-hint-in {
+		from {
+			opacity: 0;
+			transform: translateX(-50%) translateY(0.35rem);
+		}
+		to {
+			opacity: 1;
+			transform: translateX(-50%) translateY(0);
+		}
+	}
+
+	/* Accent ring + gentle lift on the actual composer box while dragging. */
+	.chat-input-wrapper.drag-active :global(.chat-input-container .chat-input-wrapper) {
+		border-color: var(--color-primary);
+		box-shadow:
+			0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent),
+			0 10px 28px -14px color-mix(in srgb, var(--color-primary) 50%, transparent);
+		transition:
+			border-color 0.15s ease,
+			box-shadow 0.15s ease;
 	}
 
 	.chat-input-wrapper.transitions-enabled {
@@ -1438,6 +2279,9 @@
 		min-width: 0;
 		overflow-wrap: break-word;
 		word-break: break-word;
+		/* Isolate each message's layout/paint so a re-render of one (e.g. the
+		   streaming tail) can't reflow siblings. */
+		contain: layout paint;
 	}
 
 	.message-wrapper :global(h1),
@@ -1453,6 +2297,21 @@
 		border: 1px solid var(--color-border);
 		border-radius: 8px;
 		padding: 10px 16px;
+	}
+
+	/* A user turn with attachments hugs its content (photo + caption) instead of
+	   spanning full width with dead space. Text-only user turns are unchanged.
+	   Direct class (set in the loop) — robust vs :has()/snippet scoping. */
+	.message-wrapper.user-has-attachment {
+		width: fit-content;
+		max-width: 100%;
+	}
+
+	/* User-attached images render as compact thumbnails (class is on the <img>
+	   itself); assistant/generated images keep the larger size. */
+	.msg-image.compact-img {
+		max-width: min(260px, 100%);
+		max-height: 260px;
 	}
 
 	/* Assistant response text - spacing after thinking block */

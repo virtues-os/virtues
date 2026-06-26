@@ -231,7 +231,7 @@ async fn build_action_system_prompt(
 ) -> String {
     let assistant_name = crate::api::assistant_profile::get_assistant_name(pool)
         .await
-        .unwrap_or_else(|_| "Assistant".to_string());
+        .unwrap_or_else(|_| "Ari".to_string());
     let user_name = crate::api::profile::get_display_name(pool)
         .await
         .unwrap_or_else(|_| "there".to_string());

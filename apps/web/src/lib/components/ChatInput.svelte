@@ -32,6 +32,7 @@
 		value = $bindable(""),
 		disabled = false,
 		sendDisabled = false,
+		allowEmptySubmit = false,
 		isStreaming = false,
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
@@ -46,10 +47,12 @@
 		editableItems = [] as EditableItem[],
 		onRemoveItem = ((_type: string, _id: string) => {}) as (type: string, id: string) => void,
 		onSelectEntities = undefined as ((entities: EntityResult[]) => void) | undefined,
+		onAttach = undefined as ((files: File[]) => void) | undefined,
 	}: {
 		value?: string;
 		disabled?: boolean;
 		sendDisabled?: boolean;
+		allowEmptySubmit?: boolean;
 		isStreaming?: boolean;
 		maxWidth?: string;
 		focused?: boolean;
@@ -64,7 +67,22 @@
 		editableItems?: EditableItem[];
 		onRemoveItem?: (type: string, id: string) => void;
 		onSelectEntities?: (entities: EntityResult[]) => void;
+		onAttach?: (files: File[]) => void;
 	} = $props();
+
+	let fileInputEl: HTMLInputElement | null = $state(null);
+
+	function pickFiles() {
+		fileInputEl?.click();
+	}
+
+	function onFilesPicked(e: Event) {
+		const input = e.target as HTMLInputElement;
+		if (input.files && input.files.length > 0) {
+			onAttach?.(Array.from(input.files));
+		}
+		input.value = ""; // allow re-picking the same file
+	}
 
 	const dispatch = createEventDispatcher<{ submit: string; stop: null }>();
 
@@ -296,7 +314,8 @@
 
 	function handleSubmit() {
 		const content = getExpandedContent().trim();
-		if (!content || disabled) return;
+		// allowEmptySubmit lets staged highlight references send with an empty composer.
+		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		dispatch("submit", content);
 
@@ -336,8 +355,38 @@
 	}
 
 	function handlePaste(e: ClipboardEvent) {
+		const dt = e.clipboardData;
+		if (!dt) return;
+
+		// Image(s) in the clipboard (screenshots, copied images) → attach.
+		const imgs: File[] = [];
+		for (const it of Array.from(dt.items || [])) {
+			if (it.kind === "file" && it.type.startsWith("image/")) {
+				const f = it.getAsFile();
+				if (f) imgs.push(f);
+			}
+		}
+		if (imgs.length === 0) {
+			for (const f of Array.from(dt.files || [])) {
+				if (f.type.startsWith("image/")) imgs.push(f);
+			}
+		}
+		if (imgs.length > 0 && onAttach) {
+			e.preventDefault();
+			onAttach(imgs);
+			return;
+		}
+
+		const text = dt.getData("text/plain") || "";
+		// Long blob → attach as a text file instead of flooding the composer.
+		if (text.length > 1500 && onAttach) {
+			e.preventDefault();
+			onAttach([new File([text], "Pasted Text.txt", { type: "text/plain" })]);
+			return;
+		}
+
+		// Short text → normal inline paste.
 		e.preventDefault();
-		const text = e.clipboardData?.getData("text/plain") || "";
 		document.execCommand("insertText", false, text);
 	}
 
@@ -399,7 +448,7 @@
 					<button
 						type="button"
 						onclick={handleSubmit}
-						disabled={!value.trim() || sendDisabled}
+						disabled={(!value.trim() && !allowEmptySubmit) || sendDisabled}
 						class="send-button absolute right-3 top-3 w-8 h-8 btn-primary cursor-pointer rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
 					>
 						{#if sendDisabled}
@@ -424,6 +473,25 @@
 
 		{#if showToolbar}
 			<div class="toolbar flex items-center gap-1.5 px-2 pb-2 pt-1">
+				{#if onAttach}
+					<button
+						type="button"
+						onclick={pickFiles}
+						class="attach-button w-6 h-6 cursor-pointer rounded-full flex items-center justify-center text-foreground-muted hover:bg-surface-elevated transition-colors"
+						aria-label="Attach files"
+						title="Attach images, PDFs, or audio"
+					>
+						<Icon icon="ri:add-line" width="16" />
+					</button>
+					<input
+						bind:this={fileInputEl}
+						type="file"
+						multiple
+						accept="image/*,application/pdf,audio/*,text/*,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.toml,.ini,.log,.ts,.tsx,.js,.jsx,.py,.rb,.rs,.go,.java,.c,.h,.cpp,.cs,.php,.swift,.kt,.sh,.sql,.css,.scss"
+						class="sr-only"
+						onchange={onFilesPicked}
+					/>
+				{/if}
 				<div>
 					<AgentModePicker
 						bind:value={selectedAgentMode}
@@ -454,7 +522,7 @@
 					<button
 						type="button"
 						onclick={handleSubmit}
-						disabled={!value.trim() || sendDisabled}
+						disabled={(!value.trim() && !allowEmptySubmit) || sendDisabled}
 						class="send-button-toolbar w-6 h-6 btn-primary cursor-pointer rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
 					>
 						{#if sendDisabled}

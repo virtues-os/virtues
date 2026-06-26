@@ -208,7 +208,7 @@ fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("wiki_days", TableMetadata {
         description: "Day summaries with autobiography and context",
         category: "wiki_temporal",
-        key_columns: &["date", "start_timezone", "end_timezone", "autobiography", "last_edited_by"],
+        key_columns: &["date", "start_timezone", "autobiography", "last_edited_by"],
         join_hint: Some("JOIN wiki_acts ON act_id = wiki_acts.id"),
     });
     m.insert("wiki_years", TableMetadata {

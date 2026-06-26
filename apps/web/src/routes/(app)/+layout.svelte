@@ -120,33 +120,10 @@
 			sessionStorage.setItem("virtues_last_commit", BUILD_COMMIT);
 		}
 
-		// Timezone auto-detect: silently set on first launch, toast on mismatch
-		const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-		if (!data?.profileTimezone) {
-			fetch("/api/profile", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ timezone: browserTz }),
-			}).catch((e) => console.error("[Layout] Failed to set timezone:", e));
-		} else if (data.profileTimezone !== browserTz) {
-			const formatTz = (tz: string) => tz.replace(/_/g, " ");
-			toast.info("Timezone changed?", {
-				description: `Browser: ${formatTz(browserTz)} · Profile: ${formatTz(data.profileTimezone)}`,
-				duration: 15000,
-				action: {
-					label: "Update",
-					onClick: () => {
-						fetch("/api/profile", {
-							method: "PUT",
-							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify({ timezone: browserTz }),
-						})
-							.then(() => toast.success("Timezone updated"))
-							.catch((e) => console.error("Failed to update timezone:", e));
-					},
-				},
-			});
-		}
+		// NOTE: home_timezone (the box's location) is server-sourced and NOT
+		// browser-tracked — see docs/timezone-model.md. The browser's zone is sent
+		// per-request via ?tz= for the live "today" view (getDaySources), so there
+		// is no profile write-through here.
 
 		// Set up session expiry warning
 		if (data?.sessionExpires) {

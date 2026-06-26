@@ -10,6 +10,86 @@ import { Chat } from '@ai-sdk/svelte';
 import { DefaultChatTransport, type ChatTransport } from 'ai';
 import { subscriptionStore } from '$lib/stores/subscription.svelte';
 
+// --- Streaming reactivity helpers (see replaceMessage override below) ---------
+//
+// The AI SDK keeps ONE live message object per response and mutates its parts in
+// place on every token, then calls replaceMessage(index, liveMessage). We keep a
+// DECOUPLED snapshot in the reactive store and, on each delta, sync only what
+// actually changed THROUGH the proxy — so a growing text part re-renders just its
+// own node instead of the whole message subtree.
+
+/** Decouple a part from the SDK's live object (it mutates parts in place). */
+function snapshotPart(part: any): any {
+    try {
+        return structuredClone(part);
+    } catch {
+        return { ...part };
+    }
+}
+
+/** Decouple a whole message (shallow fields + cloned parts). */
+function snapshotMessage(message: any): any {
+    return { ...message, parts: (message.parts ?? []).map(snapshotPart) };
+}
+
+function partsEqual(a: any, b: any): boolean {
+    try {
+        return JSON.stringify(a) === JSON.stringify(b);
+    } catch {
+        return false;
+    }
+}
+
+// Coarse signature of a non-text part, used to skip the JSON compare for settled
+// tool parts on every text delta. Source part refs are stable across deltas, so a
+// WeakMap keyed by the SDK's live part lets us short-circuit unchanged parts.
+const lastPartSig = new WeakMap<object, string>();
+function partSignature(part: any): string {
+    return `${part.type}|${part.state ?? ''}|${part.errorText !== undefined}|${part.output !== undefined}`;
+}
+
+/**
+ * Sync the SDK's live `src` message into the decoupled, proxied `target` already
+ * in the store. Only changed fields are written, so reactivity is fine-grained:
+ * streaming text mutates a single string; tool/structural parts are replaced only
+ * when they actually change.
+ */
+function syncMessageInPlace(target: any, src: any): void {
+    // Top-level scalar/ref fields that can change mid-stream (status, metadata…).
+    for (const key of Object.keys(src)) {
+        if (key === 'parts' || key === 'id') continue;
+        if (target[key] !== src[key]) target[key] = src[key];
+    }
+
+    const sParts = src.parts ?? [];
+    const tParts = target.parts;
+
+    for (let i = 0; i < sParts.length; i++) {
+        const sp = sParts[i];
+        const tp = tParts[i];
+
+        if (!tp || tp.type !== sp.type) {
+            tParts[i] = snapshotPart(sp); // new or type-changed part
+            continue;
+        }
+
+        if (sp.type === 'text' || sp.type === 'reasoning') {
+            // Hot path: only the growing text changes — mutate just that string.
+            if (tp.text !== sp.text) tp.text = sp.text;
+        } else {
+            // Tool/other parts update rarely. Skip the JSON compare when this
+            // source part hasn't changed shape since we last synced it.
+            const sig = partSignature(sp);
+            if (lastPartSig.get(sp) === sig) continue;
+            lastPartSig.set(sp, sig);
+            if (!partsEqual(tp, sp)) tParts[i] = snapshotPart(sp);
+        }
+    }
+
+    if (tParts.length > sParts.length) tParts.length = sParts.length;
+}
+// -----------------------------------------------------------------------------
+
 interface ChatInstanceEntry {
     chat: Chat;
     refCount: number; // Number of tabs/views referencing this instance
@@ -189,14 +269,30 @@ class ChatInstanceStore {
             }
         });
 
-        // Fix Svelte 5 streaming reactivity: SvelteChatState.replaceMessage() assigns
-        // the same object reference (this.messages[i] = msg), and Svelte 5's $state
-        // proxy skips notification when newValue === oldValue. Spreading into a new
-        // object on each delta forces the proxy to detect the change and re-render.
+        // Fix Svelte 5 streaming reactivity WITHOUT re-rendering the whole message
+        // subtree on every token. SvelteChatState.replaceMessage() assigns the same
+        // live object the SDK mutates in place, which the $state proxy skips on
+        // `===`. The old fix spread into a new object each delta (new identity →
+        // full-subtree re-render). Instead we keep a decoupled snapshot and sync
+        // only what changed through the proxy, so the streaming text part updates
+        // on its own and earlier paragraphs / tool cards / thinking block stay put.
         const internalState = (chat as any).state;
-        const originalReplace = internalState.replaceMessage;
+        const originalReplace = internalState.replaceMessage.bind(internalState);
         internalState.replaceMessage = (index: number, message: any) => {
-            originalReplace(index, { ...message });
+            const existing = internalState.messages[index];
+            if (
+                existing &&
+                existing.id === message.id &&
+                existing !== message &&
+                Array.isArray(existing.parts) &&
+                Array.isArray(message.parts)
+            ) {
+                syncMessageInPlace(existing, message);
+            } else {
+                // New/replaced message, or no decoupled target yet → store a clone
+                // so future deltas can be diffed against it.
+                originalReplace(index, snapshotMessage(message));
+            }
         };
 
         const entry: ChatInstanceEntry = {

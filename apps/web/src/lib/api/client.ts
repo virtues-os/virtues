@@ -703,7 +703,7 @@ export interface Profile {
 	employer?: string | null;
 	theme?: string | null;
 	update_check_hour?: number | null;
-	timezone?: string | null;
+	home_timezone?: string | null;
 	home_place_id?: string | null;
 	home_city?: string | null;
 	home_country?: string | null;

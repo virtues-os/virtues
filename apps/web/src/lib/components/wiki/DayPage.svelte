@@ -56,19 +56,10 @@
 		})}`;
 	}
 
-	function formatTimezoneDisplay(
-		startTz: string | null,
-		endTz: string | null,
-	): string | null {
+	function formatTimezoneDisplay(startTz: string | null): string | null {
 		if (!startTz) return null;
-		const formatTz = (tz: string) => {
-			const parts = tz.split("/");
-			return parts[parts.length - 1].replace(/_/g, " ");
-		};
-		if (endTz && endTz !== startTz) {
-			return `00:00 ${formatTz(startTz)} → 24:00 ${formatTz(endTz)}`;
-		}
-		return formatTz(startTz);
+		const parts = startTz.split("/");
+		return parts[parts.length - 1].replace(/_/g, " ");
 	}
 
 	// Flatten linked entities for entity display
@@ -83,8 +74,14 @@
 	}
 
 	const timezoneDisplay = $derived(
-		formatTimezoneDisplay(page.startTimezone, page.endTimezone) ?? getBrowserTimezone(),
+		formatTimezoneDisplay(page.startTimezone) ?? getBrowserTimezone(),
 	);
+
+	// Render timestamps in the SAME zone the server windowed this day in: the
+	// locked per-day start_timezone, else the viewing device's zone (which is
+	// also what get_day_sources used for an in-progress today). Keeps the Time
+	// column consistent with which records appear. See docs/timezone-model.md.
+	const rowTz = $derived(page.startTimezone ?? undefined);
 
 
 	const currentDateSlug = $derived(getLocalDateSlug(page.date));
@@ -252,6 +249,7 @@
 					hour: "numeric",
 					minute: "2-digit",
 					hour12: true,
+					timeZone: rowTz,
 				});
 			},
 		},
@@ -363,6 +361,7 @@
 			hour: "numeric",
 			minute: "2-digit",
 			hour12: true,
+			timeZone: rowTz,
 		});
 	}
 

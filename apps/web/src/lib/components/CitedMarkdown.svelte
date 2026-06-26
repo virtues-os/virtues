@@ -4,6 +4,7 @@
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
 	import EntityChip from './EntityChip.svelte';
+	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
 	import { parseEntityRoute } from '$lib/utils/entityRoutes';
 	import type { BundledTheme } from 'shiki';
 
@@ -76,7 +77,15 @@
 			skeleton: 'block text-foreground bg-transparent animate-none',
 			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
 			downloadIcon: 'w-4 h-4'
-		}
+		},
+		// Cells are rendered by streamdown's default td/th components (so inline
+		// markdown — **bold**, links, `code` — renders); we only style them here.
+		// The `table` snippet below supplies the scrolling wrapper.
+		thead: { base: 'bg-surface-elevated' },
+		tbody: { base: '' },
+		tr: { base: '' },
+		th: { base: 'px-3 py-2 text-left font-medium border-b border-border-subtle' },
+		td: { base: 'px-3 py-2 align-top border-b border-border-subtle/50' }
 	};
 </script>
 
@@ -90,7 +99,7 @@
 			shikiTheme={currentShikiTheme}
 			parseIncompleteMarkdown={isStreaming}
 			theme={customTheme}
-			controls={{ table: false }}
+			controls={{ table: true }}
 			defaultOrigin={origin}
 			allowedLinkPrefixes={['*']}
 			animation={{
@@ -112,6 +121,16 @@
 
 			{#snippet inlineCitationPopover()}
 				<!-- Empty - we use CitationPanel at page level instead -->
+			{/snippet}
+
+			{#snippet table({ children }: { children: import('svelte').Snippet })}
+				<div class="my-4 w-full overflow-x-auto rounded-xl border border-border-subtle">
+					<table class="w-full border-collapse text-sm">{@render children()}</table>
+				</div>
+			{/snippet}
+
+			{#snippet code({ token }: { token: any })}
+				<MarkdownCodeBlock {token} {isStreaming} />
 			{/snippet}
 
 			{#snippet link({ href, children, token }: { href: string; children: import('svelte').Snippet; token: any })}

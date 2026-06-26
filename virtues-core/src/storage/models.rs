@@ -58,7 +58,9 @@ pub struct UserProfile {
     pub server_status: String,
     // Preferences
     pub theme: Option<String>,
-    pub timezone: Option<String>,
+    /// Timezone of the box's physical home location (IANA). Stable anchor +
+    /// fallback floor — NOT the owner's current location. See docs/timezone-model.md.
+    pub home_timezone: Option<String>,
     // Discovery context
     pub crux: Option<String>,
     pub technology_vision: Option<String>,

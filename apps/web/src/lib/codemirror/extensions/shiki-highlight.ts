@@ -12,67 +12,10 @@
 import { syntaxTree } from '@codemirror/language';
 import type { Extension, Range } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
-import { type BundledLanguage, type BundledTheme, createHighlighter, type Highlighter, type ThemedToken } from 'shiki';
+import { highlightCode } from '$lib/shiki/highlighter';
 
 // ---------------------------------------------------------------------------
-// Singleton highlighter (lazy, async)
-// ---------------------------------------------------------------------------
-
-let highlighter: Highlighter | null = null;
-let loading = false;
-const loadedLangs = new Set<string>();
-
-function getThemeFromCSS(): BundledTheme {
-	if (typeof document === 'undefined') return 'github-light';
-	const theme = getComputedStyle(document.documentElement)
-		.getPropertyValue('--shiki-theme').trim();
-	return (theme || 'github-light') as BundledTheme;
-}
-
-async function ensureHighlighter(): Promise<Highlighter> {
-	if (highlighter) return highlighter;
-	if (loading) {
-		// Wait for existing init
-		while (!highlighter) await new Promise(r => setTimeout(r, 50));
-		return highlighter;
-	}
-	loading = true;
-	highlighter = await createHighlighter({
-		themes: [getThemeFromCSS()],
-		langs: [],
-	});
-	loading = false;
-	return highlighter;
-}
-
-async function highlightCode(code: string, lang: string): Promise<ThemedToken[][] | null> {
-	try {
-		const h = await ensureHighlighter();
-		const theme = getThemeFromCSS();
-
-		// Ensure theme is loaded
-		if (!h.getLoadedThemes().includes(theme)) {
-			await h.loadTheme(theme);
-		}
-
-		// Ensure language is loaded
-		if (!loadedLangs.has(lang)) {
-			try {
-				await h.loadLanguage(lang as BundledLanguage);
-				loadedLangs.add(lang);
-			} catch {
-				return null; // Unsupported language
-			}
-		}
-
-		return h.codeToTokens(code, { lang: lang as BundledLanguage, theme }).tokens;
-	} catch {
-		return null;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// ViewPlugin
+// ViewPlugin (highlighter singleton lives in $lib/shiki/highlighter)
 // ---------------------------------------------------------------------------
 
 const shikiPlugin = ViewPlugin.fromClass(

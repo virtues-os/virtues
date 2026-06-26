@@ -80,7 +80,6 @@ export interface WikiDayApi {
 	id: string;
 	date: string; // ISO date string
 	start_timezone: string | null;
-	end_timezone: string | null;
 	autobiography: string | null;
 	autobiography_sections: Array<{ id: string; heading: string; content: string; authored_by: string; last_edited_at: string }> | null;
 	epigraph: string | null;
@@ -690,7 +689,12 @@ export async function getDaySources(
 	date: string,
 	fetchFn: FetchFn = fetch
 ): Promise<DaySourceApi[]> {
-	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/sources`);
+	// Pass the viewing device's IANA zone so an in-progress "today" is anchored to
+	// where the owner currently is (see docs/timezone-model.md). Harmless for past
+	// days — the server prefers the day's locked start_timezone.
+	const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	const qs = tz ? `?tz=${encodeURIComponent(tz)}` : "";
+	const res = await fetchFn(`/api/wiki/day/${encodeURIComponent(date)}/sources${qs}`);
 	if (!res.ok) return [];
 	return res.json();
 }
