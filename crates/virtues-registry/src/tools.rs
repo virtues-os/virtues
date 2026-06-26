@@ -93,7 +93,43 @@ pub fn default_tools() -> Vec<ToolConfig> {
         run_action_tool(),
         dayline_event_tool(),
         get_project_item_tool(),
+        generate_image_tool(),
     ]
+}
+
+/// Generate Image tool — text-to-image via the gateway image model.
+fn generate_image_tool() -> ToolConfig {
+    ToolConfig {
+        id: "generate_image".to_string(),
+        name: "Generate Image".to_string(),
+        description: "Generate an image from a text description".to_string(),
+        llm_description: r#"Generate an image from a text description using an AI image model.
+
+Use this tool when:
+- The user asks you to create, draw, generate, or illustrate an image
+- A picture would clearly help (a scene, concept, mockup, or design)
+
+Write a vivid, specific prompt: subject, style, composition, lighting, and mood.
+The image is shown to the user automatically — after it returns, give a brief
+caption, not a long description of what you generated.
+
+Returns: the generated image (rendered inline to the user)."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["prompt"],
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the image to generate (subject, style, composition, mood)"
+                }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:image-add-line".to_string(),
+        display_order: 22,
+        is_system: false,
+    }
 }
 
 /// Think tool - structured reasoning scratchpad
@@ -1159,23 +1195,26 @@ fn get_project_item_tool() -> ToolConfig {
     ToolConfig {
         id: "get_project_item".to_string(),
         name: "Get Project Item".to_string(),
-        description: "Read the full content of a reference inside an attached project".to_string(),
-        llm_description: r#"Fetch the full content of an item referenced in an attached project.
+        description: "Read the full content of a referenced page, chat, space, or entity".to_string(),
+        llm_description: r#"Fetch the full content of a referenced item by its url.
 
 Use this when:
-- An attached_project lists items and you need to read one's full content
-- The user asks about a specific item in their project
-- You need deeper context beyond the labels shown in the attached_project block
+- The user @-mentions something — a markdown link like [name](/chat/chat_xxx),
+  [name](/page/page_xxx), or [name](/space/space_xxx) in their message — and its
+  content is RELEVANT to answering. The @-mention is a pointer; pull it in only
+  if you actually need it.
+- An attached_project lists items and you need one's full content.
 
-The item_url comes from the url attribute in the <item> tags of the attached project context.
-Returns the entity's content (page text, chat messages, person details, etc.)."#.to_string(),
+Supported urls: /page/, /chat/, /space/, /person/, /place/, /org/, /thing/.
+Returns the item's content (page text, recent chat messages, space members,
+person/place/org/thing details). Don't fetch a reference you don't need."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["item_url"],
             "properties": {
                 "item_url": {
                     "type": "string",
-                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /person/person_xxx, /chat/chat_xxx"
+                    "description": "URL of the item to fetch, e.g. /page/page_xxx, /chat/chat_xxx, /space/space_xxx, /person/person_xxx"
                 }
             }
         }),

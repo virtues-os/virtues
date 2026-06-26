@@ -7,7 +7,6 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import PinnedSection from "./PinnedSection.svelte";
-	import SpacesSection from "./SpacesSection.svelte";
 	import { SYSTEM_SECTIONS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 
@@ -193,9 +192,6 @@
 						accentColor={null}
 					/>
 				{/each}
-
-				<!-- Spaces — the rooms a chat can live in -->
-				<SpacesSection collapsed={isCollapsed} />
 			{/if}
 		</nav>
 

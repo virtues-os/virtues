@@ -98,6 +98,24 @@ async fn pty_bridge(socket: &mut WebSocket) -> Result<(), Box<dyn std::error::Er
     cmd.arg("-l");
     cmd.env("TERM", "xterm-256color");
     if let Ok(home) = std::env::var("HOME") {
+        // CLIs the user installs into their home (the Claude Code installer →
+        // ~/.local/bin, `npm -g`, cargo, our own helpers → ~/.virtues/bin) must
+        // survive across sessions. The shell is `-l`, but on the appliance the
+        // `virtues` HOME has no profile to source, so each session would
+        // otherwise start with the bare service PATH and lose whatever was
+        // installed last session — the binary persists on disk, but nothing
+        // points PATH at it. Prepend the conventional per-user bin dirs so a
+        // freshly-installed tool is on PATH regardless of dotfiles.
+        let mut path = [".local/bin", ".virtues/bin", "bin", ".npm-global/bin", ".cargo/bin"]
+            .iter()
+            .map(|d| format!("{home}/{d}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        if let Ok(existing) = std::env::var("PATH") {
+            path.push(':');
+            path.push_str(&existing);
+        }
+        cmd.env("PATH", path);
         cmd.cwd(home);
     }
 

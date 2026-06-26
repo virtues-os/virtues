@@ -572,6 +572,12 @@ async fn run_app_trigger(
     Ok(summary)
 }
 
+/// Hard ceiling on a single action subprocess. Generous enough for the largest
+/// legitimate batch, short enough that a hung/wedged process frees the per-action
+/// run lock instead of blocking the action until the box restarts. (A device
+/// upload gives up far sooner; the box still finishes idempotently if it can.)
+const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Action,
@@ -605,6 +611,7 @@ async fn run_subprocess(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| Error::Other(format!("failed to spawn action command: {e}")))?;
 
@@ -615,10 +622,21 @@ async fn run_subprocess(
             .map_err(|e| Error::Other(format!("failed to write stdin: {e}")))?;
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?;
+    // Bound the wait so a hung action can't hold the per-action run lock (and thus
+    // block every future webhook for this action) indefinitely. On timeout the
+    // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
+    // caller records the run as `error`, freeing the lock.
+    let output = match tokio::time::timeout(SUBPROCESS_TIMEOUT, child.wait_with_output()).await {
+        Ok(res) => {
+            res.map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?
+        }
+        Err(_) => {
+            return Err(Error::Other(format!(
+                "action subprocess timed out after {}s",
+                SUBPROCESS_TIMEOUT.as_secs()
+            )));
+        }
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

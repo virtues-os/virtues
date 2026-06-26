@@ -32,6 +32,7 @@ pub mod seeding;
 pub mod server;
 pub mod setup;
 pub mod storage;
+pub mod timezone;
 pub mod virtues_api;
 pub mod tools;
 pub mod types;

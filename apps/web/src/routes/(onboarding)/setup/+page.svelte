@@ -103,14 +103,20 @@
 		}
 	}
 
-	// Invisible capture: set the box's timezone from the browser if it differs.
-	// No UI, never blocks, swallows errors.
+	// Cloud/onboarding cross-check for home_timezone (the box's location).
+	// The box normally seeds this from its own system clock; but a datacenter box
+	// reads "UTC", which is wrong. So only fall back to the onboarding browser's
+	// zone when the server value is unset or UTC — a real appliance configured at
+	// home keeps its server-detected zone. See docs/timezone-model.md.
 	async function captureTimezone() {
 		try {
 			const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 			if (!tz) return;
 			const p = await getProfile();
-			if (p.timezone !== tz) await updateProfile({ timezone: tz });
+			const current = p.home_timezone;
+			if (!current || current === "UTC") {
+				if (current !== tz) await updateProfile({ home_timezone: tz });
+			}
 		} catch {
 			/* non-essential */
 		}

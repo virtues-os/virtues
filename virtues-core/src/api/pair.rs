@@ -846,6 +846,37 @@ pub async fn consume_handler(
             .into_response();
     }
 
+    // Post-commit cross-check for home_timezone (the box's location). The box
+    // normally seeds this from its own system clock, but a datacenter box reads
+    // "UTC", which is wrong — so when the current value is unset or UTC, fall back
+    // to the pairing device's reported zone. A real appliance configured at home
+    // keeps its server-detected zone. See docs/timezone-model.md.
+    if let Some(dev_tz) = device_info
+        .get("timezone")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "UTC")
+    {
+        // Seed home_timezone from the box's own system clock first — so a
+        // correctly-configured appliance wins over a (possibly traveling) pairing
+        // device; only a UTC/unset result defers to the device.
+        let _ = crate::api::profile::ensure_home_timezone(&pool).await;
+        let current = crate::api::profile::get_timezone(&pool)
+            .await
+            .ok()
+            .flatten();
+        if current.as_deref().map(|c| c == "UTC").unwrap_or(true) {
+            let _ = crate::api::profile::update_profile(
+                &pool,
+                crate::api::profile::UpdateProfileRequest {
+                    home_timezone: Some(dev_tz.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
+    }
+
     // Post-commit: log the pairing event (best-effort) and assemble the
     // response (cookie for browsers, bearer for everything else).
     let _ = log_event(

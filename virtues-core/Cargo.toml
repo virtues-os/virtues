@@ -110,6 +110,8 @@ tokio-stream = "0.1"
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+iana-time-zone = "0.1"          # box's own system tz (home_timezone source)
+tzf-rs = "0.4"                  # offline coords → IANA tz (per-day user-location tz)
 uuid = { version = "1.10", features = ["v4", "serde"] }
 
 # OAuth

@@ -24,6 +24,15 @@ pub struct ModelConfig {
     pub max_output_tokens: i32,
     /// Whether the model supports tool/function calling
     pub supports_tools: bool,
+    /// Whether the model can accept image inputs (vision)
+    #[serde(default)]
+    pub supports_vision: bool,
+    /// Whether the model can read PDF / document inputs
+    #[serde(default)]
+    pub supports_pdf: bool,
+    /// Whether the model can accept audio inputs
+    #[serde(default)]
+    pub supports_audio: bool,
     /// Whether this is the default model
     #[serde(default)]
     pub is_default: bool,
@@ -83,6 +92,9 @@ pub fn default_models() -> Vec<ModelConfig> {
             context_window: 200000,
             max_output_tokens: 32000,
             supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: false,
             is_default: true,
             // Advisory only — Vercel AI Gateway's `usage.cost` is authoritative
             // for billing (see virtues-api's ai.rs). Kept for picker display.
@@ -99,6 +111,9 @@ pub fn default_models() -> Vec<ModelConfig> {
             context_window: 203000,
             max_output_tokens: 131000,
             supports_tools: true,
+            supports_vision: false,
+            supports_pdf: false,
+            supports_audio: false,
             is_default: false,
             input_cost_per_1k: Some(0.0003),
             output_cost_per_1k: Some(0.001),
@@ -113,26 +128,115 @@ pub fn default_models() -> Vec<ModelConfig> {
             context_window: 203000,
             max_output_tokens: 131000,
             supports_tools: true,
+            supports_vision: false,
+            supports_pdf: false,
+            supports_audio: false,
             is_default: false,
             input_cost_per_1k: Some(0.0012),
             output_cost_per_1k: Some(0.0035),
         },
-        // CODING: Code generation and technical tasks
+        // (CODING slot also defaults to Opus 4.8 — see default_model_for_slot();
+        // no separate catalog entry, since the picker is a flat list of distinct
+        // models and a duplicate model_id breaks its keyed render.)
+        // ───────────────────────────────────────────────────────────────────
+        // Additional curated models (selectable in the picker; not slot defaults).
+        // Capability flags are hand-maintained here — the long-term plan is to
+        // enrich these from the Vercel AI Gateway model catalog (which carries
+        // modality + pricing metadata) so they stay current without a release.
+        //
+        // NOTE: model_ids must match the gateway's catalog exactly or requests
+        // 404 — verify any newly added id against the live gateway.
+        // ───────────────────────────────────────────────────────────────────
+        // Anthropic Sonnet — faster / cheaper than Opus, same vision + PDF.
         ModelConfig {
-            model_id: "anthropic/claude-opus-4.8".to_string(),
-            display_name: "Claude Opus 4.8".to_string(),
+            model_id: "anthropic/claude-sonnet-4.6".to_string(),
+            display_name: "Claude Sonnet 4.6".to_string(),
             provider: "Anthropic".to_string(),
-            sort_order: 4,
+            sort_order: 5,
             enabled: true,
             context_window: 200000,
-            max_output_tokens: 32000,
+            max_output_tokens: 64000,
             supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: false,
             is_default: false,
-            // Advisory only — Vercel AI Gateway's `usage.cost` field is the
-            // authoritative source for billing (see virtues-api's ai.rs).
-            // Kept for model-picker display.
-            input_cost_per_1k: Some(0.015),
-            output_cost_per_1k: Some(0.075),
+            input_cost_per_1k: Some(0.003),
+            output_cost_per_1k: Some(0.015),
+        },
+        // Gemini 2.5 Pro — full multimodal in (image + PDF + AUDIO); tool calls
+        // work via the gateway (unlike Gemini 3, below). Closes the audio gap.
+        ModelConfig {
+            model_id: "google/gemini-2.5-pro".to_string(),
+            display_name: "Gemini 2.5 Pro".to_string(),
+            provider: "Google".to_string(),
+            sort_order: 6,
+            enabled: true,
+            context_window: 1000000,
+            max_output_tokens: 65000,
+            supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: true,
+            is_default: false,
+            input_cost_per_1k: Some(0.00125),
+            output_cost_per_1k: Some(0.01),
+        },
+        // Gemini 2.5 Flash — fast, cheap, full multimodal in.
+        ModelConfig {
+            model_id: "google/gemini-2.5-flash".to_string(),
+            display_name: "Gemini 2.5 Flash".to_string(),
+            provider: "Google".to_string(),
+            sort_order: 7,
+            enabled: true,
+            context_window: 1000000,
+            max_output_tokens: 65000,
+            supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: true,
+            is_default: false,
+            input_cost_per_1k: Some(0.0003),
+            output_cost_per_1k: Some(0.0025),
+        },
+        // Gemini 3 Pro — newest Google flagship, full multimodal in. CAVEAT: via
+        // the gateway's OpenAI-compatible endpoint it 400s on parallel tool calls
+        // (needs a thought_signature the gateway doesn't pass; vercel/ai
+        // #11590/#10344) — fine for multimodal Q&A, shaky for tool-heavy agent
+        // turns. Enabled but not a slot default.
+        ModelConfig {
+            model_id: "google/gemini-3-pro".to_string(),
+            display_name: "Gemini 3 Pro".to_string(),
+            provider: "Google".to_string(),
+            sort_order: 8,
+            enabled: true,
+            context_window: 1000000,
+            max_output_tokens: 65000,
+            supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: true,
+            is_default: false,
+            input_cost_per_1k: Some(0.002),
+            output_cost_per_1k: Some(0.012),
+        },
+        // OpenAI GPT-5.1 — strong general model, vision + PDF in. (Audio input is
+        // a separate realtime surface, not this chat path.)
+        ModelConfig {
+            model_id: "openai/gpt-5.1".to_string(),
+            display_name: "GPT-5.1".to_string(),
+            provider: "OpenAI".to_string(),
+            sort_order: 9,
+            enabled: true,
+            context_window: 400000,
+            max_output_tokens: 128000,
+            supports_tools: true,
+            supports_vision: true,
+            supports_pdf: true,
+            supports_audio: false,
+            is_default: false,
+            input_cost_per_1k: Some(0.00125),
+            output_cost_per_1k: Some(0.01),
         },
     ]
 }

@@ -13,6 +13,7 @@ const ENTITY_PREFIXES: Record<string, string> = {
 	file_: 'file',
 	page_: 'page',
 	chat_: 'chat',
+	space_: 'space',
 	source_: 'source',
 };
 
@@ -26,6 +27,7 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/drive': 'file',
 	'/page': 'page',
 	'/chat': 'chat',
+	'/space': 'space',
 	'/sources': 'source',
 };
 
@@ -39,8 +41,29 @@ const TYPE_TO_ROUTE: Record<string, string> = {
 	file: '/drive',
 	page: '/page',
 	chat: '/chat',
+	space: '/space',
 	source: '/sources',
 };
+
+// Entity type → iconify icon name (for typed pills). All registered in icons.ts.
+const TYPE_TO_ICON: Record<string, string> = {
+	person: 'ri:user-line',
+	place: 'ri:map-pin-line',
+	org: 'ri:building-line',
+	thing: 'ri:lightbulb-line',
+	page: 'ri:file-text-line',
+	chat: 'ri:chat-3-line',
+	space: 'ri:folder-line',
+	file: 'ri:file-line',
+	day: 'ri:calendar-line',
+	year: 'ri:calendar-line',
+	source: 'ri:at-line',
+};
+
+/** Icon name for an entity type (falls back to the generic @ icon). */
+export function entityTypeIcon(type: string | null | undefined): string {
+	return (type && TYPE_TO_ICON[type]) || 'ri:at-line';
+}
 
 // All valid entity prefixes (exported for backward compatibility)
 export const ENTITY_PREFIXES_LIST = Object.keys(ENTITY_PREFIXES);

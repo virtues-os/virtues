@@ -2089,15 +2089,23 @@ pub async fn timeline_get_day_handler(
     }
 }
 
+/// Optional `?tz=` query — the viewing device's IANA zone, used to anchor an
+/// in-progress "today" to where the owner currently is. See docs/timezone-model.md.
+#[derive(Debug, Deserialize, Default)]
+pub struct DaySourcesQuery {
+    pub tz: Option<String>,
+}
+
 /// Get data sources (ontology records) for a day
 pub async fn wiki_get_day_sources_handler(
     State(state): State<AppState>,
     Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
 ) -> Response {
     match date.parse::<chrono::NaiveDate>() {
-        Ok(parsed_date) => {
-            api_response(crate::api::get_day_sources(state.db.pool(), parsed_date).await)
-        }
+        Ok(parsed_date) => api_response(
+            crate::api::get_day_sources(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+        ),
         Err(_) => error_response(Error::InvalidInput(format!(
             "Invalid date format: {}",
             date

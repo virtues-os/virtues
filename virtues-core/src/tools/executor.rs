@@ -289,8 +289,35 @@ impl ToolExecutor {
             "dayline_event" => super::dayline_events::execute(&self._pool, arguments, context).await,
             // Project item fetch (for attached project context lens)
             "get_project_item" => self.execute_get_project_item(arguments).await,
+            // Text-to-image generation (rendered inline to the user)
+            "generate_image" => self.execute_generate_image(arguments).await,
             _ => Err(ToolError::UnknownTool(tool_name.to_string())),
         }
+    }
+
+    /// Generate an image from a text prompt via the gateway image model, returned
+    /// as a base64 data URL the chat renders inline (and persists/reloads as-is).
+    async fn execute_generate_image(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<ToolResult, ToolError> {
+        let prompt = arguments
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ToolError::InvalidParameters("prompt is required".into()))?;
+
+        let png = crate::api::day_illustration::generate_image_via_gateway(&self._pool, prompt)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
+
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png);
+
+        Ok(ToolResult::success(serde_json::json!({
+            "url": format!("data:image/png;base64,{b64}"),
+            "prompt": prompt,
+        })))
     }
 
     /// Execute Python code in sandboxed environment
@@ -552,6 +579,21 @@ impl ToolExecutor {
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch thing: {}", e))),
             }
+        } else if let Some(space_id) = item_url.strip_prefix("/space/") {
+            match crate::api::spaces::get_space(pool, space_id).await {
+                Ok(detail) => {
+                    let members: Vec<&str> =
+                        detail.items.iter().map(|i| i.url.as_str()).collect();
+                    Ok(ToolResult::success(serde_json::json!({
+                        "type": "space",
+                        "id": detail.space.id,
+                        "name": detail.space.name,
+                        "status": detail.space.current_status,
+                        "members": members,
+                    })))
+                }
+                Err(e) => Ok(ToolResult::error(format!("Failed to fetch space: {}", e))),
+            }
         } else if item_url.starts_with("http://") || item_url.starts_with("https://") {
             // External URL — content lives outside Virtues. Return guidance to use web tools.
             Ok(ToolResult::success(serde_json::json!({
@@ -561,7 +603,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /person/, /place/, /org/, /thing/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /space/, /person/, /place/, /org/, /thing/, or https://",
                 item_url
             )))
         }

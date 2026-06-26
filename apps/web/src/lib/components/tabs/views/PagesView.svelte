@@ -146,10 +146,12 @@
 	>
 		{#snippet tableRow(page: PageSummary)}
 			{@const tags = parseTags(page.tags)}
-			<td class="col-icon">
-				<Icon icon={getPageIcon(page)} width="16" />
+			<td class="col-title">
+				<span class="title-cell">
+					<Icon icon={getPageIcon(page)} width="16" />
+					<span class="title-text">{page.title}</span>
+				</span>
 			</td>
-			<td class="col-title">{page.title}</td>
 			<td class="col-tags hide-mobile">
 				{#if tags.length > 0}
 					<div class="tags-row">
@@ -199,15 +201,24 @@
 </Page>
 
 <style>
-	.col-icon {
-		width: 36px;
-		text-align: center;
-		padding: 0.625rem 0.75rem;
-	}
 	.col-title {
 		font-weight: 500;
 		color: var(--color-foreground);
 		padding: 0.625rem 0.75rem;
+	}
+	.title-cell {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+	}
+	.title-cell :global(svg) {
+		flex-shrink: 0;
+		color: var(--color-foreground-muted);
+	}
+	.title-text {
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.col-tags {
 		padding: 0.625rem 0.75rem;

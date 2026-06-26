@@ -236,7 +236,10 @@
 			person: 'People',
 			place: 'Places',
 			file: 'Files',
-			org: 'Organizations'
+			org: 'Organizations',
+			thing: 'Things',
+			chat: 'Chats',
+			space: 'Spaces'
 		};
 		return labels[type] || type;
 	}
@@ -296,18 +299,15 @@
 		{/if}
 	</div>
 
-	<!-- Footer -->
-	<div class="footer">
-		{#if mode === 'multi' && selectedItems.length > 0}
-			<span class="selection-count">{selectedItems.length} selected</span>
-			<button type="button" class="confirm-btn" onclick={handleConfirm}>
-				Add selected
-			</button>
-		{:else}
-			<span class="hint"><kbd>↑↓</kbd> navigate</span>
-			<span class="hint"><kbd>↵</kbd> select</span>
-			<span class="hint"><kbd>esc</kbd> close</span>
-			{#if footerAction}
+	<!-- Footer (only when there's an action; keyboard hints removed) -->
+	{#if (mode === 'multi' && selectedItems.length > 0) || footerAction}
+		<div class="footer">
+			{#if mode === 'multi' && selectedItems.length > 0}
+				<span class="selection-count">{selectedItems.length} selected</span>
+				<button type="button" class="confirm-btn" onclick={handleConfirm}>
+					Add selected
+				</button>
+			{:else if footerAction}
 				<button
 					type="button"
 					class="footer-action-btn"
@@ -318,8 +318,8 @@
 					{footerAction.label}
 				</button>
 			{/if}
-		{/if}
-	</div>
+		</div>
+	{/if}
 {/snippet}
 
 {#if virtualAnchor}

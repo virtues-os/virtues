@@ -414,7 +414,7 @@ struct RawEntitySearchResult {
     entity_type: String,
     icon: String,
     mime_type: Option<String>,
-    updated_at: String,
+    updated_at: Timestamp,
     relevance: i32,
 }
 
@@ -430,6 +430,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
         "year" => format!("/year/{}", id),
         "source" => format!("/source/{}", id),
         "chat" => format!("/chat/{}", id),
+        "space" => format!("/space/{}", id),
         "thing" => format!("/thing/{}", id),
         "file" => format!("/drive/{}", id),
         _ => format!("/{}/{}", entity_type, id),
@@ -461,39 +462,53 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
         r#"
         SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_people
-        WHERE canonical_name LIKE $1
+        WHERE canonical_name ILIKE $1
         UNION ALL
         SELECT id, name, 'thing' as entity_type, 'ri:lightbulb-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_things
-        WHERE name LIKE $1
+        WHERE name ILIKE $1
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_places
-        WHERE name LIKE $1
+        WHERE name ILIKE $1
         UNION ALL
         SELECT id, canonical_name as name, 'org' as entity_type, 'ri:building-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN canonical_name LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN canonical_name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM wiki_orgs
-        WHERE canonical_name LIKE $1
+        WHERE canonical_name ILIKE $1
         UNION ALL
         SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
                mime_type, updated_at,
-               CASE WHEN filename LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN filename ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_drive_files
-        WHERE filename LIKE $1 AND deleted_at IS NULL
+        WHERE filename ILIKE $1 AND deleted_at IS NULL
         UNION ALL
         SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon,
                NULL as mime_type, updated_at,
-               CASE WHEN title LIKE $2 THEN 0 ELSE 1 END as relevance
+               CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_pages
-        WHERE title LIKE $1
+        WHERE title ILIKE $1
+        UNION ALL
+        SELECT id, title as name, 'chat' as entity_type,
+               CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:chat-3-line' END as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM app_chats
+        WHERE title ILIKE $1 AND title <> ''
+        UNION ALL
+        SELECT id, name, 'space' as entity_type,
+               CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
+               NULL as mime_type, updated_at,
+               CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
+        FROM app_spaces
+        WHERE name ILIKE $1
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3
         "#,

@@ -216,6 +216,17 @@ pub enum UIPart {
         /// When the checkpoint was created
         timestamp: String,
     },
+    /// File attachment (image / PDF / audio) — matches the AI SDK v6 file part.
+    /// `url` is a data URL (base64) so it round-trips to the provider and renders
+    /// on reload without a separate authenticated fetch.
+    #[serde(rename = "file")]
+    File {
+        #[serde(rename = "mediaType", default)]
+        media_type: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -635,7 +646,7 @@ async fn build_system_prompt(
     use crate::api::profile::get_display_name;
 
     // Load personalization from profiles (with fallbacks)
-    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Assistant".to_string());
+    let assistant_name = get_assistant_name(pool).await.unwrap_or_else(|_| "Ari".to_string());
     let user_name = get_display_name(pool).await.unwrap_or_else(|_| "there".to_string());
 
     // Load persona content from database (or fallback to registry default)
@@ -1314,7 +1325,7 @@ fn create_agent_stream(
                     .next()
                     .map(|s| s.to_string())
             }),
-            Some(cancel_token),
+            Some(cancel_token.clone()),
         );
 
         loop {
@@ -1482,6 +1493,9 @@ fn create_agent_stream(
         // Save assistant message to chat
         if !full_content.is_empty() {
             let provider = model.split('/').next().unwrap_or("unknown").to_string();
+            // Mark the message as user-stopped so the UI can show a "Stopped"
+            // notice on reload (the partial content is kept either way).
+            let was_cancelled = cancel_token.is_cancelled();
             let assistant_message = ChatMessage {
                 id: None,
                 role: "assistant".to_string(),
@@ -1493,7 +1507,7 @@ fn create_agent_stream(
                 tool_calls: if all_tool_calls.is_empty() { None } else { Some(all_tool_calls.clone()) },
                 reasoning: if reasoning_content.is_empty() { None } else { Some(reasoning_content.clone()) },
                 intent: None,
-                subject: None,
+                subject: if was_cancelled { Some("cancelled".to_string()) } else { None },
                 thought_signature: None,
                 parts: None,
             };

@@ -638,12 +638,24 @@ pub async fn complete_run(
     Ok(())
 }
 
-/// Check if an action has an active (running) run.
+/// How long a run may sit in `running` before the concurrency gate treats it as
+/// dead. A run whose process crashed (or the box restarted mid-run) leaves a
+/// stale `running` row; without an age bound that row would block the action
+/// forever, since the only reaper (`cleanup_stale_runs`) runs at startup. This is
+/// safely larger than `SUBPROCESS_TIMEOUT` (300s), which actively kills + records
+/// `error` for hangs the box itself observes.
+const RUN_STALE_TTL_SECS: f64 = 600.0;
+
+/// Check if an action has an active (running) run, ignoring runs that have been
+/// `running` longer than [`RUN_STALE_TTL_SECS`] (treated as dead).
 pub async fn has_active_run(db: &PgPool, action_id: &str) -> Result<bool> {
     let result = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM app_action_runs WHERE action_id = $1 AND status = 'running')",
+        "SELECT EXISTS(SELECT 1 FROM app_action_runs \
+         WHERE action_id = $1 AND status = 'running' \
+         AND started_at > now() - make_interval(secs => $2))",
     )
     .bind(action_id)
+    .bind(RUN_STALE_TTL_SECS)
     .fetch_one(db)
     .await?;
 

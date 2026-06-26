@@ -37,9 +37,24 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to initialize drive quota: {}", e);
     }
 
+    // Reap runs left in `running` by a crash/restart mid-execution, so a stale
+    // lock doesn't survive a reboot. (The concurrency gate also age-bounds stale
+    // runs at request time; this just keeps the runs table honest on boot.)
+    match crate::scheduler::actions::cleanup_stale_runs(client.database.pool()).await {
+        Ok(n) if n > 0 => tracing::info!("Reaped {} stale 'running' action run(s) on startup", n),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Failed to reap stale action runs: {}", e),
+    }
+
     // Auto-detect server readiness (skips setup screen if previously hydrated)
     if let Err(e) = crate::api::ensure_server_status(client.database.pool()).await {
         tracing::warn!("Failed to ensure server status: {}", e);
+    }
+
+    // Seed home_timezone from the box's own system clock once, before the
+    // scheduler resolves cron timezones. Idempotent. See docs/timezone-model.md.
+    if let Err(e) = crate::api::profile::ensure_home_timezone(client.database.pool()).await {
+        tracing::warn!("Failed to seed home_timezone: {}", e);
     }
 
     // Eager identity bringup: mint the box's WG server keypair (on Linux) if

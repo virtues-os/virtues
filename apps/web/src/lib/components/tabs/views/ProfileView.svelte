@@ -65,7 +65,7 @@
 				ethnicity = profile.ethnicity || "";
 				occupation = profile.occupation || "";
 				employer = profile.employer || "";
-				timezone = profile.timezone || "";
+				timezone = profile.home_timezone || "";
 
 				if (profile.theme && isValidTheme(profile.theme)) {
 					currentTheme = profile.theme as Theme;
@@ -266,7 +266,7 @@
 					<h2 class="section-title">Regional</h2>
 					<div class="fields">
 						<div class="field">
-							<label for="timezone">Timezone</label>
+							<label for="timezone">Home timezone</label>
 							<Input
 								type="text"
 								id="timezone"
@@ -274,10 +274,11 @@
 								placeholder="America/New_York"
 								autoSave
 								onSave={(val) =>
-									saveField("timezone", val || null)}
+									saveField("home_timezone", val || null)}
 							/>
 							<span class="field-hint"
-								>IANA timezone identifier (auto-detected from your browser)</span
+								>IANA timezone of where this box lives (auto-detected from the
+								server). Only change it if you physically relocate the appliance.</span
 							>
 						</div>
 					</div>

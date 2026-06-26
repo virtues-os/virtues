@@ -18,6 +18,9 @@ pub struct ModelInfo {
     pub context_window: Option<i32>,
     pub max_output_tokens: Option<i32>,
     pub supports_tools: Option<bool>,
+    pub supports_vision: Option<bool>,
+    pub supports_pdf: Option<bool>,
+    pub supports_audio: Option<bool>,
     pub is_default: Option<bool>,
 }
 
@@ -32,16 +35,26 @@ impl From<virtues_registry::models::ModelConfig> for ModelInfo {
             context_window: Some(config.context_window),
             max_output_tokens: Some(config.max_output_tokens),
             supports_tools: Some(config.supports_tools),
+            supports_vision: Some(config.supports_vision),
+            supports_pdf: Some(config.supports_pdf),
+            supports_audio: Some(config.supports_audio),
             is_default: Some(config.is_default),
         }
     }
 }
 
-/// List all enabled models from the registry
+/// List all enabled models from the registry.
+///
+/// Dedupes by `model_id`, keeping the first occurrence. The catalog can list
+/// the same model as more than one slot default (e.g. Opus is both the chat and
+/// coding default); the picker treats this as a flat list of distinct models and
+/// its keyed `{#each}` throws on duplicate keys, so we collapse them here.
 pub async fn list_models() -> Result<Vec<ModelInfo>> {
+    let mut seen = std::collections::HashSet::new();
     let models: Vec<ModelInfo> = virtues_registry::models::default_models()
         .into_iter()
         .filter(|m| m.enabled)
+        .filter(|m| seen.insert(m.model_id.clone()))
         .map(ModelInfo::from)
         .collect();
 
