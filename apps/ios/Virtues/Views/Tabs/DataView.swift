@@ -137,9 +137,7 @@ struct DataView: View {
             // MARK: - Core Sensor
             Section {
                 StreamToggleRow(
-                    icon: "location.fill",
-                    iconColor: .warmInfo,
-                    title: "Location",
+                    icon: "location.fill",                    title: "Location",
                     subtitle: "GPS tracking",
                     isEnabled: locationEnabled,
                     onToggle: { enabled in
@@ -165,9 +163,7 @@ struct DataView: View {
             // MARK: - Additional Sensors
             Section {
                 StreamToggleRow(
-                    icon: "mic.fill",
-                    iconColor: .warmSuccess,
-                    title: "Audio",
+                    icon: "mic.fill",                    title: "Audio",
                     subtitle: audioEnabled ? "Recording" : "Voice recording",
                     isEnabled: audioEnabled,
                     onToggle: { enabled in
@@ -178,9 +174,7 @@ struct DataView: View {
                 )
 
                 StreamToggleRow(
-                    icon: "heart.fill",
-                    iconColor: .warmError,
-                    title: "HealthKit",
+                    icon: "heart.fill",                    title: "HealthKit",
                     subtitle: "Health & fitness",
                     isEnabled: healthKitEnabled,
                     onToggle: { enabled in
@@ -191,9 +185,7 @@ struct DataView: View {
                 )
 
                 StreamToggleRow(
-                    icon: "person.crop.circle",
-                    iconColor: .cyan,
-                    title: "Contacts",
+                    icon: "person.crop.circle",                    title: "Contacts",
                     subtitle: "Address book",
                     isEnabled: contactsEnabled,
                     onToggle: { enabled in
@@ -204,9 +196,7 @@ struct DataView: View {
                 )
 
                 StreamToggleRow(
-                    icon: "creditcard.fill",
-                    iconColor: .green,
-                    title: "FinanceKit",
+                    icon: "creditcard.fill",                    title: "FinanceKit",
                     subtitle: "Apple Card & Cash",
                     isEnabled: financeKitEnabled,
                     onToggle: { enabled in
@@ -217,9 +207,7 @@ struct DataView: View {
                 )
 
                 StreamToggleRow(
-                    icon: "calendar",
-                    iconColor: .red,
-                    title: "EventKit",
+                    icon: "calendar",                    title: "EventKit",
                     subtitle: "Calendar & Reminders",
                     isEnabled: eventKitEnabled,
                     onToggle: { enabled in
@@ -363,11 +351,11 @@ struct DataView: View {
                                     recentOutcomes: [], onTap: openSettings)
         case .partial:
             return StreamStatusInfo(dotColor: .warmWarning, icon: "exclamationmark.circle.fill",
-                                    text: "Limited — only while app is open", textColor: .warmWarning,
+                                    text: "Limited access", textColor: .warmWarning,
                                     recentOutcomes: [], onTap: openSettings)
         case .undetermined:
             return StreamStatusInfo(dotColor: .warmWarning, icon: "questionmark.circle.fill",
-                                    text: "Permission not granted yet", textColor: .warmWarning,
+                                    text: "Awaiting permission", textColor: .warmWarning,
                                     recentOutcomes: [], onTap: nil)
         case .granted, .notRequired:
             break
@@ -387,7 +375,7 @@ struct DataView: View {
         if let state = state, state.consecutiveFailures > 0 {
             let suffix = state.consecutiveFailures > 1 ? " (\(state.consecutiveFailures)×)" : ""
             return StreamStatusInfo(dotColor: .warmError, icon: "exclamationmark.triangle.fill",
-                                    text: "Not reaching box\(suffix) — retrying", textColor: .warmError,
+                                    text: "Not reaching box\(suffix)", textColor: .warmError,
                                     recentOutcomes: outcomes, onTap: nil)
         }
 
@@ -397,7 +385,7 @@ struct DataView: View {
             let rel = last.formatted(.relative(presentation: .named))
             if Date().timeIntervalSince(last) > Self.staleThreshold {
                 return StreamStatusInfo(dotColor: .warmWarning, icon: "clock.badge.exclamationmark",
-                                        text: "Last reached box \(rel)", textColor: .warmWarning,
+                                        text: "Last synced \(rel)", textColor: .warmWarning,
                                         recentOutcomes: outcomes, onTap: nil)
             }
             return StreamStatusInfo(dotColor: .warmSuccess, icon: "checkmark.circle.fill",
@@ -627,7 +615,6 @@ struct StreamStatusInfo {
 
 struct StreamToggleRow: View {
     let icon: String
-    let iconColor: Color
     let title: String
     let subtitle: String
     let isEnabled: Bool
@@ -637,41 +624,40 @@ struct StreamToggleRow: View {
     let status: StreamStatusInfo
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Leading health dot — scannable as a column down the whole tab.
+        HStack(spacing: 10) {
+            // Leading health dot — the at-a-glance scan column. Saturated color
+            // here means exactly one thing: status.
             Circle()
                 .fill(status.dotColor)
                 .frame(width: 8, height: 8)
 
-            // Source icon
+            // Source icon — deliberately neutral, so green/amber/red are
+            // reserved for the status dot and line rather than competing chrome.
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundColor(iconColor)
-                .frame(width: 32)
+                .foregroundColor(.warmForeground)
+                .frame(width: 30)
 
-            // Title, subtitle, and the adaptive status line
+            // Title + a single secondary line: the live status when on, or a
+            // short description of what the source does when off. Keeping it to
+            // one secondary line gives every row the same height/rhythm.
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body)
                     .fontWeight(.medium)
 
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundColor(.warmForegroundMuted)
-
-                if !status.text.isEmpty {
+                if status.text.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.warmForegroundMuted)
+                } else {
                     statusLine
-                        .padding(.top, 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Trailing: "last X sends" strip + info button + toggle
+            // Trailing controls
             HStack(spacing: 8) {
-                if !status.recentOutcomes.isEmpty {
-                    RecentOutcomesStrip(outcomes: status.recentOutcomes)
-                }
-
                 if let onInfoTap = onInfoTap {
                     Button(action: {
                         Haptics.light()
@@ -679,7 +665,7 @@ struct StreamToggleRow: View {
                     }) {
                         Image(systemName: "info.circle")
                             .font(.body)
-                            .foregroundColor(.warmForegroundMuted)
+                            .foregroundColor(.warmForegroundSubtle)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
@@ -700,16 +686,24 @@ struct StreamToggleRow: View {
 
     @ViewBuilder
     private var statusLine: some View {
-        let content = HStack(spacing: 4) {
+        let content = HStack(spacing: 5) {
             Image(systemName: status.icon)
                 .font(.caption2)
             Text(status.text)
                 .font(.caption2)
                 .fontWeight(.medium)
+                .lineLimit(1)
             // A chevron hints the line is actionable (e.g. opens Settings).
             if status.onTap != nil {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
+            }
+            // "Last X sends" history, inline with its status — only shown once
+            // there are ≥2 outcomes, so a single dot can't read as a second
+            // health light next to the leading dot.
+            if status.recentOutcomes.count >= 2 {
+                RecentOutcomesStrip(outcomes: status.recentOutcomes)
+                    .padding(.leading, 2)
             }
         }
         .foregroundColor(status.textColor)

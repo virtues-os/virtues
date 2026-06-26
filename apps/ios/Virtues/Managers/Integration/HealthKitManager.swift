@@ -368,6 +368,7 @@ class HealthKitManager: ObservableObject {
                 }
 
                 return HealthKitMetric(
+                    id: sample.uuid.uuidString,
                     timestamp: sample.startDate,
                     metricType: metricType,
                     value: value,
@@ -391,6 +392,7 @@ class HealthKitManager: ObservableObject {
                 }
 
                 return HealthKitMetric(
+                    id: sample.uuid.uuidString,
                     timestamp: sample.startDate,
                     metricType: metricType,
                     value: value,
@@ -423,6 +425,7 @@ class HealthKitManager: ObservableObject {
                 }
                 
                 return HealthKitMetric(
+                    id: sample.uuid.uuidString,
                     timestamp: sample.startDate,
                     metricType: metricType,
                     value: value,
@@ -457,6 +460,7 @@ class HealthKitManager: ObservableObject {
                 }
                 
                 return HealthKitMetric(
+                    id: sample.uuid.uuidString,
                     timestamp: sample.startDate,
                     metricType: metricType,
                     value: value,
@@ -599,50 +603,66 @@ class HealthKitManager: ObservableObject {
         print("🏥 HealthKit timer fired - collecting new data...")
 
         var allMetrics: [HealthKitMetric] = []
-        
+        // Advanced anchors are held aside and committed ONLY after the metrics are
+        // durably enqueued. Persisting an anchor before the save means a failed
+        // save would skip those samples forever (the anchor won't re-emit them).
+        // On failure we leave the anchor where it is; the next query re-emits the
+        // samples, and A1's stable ids make the redelivery dedupe cleanly.
+        var pendingAnchors: [String: HKQueryAnchor] = [:]
+
         // Collect new data for each type using anchored queries
         for type in healthKitTypes {
             let typeKey = getAnchorKey(for: type)
             let anchor = anchors[typeKey]
-            
+
             if let (metrics, newAnchor) = await collectNewData(for: type, anchor: anchor) {
                 if !metrics.isEmpty {
                     print("🏥 Found \(metrics.count) new \(type.identifier) samples")
                     allMetrics.append(contentsOf: metrics)
                 }
-                
-                // Update anchor for next query
+
+                // Stage the advanced anchor; do not commit until the save lands.
                 if let newAnchor = newAnchor {
-                    anchors[typeKey] = newAnchor
-                    saveAnchor(newAnchor, for: typeKey)
+                    pendingAnchors[typeKey] = newAnchor
                 }
             }
         }
-        
+
+        // Commit staged anchors (in-memory + persisted) once the data is durable.
+        func commitAnchors() {
+            for (typeKey, newAnchor) in pendingAnchors {
+                anchors[typeKey] = newAnchor
+                saveAnchor(newAnchor, for: typeKey)
+            }
+        }
+
         // Save to SQLite in batches if needed
         if !allMetrics.isEmpty {
             print("🏥 Collected \(allMetrics.count) new health metrics")
-            
+
             // For regular syncs, batch if more than 1000 metrics
             if allMetrics.count > 1000 {
                 let batchSize = 1000
                 let totalBatches = (allMetrics.count + batchSize - 1) / batchSize
                 var allSuccess = true
-                
+
                 print("🏥 Saving \(allMetrics.count) metrics in \(totalBatches) batches")
-                
+
                 for batchIndex in 0..<totalBatches {
                     let startIndex = batchIndex * batchSize
                     let endIndex = min((batchIndex + 1) * batchSize, allMetrics.count)
                     let batch = Array(allMetrics[startIndex..<endIndex])
-                    
+
                     let success = await saveMetricsToQueue(batch)
                     if !success {
                         allSuccess = false
                     }
                 }
-                
+
+                // Only advance anchors if every batch landed; otherwise re-query
+                // next cycle (dedup absorbs the overlap).
                 if allSuccess {
+                    commitAnchors()
                     await MainActor.run {
                         self.lastSyncDate = Date()
                     }
@@ -651,12 +671,15 @@ class HealthKitManager: ObservableObject {
                 // Small enough to save as single batch
                 let success = await saveMetricsToQueue(allMetrics)
                 if success {
+                    commitAnchors()
                     await MainActor.run {
                         self.lastSyncDate = Date()
                     }
                 }
             }
         } else {
+            // No new samples — nothing to lose, safe to advance anchors.
+            commitAnchors()
             print("🏥 No new health metrics found")
         }
     }

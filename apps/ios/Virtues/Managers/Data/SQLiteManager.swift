@@ -43,8 +43,11 @@ class SQLiteManager {
     /// Maximum size of a single payload (10MB)
     private let maxPayloadSize = 10_000_000
 
-    /// Maximum total queue size before backpressure kicks in (500MB)
-    private let maxQueueSizeBytes: Int64 = 500_000_000
+    /// Maximum local buffer before back-pressure kicks in (4GB). Deliberately
+    /// generous so a multi-day delivery outage never drops data; when genuinely
+    /// exceeded we ring-buffer the oldest AUDIO (see `evictOldestAudioToFit`),
+    /// never the small high-value streams (location/health/finance/contacts/cal).
+    private let maxQueueSizeBytes: Int64 = 4_000_000_000
 
     /// Threshold for warning-level storage (50MB)
     private let storageWarningThreshold: Int64 = 50_000_000
@@ -211,10 +214,26 @@ class SQLiteManager {
             // Check backpressure - is queue too full?
             let stats = getQueueStatsInternal()
             if stats.totalSize > maxQueueSizeBytes {
-                // Trigger aggressive cleanup
+                // First reclaim space that's always safe to drop: completed
+                // uploads and aged-out dead-letter rows.
                 _ = cleanupOldEventsInternal()
 
-                // Re-check after cleanup
+                // Still over? Ring-buffer AUDIO: drop the oldest un-acked audio to
+                // admit new data. Audio is ~95% of volume and old ambient audio is
+                // the only thing we ever sacrifice — the small high-value streams
+                // are never evicted.
+                if getQueueStatsInternal().totalSize > maxQueueSizeBytes {
+                    let evicted = evictOldestAudioToFit()
+                    #if DEBUG
+                    if evicted > 0 {
+                        print("⚠️ Buffer full — ring-buffered \(evicted) oldest audio chunk(s) to admit new data")
+                    }
+                    #endif
+                }
+
+                // Last resort: only non-audio data and it somehow still exceeds the
+                // cap (would take years of location/health). Reject rather than
+                // evict a high-value stream.
                 let newStats = getQueueStatsInternal()
                 if newStats.totalSize > maxQueueSizeBytes {
                     return .failure(.queueFull(currentSize: newStats.totalSize, maxSize: maxQueueSizeBytes))
@@ -250,6 +269,36 @@ class SQLiteManager {
             print("✅ Enqueued event for stream: \(streamName) (ID: \(rowId), Size: \(data.count) bytes)")
             return .success(rowId)
         }
+    }
+
+    /// Ring-buffer the audio stream: delete the oldest un-acked `ios_mic` rows
+    /// until the queue fits under `maxQueueSizeBytes`, or no audio remains. Audio
+    /// is ~95% of volume and old ambient audio is the most expendable data; the
+    /// small high-value streams are never touched. Caller MUST hold `queue`.
+    /// Returns the number of rows evicted.
+    private func evictOldestAudioToFit() -> Int {
+        var totalEvicted = 0
+        let batch = 100
+        while getQueueStatsInternal().totalSize > maxQueueSizeBytes {
+            let deleteSQL = """
+                DELETE FROM upload_queue
+                WHERE id IN (
+                    SELECT id FROM upload_queue
+                    WHERE stream_name = 'ios_mic' AND status IN ('pending', 'failed')
+                    ORDER BY created_at ASC
+                    LIMIT ?
+                )
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, deleteSQL, -1, &statement, nil) == SQLITE_OK else { break }
+            sqlite3_bind_int(statement, 1, Int32(batch))
+            let done = sqlite3_step(statement) == SQLITE_DONE
+            let changes = Int(sqlite3_changes(db))
+            sqlite3_finalize(statement)
+            if !done || changes == 0 { break } // no more audio to evict
+            totalEvicted += changes
+        }
+        return totalEvicted
     }
 
     /// Internal version of getQueueStats for use within queue.sync blocks
@@ -316,16 +365,20 @@ class SQLiteManager {
 
         sqlite3_finalize(statement)
 
-        // Also delete failed events with max retries older than 3 days
-        let deleteFailedSQL = """
+        // Dead-letter sweep: a 'failed' row pinned at/above the transient cap is a
+        // permanent reject (4xx) or an exhausted poison pill. Retain it so it can be
+        // surfaced/exported, then drop after 30 days to bound growth. We NO LONGER
+        // delete still-retrying un-acked rows — flaky network must never lose data.
+        let thirtyDaysAgo = Date().addingTimeInterval(-30 * 24 * 60 * 60).timeIntervalSince1970
+        let deleteDeadLetterSQL = """
             DELETE FROM upload_queue
             WHERE status = 'failed'
-            AND upload_attempts >= 5
+            AND upload_attempts >= \(UploadEvent.maxTransientAttempts)
             AND created_at < ?
         """
 
-        if sqlite3_prepare_v2(db, deleteFailedSQL, -1, &statement, nil) == SQLITE_OK {
-            sqlite3_bind_double(statement, 1, threeDaysAgo)
+        if sqlite3_prepare_v2(db, deleteDeadLetterSQL, -1, &statement, nil) == SQLITE_OK {
+            sqlite3_bind_double(statement, 1, thirtyDaysAgo)
 
             if sqlite3_step(statement) == SQLITE_DONE {
                 deletedCount += Int(sqlite3_changes(db))
@@ -347,7 +400,7 @@ class SQLiteManager {
                 SELECT id, stream_name, data_blob, created_at, upload_attempts, last_attempt_date, status
                 FROM upload_queue
                 WHERE status IN ('pending', 'failed')
-                AND (upload_attempts < 5 OR upload_attempts IS NULL)
+                AND (upload_attempts < \(UploadEvent.maxTransientAttempts) OR upload_attempts IS NULL)
                 ORDER BY created_at ASC
                 LIMIT ?
             """
@@ -487,13 +540,18 @@ class SQLiteManager {
         }
     }
 
-    /// Mark an event as permanently failed - sets max retries so it won't be picked up again
+    /// Park an event in the dead-letter bucket — a PERMANENT failure (4xx / decode)
+    /// that must not be retried. Status stays 'failed' and attempts is pinned at
+    /// the transient cap so it's both excluded from `dequeueNext` and identifiable
+    /// as dead-letter (`status='failed' AND upload_attempts >= maxTransientAttempts`).
+    /// It is retained (not silently deleted) so it can be surfaced/exported; only
+    /// the 30-day dead-letter sweep removes it.
     func markAsFailed(id: Int64) {
         queue.sync {
             let updateSQL = """
                 UPDATE upload_queue
                 SET status = 'failed',
-                    upload_attempts = 5,
+                    upload_attempts = \(UploadEvent.maxTransientAttempts),
                     last_attempt_date = ?
                 WHERE id = ?
             """
@@ -571,17 +629,22 @@ class SQLiteManager {
             
             sqlite3_finalize(statement)
             
-            // Also delete failed events with max retries older than 3 days
-            let deleteFailedSQL = """
+            // Dead-letter sweep: a 'failed' row pinned at/above the transient cap is a
+            // permanent reject (4xx) or an exhausted poison pill. Retain it so it can
+            // be surfaced/exported, then drop after 30 days to bound growth. We NO
+            // LONGER delete still-retrying un-acked rows — flaky network must never
+            // cause silent data loss.
+            let thirtyDaysAgo = Date().addingTimeInterval(-30 * 24 * 60 * 60).timeIntervalSince1970
+            let deleteDeadLetterSQL = """
                 DELETE FROM upload_queue
                 WHERE status = 'failed'
-                AND upload_attempts >= 5
+                AND upload_attempts >= \(UploadEvent.maxTransientAttempts)
                 AND created_at < ?
             """
-            
-            if sqlite3_prepare_v2(db, deleteFailedSQL, -1, &statement, nil) == SQLITE_OK {
-                sqlite3_bind_double(statement, 1, threeDaysAgo)
-                
+
+            if sqlite3_prepare_v2(db, deleteDeadLetterSQL, -1, &statement, nil) == SQLITE_OK {
+                sqlite3_bind_double(statement, 1, thirtyDaysAgo)
+
                 if sqlite3_step(statement) == SQLITE_DONE {
                     deletedCount += Int(sqlite3_changes(db))
                 }

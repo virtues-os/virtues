@@ -8,21 +8,29 @@
 import Foundation
 
 struct HealthKitMetric: Codable {
+    /// Stable idempotency key — the originating `HKSample.uuid`, which HealthKit
+    /// guarantees is unique and stable per sample. Persisted in the SQLite blob so
+    /// every retry resends the SAME id; the box dedupes on it (`source_stream_id`),
+    /// making at-least-once delivery safe. Optional only so blobs queued before
+    /// this field existed still decode; every newly-collected metric sets it.
+    let id: String?
     let timestamp: String
     let metricType: String
     let value: Double
     let unit: String
     let metadata: [String: AnyCodable]?
-    
+
     private enum CodingKeys: String, CodingKey {
+        case id
         case timestamp
         case metricType = "metric_type"
         case value
         case unit
         case metadata
     }
-    
-    init(timestamp: Date, metricType: String, value: Double, unit: String, metadata: [String: Any]? = nil) {
+
+    init(id: String? = nil, timestamp: Date, metricType: String, value: Double, unit: String, metadata: [String: Any]? = nil) {
+        self.id = id
         self.timestamp = ISO8601DateFormatter().string(from: timestamp)
         self.metricType = metricType
         self.value = value
