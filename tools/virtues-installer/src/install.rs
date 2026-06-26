@@ -235,6 +235,16 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     cmd.args(["-R", "virtues:virtues", models_dir.to_str().unwrap()]);
     let _ = cmd.output().await;
 
+    // GPU offload depends on the sidecar user being in the host's GPU groups
+    // (create_user added `virtues` to them); the hardened unit drops all caps
+    // and sets NoNewPrivileges, so the membership only takes effect at runtime
+    // if the unit also declares it. Emit a SupplementaryGroups= line for the
+    // groups that exist, or nothing on a CPU-only host.
+    let supp_groups = match gpu_access_groups().await.as_slice() {
+        [] => String::new(),
+        groups => format!("SupplementaryGroups={}\n", groups.join(" ")),
+    };
+
     // Write + (re)start one unit per model. restart rather than just
     // enable --now so an installer re-run picks up unit/binary changes.
     for (unit, template, gguf) in [
@@ -242,6 +252,7 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
         ("virtues-rerank", RERANK_UNIT_TEMPLATE, &cfg.rerank_gguf),
     ] {
         let body = template
+            .replace("__SUPP_GROUPS__", &supp_groups)
             .replace("__BIN__", &bin.display().to_string())
             .replace("__MODEL__", &models_dir.join(gguf).display().to_string());
         fs::write(format!("/etc/systemd/system/{unit}.service"), body)
@@ -258,10 +269,38 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     run_step("Start inference sidecars", cmd).await
 }
 
+/// The standard Linux groups that gate access to GPU device nodes
+/// (`/dev/dri/*`, `/dev/nvidia*`, and on Jetson `/dev/nvhost-*` + `/dev/nvmap`).
+/// The llama-server sidecars run unprivileged as `virtues`; without membership
+/// in these groups the GPU backend can't open its device nodes and init fails
+/// (e.g. CUDA returns `cudaErrorUnknown`), so llama.cpp silently falls back to
+/// CPU. We only wire up groups that actually exist on the host — this is
+/// hardware-agnostic: a CPU-only DIY box has neither and correctly stays on
+/// CPU, while a GPU box (Jetson, discrete NVIDIA, AMD/Intel) gets offload.
+async fn gpu_access_groups() -> Vec<&'static str> {
+    let mut groups = Vec::new();
+    for g in ["video", "render"] {
+        let exists = Command::new("getent")
+            .args(["group", g])
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if exists {
+            groups.push(g);
+        }
+    }
+    groups
+}
+
 /// Shared shape: loopback-only, runs as `virtues`, read-only filesystem
 /// (the GGUF is mmap'd read-only; PrivateTmp covers scratch). `-c/-b/-ub
 /// 8192` match bge-m3's 8K context — non-causal encoders need the whole
 /// sequence to fit one ubatch or llama-server rejects the request.
+/// `__SUPP_GROUPS__` is replaced at install time with a `SupplementaryGroups=`
+/// line for whatever GPU groups exist (see `gpu_access_groups`), or removed
+/// entirely on a CPU-only host — an undefined supplementary group would make
+/// systemd fail the unit (216/GROUP), which is worse than CPU fallback.
 const EMBED_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues embedding sidecar (llama-server, bge-m3)
 Documentation=https://virtues.com/docs
@@ -271,7 +310,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-ExecStart=__BIN__ --embedding --pooling cls -m __MODEL__ --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192
+__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling cls -m __MODEL__ --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192
 Restart=on-failure
 RestartSec=5
 
@@ -299,7 +338,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-ExecStart=__BIN__ --rerank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192
+__SUPP_GROUPS__ExecStart=__BIN__ --rerank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192
 Restart=on-failure
 RestartSec=5
 
@@ -456,6 +495,22 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
         run_step("Create system user 'virtues'", cmd).await?;
     }
 
+    // Add `virtues` to the host's GPU-access groups so the inference sidecars
+    // can reach the GPU device nodes (else they silently run on CPU — see
+    // gpu_access_groups + the sidecar units). Runs on both the fresh and
+    // already-exists paths so upgrades of older boxes pick it up; `usermod -aG`
+    // is additive and idempotent. No-op on a CPU-only host (no such groups).
+    let gpu_groups = gpu_access_groups().await;
+    if !gpu_groups.is_empty() {
+        let mut cmd = Command::new("usermod");
+        cmd.args(["-aG", &gpu_groups.join(","), "virtues"]);
+        run_step(
+            &format!("Grant 'virtues' GPU access ({})", gpu_groups.join(", ")),
+            cmd,
+        )
+        .await?;
+    }
+
     for sub in &["lake", "models", "secrets"] {
         fs::create_dir_all(cfg.data_dir.join(sub))
             .with_context(|| format!("creating {}/{sub}", cfg.data_dir.display()))?;
@@ -473,6 +528,19 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700))
         .with_context(|| format!("chmod 0700 {}", secrets.display()))?;
     ui::ok(&format!("Data dir ready ({})", cfg.data_dir.display()));
+
+    // Passwordless sudo for the owner's admin shell. `virtues` is a system
+    // account with no password, so interactive sudo has nothing to authenticate
+    // against — NOPASSWD is the only thing that works, not just a convenience.
+    // Safe here because the only way to reach a `virtues` shell is the
+    // auth-gated web terminal (WG/SPKI + session); there's no local login
+    // (shell is /usr/sbin/nologin). Drop-file at 0440, the mode sudo requires.
+    let sudoers = "/etc/sudoers.d/virtues";
+    fs::write(sudoers, "virtues ALL=(ALL) NOPASSWD: ALL\n")
+        .with_context(|| format!("writing {sudoers}"))?;
+    fs::set_permissions(sudoers, fs::Permissions::from_mode(0o440))
+        .with_context(|| format!("chmod 0440 {sudoers}"))?;
+    ui::ok("Granted 'virtues' passwordless sudo (/etc/sudoers.d/virtues)");
 
     Ok(())
 }
@@ -741,24 +809,27 @@ TimeoutStartSec=120
 Restart=on-failure
 RestartSec=5
 
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=__DATA_DIR__
-ProtectHome=true
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=false
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-RestrictNamespaces=true
+# Sandbox intentionally OFF on THIS unit only. The web terminal
+# (/ws/terminal) spawns the owner's admin shell as a child of this process, so
+# the shell inherits whatever sandbox this unit has — and a real admin shell
+# must do real sysadmin work: sudo to root, write /etc and /usr, install
+# packages, run containers, load modules, edit sysctls. Each flag below blocked
+# part of that:
+#   NoNewPrivileges/RestrictSUIDSGID — blocked sudo's setuid escalation.
+#   CapabilityBoundingSet=            — root regained uid 0 but ZERO caps, so
+#                                       mount/modprobe/DAC-override still failed.
+#   ProtectSystem/ProtectHome         — /usr,/etc,/home mounted read-only.
+#   ProtectKernel*/ControlGroups      — blocked sysctl + cgroup writes.
+#   RestrictNamespaces                — blocked containers (podman/unshare).
+# The box is a single-tenant, owner-operated appliance; that shell IS the admin
+# surface and its security boundary is the WG/SPKI + session auth in front of
+# /ws/terminal, not this sandbox. TRADE-OFF: the network-facing app on :8000
+# runs in this same unit, so an RCE in the app now escalates to root — accepted
+# deliberately for an owner-operated box. The WG reconciler and inference
+# sidecars keep their full sandbox; only this human-facing unit is opened up.
+NoNewPrivileges=false
+RestrictSUIDSGID=false
 SystemCallArchitectures=native
-
-# No capabilities: the main app is rootless and does NO kernel networking —
-# it persists WG peers to the DB and the virtues-wireguard daemon (the only
-# holder of CAP_NET_ADMIN) reconciles wg0 from there. Port 8000 is unprivileged
-# so no CAP_NET_BIND_SERVICE either. Empty bounding set drops everything.
-CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target
