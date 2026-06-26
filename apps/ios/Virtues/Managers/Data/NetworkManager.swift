@@ -198,7 +198,8 @@ class NetworkManager: ObservableObject {
             device_name: deviceName,
             device_model: Self.modelIdentifier,
             os_version: osVersion,
-            app_version: appVersion
+            app_version: appVersion,
+            timezone: TimeZone.current.identifier
         )
 
         // Generate a fresh WG keypair and send the public half. The private key
@@ -390,6 +391,10 @@ struct PairingDeviceInfo: Codable {
     let device_model: String
     let os_version: String
     let app_version: String?
+    /// IANA timezone of this device at pairing time (e.g. "America/Chicago").
+    /// Used by the box as a cross-check for `home_timezone` when its own system
+    /// clock reads UTC (cloud/datacenter deploys). See docs/timezone-model.md.
+    let timezone: String?
 }
 
 /// `POST /api/pair/consume` body — see `virtues-core/src/api/pair.rs`

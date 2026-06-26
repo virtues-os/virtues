@@ -30,7 +30,6 @@ struct ContentView: View {
                     Label("Data", systemImage: audioManager.isRecording ? "waveform.path.ecg.rectangle" : "waveform.path.ecg")
                 }
                 .tag(0)
-                .badge(audioManager.isRecording ? "REC" : nil)
 
             TodayView()
                 .tabItem {

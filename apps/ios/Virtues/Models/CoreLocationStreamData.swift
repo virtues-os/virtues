@@ -9,6 +9,12 @@ import Foundation
 import CoreLocation
 
 struct LocationData: Codable {
+    /// Stable idempotency key, generated once at collection and persisted in the
+    /// SQLite blob so every retry resends the SAME id. The box dedupes on it
+    /// (`source_stream_id`), making at-least-once delivery safe. Optional only so
+    /// blobs queued before this field existed still decode (they fall back to a
+    /// server-side random id, as before); every newly-collected record sets it.
+    let id: String?
     let timestamp: String
     let latitude: Double
     let longitude: Double
@@ -20,6 +26,7 @@ struct LocationData: Codable {
     let floor: Int?
 
     private enum CodingKeys: String, CodingKey {
+        case id
         case timestamp
         case latitude
         case longitude
@@ -32,6 +39,7 @@ struct LocationData: Codable {
     }
 
     init(location: CLLocation) {
+        self.id = UUID().uuidString
         self.timestamp = ISO8601DateFormatter().string(from: location.timestamp)
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude

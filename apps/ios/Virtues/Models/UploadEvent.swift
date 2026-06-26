@@ -56,9 +56,16 @@ struct UploadEvent: Identifiable {
         return baseDelay + jitter
     }
     
+    /// Transient failures (timeout, no-connection, 5xx, lost-ack) retry up to this
+    /// many cycles before being parked as a dead-letter. Un-acked data is NEVER
+    /// deleted just because the network was flaky for a while; only genuine
+    /// permanent rejects (4xx) or a poison pill that fails this many times stops.
+    /// Dead-letter set is exactly `status == .failed && uploadAttempts >= this`.
+    static let maxTransientAttempts = 50
+
     // Check if event should be retried
     var shouldRetry: Bool {
-        guard uploadAttempts < 5 else { return false }
+        guard uploadAttempts < Self.maxTransientAttempts else { return false }
         guard status == .failed else { return false }
         
         if let lastAttempt = lastAttemptDate {
