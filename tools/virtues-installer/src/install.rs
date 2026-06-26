@@ -294,9 +294,23 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 }
 
 /// Shared shape: loopback-only, runs as `virtues`, read-only filesystem
-/// (the GGUF is mmap'd read-only; PrivateTmp covers scratch). `-c/-b/-ub
-/// 8192` match bge-m3's 8K context — non-causal encoders need the whole
-/// sequence to fit one ubatch or llama-server rejects the request.
+/// (the GGUF is mmap'd read-only; PrivateTmp covers scratch).
+///
+/// Flags (verified on an Orin 2026-06-26):
+/// - `-ngl 99` offloads all layers to the GPU. No-op on the CPU-only build
+///   (no CUDA backend compiled) → safe to ship universally; the Jetson CUDA
+///   build actually offloads (GR3D 77–99% under load). Requires the GPU
+///   `SupplementaryGroups=` below or CUDA init fails → silent CPU fallback.
+/// - `-c/-b/-ub 2048` right-sizes context. bge-m3 *can* do 8K, but our chunks
+///   are ≤512 tokens, so 8192 just bloats the KV + compute buffers (~0.5 GB)
+///   for capacity we never feed. 2048 ≈ 3 pages — ample headroom.
+/// - `-np 1`: single-tenant box; 1 slot vs the auto-4 saves ~0.9 GB of
+///   per-slot buffers (the bigger memory win). Concurrent requests queue,
+///   which is fine here.
+/// - `--cache-ram 0`: disables the prompt cache (an up-to-8 GB reservation)
+///   — useless for embed/rerank where every input is unique.
+/// Together these cut each sidecar from ~2.5 GB RSS to ~1 GB, which is also
+/// what frees enough of the Orin's 7.6 GB unified pool for `-ngl 99` to fit.
 /// `__SUPP_GROUPS__` is replaced at install time with a `SupplementaryGroups=`
 /// line for whatever GPU groups exist (see `gpu_access_groups`), or removed
 /// entirely on a CPU-only host — an undefined supplementary group would make
@@ -310,7 +324,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling cls -m __MODEL__ --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192
+__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling cls -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
 Restart=on-failure
 RestartSec=5
 
@@ -338,7 +352,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --rerank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192
+__SUPP_GROUPS__ExecStart=__BIN__ --rerank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
 Restart=on-failure
 RestartSec=5
 
