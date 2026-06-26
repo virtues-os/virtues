@@ -208,7 +208,7 @@ async fn craft_scene_prompt(
 /// (same as every other AI call) — so the gateway key never lives on the box
 /// and image-gen cost is metered through the entitlement. The gateway returns
 /// images inline (base64) in the OpenAI-compatible response.
-async fn generate_image_via_gateway(pool: &PgPool, prompt: &str) -> Result<Vec<u8>> {
+pub async fn generate_image_via_gateway(pool: &PgPool, prompt: &str) -> Result<Vec<u8>> {
     let response = crate::virtues_api::client::BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System)
         .post_json(
