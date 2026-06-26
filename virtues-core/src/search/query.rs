@@ -36,6 +36,24 @@ pub struct SemanticSearchEngine {
     pool: Arc<PgPool>,
 }
 
+/// Cap each reranker candidate so a (query, doc) pair fits the rerank
+/// sidecar's context. The sidecar runs `-c 2048` and llama-server *rejects*
+/// (doesn't truncate) a rerank sequence that overflows the ubatch, which
+/// would fail the whole batch and silently drop us to bi-encoder ranking.
+/// A cross-encoder only needs a document's lead to judge relevance, so
+/// truncating to ~512 tokens is standard practice and lossless in effect.
+/// ~2000 chars ≈ ~512 tokens for English and stays well under 2048 even for
+/// token-dense scripts; char-based (not byte) slicing keeps it UTF-8 safe.
+const MAX_RERANK_CHARS: usize = 2000;
+
+fn truncate_for_rerank(text: &str) -> String {
+    if text.chars().count() <= MAX_RERANK_CHARS {
+        text.to_string()
+    } else {
+        text.chars().take(MAX_RERANK_CHARS).collect()
+    }
+}
+
 impl SemanticSearchEngine {
     pub fn new(pool: Arc<PgPool>) -> Self {
         Self { pool }
@@ -206,7 +224,7 @@ impl SemanticSearchEngine {
 
             if !text.is_empty() {
                 rerank_indices.push(i);
-                rerank_docs.push(text);
+                rerank_docs.push(truncate_for_rerank(&text));
             }
         }
 
