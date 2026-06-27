@@ -396,6 +396,16 @@ class SQLiteManager {
             var events: [UploadEvent] = []
             var eventIds: [Int64] = []
 
+            // Byte budget for one dequeue. Batching is otherwise by record COUNT
+            // (`limit`), which is fine for tiny streams (location/health/etc.)
+            // but lets audio balloon: base64 AAC chunks are ~1MB each, so a
+            // count of 500 could produce a multi-tens-of-MB upload body — heavy
+            // on memory, the 30s background limit, and the tunnel. Cap the
+            // cumulative blob bytes per dequeue so each per-stream request body
+            // stays modest; the remainder stays 'pending' for the next cycle.
+            let maxDequeueBytes = 3 * 1024 * 1024  // ~3 MB
+            var cumulativeBytes = 0
+
             let selectSQL = """
                 SELECT id, stream_name, data_blob, created_at, upload_attempts, last_attempt_date, status
                 FROM upload_queue
@@ -451,7 +461,12 @@ class SQLiteManager {
                     if (event.shouldRetry || event.status == .pending) && !streamName.isEmpty {
                         events.append(event)
                         eventIds.append(id)
+                        cumulativeBytes += Int(blobSize)
                         print("📦 Dequeued event id=\(id) stream=\(streamName) status=\(statusString)")
+                        // Always take at least one row (so a lone oversized blob
+                        // still makes progress), then stop once the byte budget
+                        // is reached. The unselected rows remain 'pending'.
+                        if cumulativeBytes >= maxDequeueBytes { break }
                     } else if streamName.isEmpty {
                         print("⚠️ Skipping event id=\(id) with empty stream name")
                     }
