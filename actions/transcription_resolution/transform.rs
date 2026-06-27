@@ -14,6 +14,12 @@ use virtues::virtues_api::client::{BearerClient, Purpose};
 
 const MODEL: &str = "google/gemini-3.1-flash-lite";
 
+/// Below this, an audio file has no real content (an empty/glitch AAC container
+/// is ~28 bytes). Real speech recordings are hundreds of KB. Sub-kilobyte files
+/// are recorded as silent rather than sent to Gemini (which returns an empty
+/// body → an unrecoverable parse error that otherwise retries forever).
+const MIN_AUDIO_BYTES: usize = 1024;
+
 const SYSTEM_PROMPT: &str = r#"You are a verbatim audio transcription system. Output ONLY a raw JSON object — no markdown, no code fences, no explanation.
 
 Schema:
@@ -163,6 +169,29 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 continue;
             }
         };
+        // Empty/glitch recordings (a few-byte AAC container with no samples)
+        // make Gemini return an empty body → "EOF while parsing ... raw:" →
+        // counted `failed` and retried every cron tick FOREVER, burning a paid
+        // Gemini call each time. Real speech audio is hundreds of KB; anything
+        // sub-kilobyte has no content. Record it as a silent transcript so it's
+        // marked done and never re-sent.
+        if audio_bytes.len() < MIN_AUDIO_BYTES {
+            tracing::info!(
+                stream_id = %rec.source_stream_id,
+                bytes = audio_bytes.len(),
+                "audio below minimum size; recording as silent (no Gemini call)"
+            );
+            match insert_silent_transcript(db, rec).await {
+                Ok(_) => skipped += 1,
+                Err(e) => {
+                    tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                        "failed to insert silent transcript for tiny audio");
+                    failed += 1;
+                }
+            }
+            continue;
+        }
+
         let audio_b64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_bytes);
 
