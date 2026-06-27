@@ -299,7 +299,17 @@ impl StripeClient {
             return Err(OffSessionChargeError::InvalidAmount);
         }
 
-        // Step 1: look up the customer's default payment method.
+        // Step 1: resolve a payment method to charge.
+        //
+        // The preferred source is the customer's
+        // `invoice_settings.default_payment_method`, but Stripe Checkout in
+        // `mode=subscription` sets the card on the *subscription*, not the
+        // customer — so a Checkout-created customer has a null customer-level
+        // default even though a perfectly good card is on file (the
+        // subscription bills fine off its own PM). Fall back to the active
+        // subscription's PM, then to any saved card, before declining. When
+        // we resolve via a fallback we persist it back to the customer so the
+        // next charge hits the fast path and the data self-heals.
         let cust_resp = self
             .http
             .get(format!("{}/customers/{}", STRIPE_API, customer_id))
@@ -311,14 +321,25 @@ impl StripeClient {
             .json()
             .await
             .map_err(|e| OffSessionChargeError::ParseFailed(e.to_string()))?;
-        let pm = cust_body["invoice_settings"]["default_payment_method"]
+        let pm = match cust_body["invoice_settings"]["default_payment_method"]
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| OffSessionChargeError::StripeDeclined {
-                code: "no_payment_method".to_string(),
-                message: "customer has no default payment method on file".to_string(),
-            })?
-            .to_string();
+        {
+            Some(pm) => pm.to_string(),
+            None => {
+                let fallback = self.fallback_payment_method(customer_id).await?;
+                // Best-effort: a failure here only costs the next charge a
+                // repeat of the fallback lookup, so we ignore the result.
+                let _ = self
+                    .http
+                    .post(format!("{}/customers/{}", STRIPE_API, customer_id))
+                    .basic_auth(&self.secret_key, Some(""))
+                    .form(&[("invoice_settings[default_payment_method]", fallback.as_str())])
+                    .send()
+                    .await;
+                fallback
+            }
+        };
 
         // Step 2: create + confirm the PaymentIntent with the PM bound.
         let cents_str = cents.to_string();
@@ -330,7 +351,15 @@ impl StripeClient {
             ("confirm", "true"),
             ("description", description),
             ("payment_method", pm.as_str()),
-            ("payment_method_types[]", "card"),
+            // The customer's default PM is frequently a Stripe Link method
+            // (a Link-wrapped card from Checkout/Link autofill), not a raw
+            // `card`. Restricting payment_method_types to `card` makes Stripe
+            // reject it off-session with "The PaymentMethod provided (link) is
+            // not allowed for this PaymentIntent ... include 'link'" — which
+            // declines every auto-top-up and trips the failure circuit breaker.
+            // Allow both so saved Link PMs (and plain cards) charge off-session.
+            ("payment_method_types[0]", "card"),
+            ("payment_method_types[1]", "link"),
         ];
         let resp = self
             .http
@@ -367,6 +396,56 @@ impl StripeClient {
             "requires_action" => Err(OffSessionChargeError::AuthenticationRequired(pi_id)),
             other => Err(OffSessionChargeError::UnexpectedStatus(other.to_string())),
         }
+    }
+
+    /// Find a usable saved payment method when the customer carries no
+    /// `invoice_settings.default_payment_method`. Tries the active
+    /// subscription's `default_payment_method` first (the card entered at
+    /// Checkout), then any attached card. Returns a `no_payment_method`
+    /// decline only if nothing is genuinely on file.
+    async fn fallback_payment_method(
+        &self,
+        customer_id: &str,
+    ) -> Result<String, OffSessionChargeError> {
+        // (a) the active subscription's default PM.
+        let subs: serde_json::Value = self
+            .http
+            .get(format!("{}/subscriptions", STRIPE_API))
+            .basic_auth(&self.secret_key, Some(""))
+            .query(&[("customer", customer_id), ("status", "active"), ("limit", "1")])
+            .send()
+            .await
+            .map_err(|e| OffSessionChargeError::Network(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| OffSessionChargeError::ParseFailed(e.to_string()))?;
+        if let Some(pm) = subs["data"][0]["default_payment_method"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(pm.to_string());
+        }
+
+        // (b) any card attached to the customer.
+        let pms: serde_json::Value = self
+            .http
+            .get(format!("{}/payment_methods", STRIPE_API))
+            .basic_auth(&self.secret_key, Some(""))
+            .query(&[("customer", customer_id), ("type", "card"), ("limit", "1")])
+            .send()
+            .await
+            .map_err(|e| OffSessionChargeError::Network(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| OffSessionChargeError::ParseFailed(e.to_string()))?;
+        if let Some(pm) = pms["data"][0]["id"].as_str().filter(|s| !s.is_empty()) {
+            return Ok(pm.to_string());
+        }
+
+        Err(OffSessionChargeError::StripeDeclined {
+            code: "no_payment_method".to_string(),
+            message: "customer has no default payment method on file".to_string(),
+        })
     }
 
     /// Retrieve a subscription by ID. Used by `invoice.paid` to compute
