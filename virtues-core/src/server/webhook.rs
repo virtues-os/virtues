@@ -78,10 +78,69 @@ pub async fn webhook(
     headers: HeaderMap,
     payload: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Response {
+    // Do NOT swallow a body-parse failure into Value::Null and dispatch anyway.
+    // A null payload reaches the action with no top-level `stream`, producing a
+    // misleading "no stream selector" 0-row run that masquerades as an action
+    // bug (the exact failure that hid the real cause for a week). Two rules:
+    //
+    //   1. LOG the rejection reason + Content-Length. The reason text
+    //      distinguishes the real cause — "length limit exceeded" (raise the
+    //      route's DefaultBodyLimit) vs "Failed to buffer the request body" /
+    //      EOF-while-parsing (a truncated body in transit, e.g. the in-app WG
+    //      tunnel not delivering large audio batches) vs a Content-Type issue.
+    //   2. Return a RETRYABLE 409, never 400. The iOS client maps 400 ->
+    //      `badRequest` -> markAsFailed -> the batch is DELETED (silent data
+    //      loss). 409 -> `notProcessed` -> the batch is kept and resent. A
+    //      rejected body was not ingested, so it must be retryable.
     let body = match payload {
         Ok(Json(v)) => v,
-        Err(_) => Value::Null,
+        Err(rej) => {
+            tracing::warn!(
+                action_id = %action_id,
+                rejection = %rej,
+                content_length = ?headers.get("content-length"),
+                "webhook body rejected by Json extractor; returning 409 (retryable)"
+            );
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "run_id": serde_json::Value::Null,
+                    "status": "skipped",
+                    "error": "invalid webhook body",
+                    "detail": rej.body_text(),
+                })),
+            )
+                .into_response();
+        }
     };
+
+    // A parsed-but-non-object body (e.g. a bare array or a JSON scalar) also has
+    // no top-level `stream`. Reject it here rather than letting the action emit
+    // the opaque selector error.
+    if !body.is_object() {
+        let kind = match &body {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Number(_) => "number",
+            Value::String(_) => "string",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+        };
+        tracing::warn!(
+            action_id = %action_id,
+            kind = %kind,
+            "webhook body is not a JSON object; returning 409 (retryable)"
+        );
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "run_id": serde_json::Value::Null,
+                "status": "skipped",
+                "error": "webhook body must be a JSON object",
+            })),
+        )
+            .into_response();
+    }
 
     let Some(device_token) = extract_bearer(&headers) else {
         return (
