@@ -20,6 +20,18 @@ const MODEL: &str = "google/gemini-3.1-flash-lite";
 /// body → an unrecoverable parse error that otherwise retries forever).
 const MIN_AUDIO_BYTES: usize = 1024;
 
+/// Give up on a recording after this many failed transcription attempts. Past
+/// this it's never re-selected, so a poison record can't loop-bill Gemini
+/// forever AND it stops wedging the head of the oldest-first queue. Counter
+/// lives in data_audio_recording.metadata (no schema migration).
+const MAX_TRANSCRIBE_ATTEMPTS: i64 = 4;
+
+/// Exponential backoff base: a failed recording isn't re-selected until
+/// base * 2^attempts seconds have passed (2m, 4m, 8m, 16m). Spaces retries so a
+/// transient failure recovers without re-billing every 2-min cron tick, and the
+/// backoff window also lets the queue flow past it to fresh records meanwhile.
+const RETRY_BACKOFF_BASE_SECS: i64 = 120;
+
 const SYSTEM_PROMPT: &str = r#"You are a verbatim audio transcription system. Output ONLY a raw JSON object — no markdown, no code fences, no explanation.
 
 Schema:
@@ -100,11 +112,26 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         LEFT JOIN data_communication_transcription t
             ON t.source_stream_id = r.source_stream_id
         WHERE t.id IS NULL
+          -- Give-up cap: stop re-selecting (and re-billing) a recording after
+          -- $2 failures. Also unblocks head-of-line — a poison record at the
+          -- front no longer wedges the whole oldest-first queue.
+          AND COALESCE((r.metadata->>'transcribe_attempts')::int, 0) < $2
+          -- Exponential backoff: skip a recently-failed recording until
+          -- base * 2^attempts seconds have elapsed.
+          AND (
+            r.metadata->>'transcribe_last_attempt' IS NULL
+            OR (r.metadata->>'transcribe_last_attempt')::timestamptz
+               < now() - make_interval(secs =>
+                   $3::double precision
+                   * power(2, COALESCE((r.metadata->>'transcribe_attempts')::int, 0)))
+          )
         ORDER BY r.created_at ASC
         LIMIT $1
         "#,
     )
     .bind(batch_size)
+    .bind(MAX_TRANSCRIBE_ATTEMPTS)
+    .bind(RETRY_BACKOFF_BASE_SECS)
     .fetch_all(db)
     .await
     .context("failed to query pending recordings")?;
@@ -149,6 +176,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                         error = %e,
                         "failed to insert silent transcript"
                     );
+                    record_attempt_failure(db, &rec.source_stream_id).await;
                     failed += 1;
                 }
             }
@@ -172,6 +200,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                     error = %e,
                     "audio file missing or unreadable, skipping"
                 );
+                record_attempt_failure(db, &rec.source_stream_id).await;
                 failed += 1;
                 continue;
             }
@@ -193,6 +222,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 Err(e) => {
                     tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
                         "failed to insert silent transcript for tiny audio");
+                    record_attempt_failure(db, &rec.source_stream_id).await;
                     failed += 1;
                 }
             }
@@ -211,6 +241,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                         error = %e,
                         "failed to insert transcription"
                     );
+                    record_attempt_failure(db, &rec.source_stream_id).await;
                     failed += 1;
                 }
             },
@@ -231,6 +262,7 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                     Err(e) => {
                         tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
                             "failed to insert silent transcript for empty response");
+                        record_attempt_failure(db, &rec.source_stream_id).await;
                         failed += 1;
                     }
                 }
@@ -239,14 +271,37 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 tracing::warn!(
                     stream_id = %rec.source_stream_id,
                     error = %e,
-                    "transcription failed; will retry next cron tick"
+                    "transcription failed; will retry (capped + backed off)"
                 );
+                record_attempt_failure(db, &rec.source_stream_id).await;
                 failed += 1;
             }
         }
     }
 
     Ok((transcribed, skipped, failed))
+}
+
+/// Record a failed transcription attempt on the recording so the give-up cap +
+/// backoff in `drain`'s SELECT can see it. Best-effort: a write failure is
+/// logged, not propagated — bookkeeping must never abort the drain. Counters
+/// live in the existing metadata JSONB, so no schema migration is needed.
+async fn record_attempt_failure(db: &PgPool, stream_id: &str) {
+    let res = sqlx::query(
+        r#"UPDATE data_audio_recording
+           SET metadata = jsonb_set(
+                 jsonb_set(COALESCE(metadata, '{}'::jsonb),
+                   '{transcribe_attempts}',
+                   to_jsonb(COALESCE((metadata->>'transcribe_attempts')::int, 0) + 1)),
+                 '{transcribe_last_attempt}', to_jsonb(now()))
+           WHERE source_stream_id = $1"#,
+    )
+    .bind(stream_id)
+    .execute(db)
+    .await;
+    if let Err(e) = res {
+        tracing::warn!(stream_id, error = %e, "failed to record transcription attempt counter");
+    }
 }
 
 async fn insert_silent_transcript(db: &PgPool, rec: &PendingRecording) -> Result<()> {
