@@ -160,11 +160,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // nothing to show even while the lake filled. See `maintenance::entity_resolver`.
     crate::maintenance::entity_resolver::spawn(client.database.clone());
 
-    // Jetson GPU telemetry monitor for the web System view. Streams tegrastats
-    // into a cached sample only while the view is being watched (idle-gated, so
-    // zero cost at rest); no-op on non-Tegra hosts. See api::system_telemetry.
-    crate::api::system_telemetry::start_gpu_monitor();
-
     // Create ToolExecutor (optional - fails gracefully if VIRTUES_API_INTERNAL_SECRET not set)
     let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())
         .map(Arc::new)
@@ -331,13 +326,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Device-health endpoint (used by mobile/admin UIs).
         .route("/api/devices/health", get(api::device_health_check_handler))
-        // Host telemetry for the web System view (activity-monitor snapshot:
-        // CPU/mem/disk/net/thermal + Jetson GPU + inference/devices). Session-
-        // authed — carries process/network detail. See api::system_telemetry.
-        .route(
-            "/api/system/telemetry",
-            get(crate::api::system_telemetry::telemetry_handler),
-        )
         // Actions API
         .route(
             "/api/actions",
