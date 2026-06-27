@@ -532,12 +532,26 @@ impl EventLoop {
             // EOF / teardown. Only when not backpressured (else we'd drop data
             // still sitting in the socket buffer):
             //   * peer closed its send side and we've drained it (`!may_recv`)
-            //     and our writes are flushed → drop the conn, which drops
+            //     and our writes are fully flushed → drop the conn, which drops
             //     `read_tx` and surfaces EOF to the reader; or
             //   * the socket is fully dead.
+            //
+            // "writes flushed" must check BOTH the staging buffer (`conn.pending`,
+            // not yet handed to the socket) AND the socket's own TX queue
+            // (`send_queue()` — bytes enqueued but not yet ACKed by the peer).
+            // Checking only `conn.pending` abandoned the in-flight tail of large
+            // request bodies: with a 64 KiB SOCK_BUF a multi-MB upload drips out
+            // over hundreds of poll iterations, so the moment the peer half-closed
+            // its send side (e.g. a `Connection: close` response begins) this arm
+            // fired with `pending` momentarily empty while megabytes still sat
+            // unACKed in the TX buffer — the box then saw fewer bytes than
+            // Content-Length and rejected the body (small bodies flushed in ~1 RTT
+            // and were unaffected). Gating on `send_queue() == 0` keeps the conn
+            // alive (still pumping writes + polling) until the peer has ACKed every
+            // byte, regardless of body size.
+            let tx_flushed = conn.pending.is_empty() && sock.send_queue() == 0;
             if !backpressured
-                && ((conn.established && !sock.may_recv() && conn.pending.is_empty())
-                    || !sock.is_active())
+                && ((conn.established && !sock.may_recv() && tx_flushed) || !sock.is_active())
             {
                 to_close.push(*handle);
             }
