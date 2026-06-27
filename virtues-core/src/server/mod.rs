@@ -160,6 +160,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // nothing to show even while the lake filled. See `maintenance::entity_resolver`.
     crate::maintenance::entity_resolver::spawn(client.database.clone());
 
+    // Jetson GPU telemetry monitor for the web System view. Streams tegrastats
+    // into a cached sample only while the view is being watched (idle-gated, so
+    // zero cost at rest); no-op on non-Tegra hosts. See api::system_telemetry.
+    crate::api::system_telemetry::start_gpu_monitor();
+
     // Create ToolExecutor (optional - fails gracefully if VIRTUES_API_INTERNAL_SECRET not set)
     let tool_executor = crate::tools::ToolExecutor::from_env(client.database.pool().clone())
         .map(Arc::new)
@@ -236,7 +241,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // O(1) by HMAC against `credentials.secret_lookup_hash`), NOT via web
         // session cookies. Lives in public_routes because the AuthUser
         // extractor only knows how to read session cookies.
-        .route("/webhook/:action_id", post(webhook::webhook))
+        // Per-route body limit override (router-wide cap is 105MB): iOS audio
+        // batches are base64 AAC and can dwarf the other streams on backfill.
+        // A body over the cap is rejected by the Json extractor before the
+        // handler runs, which historically surfaced as a bogus "no stream
+        // selector" action error. See webhook.rs for the rejection handling.
+        .route(
+            "/webhook/:action_id",
+            post(webhook::webhook).layer(DefaultBodyLimit::max(512 * 1024 * 1024)),
+        )
         // Device re-fetch for stream → action_id map. Used by paired devices
         // whose Keychain entry predates the webhook unification, or after
         // templates.toml adds a new stream. Same device-token bearer auth as
@@ -318,6 +331,13 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Device-health endpoint (used by mobile/admin UIs).
         .route("/api/devices/health", get(api::device_health_check_handler))
+        // Host telemetry for the web System view (activity-monitor snapshot:
+        // CPU/mem/disk/net/thermal + Jetson GPU + inference/devices). Session-
+        // authed — carries process/network detail. See api::system_telemetry.
+        .route(
+            "/api/system/telemetry",
+            get(crate::api::system_telemetry::telemetry_handler),
+        )
         // Actions API
         .route(
             "/api/actions",
