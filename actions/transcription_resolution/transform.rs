@@ -12,7 +12,12 @@ use sqlx::{Row, PgPool};
 use uuid::Uuid;
 use virtues::virtues_api::client::{BearerClient, Purpose};
 
-const MODEL: &str = "google/gemini-3.1-flash-lite";
+// gemini-2.5-flash: audio-capable (flash-lite is NOT — it returned empty on
+// every clip, which drove the retry/re-bill loop). 2.5-flash ingests audio as
+// native audio tokens (~25/sec, ~7.5K for a 5-min clip — cheap) and does full
+// scene understanding (speech + ambient sounds + music + mood + setting), which
+// is what a life-log wants, not bare ASR. Validated live via the Vercel gateway.
+const MODEL: &str = "google/gemini-2.5-flash";
 
 /// Below this, an audio file has no real content (an empty/glitch AAC container
 /// is ~28 bytes). Real speech recordings are hundreds of KB. Sub-kilobyte files
@@ -32,17 +37,18 @@ const MAX_TRANSCRIBE_ATTEMPTS: i64 = 4;
 /// backoff window also lets the queue flow past it to fresh records meanwhile.
 const RETRY_BACKOFF_BASE_SECS: i64 = 120;
 
-const SYSTEM_PROMPT: &str = r#"You are a verbatim audio transcription system. Output ONLY a raw JSON object — no markdown, no code fences, no explanation.
+const SYSTEM_PROMPT: &str = r#"You are an audio SCENE-UNDERSTANDING engine for a personal life-log. You hear a slice of someone's real life: speech, but also music, ambient sound, room tone, the feel of a place. Capture BOTH the words AND the essence of the moment. Output ONLY a raw JSON object — no markdown, no code fences, no prose.
 
 Schema:
-{"title":"string max 10 words","summary":"string 1-2 sentences","text":"string verbatim transcript","language":"string ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 5 strings"],"entities":{"people":[],"places":[],"organizations":[]}}
+{"title":"string, max 10 words, what this moment is","summary":"1-2 sentence narrative of what was happening and how it felt","text":"verbatim speech transcript, empty string if no speech","language":"ISO 639-1","confidence":0.0-1.0,"speaker_count":integer,"tags":["max 8 topical + scene tags"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":["non-speech sounds heard: music, laughter, dog barking, traffic, dishes, footsteps, TV..."],"music":"description of any music (genre/energy) or null","mood":"the emotional tone/energy of the moment","setting":"likely place/context (e.g. home kitchen, bar, car, outdoors)"}}
 
 Rules:
-- text: Exact words spoken. No paraphrasing. Include filler words (um, uh, ah). Use "[Speaker 1]:", "[Speaker 2]:" if multiple speakers.
-- entities: Only extract names explicitly spoken. Use "[unclear]" if a name is ambiguous.
-- confidence: 0.0 for silence/unintelligible, 0.5+ for partial, 0.9+ for clear speech.
-- tags: 1-5 topic labels maximum.
-- Silence/noise: Return {"title":"Silence","summary":"No speech detected","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":[],"entities":{"people":[],"places":[],"organizations":[]}}
+- text: exact words spoken, no paraphrasing, keep fillers (um, uh). Use "[Speaker 1]:", "[Speaker 2]:" when multiple voices. Empty "" if no intelligible speech.
+- ALWAYS fill scene.* even when there is no speech — ambient-only moments are valuable. Describe what you actually hear; do not invent.
+- entities: only names/places/orgs explicitly spoken or clearly identifiable. "[unclear]" if ambiguous.
+- confidence: confidence in the SPEECH transcript (0.0 if no speech, 0.9+ if clear).
+- tags: blend topic (what's discussed) and scene (sounds/mood/setting) labels.
+- Truly silent/empty audio (no speech AND no discernible ambient sound): {"title":"Silence","summary":"Silent audio","text":"","language":"en","confidence":0.0,"speaker_count":0,"tags":["silence"],"entities":{"people":[],"places":[],"organizations":[]},"scene":{"sounds":[],"music":null,"mood":"quiet","setting":"unknown"}}
 "#;
 
 #[derive(Debug, thiserror::Error)]
@@ -71,6 +77,9 @@ struct TranscriptionResponse {
     speaker_count: Option<i32>,
     tags: Option<Vec<String>>,
     entities: Option<Value>,
+    /// Audio scene block (sounds/music/mood/setting) — the non-speech "essence"
+    /// of the moment. Stored in the transcription row's metadata JSONB.
+    scene: Option<Value>,
 }
 
 /// One row from the LEFT JOIN selecting untranscribed recordings.
@@ -357,6 +366,11 @@ async fn insert_transcription(
         .entities
         .clone()
         .unwrap_or_else(|| serde_json::json!({}));
+    // Persist the audio scene (sounds/music/mood/setting) in metadata so the
+    // non-speech "essence" is queryable alongside the transcript.
+    let metadata_json = serde_json::json!({
+        "scene": t.scene.clone().unwrap_or(serde_json::Value::Null)
+    });
 
     sqlx::query(
         r#"INSERT INTO data_communication_transcription (
@@ -387,7 +401,7 @@ async fn insert_transcription(
     .bind(&rec.source_stream_id)
     .bind("stream_ios_microphone")
     .bind("ios")
-    .bind(serde_json::json!({}))
+    .bind(&metadata_json)
     .execute(db)
     .await
     .context("insert transcription")?;
@@ -428,8 +442,11 @@ async fn transcribe(
         // almost certainly hallucinating/looping on quiet audio — handled
         // by the salvage path below rather than by raising the cap.
         "max_tokens": 8192,
-        "temperature": 0.0,
-        "response_format": { "type": "json_object" }
+        "temperature": 0.0
+        // NOTE: no `response_format` — the Vercel gateway rejects it for Gemini
+        // (HTTP 400 "Invalid input" on param response_format). The system prompt
+        // enforces raw-JSON output, and the parse path below strips ```json
+        // fences and salvages partials, so JSON mode isn't needed.
     });
 
     let response = client
@@ -529,6 +546,7 @@ fn salvage_truncated_response(raw: &str) -> Option<TranscriptionResponse> {
         speaker_count: None,
         tags: None,
         entities: None,
+        scene: None,
     })
 }
 
