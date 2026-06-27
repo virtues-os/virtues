@@ -20,9 +20,14 @@ mod transform;
 use anyhow::Result;
 use virtues_helpers::{connect_from_env, output, read_input};
 
-/// Maximum recordings to process per cron tick. Keeps each run bounded so a
-/// huge backlog doesn't hold a single Gemini connection open for minutes.
-const BATCH_SIZE: i64 = 5;
+/// Maximum recordings to process per cron tick. Drained sequentially, so the
+/// run time is ~BATCH_SIZE × per-call latency; the action runner's 300s
+/// SUBPROCESS_TIMEOUT is the ceiling. At 30 and ~2–4s/call a run finishes in
+/// ~1–2 min, well inside both the timeout and the 1-min cron cadence, giving
+/// ~30/min of drain (6× the old 5/2min) — enough to clear a multi-hundred
+/// backlog in minutes rather than hours. A single poison row (e.g. a missing
+/// audio file) now wastes 1 of 30 slots instead of 1 of 5.
+const BATCH_SIZE: i64 = 30;
 
 #[tokio::main]
 async fn main() -> Result<()> {
