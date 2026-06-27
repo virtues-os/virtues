@@ -2279,13 +2279,13 @@ pub async fn get_day_streams(pool: &PgPool, date: NaiveDate) -> Result<DayStream
             .map(|c| format!(", {} as end_ts", c))
             .unwrap_or_default();
 
-        // Encode bytea IDs as hex for tables with blob IDs (location_visit).
-        // Postgres uses `encode(bytea, 'hex')` — there is no scalar `hex()`.
-        let id_select = if ontology.name == "location_visit" {
-            "encode(id, 'hex') as id"
-        } else {
-            "id"
-        };
+        // All ontology tables (incl. location_visit) use TEXT UUID ids — see the
+        // `data_location_visit` join comment above. An earlier version assumed
+        // location_visit had blob ids and wrapped them in `encode(id, 'hex')`,
+        // but `encode()` only accepts `bytea`, so that query failed at runtime
+        // with "function encode(text, unknown) does not exist" — silently
+        // breaking the day page's location rendering. Select the id directly.
+        let id_select = "id";
 
         // Build dynamic query - select id, timestamps, and all other columns as JSON
         let sql = format!(
