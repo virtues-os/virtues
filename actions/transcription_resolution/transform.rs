@@ -37,6 +37,13 @@ Rules:
 enum TranscribeError {
     #[error("virtues-api rate limited (429)")]
     RateLimited,
+    /// Gemini returned an empty response body — the recording has no
+    /// transcribable speech (silent/near-silent audio). Deterministic, NOT
+    /// transient, so the caller records it as a silent transcript and marks it
+    /// DONE rather than retrying it forever (which re-bills the audio input on
+    /// every cron tick — the cause of the runaway auto-top-up drain).
+    #[error("empty transcription response (silent audio)")]
+    EmptyResponse,
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 }
@@ -215,6 +222,19 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
                 );
                 return Ok((transcribed, skipped, failed));
             }
+            Err(TranscribeError::EmptyResponse) => {
+                // Silent/no-speech audio: record an empty transcript so it's
+                // marked DONE and never re-sent. Without this the same recording
+                // is re-billed to Gemini every cron tick forever.
+                match insert_silent_transcript(db, rec).await {
+                    Ok(_) => skipped += 1,
+                    Err(e) => {
+                        tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
+                            "failed to insert silent transcript for empty response");
+                        failed += 1;
+                    }
+                }
+            }
             Err(TranscribeError::Other(e)) => {
                 tracing::warn!(
                     stream_id = %rec.source_stream_id,
@@ -381,6 +401,14 @@ async fn transcribe(
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .ok_or_else(|| TranscribeError::Other(anyhow!("missing choices[0].message.content")))?;
+
+    // Gemini returns an empty body for silent/no-speech audio. Parsing "" panics
+    // the strict parse with "EOF at column 0" → counted failed → retried every
+    // cron tick forever, re-billing the audio input each time. Treat empty as a
+    // deterministic "silent" signal so the caller can mark it done.
+    if content_str.trim().is_empty() {
+        return Err(TranscribeError::EmptyResponse);
+    }
 
     // Strip markdown code fencing if Gemini wraps in ```json ... ```
     let json_str = content_str.trim();
