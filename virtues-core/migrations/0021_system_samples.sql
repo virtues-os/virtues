@@ -21,7 +21,7 @@ CREATE TABLE app_system_samples (
     disk_used_bytes    BIGINT,
     disk_total_bytes   BIGINT,
     temp_c             REAL,
-    load1              REAL,
+    load1              DOUBLE PRECISION,  -- sysinfo load avg is f64
     sidecar_embed_up   BOOLEAN,
     sidecar_rerank_up  BOOLEAN
 );

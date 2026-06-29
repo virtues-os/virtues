@@ -264,7 +264,7 @@ async fn embeddings(
             .and_then(|t| t.as_u64())
             .unwrap_or(0);
         let cost_usd = (total_tokens as f64 / 1000.0) * 0.0001;
-        let cost_micros = usd_to_micros(cost_usd);
+        let cost_micros = entitlement::usd_to_micros(cost_usd);
         if cost_micros > 0 {
             if let Err(e) = entitlement::settle(pool, &ent.account_id, cost_micros).await {
                 tracing::warn!("ai embeddings settle failed: {e}");
@@ -350,7 +350,7 @@ fn extract_cost_micros(body: &Value, model: &str) -> i64 {
         .and_then(|u| u.get("cost"))
         .and_then(|c| c.as_f64())
     {
-        return usd_to_micros(cost);
+        return entitlement::usd_to_micros(cost);
     }
 
     // Fallback: registry pricing × token usage.
@@ -366,13 +366,9 @@ fn extract_cost_micros(body: &Value, model: &str) -> i64 {
         })
         .unwrap_or((0, 0));
     let cost_usd = calculate_cost(model, prompt, completion);
-    usd_to_micros(cost_usd)
+    // Shared formula — no local duplicate (see entitlement::usd_to_micros).
+    entitlement::usd_to_micros(cost_usd)
 }
-
-fn usd_to_micros(usd: f64) -> i64 {
-    (usd * 1_000_000.0).round() as i64
-}
-
 
 fn err(status: StatusCode, code: &str, message: &str) -> Response {
     (

@@ -836,7 +836,7 @@ pub struct SystemSample {
     pub disk_used_bytes: Option<i64>,
     pub disk_total_bytes: Option<i64>,
     pub temp_c: Option<f32>,
-    pub load1: Option<f32>,
+    pub load1: Option<f64>,
     pub sidecar_embed_up: Option<bool>,
     pub sidecar_rerank_up: Option<bool>,
 }

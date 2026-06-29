@@ -168,7 +168,8 @@ async fn craft_scene_prompt(
 
     // System purpose — day illustration is automated, debits OS reserve.
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System);
+        .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("day_illustration");
     let response = client
         .post_json(
             "/v1/ai/chat/completions",
@@ -211,6 +212,7 @@ async fn craft_scene_prompt(
 pub async fn generate_image_via_gateway(pool: &PgPool, prompt: &str) -> Result<Vec<u8>> {
     let response = crate::virtues_api::client::BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("day_illustration")
         .post_json(
             "/v1/ai/chat/completions",
             &serde_json::json!({

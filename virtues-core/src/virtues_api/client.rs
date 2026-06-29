@@ -104,15 +104,47 @@ async fn auto_topup_allowed(pool: &sqlx::PgPool) -> bool {
     }
 }
 
-/// Reset the failure counter to zero. Called after a successful top-up so
-/// transient blips don't accumulate into a breaker trip across days.
+/// Record a successful top-up: reset the failure counter, and enforce the
+/// RATE guard. Counts auto-top-ups within a rolling 24h window; if the count
+/// exceeds `AUTO_TOPUP_MAX_PER_WINDOW`, trip the breaker
+/// (`auto_topup_enabled = FALSE`) so a runaway loop can't keep charging the
+/// card unboundedly (the failure breaker only catches *failed* charges). The
+/// monthly cap bounds total spend; this bounds the velocity.
 async fn record_topup_success(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now();
+    let row: Option<(i32, Option<chrono::DateTime<chrono::Utc>>)> = sqlx::query_as(
+        "SELECT auto_topup_count_window, auto_topup_window_start \
+         FROM app_user_profile \
+         WHERE id = '00000000-0000-0000-0000-000000000001'",
+    )
+    .fetch_optional(pool)
+    .await?;
+    // Roll the window if it's stale (or unset); otherwise increment within it.
+    let (count, window_start) = match row {
+        Some((c, Some(start))) if now.signed_duration_since(start).num_seconds() < AUTO_TOPUP_WINDOW_SECS => {
+            (c + 1, start)
+        }
+        _ => (1, now),
+    };
+    let tripped = count > AUTO_TOPUP_MAX_PER_WINDOW;
+    if tripped {
+        tracing::warn!(
+            count,
+            "auto-top-up rate guard tripped — disabling auto-top-up (too many refills in 24h)"
+        );
+    }
     sqlx::query(
         "UPDATE app_user_profile \
          SET auto_topup_failures_24h = 0, \
-             auto_topup_disabled_at = NULL \
+             auto_topup_count_window = $1, \
+             auto_topup_window_start = $2, \
+             auto_topup_enabled = CASE WHEN $3 THEN FALSE ELSE auto_topup_enabled END, \
+             auto_topup_disabled_at = CASE WHEN $3 THEN now() ELSE NULL END \
          WHERE id = '00000000-0000-0000-0000-000000000001'",
     )
+    .bind(count)
+    .bind(window_start)
+    .bind(tripped)
     .execute(pool)
     .await
     .map(|_| ())
@@ -146,6 +178,13 @@ async fn record_topup_failure(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
 /// breaker trips and auto-top-up is disabled. The counter is reset by a
 /// successful top-up OR by the sweeper rolling the daily window.
 const AUTO_TOPUP_FAILURE_THRESHOLD: i32 = 3;
+
+/// Rolling window for the success-rate guard, and the max auto-top-ups allowed
+/// within it before the breaker trips. At the $20 default that's ~$100/24h of
+/// auto-refills before the box stops charging the card and asks the user to
+/// intervene — a velocity bound on runaway loops, complementing the monthly cap.
+const AUTO_TOPUP_WINDOW_SECS: i64 = 24 * 60 * 60;
+const AUTO_TOPUP_MAX_PER_WINDOW: i32 = 5;
 
 /// A fully-read virtues-api response: status + parsed JSON body.
 pub struct ApiResponse {
@@ -195,6 +234,12 @@ pub struct BearerClient {
     api_url: String,
     atlas_url: String,
     purpose: Purpose,
+    /// Feature bucket for box-local cost capture (`app_ai_calls`). Set by
+    /// background callers (e.g. "transcription", "day_summary"); falls back to
+    /// the purpose tag. The streaming chat path records its own row (cost only
+    /// arrives in the SSE trailer), so this drives the non-streaming `post_json`
+    /// capture.
+    feature: Option<String>,
 }
 
 impl BearerClient {
@@ -209,6 +254,7 @@ impl BearerClient {
             atlas_url,
             // No-op now (single wallet); just the default telemetry tag.
             purpose: Purpose::User,
+            feature: None,
         }
     }
 
@@ -219,15 +265,70 @@ impl BearerClient {
         self
     }
 
+    /// Tag the cost bucket recorded into `app_ai_calls` for this client's
+    /// `post_json` calls to `/v1/ai/*` (e.g. "transcription", "day_summary").
+    pub fn with_feature(mut self, feature: impl Into<String>) -> Self {
+        self.feature = Some(feature.into());
+        self
+    }
+
     /// POST JSON to a virtues-api route, attaching the api_key. On a
     /// `wallet_empty`/`insufficient_budget` 402 it triggers one auto-top-up via
     /// atlas (`/credits/auto-topup`) and retries once; typed errors
     /// (`card_declined`, `monthly_cap_reached`, …) and other 402s surface to the
     /// caller. A 401 (`unknown_key`) means the box must re-link.
+    ///
+    /// For `/v1/ai/*` calls, the authoritative `usage.cost` in the response is
+    /// captured into `app_ai_calls` here — the single chokepoint, so every
+    /// non-streaming AI feature (compaction, day summaries, transcription, …)
+    /// is accounted for without per-caller bookkeeping.
     pub async fn post_json(&self, path: &str, body: &Value) -> Result<ApiResponse> {
         let bearer = self.ensure_bearer().await?;
         let resp = self.send(path, body, &bearer).await?;
-        self.handle_402_and_retry_post(path, body, resp).await
+        let resp = self.handle_402_and_retry_post(path, body, resp).await?;
+        self.record_ai_usage(path, body, &resp).await;
+        Ok(resp)
+    }
+
+    /// Best-effort: record one `app_ai_calls` row for a successful `/v1/ai/*`
+    /// response that carries a `usage` block. Never fails the request.
+    async fn record_ai_usage(&self, path: &str, req_body: &Value, resp: &ApiResponse) {
+        if !path.starts_with("/v1/ai/") || !resp.is_success() {
+            return;
+        }
+        let Some(usage) = resp.body.get("usage") else { return };
+        let as_i64 = |k: &str| usage.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+        let cost_micros = usage
+            .get("cost")
+            .and_then(|c| c.as_f64())
+            .map(|c| (c * 1_000_000.0).round() as i64)
+            .unwrap_or(0);
+        let reasoning = usage
+            .get("completion_tokens_details")
+            .and_then(|d| d.get("reasoning_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let feature = self
+            .feature
+            .clone()
+            .unwrap_or_else(|| self.purpose.as_str().to_string());
+        let call = crate::api::ai_calls::AiCall {
+            feature,
+            model: req_body
+                .get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            prompt_tokens: as_i64("prompt_tokens"),
+            completion_tokens: as_i64("completion_tokens"),
+            reasoning_tokens: reasoning,
+            cost_micros,
+            chat_id: None,
+            action_run_id: None,
+        };
+        if let Err(e) = crate::api::ai_calls::record_ai_call(&self.pool, &call).await {
+            tracing::warn!(error = %e, "failed to record ai_call (post_json)");
+        }
     }
 
     /// GET a virtues-api route (api_key attached). Same recovery as `post_json`.

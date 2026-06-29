@@ -1308,6 +1308,7 @@ fn create_agent_stream(
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
+        let mut total_reasoning_tokens: u32 = 0;
         // Authoritative spend for this turn (sum of gateway-reported usage.cost
         // across every step), captured into app_ai_calls for the Usage tab.
         let mut total_cost_micros: i64 = 0;
@@ -1442,9 +1443,12 @@ fn create_agent_stream(
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
 
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, cost_micros } => {
+                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, reasoning_tokens, cost_micros } => {
                     total_input_tokens += prompt_tokens;
                     total_output_tokens += completion_tokens;
+                    if let Some(r) = reasoning_tokens {
+                        total_reasoning_tokens += r;
+                    }
                     if let Some(c) = cost_micros {
                         total_cost_micros += c;
                     }
@@ -1544,11 +1548,13 @@ fn create_agent_stream(
             if let Err(e) = crate::api::ai_calls::record_ai_call(
                 &pool,
                 &crate::api::ai_calls::AiCall {
-                    feature: "chat",
+                    // Real feature bucket: chat | council | deep_research (these
+                    // modes share this handler), so spend attributes correctly.
+                    feature: request.agent_mode.clone(),
                     model: model.clone(),
                     prompt_tokens: total_input_tokens as i64,
                     completion_tokens: total_output_tokens as i64,
-                    reasoning_tokens: 0,
+                    reasoning_tokens: total_reasoning_tokens as i64,
                     cost_micros: total_cost_micros,
                     chat_id: Some(chat_id.clone()),
                     action_run_id: None,

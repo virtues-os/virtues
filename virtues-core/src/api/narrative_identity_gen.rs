@@ -253,7 +253,8 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
     let chat_model = crate::api::assistant_profile::get_chat_model(pool).await?;
 
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System);
+        .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("narrative_identity");
     let response = client
         .post_json(
             "/v1/ai/chat/completions",
