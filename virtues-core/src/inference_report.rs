@@ -37,12 +37,16 @@ pub struct ResolutionReport {
     pub models: Vec<ModelEntry>,
 }
 
-/// The GGUFs the installer provisions. Embed stays F16 to match the
-/// precision the v0.1.0 Ollama daemon served (existing `search_vectors`
-/// rows were embedded with F16 weights); the reranker has no stored state,
-/// so it takes the 2× smaller/faster Q8_0.
-pub const EMBED_GGUF: &str = "bge-m3-FP16.gguf";
-pub const RERANK_GGUF: &str = "bge-reranker-v2-m3-Q8_0.gguf";
+/// The GGUFs the installer provisions.
+/// - Embed: EmbeddingGemma-300M, QAT Q8_0 (quantization-aware-trained →
+///   robust quant; on-device-designed, mean pooling, 768-dim native that we
+///   Matryoshka-truncate to 256). NOTE: its activations require bf16/fp32,
+///   not fp16 — run it on CPU (the Orin CUDA path forces fp32 and is slower
+///   than CPU); see embedder.rs.
+/// - Rerank: gte-reranker-modernbert-base, Q8_0 (Q4 doesn't help — the
+///   workload is overhead/layer-bound at this size, not bandwidth-bound).
+pub const EMBED_GGUF: &str = "embeddinggemma-300m-qat-Q8_0.gguf";
+pub const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 
 fn models_dir() -> PathBuf {
     std::env::var("VIRTUES_MODELS_DIR")
@@ -73,13 +77,13 @@ pub fn resolution_report() -> ResolutionReport {
     let models = vec![
         ModelEntry {
             name: "embed",
-            repo: "bge-m3 @ :18181",
+            repo: "embeddinggemma-300m @ :18181",
             gguf_file: EMBED_GGUF,
             source: source_for(EMBED_GGUF),
         },
         ModelEntry {
             name: "rerank",
-            repo: "bge-reranker-v2-m3 @ :18182",
+            repo: "gte-reranker-modernbert-base @ :18182",
             gguf_file: RERANK_GGUF,
             source: source_for(RERANK_GGUF),
         },

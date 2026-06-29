@@ -543,13 +543,13 @@ async fn login_verify(
     let api_key = super::claim::random_token();
     let api_key_hash = sha256(api_key.as_bytes());
 
-    let lookup: Result<(String, i64), _> = sqlx::query_as(
-        "SELECT account_id, daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
+    let lookup: Result<(String,), _> = sqlx::query_as(
+        "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
     )
     .bind(&customer_id)
     .fetch_one(&state.pool)
     .await;
-    let (account_id, daily_cap_micros) = match lookup {
+    let (account_id,) = match lookup {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("customers lookup failed: {e:#}");
@@ -565,7 +565,6 @@ async fn login_verify(
         .register_device(&crate::virtues_api_client::RegisterDevice {
             api_key_hash: hex::encode(&api_key_hash),
             account_id,
-            daily_cap_micros,
         })
         .await
     {

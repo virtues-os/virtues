@@ -20,7 +20,8 @@ import WikiDetailView from '$lib/components/tabs/views/WikiDetailView.svelte';
 import WikiListView from '$lib/components/tabs/views/WikiListView.svelte';
 import ConnectionsPanel from '$lib/components/actions/ConnectionsPanel.svelte';
 import CredentialDetailView from '$lib/components/tabs/views/CredentialDetailView.svelte';
-import UsageView from '$lib/components/tabs/views/UsageView.svelte';
+import UsageTab from '$lib/components/tabs/views/UsageTab.svelte';
+import TelemetryTab from '$lib/components/tabs/views/TelemetryTab.svelte';
 import ActionsView from '$lib/components/tabs/views/ActionsView.svelte';
 import ActionDetailView from '$lib/components/tabs/views/ActionDetailView.svelte';
 import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
@@ -701,6 +702,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				'byo-key': { label: 'AI Provider Key', icon: 'ri:key-line' },
 				changelog: { label: "What's New", icon: 'ri:megaphone-line' },
 				usage: { label: 'Usage', icon: 'ri:bar-chart-line' },
+					telemetry: { label: 'Telemetry', icon: 'ri:pulse-line' },
 				lake: { label: 'Lake', icon: 'ri:database-2-line' },
 				sql: { label: 'SQL', icon: 'ri:database-2-line' },
 				terminal: { label: 'Terminal', icon: 'ri:terminal-box-line' },
@@ -785,7 +787,8 @@ export function getVirtuesComponent(page: string): Component<any> {
 		'byo-key': ByoKeyView,
 		billing: BillingView,
 		changelog: ChangelogView,
-		usage: UsageView,
+		usage: UsageTab,
+		telemetry: TelemetryTab,
 		lake: DeveloperLakeView,
 		sql: DeveloperSqlView,
 		terminal: DeveloperTerminalView,

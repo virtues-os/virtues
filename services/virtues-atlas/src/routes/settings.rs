@@ -6,17 +6,16 @@
 //! Both authed via the box's `api_key`. iOS Settings is the. iOS Settings is the
 //! primary consumer — pulls current state on open, writes back on change.
 //!
-//! Spend caps are atlas-side because:
+//! The monthly cap is atlas-side because:
 //!   1. atlas owns the customer record + Stripe relationship
-//!   2. monthly cap enforcement requires the customer ledger which lives
-//!      here
-//!   3. daily cap mirror lets virtues-api enforce locally without an
-//!      atlas round-trip on every call (future: virtues-api caches it)
+//!   2. monthly cap enforcement requires the customer ledger which lives here
+//!      (it bounds top-ups, the Cursor-style spend ceiling — there is no
+//!      per-day wall)
 //!
 //! ## Bounds
 //!
-//! - `monthly_cap_micros`: $100 (10_000_000_0) ≤ x ≤ $1000 (1_000_000_000)
-//! - `daily_cap_micros`:  $5  (5_000_000)     ≤ x ≤ $200 (200_000_000)
+//! - `monthly_cap_micros`: $100 (100_000_000) ≤ x ≤ $1000 (1_000_000_000),
+//!   default $200
 //! - `auto_topup_enabled`: bool
 
 use axum::{
@@ -34,8 +33,6 @@ use crate::routes::AppState;
 
 const MONTHLY_CAP_MIN: i64 = 100_000_000; // $100
 const MONTHLY_CAP_MAX: i64 = 1_000_000_000; // $1000
-const DAILY_CAP_MIN: i64 = 5_000_000; // $5
-const DAILY_CAP_MAX: i64 = 200_000_000; // $200
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -52,7 +49,6 @@ struct AuthBody {
 struct SettingsUpdate {
     api_key: String,
     monthly_cap_micros: Option<i64>,
-    daily_cap_micros: Option<i64>,
     auto_topup_enabled: Option<bool>,
 }
 
@@ -62,9 +58,9 @@ async fn get_settings(
 ) -> axum::response::Response {
     let token_hash = sha256(body.api_key.as_bytes());
 
-    let row: Option<(i64, i64, bool, i64, i64)> = sqlx::query_as(
+    let row: Option<(i64, bool, i64, i64)> = sqlx::query_as(
         r#"
-        SELECT monthly_cap_micros, daily_cap_micros, auto_topup_enabled,
+        SELECT monthly_cap_micros, auto_topup_enabled,
                monthly_charges_micros, COALESCE(EXTRACT(EPOCH FROM month_reset_at)::bigint, 0)
         FROM customers
         WHERE api_key_hash = $1
@@ -76,7 +72,7 @@ async fn get_settings(
     .ok()
     .flatten();
 
-    let Some((monthly_cap, daily_cap, auto_topup, charges, reset_epoch)) = row else {
+    let Some((monthly_cap, auto_topup, charges, reset_epoch)) = row else {
         return err(
             StatusCode::UNAUTHORIZED,
             "invalid_api_key",
@@ -88,7 +84,6 @@ async fn get_settings(
         StatusCode::OK,
         Json(json!({
             "monthly_cap_micros": monthly_cap,
-            "daily_cap_micros": daily_cap,
             "auto_topup_enabled": auto_topup,
             "monthly_charges_micros": charges,
             "month_reset_epoch": reset_epoch,
@@ -111,16 +106,6 @@ async fn put_settings(
             );
         }
     }
-    if let Some(dc) = body.daily_cap_micros {
-        if !(DAILY_CAP_MIN..=DAILY_CAP_MAX).contains(&dc) {
-            return err(
-                StatusCode::BAD_REQUEST,
-                "daily_cap_out_of_range",
-                &format!("daily_cap_micros must be {DAILY_CAP_MIN}..={DAILY_CAP_MAX}"),
-            );
-        }
-    }
-
     let token_hash = sha256(body.api_key.as_bytes());
 
     // Partial update: only touch fields the client sent.
@@ -128,14 +113,12 @@ async fn put_settings(
         r#"
         UPDATE customers
         SET monthly_cap_micros   = COALESCE($2, monthly_cap_micros),
-            daily_cap_micros     = COALESCE($3, daily_cap_micros),
-            auto_topup_enabled   = COALESCE($4, auto_topup_enabled)
+            auto_topup_enabled   = COALESCE($3, auto_topup_enabled)
         WHERE api_key_hash = $1
         "#,
     )
     .bind(&token_hash[..])
     .bind(body.monthly_cap_micros)
-    .bind(body.daily_cap_micros)
     .bind(body.auto_topup_enabled)
     .execute(&state.pool)
     .await;

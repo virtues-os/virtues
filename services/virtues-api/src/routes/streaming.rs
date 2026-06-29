@@ -76,6 +76,9 @@ pub struct StreamingRequest {
     /// Tool choice: "auto", "none", "required", or specific tool
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    /// Optional reasoning budget hint forwarded to the gateway.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
 }
 
 /// Create SSE streaming response with caller-supplied charge callback.
@@ -105,6 +108,10 @@ where
         "stream": true,
         "stream_options": { "include_usage": true }
     });
+
+    if let Some(ref effort) = request.reasoning_effort {
+        body["reasoning_effort"] = serde_json::json!(effort);
+    }
 
     // Only include tools if present and non-empty (providers reject null/empty arrays)
     if let Some(ref tools) = request.tools {

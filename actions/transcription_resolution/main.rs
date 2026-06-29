@@ -18,7 +18,7 @@
 mod transform;
 
 use anyhow::Result;
-use virtues_helpers::{connect_from_env, output, read_input};
+use virtues_helpers::{connect_from_env, output_with_records, read_input};
 
 /// Maximum recordings to process per cron tick. Drained sequentially, so the
 /// run time is ~BATCH_SIZE × per-call latency; the action runner's 300s
@@ -43,6 +43,8 @@ async fn main() -> Result<()> {
         transcribed, skipped, failed
     );
 
-    output(&summary, &input.config)?;
+    // records_processed = recordings resolved this run (transcribed + silent).
+    let records = (transcribed + skipped) as i64;
+    output_with_records(&summary, &input.config, records)?;
     Ok(())
 }

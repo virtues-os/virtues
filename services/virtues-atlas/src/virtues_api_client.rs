@@ -24,8 +24,6 @@ pub struct RegisterDevice {
     pub api_key_hash: String,
     /// Opaque per-customer account id.
     pub account_id: String,
-    /// The customer's user-tunable daily spend ceiling.
-    pub daily_cap_micros: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -34,7 +32,6 @@ pub struct Credit {
     pub amount_micros: i64,
     /// "set" = subscription renewal (overwrite). "add" = top-up (increment).
     pub mode: &'static str,
-    pub daily_cap_micros: i64,
     /// Optional ledger reference (e.g. a Stripe invoice/PI id).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,

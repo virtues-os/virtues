@@ -15,7 +15,7 @@ use anyhow::Result;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
-use crate::entitlement::{self, CreditMode, DEFAULT_DAILY_CEILING_MICROS};
+use crate::entitlement::{self, CreditMode};
 
 /// Default api_key when `VIRTUES_API_KEY` is unset. Kept in sync with the
 /// virtues-core client override and the Makefile's `dev-api`/`dev-core` env.
@@ -24,8 +24,8 @@ const DEFAULT_DEV_KEY: &str = "dev-local-key";
 /// Opaque account id for the dev account.
 const DEV_ACCOUNT_ID: &str = "dev-local-account";
 
-/// Balance to fund the dev account with ($1000 in micros). The per-day and
-/// per-call caps still bound actual spend.
+/// Balance to fund the dev account with ($1000 in micros). The per-call cap
+/// still bounds actual spend.
 const DEV_BALANCE_MICROS: i64 = 1_000_000_000;
 
 /// Seed a funded account + device key for the dev api_key. Idempotent enough:
@@ -44,12 +44,10 @@ pub async fn seed_dev_account(pool: &PgPool) -> Result<()> {
         DEV_ACCOUNT_ID,
         DEV_BALANCE_MICROS,
         CreditMode::Set,
-        DEFAULT_DAILY_CEILING_MICROS,
         Some("dev-seed"),
     )
     .await?;
-    entitlement::register_device(pool, &key_hash, DEV_ACCOUNT_ID, DEFAULT_DAILY_CEILING_MICROS)
-        .await?;
+    entitlement::register_device(pool, &key_hash, DEV_ACCOUNT_ID).await?;
 
     tracing::warn!(
         "DEV SEED: funded account '{}' with ${} for api_key '{}' \

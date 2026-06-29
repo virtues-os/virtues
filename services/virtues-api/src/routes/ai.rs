@@ -42,18 +42,12 @@ use crate::AppState;
 /// charge post-success — but we must still refuse to *start* a call when the
 /// wallet can't plausibly cover it, otherwise a $0 account chats for free
 /// (charges just get logged-and-dropped). BearerAuth already enforced expiry;
-/// here we gate empty balance + daily cap so the box surfaces wallet_empty
-/// ("Add credits") / daily_cap_reached before burning upstream spend.
+/// here we gate empty balance so the box surfaces wallet_empty ("Add credits")
+/// before burning upstream spend. There is no per-day wall — the only ceiling
+/// is the monthly top-up cap enforced atlas-side.
 fn budget_gate(acct: &Account) -> Option<Response> {
     if acct.balance_micros <= 0 {
         return Some(err(StatusCode::PAYMENT_REQUIRED, "wallet_empty", "wallet empty — add credits"));
-    }
-    if acct.today_spent_micros >= acct.daily_cap_micros {
-        return Some(err(
-            StatusCode::PAYMENT_REQUIRED,
-            "daily_cap_reached",
-            "daily spend ceiling reached",
-        ));
     }
     None
 }
@@ -80,6 +74,10 @@ struct ChatRequest {
     tools: Option<Vec<Value>>,
     #[serde(default)]
     tool_choice: Option<Value>,
+    /// Optional reasoning budget hint ("low" | "medium" | "high") forwarded to
+    /// the gateway. Lets callers (e.g. transcription) trim thinking-token cost.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
 }
 
 async fn chat_completions(
@@ -109,6 +107,7 @@ async fn chat_completions(
             temperature: request.temperature,
             tools: request.tools.clone(),
             tool_choice: request.tool_choice.clone(),
+            reasoning_effort: request.reasoning_effort.clone(),
         };
         let pool_clone = pool.clone();
         let account_id = ent.account_id.clone();
@@ -141,6 +140,9 @@ async fn chat_completions(
         "max_tokens": request.max_tokens.unwrap_or(4096),
         "temperature": request.temperature.unwrap_or(0.7),
     });
+    if let Some(ref effort) = request.reasoning_effort {
+        body["reasoning_effort"] = json!(effort);
+    }
     if let Some(ref tools) = request.tools {
         if !tools.is_empty() {
             body["tools"] = json!(tools);

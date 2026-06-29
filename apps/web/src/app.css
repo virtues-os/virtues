@@ -34,29 +34,13 @@
 	background-attachment: fixed;
 }
 
-/* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
-   where Avenir is a system font. Avenir has no native 600/700; the browser
-   nearest-weight matches 600→500 and 700→800, mirroring macOS Core Text. */
+/* Google Sans Flex (sans) — self-hosted so it renders off-Apple (Jetson/Linux),
+   not just where it's a system font. One variable file covers the full 1–1000
+   weight range, so any weight resolves natively without nearest-weight matching. */
 @font-face {
-	font-family: 'Avenir';
-	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
-	font-weight: 400;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: 'Avenir';
-	src: url('/fonts/Avenir-Medium.woff2') format('woff2');
-	font-weight: 500;
-	font-style: normal;
-	font-display: swap;
-}
-
-@font-face {
-	font-family: 'Avenir';
-	src: url('/fonts/Avenir-Bold.woff2') format('woff2');
-	font-weight: 800;
+	font-family: 'Google Sans Flex';
+	src: url('/fonts/GoogleSansFlex-VariableFont.woff2') format('woff2');
+	font-weight: 1 1000;
 	font-style: normal;
 	font-display: swap;
 }

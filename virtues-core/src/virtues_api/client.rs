@@ -4,8 +4,7 @@
 //! No renewal — the key is stable; the wallet behind it is credited
 //! server-side. On a `wallet_empty` 402 it triggers one auto-top-up via atlas
 //! (which charges the card + credits the wallet) and retries; other 402s
-//! (wallet_expired, daily_cap_reached) and 401 (unknown_key → re-link) surface
-//! to the caller.
+//! (wallet_expired) and 401 (unknown_key → re-link) surface to the caller.
 //!
 //! Use this for the proxy routes (`/v1/ai/*`, `/v1/places/*`, `/v1/exa/*`,
 //! `/v1/unsplash/*`).
@@ -252,7 +251,7 @@ impl BearerClient {
             "insufficient_budget" | "wallet_empty" => {
                 self.auto_topup_and_retry_post(path, body).await
             }
-            // wallet_expired (sub lapsed), daily_cap_reached, call_too_expensive,
+            // wallet_expired (sub lapsed), call_too_expensive,
             // unknown_key (re-link) — not recoverable from the box; surface.
             _ => Ok(resp),
         }
@@ -329,9 +328,8 @@ impl BearerClient {
     /// happen *before* the body starts flowing (mid-stream recovery is
     /// impossible), so on a `wallet_empty` 402 at connect time we top up and
     /// retry once. On success the response body is returned untouched for the
-    /// caller to stream; non-recoverable 402s (daily_cap_reached, card_declined,
-    /// wallet_expired, …) come back as `StreamOutcome::Error` with the drained
-    /// body.
+    /// caller to stream; non-recoverable 402s (card_declined, wallet_expired, …)
+    /// come back as `StreamOutcome::Error` with the drained body.
     pub async fn stream(&self, path: &str, body: &Value) -> Result<StreamOutcome> {
         // BYO key escape hatch. When the user has set their own provider
         // key, every chat call goes box → upstream directly. virtues-api

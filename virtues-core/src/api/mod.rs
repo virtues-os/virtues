@@ -2,6 +2,7 @@
 
 pub mod action_events;
 pub mod agents;
+pub mod ai_calls;
 pub mod ai_complete;
 pub mod assistant_profile;
 pub mod audit;
@@ -44,6 +45,7 @@ pub mod source_auth;
 pub mod spaces;
 pub mod storage;
 pub mod subscription;
+pub mod system_telemetry;
 pub mod system_update;
 pub mod terminal;
 pub mod token_estimation;

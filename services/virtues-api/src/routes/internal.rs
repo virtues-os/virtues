@@ -45,9 +45,6 @@ struct RegisterDeviceBody {
     api_key_hash: String,
     /// Opaque per-customer account id (assigned by atlas).
     account_id: String,
-    /// The customer's daily spend ceiling. Defaults to the $20 floor.
-    #[serde(default = "default_daily_cap")]
-    daily_cap_micros: i64,
 }
 
 async fn register_device(
@@ -62,9 +59,7 @@ async fn register_device(
             "api_key_hash must be lowercase hex",
         );
     };
-    match entitlement::register_device(&state.db, &hash, &body.account_id, body.daily_cap_micros)
-        .await
-    {
+    match entitlement::register_device(&state.db, &hash, &body.account_id).await {
         Ok(()) => (StatusCode::CREATED, Json(json!({ "ok": true }))).into_response(),
         Err(e) => {
             tracing::warn!("register device failed: {e:#}");
@@ -80,8 +75,6 @@ struct CreditBody {
     /// "set" = subscription renewal (overwrite balance to amount, fresh
     /// monthly cohort). "add" = top-up (increment).
     mode: String,
-    #[serde(default = "default_daily_cap")]
-    daily_cap_micros: i64,
     /// Optional reference for the ledger row (e.g. a Stripe invoice/PI id).
     #[serde(default)]
     reference: Option<String>,
@@ -111,7 +104,6 @@ async fn credit_account(
         &body.account_id,
         body.amount_micros,
         mode,
-        body.daily_cap_micros,
         body.reference.as_deref(),
     )
     .await
@@ -126,9 +118,6 @@ async fn credit_account(
     }
 }
 
-fn default_daily_cap() -> i64 {
-    crate::entitlement::DEFAULT_DAILY_CEILING_MICROS
-}
 
 /// Introspection: current blocks + the rate "watchlist". Internal-secret gated.
 async fn blocklist_state(

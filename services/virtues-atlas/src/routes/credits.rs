@@ -150,18 +150,6 @@ async fn do_topup(
         }
     };
 
-    // Carry the customer's daily ceiling so virtues-api keeps enforcing it.
-    // Falls back to the $20 default if the row read hiccups.
-    let daily_cap_micros: i64 = sqlx::query_scalar(
-        "SELECT daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
-    )
-    .bind(customer_id)
-    .fetch_optional(&state.pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(20_000_000);
-
     // Credit the account's wallet (ADD). On failure after a successful charge,
     // log + 500 for manual reconciliation (money is in Stripe, not yet credited).
     if let Err(e) = state
@@ -170,7 +158,6 @@ async fn do_topup(
             account_id: account_id.to_string(),
             amount_micros,
             mode: "add",
-            daily_cap_micros,
             reference: Some(format!("topup:{pi_id}")),
         })
         .await

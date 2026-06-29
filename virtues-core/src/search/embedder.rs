@@ -18,20 +18,45 @@
 //!
 //! ## Model
 //!
-//! Default: `bge-m3` (1024-dim, multilingual, 8K-token context, dense+sparse
-//! hybrid — top of MTEB for personal-data heterogeneous corpora), served as
-//! an F16 GGUF to stay numerically close to the F16 weights Ollama served in
-//! v0.1.0 (existing `search_vectors` rows were embedded with those). Whatever
-//! model the sidecar loads must produce 1024-dim vectors — the
-//! `search_vectors.embedding` column is `vector(1024)`.
+//! `EmbeddingGemma-300M` (QAT Q8_0): a Gemma-3-lineage bidirectional encoder,
+//! mean-pooled, **768-dim native** which we Matryoshka-truncate to `EMBED_DIM`
+//! (256) and re-normalize — a 4× lighter HNSW index (`search_vectors.embedding`
+//! is `vector(256)`). Asymmetric: queries and documents get different prompt
+//! prefixes (see `QUERY_PROMPT`/`DOC_PROMPT`). The sidecar must emit 768-dim
+//! vectors (`validate_native_dim`); run it on CPU — its activations require
+//! bf16/fp32, so the Orin CUDA path forces fp32 and is slower than CPU.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-const EMBED_DIM: usize = 1024;
+/// EmbeddingGemma's native output is 768-dim; we keep only the first
+/// `EMBED_DIM` (Matryoshka truncation) and re-normalize — a 3× storage/RAM
+/// cut on the index for ~minimal quality loss. `search_vectors.embedding`
+/// is `vector(256)` (migration 0017).
+const NATIVE_DIM: usize = 768;
+const EMBED_DIM: usize = 256;
 const DEFAULT_URL: &str = "http://127.0.0.1:18181";
+
+/// EmbeddingGemma is asymmetric — queries and documents get different prompt
+/// prefixes (official Gemma formats). On personal data, where queries
+/// ("why have I felt off?") look nothing like passages (event records), this
+/// is free recall.
+const QUERY_PROMPT: &str = "task: search result | query: ";
+const DOC_PROMPT: &str = "title: none | text: ";
+
+/// Truncate a native (768-dim) embedding to `EMBED_DIM` and L2-renormalize
+/// (Matryoshka). Renormalization is required for cosine after truncation.
+fn matryoshka_truncate(v: &mut Vec<f32>) {
+    v.truncate(EMBED_DIM);
+    let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for x in v.iter_mut() {
+            *x /= norm;
+        }
+    }
+}
 
 pub trait Embedder: Send + Sync {
     fn dimension(&self) -> usize;
@@ -89,17 +114,27 @@ impl LocalEmbedder {
         Ok(Self { client, base_url })
     }
 
-    pub async fn embed_async(self: &Arc<Self>, text: &str) -> Result<Vec<f32>> {
-        let mut vecs = self.request(vec![text.to_string()]).await?;
-        let vec = vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))?;
-        Ok(vec)
+    /// Embed a **query** (asymmetric — uses the query prompt). Use this for
+    /// the search-time side; everything that embeds stored content uses the
+    /// document-prompt variants below.
+    pub async fn embed_query_async(self: &Arc<Self>, text: &str) -> Result<Vec<f32>> {
+        let mut vecs = self.request(vec![format!("{QUERY_PROMPT}{text}")]).await?;
+        vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))
     }
 
+    /// Embed a single **document/content** string (document prompt).
+    pub async fn embed_async(self: &Arc<Self>, text: &str) -> Result<Vec<f32>> {
+        let mut vecs = self.request(vec![format!("{DOC_PROMPT}{text}")]).await?;
+        vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))
+    }
+
+    /// Embed a batch of **documents/content** (document prompt).
     pub async fn embed_batch_async(self: &Arc<Self>, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        self.request(texts).await
+        let prompted: Vec<String> = texts.into_iter().map(|t| format!("{DOC_PROMPT}{t}")).collect();
+        self.request(prompted).await
     }
 
     async fn request(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>> {
@@ -127,10 +162,13 @@ impl LocalEmbedder {
         // than trusting array order.
         let mut rows = body.data;
         rows.sort_by_key(|r| r.index);
-        for r in &rows {
-            validate_dim(&r.embedding)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for mut r in rows {
+            validate_native_dim(&r.embedding)?;
+            matryoshka_truncate(&mut r.embedding); // 768 -> EMBED_DIM, re-normalized
+            out.push(r.embedding);
         }
-        Ok(rows.into_iter().map(|r| r.embedding).collect())
+        Ok(out)
     }
 }
 
@@ -140,10 +178,10 @@ impl Embedder for LocalEmbedder {
     }
 }
 
-fn validate_dim(v: &[f32]) -> Result<()> {
-    if v.len() != EMBED_DIM {
+fn validate_native_dim(v: &[f32]) -> Result<()> {
+    if v.len() != NATIVE_DIM {
         return Err(anyhow!(
-            "embedding dim {} != expected {EMBED_DIM} — check the sidecar's GGUF is a 1024-dim model",
+            "embedding dim {} != expected native {NATIVE_DIM} — check the sidecar's GGUF is EmbeddingGemma-300M",
             v.len()
         ));
     }

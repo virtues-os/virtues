@@ -296,14 +296,17 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 /// Shared shape: loopback-only, runs as `virtues`, read-only filesystem
 /// (the GGUF is mmap'd read-only; PrivateTmp covers scratch).
 ///
-/// Flags (verified on an Orin 2026-06-26):
-/// - `-ngl 99` offloads all layers to the GPU. No-op on the CPU-only build
-///   (no CUDA backend compiled) → safe to ship universally; the Jetson CUDA
-///   build actually offloads (GR3D 77–99% under load). Requires the GPU
-///   `SupplementaryGroups=` below or CUDA init fails → silent CPU fallback.
-/// - `-c/-b/-ub 2048` right-sizes context. bge-m3 *can* do 8K, but our chunks
-///   are ≤512 tokens, so 8192 just bloats the KV + compute buffers (~0.5 GB)
-///   for capacity we never feed. 2048 ≈ 3 pages — ample headroom.
+/// Flags (verified on an Orin 2026-06):
+/// - **embed → `-ngl 0` (CPU), rerank → `-ngl 99` (GPU).** The two workloads
+///   want opposite hardware: EmbeddingGemma's activations can't run fp16, so
+///   the Orin CUDA path forces fp32 and is *slower than CPU* (and CPU is fine
+///   for background embedding). gte-modernbert reranking is ~5× faster on the
+///   GPU. `-ngl 99` is a no-op on the CPU-only build and needs the GPU
+///   `SupplementaryGroups=` below or CUDA init silently falls back to CPU.
+///   `--pooling mean` (EmbeddingGemma) / `--pooling rank` (cross-encoder).
+/// - `-c/-b/-ub 2048` right-sizes context. Both models do longer, but our
+///   chunks are ≤512 tok and rerank docs are capped at ~256, so 2048 is ample
+///   and 8K would just bloat KV + compute buffers (~0.5 GB) for unused reach.
 /// - `-np 1`: single-tenant box; 1 slot vs the auto-4 saves ~0.9 GB of
 ///   per-slot buffers (the bigger memory win). Concurrent requests queue,
 ///   which is fine here.
@@ -324,7 +327,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling cls -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
+__SUPP_GROUPS__ExecStart=__BIN__ --embedding --pooling mean -m __MODEL__ --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
 Restart=on-failure
 RestartSec=5
 
@@ -352,7 +355,7 @@ After=network.target
 Type=simple
 User=virtues
 Group=virtues
-__SUPP_GROUPS__ExecStart=__BIN__ --rerank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
+__SUPP_GROUPS__ExecStart=__BIN__ --rerank --pooling rank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
 Restart=on-failure
 RestartSec=5
 

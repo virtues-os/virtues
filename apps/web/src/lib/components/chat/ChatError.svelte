@@ -28,7 +28,6 @@
 		if (has(/wallet_empty|insufficient_budget/i)) return "wallet_empty";
 		if (has(/card_declined/i)) return "card_declined";
 		if (has(/monthly_cap_reached/i)) return "monthly_cap";
-		if (has(/daily_cap_reached/i)) return "daily_cap";
 		if (has(/topup_disabled/i)) return "topup_disabled";
 		if (has(/wallet_expired|subscription_inactive/i)) return "subscription";
 		if (has(/unknown_key|missing_key|malformed_key/i) || status === 401) return "reconnect";
@@ -39,7 +38,7 @@
 	});
 
 	const isBilling = $derived(
-		["wallet_empty", "card_declined", "monthly_cap", "daily_cap", "topup_disabled", "subscription"].includes(kind)
+		["wallet_empty", "card_declined", "monthly_cap", "topup_disabled", "subscription"].includes(kind)
 	);
 	// "Warning" styling (amber) for soft, user-fixable states; hard error (red) otherwise.
 	const isSoft = $derived(isBilling || kind === "rate_limit" || kind === "reconnect");
@@ -71,10 +70,6 @@
 		monthly_cap: {
 			title: "Monthly cap reached",
 			message: "You've hit your monthly spend cap. Raise it in Settings → Billing, or wait until it resets.",
-		},
-		daily_cap: {
-			title: "Daily limit reached",
-			message: "You've hit today's spend ceiling (a safety limit). It resets at midnight UTC, or raise it in Settings.",
 		},
 		topup_disabled: {
 			title: "Auto top-up off",
