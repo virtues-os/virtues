@@ -303,6 +303,7 @@ where
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: Some(usage.prompt_tokens + usage.completion_tokens),
+            reasoning_tokens: usage.reasoning_tokens,
             cost_micros: usage.cost_micros,
         });
     }

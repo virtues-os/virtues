@@ -16,8 +16,10 @@ use sqlx::PgPool;
 /// One paid AI call to record. Cost is micros-USD from the gateway `usage.cost`.
 #[derive(Debug, Clone, Default)]
 pub struct AiCall {
-    /// Coarse bucket: chat | transcription | search | embedding | agent.
-    pub feature: &'static str,
+    /// Coarse bucket: chat | council | deep_research | transcription |
+    /// compaction | day_summary | … (the calling feature, or the client's
+    /// purpose tag for callers that don't set one).
+    pub feature: String,
     pub model: String,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
@@ -50,7 +52,7 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
         "#,
     )
     .bind(id)
-    .bind(call.feature)
+    .bind(&call.feature)
     .bind(&call.model)
     .bind(call.prompt_tokens)
     .bind(call.completion_tokens)

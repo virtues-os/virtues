@@ -178,6 +178,7 @@ async fn generate_summary(
     // System purpose — chat compaction is automated background work.
     let response = BearerClient::from_env(pool.clone())
         .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("compaction")
         .post_json("/v1/ai/chat/completions", &body)
         .await
         .map_err(|e| crate::Error::Other(format!("Summary generation failed: {}", e)))?;

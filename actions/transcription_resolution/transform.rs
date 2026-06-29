@@ -66,33 +66,6 @@ enum TranscribeError {
     Other(#[from] anyhow::Error),
 }
 
-/// Authoritative per-call cost + token counts pulled from the gateway response
-/// `usage` block, recorded into `app_ai_calls` for the Usage/Telemetry tabs.
-#[derive(Debug, Default, Clone)]
-struct CallCost {
-    cost_micros: i64,
-    prompt_tokens: i64,
-    completion_tokens: i64,
-}
-
-fn parse_call_cost(body: &Value) -> CallCost {
-    let usage = body.get("usage");
-    let cost_micros = usage
-        .and_then(|u| u.get("cost"))
-        .and_then(|c| c.as_f64())
-        .map(|c| (c * 1_000_000.0).round() as i64)
-        .unwrap_or(0);
-    let prompt_tokens = usage
-        .and_then(|u| u.get("prompt_tokens"))
-        .and_then(|t| t.as_i64())
-        .unwrap_or(0);
-    let completion_tokens = usage
-        .and_then(|u| u.get("completion_tokens"))
-        .and_then(|t| t.as_i64())
-        .unwrap_or(0);
-    CallCost { cost_micros, prompt_tokens, completion_tokens }
-}
-
 #[derive(Debug, Deserialize)]
 struct TranscriptionResponse {
     title: Option<String>,
@@ -222,7 +195,11 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
         // Lazy-init the api_key client. The device's own key funds this
         // background call, with one auto-top-up-and-retry on a 402 wallet_empty.
         if virtues_api.is_none() {
-            virtues_api = Some(BearerClient::from_env(db.clone()).with_purpose(Purpose::System));
+            virtues_api = Some(
+                BearerClient::from_env(db.clone())
+                    .with_purpose(Purpose::System)
+                    .with_feature("transcription"),
+            );
         }
         let client = virtues_api.as_ref().unwrap();
 
@@ -269,30 +246,10 @@ pub async fn drain(db: &PgPool, batch_size: i64) -> Result<(usize, usize, usize)
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &audio_bytes);
 
         match transcribe(client, &audio_b64, &rec.audio_format).await {
-            Ok((t, cost)) => match insert_transcription(db, rec, &t).await {
-                Ok(_) => {
-                    transcribed += 1;
-                    // Box-local per-call cost log (authoritative gateway cost).
-                    // Best-effort — a logging failure must not abort the drain.
-                    if let Err(e) = virtues::api::ai_calls::record_ai_call(
-                        db,
-                        &virtues::api::ai_calls::AiCall {
-                            feature: "transcription",
-                            model: MODEL.to_string(),
-                            prompt_tokens: cost.prompt_tokens,
-                            completion_tokens: cost.completion_tokens,
-                            reasoning_tokens: 0,
-                            cost_micros: cost.cost_micros,
-                            chat_id: None,
-                            action_run_id: None,
-                        },
-                    )
-                    .await
-                    {
-                        tracing::warn!(stream_id = %rec.source_stream_id, error = %e,
-                            "failed to record transcription ai_call");
-                    }
-                }
+            // Cost is captured at the BearerClient chokepoint (post_json records
+            // the gateway usage.cost into app_ai_calls, tagged "transcription").
+            Ok(t) => match insert_transcription(db, rec, &t).await {
+                Ok(_) => transcribed += 1,
                 Err(e) => {
                     tracing::warn!(
                         stream_id = %rec.source_stream_id,
@@ -465,7 +422,7 @@ async fn transcribe(
     client: &BearerClient,
     audio_b64: &str,
     audio_format: &str,
-) -> std::result::Result<(TranscriptionResponse, CallCost), TranscribeError> {
+) -> std::result::Result<TranscriptionResponse, TranscribeError> {
     let mime_type = audio_mime_type(audio_format);
     let request_body = serde_json::json!({
         "model": MODEL,
@@ -518,9 +475,6 @@ async fn transcribe(
         )));
     }
 
-    // Authoritative cost for this call (from the gateway usage block).
-    let cost = parse_call_cost(&response.body);
-
     let content_str = response
         .body
         .get("choices")
@@ -554,7 +508,7 @@ async fn transcribe(
     // truncated mid-string, or hallucinated past the cap), try to salvage
     // the partial response so we don't loop forever on poison records.
     match serde_json::from_str::<TranscriptionResponse>(json_str) {
-        Ok(t) => Ok((t, cost)),
+        Ok(t) => Ok(t),
         Err(parse_err) => {
             if let Some(salvaged) = salvage_truncated_response(json_str) {
                 tracing::warn!(
@@ -563,7 +517,7 @@ async fn transcribe(
                     text_len = salvaged.text.len(),
                     "salvaged truncated Gemini response"
                 );
-                Ok((salvaged, cost))
+                Ok(salvaged)
             } else {
                 Err(TranscribeError::Other(anyhow!(
                     "failed to parse Gemini JSON: {parse_err}. raw: {}",

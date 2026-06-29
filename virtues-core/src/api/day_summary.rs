@@ -910,7 +910,8 @@ async fn call_virtues_api(pool: &PgPool, user_prompt: &str) -> Result<String> {
     // api_key-auth path: the device's own key funds this background call,
     // with one auto-top-up-and-retry on a 402 wallet_empty.
     let client = crate::virtues_api::client::BearerClient::from_env(pool.clone())
-        .with_purpose(crate::virtues_api::client::Purpose::System);
+        .with_purpose(crate::virtues_api::client::Purpose::System)
+        .with_feature("day_summary");
     let response = client
         .post_json(
             "/v1/ai/chat/completions",
