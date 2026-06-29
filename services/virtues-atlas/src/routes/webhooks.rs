@@ -157,16 +157,16 @@ async fn handle_webhook(
 
 /// On subscription renewal (`invoice.paid`), set the account's wallet to the
 /// monthly allotment via virtues-api. Looks up the customer's opaque
-/// `account_id` + daily cap; the api side overwrites the balance + bumps the
-/// cohort expiry (use-it-or-lose-it).
+/// `account_id`; the api side overwrites the balance + bumps the cohort expiry
+/// (use-it-or-lose-it).
 async fn renew_wallet(state: &AppState, stripe_customer_id: &str) -> anyhow::Result<()> {
-    let row: Option<(String, i64)> = sqlx::query_as(
-        "SELECT account_id, daily_cap_micros FROM customers WHERE stripe_customer_id = $1",
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT account_id FROM customers WHERE stripe_customer_id = $1",
     )
     .bind(stripe_customer_id)
     .fetch_optional(&state.pool)
     .await?;
-    let Some((account_id, daily_cap_micros)) = row else {
+    let Some((account_id,)) = row else {
         // Customer hasn't claimed/linked yet — nothing to credit.
         return Ok(());
     };
@@ -176,7 +176,6 @@ async fn renew_wallet(state: &AppState, stripe_customer_id: &str) -> anyhow::Res
             account_id,
             amount_micros: state.credit.renewal_micros,
             mode: "set",
-            daily_cap_micros,
             reference: Some("renewal".to_string()),
         })
         .await

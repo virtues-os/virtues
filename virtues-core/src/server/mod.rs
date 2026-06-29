@@ -89,6 +89,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     yjs_state.start_save_processor();
     tracing::info!("Yjs WebSocket server initialized");
 
+    // System telemetry: the Jetson GPU monitor (idle-gated tegrastats) and the
+    // box-local time-series sampler (1/min → app_system_samples) behind the
+    // System/Telemetry views. Both are no-ops/best-effort on non-Jetson hosts.
+    crate::api::system_telemetry::start_gpu_monitor();
+    crate::api::system_telemetry::start_system_sampler(client.database.pool().clone());
+
     // Reconcile action templates from per-folder manifests — creates/updates
     // system action rows. Safe to call on every startup (user-managed runtime
     // state preserved).
@@ -427,9 +433,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/metrics/activity",
             get(api::get_activity_metrics_handler),
         )
-        // Usage API
-        .route("/api/usage", get(api::usage_handler))
-        .route("/api/usage/check", get(api::usage_check_handler))
         // Subscription & Billing API
         .route("/api/subscription", get(api::get_subscription_handler))
         .route(
@@ -439,6 +442,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/billing/claim", post(api::claim_billing_handler))
         // Wallet balance + recent ledger (proxied from virtues-api /v1/usage).
         .route("/api/billing/usage", get(api::billing_usage_handler))
+        // Box-local AI spend breakdown (app_ai_calls) for the Usage tab.
+        .route("/api/usage/summary", get(api::usage_summary_handler))
+        // Recent individual AI calls (app_ai_calls) for the Telemetry tab log.
+        .route("/api/telemetry/ai-calls", get(api::ai_calls_handler))
         // Device-authorization link flow (web "Connect subscription").
         .route(
             "/api/billing/link/start",
@@ -608,6 +615,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // System (operator surface — apps + logs)
         .route("/api/system/apps", get(api::list_system_apps_handler))
         .route("/api/actions/:id/logs", get(api::get_action_logs_handler))
+        // Live host snapshot + persisted history for the System/Telemetry views.
+        .route(
+            "/api/system/telemetry",
+            get(crate::api::system_telemetry::telemetry_handler),
+        )
+        .route(
+            "/api/system/history",
+            get(crate::api::system_telemetry::history_handler),
+        )
         // Developer API
         .route("/api/developer/sql", post(api::execute_sql_handler))
         .route("/api/developer/tables", get(api::list_tables_handler))

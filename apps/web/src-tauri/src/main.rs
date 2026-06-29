@@ -1228,6 +1228,11 @@ fn main() {
                 .min_inner_size(800.0, 600.0)
                 .center()
                 .visible(true)
+                // Tauri's native OS drag-drop handler is on by default and swallows
+                // file drops before they reach the webview, so the chat composer's
+                // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
+                // drops fall through to the web layer (works in-browser already).
+                .disable_drag_drop_handler()
                 .build()?;
 
             // Only used in debug; silence the release-build unused warning.

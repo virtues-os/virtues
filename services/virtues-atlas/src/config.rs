@@ -29,7 +29,7 @@ pub struct Config {
 
     /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
     pub renewal_micros: i64,
-    /// Auto-top-up amount (micros USD). Default $10 fixed.
+    /// Auto-top-up amount (micros USD). Default $20 (user-settable).
     pub auto_topup_micros: i64,
     /// Manual top-up min/max range (micros USD). Defaults $10–$50.
     pub topup_min_micros: i64,
@@ -117,11 +117,12 @@ impl Config {
         //     margin-positive and the per-user floor is ~$2-3 (much higher for
         //     anyone who doesn't burn the whole wallet). See entitlement.rs::
         //     apply_markup.
-        //   * Auto-top-up: $10 fixed, fires when wallet hits 0.
+        //   * Auto-top-up: $20 default (user-settable), fires when wallet hits 0.
         //   * Manual top-up: $10–$50 user choice (atlas validates band).
-        //   * Top-ups (add) are bounded by monthly_cap_micros, not anti-stacking.
+        //   * Top-ups (add) are bounded by monthly_cap_micros — the Cursor-style
+        //     user-settable MONTHLY ceiling that replaces the old daily cap.
         let renewal_micros = env_i64("RENEWAL_MICROS", 20_000_000);
-        let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 10_000_000);
+        let auto_topup_micros = env_i64("AUTO_TOPUP_MICROS", 20_000_000); // $20 default
         let topup_min_micros = env_i64("TOPUP_MIN_MICROS", 10_000_000);
         let topup_max_micros = env_i64("TOPUP_MAX_MICROS", 50_000_000);
 

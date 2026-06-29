@@ -80,6 +80,10 @@ pub enum AgentEvent {
         completion_tokens: u32,
         #[serde(skip_serializing_if = "Option::is_none")]
         total_tokens: Option<u32>,
+        /// Authoritative cost in micros-USD from the gateway `usage.cost`.
+        /// `None` if the gateway didn't report it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cost_micros: Option<i64>,
     },
 
     /// Message ID assignment (for persistence)

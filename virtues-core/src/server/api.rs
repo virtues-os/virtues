@@ -1349,62 +1349,6 @@ pub async fn places_details_handler(
 }
 
 // =============================================================================
-// Usage API Handlers
-// =============================================================================
-
-/// Get usage summary for all services
-pub async fn usage_handler(State(state): State<AppState>) -> Response {
-    match crate::api::get_all_usage(state.db.pool()).await {
-        Ok(summary) => (StatusCode::OK, Json(summary)).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("Failed to get usage: {}", e) })),
-        )
-            .into_response(),
-    }
-}
-
-/// Check remaining usage for a service
-#[derive(Debug, Deserialize)]
-pub struct UsageCheckQuery {
-    pub service: String,
-}
-
-pub async fn usage_check_handler(
-    State(state): State<AppState>,
-    Query(query): Query<UsageCheckQuery>,
-) -> Response {
-    let service = match query.service.as_str() {
-        "ai_gateway" => crate::api::Service::AiGateway,
-        "google_places" => crate::api::Service::GooglePlaces,
-        "exa" => crate::api::Service::Exa,
-        _ => {
-            return error_response(crate::error::Error::InvalidInput(format!(
-                "Invalid service: {}. Valid services: ai_gateway, google_places, exa",
-                query.service
-            )))
-        }
-    };
-
-    match crate::api::check_limit(state.db.pool(), service).await {
-        Ok(remaining) => (StatusCode::OK, Json(remaining)).into_response(),
-        Err(e) => (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": "usage_limit_exceeded",
-                "service": e.service,
-                "used": e.used,
-                "limit": e.limit,
-                "unit": e.unit,
-                "resets_at": e.resets_at,
-                "message": format!("Monthly {} limit reached. Resets at {}", e.service, e.resets_at)
-            })),
-        )
-            .into_response(),
-    }
-}
-
-// =============================================================================
 // Subscription & Billing API Handlers
 // =============================================================================
 
@@ -1535,9 +1479,9 @@ pub async fn claim_billing_handler(
 /// GET /api/billing/usage — wallet balance + recent ledger for BillingView.
 ///
 /// Proxies virtues-api `GET /v1/usage` (authenticated with the box's device
-/// api_key). Returns `{ balance_micros, today_spent_micros, daily_cap_micros,
-/// month_to_date_micros, expires_at, entries: [{ ts, micros, kind, real_micros }] }`,
-/// or a clean `{error}` (never a 500) when not linked / the proxy is unreachable.
+/// api_key). Returns `{ balance_micros, month_to_date_micros, expires_at,
+/// entries: [{ ts, micros, kind, real_micros }] }`, or a clean `{error}`
+/// (never a 500) when not linked / the proxy is unreachable.
 pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response {
     if !crate::virtues_api::renew::has_api_key(&pool).await.unwrap_or(false) {
         return (
@@ -1556,6 +1500,53 @@ pub async fn billing_usage_handler(State(pool): State<sqlx::PgPool>) -> Response
         Err(e) => {
             tracing::warn!("billing usage: proxy call failed: {e}");
             (StatusCode::OK, Json(serde_json::json!({ "error": "Couldn't load your balance. Try again." }))).into_response()
+        }
+    }
+}
+
+/// GET /api/usage/summary — box-local AI spend breakdown for the Usage tab.
+///
+/// Reads `app_ai_calls` (the per-call cost log) and returns spend grouped by
+/// feature and by model since the start of the current UTC month, plus the
+/// month boundary. The wallet headline (balance/month-to-date) comes from the
+/// separate `/api/billing/usage` proxy — this endpoint is purely the local
+/// "where did my money go" detail. No egress.
+pub async fn usage_summary_handler(State(state): State<AppState>) -> Response {
+    use chrono::Datelike;
+    let now = chrono::Utc::now();
+    let month_start = chrono::NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| dt.and_utc())
+        .unwrap_or(now);
+
+    let pool = state.db.pool();
+    let by_feature = crate::api::ai_calls::spend_by_feature(pool, month_start)
+        .await
+        .unwrap_or_default();
+    let by_model = crate::api::ai_calls::spend_by_model(pool, month_start)
+        .await
+        .unwrap_or_default();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "month_start": month_start,
+            "by_feature": by_feature,
+            "by_model": by_model,
+        })),
+    )
+        .into_response()
+}
+
+/// GET /api/telemetry/ai-calls — recent individual AI calls for the Telemetry
+/// tab's AI-call log (the window that was missing when the transcription runaway
+/// burned the wallet invisibly). Box-local `app_ai_calls`, newest first.
+pub async fn ai_calls_handler(State(state): State<AppState>) -> Response {
+    match crate::api::ai_calls::recent_calls(state.db.pool(), 100).await {
+        Ok(rows) => (StatusCode::OK, Json(rows)).into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "ai_calls query failed");
+            (StatusCode::OK, Json(Vec::<crate::api::ai_calls::AiCallRow>::new())).into_response()
         }
     }
 }

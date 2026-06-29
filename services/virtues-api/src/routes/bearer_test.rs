@@ -47,10 +47,7 @@ async fn usage(State(state): State<Arc<AppState>>, BearerAuth(acct): BearerAuth)
 async fn whoami(BearerAuth(acct): BearerAuth) -> impl IntoResponse {
     Json(json!({
         "balance_micros": acct.balance_micros,
-        "today_spent_micros": acct.today_spent_micros,
-        "today_reset_at": acct.today_reset_at,
         "expires_at": acct.expires_at,
-        "daily_cap_micros": acct.daily_cap_micros,
     }))
 }
 
@@ -115,11 +112,6 @@ async fn charge_test(
         Err(ChargeError::CallTooExpensive) => (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": { "code": "call_too_expensive" } })),
-        )
-            .into_response(),
-        Err(ChargeError::DailyCapReached) => (
-            StatusCode::PAYMENT_REQUIRED,
-            Json(json!({ "error": { "code": "daily_cap_reached" } })),
         )
             .into_response(),
         Err(ChargeError::Db(e)) => {

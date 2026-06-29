@@ -21,6 +21,6 @@ export { default as ChatContent } from '../tabs/views/ChatView.svelte';
 export { default as DriveContent } from '../tabs/views/DriveView.svelte';
 export { default as ProfileContent } from '../tabs/views/ProfileView.svelte';
 export { default as AssistantContent } from '../tabs/views/AssistantView.svelte';
-export { default as UsageContent } from '../tabs/views/UsageView.svelte';
+export { default as UsageContent } from '../tabs/views/UsageTab.svelte';
 export { default as HistoryContent } from '../tabs/views/HistoryView.svelte';
 

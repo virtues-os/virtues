@@ -51,6 +51,10 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub reasoning_tokens: Option<u32>,
+    /// Authoritative cost in micros-USD, from the gateway's `usage.cost` (the
+    /// real upstream price for this call). `None` if the gateway didn't report
+    /// it. Captured into `app_ai_calls` rather than re-estimated locally.
+    pub cost_micros: Option<i64>,
 }
 
 /// Stream an LLM response and emit events
@@ -265,6 +269,12 @@ where
                             .and_then(|t| t.as_u64())
                             .map(|t| t as u32);
                     }
+
+                    // Authoritative cost from the gateway (USD float → micros).
+                    // Keep it instead of re-estimating from a local price table.
+                    if let Some(cost) = usage_obj.get("cost").and_then(|c| c.as_f64()) {
+                        usage.cost_micros = Some((cost * 1_000_000.0).round() as i64);
+                    }
                 }
             }
         }
@@ -293,6 +303,7 @@ where
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: Some(usage.prompt_tokens + usage.completion_tokens),
+            cost_micros: usage.cost_micros,
         });
     }
 

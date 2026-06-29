@@ -88,13 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_writer(std::io::stderr)
             .init();
 
-        // Initialize observability (metrics)
-        // If OTEL_EXPORTER_OTLP_ENDPOINT is set, metrics will be exported
-        if let Err(e) =
-            virtues::observability::init(virtues::observability::ObservabilityConfig::default())
-        {
-            tracing::warn!(error = %e, "Failed to initialize observability, continuing without metrics");
-        }
+        // No metrics exporter. Virtues collects no central telemetry — all
+        // observability is box-local (see api/system_telemetry.rs + the
+        // app_ai_calls / app_system_samples tables). The old OpenTelemetry
+        // OTLP exporter was removed: it was egress and dropped-on-restart.
     }
 
     // Inject the rich version (semver + codename + date + sha) into clap's

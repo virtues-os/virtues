@@ -84,13 +84,9 @@ toml = "0.8"
 anyhow = "1.0"
 thiserror = "1.0"
 
-# Logging & Observability
+# Logging (box-local only — no metrics exporter; Virtues collects no central telemetry)
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-opentelemetry = "0.28"
-opentelemetry = { version = "0.27", features = ["metrics"] }
-opentelemetry_sdk = { version = "0.27", features = ["rt-tokio", "metrics"] }
-opentelemetry-otlp = { version = "0.27", features = ["metrics", "grpc-tonic"] }
 
 # HTTP Server
 axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
@@ -169,6 +165,10 @@ regex = "1.0"
 
 # Static initialization
 lazy_static = "1.5"
+
+# Host telemetry for the web System view (CPU/mem/disk/net/thermal). The Jetson
+# GPU is read separately via tegrastats; sysinfo covers the cross-platform rest.
+sysinfo = "0.33"
 
 # Time handling for cookies
 time = "0.3"

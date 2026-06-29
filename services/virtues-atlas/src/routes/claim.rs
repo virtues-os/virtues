@@ -217,13 +217,13 @@ pub(crate) async fn finalize_paid_session(
     // opaque `account_id` is assigned once and kept on conflict, so re-claiming
     // re-points the device to the SAME account — the wallet is preserved.
     let candidate_account_id = new_account_id();
-    let (account_id, daily_cap_micros): (String, i64) = sqlx::query_as(
+    let (account_id,): (String,) = sqlx::query_as(
         r#"
         INSERT INTO customers (stripe_customer_id, email, api_key_hash, account_id)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (stripe_customer_id)
         DO UPDATE SET api_key_hash = $3, email = $2
-        RETURNING account_id, daily_cap_micros
+        RETURNING account_id
         "#,
     )
     .bind(&stripe_customer_id)
@@ -273,7 +273,6 @@ pub(crate) async fn finalize_paid_session(
             .register_device(&RegisterDevice {
                 api_key_hash: hex::encode(&api_key_hash),
                 account_id: account_id.clone(),
-                daily_cap_micros,
             })
             .await
             .context("register_device")?;
@@ -283,7 +282,6 @@ pub(crate) async fn finalize_paid_session(
                 account_id: account_id.clone(),
                 amount_micros: state.credit.renewal_micros,
                 mode: "set",
-                daily_cap_micros,
                 reference: Some(format!("checkout:{session_id}")),
             })
             .await

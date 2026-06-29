@@ -383,6 +383,11 @@ Use sql_query with the returned record_ids to get full details."#.to_string(),
                     "type": "string",
                     "description": "Only return results before this date (ISO 8601)"
                 },
+                "entities": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional filter: only return results whose source references one of these resolved entity IDs (e.g. a person/place/org id like 'person_abc'). Use when the query is about a specific known entity — it's far more reliable than matching the name semantically."
+                },
                 "num_results": {
                     "type": "integer",
                     "description": "Number of results (1-50, default 10)",

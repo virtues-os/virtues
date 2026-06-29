@@ -174,8 +174,6 @@
 	type LedgerEntry = { ts: string; micros: number; kind: string; real_micros: number | null };
 	type Usage = {
 		balance_micros: number;
-		today_spent_micros: number;
-		daily_cap_micros: number;
 		month_to_date_micros: number;
 		expires_at: string | null;
 		entries: LedgerEntry[];
@@ -211,12 +209,7 @@
 		adjust: 'ri:equalizer-line',
 	};
 
-	// Daily-cap progress (0–100), and a human "renews" date from expiry.
-	const dailyPct = $derived(
-		usage && usage.daily_cap_micros > 0
-			? Math.min(100, Math.round((usage.today_spent_micros / usage.daily_cap_micros) * 100))
-			: 0
-	);
+	// Human "renews" date from expiry.
 	const renewsLabel = $derived(
 		usage?.expires_at
 			? new Date(usage.expires_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })
@@ -293,21 +286,6 @@
 					<span class="text-foreground-muted text-sm">available</span>
 				</div>
 
-				<!-- Daily spend progress -->
-				<div class="mb-4">
-					<div class="flex justify-between text-xs mb-1.5">
-						<span class="text-foreground-muted">Today</span>
-						<span class="text-foreground-muted tabular-nums">
-							{formatMicrosUSD(usage.today_spent_micros)} <span class="opacity-60">/ {formatMicrosUSD(usage.daily_cap_micros)} daily limit</span>
-						</span>
-					</div>
-					<div class="h-1.5 w-full rounded-full bg-surface-elevated overflow-hidden">
-						<div
-							class="h-full rounded-full transition-all duration-500 {dailyPct >= 100 ? 'bg-warning' : 'bg-foreground'}"
-							style="width: {Math.max(dailyPct, usage.today_spent_micros > 0 ? 2 : 0)}%"
-						></div>
-					</div>
-				</div>
 				<div class="flex justify-between text-sm">
 					<span class="text-foreground-muted">Spent this month</span>
 					<span class="text-foreground tabular-nums">{formatMicrosUSD(usage.month_to_date_micros)}</span>

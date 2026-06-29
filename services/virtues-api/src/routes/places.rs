@@ -178,11 +178,6 @@ fn charge_error_resp(e: ChargeError) -> axum::response::Response {
             "call_too_expensive",
             "single call exceeds per-call cap".to_string(),
         ),
-        ChargeError::DailyCapReached => (
-            StatusCode::PAYMENT_REQUIRED,
-            "daily_cap_reached",
-            "daily spend ceiling reached".to_string(),
-        ),
         ChargeError::Db(err) => {
             tracing::warn!("places charge db error: {err:#}");
             (

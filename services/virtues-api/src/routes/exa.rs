@@ -144,21 +144,15 @@ fn extract_exa_cost_micros(body: &Value, floor_micros: i64) -> i64 {
 }
 
 /// Read-only pre-flight gate, mirroring `routes/ai.rs::budget_gate`. BearerAuth
-/// already enforced expiry; here we surface empty wallet / daily cap before
-/// burning upstream spend.
+/// already enforced expiry; here we surface empty wallet before burning
+/// upstream spend. No per-day wall — the only ceiling is the monthly top-up
+/// cap enforced atlas-side.
 fn budget_gate(acct: &Account) -> Option<Response> {
     if acct.balance_micros <= 0 {
         return Some(err(
             StatusCode::PAYMENT_REQUIRED,
             "wallet_empty",
             "wallet empty — add credits",
-        ));
-    }
-    if acct.today_spent_micros >= acct.daily_cap_micros {
-        return Some(err(
-            StatusCode::PAYMENT_REQUIRED,
-            "daily_cap_reached",
-            "daily spend ceiling reached",
         ));
     }
     None

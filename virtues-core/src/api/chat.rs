@@ -1308,6 +1308,9 @@ fn create_agent_stream(
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
         let mut total_output_tokens: u32 = 0;
+        // Authoritative spend for this turn (sum of gateway-reported usage.cost
+        // across every step), captured into app_ai_calls for the Usage tab.
+        let mut total_cost_micros: i64 = 0;
 
         // Tool call tracking for persistence
         let mut all_tool_calls: Vec<ToolCall> = Vec::new();
@@ -1439,9 +1442,12 @@ fn create_agent_stream(
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
 
-                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _ } => {
+                AgentEvent::Usage { prompt_tokens, completion_tokens, total_tokens: _, cost_micros } => {
                     total_input_tokens += prompt_tokens;
                     total_output_tokens += completion_tokens;
+                    if let Some(c) = cost_micros {
+                        total_cost_micros += c;
+                    }
                 }
 
                 AgentEvent::ThoughtSignature { signature } => {
@@ -1531,6 +1537,26 @@ fn create_agent_stream(
                     error = %e,
                     "Failed to record chat usage"
                 );
+            }
+
+            // Box-local per-call cost log (authoritative gateway cost) for the
+            // Usage/Telemetry tabs. Best-effort — never break the response.
+            if let Err(e) = crate::api::ai_calls::record_ai_call(
+                &pool,
+                &crate::api::ai_calls::AiCall {
+                    feature: "chat",
+                    model: model.clone(),
+                    prompt_tokens: total_input_tokens as i64,
+                    completion_tokens: total_output_tokens as i64,
+                    reasoning_tokens: 0,
+                    cost_micros: total_cost_micros,
+                    chat_id: Some(chat_id.clone()),
+                    action_run_id: None,
+                },
+            )
+            .await
+            {
+                tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
             }
         }
 

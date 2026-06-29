@@ -42,6 +42,11 @@ impl SemanticSearchTool {
 
         let date_after = arguments.get("date_after").and_then(|v| v.as_str());
         let date_before = arguments.get("date_before").and_then(|v| v.as_str());
+        // Resolved entity IDs (person/place/org/thing) to scope the search to.
+        let entities: Option<Vec<String>> = arguments
+            .get("entities")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect());
         let num_results = arguments
             .get("num_results")
             .and_then(|v| v.as_i64());
@@ -53,6 +58,7 @@ impl SemanticSearchTool {
                 domains.as_deref(),
                 date_after,
                 date_before,
+                entities.as_deref(),
                 num_results,
             )
             .await

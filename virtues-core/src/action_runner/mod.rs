@@ -317,6 +317,7 @@ async fn execute_prepared(
 
     // 7. Subprocess phase.
     let mut subprocess_summary: Option<String> = None;
+    let mut subprocess_records: i64 = 0;
     let has_command = action.command.as_ref().is_some_and(|c| !c.is_empty());
     if action.runtime == "service" && has_command {
         match run_app_trigger(&action, payload.as_ref()).await {
@@ -340,8 +341,9 @@ async fn execute_prepared(
         )
         .await
         {
-            Ok(summary) => {
-                subprocess_summary = Some(summary);
+            Ok(outcome) => {
+                subprocess_summary = Some(outcome.summary);
+                subprocess_records = outcome.records;
             }
             Err(e) => {
                 let msg = e.to_string();
@@ -390,7 +392,7 @@ async fn execute_prepared(
     // 9. Complete run.
     let summary = subprocess_summary.unwrap_or_default();
     if let Err(e) =
-        actions::complete_run(&deps.db, &run_id, "success", 0, None, Some(&summary)).await
+        actions::complete_run(&deps.db, &run_id, "success", subprocess_records, None, Some(&summary)).await
     {
         tracing::error!(action_id, error = %e, "complete_run failed at end of run");
     }
@@ -578,13 +580,20 @@ async fn run_app_trigger(
 /// upload gives up far sooner; the box still finishes idempotently if it can.)
 const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// What a successful subprocess phase produced: the one-line summary plus the
+/// processed-record count (for `app_action_runs.records_processed`).
+struct SubprocessOutcome {
+    summary: String,
+    records: i64,
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Action,
     command: &[String],
     credentials: Option<serde_json::Value>,
     payload: Option<&serde_json::Value>,
-) -> Result<String> {
+) -> Result<SubprocessOutcome> {
     let argv0 = command
         .first()
         .ok_or_else(|| Error::Other("action command is empty".to_string()))?;
@@ -664,7 +673,22 @@ async fn run_subprocess(
         .await
         .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
 
-    Ok(action_output.result)
+    // Surface stderr even on a clean exit. An action can succeed (exit 0, valid
+    // JSON) while warning on stderr — that channel used to be swallowed, which
+    // is exactly how the transcription runaway stayed invisible. Log it, and
+    // fold a short tail into the run summary so it shows in the Telemetry tab.
+    let mut summary = action_output.result;
+    if !stderr.trim().is_empty() {
+        tracing::warn!(action_id = %action.id, "action stderr (exit 0): {}", stderr.trim());
+        let tail: String = stderr.trim().chars().rev().take(500).collect::<Vec<_>>()
+            .into_iter().rev().collect();
+        summary = format!("{summary}\n[stderr] {tail}");
+    }
+
+    Ok(SubprocessOutcome {
+        summary,
+        records: action_output.records,
+    })
 }
 
 /// Default deployed location for action binaries, matching the installer's

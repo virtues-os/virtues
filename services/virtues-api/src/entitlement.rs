@@ -1,7 +1,7 @@
 //! Account + ledger data layer — linked prepaid model (v1).
 //!
 //! One row per account in `accounts`:
-//!   `account_id → (balance_micros, today_spent_micros, expires_at, daily_cap)`
+//!   `account_id → (balance_micros, expires_at)`
 //!
 //! `account_id` is an opaque string atlas assigns per customer. The box
 //! authenticates with a rotatable api_key (see `device_keys`); the wallet is
@@ -20,11 +20,12 @@
 //!   1. 20% universal markup (env `USAGE_MARKUP_BASIS_POINTS=2000`) on the
 //!      real upstream cost — how Virtues makes money on usage.
 //!   2. Per-call cap ($5 billed).
-//!   3. Lazy daily reset of `today_spent_micros` at UTC midnight.
-//!   4. Daily ceiling (default $20/day, per-account via atlas).
-//!   5. Atomic decrement guarded by `expires_at > now()` AND
-//!      `balance >= billed AND today_spent + billed <= daily_cap`, plus a
-//!      `ledger` 'charge' row, in one transaction.
+//!   3. Atomic decrement guarded by `expires_at > now()` AND
+//!      `balance >= billed`, plus a `ledger` 'charge' row, in one transaction.
+//!
+//! There is **no per-day spend wall** — the Cursor-style model uses a
+//! user-settable MONTHLY top-up ceiling (`customers.monthly_cap_micros`,
+//! enforced atlas-side on top-up) as the only spend ceiling.
 //!
 //! On `InsufficientBudget` the box surfaces "wallet empty" (optionally one
 //! auto-topup via atlas, which credits the wallet here).
@@ -36,10 +37,6 @@ use sqlx::PgPool;
 /// Per-call cost cap. Rejects pathologically large prompts. Fixed defense,
 /// not user-tunable. Applied AFTER markup — `billed > PER_CALL_CAP_MICROS` 400s.
 pub const PER_CALL_CAP_MICROS: i64 = 5_000_000; // $5/call billed
-
-/// Default daily spend ceiling — the migration default and the fallback when
-/// atlas omits a per-account cap on device registration.
-pub const DEFAULT_DAILY_CEILING_MICROS: i64 = 20_000_000; // $20/day
 
 /// Universal markup applied to the real upstream cost before debit.
 /// 2000 basis points = 20%.
@@ -74,11 +71,7 @@ pub fn usd_to_micros(usd: f64) -> i64 {
 pub struct Account {
     pub account_id: String,
     pub balance_micros: i64,
-    pub today_spent_micros: i64,
-    pub today_reset_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
-    /// Per-account daily spend ceiling, carried from atlas. Enforced in `charge`.
-    pub daily_cap_micros: i64,
 }
 
 /// Resolve an account from a device api_key hash (the auth hot path). Joins
@@ -89,8 +82,7 @@ pub async fn resolve_account_by_key(
 ) -> Result<Option<Account>> {
     let row = sqlx::query_as::<_, Account>(
         r#"
-        SELECT a.account_id, a.balance_micros, a.today_spent_micros,
-               a.today_reset_at, a.expires_at, a.daily_cap_micros
+        SELECT a.account_id, a.balance_micros, a.expires_at
         FROM device_keys k
         JOIN accounts a ON a.account_id = k.account_id
         WHERE k.api_key_hash = $1
@@ -107,8 +99,7 @@ pub async fn resolve_account_by_key(
 pub async fn get_by_account_id(pool: &PgPool, account_id: &str) -> Result<Option<Account>> {
     let row = sqlx::query_as::<_, Account>(
         r#"
-        SELECT account_id, balance_micros, today_spent_micros,
-               today_reset_at, expires_at, daily_cap_micros
+        SELECT account_id, balance_micros, expires_at
         FROM accounts
         WHERE account_id = $1
         "#,
@@ -139,36 +130,18 @@ pub async fn charge(
         return Err(ChargeError::CallTooExpensive);
     }
 
-    let now = Utc::now();
-    let next_midnight = next_utc_midnight(now);
-
     let mut tx = pool.begin().await.map_err(|e| ChargeError::Db(e.into()))?;
 
-    // Lazy daily reset: zero `today_spent` at UTC midnight rollover.
-    sqlx::query(
-        r#"
-        UPDATE accounts
-        SET today_spent_micros = 0, today_reset_at = $3
-        WHERE account_id = $1 AND today_reset_at <= $2
-        "#,
-    )
-    .bind(account_id)
-    .bind(now)
-    .bind(next_midnight)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| ChargeError::Db(e.into()))?;
-
-    // Atomic decrement guarded by expiry + balance + daily-cap invariants.
+    // Atomic decrement guarded by expiry + balance. No per-day wall — the
+    // Cursor-style model uses a user-settable MONTHLY top-up ceiling
+    // (enforced atlas-side on top-up) as the only spend ceiling.
     let row: Option<(i64,)> = sqlx::query_as(
         r#"
         UPDATE accounts
-        SET balance_micros = balance_micros - $1,
-            today_spent_micros = today_spent_micros + $1
+        SET balance_micros = balance_micros - $1
         WHERE account_id = $2
           AND expires_at > now()
           AND balance_micros >= $1
-          AND today_spent_micros + $1 <= daily_cap_micros
         RETURNING balance_micros
         "#,
     )
@@ -207,37 +180,24 @@ pub async fn charge(
 /// Post-paid settlement for a call whose cost is only known *after* it
 /// succeeds (AI: the gateway reports `usage.cost` in the response). Unlike
 /// `charge()`, it debits **unconditionally** — the response already went out,
-/// so we must record the true spend even if it dips the balance negative or
-/// past the daily cap by at most one call. The pre-flight budget gate (see
-/// `routes/ai.rs`) then refuses the *next* call once the balance is in the red
-/// or the cap is crossed. This is what makes the wallet actually enforce on the
-/// chat path; a guarded `charge()` here would plateau the balance at a few
-/// cents and leak unlimited free calls. Returns the new balance.
+/// so we must record the true spend even if it dips the balance negative by at
+/// most one call. The pre-flight budget gate (see `routes/ai.rs`) then refuses
+/// the *next* call once the balance is in the red. This is what makes the
+/// wallet actually enforce on the chat path; a guarded `charge()` here would
+/// plateau the balance at a few cents and leak unlimited free calls. Returns
+/// the new balance.
 pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> Result<i64> {
     if real_cost_micros <= 0 {
         return Ok(0);
     }
     let billed = apply_markup(real_cost_micros);
-    let now = Utc::now();
-    let next_midnight = next_utc_midnight(now);
 
     let mut tx = pool.begin().await?;
-    sqlx::query(
-        "UPDATE accounts SET today_spent_micros = 0, today_reset_at = $3 \
-         WHERE account_id = $1 AND today_reset_at <= $2",
-    )
-    .bind(account_id)
-    .bind(now)
-    .bind(next_midnight)
-    .execute(&mut *tx)
-    .await
-    .context("settle daily reset")?;
 
     // Unconditional debit — only requires the account to still exist.
     let row: Option<(i64,)> = sqlx::query_as(
         "UPDATE accounts \
-         SET balance_micros = balance_micros - $1, \
-             today_spent_micros = today_spent_micros + $1 \
+         SET balance_micros = balance_micros - $1 \
          WHERE account_id = $2 \
          RETURNING balance_micros",
     )
@@ -266,15 +226,14 @@ pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> R
 }
 
 /// On a failed debit, disambiguate why: not found / expired / insufficient
-/// balance / daily cap reached.
+/// balance.
 async fn classify_failure(
     pool: &PgPool,
     account_id: &str,
-    billed: i64,
+    _billed: i64,
 ) -> Result<ChargeOk, ChargeError> {
-    let row: Option<(DateTime<Utc>, i64, i64, i64)> = sqlx::query_as(
-        "SELECT expires_at, balance_micros, today_spent_micros, daily_cap_micros \
-         FROM accounts WHERE account_id = $1",
+    let row: Option<(DateTime<Utc>, i64)> = sqlx::query_as(
+        "SELECT expires_at, balance_micros FROM accounts WHERE account_id = $1",
     )
     .bind(account_id)
     .fetch_optional(pool)
@@ -283,10 +242,7 @@ async fn classify_failure(
 
     match row {
         None => Err(ChargeError::NotFound),
-        Some((expires_at, _, _, _)) if expires_at <= Utc::now() => Err(ChargeError::Expired),
-        Some((_, _, today_spent, daily_cap)) if today_spent + billed > daily_cap => {
-            Err(ChargeError::DailyCapReached)
-        }
+        Some((expires_at, _)) if expires_at <= Utc::now() => Err(ChargeError::Expired),
         Some(_) => Err(ChargeError::InsufficientBudget),
     }
 }
@@ -298,8 +254,7 @@ pub async fn refund(pool: &PgPool, account_id: &str, billed_micros: i64) -> Resu
     let updated = sqlx::query(
         r#"
         UPDATE accounts
-        SET balance_micros = balance_micros + $1,
-            today_spent_micros = GREATEST(today_spent_micros - $1, 0)
+        SET balance_micros = balance_micros + $1
         WHERE account_id = $2
         "#,
     )
@@ -334,23 +289,19 @@ pub async fn register_device(
     pool: &PgPool,
     api_key_hash: &[u8],
     account_id: &str,
-    daily_cap_micros: i64,
 ) -> Result<()> {
     let now = Utc::now();
     let mut tx = pool.begin().await?;
 
     sqlx::query(
         r#"
-        INSERT INTO accounts
-            (account_id, balance_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros)
-        VALUES ($1, 0, 0, $2, $3, $4)
-        ON CONFLICT (account_id) DO UPDATE SET daily_cap_micros = EXCLUDED.daily_cap_micros
+        INSERT INTO accounts (account_id, balance_micros, expires_at)
+        VALUES ($1, 0, $2)
+        ON CONFLICT (account_id) DO NOTHING
         "#,
     )
     .bind(account_id)
-    .bind(next_utc_midnight(now))
     .bind(cohort_align_after(now + Duration::days(30)))
-    .bind(daily_cap_micros)
     .execute(&mut *tx)
     .await
     .context("ensure account on device register")?;
@@ -375,8 +326,8 @@ pub async fn register_device(
 /// How a credit lands on the balance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CreditMode {
-    /// Renewal: overwrite the balance to `amount` (fresh monthly allotment),
-    /// reset `today_spent`, and bump expiry to the next cohort boundary.
+    /// Renewal: overwrite the balance to `amount` (fresh monthly allotment)
+    /// and bump expiry to the next cohort boundary.
     Set,
     /// Top-up: add `amount` to the existing balance; expiry unchanged.
     Add,
@@ -392,7 +343,6 @@ pub async fn credit(
     account_id: &str,
     amount_micros: i64,
     mode: CreditMode,
-    daily_cap_micros: i64,
     reference: Option<&str>,
 ) -> Result<i64> {
     let now = Utc::now();
@@ -415,22 +365,16 @@ pub async fn credit(
         CreditMode::Set => {
             sqlx::query(
                 r#"
-                INSERT INTO accounts
-                    (account_id, balance_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros)
-                VALUES ($1, $2, 0, $3, $4, $5)
+                INSERT INTO accounts (account_id, balance_micros, expires_at)
+                VALUES ($1, $2, $3)
                 ON CONFLICT (account_id) DO UPDATE
                 SET balance_micros = EXCLUDED.balance_micros,
-                    today_spent_micros = 0,
-                    today_reset_at = EXCLUDED.today_reset_at,
-                    expires_at = EXCLUDED.expires_at,
-                    daily_cap_micros = EXCLUDED.daily_cap_micros
+                    expires_at = EXCLUDED.expires_at
                 "#,
             )
             .bind(account_id)
             .bind(new_balance)
-            .bind(next_utc_midnight(now))
             .bind(cohort_align_after(now + Duration::days(30)))
-            .bind(daily_cap_micros)
             .execute(&mut *tx)
             .await
             .context("credit set")?;
@@ -438,19 +382,15 @@ pub async fn credit(
         CreditMode::Add => {
             sqlx::query(
                 r#"
-                INSERT INTO accounts
-                    (account_id, balance_micros, today_spent_micros, today_reset_at, expires_at, daily_cap_micros)
-                VALUES ($1, $2, 0, $3, $4, $5)
+                INSERT INTO accounts (account_id, balance_micros, expires_at)
+                VALUES ($1, $2, $3)
                 ON CONFLICT (account_id) DO UPDATE
-                SET balance_micros = accounts.balance_micros + $2,
-                    daily_cap_micros = EXCLUDED.daily_cap_micros
+                SET balance_micros = accounts.balance_micros + $2
                 "#,
             )
             .bind(account_id)
             .bind(amount_micros)
-            .bind(next_utc_midnight(now))
             .bind(cohort_align_after(now + Duration::days(30)))
-            .bind(daily_cap_micros)
             .execute(&mut *tx)
             .await
             .context("credit add")?;
@@ -505,8 +445,6 @@ pub async fn usage_summary(
 
     Ok(UsageSummary {
         balance_micros: acct.balance_micros,
-        today_spent_micros: acct.today_spent_micros,
-        daily_cap_micros: acct.daily_cap_micros,
         month_to_date_micros: mtd.unwrap_or(0),
         expires_at: Some(acct.expires_at),
         entries,
@@ -516,8 +454,6 @@ pub async fn usage_summary(
 #[derive(Debug, Default, serde::Serialize)]
 pub struct UsageSummary {
     pub balance_micros: i64,
-    pub today_spent_micros: i64,
-    pub daily_cap_micros: i64,
     pub month_to_date_micros: i64,
     pub expires_at: Option<DateTime<Utc>>,
     pub entries: Vec<LedgerEntry>,
@@ -544,7 +480,6 @@ pub struct ChargeOk {
 #[derive(Debug)]
 pub enum ChargeError {
     InsufficientBudget,
-    DailyCapReached,
     Expired,
     NotFound,
     InvalidCost,
@@ -556,7 +491,6 @@ impl std::fmt::Display for ChargeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InsufficientBudget => write!(f, "wallet empty — add credits"),
-            Self::DailyCapReached => write!(f, "daily spend ceiling reached"),
             Self::Expired => write!(f, "subscription wallet expired — reconnect"),
             Self::NotFound => write!(f, "account not found"),
             Self::InvalidCost => write!(f, "real_cost_micros must be > 0"),
@@ -564,14 +498,6 @@ impl std::fmt::Display for ChargeError {
             Self::Db(e) => write!(f, "db error: {e}"),
         }
     }
-}
-
-/// Next UTC midnight strictly after `now`.
-pub fn next_utc_midnight(now: DateTime<Utc>) -> DateTime<Utc> {
-    let date = now.date_naive().succ_opt().expect("date overflow");
-    date.and_hms_opt(0, 0, 0)
-        .expect("midnight construction")
-        .and_utc()
 }
 
 /// First-of-month 00:00 UTC at or after `dt` — the cohort-aligned wallet
@@ -601,22 +527,24 @@ fn month_start_utc(now: DateTime<Utc>) -> DateTime<Utc> {
 mod tests {
     use super::*;
 
-    /// `charge()` enforces the account's own `daily_cap_micros` and writes a
-    /// ledger row each time, keeping `balance == SUM(ledger)`.
+    /// `charge()` debits the balance, refuses once the wallet is empty, and
+    /// writes a ledger row each time, keeping `balance == SUM(ledger)`. (No
+    /// daily cap — the only spend ceiling is the monthly top-up cap atlas-side.)
     #[sqlx::test]
-    async fn charge_enforces_cap_and_journals(pool: PgPool) {
-        // $10/day cap, funded $1000 via a renewal credit.
-        credit(&pool, "acct-low", 1_000_000_000, CreditMode::Set, 10_000_000, None)
+    async fn charge_debits_and_journals(pool: PgPool) {
+        // Fund $10 via a renewal credit.
+        credit(&pool, "acct-low", 10_000_000, CreditMode::Set, None)
             .await
             .unwrap();
 
-        // billed = 4_800_000 each; two land (9.6M ≤ 10M), the third trips.
+        // billed = 4_800_000 each; two land (9.6M ≤ 10M), the third has no
+        // balance left and trips InsufficientBudget.
         charge(&pool, "acct-low", 4_000_000).await.expect("1st ok");
         charge(&pool, "acct-low", 4_000_000).await.expect("2nd ok");
         let third = charge(&pool, "acct-low", 4_000_000).await;
         assert!(
-            matches!(third, Err(ChargeError::DailyCapReached)),
-            "third charge should trip the $10 cap, got {third:?}"
+            matches!(third, Err(ChargeError::InsufficientBudget)),
+            "third charge should exhaust the wallet, got {third:?}"
         );
 
         // balance projection == SUM(ledger).
@@ -634,17 +562,17 @@ mod tests {
     /// funds are chargeable under the new key.
     #[sqlx::test]
     async fn key_rotation_preserves_balance(pool: PgPool) {
-        credit(&pool, "acct-r", 50_000_000, CreditMode::Set, 20_000_000, None)
+        credit(&pool, "acct-r", 50_000_000, CreditMode::Set, None)
             .await
             .unwrap();
-        register_device(&pool, b"keyhash-old-0000000000000000", "acct-r", 20_000_000)
+        register_device(&pool, b"keyhash-old-0000000000000000", "acct-r")
             .await
             .unwrap();
         charge(&pool, "acct-r", 1_000_000).await.expect("charge under old key path");
 
         let before = get_by_account_id(&pool, "acct-r").await.unwrap().unwrap().balance_micros;
         // Rotate to a new key for the SAME account.
-        register_device(&pool, b"keyhash-new-0000000000000000", "acct-r", 20_000_000)
+        register_device(&pool, b"keyhash-new-0000000000000000", "acct-r")
             .await
             .unwrap();
         let resolved = resolve_account_by_key(&pool, b"keyhash-new-0000000000000000")
