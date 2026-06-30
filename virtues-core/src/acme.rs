@@ -22,6 +22,17 @@ use std::time::Duration;
 /// days, so renewing at 60 leaves a 30-day window to retry on failure.
 pub const RENEW_AFTER: Duration = Duration::from_secs(60 * 24 * 3600);
 
+/// Max time to wait for the CA to validate the order after challenges are ready.
+/// DNS-01 validation can lag minutes under CA load / slow propagation, so a tight
+/// cap would abort a perfectly good issuance and leave the box on the (browser-
+/// rejected) self-signed bootstrap. Generous, since the box is unreachable to
+/// browsers until this succeeds.
+const ORDER_READY_TIMEOUT: Duration = Duration::from_secs(180);
+/// Max time to wait for the finalized certificate to become downloadable. Bounds
+/// the post-finalize poll so a CA stuck "valid but not downloadable" can't wedge
+/// the issuance task forever.
+const CERT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+
 use instant_acme::{
     Account, AuthorizationStatus, ChallengeType, Identifier, NewAccount, NewOrder, OrderStatus,
 };
@@ -198,19 +209,26 @@ pub async fn obtain(cfg: &AcmeConfig, publisher: &dyn DnsPublisher) -> Result<Ce
         order.set_challenge_ready(url).await.context("set challenge ready")?;
     }
 
-    // Poll until the order is Ready (or Invalid), with exponential backoff.
+    // Poll until the order is Ready (or Invalid), with exponential backoff up to
+    // a generous deadline — DNS-01 validation is often slow, and giving up early
+    // strands the box on the self-signed bootstrap until the next renewal tick.
     let mut delay = Duration::from_millis(250);
-    for _ in 0..10 {
+    let deadline = tokio::time::Instant::now() + ORDER_READY_TIMEOUT;
+    loop {
         tokio::time::sleep(delay).await;
         let state = order.refresh().await.context("refresh order")?;
         match state.status {
             OrderStatus::Ready => break,
             OrderStatus::Invalid => anyhow::bail!("ACME order became invalid"),
-            _ => delay = (delay * 2).min(Duration::from_secs(8)),
+            other => {
+                if tokio::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "ACME order not ready within {ORDER_READY_TIMEOUT:?} (last status: {other:?})"
+                    );
+                }
+                delay = (delay * 2).min(Duration::from_secs(8));
+            }
         }
-    }
-    if order.state().status != OrderStatus::Ready {
-        anyhow::bail!("ACME order not ready after polling");
     }
 
     // Finalize with a locally-generated key (the box holds it) + CSR.
@@ -220,10 +238,18 @@ pub async fn obtain(cfg: &AcmeConfig, publisher: &dyn DnsPublisher) -> Result<Ce
     let csr = params.serialize_request(&key_pair).context("serialize CSR")?;
     order.finalize(csr.der()).await.context("finalize order")?;
 
+    let cert_deadline = tokio::time::Instant::now() + CERT_DOWNLOAD_TIMEOUT;
     let cert_pem = loop {
         match order.certificate().await.context("download certificate")? {
             Some(pem) => break pem,
-            None => tokio::time::sleep(Duration::from_secs(1)).await,
+            None => {
+                if tokio::time::Instant::now() >= cert_deadline {
+                    anyhow::bail!(
+                        "certificate not downloadable within {CERT_DOWNLOAD_TIMEOUT:?}"
+                    );
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
         }
     };
 
