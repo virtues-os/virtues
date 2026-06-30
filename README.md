@@ -81,6 +81,8 @@ All of it runs on a single Rust server with a Postgres database and S3 storage. 
 
 **Core** handles data ingestion, entity resolution, the wiki, pages, chat, and serves the web UI. **virtues-api** is a sidecar proxy that mediates all external API calls — LLM requests, web search, bank connections — with budget tracking and key isolation. Core never touches API keys directly.
 
+**Remote access** is a blind relay: your box dials out and holds a connection open, so any browser can reach it from anywhere with no port opened at home — and the relay forwards only sealed, end-to-end-encrypted bytes it has no key to read. See **[Privacy &amp; security model](docs/privacy-model.md)** (who holds which secret, and who deliberately doesn't) and the [visual walkthrough](docs/relay-walkthrough.html).
+
 <a id="data-sources"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-data-sources-dark.svg"><img alt="Data Sources" src=".github/images/headings/h2-data-sources-light.svg" height="28"></picture>
 
