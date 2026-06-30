@@ -31,6 +31,11 @@ use virtues_helpers::transport::tls;
 
 /// How often the background task checks whether the ACME cert needs renewing.
 const RENEW_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 3600);
+/// Initial-issuance retry backoff. Until the first browser-trusted cert lands the
+/// box serves the self-signed bootstrap, which browsers reject — so retry fast
+/// (not at the 12h renewal cadence), backing off to a ceiling on repeated failure.
+const INITIAL_ISSUE_BACKOFF: Duration = Duration::from_secs(30);
+const INITIAL_ISSUE_BACKOFF_MAX: Duration = Duration::from_secs(15 * 60);
 
 /// Process-wide live-registration flag: `true` only while the box currently
 /// holds a registered control connection to the relay. Set by the relay-client,
@@ -56,8 +61,14 @@ pub fn is_relay_registered() -> bool {
 /// in `box_secrets`; falls back to env vars (dev/manual). No-op otherwise.
 pub fn maybe_spawn(db: PgPool, http_port: u16) {
     tokio::spawn(async move {
-        let Some((relay_addr, sni, token)) = load_runtime_config(&db).await else {
-            tracing::debug!("relay not provisioned (no box_secrets config, VIRTUES_RELAY_ADDR unset) — reachability disabled");
+        let resolved = match load_runtime_config(&db).await {
+            Some(c) => Some(c),
+            // Lazy-provision: a box linked before provisioning existed (or whose
+            // provisioning failed) has an api_key but no stored config. Fetch it.
+            None => lazy_provision(&db).await,
+        };
+        let Some((relay_addr, sni, token)) = resolved else {
+            tracing::debug!("relay not provisioned (no box_secrets/env config, not lazily provisionable) — reachability disabled");
             return;
         };
         let tls_front = std::env::var("VIRTUES_RELAY_TLS_FRONT")
@@ -87,6 +98,43 @@ async fn load_runtime_config(db: &PgPool) -> Option<(String, String, String)> {
     let token = std::env::var("VIRTUES_RELAY_TOKEN").unwrap_or_default();
     tracing::info!(%sni, "relay config loaded from environment (dev/manual)");
     Some((relay_addr, sni, token))
+}
+
+/// Fetch + persist relay config from atlas for a linked box that has no stored
+/// config yet (linked before provisioning existed, or an earlier provision
+/// failed). Retries transient failures with backoff; gives up — leaving the box
+/// LAN-only — if the box isn't linked or the deployment has no relay (atlas 503).
+async fn lazy_provision(db: &PgPool) -> Option<(String, String, String)> {
+    let api_key = match crate::virtues_api::renew::read_api_key(db).await {
+        Ok(Some(k)) => k,
+        _ => return None, // not linked → nothing to provision against
+    };
+    let http = crate::http_client::virtues_api_client();
+    let atlas = crate::virtues_api::atlas_url();
+    let mut backoff = Duration::from_secs(30);
+    loop {
+        match crate::virtues_api::relay::fetch_and_store(db, &http, &atlas, &api_key).await {
+            Ok(()) => {
+                tracing::info!("relay config lazily provisioned from atlas");
+                return crate::virtues_api::relay::load(db)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|c| (c.relay_addr, c.sni, c.token));
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                // 503 = this deployment has no relay configured; don't spin.
+                if msg.contains("503") {
+                    tracing::info!("relay not enabled on this deployment — LAN-only reach");
+                    return None;
+                }
+                tracing::warn!(error = %msg, ?backoff, "lazy relay provisioning failed; retrying");
+            }
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(INITIAL_ISSUE_BACKOFF_MAX);
+    }
 }
 
 async fn run(
@@ -187,18 +235,28 @@ async fn cert_task(
     publisher: crate::acme::HttpDnsPublisher,
     reloader: tls::CertReloader,
 ) {
-    // Initial issuance (load cached-if-fresh, else obtain).
-    match crate::acme::ensure_cert(&cfg, &publisher).await {
-        Ok(m) => match tls::server_config_from_pem(&m.cert_pem, &m.key_pem) {
-            Ok(c) => {
-                reloader.reload(c);
-                tracing::info!("ACME cert active (box-held key)");
+    // Initial issuance (load cached-if-fresh, else obtain). Retry aggressively
+    // until the first browser-trusted cert lands — until then the box serves the
+    // self-signed bootstrap, which every browser rejects, so the box is
+    // effectively unreachable. Waiting the 12h renewal cadence to retry would
+    // mean a transient ACME/DNS hiccup leaves the box dark for half a day.
+    let mut backoff = INITIAL_ISSUE_BACKOFF;
+    loop {
+        match crate::acme::ensure_cert(&cfg, &publisher).await {
+            Ok(m) => match tls::server_config_from_pem(&m.cert_pem, &m.key_pem) {
+                Ok(c) => {
+                    reloader.reload(c);
+                    tracing::info!("ACME cert active (box-held key)");
+                    break;
+                }
+                Err(e) => tracing::warn!(error = %e, "issued cert failed to load; retrying"),
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, ?backoff, "initial ACME issuance failed; retrying (on self-signed bootstrap until then)")
             }
-            Err(e) => tracing::warn!(error = %e, "issued cert failed to load; staying on bootstrap"),
-        },
-        Err(e) => {
-            tracing::warn!(error = %e, "initial ACME issuance failed; staying on bootstrap cert")
         }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(INITIAL_ISSUE_BACKOFF_MAX);
     }
 
     // Renewal loop.

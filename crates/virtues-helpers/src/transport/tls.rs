@@ -27,12 +27,20 @@ pub fn server_config_from_pem(cert_pem: &str, key_pem: &str) -> anyhow::Result<r
     let key: PrivateKeyDer<'static> = rustls_pemfile::private_key(&mut key_pem.as_bytes())?
         .ok_or_else(|| anyhow::anyhow!("no private key found in key PEM"))?;
 
-    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+    let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()?
     .with_no_client_auth()
     .with_single_cert(certs, key)?;
+
+    // Offer HTTP/2 (with HTTP/1.1 fallback). The box terminates TLS here and
+    // splices the *decrypted* stream to its local `axum::serve` server, which
+    // auto-detects HTTP/2 cleartext (h2c) — so a browser that negotiates `h2`
+    // multiplexes a whole page over ONE TLS connection, hence one relay
+    // work-conn, instead of opening 6+ parallel connections (each its own
+    // OpenConn → work-conn dance). Browsers without h2 fall back to http/1.1.
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
     Ok(config)
 }
 
