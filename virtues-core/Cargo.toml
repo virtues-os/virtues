@@ -54,9 +54,6 @@ virtues-relay-client = { path = "../crates/virtues-relay-client" }
 # authority only writes the _acme-challenge TXT. rcgen mints the local keypair/CSR.
 instant-acme = "0.7"
 rcgen = "0.13"
-# Minimal WireGuard engine (kernel wg0, ULA, sealed box-secrets). Re-exported
-# via core::wireguard; also the basis of the standalone virtues-wireguard daemon.
-virtues-wg = { path = "../crates/virtues-wg" }
 # Wire-protocol types shared with every paired-device daemon (iOS, desktop
 # client, etc.). Pure data + serde; no I/O. virtues-core re-exports these so
 # existing call sites (`crate::wireguard::{PairingBundle, INTERNAL_HOST, ...}`)

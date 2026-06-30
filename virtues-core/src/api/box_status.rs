@@ -13,12 +13,12 @@ use sqlx::PgPool;
 
 use crate::inference_report::{self, ModelSource};
 use crate::server::webhook::AppState;
-use crate::wireguard::box_secrets;
-
 #[derive(Debug, Clone, Serialize)]
 pub struct BoxStatus {
-    /// True once the box has its identity: a WG server keypair. (There is no
-    /// CA — trust is SPKI pinning over the WG Noise handshake; see spki.rs.)
+    /// True once the box can serve over TLS. In the relay model this is always
+    /// satisfiable — the box self-signs a bootstrap cert and is reached via the
+    /// relay (no per-box WG identity to mint first). Kept for the setup state
+    /// machine's `identity` gate.
     pub ready: bool,
     pub identity: IdentityStatus,
     pub subscription: SubscriptionStatus,
@@ -27,16 +27,10 @@ pub struct BoxStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IdentityStatus {
-    pub wg_server_keypair: bool,
-    pub wg_public_key: Option<String>,
-    /// The box's SPKI fingerprint (`sha256-<b64>` of its WG public key) — the
-    /// identity a device pins over the WG Noise handshake. For out-of-band
-    /// verification (compare what the box shows vs what a client reports).
-    pub spki_fingerprint: Option<String>,
-    /// Current reachable WG endpoint (`ip:port`), if the daemon has recorded
-    /// one — useful for BYO-overlay setup. `None` on a box that hasn't detected
-    /// a global endpoint yet.
-    pub wg_endpoint: Option<String>,
+    /// Whether a persisted (ACME-issued) TLS cert is present on disk. The box
+    /// also self-signs a bootstrap cert at runtime, so reachability does not
+    /// depend on this being true.
+    pub tls_cert: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,50 +43,34 @@ pub struct SubscriptionStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DeviceStatus {
+    /// Active paired devices (any kind). Named `paired_wg` for API stability.
     pub paired_wg: i64,
+}
+
+/// Whether the box has a persisted TLS cert on disk (ACME-issued). The runtime
+/// self-signed bootstrap covers the box even when this is false.
+fn tls_cert_present() -> bool {
+    let dir = std::env::var("VIRTUES_TLS_CERT_DIR").unwrap_or_else(|_| "./data/tls".to_string());
+    std::path::Path::new(&dir).join("cert.pem").exists()
 }
 
 /// Compute the box's health snapshot. Shared by the CLI (`virtues status`) and
 /// the HTTP endpoint.
 pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
-    let wg_key = box_secrets::get(pool, "wg_server_keypair").await?;
     let linked = crate::virtues_api::renew::has_api_key(pool)
         .await
         .unwrap_or(false);
     let paired_wg: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE (metadata->'wg') IS NOT NULL AND status = 'active'",
+        "SELECT count(*) FROM credentials WHERE device_id IS NOT NULL AND status = 'active'",
     )
     .fetch_one(pool)
     .await
     .unwrap_or(0);
 
-    let wg_public_key = wg_key.as_ref().and_then(|(_, m)| {
-        m.get("public_key").and_then(|v| v.as_str()).map(String::from)
-    });
-
-    // The SPKI fingerprint is derived from the WG public key (no CA) — the
-    // identity devices pin over the Noise handshake.
-    let spki_fingerprint = wg_public_key.as_ref().and_then(|pk| {
-        use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD
-            .decode(pk)
-            .ok()
-            .and_then(|b| <[u8; 32]>::try_from(b).ok())
-            .map(|arr| crate::wireguard::spki::spki_fingerprint(&arr))
-    });
-    let wg_endpoint = crate::wireguard::endpoint::read_current(pool)
-        .await
-        .ok()
-        .flatten()
-        .map(|ep| format!("{}:{}", ep.ip, ep.port));
-
     Ok(BoxStatus {
-        ready: wg_key.is_some(),
+        ready: true,
         identity: IdentityStatus {
-            wg_server_keypair: wg_key.is_some(),
-            wg_public_key,
-            spki_fingerprint,
-            wg_endpoint,
+            tls_cert: tls_cert_present(),
         },
         subscription: SubscriptionStatus { linked },
         devices: DeviceStatus { paired_wg },

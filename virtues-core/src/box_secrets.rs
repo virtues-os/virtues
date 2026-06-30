@@ -1,9 +1,10 @@
-//! Sealed singleton secrets for this box (the WG server keypair). Thin helper
-//! over the `box_secrets` table (migration 0009): the secret material is sealed
-//! with the vault master key; non-secret public parts live in `metadata` in the
-//! clear.
+//! Sealed singleton secrets for this box. Thin helper over the `box_secrets`
+//! table (migration 0009): secret material is sealed with the vault master key;
+//! non-secret public parts live in `metadata` in the clear.
 //!
-//! Cross-platform (DB + crypto only) — no WireGuard/netlink here.
+//! Pure DB + crypto (cross-platform). Used for the box's device-link code, and
+//! any other mint-once box secret. (Formerly lived in `virtues-wg`; moved here
+//! when WireGuard was removed — it was never WG-specific.)
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;
@@ -26,12 +27,7 @@ pub async fn get(db: &PgPool, key: &str) -> Result<Option<(String, serde_json::V
 }
 
 /// Upsert a box secret (sealed) plus its public metadata.
-pub async fn put(
-    db: &PgPool,
-    key: &str,
-    secret: &str,
-    metadata: &serde_json::Value,
-) -> Result<()> {
+pub async fn put(db: &PgPool, key: &str, secret: &str, metadata: &serde_json::Value) -> Result<()> {
     let enc = TokenEncryptor::from_env().context("vault encryptor")?;
     let sealed = enc.encrypt(secret).context("seal box secret")?;
     sqlx::query(
@@ -51,11 +47,8 @@ pub async fn put(
     Ok(())
 }
 
-/// Insert a box secret only if absent (`ON CONFLICT DO NOTHING`). Used for
-/// mint-once singletons that two processes might race to create (e.g. the WG
-/// server keypair, minted by both the app and the daemon): the first writer
-/// wins, and callers re-read to converge on it. Returns `true` if this call
-/// inserted.
+/// Insert a box secret only if absent (`ON CONFLICT DO NOTHING`). Returns `true`
+/// if this call inserted (mint-once singletons two processes might race to set).
 pub async fn put_if_absent(
     db: &PgPool,
     key: &str,

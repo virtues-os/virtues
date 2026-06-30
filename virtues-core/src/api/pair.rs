@@ -347,11 +347,9 @@ pub async fn mint_handler(
     )
     .await;
 
-    // Embed the box's SPKI fingerprint in the QR so the scanning device can
-    // verify the WG server key it gets back in the bundle was not substituted
-    // by a LAN MITM. The QR travels over an out-of-band channel (the screen),
-    // not the spoofable HTTP response, so it's a trustworthy carrier.
-    let fpr = box_spki_fpr(&pool).await;
+    // No SPKI fingerprint in the relay model — device trust is the relay/box
+    // cert (or app pinning), not a WG server key.
+    let fpr: Option<String> = None;
     let pair_url = format_pair_url(&minted.token, fpr.as_deref());
     let qr_svg = render_qr_svg(&pair_url);
     (
@@ -569,7 +567,6 @@ pub struct ConsumeRequest {
     pub kind: String,                                 // 'browser' | 'mobile_app' | 'desktop_app' | 'sensor'
     pub label: Option<String>,                        // auto-generated if absent
     pub device_info: Option<Value>,                   // arbitrary JSON describing the device
-    pub wg_public_key: Option<String>,                // WG-capable devices only
     /// The data source this collector represents (`"mac"`, `"ios"`, …, from
     /// `actions/sources.toml`). REQUIRED for a collector to receive its
     /// per-credential action fan-out — the credential's `source_id` is set
@@ -601,12 +598,6 @@ pub struct ConsumeResponse {
     /// for browser pairings (browsers don't run actions).
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
-    /// WireGuard provisioning bundle. Present when the device supplied a
-    /// `wg_public_key` AND the box's WG engine is operational (Linux only,
-    /// `assemble_bundle` succeeded). Absent on macOS dev hosts and on
-    /// devices that didn't request a tunnel.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bundle: Option<crate::wireguard::bundle::PairingBundle>,
 }
 
 /// `POST /api/pair/consume` — anonymous, but valid token required.
@@ -686,7 +677,7 @@ pub async fn consume_handler(
     let bearer_pack = if kind == "browser" {
         None
     } else {
-        match build_bearer_pack(kind, &label, &body.device_info, body.wg_public_key.as_deref()) {
+        match build_bearer_pack(kind, &label, &body.device_info) {
             Ok(p) => Some(p),
             Err(e) => return e.into_response(),
         }
@@ -886,7 +877,6 @@ pub async fn consume_handler(
         json!({
             "kind": kind,
             "label": &label,
-            "has_wg": body.wg_public_key.is_some(),
             "token_id": &token_id,
         }),
         ip,
@@ -919,7 +909,6 @@ pub async fn consume_handler(
                     redirect: "/".to_string(),
                     bearer: None,
                     action_ids: std::collections::HashMap::new(),
-                    bundle: None,
                 }),
             ),
         )
@@ -948,23 +937,6 @@ pub async fn consume_handler(
         }
     };
 
-    let bundle = match body.wg_public_key.as_deref() {
-        Some(pubkey) if !pubkey.is_empty() => {
-            match assemble_wg_bundle(&pool, &bp.credential_id, &bp.bearer, pubkey).await {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(
-                        "pair consume: WG bundle assembly failed for credential {}: {e:#}; \
-                         device paired without tunnel",
-                        bp.credential_id
-                    );
-                    None
-                }
-            }
-        }
-        _ => None,
-    };
-
     (
         StatusCode::OK,
         Json(ConsumeResponse {
@@ -973,7 +945,6 @@ pub async fn consume_handler(
             redirect: "/".to_string(),
             bearer: Some(bp.bearer),
             action_ids,
-            bundle,
         }),
     )
         .into_response()
@@ -999,12 +970,8 @@ pub struct ProvisionResponse {
     pub bearer: String,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
-    /// The full WG provisioning bundle, INCLUDING the box-generated device
-    /// private key (`wg.client_private_key`). Absent on a non-WG host (macOS dev).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bundle: Option<crate::wireguard::bundle::PairingBundle>,
-    /// SVG QR encoding the bundle blob (`virtues-bundle:<base64-json>`) the new
-    /// device scans. Empty when there's no bundle to hand off (non-WG host).
+    /// SVG QR for the new device to scan. Empty in the relay model (no WG bundle
+    /// to hand off); retained for response-shape stability.
     pub qr_svg: String,
 }
 
@@ -1056,7 +1023,7 @@ pub async fn provision_handler(
     // The box generates the device's keypair (relay path), so no wg_public_key
     // is supplied to the bearer pack — the pubkey is recorded on the peer record
     // by `assemble_bundle_generated` instead.
-    let bp = match build_bearer_pack(kind, &label, &body.device_info, None) {
+    let bp = match build_bearer_pack(kind, &label, &body.device_info) {
         Ok(p) => p,
         Err(e) => return e.into_response(),
     };
@@ -1116,23 +1083,8 @@ pub async fn provision_handler(
         }
     };
 
-    let bundle = match assemble_wg_bundle_generated(&pool, &bp.credential_id, &bp.bearer).await {
-        Ok(b) => b,
-        Err(e) => {
-            tracing::warn!(
-                "pair provision: WG bundle assembly failed for credential {}: {e:#}; \
-                 device provisioned without tunnel",
-                bp.credential_id
-            );
-            None
-        }
-    };
-
-    let qr_svg = bundle
-        .as_ref()
-        .and_then(|b| provision_qr_payload(b, &action_ids))
-        .map(|payload| render_qr_svg(&payload))
-        .unwrap_or_default();
+    // Relay model: no WG bundle to hand off, so no QR payload either.
+    let qr_svg = String::new();
 
     (
         StatusCode::OK,
@@ -1141,7 +1093,6 @@ pub async fn provision_handler(
             credential_id: bp.credential_id,
             bearer: bp.bearer,
             action_ids,
-            bundle,
             qr_svg,
         }),
     )
@@ -1167,92 +1118,6 @@ async fn assemble_action_fanout(
     virtues_helpers::auth::fanout_action_ids(pool, credential_id)
         .await
         .map_err(|e| crate::Error::Other(format!("fanout_action_ids: {e}")))
-}
-
-/// Assemble the WG provisioning bundle on Linux; no-op on the macOS dev
-/// host (the WG engine is Linux-only). When the device supplied a
-/// `wg_public_key`, the box records them as a peer in the durable store and
-/// returns the bundle of (server pubkey, allowed IPs, endpoint) the device
-/// needs to dial the tunnel later. (No CA — trust is SPKI pinning over the WG
-/// Noise handshake.)
-#[cfg(target_os = "linux")]
-async fn assemble_wg_bundle(
-    pool: &PgPool,
-    credential_id: &str,
-    bearer: &str,
-    pubkey: &str,
-) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
-    let bundle = crate::wireguard::pairing::assemble_bundle(pool, credential_id, bearer, pubkey)
-        .await
-        .map_err(|e| crate::Error::Other(format!("assemble_bundle: {e}")))?;
-    // The peer is now in the durable store but not yet in the kernel `wg0`.
-    // Nudge the privileged daemon to reconcile NOW so the device can complete
-    // its WG handshake immediately instead of racing the daemon's backstop
-    // poll (the desktop client only waits ~6s). Best-effort: the poll catches
-    // up regardless.
-    if let Err(e) = crate::wireguard::signal::notify_reconcile(pool).await {
-        tracing::warn!(error = %e, "wg reconcile notify failed (poll backstop will catch up)");
-    }
-    Ok(Some(bundle))
-}
-
-#[cfg(not(target_os = "linux"))]
-async fn assemble_wg_bundle(
-    _pool: &PgPool,
-    _credential_id: &str,
-    _bearer: &str,
-    _pubkey: &str,
-) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
-    // On the macOS dev host there's no kernel WG. The pubkey is recorded in the
-    // credential's metadata (in `consume_handler` above); the iOS app will
-    // simply have no bundle to dial from this dev box.
-    tracing::debug!("WG bundle assembly skipped (non-Linux host)");
-    Ok(None)
-}
-
-/// Like [`assemble_wg_bundle`], but the BOX generates the device keypair (the
-/// relay/provision path) and the returned bundle carries the device private key.
-#[cfg(target_os = "linux")]
-async fn assemble_wg_bundle_generated(
-    pool: &PgPool,
-    credential_id: &str,
-    bearer: &str,
-) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
-    let bundle = crate::wireguard::pairing::assemble_bundle_generated(pool, credential_id, bearer)
-        .await
-        .map_err(|e| crate::Error::Other(format!("assemble_bundle_generated: {e}")))?;
-    if let Err(e) = crate::wireguard::signal::notify_reconcile(pool).await {
-        tracing::warn!(error = %e, "wg reconcile notify failed (poll backstop will catch up)");
-    }
-    Ok(Some(bundle))
-}
-
-#[cfg(not(target_os = "linux"))]
-async fn assemble_wg_bundle_generated(
-    _pool: &PgPool,
-    _credential_id: &str,
-    _bearer: &str,
-) -> Result<Option<crate::wireguard::bundle::PairingBundle>, crate::Error> {
-    tracing::debug!("WG bundle assembly skipped (non-Linux host)");
-    Ok(None)
-}
-
-/// Encode a finished provision as the QR payload the new device scans:
-/// `virtues-bundle:<base64(JSON)>`, where the JSON is an envelope
-/// `{ "bundle": <PairingBundle>, "action_ids": {…} }`. Carrying `action_ids`
-/// here means the device is fully configured from one scan — it needn't fetch
-/// the webhook map over its not-yet-established tunnel. Returns `None` if the
-/// envelope can't be serialized (never expected). The QR carries the bearer +
-/// device private key — see the on-screen-secret caveats on the provision flow.
-fn provision_qr_payload(
-    bundle: &crate::wireguard::bundle::PairingBundle,
-    action_ids: &std::collections::HashMap<String, String>,
-) -> Option<String> {
-    use base64::Engine as _;
-    let envelope = json!({ "bundle": bundle, "action_ids": action_ids });
-    let json = serde_json::to_vec(&envelope).ok()?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(json);
-    Some(format!("virtues-bundle:{b64}"))
 }
 
 /// Insert the `app_device` row for a freshly-paired/provisioned device. Shared
@@ -1359,7 +1224,6 @@ fn build_bearer_pack(
     kind: &str,
     label: &str,
     device_info: &Option<Value>,
-    wg_public_key: Option<&str>,
 ) -> Result<BearerPack, BearerPackError> {
     let bearer = random_32_bearer();
     let credential_id = crate::ids::generate_id(
@@ -1386,11 +1250,6 @@ fn build_bearer_pack(
             for (k, v) in map {
                 meta.insert(k.clone(), v.clone());
             }
-        }
-    }
-    if let Some(pubkey) = wg_public_key {
-        if let Value::Object(meta) = &mut metadata {
-            meta.insert("wg_public_key".to_string(), Value::String(pubkey.to_string()));
         }
     }
     Ok(BearerPack {
@@ -1425,28 +1284,6 @@ fn render_qr_svg(data: &str) -> String {
     }
 }
 
-/// The box's SPKI fingerprint (`sha256-<b64nopad>` of its WG server public key),
-/// for out-of-band identity verification at pairing. `None` on a host with no WG
-/// engine (macOS dev) — such a box returns no tunnel bundle either, so there's
-/// nothing to verify.
-#[cfg(target_os = "linux")]
-async fn box_spki_fpr(pool: &PgPool) -> Option<String> {
-    use base64::Engine as _; // brings `.decode()` into scope (Linux-only path)
-    let kp = crate::wireguard::reconcile::ensure_server_keypair(pool)
-        .await
-        .ok()?;
-    let raw = base64::engine::general_purpose::STANDARD
-        .decode(kp.public_key.trim())
-        .ok()?;
-    let arr: [u8; 32] = raw.try_into().ok()?;
-    Some(virtues_protocol::spki_fingerprint(&arr).to_string())
-}
-
-#[cfg(not(target_os = "linux"))]
-async fn box_spki_fpr(_pool: &PgPool) -> Option<String> {
-    None
-}
-
 fn format_pair_url(token: &str, fpr: Option<&str>) -> String {
     // URL fragment (not query): fragments never leave the browser, so the
     // token doesn't end up in proxy logs or referer headers.
@@ -1470,7 +1307,7 @@ fn format_pair_url(token: &str, fpr: Option<&str>) -> String {
             format!(
                 "http://{}:{}",
                 crate::cli::link::forward_host(),
-                crate::wireguard::INTERNAL_PORT
+                virtues_protocol::INTERNAL_PORT
             )
         }
         Err(_) => {

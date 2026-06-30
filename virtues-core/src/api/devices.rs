@@ -247,16 +247,6 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // WG eviction is the daemon's job (single writer of kernel state): the
-    // device row is now revoked, so the daemon's next reconcile rebuilds wg0
-    // from the active peers only (REPLACE_PEERS) and the peer drops out. Nudge
-    // it to reconcile NOW rather than at the next backstop poll. Best-effort,
-    // after commit so the DB is authoritative.
-    if wg_pubkey.is_some() {
-        if let Err(e) = crate::wireguard::signal::notify_reconcile(&pool).await {
-            tracing::warn!(error = %e, "wg reconcile notify on revoke failed (poll backstop will catch up)");
-        }
-    }
 
     // Event log.
     let _ = sqlx::query(

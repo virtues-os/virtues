@@ -17,17 +17,6 @@
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket};
 
-/// The box's WireGuard listen port — the inbound port that must be reachable.
-/// Reads `VIRTUES_WG_LISTEN_PORT` (mirroring `virtues_wg::manager::wg_listen_port`),
-/// else the WireGuard default. Re-read here rather than importing the WG crate
-/// so this module stays free of the (Linux-only) WG crate and runs on any host.
-fn wg_port() -> u16 {
-    std::env::var("VIRTUES_WG_LISTEN_PORT")
-        .ok()
-        .and_then(|s| s.parse::<u16>().ok())
-        .filter(|&p| p != 0)
-        .unwrap_or(51820)
-}
 
 /// How the box sits on the network, most → least directly reachable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +82,7 @@ pub struct NetStatus {
 /// Cheap by design — two UDP `connect()`s (kernel route lookups, no packets
 /// on the wire) plus one `getifaddrs` syscall. It is called per-poll from
 /// `/api/setup/state`, so keep it allocation-light and never add network I/O
-/// here; the active inbound echo lives in [`verify_inbound`], doctor-only.
+/// here. (Remote access is via the relay; there is no inbound echo to run.)
 pub fn compute_net_status() -> NetStatus {
     let ipv6_global = probe_source("[2606:4700:4700::1111]:53", "[::]:0").and_then(|ip| match ip {
         IpAddr::V6(v) if is_global_v6(v) => Some(v),
@@ -114,7 +103,7 @@ pub fn compute_net_status() -> NetStatus {
         NetClass::Unknown
     };
 
-    let (headline, guidance) = verdict_strings(class, ipv6_global, wg_port());
+    let (headline, guidance) = verdict_strings(class, ipv6_global);
 
     NetStatus {
         class,
@@ -132,109 +121,31 @@ pub fn compute_net_status() -> NetStatus {
 /// network and never instructs, never blames, never says "wait". The
 /// **guidance carries the instructions** and only renders in `virtues
 /// doctor`, where the user has asked for them.
-fn verdict_strings(class: NetClass, ipv6: Option<Ipv6Addr>, port: u16) -> (String, String) {
+fn verdict_strings(class: NetClass, ipv6: Option<Ipv6Addr>) -> (String, String) {
+    // Remote access is via the Virtues relay (the box dials out on 443), so
+    // reachability no longer depends on inbound ports — this is now an
+    // informational classification of the box's own connectivity.
     match class {
         NetClass::Ipv6Direct => {
             let addr = ipv6.expect("ipv6 is Some for Ipv6Direct");
             (
-                format!("Global IPv6 detected ({addr}) — reachable directly from anywhere."),
-                format!(
-                    "Your server has a public IPv6 address, which is the ideal path. \
-                     It tries to open inbound udp/{port} automatically; if your router \
-                     is default-deny you may need to allow it. No third party, no overlay."
-                ),
+                format!("Global IPv6 detected ({addr})."),
+                "Remote access works from anywhere via the relay regardless.".to_string(),
             )
         }
         NetClass::Ipv4Public => (
-            "Global IPv4 detected — reachable directly over IPv4.".to_string(),
-            format!(
-                "Forward inbound udp/{port} to your server on your router. \
-                 (IPv6 would be simpler if your ISP offers it.)"
-            ),
+            "Global IPv4 detected.".to_string(),
+            "Remote access works from anywhere via the relay.".to_string(),
         ),
         NetClass::NatNoIpv6 => (
-            "Behind NAT, no global IPv6 — local + LAN access work. \
-             Remote access depends on whether you control the router."
+            "Behind NAT — local + LAN access work; remote access is via the relay.".to_string(),
+            "The box dials out to the Virtues relay, so it's reachable from anywhere with no \
+             port-forwarding."
                 .to_string(),
-            format!(
-                "If you control the router, forward udp/{port} to your server — that's all it \
-                 takes. If you don't control the network, remote access needs a tunnel you run \
-                 yourself (Tailscale/Headscale/your own VPS). Virtues never installs or \
-                 requires one. Run `virtues doctor` for a network diagnosis."
-            ),
         ),
         NetClass::Unknown => (
             "No internet connection detected.".to_string(),
-            "Your server can't reach the internet. Check its network connection.".to_string(),
-        ),
-    }
-}
-
-/// Outcome of the external inbound-reachability echo.
-pub enum InboundResult {
-    /// virtues-api reached us — inbound is confirmed open on the tested path.
-    Reachable,
-    /// Could not confirm. NOT a definitive "blocked": a timeout is ambiguous
-    /// (the box's firewall, OR api having no IPv6 yet, OR a transient drop), so
-    /// we never claim "blocked" — only "couldn't confirm" + a short reason.
-    Inconclusive(String),
-}
-
-/// Ask virtues-api to fire a UDP nonce back at us over IPv6 and see if it
-/// arrives — the one honest inbound test (a box can't test its own firewall
-/// from inside). Returns [`InboundResult::Reachable`] only on a positive
-/// confirmation; everything else is `Inconclusive` (we never assert "blocked").
-///
-/// Forces the probe request out over the box's global IPv6 (`local_address`) so
-/// api observes our v6 source and fires at v6 — testing the doctrine's primary
-/// path. Requires api to have an AAAA; until then this is always inconclusive,
-/// which is honest (no false negatives).
-pub async fn verify_inbound(global_v6: Ipv6Addr, api_base: &str) -> InboundResult {
-    use std::time::Duration;
-
-    let sock = match tokio::net::UdpSocket::bind("[::]:0").await {
-        Ok(s) => s,
-        Err(e) => return InboundResult::Inconclusive(format!("could not bind probe socket: {e}")),
-    };
-    let port = match sock.local_addr() {
-        Ok(a) => a.port(),
-        Err(e) => return InboundResult::Inconclusive(format!("local_addr: {e}")),
-    };
-
-    // A short random nonce so we can match the echoed datagram to this request.
-    let nonce: String = {
-        use rand::Rng;
-        let mut rng = rand::rng();
-        (0..16).map(|_| format!("{:x}", rng.random_range(0u8..16))).collect()
-    };
-
-    // Pin egress to the global v6 so api observes our v6 (not a happy-eyeballs v4).
-    let client = match reqwest::Client::builder()
-        .local_address(IpAddr::V6(global_v6))
-        .timeout(Duration::from_secs(4))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return InboundResult::Inconclusive(format!("http client: {e}")),
-    };
-    let url = format!("{}/v1/net/probe", api_base.trim_end_matches('/'));
-    let body = serde_json::json!({ "port": port, "nonce": nonce });
-    if let Err(e) = client.post(&url).json(&body).send().await {
-        return InboundResult::Inconclusive(format!(
-            "could not reach virtues-api over IPv6 ({e}) — api may not have an IPv6 address yet"
-        ));
-    }
-
-    // Wait up to 3s for the echoed nonce.
-    let mut buf = [0u8; 256];
-    match tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf)).await {
-        Ok(Ok((n, _))) if buf[..n] == *nonce.as_bytes() => InboundResult::Reachable,
-        Ok(Ok(_)) => InboundResult::Inconclusive("received an unexpected datagram".into()),
-        Ok(Err(e)) => InboundResult::Inconclusive(format!("recv error: {e}")),
-        Err(_) => InboundResult::Inconclusive(
-            "no packet arrived within 3s — inbound may be blocked (open udp/51820), \
-             or api has no IPv6 yet"
-                .into(),
+            "Your box can't reach the internet. Check its network connection.".to_string(),
         ),
     }
 }
@@ -487,7 +398,7 @@ mod tests {
             (NetClass::Ipv4Public, None),
             (NetClass::Unknown, None),
         ] {
-            let (headline, _) = verdict_strings(class, ipv6, 51820);
+            let (headline, _) = verdict_strings(class, ipv6);
             for instruction in ["forward", "router", "open udp", "allow", "run ", "check "] {
                 assert!(
                     !headline.to_lowercase().contains(instruction),
@@ -499,17 +410,15 @@ mod tests {
 
     #[test]
     fn headline_copy_exact() {
-        let (h, _) = verdict_strings(NetClass::NatNoIpv6, None, 51820);
+        let (h, _) = verdict_strings(NetClass::NatNoIpv6, None);
         assert_eq!(
             h,
-            "Behind NAT, no global IPv6 — local + LAN access work. \
-             Remote access depends on whether you control the router."
+            "Behind NAT — local + LAN access work; remote access is via the relay."
         );
-        let (h, _) = verdict_strings(NetClass::Unknown, None, 51820);
+        let (h, _) = verdict_strings(NetClass::Unknown, None);
         assert_eq!(h, "No internet connection detected.");
-        let (h, _) =
-            verdict_strings(NetClass::Ipv6Direct, Some("2001:db8::1".parse().unwrap()), 51820);
-        assert_eq!(h, "Global IPv6 detected (2001:db8::1) — reachable directly from anywhere.");
+        let (h, _) = verdict_strings(NetClass::Ipv6Direct, Some("2001:db8::1".parse().unwrap()));
+        assert_eq!(h, "Global IPv6 detected (2001:db8::1).");
     }
 
     fn iface(name: &str, addrs: &[&str]) -> (String, Vec<IpAddr>) {

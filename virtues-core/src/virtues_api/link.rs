@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::wireguard::box_secrets;
+use crate::box_secrets;
 
 /// box_secrets key holding the in-flight link's secret device_code + metadata.
 const INFLIGHT_KEY: &str = "billing_link_inflight";

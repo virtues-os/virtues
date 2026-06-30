@@ -25,6 +25,7 @@ pub mod maintenance;
 pub mod mcp;
 pub mod middleware;
 pub mod acme;
+pub mod box_secrets;
 pub mod net_check;
 pub mod relay;
 pub mod scheduler;
@@ -37,7 +38,6 @@ pub mod timezone;
 pub mod virtues_api;
 pub mod tools;
 pub mod types;
-pub mod wireguard;
 
 // Re-export main types
 pub use client::{Virtues, VirtuesBuilder};

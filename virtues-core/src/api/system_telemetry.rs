@@ -164,7 +164,6 @@ pub struct InferenceModel {
 #[derive(Debug, Clone, Serialize)]
 pub struct DevicesInfo {
     pub paired_wg: i64,
-    pub wg_endpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -235,12 +234,8 @@ pub async fn telemetry_handler(
     let devices = match crate::api::box_status::compute_status(state.db.pool()).await {
         Ok(s) => DevicesInfo {
             paired_wg: s.devices.paired_wg,
-            wg_endpoint: s.identity.wg_endpoint,
         },
-        Err(_) => DevicesInfo {
-            paired_wg: 0,
-            wg_endpoint: None,
-        },
+        Err(_) => DevicesInfo { paired_wg: 0 },
     };
 
     // Sidecar liveness — TCP probe the embedding/rerank llama-servers.
