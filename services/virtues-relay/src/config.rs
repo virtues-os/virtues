@@ -10,6 +10,11 @@ pub const PONG_DEADLINE: Duration = Duration::from_secs(35);
 /// How long an inbound client waits for the box to dial its work connection
 /// before we give up and close the client.
 pub const WORK_DEADLINE: Duration = Duration::from_secs(10);
+/// Idle timeout for a spliced client↔box connection. The timer resets on any
+/// byte movement, so a long-lived stream carrying periodic heartbeats lives
+/// indefinitely — but a half-open connection (peer vanished with no FIN, e.g. a
+/// NAT/middlebox blackhole) is reaped instead of pinning a task + two FDs forever.
+pub const SPLICE_IDLE: Duration = Duration::from_secs(600);
 
 pub struct Config {
     /// Browser/client-facing listener (TLS passthrough — peek SNI, splice
@@ -17,20 +22,67 @@ pub struct Config {
     pub client_addr: String,
     /// Box-facing listener: boxes dial out here (control + work connections).
     pub control_addr: String,
-    /// Shared bearer a box must present to `Register` (v1 auth; blinded tokens
-    /// in P3). Required in production; defaults to a dev value locally.
+    /// Per-SNI HMAC secret (`VIRTUES_RELAY_SECRET`). When set, a box must present
+    /// `derive_token(secret, sni)` to `Register`, so a box can register only its
+    /// own SNI — closing the cross-tenant hijack a flat shared bearer allows.
+    /// **Strongly recommended in production.** When unset, the relay falls back
+    /// to the shared [`Self::token`] bearer (dev/single-tenant).
+    pub secret: Option<String>,
+    /// Shared bearer fallback used only when [`Self::secret`] is unset (v1 dev
+    /// auth; blinded tokens in P3).
     pub token: String,
 }
 
 impl Config {
     pub fn from_env() -> Self {
+        let secret = std::env::var("VIRTUES_RELAY_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let token = std::env::var("VIRTUES_RELAY_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        // Fail closed. With neither a per-SNI secret nor an explicit shared
+        // bearer, the relay would otherwise authenticate every box against a
+        // source-known default token — letting anyone register any SNI and
+        // intercept that box's inbound TLS (the exact cross-tenant hijack the
+        // HMAC path exists to close). Refuse to boot in that state unless the
+        // operator explicitly opts into the insecure dev fallback.
+        let token = match (&secret, token) {
+            // Per-SNI HMAC governs auth; the shared bearer is unused.
+            (Some(_), _) => String::new(),
+            (None, Some(t)) => {
+                tracing::warn!(
+                    "VIRTUES_RELAY_SECRET unset — using a flat shared bearer; set a secret \
+                     for per-SNI HMAC auth in production"
+                );
+                t
+            }
+            (None, None) => {
+                if std::env::var("VIRTUES_RELAY_ALLOW_INSECURE").is_ok() {
+                    tracing::warn!(
+                        "INSECURE: no VIRTUES_RELAY_SECRET/VIRTUES_RELAY_TOKEN set — accepting the \
+                         well-known 'dev-token' for ANY SNI. Dev only."
+                    );
+                    "dev-token".to_string()
+                } else {
+                    eprintln!(
+                        "FATAL: relay has no auth configured. Set VIRTUES_RELAY_SECRET \
+                         (recommended) or VIRTUES_RELAY_TOKEN, or VIRTUES_RELAY_ALLOW_INSECURE=1 \
+                         for local dev. Refusing to start with a default token."
+                    );
+                    std::process::exit(1);
+                }
+            }
+        };
+
         Self {
             client_addr: std::env::var("VIRTUES_RELAY_CLIENT_ADDR")
                 .unwrap_or_else(|_| "[::]:8443".to_string()),
             control_addr: std::env::var("VIRTUES_RELAY_CONTROL_ADDR")
                 .unwrap_or_else(|_| "[::]:9443".to_string()),
-            token: std::env::var("VIRTUES_RELAY_TOKEN")
-                .unwrap_or_else(|_| "dev-token".to_string()),
+            secret,
+            token,
         }
     }
 }

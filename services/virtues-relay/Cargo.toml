@@ -37,6 +37,9 @@ virtues-protocol = { path = "../../crates/virtues-protocol" }
 serde = "1.0"
 serde_json = "1.0"
 
+# Constant-time token comparison
+subtle = "2.5"
+
 # Errors / logging / env
 anyhow = "1.0"
 thiserror = "1.0"

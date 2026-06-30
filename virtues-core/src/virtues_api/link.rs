@@ -144,6 +144,12 @@ pub async fn poll(
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("link ready but no api_key"))?;
             super::renew::store_api_key(db, api_key).await?;
+            // Provision relay reachability (best-effort): atlas mints this box's
+            // per-SNI token; the box stores it for the relay subsystem. A failure
+            // (e.g. relay disabled → 503) just leaves the box reachable on LAN.
+            if let Err(e) = super::relay::fetch_and_store(db, http, atlas_url, api_key).await {
+                tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)");
+            }
             clear_inflight(db).await;
             Ok(LinkStatus::Ready)
         }

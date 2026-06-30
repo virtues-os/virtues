@@ -109,7 +109,9 @@ pub async fn box_status_handler(
 pub struct ReadinessGates {
     /// DB reachable + migrations applied. True if we can answer at all.
     pub infra: bool,
-    /// WG server keypair minted (== `BoxStatus::ready`).
+    /// Box has a serving TLS identity (== `BoxStatus::ready`). Always satisfiable
+    /// in the relay model via the self-signed bootstrap cert; `identity.tls_cert`
+    /// carries the finer "ACME cert issued" signal.
     pub identity: bool,
     /// Linked to a Virtues subscription: a device `api_key` is present. This is
     /// "claimed" — ownership is the billing relationship, and the same key makes
