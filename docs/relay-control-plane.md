@@ -168,6 +168,51 @@ key gets the **same SNI** back; atlas re-mints the same token; DNS + clients kee
 working. A lost identity → email-token re-point issues a new boxhash (clients
 re-pair). Consistent with `project_box_theft_model`.
 
+## Revocation — bounded, stateless-preserving (resolves open-question #4)
+
+**Problem.** The relay is stateless (derives the expected token from one secret —
+no per-box table; that's the RAM-only/blind moat). So it cannot "revoke" a single
+previously-valid token without *some* state or expiry. Instant revocation would
+require pushing a denylist to the relay → per-box state → erodes the moat.
+**Decision: bounded revocation via time-bucketed tokens** (no relay state).
+
+**Mechanism.**
+1. **Bucketed token:** `derive_token(secret, sni, bucket)` =
+   `HMAC(secret, "<sni>:<bucket>")`, `bucket = floor(unix_secs / 86400)` (24h).
+2. **Relay verify (stateless):** on `Register`, accept if the presented token
+   matches the **current OR previous** bucket (constant-time). The ±1 window
+   absorbs clock skew and day-boundary races. No stored tokens.
+3. **Force periodic re-registration:** the relay drops a control connection once
+   it exceeds a **max age** (~1 bucket, jittered to avoid a reconnect herd). The
+   token is only checked at `Register`, so without this a long-lived connection
+   would never be re-verified and revocation would never bite. Max-age is a
+   per-connection local timer — still no shared state.
+4. **Box refresh:** the box re-fetches its token from atlas on an interval
+   `< bucket` (e.g. 12h) and presents the fresh token on each (re)connect. This
+   means the relay-client must read the *current* token at connect time, not hold
+   a single one for the process life — a small `token_source` seam on
+   `RelayClientConfig` (tests keep the static `token`).
+5. **atlas gate:** atlas mints the current-bucket token **only for an active,
+   non-revoked account**. Revocation = atlas stops minting → the box's token
+   expires within ≤2 buckets (≤48h) and the next forced re-registration is
+   rejected. Subscription-lapse already flows through `resolve_active_customer`;
+   owner-initiated "revoke" is the same gate plus a `revoked` flag.
+
+**Latency:** ≤2 buckets (≤48h at 24h). Tunable down (smaller bucket → more
+re-fetch traffic). Acceptable for v1 (lapse/cancel isn't second-critical).
+
+**Stolen-box / replace-and-keep-account** needs a per-box **epoch** folded into
+the SNI: `sni = H(account_id + ":" + epoch)`. Owner provisions a replacement →
+atlas bumps the epoch → new SNI (new DNS name + cert, clients re-pair); the old
+box keeps the old SNI, atlas stops minting for it, relay rejects within the
+window. Matches `project_box_theft_model` (rotate creds, re-pair).
+
+**Build order (coordinated — all-or-nothing, can't half-ship the bucketing):**
+protocol `derive_token(.., bucket)` → relay accept-current-or-previous +
+max-age eviction → atlas mint current bucket → box periodic refresh +
+present-fresh-on-reconnect. Each with a test (bucket-boundary, ±1 acceptance,
+max-age eviction, refresh-rotates-token).
+
 ## Open questions
 
 1. Exact `boxhash` derivation (which key, hash, truncation length vs. collision/
@@ -175,9 +220,8 @@ re-pair). Consistent with `project_box_theft_model`.
 2. Whether relay-config rides the existing claim/link response or a small
    dedicated authenticated call (leaning: extend claim/link to avoid new surface).
 3. Refresh trigger UX — automatic on relay-enable toggle vs. `virtues` CLI verb.
-4. Per-box revocation under HMAC (revoking the api_key/subscription must also cut
-   relay access — relay has no per-box state, so revocation likely flows through
-   rotating the box's token or an atlas-side allowlist epoch; needs design).
+4. ~~Per-box revocation under HMAC~~ — **RESOLVED** above (bounded, time-bucketed
+   tokens + max-age re-registration; epoch-in-SNI for replace-and-keep-account).
 5. LAN-direct naming (`192-168-1-50.<boxhash>.virtues.ch`) interplay with the wildcard
    cert and rebind filters (see `networking-relay-tee.md` LAN gotcha).
 ```
