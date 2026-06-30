@@ -55,7 +55,15 @@ async fn relay_config(
     }
 
     let sni = format!("{}.{}", boxhash(&account_id), state.relay.base_domain);
-    let token = virtues_protocol::relay::derive_token(&state.relay.secret, &sni);
+    // Mint the *current bucket's* token only. The box re-fetches each bucket; if
+    // this account is later revoked/lapses, resolve_active_customer above fails
+    // and we stop minting, so the box's token expires within ~2 buckets (the
+    // relay accepts only current/previous). That's revocation without relay state.
+    let token = virtues_protocol::relay::derive_token(
+        &state.relay.secret,
+        &sni,
+        virtues_protocol::relay::current_bucket(),
+    );
 
     (
         StatusCode::OK,
@@ -93,11 +101,13 @@ mod tests {
 
     #[test]
     fn minted_token_matches_relay_verification() {
-        // The token atlas mints must equal what the relay re-derives.
+        // The token atlas mints (current bucket) must equal what the relay
+        // re-derives for the same bucket.
         let secret = "relay-master-secret";
         let sni = format!("{}.virtues.ch", boxhash("acct_xyz"));
-        let minted = virtues_protocol::relay::derive_token(secret, &sni);
-        let verified = virtues_protocol::relay::derive_token(secret, &sni);
+        let bucket = virtues_protocol::relay::current_bucket();
+        let minted = virtues_protocol::relay::derive_token(secret, &sni, bucket);
+        let verified = virtues_protocol::relay::derive_token(secret, &sni, bucket);
         assert_eq!(minted, verified);
     }
 }

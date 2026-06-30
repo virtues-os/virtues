@@ -37,6 +37,7 @@ fn cfg(addr: &str, sni: &str, token: &str, read_timeout: Duration) -> RelayClien
         local_addr: "127.0.0.1:1".into(), // unused; no OpenConn is sent
         read_timeout: Some(read_timeout),
         registered: None,
+        token_cell: None,
     }
 }
 
@@ -68,14 +69,15 @@ async fn hmac_secret_gates_registration_by_sni() {
 
     // 2. A token minted for a DIFFERENT SNI must not register `sni` (the hijack
     //    case): a box holding its own valid token can't claim another's name.
-    let foreign = derive_token(secret, "victim.boxes.virtues.com");
+    let bucket = virtues_protocol::relay::current_bucket();
+    let foreign = derive_token(secret, "victim.boxes.virtues.com", bucket);
     let r = serve_once(&cfg(&addr, sni, &foreign, short)).await;
     assert!(r.is_err(), "relay accepted a token minted for a different SNI");
     assert!(state.registry.lookup(sni).is_none());
 
     // 3. The correct per-SNI token registers. serve_once blocks after Register,
     //    so drive it detached (long read timeout so the entry persists) and poll.
-    let good = derive_token(secret, sni);
+    let good = derive_token(secret, sni, bucket);
     let good_cfg = cfg(&addr, sni, &good, Duration::from_secs(30));
     tokio::spawn(async move {
         let _ = serve_once(&good_cfg).await;
@@ -83,6 +85,33 @@ async fn hmac_secret_gates_registration_by_sni() {
     let registered =
         wait_until(|| state.registry.lookup(sni).is_some(), Duration::from_secs(5)).await;
     assert!(registered, "relay rejected the correct per-SNI token");
+}
+
+#[tokio::test]
+async fn token_expires_outside_current_or_previous_bucket() {
+    // Revocation mechanism: the relay accepts the current and previous bucket
+    // (±1, for clock skew / day boundary) but rejects an older token. atlas stops
+    // minting for a revoked box, so its token falls out of this window.
+    let secret = "relay-secret";
+    let sni = "bucketed.boxes.virtues.com";
+    let (state, addr) = start_relay(Some(secret.into())).await;
+    let now = virtues_protocol::relay::current_bucket();
+
+    // Two buckets old → rejected (expired).
+    let stale = derive_token(secret, sni, now - 2);
+    let r = serve_once(&cfg(&addr, sni, &stale, Duration::from_millis(200))).await;
+    assert!(r.is_err(), "relay accepted a two-bucket-old token");
+    assert!(state.registry.lookup(sni).is_none());
+
+    // Previous bucket → still accepted (the ±1 grace window).
+    let prev = derive_token(secret, sni, now - 1);
+    let good_cfg = cfg(&addr, sni, &prev, Duration::from_secs(30));
+    tokio::spawn(async move {
+        let _ = serve_once(&good_cfg).await;
+    });
+    let registered =
+        wait_until(|| state.registry.lookup(sni).is_some(), Duration::from_secs(5)).await;
+    assert!(registered, "relay rejected a previous-bucket token");
 }
 
 #[tokio::test]

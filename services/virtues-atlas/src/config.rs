@@ -28,7 +28,7 @@ pub struct Config {
     pub public_url: String,
 
     /// Relay master secret, shared with `virtues-relay`. atlas mints each box's
-    /// per-SNI token as `derive_token(relay_secret, sni)`; the relay verifies
+    /// per-SNI token as `derive_token(relay_secret, sni, bucket)`; the relay verifies
     /// with the same secret. Empty → relay-config minting disabled (503).
     /// Env: `VIRTUES_RELAY_SECRET`.
     pub relay_secret: String,

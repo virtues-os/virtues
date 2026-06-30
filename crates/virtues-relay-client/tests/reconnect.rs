@@ -33,6 +33,7 @@ fn cfg(addr: String) -> RelayClientConfig {
         local_addr: "127.0.0.1:1".into(), // unused; no OpenConn is ever sent
         read_timeout: Some(Duration::from_millis(150)),
         registered: None,
+        token_cell: None,
     }
 }
 

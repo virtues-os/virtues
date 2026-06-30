@@ -1,7 +1,7 @@
 //! Relay reachability config, provisioned by atlas (Option A control plane).
 //!
 //! The box does **not** hold the relay master secret. At link, atlas mints this
-//! box's per-SNI registration token (`derive_token(RELAY_SECRET, sni)`) and
+//! box's per-SNI registration token (`derive_token(RELAY_SECRET, sni, bucket)`) and
 //! returns `{relay_addr, sni, token}`; the box persists it in `box_secrets` and
 //! the relay subsystem ([`crate::relay`]) reads it at startup. The token is
 //! sealed (it's a bearer); `relay_addr`/`sni` are public, stored in metadata.

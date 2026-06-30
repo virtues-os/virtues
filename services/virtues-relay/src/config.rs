@@ -20,6 +20,12 @@ pub const SPLICE_IDLE: Duration = Duration::from_secs(600);
 /// at a time (or never) to pin a task + socket. The browser side is already
 /// bounded by the SNI peek timeout; this is its box-side counterpart.
 pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Max age of a control connection before the relay drops it, forcing the box to
+/// re-register. The token is only checked at `Register`, so this is what makes
+/// revocation bite within a bounded time: a revoked box, on its forced reconnect,
+/// presents a now-stale (un-re-minted) token and is rejected. Kept below one
+/// token bucket so re-verification happens at least once per bucket.
+pub const MAX_CONN_AGE: Duration = Duration::from_secs(20 * 3600);
 
 pub struct Config {
     /// Browser/client-facing listener (TLS passthrough — peek SNI, splice
@@ -28,7 +34,7 @@ pub struct Config {
     /// Box-facing listener: boxes dial out here (control + work connections).
     pub control_addr: String,
     /// Per-SNI HMAC secret (`VIRTUES_RELAY_SECRET`). When set, a box must present
-    /// `derive_token(secret, sni)` to `Register`, so a box can register only its
+    /// `derive_token(secret, sni, bucket)` to `Register`, so a box can register only its
     /// own SNI — closing the cross-tenant hijack a flat shared bearer allows.
     /// **Strongly recommended in production.** When unset, the relay falls back
     /// to the shared [`Self::token`] bearer (dev/single-tenant).
