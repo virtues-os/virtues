@@ -15,6 +15,11 @@ pub const WORK_DEADLINE: Duration = Duration::from_secs(10);
 /// indefinitely — but a half-open connection (peer vanished with no FIN, e.g. a
 /// NAT/middlebox blackhole) is reaped instead of pinning a task + two FDs forever.
 pub const SPLICE_IDLE: Duration = Duration::from_secs(600);
+/// Max time a freshly-accepted box connection has to send its hello line. Closes
+/// a slowloris on the control/work port: connect, then send the hello one byte
+/// at a time (or never) to pin a task + socket. The browser side is already
+/// bounded by the SNI peek timeout; this is its box-side counterpart.
+pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Config {
     /// Browser/client-facing listener (TLS passthrough — peek SNI, splice
