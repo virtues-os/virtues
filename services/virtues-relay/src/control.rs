@@ -10,15 +10,22 @@ use tokio::time::interval;
 use uuid::Uuid;
 use virtues_protocol::relay::{BoxHello, BoxMsg, RelayMsg};
 
-use crate::config::{KEEPALIVE, PONG_DEADLINE};
+use crate::config::{HELLO_TIMEOUT, KEEPALIVE, PONG_DEADLINE};
 use crate::state::AppState;
 use crate::wire::{read_msg, write_msg};
 
 /// Dispatch a freshly-accepted box connection by its hello line.
 pub async fn handle_box_conn(mut stream: TcpStream, state: AppState) -> Result<()> {
     // Read the hello byte-by-byte so a *work* connection's post-hello bytes stay
-    // intact for splicing.
-    let hello: BoxHello = read_msg(&mut stream).await?;
+    // intact for splicing — bounded by HELLO_TIMEOUT so a connect-then-stall peer
+    // can't pin a task + socket waiting for a hello that never completes.
+    let hello: BoxHello = match tokio::time::timeout(HELLO_TIMEOUT, read_msg(&mut stream)).await {
+        Ok(r) => r?,
+        Err(_) => {
+            tracing::debug!("box hello timed out before completing; dropping");
+            return Ok(());
+        }
+    };
     match hello {
         BoxHello::Register { sni, token } => handle_control(stream, sni, token, state).await,
         BoxHello::Work { conn_id } => {
