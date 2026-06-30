@@ -142,9 +142,6 @@ async fn main() -> Result<()> {
         // OAuth proxy (google/notion/strava/plaid) — folded in from the Node
         // oauth-proxy (WS-4). Mounted at root: /{provider}/start|callback|...
         .merge(routes::oauth::router())
-        // Inbound-reachability echo: fires a UDP nonce back at the caller's own
-        // observed address so a box can confirm it's reachable from outside.
-        .merge(routes::net_probe::router())
         // WS-6b bearer-auth smoke endpoints (whoami + charge-test)
         .merge(routes::bearer_test::router())
         // Bearer-auth + entitlement charge: Places, Exa, Unsplash, AI.

@@ -80,22 +80,6 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     let bin_dst = cfg.binary_path();
     install_executable(&bin_src, &bin_dst)?;
 
-    // Install virtues-wireguard alongside it. Older tarballs may not ship the
-    // WG binary yet (pre-v0.2.1 releases) — log a warning rather than failing
-    // the install so the box can still come up; the installer's systemd step
-    // will then skip the WG unit and surface a clear message.
-    let wg_src = tmpdir.path().join("virtues-wireguard");
-    if wg_src.is_file() {
-        let wg_dst = cfg.wg_binary_path();
-        install_executable(&wg_src, &wg_dst)?;
-        ui::ok(&format!("Installed virtues-wireguard → {}", wg_dst.display()));
-    } else {
-        ui::warn(
-            "virtues-wireguard not in tarball (pre-v0.2.1 release) — WG tunnel \
-             reconciler will not be installed. Upgrade once a newer release is available.",
-        );
-    }
-
     // llama-server — the inference sidecar engine (embed + rerank; see
     // install::install_inference). Every tarball ships the CPU build; on
     // Jetson we then try to swap in the CUDA (sm_87) build, published as a

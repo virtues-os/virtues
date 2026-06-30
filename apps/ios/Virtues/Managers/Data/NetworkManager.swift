@@ -202,18 +202,13 @@ class NetworkManager: ObservableObject {
             timezone: TimeZone.current.identifier
         )
 
-        // Generate a fresh WG keypair and send the public half. The private key
-        // is stored in the Keychain by the tunnel manager; the box uses the
-        // public key to provision a peer and returns a `bundle` we persist
-        // below for tunnel bring-up.
-        let wgPublicKey = try? VirtuesTunnelManager.shared.generateAndStorePairKeypair()
-
+        // Relay model: no WG keypair. The box is reached over HTTPS at the URL it
+        // returns (`box_url`); there's nothing to provision on-device.
         let body = PairConsumeRequest(
             token: pairToken,
             kind: "mobile_app",
             label: deviceName,
-            device_info: deviceInfo,
-            wg_public_key: wgPublicKey
+            device_info: deviceInfo
         )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
@@ -235,24 +230,11 @@ class NetworkManager: ObservableObject {
             if let bearer = parsed.bearer, !bearer.isEmpty {
                 try? KeychainStore.shared.saveBearer(bearer)
             }
-            // Persist the raw `bundle` sub-object (if the box returned one) for
-            // tunnel bring-up. We pull it out of the JSON verbatim rather than
-            // re-encoding a decoded struct, so the exact wire shape the Rust FFI
-            // expects is preserved. Boxes that don't provision WG omit it.
-            //
-            // SECURITY: before storing, verify the bundle's WG server key against
-            // the SPKI fingerprint that came over the QR (an out-of-band channel
-            // the LAN MITM can't sit on) and apply TOFU. `verifyAndStoreBundle`
-            // throws on a mismatch, which aborts pairing — exactly what we want
-            // if someone substituted the server identity.
-            if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let bundle = obj["bundle"] as? [String: Any],
-               let bundleData = try? JSONSerialization.data(withJSONObject: bundle) {
-                try VirtuesTunnelManager.shared.verifyAndStoreBundle(
-                    bundleData,
-                    expectedFingerprint: expectedFingerprint
-                )
-            }
+            // Relay model: the box's identity is its browser-trusted TLS cert
+            // (verified by URLSession against the public CA roots on every call),
+            // so there's no WG server key to pin out-of-band. `expectedFingerprint`
+            // is accepted for call-site compatibility but no longer used.
+            _ = expectedFingerprint
             return parsed
         case 401:
             throw NetworkError.badRequest(message: "Pair token is invalid, expired, or already used. Get a fresh one from `virtues link` on the box.")
@@ -278,9 +260,9 @@ class NetworkManager: ObservableObject {
     /// off `last_seen_at > paired_at`). Never throws — if the tunnel isn't up yet
     /// the next scheduled upload will register liveness anyway.
     func confirmPairOnline() async {
-        guard let bundle = VirtuesTunnelManager.shared.boxBundle(),
+        guard let base = DeviceManager.shared.configuration.baseURL,
               let bearer = KeychainStore.shared.loadBearer(),
-              let url = URL(string: "http://\(bundle.internalHost):\(bundle.httpPort)/api/devices/action-ids")
+              let url = URL(string: "\(base.absoluteString)/api/devices/action-ids")
         else { return }
 
         var request = URLRequest(url: url)
@@ -409,10 +391,6 @@ struct PairConsumeRequest: Codable {
     /// the device's name (`UIDevice.current.name`) when nil.
     let label: String?
     let device_info: PairingDeviceInfo
-    /// Reserved for v1.1 — the iOS app will generate a WireGuard keypair
-    /// on-device and send the pubkey here so the box can hand back a
-    /// PairingBundle for tunnel setup.
-    let wg_public_key: String?
 }
 
 /// `POST /api/pair/consume` response — see `virtues-core/src/api/pair.rs`
@@ -427,6 +405,10 @@ struct PairConsumeResponse: Codable {
     /// Backend `function_name → action_id` map the device persists and uses
     /// when posting each stream flush to `POST /webhook/{action_id}`.
     let actionIds: [String: String]
-    // `bundle` (WG provisioning) is deliberately omitted from the iOS-side
-    // type for v1 — the app doesn't yet drive a tunnel. Wire in v1.1.
+    /// The box's canonical browser-reachable URL (`https://<relay-sni>`), when
+    /// configured for relay reach. The caller stores this as the device's
+    /// `apiEndpoint` so all box calls go to the relay URL. `nil` on a LAN-only
+    /// box — the caller falls back to the origin it paired against.
+    /// (`box_url` → `boxUrl` via `.convertFromSnakeCase`.)
+    let boxUrl: String?
 }

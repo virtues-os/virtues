@@ -249,10 +249,10 @@ pub struct ByoTransport {
     pub addr: Option<IpAddr>,
 }
 
-/// The box's own tunnel interface — never a "BYO" finding. Mirrors
-/// `virtues_wg::manager::WG_IFNAME` rather than importing it, same reasoning
-/// as [`wg_port`]: that crate's `manager` is Linux-only and this module (and
-/// its tests) must build on any host. Keep in sync.
+/// `wg0` — excluded from BYO-overlay detection. The relay-model box no longer
+/// brings up a WireGuard interface, but a box upgraded from a WireGuard-era
+/// release may still have a leftover `wg0`; don't misreport that as a user
+/// "bring-your-own" overlay.
 const BUILTIN_WG_IFNAME: &str = "wg0";
 
 /// Detect a user-run overlay on this box. Linux-only signal; `None` elsewhere.
