@@ -10,7 +10,7 @@ use tokio::time::interval;
 use uuid::Uuid;
 use virtues_protocol::relay::{BoxHello, BoxMsg, RelayMsg};
 
-use crate::config::{HELLO_TIMEOUT, KEEPALIVE, PONG_DEADLINE};
+use crate::config::{HELLO_TIMEOUT, KEEPALIVE, MAX_CONN_AGE, PONG_DEADLINE};
 use crate::state::AppState;
 use crate::wire::{read_msg, write_msg};
 
@@ -51,14 +51,24 @@ async fn handle_control(
     token: String,
     state: AppState,
 ) -> Result<()> {
-    // Expected token: per-SNI HMAC when a secret is configured (so a box can
-    // register only its *own* SNI), else the shared bearer fallback. Compared in
-    // constant time to avoid leaking it byte-by-byte via timing.
-    let expected = match &state.config.secret {
-        Some(secret) => virtues_protocol::relay::derive_token(secret, &sni),
-        None => state.config.token.clone(),
+    // Authorize the registration. With a per-SNI secret, accept the token for the
+    // current OR previous bucket — the ±1 window absorbs clock skew and the day
+    // boundary, and accepting only these two buckets is what expires a revoked
+    // box's token (atlas stops re-minting → it falls out of the window). Derived
+    // on the fly from the one secret, so the relay holds no per-box state. Both
+    // candidates are compared in constant time (no short-circuit).
+    let authorized = match &state.config.secret {
+        Some(secret) => {
+            let now = virtues_protocol::relay::current_bucket();
+            let cur = virtues_protocol::relay::derive_token(secret, &sni, now);
+            let prev = virtues_protocol::relay::derive_token(secret, &sni, now.saturating_sub(1));
+            bool::from(
+                token.as_bytes().ct_eq(cur.as_bytes()) | token.as_bytes().ct_eq(prev.as_bytes()),
+            )
+        }
+        None => bool::from(token.as_bytes().ct_eq(state.config.token.as_bytes())),
     };
-    if !bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
+    if !authorized {
         write_msg(&mut stream, &RelayMsg::Rejected { reason: "bad token".into() }).await?;
         tracing::warn!(%sni, "register rejected: bad token");
         return Ok(());
@@ -96,19 +106,25 @@ async fn handle_control(
     });
 
     // Reader: a box must produce traffic (Pong) within PONG_DEADLINE or it's dead.
-    loop {
-        match tokio::time::timeout(PONG_DEADLINE, read_msg::<_, BoxMsg>(&mut rd)).await {
-            Ok(Ok(BoxMsg::Pong)) => continue,
-            Ok(Err(e)) => {
-                tracing::debug!(%sni, error = %e, "control reader ended");
-                break;
-            }
-            Err(_) => {
-                tracing::debug!(%sni, "control liveness timeout; evicting");
-                break;
+    // The whole session is also capped at MAX_CONN_AGE: on expiry we tear down so
+    // the box re-registers, which re-checks its token against the current bucket —
+    // this is what makes token-revocation actually bite on long-lived connections.
+    let _ = tokio::time::timeout(MAX_CONN_AGE, async {
+        loop {
+            match tokio::time::timeout(PONG_DEADLINE, read_msg::<_, BoxMsg>(&mut rd)).await {
+                Ok(Ok(BoxMsg::Pong)) => continue,
+                Ok(Err(e)) => {
+                    tracing::debug!(%sni, error = %e, "control reader ended");
+                    break;
+                }
+                Err(_) => {
+                    tracing::debug!(%sni, "control liveness timeout; evicting");
+                    break;
+                }
             }
         }
-    }
+    })
+    .await;
 
     writer.abort();
     state.registry.unregister_if(&sni, gen);

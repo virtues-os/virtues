@@ -24,13 +24,18 @@
 use anyhow::{Context, Result};
 use sqlx::PgPool;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use virtues_helpers::transport::tls;
 
 /// How often the background task checks whether the ACME cert needs renewing.
 const RENEW_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 3600);
+/// How often the box re-fetches its relay token from atlas. Must be shorter than
+/// the token bucket (24h) so the presented token is always within the relay's
+/// current-or-previous window; a revoked box stops getting fresh tokens here and
+/// falls out of that window within ~2 buckets. See `docs/relay-control-plane.md`.
+const TOKEN_REFRESH_INTERVAL: Duration = Duration::from_secs(12 * 3600);
 /// Initial-issuance retry backoff. Until the first browser-trusted cert lands the
 /// box serves the self-signed bootstrap, which browsers reject — so retry fast
 /// (not at the 12h renewal cadence), backing off to a ceiling on repeated failure.
@@ -71,11 +76,46 @@ pub fn maybe_spawn(db: PgPool, http_port: u16) {
             tracing::debug!("relay not provisioned (no box_secrets/env config, not lazily provisionable) — reachability disabled");
             return;
         };
+        // Live token cell: the refresh task keeps it on the current bucket so each
+        // reconnect presents a fresh token (and a revoked box stops getting one).
+        let token_cell = Arc::new(RwLock::new(token));
+        spawn_token_refresh(db.clone(), token_cell.clone());
+
         let tls_front = std::env::var("VIRTUES_RELAY_TLS_FRONT")
             .unwrap_or_else(|_| "127.0.0.1:8443".to_string());
         let upstream = format!("127.0.0.1:{http_port}");
-        if let Err(e) = run(relay_addr, sni, token, tls_front, upstream).await {
+        if let Err(e) = run(relay_addr, sni, token_cell, tls_front, upstream).await {
             tracing::error!(error = %e, "relay subsystem exited");
+        }
+    });
+}
+
+/// Periodically re-fetch this box's relay token from atlas and update the live
+/// cell. atlas mints only the current bucket for an active, non-revoked account,
+/// so this both rotates the token forward each bucket and is the point at which a
+/// revoked/lapsed box stops receiving valid tokens. Best-effort: a failed refresh
+/// keeps the current token (still valid for up to ~2 buckets).
+fn spawn_token_refresh(db: PgPool, cell: Arc<RwLock<String>>) {
+    tokio::spawn(async move {
+        loop {
+            // Refresh immediately on spawn (a box offline > 1 bucket has a stale
+            // stored token), then once per interval.
+            if let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(&db).await {
+                let http = crate::http_client::virtues_api_client();
+                let atlas = crate::virtues_api::atlas_url();
+                match crate::virtues_api::relay::fetch_and_store(&db, &http, &atlas, &api_key).await {
+                    Ok(()) => {
+                        if let Ok(Some(rc)) = crate::virtues_api::relay::load(&db).await {
+                            if let Ok(mut g) = cell.write() {
+                                *g = rc.token;
+                            }
+                            tracing::debug!("relay token refreshed");
+                        }
+                    }
+                    Err(e) => tracing::debug!(error = %e, "relay token refresh skipped"),
+                }
+            }
+            tokio::time::sleep(TOKEN_REFRESH_INTERVAL).await;
         }
     });
 }
@@ -140,7 +180,7 @@ async fn lazy_provision(db: &PgPool) -> Option<(String, String, String)> {
 async fn run(
     relay_addr: String,
     sni: String,
-    token: String,
+    token_cell: Arc<RwLock<String>>,
     tls_front: String,
     upstream: String,
 ) -> Result<()> {
@@ -213,10 +253,12 @@ async fn run(
     });
 
     // Dial out to the relay and serve forever (reconnects internally).
+    let token_fallback = token_cell.read().map(|g| g.clone()).unwrap_or_default();
     virtues_relay_client::run(virtues_relay_client::RelayClientConfig {
         relay_addr,
         sni,
-        token,
+        token: token_fallback,
+        token_cell: Some(token_cell),
         local_addr: tls_front,
         read_timeout: None,
         registered: Some(registered_flag()),

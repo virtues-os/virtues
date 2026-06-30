@@ -96,6 +96,7 @@ async fn browser_reaches_box_through_relay() {
         local_addr: echo_addr,
         read_timeout: None,
         registered: None,
+        token_cell: None,
     };
     tokio::spawn(async move {
         // One lifecycle is enough for the test (no splay/backoff).

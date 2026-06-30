@@ -15,20 +15,46 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Derive a box's per-SNI registration token: `hex(HMAC-SHA256(secret, sni))`.
+/// Seconds per revocation bucket (24h). Tokens are scoped to a bucket so the
+/// relay can expire a box's access **without holding per-box state**: it accepts
+/// only the current or previous bucket, and a box must re-fetch its token each
+/// bucket from atlas — which stops minting for a revoked/lapsed account. See
+/// `docs/relay-control-plane.md` → Revocation.
+pub const BUCKET_SECS: u64 = 86_400;
+
+/// The revocation bucket index for a unix timestamp (seconds).
+pub fn bucket_at(unix_secs: u64) -> u64 {
+    unix_secs / BUCKET_SECS
+}
+
+/// The current revocation bucket from the system clock.
+pub fn current_bucket() -> u64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    bucket_at(now)
+}
+
+/// Derive a box's per-SNI, per-bucket registration token:
+/// `hex(HMAC-SHA256(secret, "<sni>:<bucket>"))`.
 ///
 /// The relay holds the `secret` and derives the expected token for the `sni` a
-/// box claims at `Register`; box provisioning mints the same value. Because the
-/// token is bound to the SNI, a box (or a leaked single token) can register only
-/// its **own** name — it can't compute a valid token for another tenant's SNI
-/// without the secret, which closes the cross-tenant-hijack hole that a flat
-/// shared bearer leaves open. Compare the result in constant time.
-pub fn derive_token(secret: &str, sni: &str) -> String {
+/// box claims at `Register` (checking the current and previous `bucket`); atlas
+/// mints the same value for the current bucket. Binding to the SNI means a box
+/// (or a leaked token) can register only its **own** name — it can't compute a
+/// valid token for another tenant's SNI without the secret. Binding to the
+/// `bucket` means a token naturally expires after ~2 buckets unless atlas keeps
+/// re-minting it, which is how a stateless relay supports revocation. Compare in
+/// constant time.
+pub fn derive_token(secret: &str, sni: &str, bucket: u64) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(sni.as_bytes());
+    mac.update(b":");
+    mac.update(bucket.to_string().as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
 
@@ -103,16 +129,27 @@ mod tests {
     }
 
     #[test]
-    fn derive_token_is_sni_bound_and_stable() {
+    fn derive_token_is_sni_bucket_bound_and_stable() {
         let secret = "relay-secret";
-        let a = derive_token(secret, "a.boxes.virtues.com");
-        let b = derive_token(secret, "b.boxes.virtues.com");
-        // Same inputs → same token (provisioning and relay must agree).
-        assert_eq!(a, derive_token(secret, "a.boxes.virtues.com"));
+        let bucket = 20_000;
+        let a = derive_token(secret, "a.virtues.ch", bucket);
+        let b = derive_token(secret, "b.virtues.ch", bucket);
+        // Same inputs → same token (atlas and relay must agree).
+        assert_eq!(a, derive_token(secret, "a.virtues.ch", bucket));
         // Different SNI → different token (can't reuse one box's token for another).
         assert_ne!(a, b);
+        // Different bucket → different token (this is what makes it expire).
+        assert_ne!(a, derive_token(secret, "a.virtues.ch", bucket + 1));
         // Hex-encoded SHA-256 HMAC is 64 chars.
         assert_eq!(a.len(), 64);
+    }
+
+    #[test]
+    fn bucket_at_is_day_quantized() {
+        assert_eq!(bucket_at(0), 0);
+        assert_eq!(bucket_at(BUCKET_SECS - 1), 0);
+        assert_eq!(bucket_at(BUCKET_SECS), 1);
+        assert_eq!(bucket_at(BUCKET_SECS * 3 + 5), 3);
     }
 
     #[test]

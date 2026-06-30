@@ -13,7 +13,7 @@ mod wire;
 
 use anyhow::{anyhow, Result};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::net::TcpStream;
 use virtues_protocol::relay::{BoxHello, BoxMsg, RelayMsg};
@@ -62,8 +62,14 @@ pub struct RelayClientConfig {
     pub relay_addr: String,
     /// This box's SNI, e.g. `abc123.boxes.virtues.com`.
     pub sni: String,
-    /// Shared bearer presented at `Register` (v1 auth; blinded tokens in P3).
+    /// Token presented at `Register` when [`Self::token_cell`] is unset (tests,
+    /// dev/env path). The atlas-provisioned box uses `token_cell` instead so it
+    /// can present a freshly-rotated (current-bucket) token on each reconnect.
     pub token: String,
+    /// Live token cell: read at each (re)connect so token rotation (revocation
+    /// bucketing) takes effect without restarting the client. `None` → use
+    /// [`Self::token`].
+    pub token_cell: Option<Arc<RwLock<String>>>,
     /// The box's own local TLS service to forward work connections to,
     /// e.g. `127.0.0.1:8443`. The box terminates TLS here with its own cert.
     pub local_addr: String,
@@ -124,11 +130,21 @@ pub async fn serve_once(cfg: &RelayClientConfig) -> Result<()> {
     // moment the control link drops.
     let _reg = RegisteredGuard(cfg.registered.clone());
 
+    // Resolve the token fresh at connect time: the cell (if present) holds the
+    // current-bucket token the refresh task keeps up to date, so a reconnect
+    // after rotation presents the new token without restarting the client.
+    let token = match &cfg.token_cell {
+        Some(cell) => cell
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| cfg.token.clone()),
+        None => cfg.token.clone(),
+    };
     write_msg(
         &mut wr,
         &BoxHello::Register {
             sni: cfg.sni.clone(),
-            token: cfg.token.clone(),
+            token,
         },
     )
     .await?;
