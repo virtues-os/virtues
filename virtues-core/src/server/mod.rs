@@ -805,6 +805,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         app
     };
 
+    // Relay reachability: if configured (VIRTUES_RELAY_ADDR), dial out to the
+    // blind relay and front the local HTTP server with a box-held-cert TLS
+    // terminator, so the box is reachable from any browser with no public
+    // inbound port. No-op when unconfigured. See `crate::relay`.
+    crate::relay::maybe_spawn(port);
+
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;
 

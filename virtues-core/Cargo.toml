@@ -46,7 +46,14 @@ tensorrt = ["cuda"]
 virtues-registry = { path = "../crates/virtues-registry" }
 
 # Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
-virtues-helpers = { path = "../crates/virtues-helpers" }
+# `tls` feature: box-held-cert TLS termination for the relay/LAN-direct front.
+virtues-helpers = { path = "../crates/virtues-helpers", features = ["tls"] }
+# Box-side client for the blind relay (dial-out + reverse-proxy to the box).
+virtues-relay-client = { path = "../crates/virtues-relay-client" }
+# ACME (DNS-01) for the box's own per-box cert — the box holds the key; our
+# authority only writes the _acme-challenge TXT. rcgen mints the local keypair/CSR.
+instant-acme = "0.7"
+rcgen = "0.13"
 # Minimal WireGuard engine (kernel wg0, ULA, sealed box-secrets). Re-exported
 # via core::wireguard; also the basis of the standalone virtues-wireguard daemon.
 virtues-wg = { path = "../crates/virtues-wg" }

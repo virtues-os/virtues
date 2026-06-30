@@ -5,11 +5,13 @@ members = [
     "crates/virtues-protocol",
     "crates/virtues-wg",
     "crates/virtues-registry",
+    "crates/virtues-relay-client",
     "crates/virtues-tunnel",
     "actions",
     "apps/desktop",
     "services/virtues-api",
     "services/virtues-atlas",
+    "services/virtues-relay",
     "tools/virtues-installer",
 ]
 # The Tauri desktop app is a standalone crate built by the `tauri` CLI, with
