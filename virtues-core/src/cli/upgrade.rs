@@ -110,7 +110,6 @@ pub async fn run(
     // subset — every one is optional and best-effort so an upgrade from any
     // historical tarball still swaps whatever it can. `virtues` itself is the
     // only mandatory member (already located by `extract_binary`).
-    let new_wg = find_named(&extracted, "virtues-wireguard").ok();
     let new_llama = find_named(&extracted, "llama-server").ok();
     let web_src = find_dir_named(&extracted, "web").ok();
     let actions_src = find_dir_named(&extracted, "actions").ok();
@@ -118,34 +117,32 @@ pub async fn run(
 
     let dirs = InstallDirs::resolve();
 
+    // Relay migration: an upgrade from a WireGuard-era release has an orphaned
+    // `virtues-wireguard.service` (the box now reaches via the relay). Stop +
+    // disable it so it doesn't idle forever reconciling a wg0 nothing creates.
+    // Best-effort; a no-op on boxes that never had it.
+    disable_legacy_wireguard();
+
     // ── Stop affected services ──────────────────────────────────────────────
-    // The main app always. The WG reconciler + inference sidecars only when
-    // we're actually replacing their binaries — restarting the sidecars
-    // reloads multi-GB GGUFs (slow, esp. on Jetson), so don't pay that cost
-    // for a binary-only app upgrade. A running process holds the old inode
-    // until restarted, so the stop→swap→start ordering is what makes the new
-    // bytes take effect.
+    // The main app always. The inference sidecars only when we're actually
+    // replacing their binaries — restarting the sidecars reloads multi-GB GGUFs
+    // (slow, esp. on Jetson), so don't pay that cost for a binary-only app
+    // upgrade. A running process holds the old inode until restarted, so the
+    // stop→swap→start ordering is what makes the new bytes take effect.
     println!("→ stopping virtues.service…");
     service_stop("virtues");
-    if new_wg.is_some() {
-        service_stop("virtues-wireguard");
-    }
     if new_llama.is_some() {
         service_stop("virtues-embed");
         service_stop("virtues-rerank");
     }
 
     // Bring the sidecars we stopped back up. Called on every abort path below
-    // so a failed upgrade doesn't leave the box with dead search / no remote
-    // access — without this, stopping `virtues-embed`/`-rerank` early then
-    // returning on a migrate or start failure left them down until a manual
-    // `systemctl start`. Idempotent and best-effort.
-    let revive_wg = new_wg.is_some();
+    // so a failed upgrade doesn't leave the box with dead search — without this,
+    // stopping `virtues-embed`/`-rerank` early then returning on a migrate or
+    // start failure left them down until a manual `systemctl start`. Idempotent
+    // and best-effort.
     let revive_llama = new_llama.is_some();
     let revive_sidecars = move || {
-        if revive_wg {
-            let _ = service_start("virtues-wireguard");
-        }
         if revive_llama {
             let _ = service_start("virtues-embed");
             let _ = service_start("virtues-rerank");
@@ -169,13 +166,6 @@ pub async fn run(
     // A failed sidecar swap must not abort an otherwise-good app upgrade —
     // swap_with_bak restores the prior binary on failure, so the box keeps a
     // working sidecar. We warn and continue.
-    if let Some(src) = &new_wg {
-        let dst = dirs.bin_dir.join("virtues-wireguard");
-        match swap_with_bak(src, &dst) {
-            Ok(_) => println!("→ swapped {}", dst.display()),
-            Err(e) => eprintln!("  ⚠ virtues-wireguard not swapped ({e}); prior binary kept"),
-        }
-    }
     if let Some(src) = &new_llama {
         let dst = dirs.bin_dir.join("llama-server");
         match swap_with_bak(src, &dst) {
@@ -254,11 +244,6 @@ pub async fn run(
             revive_sidecars();
             print_rollback_hint(&bak);
             return Err(crate::Error::Other(format!("invoke systemctl: {e}")));
-        }
-    }
-    if new_wg.is_some() {
-        if let Ok(false) | Err(_) = service_start("virtues-wireguard") {
-            eprintln!("  ⚠ virtues-wireguard did not start — remote access may be down; check `systemctl status virtues-wireguard`");
         }
     }
     if new_llama.is_some() {
@@ -344,6 +329,23 @@ fn refresh_named(label: &str, src: &Path, dst: &Path) {
 /// `systemctl stop <unit>` — best-effort (a not-yet-running unit is fine).
 fn service_stop(unit: &str) {
     let _ = Command::new("systemctl").arg("stop").arg(unit).status();
+}
+
+/// Relay migration: retire a leftover `virtues-wireguard.service` from a
+/// WireGuard-era box. Stop + disable + remove the unit and binary so it doesn't
+/// idle reconciling a wg0 that pairing no longer populates. All best-effort and
+/// a no-op on boxes that never had WireGuard.
+fn disable_legacy_wireguard() {
+    const UNIT: &str = "virtues-wireguard.service";
+    if !std::path::Path::new("/etc/systemd/system/virtues-wireguard.service").exists() {
+        return;
+    }
+    println!("→ retiring legacy virtues-wireguard.service (relay model)…");
+    let _ = Command::new("systemctl").arg("stop").arg(UNIT).status();
+    let _ = Command::new("systemctl").arg("disable").arg(UNIT).status();
+    let _ = std::fs::remove_file("/etc/systemd/system/virtues-wireguard.service");
+    let _ = std::fs::remove_file("/usr/local/bin/virtues-wireguard");
+    let _ = Command::new("systemctl").arg("daemon-reload").status();
 }
 
 /// `systemctl start <unit>` — `Ok(true)` on success, `Ok(false)` on non-zero

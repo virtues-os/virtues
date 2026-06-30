@@ -16,7 +16,6 @@ pub mod bearer_test;
 pub mod exa;
 pub mod health;
 pub mod internal;
-pub mod net_probe;
 pub mod oauth;
 pub mod places;
 pub mod streaming;

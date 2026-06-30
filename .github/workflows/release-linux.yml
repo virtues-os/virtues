@@ -129,17 +129,6 @@ jobs:
         run: |
           cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
-      # virtues-wireguard — the box-side privileged WG reconciler. Ships in
-      # the main tarball next to `virtues` so the installer can put it under
-      # /usr/local/bin/ and write a systemd unit pointing at it. Without this
-      # the box has peer rows in the DB but never touches wg0 → daemon
-      # handshake times out forever.
-      - name: Build virtues-wireguard binary
-        env:
-          SQLX_OFFLINE: 'true'
-        run: |
-          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-wg --bin virtues-wireguard --target ${{ matrix.target }}
-
       # Action binaries — the function-runtime actions (ios_*, day_summary_eod,
       # google_*_sync, plaid_*, …) are separate executables the box forks via
       # `command = ["<name>"]`. They are NOT compiled into `virtues`, so without
@@ -221,10 +210,8 @@ jobs:
           BIN_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues"
           INSTALLER_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-installer"
           CLIENT_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-client"
-          WG_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-wireguard"
           test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
           test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
-          test -x "$WG_PATH"        || (echo "virtues-wireguard not built"   >&2 && exit 1)
           # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
           # (its build step is non-fatal); it's packaged below only if present.
 
@@ -233,7 +220,6 @@ jobs:
 
           # Layout inside the main tarball:
           #   virtues             box binary, installer moves to /usr/local/bin/
-          #   virtues-wireguard   privileged WG reconciler, also to /usr/local/bin/
           #   llama-server        inference sidecar engine (CPU build), also to /usr/local/bin/
           #   web/                SvelteKit static build, → /usr/local/share/virtues/web/
           #   actions/            action manifests + UI + sources.toml,
@@ -246,7 +232,6 @@ jobs:
           #                       Forked by the box per webhook; without them the
           #                       manifests above exist but can never run.
           cp "$BIN_PATH" staging/virtues
-          cp "$WG_PATH"  staging/virtues-wireguard
           cp "$LLAMA_PATH" staging/llama-server
           cp -r apps/web/build staging/web
           cp -r actions staging/actions
@@ -265,7 +250,7 @@ jobs:
           done
 
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues virtues-wireguard llama-server web actions actions-bin
+          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web actions actions-bin
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the

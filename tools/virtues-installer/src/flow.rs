@@ -27,8 +27,6 @@ pub struct Config {
     pub dry_run: bool,
     pub no_init: bool,
     pub assume_yes: bool,
-    /// Proceed without kernel WireGuard (LAN-only box). See `--local`.
-    pub local: bool,
 }
 
 pub async fn run(cli: Config) -> Result<()> {
@@ -43,7 +41,7 @@ pub async fn run(cli: Config) -> Result<()> {
     ui::section("Pre-flight");
     let target = steps::detect()?;
     ui::ok(&format!("Linux {} · {} {}", target.arch, target.distro, target.distro_version));
-    preflight::run(cli.local).await?;
+    preflight::run().await?;
 
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
@@ -51,7 +49,7 @@ pub async fn run(cli: Config) -> Result<()> {
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
-        ui::skip("  • System packages (Postgres 18, WireGuard, Avahi)");
+        ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip(&format!(
             "  • Inference sidecars (llama-server): {} + {}",
             cfg.embed_gguf, cfg.rerank_gguf
@@ -68,13 +66,6 @@ pub async fn run(cli: Config) -> Result<()> {
     ui::section("System packages");
     install::ensure_utf8_locale().await?;
     install::install_deps(&target).await?;
-    // --local = LAN-only box: skip WireGuard setup entirely (the preflight gate
-    // already let us through without it). Otherwise load + persist the module.
-    if cli.local {
-        ui::skip("WireGuard skipped (--local: LAN-only box)");
-    } else {
-        install::ensure_wireguard_module().await?;
-    }
     install::configure_mdns().await?;
     install::create_user(&cfg).await?;
     install::provision_db().await?;
@@ -92,14 +83,6 @@ pub async fn run(cli: Config) -> Result<()> {
     let mut start = tokio::process::Command::new("systemctl");
     start.args(["enable", "--now", "virtues"]);
     steps::run_step("Enable + start virtues service", start).await?;
-
-    // Start virtues-wireguard after virtues is up so the reconciler reads a
-    // populated DB (server keypair + any pre-existing peer rows). No-op if
-    // the WG binary wasn't in the tarball. Skipped on --local — a LAN-only box
-    // has no use for the reconciler (it would just idle waiting for WG).
-    if !cli.local {
-        install::enable_wireguard_unit(&cfg).await?;
-    }
 
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");

@@ -5,7 +5,6 @@ members = [
     "crates/virtues-protocol",
     "crates/virtues-registry",
     "crates/virtues-relay-client",
-    "crates/virtues-tunnel",
     "actions",
     "apps/desktop",
     "services/virtues-api",

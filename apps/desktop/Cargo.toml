@@ -3,7 +3,7 @@ name = "virtues-client"
 version = "0.1.0"
 edition = "2021"
 authors = ["Virtues Team <team@virtues.com>"]
-description = "Desktop daemon that pairs to a Virtues box over WireGuard and proxies http://localhost:8000 to the box's HTTP server. The bridge that makes 'open the box in your browser' work on Mac, Linux, and Windows."
+description = "Small CLI that pairs this machine to a Virtues box and opens it in the browser. In the relay model the box is reachable at its own HTTPS URL, so this is a pair + open + status tool — no tunnel, no proxy."
 license = "MIT"
 repository = "https://github.com/virtues-os/virtues"
 
@@ -12,22 +12,18 @@ name = "virtues-client"
 path = "src/main.rs"
 
 [dependencies]
-# The wire-protocol types (PairingBundle, punch shapes, SPKI helpers, constants).
-# This is the ONLY virtues-* crate we depend on — keep it that way so the
-# daemon stays cross-platform-buildable without virtues-core's dep universe.
-virtues-protocol = { path = "../../crates/virtues-protocol" }
-
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 
-# Async runtime
+# Async runtime (pair/status/discover are async; mDNS browse + reqwest need it)
 tokio = { version = "1.40", features = ["full"] }
 
-# HTTP client for the pair flow + future punch coordinator calls
+# HTTP client for the pair flow + reachability/revoke calls. webpki-roots so the
+# box's relay URL (browser-trusted ACME cert chaining to a public root) verifies.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
 
 # OS-native credential storage (Keychain on macOS, Secret Service on Linux,
-# Credential Manager on Windows). Used to persist the PairingBundle after pair.
+# Credential Manager on Windows). Persists the paired-box record after pair.
 keyring = "3"
 
 # Serialization
@@ -37,37 +33,14 @@ serde_json = "1.0"
 # Errors
 anyhow = "1.0"
 
-# Logging — stderr by default so any future proxy stdout stays clean
+# Logging — stderr by default
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Directory discovery (config / cache / logs per-platform)
-directories = "5"
-
-# Pair URL parsing (already in workspace via reqwest dep tree but pull explicitly)
+# Pair URL parsing
 url = "2.5"
 
-# WireGuard keypair (Curve25519). Pure Rust, no platform-specific code.
-# We generate one per-machine at pair time; private key goes to the OS keychain,
-# public key flows to the box at /api/pair/consume so it can install the peer.
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-rand = "0.8"  # x25519-dalek-2 uses rand 0.8's RngCore trait
-base64 = "0.22"
-
-# Reverse-proxy HTTP path (browser → 127.0.0.1:8000 → box). Hyper 1.x is
-# cross-platform (Mac/Linux/Windows) and tokio-native.
-hyper = { version = "1.5", features = ["server", "client", "http1"] }
-hyper-util = { version = "0.1", features = ["server-auto", "client-legacy", "tokio", "http1"] }
-http-body-util = "0.1"
-bytes = "1.7"
-
-# Userspace WireGuard — the ONE shared client tunnel engine (boringtun +
-# smoltcp netstack, no root, no utun/system-VPN). Same crate iOS uses; the
-# desktop dials through it and bridges to the localhost proxy. This replaced
-# the old gotatun/utun path (root-requiring, desktop-only).
-virtues-tunnel = { path = "../../crates/virtues-tunnel" }
-
-# mDNS service discovery — browses _http._tcp.local. for Virtues servers.
+# mDNS service discovery — browses _http._tcp.local. for Virtues boxes.
 mdns-sd = "0.11"
 
 # mdns-sd's browse channel is a flume Receiver; we name flume's

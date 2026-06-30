@@ -373,8 +373,13 @@ struct SettingsView: View {
                     expectedFingerprint: fingerprint
                 )
 
+                // Reach the box from now on at its relay URL (works off-LAN);
+                // fall back to the scanned origin on a LAN-only box.
+                let reachEndpoint = response.boxUrl?.isEmpty == false
+                    ? response.boxUrl!
+                    : endpoint
                 await MainActor.run {
-                    deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    deviceManager.updateConfiguration(apiEndpoint: reachEndpoint)
                     deviceManager.updateActionIds(response.actionIds)
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured

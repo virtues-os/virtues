@@ -344,8 +344,7 @@
 			<h2 class="chapter-title">Network &amp; Devices</h2>
 			<div class="cols">
 				<div class="col">
-					{@render ledger("Paired devices", t?.devices?.paired_wg != null ? `${t.devices.paired_wg} over WireGuard` : "—")}
-					{@render ledger("Endpoint", t?.devices?.wg_endpoint ?? "not yet detected", true)}
+					{@render ledger("Paired devices", t?.devices?.paired_wg != null ? `${t.devices.paired_wg}` : "—")}
 					{@render ledger("Throughput", t?.network ? `↓ ${rateStr(t.network.rx_per_sec)}  ↑ ${rateStr(t.network.tx_per_sec)}` : "—", true)}
 				</div>
 				<div class="col">

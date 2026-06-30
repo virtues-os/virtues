@@ -77,13 +77,6 @@ impl InstallConfig {
         self.install_prefix.join("bin/virtues")
     }
 
-    /// Path to the privileged WireGuard reconciler. Ships in the same tarball
-    /// as `virtues`; runs as its own systemd unit so the main app stays
-    /// rootless. See `install::install_wireguard_unit`.
-    pub fn wg_binary_path(&self) -> PathBuf {
-        self.install_prefix.join("bin/virtues-wireguard")
-    }
-
     pub fn web_dir(&self) -> PathBuf {
         self.install_prefix.join("share/virtues/web")
     }

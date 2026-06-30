@@ -22,7 +22,7 @@ use crate::steps::{run_step, PkgMgr, Target};
 use crate::ui;
 
 // ────────────────────────────────────────────────────────────────────────
-// System dependencies (apt/dnf): Postgres, WireGuard, Avahi, ca-certs
+// System dependencies (apt/dnf): Postgres, Avahi, ca-certs
 // ────────────────────────────────────────────────────────────────────────
 
 pub async fn install_deps(target: &Target) -> Result<()> {
@@ -43,7 +43,6 @@ async fn install_deps_apt(target: &Target) -> Result<()> {
     add_pgdg_repo(target).await?;
 
     apt_install("Postgres 18 + pgvector", &["postgresql-18", "postgresql-18-pgvector"]).await?;
-    apt_install("WireGuard", &["wireguard", "wireguard-tools"]).await?;
     apt_install("Avahi (mDNS)", &["avahi-daemon", "avahi-utils", "libnss-mdns"]).await?;
     apt_install("ca-certificates + curl", &["ca-certificates", "curl"]).await?;
 
@@ -54,7 +53,6 @@ async fn install_deps_apt(target: &Target) -> Result<()> {
 
 async fn install_deps_dnf() -> Result<()> {
     dnf_install("Postgres + pgvector", &["postgresql-server", "postgresql-contrib", "pgvector"]).await?;
-    dnf_install("WireGuard tooling", &["wireguard-tools"]).await?;
     dnf_install("Avahi (mDNS)", &["avahi", "nss-mdns"]).await?;
     dnf_install("ca-certificates + curl", &["ca-certificates", "curl"]).await?;
 
@@ -67,67 +65,6 @@ async fn install_deps_dnf() -> Result<()> {
     systemctl(&["enable", "--now", "postgresql"], "Enable postgresql").await?;
     systemctl(&["enable", "--now", "avahi-daemon"], "Enable avahi-daemon").await?;
     Ok(())
-}
-
-/// Load the kernel WireGuard module and persist it across reboots. Best-effort
-/// and **never fatal**: on a stripped kernel (Jetson/Tegra) WG is absent, which
-/// the preflight already warned about and the `virtues-wireguard` daemon waits
-/// on gracefully — we don't block an install over remote-access capability.
-pub async fn ensure_wireguard_module() -> Result<()> {
-    // Try to load it as a module. Succeeds on stock distros where WG is `=m`;
-    // fails (harmlessly) when WG is built in (`=y`, no module file) or absent.
-    let loaded = Command::new("modprobe")
-        .arg("wireguard")
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if loaded {
-        // Persist so the module loads eagerly at every boot.
-        fs::write("/etc/modules-load.d/wireguard.conf", "wireguard\n")
-            .context("writing /etc/modules-load.d/wireguard.conf")?;
-        ui::ok("WireGuard module loaded + persisted");
-    } else if wireguard_capable() == Some(true) {
-        // Built into the kernel — always present, nothing to persist.
-        ui::ok("WireGuard built into kernel");
-    } else {
-        // Stripped kernel. Preflight already warned + pointed at docs/jetson-wg.md;
-        // the daemon waits gracefully. Non-fatal.
-        ui::skip("WireGuard kernel support absent — remote access disabled (see preflight)");
-    }
-    Ok(())
-}
-
-/// Can the kernel bring up a WireGuard interface? Best-effort `modprobe` (loads
-/// it if it's a module; no-op if built in) then a create+delete probe. Needs
-/// root — the installer runs as root. `Some(true)` = works, `Some(false)` = no
-/// kernel WG, `None` = couldn't tell (e.g. a permission error, no `NET_ADMIN`).
-/// The single WG-capability probe for the installer (preflight + module step).
-pub(crate) fn wireguard_capable() -> Option<bool> {
-    use std::process::Command as SyncCommand;
-    const PROBE_IF: &str = "vwgprobe0";
-
-    // Autoload if it's a module; ignore failure (built-in kernels have no module).
-    let _ = SyncCommand::new("modprobe").arg("wireguard").status();
-    // Clear any leftover from a crashed probe so "already exists" can't be
-    // mistaken for "unsupported".
-    let _ = SyncCommand::new("ip").args(["link", "del", PROBE_IF]).output();
-
-    let add = SyncCommand::new("ip")
-        .args(["link", "add", PROBE_IF, "type", "wireguard"])
-        .output()
-        .ok()?;
-    if add.status.success() {
-        let _ = SyncCommand::new("ip").args(["link", "del", PROBE_IF]).status();
-        return Some(true);
-    }
-    let err = String::from_utf8_lossy(&add.stderr).to_lowercase();
-    if err.contains("not permitted") || err.contains("permission denied") {
-        return None; // no NET_ADMIN — can't determine
-    }
-    // "unknown device type" / "operation not supported" / "no such device" → no WG.
-    Some(false)
 }
 
 async fn add_pgdg_repo(target: &Target) -> Result<()> {
@@ -775,36 +712,9 @@ pub async fn install_systemd_unit(cfg: &InstallConfig) -> Result<()> {
     fs::write("/etc/systemd/system/virtues.service", body)
         .context("writing /etc/systemd/system/virtues.service")?;
 
-    // Sibling unit: virtues-wireguard reconciles wg0 from the peer rows
-    // virtues writes to Postgres. Without it, pair succeeds but the WG
-    // handshake from a paired desktop never completes — there's no peer
-    // installed on the kernel side.
-    //
-    // Skipped silently when the binary isn't present (older tarballs from
-    // before v0.2.1 didn't ship it). download.rs already warned the user.
-    if cfg.wg_binary_path().exists() {
-        let wg_body = WIREGUARD_UNIT_TEMPLATE
-            .replace("__BIN__", &cfg.wg_binary_path().display().to_string())
-            .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
-        fs::write("/etc/systemd/system/virtues-wireguard.service", wg_body)
-            .context("writing /etc/systemd/system/virtues-wireguard.service")?;
-    }
-
     let mut cmd = Command::new("systemctl");
     cmd.arg("daemon-reload");
     run_step("Install systemd unit", cmd).await
-}
-
-/// Enable + start `virtues-wireguard.service` if its binary was installed.
-/// Called after the main `virtues.service` is up so the WG reconciler reads
-/// a populated DB (server keypair, any pre-existing peer rows).
-pub async fn enable_wireguard_unit(cfg: &InstallConfig) -> Result<()> {
-    if !cfg.wg_binary_path().exists() {
-        return Ok(());
-    }
-    let mut cmd = Command::new("systemctl");
-    cmd.args(["enable", "--now", "virtues-wireguard"]);
-    run_step("Enable + start virtues-wireguard service", cmd).await
 }
 
 const SYSTEMD_UNIT_TEMPLATE: &str = r#"[Unit]
@@ -842,60 +752,11 @@ RestartSec=5
 # surface and its security boundary is the WG/SPKI + session auth in front of
 # /ws/terminal, not this sandbox. TRADE-OFF: the network-facing app on :8000
 # runs in this same unit, so an RCE in the app now escalates to root — accepted
-# deliberately for an owner-operated box. The WG reconciler and inference
-# sidecars keep their full sandbox; only this human-facing unit is opened up.
+# deliberately for an owner-operated box. The inference sidecars keep their full
+# sandbox; only this human-facing unit is opened up.
 NoNewPrivileges=false
 RestrictSUIDSGID=false
 SystemCallArchitectures=native
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-/// Privileged WG reconciler — does netlink to `wg0` and records the box's
-/// current public endpoint into `box_secrets` for the pairing bundle.
-///
-/// `After=virtues.service` so the main app has a chance to migrate the DB +
-/// mint the server keypair before reconcile runs. The reconciler is
-/// idempotent and retries internally, so the strict ordering is more about
-/// log clarity than correctness.
-///
-/// `User=virtues` + `AmbientCapabilities=CAP_NET_ADMIN`: systemd starts as
-/// root, sets the cap, then drops to `virtues` while keeping the capability
-/// in the ambient set. Same pattern as `virtues.service`.
-const WIREGUARD_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues WireGuard reconciler — kernel wg0 from the peer store
-Documentation=https://virtues.com/docs
-After=virtues.service postgresql.service
-Wants=postgresql.service
-Requires=virtues.service
-
-[Service]
-Type=simple
-User=virtues
-Group=virtues
-WorkingDirectory=__DATA_DIR__
-EnvironmentFile=-__DATA_DIR__/virtues.env
-ExecStart=__BIN__
-Restart=on-failure
-RestartSec=5s
-
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=__DATA_DIR__
-ProtectHome=true
-PrivateTmp=true
-ProtectKernelTunables=true
-ProtectKernelModules=false
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
-RestrictNamespaces=true
-SystemCallArchitectures=native
-
-# Only NET_ADMIN — no port binding, no other privileged ops.
-AmbientCapabilities=CAP_NET_ADMIN
-CapabilityBoundingSet=CAP_NET_ADMIN
 
 [Install]
 WantedBy=multi-user.target
