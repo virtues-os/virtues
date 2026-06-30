@@ -24,28 +24,7 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("Virtues box status");
     println!("──────────────────");
     println!("  identity:");
-    println!("    WG server keypair    {}", yn(s.identity.wg_server_keypair));
-    if let Some(pk) = &s.identity.wg_public_key {
-        println!("      public key         {pk}");
-    }
-    if let Some(fpr) = &s.identity.spki_fingerprint {
-        // The fingerprint a device pins out-of-band (compare against what the
-        // client shows). No CA — this WG-key SPKI is the box's identity.
-        println!("      SPKI fingerprint   {fpr}");
-    }
-    if let Some(ep) = &s.identity.wg_endpoint {
-        println!("      WG endpoint        {ep}");
-    }
-    // Kernel WireGuard capability — whether the tunnel can come up at all.
-    {
-        use crate::wireguard::kernel::{kernel_wg_supported, WgSupport};
-        let kwg = match kernel_wg_supported() {
-            WgSupport::Supported => "yes",
-            WgSupport::Unsupported => "no (see docs/jetson-wg.md)",
-            WgSupport::Unknown => "unknown (run as root)",
-        };
-        println!("    kernel WG support    {kwg}");
-    }
+    println!("    TLS cert (ACME)      {}", yn(s.identity.tls_cert));
 
     // Inference resolution (sidecar engine + per-model on-disk/missing).
     let r = inference_report::resolution_report();
@@ -138,17 +117,8 @@ fn access_url() -> String {
 /// box's identity exists (WG server keypair). Idempotent, so it's safe to run on
 /// every boot. The appliance runs this headless; DIY runs it too.
 pub async fn handle_bringup(virtues: &Virtues) -> Result<()> {
-    #[cfg(target_os = "linux")]
-    let pool = virtues.database.pool();
-
     println!("running migrations…");
     virtues.database.initialize().await?;
-
-    println!("ensuring box identity…");
-    #[cfg(target_os = "linux")]
-    crate::wireguard::reconcile::ensure_server_keypair(pool).await?;
-    #[cfg(not(target_os = "linux"))]
-    println!("  (WG server keypair skipped — Linux-only; generated on the appliance)");
 
     println!("✅ bringup complete");
     handle_status(virtues).await

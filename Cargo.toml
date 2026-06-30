@@ -3,7 +3,6 @@ members = [
     "virtues-core",
     "crates/virtues-helpers",
     "crates/virtues-protocol",
-    "crates/virtues-wg",
     "crates/virtues-registry",
     "crates/virtues-relay-client",
     "crates/virtues-tunnel",

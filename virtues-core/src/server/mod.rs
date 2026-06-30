@@ -57,16 +57,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         tracing::warn!("Failed to seed home_timezone: {}", e);
     }
 
-    // Eager identity bringup: mint the box's WG server keypair (on Linux) if
-    // absent, so a freshly-booted box reaches identity-ready without a manual
-    // `virtues bringup`. Idempotent and best-effort — a failure here must not
-    // stop the box from serving. Mirrors `handle_bringup`.
+    // Eager identity bringup: ensure the loopback console device exists so the
+    // box's own browser is authenticated. Best-effort — a failure here must not
+    // stop the box from serving. (The box's TLS identity is its own cert,
+    // obtained at relay spawn; no keypair to mint here.)
     {
         let pool = client.database.pool();
-        #[cfg(target_os = "linux")]
-        if let Err(e) = crate::wireguard::reconcile::ensure_server_keypair(pool).await {
-            tracing::warn!("identity bringup: ensure_server_keypair failed: {e}");
-        }
         if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
             tracing::warn!("identity bringup: ensure_console_device failed: {e}");
         }

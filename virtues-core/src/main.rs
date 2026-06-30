@@ -114,39 +114,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if matches!(cli.command, Some(Commands::Doctor)) {
         print_resolution_report();
 
-        // WireGuard kernel capability — the tunnel that powers remote access.
-        // Stock distro kernels have it; stripped vendor kernels (Jetson/Tegra)
-        // don't, and that's the difference between "remote access works" and
-        // "virtues-wireguard waits forever."
-        use virtues::wireguard::kernel::{kernel_wg_supported, WgSupport};
-        match kernel_wg_supported() {
-            WgSupport::Supported => println!("  wireguard:     ✓ kernel module available"),
-            WgSupport::Unsupported => println!(
-                "  wireguard:     ✗ kernel support missing — remote access disabled; \
-                 see docs/jetson-wg.md"
-            ),
-            WgSupport::Unknown => {
-                println!("  wireguard:     ? could not verify (try: sudo virtues doctor)")
-            }
-        }
-
-        // Active inbound-reachability check — only meaningful when the box has a
-        // global IPv6 (the direct path). Asks virtues-api to fire a UDP nonce
-        // back at us; confirms inbound is actually open (the pinhole worked),
-        // which the local egress classification alone can't tell us.
+        // Remote access is via the relay now (the box dials out) — no inbound
+        // pinhole or kernel-WG dependency to check. Just report the net class.
         let net = virtues::net_check::compute_net_status();
-        if let Some(v6) = net.ipv6_global {
-            let api = virtues::virtues_api::api_url();
-            println!("  checking inbound reachability via virtues-api…");
-            match virtues::net_check::verify_inbound(v6, &api).await {
-                virtues::net_check::InboundResult::Reachable => {
-                    println!("  inbound:       ✓ confirmed reachable from the internet")
-                }
-                virtues::net_check::InboundResult::Inconclusive(why) => {
-                    println!("  inbound:       could not confirm — {why}")
-                }
-            }
-        }
+        println!("  network:       {}", net.headline);
         return Ok(());
     }
 
