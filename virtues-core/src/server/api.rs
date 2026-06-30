@@ -1469,6 +1469,15 @@ pub async fn claim_billing_handler(
             .into_response();
     }
 
+    // Provision relay reachability (best-effort): atlas mints this box's per-SNI
+    // token; the box stores it for the relay subsystem. A failure (e.g. relay
+    // disabled → 503) just leaves the box reachable on LAN.
+    if let Err(e) =
+        crate::virtues_api::relay::fetch_and_store(&pool, &http, &atlas_url, &claim.api_key).await
+    {
+        tracing::warn!(error = %e, "relay config provisioning skipped (LAN-only reach)");
+    }
+
     (
         StatusCode::OK,
         Json(serde_json::json!({ "claimed": true, "linked": true })),

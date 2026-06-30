@@ -17,6 +17,11 @@ path = "src/main.rs"
 # `crates/virtues-helpers/src/crypto/` (Lint 3 keeps HMAC primitives there).
 virtues-helpers = { path = "../../crates/virtues-helpers" }
 
+# Shared relay wire protocol — `derive_token` mints the per-SNI registration
+# token the relay verifies. Single source of the HMAC so atlas + relay can't
+# drift. Pure-data crate (no tokio).
+virtues-protocol = { path = "../../crates/virtues-protocol" }
+
 # HTTP server
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"

@@ -3,6 +3,7 @@
 //! one per inbound client, handed to the waiting client task to splice).
 
 use anyhow::Result;
+use subtle::ConstantTimeEq;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::interval;
@@ -43,7 +44,14 @@ async fn handle_control(
     token: String,
     state: AppState,
 ) -> Result<()> {
-    if token != state.config.token {
+    // Expected token: per-SNI HMAC when a secret is configured (so a box can
+    // register only its *own* SNI), else the shared bearer fallback. Compared in
+    // constant time to avoid leaking it byte-by-byte via timing.
+    let expected = match &state.config.secret {
+        Some(secret) => virtues_protocol::relay::derive_token(secret, &sni),
+        None => state.config.token.clone(),
+    };
+    if !bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
         write_msg(&mut stream, &RelayMsg::Rejected { reason: "bad token".into() }).await?;
         tracing::warn!(%sni, "register rejected: bad token");
         return Ok(());

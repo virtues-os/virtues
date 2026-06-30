@@ -8,6 +8,7 @@
 
 pub mod client;
 pub mod link;
+pub mod relay;
 pub mod renew;
 
 /// Default cloud endpoints. A real box always has `VIRTUES_API_URL` /

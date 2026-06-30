@@ -27,6 +27,18 @@ pub struct Config {
     /// verification URL and the Stripe success/cancel URLs.
     pub public_url: String,
 
+    /// Relay master secret, shared with `virtues-relay`. atlas mints each box's
+    /// per-SNI token as `derive_token(relay_secret, sni)`; the relay verifies
+    /// with the same secret. Empty → relay-config minting disabled (503).
+    /// Env: `VIRTUES_RELAY_SECRET`.
+    pub relay_secret: String,
+    /// Public relay control address boxes dial out to (host:port). Handed to the
+    /// box as `relay_addr`. Empty → minting disabled. Env: `VIRTUES_RELAY_CONTROL_ADDR`.
+    pub relay_control_addr: String,
+    /// Base domain for box SNIs, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.
+    /// Env: `VIRTUES_RELAY_BASE_DOMAIN` (default `virtues.ch`).
+    pub relay_base_domain: String,
+
     /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
     pub renewal_micros: i64,
     /// Auto-top-up amount (micros USD). Default $20 (user-settable).
@@ -109,6 +121,13 @@ impl Config {
         let public_url = std::env::var("VIRTUES_ATLAS_PUBLIC_URL")
             .unwrap_or_else(|_| format!("http://localhost:{port}"));
 
+        // Relay control plane (Option A): atlas mints per-SNI tokens. Empty
+        // secret/addr → /relay/config returns 503 (relay reachability disabled).
+        let relay_secret = std::env::var("VIRTUES_RELAY_SECRET").unwrap_or_default();
+        let relay_control_addr = std::env::var("VIRTUES_RELAY_CONTROL_ADDR").unwrap_or_default();
+        let relay_base_domain =
+            std::env::var("VIRTUES_RELAY_BASE_DOMAIN").unwrap_or_else(|_| "virtues.ch".to_string());
+
         // Wallet economics — linked prepaid model.
         //   * Monthly renewal credit: $20 (overwrites wallet to the full
         //     subscription value — "all credit, no haircut"). Margin comes
@@ -184,6 +203,9 @@ impl Config {
             stripe_webhook_secret,
             stripe_price_id,
             public_url,
+            relay_secret,
+            relay_control_addr,
+            relay_base_domain,
             renewal_micros,
             auto_topup_micros,
             topup_min_micros,

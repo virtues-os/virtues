@@ -15,6 +15,23 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Derive a box's per-SNI registration token: `hex(HMAC-SHA256(secret, sni))`.
+///
+/// The relay holds the `secret` and derives the expected token for the `sni` a
+/// box claims at `Register`; box provisioning mints the same value. Because the
+/// token is bound to the SNI, a box (or a leaked single token) can register only
+/// its **own** name — it can't compute a valid token for another tenant's SNI
+/// without the secret, which closes the cross-tenant-hijack hole that a flat
+/// shared bearer leaves open. Compare the result in constant time.
+pub fn derive_token(secret: &str, sni: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(sni.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
 /// First line on any box→relay connection: declares its purpose.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -83,6 +100,19 @@ mod tests {
         let line = serde_json::to_string(&m).unwrap();
         assert_eq!(line, r#"{"type":"open_conn","conn_id":"deadbeef"}"#);
         assert_eq!(serde_json::from_str::<RelayMsg>(&line).unwrap(), m);
+    }
+
+    #[test]
+    fn derive_token_is_sni_bound_and_stable() {
+        let secret = "relay-secret";
+        let a = derive_token(secret, "a.boxes.virtues.com");
+        let b = derive_token(secret, "b.boxes.virtues.com");
+        // Same inputs → same token (provisioning and relay must agree).
+        assert_eq!(a, derive_token(secret, "a.boxes.virtues.com"));
+        // Different SNI → different token (can't reuse one box's token for another).
+        assert_ne!(a, b);
+        // Hex-encoded SHA-256 HMAC is 64 chars.
+        assert_eq!(a.len(), 64);
     }
 
     #[test]

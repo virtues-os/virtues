@@ -20,6 +20,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 rand = "0.8"
+socket2 = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1.40", features = ["full", "test-util"] }

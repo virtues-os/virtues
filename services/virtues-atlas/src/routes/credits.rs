@@ -198,8 +198,8 @@ async fn do_topup(
 }
 
 /// Resolve an api_key → (active customer id, account id). Errors on unknown
-/// key or inactive subscription.
-async fn resolve_active_customer(
+/// key or inactive subscription. Shared with `routes::relay` (token minting).
+pub(crate) async fn resolve_active_customer(
     state: &AppState,
     api_key: &str,
 ) -> Result<(String, String), axum::response::Response> {

@@ -86,7 +86,8 @@ where
 /// most SNI proxies); such clients fall through to `Malformed`/`NoSni`.
 pub fn extract_sni(buf: &[u8]) -> Result<Option<String>, SniError> {
     use tls_parser::{
-        parse_tls_extensions, parse_tls_plaintext, TlsExtension, TlsMessage, TlsMessageHandshake,
+        parse_tls_extensions, parse_tls_plaintext, SNIType, TlsExtension, TlsMessage,
+        TlsMessageHandshake,
     };
 
     let (_, record) = match parse_tls_plaintext(buf) {
@@ -107,7 +108,13 @@ pub fn extract_sni(buf: &[u8]) -> Result<Option<String>, SniError> {
         };
         for ext in exts {
             let TlsExtension::SNI(names) = ext else { continue };
-            for (_sni_type, host) in names {
+            for (sni_type, host) in names {
+                // Only host_name(0) is a routable DNS name (RFC 6066 deprecated
+                // every other type). Skip anything else rather than treating its
+                // bytes as a hostname and misrouting.
+                if sni_type != SNIType(0) {
+                    continue;
+                }
                 if host.len() > MAX_HOSTNAME {
                     return Err(SniError::Malformed);
                 }

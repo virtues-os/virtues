@@ -598,6 +598,32 @@ pub struct ConsumeResponse {
     /// for browser pairings (browsers don't run actions).
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
+    /// The box's canonical browser-reachable URL (`https://<relay-sni>`) when the
+    /// box is configured for relay reach. Clients store this so they know where to
+    /// open the box from anywhere; `None` on a LAN-only box (the client then
+    /// falls back to the origin it paired against).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub box_url: Option<String>,
+}
+
+/// The box's canonical browser-reachable URL derived from its relay SNI — but
+/// only while the box is **currently registered** with the relay (review #10), so
+/// a client never persists a URL the box isn't actually reachable at over a
+/// working LAN origin. `None` on a LAN-only box, or before/after registration.
+///
+/// A client that pairs during the brief pre-registration window gets the LAN
+/// origin and can pick up the relay URL later from `box/status` once registered.
+async fn box_reach_url(pool: &PgPool) -> Option<String> {
+    if !crate::relay::is_relay_registered() {
+        return None;
+    }
+    let sni = match crate::virtues_api::relay::sni(pool).await {
+        Some(s) => s,
+        None => std::env::var("VIRTUES_RELAY_SNI")
+            .ok()
+            .filter(|s| !s.is_empty())?,
+    };
+    Some(format!("https://{sni}"))
 }
 
 /// `POST /api/pair/consume` — anonymous, but valid token required.
@@ -909,6 +935,7 @@ pub async fn consume_handler(
                     redirect: "/".to_string(),
                     bearer: None,
                     action_ids: std::collections::HashMap::new(),
+                    box_url: box_reach_url(&pool).await,
                 }),
             ),
         )
@@ -945,6 +972,7 @@ pub async fn consume_handler(
             redirect: "/".to_string(),
             bearer: Some(bp.bearer),
             action_ids,
+            box_url: box_reach_url(&pool).await,
         }),
     )
         .into_response()
@@ -973,6 +1001,11 @@ pub struct ProvisionResponse {
     /// SVG QR for the new device to scan. Empty in the relay model (no WG bundle
     /// to hand off); retained for response-shape stability.
     pub qr_svg: String,
+    /// The box's relay-reachable URL, so the provisioned device knows where to
+    /// reach the box off-LAN. Mirrors [`ConsumeResponse::box_url`]; `None` when
+    /// the box isn't currently relay-registered (review #11).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub box_url: Option<String>,
 }
 
 /// `POST /api/pair/provision` — AUTHENTICATED. An already-paired device (reached
@@ -1094,6 +1127,7 @@ pub async fn provision_handler(
             bearer: bp.bearer,
             action_ids,
             qr_svg,
+            box_url: box_reach_url(&pool).await,
         }),
     )
         .into_response()

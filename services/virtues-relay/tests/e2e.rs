@@ -81,6 +81,7 @@ async fn browser_reaches_box_through_relay() {
     let state = AppState::new(Config {
         client_addr: client_addr.to_string(),
         control_addr: control_addr.to_string(),
+        secret: None, // shared-bearer path; per-SNI HMAC is covered by a unit test
         token: token.to_string(),
     });
     let state_probe = state.clone();
@@ -93,6 +94,8 @@ async fn browser_reaches_box_through_relay() {
         sni: sni.to_string(),
         token: token.to_string(),
         local_addr: echo_addr,
+        read_timeout: None,
+        registered: None,
     };
     tokio::spawn(async move {
         // One lifecycle is enough for the test (no splay/backoff).

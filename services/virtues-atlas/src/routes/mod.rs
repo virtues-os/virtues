@@ -11,6 +11,7 @@ mod diag;
 mod health;
 mod link;
 mod preorder;
+mod relay;
 mod settings;
 mod webhooks;
 
@@ -54,6 +55,17 @@ pub struct PreorderPolicy {
     pub email_reply_to: String,
 }
 
+/// Relay control-plane params (Option A minting). See `routes::relay`.
+#[derive(Clone)]
+pub struct RelayPolicy {
+    /// Master secret shared with `virtues-relay`. Empty → minting disabled.
+    pub secret: String,
+    /// Public relay control address boxes dial (host:port). Empty → disabled.
+    pub control_addr: String,
+    /// SNI base domain, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.
+    pub base_domain: String,
+}
+
 /// Shared route state for atlas.
 #[derive(Clone)]
 pub struct AppState {
@@ -67,6 +79,7 @@ pub struct AppState {
     pub public_url: String,
     pub credit: CreditPolicy,
     pub preorder: PreorderPolicy,
+    pub relay: RelayPolicy,
     /// Resend API key for transactional email (the pre-order thank-you note).
     /// Empty → email sends are skipped. See `Config::resend_api_key`.
     pub resend_api_key: String,
@@ -82,6 +95,7 @@ pub fn router() -> Router<AppState> {
         .merge(link::router())
         .merge(preorder::router())
         .merge(credits::router())
+        .merge(relay::router())
         .merge(billing_portal::router())
         .merge(settings::router())
         .merge(webhooks::router())

@@ -80,6 +80,11 @@ async fn main() -> Result<()> {
             email_from: cfg.preorder_email_from.clone(),
             email_reply_to: cfg.preorder_email_reply_to.clone(),
         },
+        relay: routes::RelayPolicy {
+            secret: cfg.relay_secret.clone(),
+            control_addr: cfg.relay_control_addr.clone(),
+            base_domain: cfg.relay_base_domain.clone(),
+        },
         resend_api_key: cfg.resend_api_key.clone(),
         allow_promotion_codes: cfg.allow_promotion_codes,
     };
