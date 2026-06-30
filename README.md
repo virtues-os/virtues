@@ -172,34 +172,32 @@ restore from backup, BYO key reset, and more.
 <a id="connect-from-another-machine-v02-preview"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-dark.svg"><img alt="Connect from another machine (v0.2 preview)" src=".github/images/headings/h2-connect-from-another-machine-v0-2-preview-light.svg" height="28"></picture>
 
-The desktop daemon (`virtues-client`) pairs a Linux laptop to your box over
-WireGuard and exposes the box's web UI on `http://localhost:8000` — a Secure
-Context origin with no cert warnings.
+Reach your box from **any browser, anywhere** — no app to install, no tunnel, no
+port forwarding — at its relay URL:
 
-```bash
-# On the laptop, one-time setup
-curl -L -o virtues-client \
-  https://github.com/virtues-os/virtues/releases/latest/download/virtues-client-$(uname -m)-linux
-chmod +x virtues-client && sudo mv virtues-client /usr/local/bin/
-sudo setcap cap_net_admin+ep /usr/local/bin/virtues-client
-
-# On the box, mint a pair URL
-sudo -u virtues virtues link    # copy the printed https://…/pair#t=… URL
-
-# On the laptop, pair + bring the tunnel up
-virtues-client pair "<paste-pair-url>"
-sudo virtues-client up          # → "proxy listening on http://localhost:8000"
+```
+https://<boxhash>.virtues.ch
 ```
 
-Open `http://localhost:8000` in any browser on the laptop and you're talking
-to the box.
+Your box **dials out** to a blind relay and holds the connection open, so a
+browser hitting that URL is spliced through to the box over end-to-end TLS the
+relay can't read. It works behind CGNAT, coworking/café wifi, and IPv6-only home
+ISPs — anywhere outbound 443 reaches, which is everywhere. The relay sees only
+the destination name and sealed bytes; it has no key to decrypt your traffic. See
+**[Privacy &amp; security model](docs/privacy-model.md)** and the
+[visual walkthrough](docs/relay-walkthrough.html).
 
-**Honest scope of the v0.2 preview:**
+The box is provisioned with its relay URL automatically once it's linked to a
+subscription (atlas mints a per-box name + token; the box dials the relay and
+registers). On your home network you can still reach the box directly, no relay.
 
-- Linux client only. macOS lands in v0.2.2.
-- The WireGuard server-side daemon (`virtues-wireguard`) is **v0.2.1 work** —
-  pair succeeds today, but the tunnel won't reach the box until that lands.
-- Strict-symmetric NAT (mostly enterprise) is not supported; cone NAT works.
+**Honest scope today:**
+
+- The box currently serves a **self-signed** cert, so browsers show a one-time
+  warning — per-box browser-trusted (ACME) certificates are the next step.
+- The relay is **single-region and IPv4-only** for now (IPv6 + multi-region later).
+- This replaces the earlier WireGuard desktop-tunnel preview, which has been
+  removed.
 
 <a id="development"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-development-dark.svg"><img alt="Development" src=".github/images/headings/h2-development-light.svg" height="28"></picture>
