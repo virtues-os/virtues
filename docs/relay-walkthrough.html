@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Virtues relay — how it actually works</title>
+<style>
+  :root{
+    --bg:#0d0f14; --panel:#161a22; --panel2:#1c2230; --ink:#e8ecf2; --muted:#98a3b3; --line:#2a313f;
+    --mac:#f6c453; --relay:#34d399; --box:#5b9cff; --atlas:#b07bff; --bad:#ff6b6b; --good:#34d399; --warn:#f6c453;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1100px 600px at 75% -10%,#171c28,var(--bg));color:var(--ink);font-family:var(--sans);line-height:1.5;padding:44px 22px 100px}
+  .wrap{max-width:1080px;margin:0 auto}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin:0 0 8px;font-size:15px}
+  .tl{font-size:15px;background:var(--panel2);border:1px solid var(--line);border-left:3px solid var(--relay);border-radius:10px;padding:12px 16px;margin:18px 0 34px}
+  h2{font-size:20px;margin:42px 0 6px;letter-spacing:-.01em}
+  h2 .n{color:var(--muted);font-variant-numeric:tabular-nums;margin-right:8px}
+  .lede{color:var(--muted);font-size:14px;margin:0 0 18px}
+  code{font-family:var(--mono);font-size:.86em;background:var(--panel2);padding:1px 6px;border-radius:6px}
+  .c-mac{color:var(--mac)} .c-relay{color:var(--relay)} .c-box{color:var(--box)} .c-atlas{color:var(--atlas)}
+  .b-mac{border-color:var(--mac)} .b-relay{border-color:var(--relay)} .b-box{border-color:var(--box)} .b-atlas{border-color:var(--atlas)}
+
+  /* topology */
+  .topo{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:stretch}
+  .node{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px;position:relative;overflow:hidden}
+  .node::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .node.mac::before{background:var(--mac)} .node.relay::before{background:var(--relay)} .node.box::before{background:var(--box)} .node.atlas::before{background:var(--atlas)}
+  .node .ttl{font-weight:650;font-size:15px} .node .loc{color:var(--muted);font-size:12px;margin-top:1px}
+  .node .role{color:var(--muted);font-size:12.5px;margin-top:8px}
+  .pill{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin:8px 6px 0 0;color:var(--muted)}
+  .pill.good{color:var(--good);border-color:rgba(52,211,153,.4);background:rgba(52,211,153,.08)}
+  .pill.bad{color:var(--bad);border-color:rgba(255,107,107,.4);background:rgba(255,107,107,.08)}
+  .flowrow{display:flex;align-items:center;gap:10px;margin:14px 0;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+  .arrow{font-family:var(--mono);font-size:12.5px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:5px 10px}
+  .heart{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--relay);animation:pulse 2.5s infinite}
+  @keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+
+  /* secrets ledger */
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+  td.k{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:nowrap}
+  .has{color:var(--good);font-weight:700}.no{color:var(--bad)}.na{color:var(--muted)}
+  .why{color:var(--muted);font-size:12.5px}
+
+  /* steps */
+  .steps{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:6px 18px 16px;margin:14px 0}
+  .step{display:grid;grid-template-columns:26px 150px 1fr;gap:12px;align-items:start;padding:11px 0;border-top:1px dashed var(--line)}
+  .step:first-child{border-top:none}
+  .step .i{font-family:var(--mono);font-size:12px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:7px;width:26px;height:24px;display:flex;align-items:center;justify-content:center}
+  .step .who{font-family:var(--mono);font-size:12px;padding-top:3px}
+  .step .what{font-size:13.5px}
+  .step .what .msg{font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:4px 8px;display:inline-block;margin-top:3px}
+  .step .what .note{display:block;color:var(--muted);font-size:12px;margin-top:5px}
+
+  /* teach cards */
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:15px 17px}
+  .card h4{margin:0 0 7px;font-size:14.5px}
+  .card h4 .em{font-size:16px;margin-right:7px}
+  .card p{margin:0;color:var(--muted);font-size:13.5px}
+  .card .k{color:var(--ink)}
+  .foot{color:var(--muted);font-size:12px;margin-top:40px;border-top:1px solid var(--line);padding-top:16px}
+  @media(max-width:760px){.topo,.cards{grid-template-columns:1fr}.step{grid-template-columns:26px 1fr}.step .who{display:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>How the Virtues relay actually works</h1>
+  <p class="sub">A Mac on WeWork wifi reaching your home box — the secrets, the connections, and what happens when you pull the plug.</p>
+  <div class="tl"><b>One sentence:</b> your home box <b class="c-box">dials OUT</b> to a <b class="c-relay">blind relay</b> and holds the connection open; a browser anywhere hits the relay, which forwards <i>sealed</i> bytes to your box over that already-open pipe. Nobody opens a port at your house, and the relay can't read a thing.</div>
+
+  <h2><span class="n">01</span>The cast</h2>
+  <p class="lede">Four parties. Notice how little the two cloud pieces actually know.</p>
+  <div class="topo">
+    <div class="node mac">
+      <div class="ttl c-mac">Mac @ WeWork</div><div class="loc">v4-only café/coworking wifi · vanilla browser, no install</div>
+      <div class="role">Wants to open your dashboard. Has no way to reach your house directly (WeWork has no IPv6, your box has no open port).</div>
+      <span class="pill">holds: a device bearer + box_url (after pairing)</span>
+    </div>
+    <div class="node relay">
+      <div class="ttl c-relay">Relay</div><div class="loc">OVH · 15.204.248.171 · :443 browsers · :9443 boxes</div>
+      <div class="role">A dumb, blind switchboard. Reads only the cleartext <b>name</b> (SNI) to route; splices encrypted bytes. Keeps an in-RAM list of which box is connected.</div>
+      <span class="pill good">RAM-only · stateless · open-source</span>
+    </div>
+    <div class="node box">
+      <div class="ttl c-box">Home box</div><div class="loc">Jetson, behind your router (Spectrum NAT)</div>
+      <div class="role">Runs your dashboard on localhost, terminates TLS with <b>its own key</b>, and dials out to the relay. The source of truth — your data lives here.</div>
+      <span class="pill">SNI: <code>a4e65cc3…​.virtues.ch</code></span>
+    </div>
+  </div>
+  <div class="flowrow" style="margin-top:14px">
+    <span class="c-atlas" style="font-weight:650">atlas (AWS)</span>
+    <span class="arrow">the control plane</span>
+    — mints each box's token, knows accounts/billing, writes DNS. <b>Not</b> in the data path. The box talks to it to get provisioned; the relay shares one secret with it.
+  </div>
+  <div class="flowrow">
+    <span class="arrow c-box">box → relay :9443</span> dial-out control pipe (stays open)
+    <span class="arrow c-mac">browser → relay :443</span> per page-load
+    <span class="arrow c-box">box → atlas 443</span> provision + billing
+    <span class="heart"></span> relay pings the box every ~25s
+  </div>
+
+  <h2><span class="n">02</span>Who holds which secret <span style="font-size:13px;color:var(--muted);font-weight:400">— and who deliberately doesn't</span></h2>
+  <p class="lede">This table is the whole privacy model. The red cells are the point.</p>
+  <table>
+    <tr><th>Secret</th><th class="c-mac">Mac</th><th class="c-relay">Relay</th><th class="c-box">Box</th><th class="c-atlas">atlas</th><th>What it's for / why</th></tr>
+    <tr>
+      <td class="k">RELAY_SECRET</td>
+      <td class="no">✗</td><td class="has">✓</td><td class="no">✗</td><td class="has">✓</td>
+      <td class="why">Master HMAC key. atlas <i>mints</i> tokens with it; relay <i>verifies</i> with it. The box never sees it — so a stolen box can't forge other boxes' tokens.</td>
+    </tr>
+    <tr>
+      <td class="k">per-SNI token</td>
+      <td class="no">✗</td><td class="na">derives, doesn't store</td><td class="has">✓</td><td class="na">mints</td>
+      <td class="why"><code>HMAC(RELAY_SECRET, "&lt;sni&gt;:&lt;day&gt;")</code>. atlas mints it for <i>your</i> box only; box presents it to register. Relay recomputes to check — stores nothing.</td>
+    </tr>
+    <tr>
+      <td class="k">box TLS private key</td>
+      <td class="no">✗</td><td class="no">✗ <b>never</b></td><td class="has">✓</td><td class="no">✗</td>
+      <td class="why"><b>The blindness.</b> Only the box can decrypt the browser↔box TLS. The relay forwards ciphertext it has no key for — it <i>cannot</i> read your data, by construction.</td>
+    </tr>
+    <tr>
+      <td class="k">api_key</td>
+      <td class="no">✗</td><td class="no">✗</td><td class="has">✓</td><td class="has">✓</td>
+      <td class="why">Box ↔ atlas auth (billing + "give me my relay config"). Proves which account the box is, so atlas mints the right token.</td>
+    </tr>
+    <tr>
+      <td class="k">device bearer</td>
+      <td class="has">✓</td><td class="no">✗</td><td class="has">✓</td><td class="no">✗</td>
+      <td class="why">Your app login, sent on every request. It travels <i>inside</i> the TLS the box terminates — so the relay never sees it. App-auth is the real lock.</td>
+    </tr>
+    <tr>
+      <td class="k">your actual data</td>
+      <td class="na">sees its own</td><td class="no">✗ ciphertext only</td><td class="has">✓ lives here</td><td class="no">✗</td>
+      <td class="why">Notes, location, health — never leave the box except as E2E-encrypted bytes to <i>your</i> browser. The relay sees the SNI (cleartext) + sealed bytes, nothing more.</td>
+    </tr>
+  </table>
+
+  <h2><span class="n">03</span>Boot &amp; provision <span style="font-size:13px;color:var(--muted);font-weight:400">— box plugs in for the first time</span></h2>
+  <div class="steps">
+    <div class="step"><div class="i">1</div><div class="who c-box">box</div><div class="what">Boots, runs the dashboard on localhost, generates/loads its own TLS cert.</div></div>
+    <div class="step"><div class="i">2</div><div class="who c-box">box → <span class="c-atlas">atlas</span></div><div class="what">"Give me my relay config." (authenticated by <code>api_key</code>)<span class="note">atlas checks the subscription is active, derives <code>boxhash</code> from the account, mints the token for today's bucket.</span></div></div>
+    <div class="step"><div class="i">3</div><div class="who c-atlas">atlas → <span class="c-box">box</span></div><div class="what"><span class="msg">{ relay_addr, sni: a4e65cc3….virtues.ch, token }</span><span class="note">box stores these sealed in <code>box_secrets</code>. It now knows where to dial and how to prove itself.</span></div></div>
+    <div class="step"><div class="i">4</div><div class="who c-box">box → <span class="c-relay">relay :9443</span></div><div class="what">Dials OUT and sends <span class="msg">Register{ sni, token }</span><span class="note">Outbound 9443 — works through any NAT/firewall. No inbound port ever opened at home.</span></div></div>
+    <div class="step"><div class="i">5</div><div class="who c-relay">relay</div><div class="what">Recomputes <code>HMAC(secret, sni:today)</code> (and yesterday), constant-time compares → match.<span class="note">Adds <code>sni → this connection</code> to its in-RAM registry. Replies <span class="msg">Registered ✓</span>. The box is now reachable.</span></div></div>
+  </div>
+
+  <h2><span class="n">04</span>Steady state <span style="font-size:13px;color:var(--muted);font-weight:400">— the pipe stays alive</span></h2>
+  <div class="steps">
+    <div class="step"><div class="i"><span class="heart"></span></div><div class="who c-relay">relay → <span class="c-box">box</span></div><div class="what">Pings every ~25s; box Pongs. Miss it for ~35s → relay declares the box dead and drops it from the registry.<span class="note">This catches a box that vanished without a clean goodbye (power cut, NAT drop) — TCP alone wouldn't notice.</span></div></div>
+    <div class="step"><div class="i">↻</div><div class="who c-box">box → <span class="c-atlas">atlas</span></div><div class="what">Re-fetches its token every ~12h (tokens are day-scoped).<span class="note">This is how revocation works: if atlas stops minting (sub lapsed / box revoked), the token expires within ~2 days and the relay stops accepting it. No relay state needed.</span></div></div>
+    <div class="step"><div class="i">⤓</div><div class="who c-relay">relay</div><div class="what">Force-recycles each control connection after ~20h → box re-registers.<span class="note">Guarantees a revoked box is re-checked at least daily even if it never disconnects on its own.</span></div></div>
+  </div>
+
+  <h2><span class="n">05</span>The Mac reaches the box <span style="font-size:13px;color:var(--muted);font-weight:400">— from WeWork wifi, no install</span></h2>
+  <div class="steps">
+    <div class="step"><div class="i">1</div><div class="who c-mac">browser</div><div class="what">Opens <code>https://a4e65cc3….virtues.ch</code>. DNS → <code>15.204.248.171</code> (the relay).</div></div>
+    <div class="step"><div class="i">2</div><div class="who c-mac">browser → <span class="c-relay">relay :443</span></div><div class="what">Starts TLS. The first packet (ClientHello) carries the <b>SNI</b> in cleartext.<span class="note">The relay reads ONLY the name to route — like the address on a sealed envelope.</span></div></div>
+    <div class="step"><div class="i">3</div><div class="who c-relay">relay</div><div class="what">Looks up <code>a4e65cc3…</code> in its registry → finds your box's open control pipe → tells it: <span class="msg">OpenConn</span></div></div>
+    <div class="step"><div class="i">4</div><div class="who c-box">box → <span class="c-relay">relay</span></div><div class="what">Dials a fresh <b>work connection</b> back out to the relay for this visitor.</div></div>
+    <div class="step"><div class="i">5</div><div class="who c-relay">relay</div><div class="what">Replays the buffered ClientHello to the box, then <b>splices</b> bytes both ways — browser ⇄ box.<span class="note">From here the relay is a dumb pipe moving ciphertext. It has no TLS key; it can't see inside.</span></div></div>
+    <div class="step"><div class="i">6</div><div class="who c-box">box</div><div class="what">Terminates TLS with <i>its own</i> cert, serves the dashboard. Your <code>device bearer</code> (inside the TLS) logs you in.<span class="note">End-to-end encrypted, browser ⇄ your box. The café, WeWork, and the relay all see only sealed bytes + the name.</span></div></div>
+  </div>
+
+  <h2><span class="n">06</span>You unplug the box… then plug it back in</h2>
+  <div class="steps">
+    <div class="step"><div class="i">🔌</div><div class="who c-box">box</div><div class="what"><b>Power/network cut.</b> The control pipe goes silent.</div></div>
+    <div class="step"><div class="i">⏱</div><div class="who c-relay">relay</div><div class="what">Ping gets no Pong for ~35s → evicts <code>a4e65cc3…</code> from the registry.<span class="note">Because the relay holds NO durable state about your box, eviction is just forgetting one in-RAM entry. A browser hitting the name now gets "no box here" and the connection closes.</span></div></div>
+    <div class="step"><div class="i">⚡</div><div class="who c-box">box</div><div class="what"><b>Plugged back in.</b> Boots, reads its stored relay config (or re-fetches), and re-dials — after a small random delay (jittered backoff + startup splay).<span class="note">The jitter matters at fleet scale: if the relay restarts and 10,000 boxes reboot at once, they don't all dial back in the same millisecond.</span></div></div>
+    <div class="step"><div class="i">✓</div><div class="who c-relay">relay</div><div class="what">Verifies the token again, re-registers the box. <b>Reachable again — fully automatic, no human touch.</b><span class="note">Meanwhile your LAN never depended on any of this: at home you reach the box directly the whole time.</span></div></div>
+  </div>
+
+  <h2><span class="n">07</span>Teaching moments for this paradigm</h2>
+  <div class="cards">
+    <div class="card b-box"><h4><span class="em">📞</span>Dial-out inverts the firewall problem</h4><p>You never open a port at home — impossible behind CGNAT/WeWork anyway. The box reaches <span class="k">outbound</span>, which <i>every</i> network allows. The hard "how do I accept an inbound connection to a house" problem becomes the trivial "make an outbound call" problem. This single inversion is why it works everywhere.</p></div>
+    <div class="card b-relay"><h4><span class="em">✉️</span>Blind by construction, not by promise</h4><p>The relay forwards sealed envelopes and reads only the address. It has no TLS key, so "we can't read your data" isn't a policy you trust — it's a thing the relay is <span class="k">physically unable</span> to do. Strongest possible version of the claim.</p></div>
+    <div class="card b-atlas"><h4><span class="em">⏳</span>Revocation without a database</h4><p>Tokens are scoped to your name <i>and</i> to the day. A leaked token only works for your box, and only until tomorrow — unless atlas keeps re-minting it (which it won't if you're revoked). The relay enforces this by just recomputing the HMAC; it never stores a list of valid tokens.</p></div>
+    <div class="card b-relay"><h4><span class="em">🧠</span>RAM-only = self-healing + private</h4><p>Reboot the relay and <span class="k">nothing is lost</span> — there's no DB of who's who; boxes simply re-dial. The same property that makes it private (no records) makes it operationally simple (no state to corrupt, back up, or migrate).</p></div>
+    <div class="card b-box"><h4><span class="em">🏠</span>Home holds the keys; cloud is a thin conduit</h4><p>The box is the source of truth, holds the TLS key, terminates encryption, and stores your data. The cloud does two small jobs: <span class="k">mint a token</span> (atlas) and <span class="k">move sealed bytes</span> (relay). Delete both and your data is untouched at home.</p></div>
+    <div class="card b-mac"><h4><span class="em">⚠️</span>The honest tradeoff: the relay is a SPOF</h4><p>If the relay is down, <span class="k">remote</span> reach is down (LAN keeps working; the box keeps collecting). That's the price of "reach from anywhere with no install." Mitigations: auto-reconnect, low-TTL DNS to repoint fast, and — later — multi-region.</p></div>
+  </div>
+
+  <p class="foot">Concrete values are this deployment's: relay <code>15.204.248.171</code>, box SNI <code>a4e65cc3c92fc8882b6c.virtues.ch</code>. Companion to <code>docs/relay-control-plane.md</code> + <code>docs/networking-relay-tee.md</code>. Today: TLS cert is self-signed (browser warning) until ACME lands; relay is v4-only.</p>
+</div>
+</body>
+</html>
