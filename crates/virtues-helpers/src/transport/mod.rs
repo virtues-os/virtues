@@ -34,6 +34,10 @@ pub trait ServerTransport: Send + Sync {
 pub mod real;
 pub use real::RealServerTransport;
 
+// Box-held-cert TLS termination for the LAN-direct listener (relay model).
+#[cfg(feature = "tls")]
+pub mod tls;
+
 #[cfg(feature = "dev-transport")]
 pub mod dev_local;
 #[cfg(feature = "dev-transport")]

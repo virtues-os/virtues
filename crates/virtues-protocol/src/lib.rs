@@ -34,6 +34,7 @@
 
 pub mod bundle;
 pub mod constants;
+pub mod relay;
 pub mod spki;
 
 // Convenience re-exports so consumers can `use virtues_protocol::{PairingBundle,

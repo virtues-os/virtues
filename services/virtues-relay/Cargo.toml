@@ -1,0 +1,50 @@
+[package]
+name = "virtues-relay"
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "Blind L4 SNI-passthrough relay: boxes dial out, browsers reach them, the relay only ever sees ciphertext."
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+keywords = ["relay", "sni", "passthrough", "tunnel"]
+
+[lib]
+name = "virtues_relay"
+path = "src/lib.rs"
+
+[[bin]]
+name = "virtues-relay"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+
+# TLS ClientHello parsing for SNI peek. NOTE: the relay never *terminates* TLS
+# (pure L4 passthrough), so there is deliberately NO rustls/openssl dependency —
+# we only read the cleartext SNI from the ClientHello, then splice ciphertext.
+tls-parser = "0.12"
+nom = "7"
+
+# Concurrent registry (sni -> box control handle)
+dashmap = "6.0"
+
+# IDs for pairing client conns with box work conns
+uuid = { version = "1.10", features = ["v4"] }
+
+# Box<->relay wire protocol (shared, pure-data crate)
+virtues-protocol = { path = "../../crates/virtues-protocol" }
+serde = "1.0"
+serde_json = "1.0"
+
+# Errors / logging / env
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+dotenvy = "0.15"
+
+[dev-dependencies]
+tokio-test = "0.4"
+# The e2e test drives a real box-side client through the relay.
+virtues-relay-client = { path = "../../crates/virtues-relay-client" }
