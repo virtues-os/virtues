@@ -1116,8 +1116,25 @@ pub async fn provision_handler(
         }
     };
 
-    // Relay model: no WG bundle to hand off, so no QR payload either.
-    let qr_svg = String::new();
+    // Relay model: the QR hands the phone everything it needs to reach the box
+    // off-LAN immediately — the box's relay URL plus this device's bearer. Only
+    // meaningful once the box is relay-registered (box_url present); otherwise
+    // there's no off-LAN address to convey, so the QR is left empty. Payload
+    // contract (the iOS scanner must match) is in apps/ios/RELAY_MIGRATION.md.
+    let box_url = box_reach_url(&pool).await;
+    let qr_svg = match &box_url {
+        Some(url) => render_qr_svg(
+            &serde_json::json!({
+                "v": 1,
+                "box_url": url,
+                "bearer": &bp.bearer,
+                "credential_id": &bp.credential_id,
+                "device_id": &device_id,
+            })
+            .to_string(),
+        ),
+        None => String::new(),
+    };
 
     (
         StatusCode::OK,
@@ -1127,7 +1144,7 @@ pub async fn provision_handler(
             bearer: bp.bearer,
             action_ids,
             qr_svg,
-            box_url: box_reach_url(&pool).await,
+            box_url,
         }),
     )
         .into_response()

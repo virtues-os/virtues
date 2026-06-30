@@ -53,6 +53,34 @@ them up (all are obsolete in the relay model):
 - **`Views/QRScannerView.swift`** — if it distinguishes `virtues-bundle:` QRs
   from `/pair#t=` URLs, drop the bundle branch.
 
+## Provision-QR contract (Mac→phone hand-off) — NEW, implement the scanner
+
+The desktop-relayed provision flow (an already-paired Mac asks the box to
+provision the phone, then shows a QR) **replaces** the old `virtues-bundle:` WG
+blob. The box now renders the QR of a compact JSON payload (see
+`virtues-core/src/api/pair.rs` `provision_handler`):
+
+```json
+{ "v": 1,
+  "box_url": "https://<boxhash>.virtues.ch",
+  "bearer": "<device bearer>",
+  "credential_id": "<credential id>",
+  "device_id": "<device id>" }
+```
+
+The phone scanner must: parse this JSON, store `apiEndpoint = box_url` and the
+`bearer` (same Keychain slots the `/pair#t=` path uses), and start uploading —
+no WG, no key generation, no second round-trip to the box. The QR carries the
+bearer in cleartext, so it has a short TTL (120s) and the provisioned device is
+revoked if the user cancels before the phone comes online (the web modal handles
+that side). The box only emits this QR once it is relay-registered (`box_url`
+present); otherwise `qr_svg` is empty (there is no off-LAN address to hand off).
+
+So `handleBundleScanResult` isn't just deleted — its QR branch is **repointed**
+to a small JSON decoder for the payload above. The `ProvisionResponse` already
+carries `box_url` too, if the web prefers to build the QR client-side via the
+bundled `qrcode` lib instead of displaying `qr_svg` (either works; pick one).
+
 ## Sanity check after cleanup
 
 1. `grep -rn 'VirtuesTunnelManager\|virtues_tunnel\|wg_public_key\|verifyAndStoreBundle\|BoxBundle' apps/ios/Virtues` → should return nothing.
