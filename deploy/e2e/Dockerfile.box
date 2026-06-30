@@ -1,0 +1,11 @@
+# e2e box harness (relay subsystem stand-in). Build context = repo root.
+# The harness is its own cargo workspace under deploy/e2e/box-harness with path
+# deps reaching back to the repo crates, so we build it by manifest path.
+FROM rust:1-bookworm AS build
+WORKDIR /src
+COPY . .
+RUN cargo build --release --manifest-path deploy/e2e/box-harness/Cargo.toml
+
+FROM debian:bookworm-slim
+COPY --from=build /src/deploy/e2e/box-harness/target/release/relay-e2e-box /usr/local/bin/relay-e2e-box
+ENTRYPOINT ["relay-e2e-box"]
