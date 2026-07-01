@@ -202,13 +202,19 @@ class NetworkManager: ObservableObject {
             timezone: TimeZone.current.identifier
         )
 
-        // Relay model: no WG keypair. The box is reached over HTTPS at the URL it
-        // returns (`box_url`); there's nothing to provision on-device.
+        // iroh model: this device has its own iroh identity. Generate (or reuse) a
+        // 32-byte seed, derive its EndpointId, and submit it so the box allowlists
+        // this device for iroh reach. The seed stays in the Keychain; only the
+        // public EndpointId leaves the device.
+        let seed = Self.ensureIrohSeed()
+        let deviceNodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
+
         let body = PairConsumeRequest(
             token: pairToken,
             kind: "mobile_app",
             label: deviceName,
-            device_info: deviceInfo
+            device_info: deviceInfo,
+            device_node_id: deviceNodeId
         )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
@@ -230,10 +236,11 @@ class NetworkManager: ObservableObject {
             if let bearer = parsed.bearer, !bearer.isEmpty {
                 try? KeychainStore.shared.saveBearer(bearer)
             }
-            // Relay model: the box's identity is its browser-trusted TLS cert
-            // (verified by URLSession against the public CA roots on every call),
-            // so there's no WG server key to pin out-of-band. `expectedFingerprint`
-            // is accepted for call-site compatibility but no longer used.
+            // iroh model: the box's identity is its Ed25519 EndpointId, returned
+            // in the reach ticket (`box_node_id`) and dialed with mutual-key auth
+            // (no CA). There's no separate fingerprint to pin out-of-band, so
+            // `expectedFingerprint` is accepted for call-site compatibility but
+            // unused. The caller persists `boxNodeId`/`relayUrl` as the ticket.
             _ = expectedFingerprint
             return parsed
         case 401:
@@ -303,6 +310,46 @@ class NetworkManager: ObservableObject {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode([ActionRun].self, from: data)
+    }
+
+    // MARK: - iroh device identity
+
+    /// Return this device's iroh seed (hex), generating + persisting a fresh
+    /// 32-byte seed in the Keychain on first use so the EndpointId is stable
+    /// across launches. `nil` only if the Keychain write fails.
+    static func ensureIrohSeed() -> String? {
+        if let existing = KeychainStore.shared.loadIrohSeed(), !existing.isEmpty {
+            return existing
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            return nil
+        }
+        let hex = bytes.map { String(format: "%02x", $0) }.joined()
+        try? KeychainStore.shared.saveIrohSeed(hex)
+        return KeychainStore.shared.loadIrohSeed()
+    }
+
+    /// Register this device's iroh EndpointId with the box (provision path, where
+    /// the device wasn't able to submit it in-band at consume). Authenticated with
+    /// the device bearer; the box updates `app_device.node_id` for the caller.
+    /// Best-effort — returns whether the box accepted it. Goes over `BoxTransport`
+    /// (iroh), so the box must already reach this device's EndpointId; if it
+    /// can't yet (freshly provisioned), the user re-pairs via the QR consume path.
+    func registerSelfNodeId(base: URL, bearer: String, nodeId: String) async -> Bool {
+        guard let url = URL(string: "\(base.absoluteString)/api/devices/self/node-id") else {
+            return false
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["node_id": nodeId])
+        request.timeoutInterval = 15
+        guard let (_, http) = try? await BoxTransport.shared.send(request, session: session) else {
+            return false
+        }
+        return (200...299).contains(http.statusCode)
     }
 
     /// Hardware model identifier (e.g. "iPhone16,1")
@@ -391,6 +438,9 @@ struct PairConsumeRequest: Codable {
     /// the device's name (`UIDevice.current.name`) when nil.
     let label: String?
     let device_info: PairingDeviceInfo
+    /// This device's iroh EndpointId (hex), derived from its locally-generated
+    /// seed. The box allowlists it so the device can reach the box over iroh.
+    let device_node_id: String?
 }
 
 /// `POST /api/pair/consume` response — see `virtues-core/src/api/pair.rs`
@@ -405,10 +455,11 @@ struct PairConsumeResponse: Codable {
     /// Backend `function_name → action_id` map the device persists and uses
     /// when posting each stream flush to `POST /webhook/{action_id}`.
     let actionIds: [String: String]
-    /// The box's canonical browser-reachable URL (`https://<relay-sni>`), when
-    /// configured for relay reach. The caller stores this as the device's
-    /// `apiEndpoint` so all box calls go to the relay URL. `nil` on a LAN-only
-    /// box — the caller falls back to the origin it paired against.
-    /// (`box_url` → `boxUrl` via `.convertFromSnakeCase`.)
-    let boxUrl: String?
+    /// The box's iroh EndpointId (hex) — the reach ticket the device dials over
+    /// iroh. `nil` on a dev/LAN box with no relay reach.
+    /// (`box_node_id` → `boxNodeId` via `.convertFromSnakeCase`.)
+    let boxNodeId: String?
+    /// The relay URL to reach `boxNodeId` through — the other half of the ticket.
+    /// (`relay_url` → `relayUrl` via `.convertFromSnakeCase`.)
+    let relayUrl: String?
 }

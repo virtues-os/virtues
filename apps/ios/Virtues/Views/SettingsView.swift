@@ -112,11 +112,6 @@ struct SettingsView: View {
                         .font(.subheadline)
                     }
 
-                    // Connection / WireGuard tunnel details (status, endpoint,
-                    // SPKI fingerprint, forget credentials).
-                    NavigationLink(destination: ConnectionSettingsView()) {
-                        Label("Connection", systemImage: "lock.shield")
-                    }
                 }
                 
                 // Permissions Section
@@ -373,13 +368,14 @@ struct SettingsView: View {
                     expectedFingerprint: fingerprint
                 )
 
-                // Reach the box from now on at its relay URL (works off-LAN);
-                // fall back to the scanned origin on a LAN-only box.
-                let reachEndpoint = response.boxUrl?.isEmpty == false
-                    ? response.boxUrl!
-                    : endpoint
+                // iroh model: keep the scanned origin as the path base
+                // (`apiEndpoint`); actual reach is over iroh via the ticket
+                // (`box_node_id` + `relay_url`) the box just returned, dialed by
+                // BoxTransport. The device seed was generated + stored in
+                // `consumePairToken`.
                 await MainActor.run {
-                    deviceManager.updateConfiguration(apiEndpoint: reachEndpoint)
+                    deviceManager.updateConfiguration(apiEndpoint: endpoint)
+                    deviceManager.updateReach(boxNodeId: response.boxNodeId, relayUrl: response.relayUrl)
                     deviceManager.updateActionIds(response.actionIds)
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured
@@ -400,68 +396,71 @@ struct SettingsView: View {
         }
     }
 
-    /// Desktop-RELAYED off-LAN pairing: the QR is a `virtues-bundle:` blob whose
-    /// envelope is `{ bundle, action_ids }`. The box already generated this
-    /// device's WG keypair, so there's no consume round-trip — we import the
-    /// bundle (bearer + private key + WG params), pin the box's key (TOFU; no
-    /// out-of-band fpr needed since the QR came from the user's own already-paired
-    /// device), set the tunnel endpoint, persist `action_ids`, and ping the box
-    /// over the fresh tunnel so the relaying device's UI flips to "paired".
-    private func handleBundleScanResult(_ envelope: Data) {
+    /// Desktop-RELAYED provision (Mac→phone hand-off): an already-paired device
+    /// asks the box to mint this phone's credential, then shows a v2 QR carrying
+    /// the box's iroh reach ticket + bearer:
+    ///
+    /// ```json
+    /// { "v": 2, "box_node_id": "...", "relay_url": "...",
+    ///   "bearer": "...", "credential_id": "...", "device_id": "..." }
+    /// ```
+    ///
+    /// We store the bearer + ticket, generate this device's iroh seed, and
+    /// register its EndpointId with the box so it's allowlisted. (The box minted
+    /// the credential before the phone had a key, so the node_id is registered
+    /// here post-scan rather than in-band — see `registerSelfNodeId`.)
+    private func handleBundleScanResult(_ payload: Data) {
         showQRScanner = false
         isCompletingPairing = true
         pairingError = nil
 
         Task {
             do {
-                guard
-                    let root = try JSONSerialization.jsonObject(with: envelope) as? [String: Any],
-                    let bundle = root["bundle"] as? [String: Any],
-                    let bundleData = try? JSONSerialization.data(withJSONObject: bundle)
-                else {
+                guard let root = try JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
                     throw NetworkError.decodingError
                 }
-
-                let bearer = bundle["bearer"] as? String
-                let wg = bundle["wg"] as? [String: Any]
-                let privKey = wg?["client_private_key"] as? String
-                guard let bearer, !bearer.isEmpty, let privKey, !privKey.isEmpty else {
+                let bearer = root["bearer"] as? String
+                let boxNodeId = root["box_node_id"] as? String
+                let relayUrl = root["relay_url"] as? String
+                guard let bearer, !bearer.isEmpty,
+                      let boxNodeId, !boxNodeId.isEmpty,
+                      let relayUrl, !relayUrl.isEmpty else {
                     throw NetworkError.badRequest(
-                        message: "This pairing QR is missing tunnel credentials. "
+                        message: "This provision QR is missing the box reach ticket. "
                             + "Regenerate it from + Add Device on your other device."
                     )
                 }
 
-                // Store secrets + bundle. `verifyAndStoreBundle` pins the server
-                // key (TOFU) and tears down any stale tunnel; nil fingerprint =
-                // trust the bundle from the user's own paired device.
+                // Persist bearer + reach ticket + this device's iroh seed.
                 try KeychainStore.shared.saveBearer(bearer)
-                try KeychainStore.shared.saveWgPrivateKey(privKey)
-                try VirtuesTunnelManager.shared.verifyAndStoreBundle(
-                    bundleData,
-                    expectedFingerprint: nil
-                )
+                let seed = NetworkManager.ensureIrohSeed()
+                let nodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
 
-                let actionIds = (root["action_ids"] as? [String: String]) ?? [:]
-                let internalHost = (bundle["internal_host"] as? String) ?? "virtues.internal"
-                let httpPort = (bundle["http_port"] as? Int) ?? 8000
-                let endpoint = "http://\(internalHost):\(httpPort)"
+                // `apiEndpoint` is only a path base over iroh (host is ignored by
+                // the box) — provision QRs carry no LAN origin, so use a stable
+                // placeholder so webhook paths compose.
+                let pathBase = "http://virtues.box:8000"
 
                 await MainActor.run {
-                    deviceManager.updateConfiguration(apiEndpoint: endpoint)
-                    deviceManager.updateActionIds(actionIds)
+                    deviceManager.updateConfiguration(apiEndpoint: pathBase)
+                    deviceManager.updateReach(boxNodeId: boxNodeId, relayUrl: relayUrl)
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured
                     isCompletingPairing = false
                     Haptics.success()
                 }
 
-                // Best-effort, non-blocking: reach the box over the new tunnel so
-                // its `last_seen_at` advances and the relaying device shows
-                // "paired" now (not on the first scheduled upload minutes later).
-                // Detached so a slow/unreachable tunnel never stalls the UI — the
-                // first upload registers liveness regardless.
-                Task.detached { await NetworkManager.shared.confirmPairOnline() }
+                // Register this device's EndpointId so the box allowlists it, and
+                // bump `last_seen_at` so the relaying device flips to "paired".
+                // Best-effort + detached: the first upload retries if it doesn't
+                // land now.
+                if let nodeId, let base = DeviceManager.shared.configuration.baseURL {
+                    Task.detached {
+                        _ = await NetworkManager.shared.registerSelfNodeId(
+                            base: base, bearer: bearer, nodeId: nodeId
+                        )
+                    }
+                }
             } catch {
                 await MainActor.run {
                     isCompletingPairing = false
@@ -493,8 +492,8 @@ struct SettingsView: View {
         locationManager.stopTracking()
         audioManager.stopRecording()
 
-        // Drop the live tunnel + wipe all Keychain secrets.
-        VirtuesTunnelManager.shared.teardown()
+        // Drop the warm iroh connection + wipe all Keychain secrets.
+        Task { await BoxTransport.shared.reset() }
         KeychainStore.shared.wipeAll()
 
         // Clear configuration (endpoint, action IDs) + every UserDefaults key.

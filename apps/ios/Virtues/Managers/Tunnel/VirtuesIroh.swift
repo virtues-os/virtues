@@ -7,8 +7,8 @@ import Foundation
 // Depending on the consumer's build setup, the low-level FFI code
 // might be in a separate module, or it might be compiled inline into
 // this module. This is a bit of light hackery to work with both.
-#if canImport(virtues_tunnelFFI)
-import virtues_tunnelFFI
+#if canImport(virtues_iroh_ffiFFI)
+import virtues_iroh_ffiFFI
 #endif
 
 fileprivate extension RustBuffer {
@@ -25,13 +25,13 @@ fileprivate extension RustBuffer {
     }
 
     static func from(_ ptr: UnsafeBufferPointer<UInt8>) -> RustBuffer {
-        try! rustCall { ffi_virtues_tunnel_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
+        try! rustCall { ffi_virtues_iroh_ffi_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
     }
 
     // Frees the buffer in place.
     // The buffer must not be used after this is called.
     func deallocate() {
-        try! rustCall { ffi_virtues_tunnel_rustbuffer_free(self, $0) }
+        try! rustCall { ffi_virtues_iroh_ffi_rustbuffer_free(self, $0) }
     }
 }
 
@@ -281,7 +281,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureVirtuesTunnelInitialized()
+    uniffiEnsureInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -352,29 +352,18 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-// Initial value and increment amount for handles. 
-// These ensure that SWIFT handles always have the lowest bit set
-fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
-fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
-
-fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
-    // All mutation happens with this lock held, which is why we implement @unchecked Sendable.
-    private let lock = NSLock()
+fileprivate class UniffiHandleMap<T> {
     private var map: [UInt64: T] = [:]
-    private var currentHandle: UInt64 = UNIFFI_HANDLEMAP_INITIAL
+    private let lock = NSLock()
+    private var currentHandle: UInt64 = 1
 
     func insert(obj: T) -> UInt64 {
         lock.withLock {
-            return doInsert(obj)
+            let handle = currentHandle
+            currentHandle += 1
+            map[handle] = obj
+            return handle
         }
-    }
-
-    // Low-level insert function, this assumes `lock` is held.
-    private func doInsert(_ obj: T) -> UInt64 {
-        let handle = currentHandle
-        currentHandle += UNIFFI_HANDLEMAP_DELTA
-        map[handle] = obj
-        return handle
     }
 
      func get(handle: UInt64) throws -> T {
@@ -383,15 +372,6 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
                 throw UniffiInternalError.unexpectedStaleHandle
             }
             return obj
-        }
-    }
-
-     func clone(handle: UInt64) throws -> UInt64 {
-        try lock.withLock {
-            guard let obj = map[handle] else {
-                throw UniffiInternalError.unexpectedStaleHandle
-            }
-            return doInsert(obj)
         }
     }
 
@@ -415,38 +395,6 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 // Public interface members begin here.
 
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterUInt16: FfiConverterPrimitive {
-    typealias FfiType = UInt16
-    typealias SwiftType = UInt16
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt16 {
-        return try lift(readInt(&buf))
-    }
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
-    typealias FfiType = UInt32
-    typealias SwiftType = UInt32
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
-        return try lift(readInt(&buf))
-    }
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -511,464 +459,360 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
- * A paired, in-app userspace WireGuard tunnel. (Named `TunnelHandle` rather
- * than `VirtuesTunnel` so the Swift type doesn't collide with the
- * `VirtuesTunnel` module name.)
+ * A warm iroh transport to one box. Construct with [`IrohTransport::dial`]; reuse
+ * it across many `request()` calls (the underlying connection is kept warm and
+ * redialed transparently on staleness). Hold a single instance for the app's
+ * lifetime — a cold dial won't fit iOS's ~30s background-task budget.
  */
-public protocol TunnelHandleProtocol: AnyObject, Sendable {
+public protocol IrohTransportProtocol : AnyObject {
     
     /**
-     * Open a TCP stream to `(ip, port)` inside the tunnel (the box ULA +
-     * http_port). Blocks until connected or the dial times out.
+     * Graceful close — flush the QUIC close frame. Optional; dropping the last
+     * Swift reference also closes the endpoint.
      */
-    func dial(ip: String, port: UInt16) throws  -> TunnelStreamHandle
+    func close() async 
     
     /**
-     * Coarse status: "connecting" | "connected" | "failed: …" | "closed".
+     * Send a raw HTTP/1 request over a fresh bi-stream; return the raw HTTP/1
+     * response bytes. Swift serializes its `URLRequest` to bytes and parses the
+     * returned bytes back into a response — the box serves each stream as a
+     * normal hyper HTTP/1 connection.
      */
-    func status()  -> String
+    func request(rawHttp: Data) async throws  -> Data
     
 }
-/**
- * A paired, in-app userspace WireGuard tunnel. (Named `TunnelHandle` rather
- * than `VirtuesTunnel` so the Swift type doesn't collide with the
- * `VirtuesTunnel` module name.)
- */
-open class TunnelHandle: TunnelHandleProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
 
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+/**
+ * A warm iroh transport to one box. Construct with [`IrohTransport::dial`]; reuse
+ * it across many `request()` calls (the underlying connection is kept warm and
+ * redialed transparently on staleness). Hold a single instance for the app's
+ * lifetime — a cold dial won't fit iOS's ~30s background-task budget.
+ */
+open class IrohTransport:
+    IrohTransportProtocol {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public struct NoHandle {
+    public struct NoPointer {
         public init() {}
     }
 
     // TODO: We'd like this to be `private` but for Swifty reasons,
     // we can't implement `FfiConverter` without making this `required` and we can't
     // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
     }
 
     // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
     //
     // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_virtues_tunnel_fn_clone_tunnelhandle(self.handle, $0) }
-    }
-    /**
-     * Bring up the tunnel. `bundle_json` is the raw `/api/pair/consume` body;
-     * `private_key_b64` is the device key whose public half was sent at pair.
-     */
-public convenience init(bundleJson: String, privateKeyB64: String)throws  {
-    let handle =
-        try rustCallWithError(FfiConverterTypeTunnelFfiError_lift) {
-    uniffi_virtues_tunnel_fn_constructor_tunnelhandle_new(
-        FfiConverterString.lower(bundleJson),
-        FfiConverterString.lower(privateKeyB64),$0
-    )
-}
-    self.init(unsafeFromHandle: handle)
-}
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_virtues_tunnel_fn_free_tunnelhandle(handle, $0) }
-    }
-
-    
-
-    
-    /**
-     * Open a TCP stream to `(ip, port)` inside the tunnel (the box ULA +
-     * http_port). Blocks until connected or the dial times out.
-     */
-open func dial(ip: String, port: UInt16)throws  -> TunnelStreamHandle  {
-    return try  FfiConverterTypeTunnelStreamHandle_lift(try rustCallWithError(FfiConverterTypeTunnelFfiError_lift) {
-    uniffi_virtues_tunnel_fn_method_tunnelhandle_dial(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(ip),
-        FfiConverterUInt16.lower(port),$0
-    )
-})
-}
-    
-    /**
-     * Coarse status: "connecting" | "connected" | "failed: …" | "closed".
-     */
-open func status() -> String  {
-    return try!  FfiConverterString.lift(try! rustCall() {
-    uniffi_virtues_tunnel_fn_method_tunnelhandle_status(
-            self.uniffiCloneHandle(),$0
-    )
-})
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeTunnelHandle: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = TunnelHandle
-
-    public static func lift(_ handle: UInt64) throws -> TunnelHandle {
-        return TunnelHandle(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: TunnelHandle) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TunnelHandle {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: TunnelHandle, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTunnelHandle_lift(_ handle: UInt64) throws -> TunnelHandle {
-    return try FfiConverterTypeTunnelHandle.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTunnelHandle_lower(_ value: TunnelHandle) -> UInt64 {
-    return FfiConverterTypeTunnelHandle.lower(value)
-}
-
-
-
-
-
-
-/**
- * One TCP byte stream inside the tunnel.
- */
-public protocol TunnelStreamHandleProtocol: AnyObject, Sendable {
-    
-    /**
-     * Read up to `max_len` bytes. Returns an empty vec on clean EOF.
-     */
-    func read(maxLen: UInt32) throws  -> Data
-    
-    /**
-     * Write all of `data`. Returns the number of bytes accepted.
-     */
-    func write(data: Data) throws  -> UInt32
-    
-}
-/**
- * One TCP byte stream inside the tunnel.
- */
-open class TunnelStreamHandle: TunnelStreamHandleProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
     }
 
 #if swift(>=5.8)
     @_documentation(visibility: private)
 #endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_virtues_tunnel_fn_clone_tunnelstreamhandle(self.handle, $0) }
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_virtues_iroh_ffi_fn_clone_irohtransport(self.pointer, $0) }
     }
     // No primary constructor declared for this class.
 
     deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
+        guard let pointer = pointer else {
             return
         }
 
-        try! rustCall { uniffi_virtues_tunnel_fn_free_tunnelstreamhandle(handle, $0) }
+        try! rustCall { uniffi_virtues_iroh_ffi_fn_free_irohtransport(pointer, $0) }
     }
-
-    
 
     
     /**
-     * Read up to `max_len` bytes. Returns an empty vec on clean EOF.
+     * Dial the box: `relay_url` = our relay, `box_id_hex` = the box's EndpointId
+     * (from the pairing ticket), `device_seed_hex` = this device's 32-byte iroh
+     * seed (generated at pairing; its EndpointId is on the box's allowlist).
      */
-open func read(maxLen: UInt32)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeTunnelFfiError_lift) {
-    uniffi_virtues_tunnel_fn_method_tunnelstreamhandle_read(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt32.lower(maxLen),$0
-    )
-})
-}
-    
-    /**
-     * Write all of `data`. Returns the number of bytes accepted.
-     */
-open func write(data: Data)throws  -> UInt32  {
-    return try  FfiConverterUInt32.lift(try rustCallWithError(FfiConverterTypeTunnelFfiError_lift) {
-    uniffi_virtues_tunnel_fn_method_tunnelstreamhandle_write(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(data),$0
-    )
-})
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeTunnelStreamHandle: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = TunnelStreamHandle
-
-    public static func lift(_ handle: UInt64) throws -> TunnelStreamHandle {
-        return TunnelStreamHandle(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: TunnelStreamHandle) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TunnelStreamHandle {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: TunnelStreamHandle, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTunnelStreamHandle_lift(_ handle: UInt64) throws -> TunnelStreamHandle {
-    return try FfiConverterTypeTunnelStreamHandle.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTunnelStreamHandle_lower(_ value: TunnelStreamHandle) -> UInt64 {
-    return FfiConverterTypeTunnelStreamHandle.lower(value)
-}
-
-
-
-
-/**
- * A freshly generated pairing keypair.
- */
-public struct PairKeypair: Equatable, Hashable {
-    public var privateKeyB64: String
-    public var publicKeyB64: String
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(privateKeyB64: String, publicKeyB64: String) {
-        self.privateKeyB64 = privateKeyB64
-        self.publicKeyB64 = publicKeyB64
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension PairKeypair: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypePairKeypair: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PairKeypair {
-        return
-            try PairKeypair(
-                privateKeyB64: FfiConverterString.read(from: &buf), 
-                publicKeyB64: FfiConverterString.read(from: &buf)
+public static func dial(relayUrl: String, boxIdHex: String, deviceSeedHex: String)async throws  -> IrohTransport {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_virtues_iroh_ffi_fn_constructor_irohtransport_dial(FfiConverterString.lower(relayUrl),FfiConverterString.lower(boxIdHex),FfiConverterString.lower(deviceSeedHex)
+                )
+            },
+            pollFunc: ffi_virtues_iroh_ffi_rust_future_poll_pointer,
+            completeFunc: ffi_virtues_iroh_ffi_rust_future_complete_pointer,
+            freeFunc: ffi_virtues_iroh_ffi_rust_future_free_pointer,
+            liftFunc: FfiConverterTypeIrohTransport.lift,
+            errorHandler: FfiConverterTypeIrohError.lift
         )
+}
+    
+
+    
+    /**
+     * Graceful close — flush the QUIC close frame. Optional; dropping the last
+     * Swift reference also closes the endpoint.
+     */
+open func close()async  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_virtues_iroh_ffi_fn_method_irohtransport_close(
+                    self.uniffiClonePointer()
+                    
+                )
+            },
+            pollFunc: ffi_virtues_iroh_ffi_rust_future_poll_void,
+            completeFunc: ffi_virtues_iroh_ffi_rust_future_complete_void,
+            freeFunc: ffi_virtues_iroh_ffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * Send a raw HTTP/1 request over a fresh bi-stream; return the raw HTTP/1
+     * response bytes. Swift serializes its `URLRequest` to bytes and parses the
+     * returned bytes back into a response — the box serves each stream as a
+     * normal hyper HTTP/1 connection.
+     */
+open func request(rawHttp: Data)async throws  -> Data {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_virtues_iroh_ffi_fn_method_irohtransport_request(
+                    self.uniffiClonePointer(),
+                    FfiConverterData.lower(rawHttp)
+                )
+            },
+            pollFunc: ffi_virtues_iroh_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_virtues_iroh_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_virtues_iroh_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterData.lift,
+            errorHandler: FfiConverterTypeIrohError.lift
+        )
+}
+    
+
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeIrohTransport: FfiConverter {
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = IrohTransport
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> IrohTransport {
+        return IrohTransport(unsafeFromRawPointer: pointer)
     }
 
-    public static func write(_ value: PairKeypair, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.privateKeyB64, into: &buf)
-        FfiConverterString.write(value.publicKeyB64, into: &buf)
+    public static func lower(_ value: IrohTransport) -> UnsafeMutableRawPointer {
+        return value.uniffiClonePointer()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IrohTransport {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: IrohTransport, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
     }
 }
+
+
 
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypePairKeypair_lift(_ buf: RustBuffer) throws -> PairKeypair {
-    return try FfiConverterTypePairKeypair.lift(buf)
+public func FfiConverterTypeIrohTransport_lift(_ pointer: UnsafeMutableRawPointer) throws -> IrohTransport {
+    return try FfiConverterTypeIrohTransport.lift(pointer)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypePairKeypair_lower(_ value: PairKeypair) -> RustBuffer {
-    return FfiConverterTypePairKeypair.lower(value)
+public func FfiConverterTypeIrohTransport_lower(_ value: IrohTransport) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeIrohTransport.lower(value)
 }
 
 
 /**
- * FFI error — flattened to a message so Swift gets a single throwing type.
+ * Errors surfaced to Swift. Each variant maps to a Swift enum case with an
+ * attached message, so the app can log/branch without string-matching.
  */
-public enum TunnelFfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+public enum IrohError {
 
     
     
-    case Tunnel(message: String)
-    
-
-    
-
-    
-
-    
-    public var errorDescription: String? {
-        String(reflecting: self)
-    }
-    
+    /**
+     * A hex input (box EndpointId or device seed) was malformed or wrong-length.
+     */
+    case BadHex(String
+    )
+    /**
+     * The relay URL didn't parse.
+     */
+    case BadRelayUrl(String
+    )
+    /**
+     * Binding the local endpoint / dialing the box failed.
+     */
+    case Dial(String
+    )
+    /**
+     * Sending the request / reading the response over iroh failed.
+     */
+    case Request(String
+    )
 }
 
-#if compiler(>=6)
-extension TunnelFfiError: Sendable {}
-#endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTunnelFfiError: FfiConverterRustBuffer {
-    typealias SwiftType = TunnelFfiError
+public struct FfiConverterTypeIrohError: FfiConverterRustBuffer {
+    typealias SwiftType = IrohError
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TunnelFfiError {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> IrohError {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
         
 
         
-        case 1: return .Tunnel(
-            message: try FfiConverterString.read(from: &buf)
-        )
-        
+        case 1: return .BadHex(
+            try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .BadRelayUrl(
+            try FfiConverterString.read(from: &buf)
+            )
+        case 3: return .Dial(
+            try FfiConverterString.read(from: &buf)
+            )
+        case 4: return .Request(
+            try FfiConverterString.read(from: &buf)
+            )
 
-        default: throw UniffiInternalError.unexpectedEnumCase
+         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
-    public static func write(_ value: TunnelFfiError, into buf: inout [UInt8]) {
+    public static func write(_ value: IrohError, into buf: inout [UInt8]) {
         switch value {
 
         
 
         
-        case .Tunnel(_ /* message is ignored*/):
-            writeInt(&buf, Int32(1))
-
         
+        case let .BadHex(v1):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(v1, into: &buf)
+            
+        
+        case let .BadRelayUrl(v1):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(v1, into: &buf)
+            
+        
+        case let .Dial(v1):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(v1, into: &buf)
+            
+        
+        case let .Request(v1):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(v1, into: &buf)
+            
         }
     }
 }
 
 
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTunnelFfiError_lift(_ buf: RustBuffer) throws -> TunnelFfiError {
-    return try FfiConverterTypeTunnelFfiError.lift(buf)
+extension IrohError: Equatable, Hashable {}
+
+extension IrohError: Foundation.LocalizedError {
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+}
+private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
+private let UNIFFI_RUST_FUTURE_POLL_MAYBE_READY: Int8 = 1
+
+fileprivate let uniffiContinuationHandleMap = UniffiHandleMap<UnsafeContinuation<Int8, Never>>()
+
+fileprivate func uniffiRustCallAsync<F, T>(
+    rustFutureFunc: () -> UInt64,
+    pollFunc: (UInt64, @escaping UniffiRustFutureContinuationCallback, UInt64) -> (),
+    completeFunc: (UInt64, UnsafeMutablePointer<RustCallStatus>) -> F,
+    freeFunc: (UInt64) -> (),
+    liftFunc: (F) throws -> T,
+    errorHandler: ((RustBuffer) throws -> Swift.Error)?
+) async throws -> T {
+    // Make sure to call uniffiEnsureInitialized() since future creation doesn't have a
+    // RustCallStatus param, so doesn't use makeRustCall()
+    uniffiEnsureInitialized()
+    let rustFuture = rustFutureFunc()
+    defer {
+        freeFunc(rustFuture)
+    }
+    var pollResult: Int8;
+    repeat {
+        pollResult = await withUnsafeContinuation {
+            pollFunc(
+                rustFuture,
+                uniffiFutureContinuationCallback,
+                uniffiContinuationHandleMap.insert(obj: $0)
+            )
+        }
+    } while pollResult != UNIFFI_RUST_FUTURE_POLL_READY
+
+    return try liftFunc(makeRustCall(
+        { completeFunc(rustFuture, $0) },
+        errorHandler: errorHandler
+    ))
 }
 
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeTunnelFfiError_lower(_ value: TunnelFfiError) -> RustBuffer {
-    return FfiConverterTypeTunnelFfiError.lower(value)
+// Callback handlers for an async calls.  These are invoked by Rust when the future is ready.  They
+// lift the return value or error and resume the suspended function.
+fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {
+    if let continuation = try? uniffiContinuationHandleMap.remove(handle: handle) {
+        continuation.resume(returning: pollResult)
+    } else {
+        print("uniffiFutureContinuationCallback invalid handle")
+    }
 }
 /**
- * Compute the box's SPKI fingerprint (`sha256-<base64nopad>`) from its base64
- * WG public key, for out-of-band verification in Settings.
+ * Derive a device's iroh `EndpointId` (hex) from its 32-byte seed (hex). The app
+ * generates a seed at pairing, stores it, submits the derived EndpointId to the
+ * box, and later dials with the same seed. Exposed so Swift doesn't need its own
+ * Ed25519 implementation.
  */
-public func boxSpkiFingerprint(serverPublicKeyB64: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeTunnelFfiError_lift) {
-    uniffi_virtues_tunnel_fn_func_box_spki_fingerprint(
-        FfiConverterString.lower(serverPublicKeyB64),$0
-    )
-})
-}
-/**
- * Generate a Curve25519 keypair. Keep the private key in the keychain; send the
- * public key to the box as `wg_public_key`.
- */
-public func generateKeypair() -> PairKeypair  {
-    return try!  FfiConverterTypePairKeypair_lift(try! rustCall() {
-    uniffi_virtues_tunnel_fn_func_generate_keypair($0
+public func endpointIdFromSeed(deviceSeedHex: String)throws  -> String {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeIrohError.lift) {
+    uniffi_virtues_iroh_ffi_fn_func_endpoint_id_from_seed(
+        FfiConverterString.lower(deviceSeedHex),$0
     )
 })
 }
@@ -980,42 +824,31 @@ private enum InitializationResult {
 }
 // Use a global variable to perform the versioning checks. Swift ensures that
 // the code inside is only computed once.
-private let initializationResult: InitializationResult = {
+private var initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
-    let bindings_contract_version = 30
+    let bindings_contract_version = 26
     // Get the scaffolding contract version by calling the into the dylib
-    let scaffolding_contract_version = ffi_virtues_tunnel_uniffi_contract_version()
+    let scaffolding_contract_version = ffi_virtues_iroh_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_virtues_tunnel_checksum_func_box_spki_fingerprint() != 61212) {
+    if (uniffi_virtues_iroh_ffi_checksum_func_endpoint_id_from_seed() != 53303) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_virtues_tunnel_checksum_func_generate_keypair() != 59172) {
+    if (uniffi_virtues_iroh_ffi_checksum_method_irohtransport_close() != 16468) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_virtues_tunnel_checksum_method_tunnelhandle_dial() != 30122) {
+    if (uniffi_virtues_iroh_ffi_checksum_method_irohtransport_request() != 57181) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_virtues_tunnel_checksum_method_tunnelhandle_status() != 37467) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_virtues_tunnel_checksum_method_tunnelstreamhandle_read() != 9683) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_virtues_tunnel_checksum_method_tunnelstreamhandle_write() != 48871) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_virtues_tunnel_checksum_constructor_tunnelhandle_new() != 6098) {
+    if (uniffi_virtues_iroh_ffi_checksum_constructor_irohtransport_dial() != 1302) {
         return InitializationResult.apiChecksumMismatch
     }
 
     return InitializationResult.ok
 }()
 
-// Make the ensure init function public so that other modules which have external type references to
-// our types can call it.
-public func uniffiEnsureVirtuesTunnelInitialized() {
+private func uniffiEnsureInitialized() {
     switch initializationResult {
     case .ok:
         break

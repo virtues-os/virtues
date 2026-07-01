@@ -35,6 +35,11 @@ struct DeviceConfiguration: Codable {
     /// predate the webhook unification; `webhookURL(forStream:)` returns nil
     /// in that case and the caller should refetch.
     var actionIds: [String: String]
+    /// The box's iroh EndpointId (hex) — half the reach ticket the app dials over
+    /// iroh. `nil` on a dev/LAN box with no relay reach. Non-secret.
+    var boxNodeId: String?
+    /// The relay URL to reach `boxNodeId` through — the other half of the ticket.
+    var relayUrl: String?
 
     private enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
@@ -42,18 +47,24 @@ struct DeviceConfiguration: Codable {
         case deviceName = "device_name"
         case configuredDate = "configured_date"
         case actionIds = "action_ids"
+        case boxNodeId = "box_node_id"
+        case relayUrl = "relay_url"
     }
 
     init(deviceId: String = UUID().uuidString,
          apiEndpoint: String = "",
          deviceName: String = UIDevice.current.name,
          configuredDate: Date? = nil,
-         actionIds: [String: String] = [:]) {
+         actionIds: [String: String] = [:],
+         boxNodeId: String? = nil,
+         relayUrl: String? = nil) {
         self.deviceId = deviceId
         self.apiEndpoint = apiEndpoint
         self.deviceName = deviceName
         self.configuredDate = configuredDate
         self.actionIds = actionIds
+        self.boxNodeId = boxNodeId
+        self.relayUrl = relayUrl
     }
 
     init(from decoder: Decoder) throws {
@@ -63,6 +74,8 @@ struct DeviceConfiguration: Codable {
         self.deviceName = try c.decode(String.self, forKey: .deviceName)
         self.configuredDate = try c.decodeIfPresent(Date.self, forKey: .configuredDate)
         self.actionIds = (try? c.decodeIfPresent([String: String].self, forKey: .actionIds)) ?? [:]
+        self.boxNodeId = try? c.decodeIfPresent(String.self, forKey: .boxNodeId)
+        self.relayUrl = try? c.decodeIfPresent(String.self, forKey: .relayUrl)
     }
 
     /// Bearer token read from the Keychain. Set by the pair flow; returns

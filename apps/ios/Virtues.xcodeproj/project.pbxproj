@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		563090C22FE4982200EE0CBF /* VirtuesTunnel.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */; };
-		563090C32FE4982200EE0CBF /* VirtuesTunnel.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		563090C22FE4982200EE0CBF /* VirtuesIroh.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 563090C12FE4982200EE0CBF /* VirtuesIroh.xcframework */; };
+		563090C32FE4982200EE0CBF /* VirtuesIroh.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 563090C12FE4982200EE0CBF /* VirtuesIroh.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -18,7 +18,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				563090C32FE4982200EE0CBF /* VirtuesTunnel.xcframework in Embed Frameworks */,
+				563090C32FE4982200EE0CBF /* VirtuesIroh.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -26,7 +26,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = VirtuesTunnel.xcframework; path = "../../crates/virtues-tunnel/generated/VirtuesTunnel.xcframework"; sourceTree = "<group>"; };
+		563090C12FE4982200EE0CBF /* VirtuesIroh.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = VirtuesIroh.xcframework; path = "../../crates/virtues-iroh-ffi/generated/VirtuesIroh.xcframework"; sourceTree = "<group>"; };
 		5644C5F22E3B03D50043F3CA /* Virtues.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Virtues.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -56,7 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				563090C22FE4982200EE0CBF /* VirtuesTunnel.xcframework in Frameworks */,
+				563090C22FE4982200EE0CBF /* VirtuesIroh.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -66,7 +66,7 @@
 		563090C02FE4982200EE0CBF /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				563090C12FE4982200EE0CBF /* VirtuesTunnel.xcframework */,
+				563090C12FE4982200EE0CBF /* VirtuesIroh.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -329,6 +329,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
+				OTHER_LDFLAGS = "-framework SystemConfiguration";
 				PRODUCT_BUNDLE_IDENTIFIER = com.virtues.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -377,6 +378,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
+				OTHER_LDFLAGS = "-framework SystemConfiguration";
 				PRODUCT_BUNDLE_IDENTIFIER = com.virtues.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

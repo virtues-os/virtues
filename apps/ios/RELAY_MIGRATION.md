@@ -1,90 +1,56 @@
-# iOS relay migration — Xcode handoff
+# iOS transport: iroh (QUIC P2P)
 
-The Swift **networking + pairing** has been rewritten for the relay model (the
-box is reached over plain HTTPS at the URL it returns at pair time; no in-app
-WireGuard tunnel). The tunnel source files were **left in place** so the project
-still compiles. Finish the cut in Xcode, where you have a compiler.
+The iOS app reaches the box over **iroh** — the box is an iroh `Endpoint`
+addressed by its Ed25519 EndpointId, reached LAN-direct, hole-punched, or via our
+relay. There is no in-app WireGuard tunnel and no public box URL. This replaced
+both the WireGuard model and the interim relay-HTTPS model.
 
-## What was already changed (compiles as-is)
+## How it's wired
 
-- **`Managers/Tunnel/BoxTransport.swift`** — now a thin direct-HTTPS sender
-  (`URLSession.data(for:)`); no longer references `VirtuesTunnelManager`.
-- **`Managers/Data/NetworkManager.swift`**
-  - `consumePairToken` no longer generates a WG keypair, sends `wg_public_key`,
-    or verifies/stores a bundle. `expectedFingerprint` is accepted but unused
-    (kept for call-site compatibility).
-  - `PairConsumeRequest` dropped `wg_public_key`.
-  - `PairConsumeResponse` gained `boxUrl` (`box_url` via `.convertFromSnakeCase`).
-  - `confirmPairOnline` now uses `DeviceManager.shared.configuration.baseURL`.
-- **`Views/SettingsView.swift`** — `handleQRScanResult` sets `apiEndpoint` to the
-  box's relay URL (`response.boxUrl ?? endpoint`).
-- **Box side**: `POST /api/pair/consume` now returns `box_url`
-  (`https://<boxhash>.boxes.virtues.com`) when the box has a relay SNI.
+- **`Managers/Tunnel/BoxTransport.swift`** — an `actor` holding one warm
+  `IrohTransport` (the Rust client, from `VirtuesIroh.xcframework`). `send()`
+  serializes the caller's `URLRequest` to HTTP/1 bytes (`HTTPWire.swift`), sends
+  them over a fresh iroh bi-stream, and parses the reply into
+  `(Data, HTTPURLResponse)`. NetworkManager / BatchUploadCoordinator are
+  unchanged above this line. Dialed lazily from the reach ticket; dropped +
+  redialed on any transport error.
+- **`Managers/Tunnel/HTTPWire.swift`** — HTTP/1.1 request serializer + response
+  parser (origin-form target, `Host`, `Content-Length`, `Connection: close`).
+- **`Managers/Tunnel/VirtuesIroh.swift`** — uniffi-generated Swift bindings for
+  the `virtues-iroh-ffi` crate (`IrohTransport.dial/request/close`,
+  `endpointIdFromSeed`). **Generated — do not edit by hand**; regenerate with the
+  build script below.
+- **Reach ticket**: `box_node_id` + `relay_url` live in `DeviceConfiguration`
+  (UserDefaults, non-secret); this device's 32-byte iroh **seed** lives in the
+  Keychain (`KeychainStore.irohSeed`). `DeviceManager.currentReachTicket()`
+  resolves all three off any thread.
+- **Pairing (consume, primary)**: `NetworkManager.consumePairToken` generates the
+  device seed, derives its EndpointId (`endpointIdFromSeed`), and submits it as
+  `device_node_id` so the box allowlists this device; it reads `box_node_id` +
+  `relay_url` back and stores the ticket.
+- **Pairing (provision, Mac→phone)**: the scanner accepts the box's v2 JSON QR
+  `{ v:2, box_node_id, relay_url, bearer, credential_id, device_id }`
+  (`QRScannerView.parseProvisionPayload` → `SettingsView.handleBundleScanResult`),
+  stores bearer + ticket + a fresh seed, and registers the device's EndpointId
+  via `POST /api/devices/self/node-id` (`registerSelfNodeId`, best-effort).
 
-## What still references the tunnel (delete/clean in Xcode)
+## Rebuilding the FFI (after changing `crates/virtues-iroh-ffi` or bumping iroh)
 
-These files are now vestigial. Remove them from the project (Xcode → delete +
-"Move to Trash"), which also fixes the `.pbxproj` references:
-
-- `Managers/Tunnel/VirtuesTunnelManager.swift`
-- `Managers/Tunnel/virtues_tunnel.swift` (the boringtun/smoltcp FFI shim)
-- `Views/ConnectionSettingsView.swift` (entirely a tunnel-status UI)
-
-Plus remove the WireGuard XCFramework / `virtues_tunnel` binary target from the
-project and any "Link Binary With Libraries" / "Embed Frameworks" entry for it.
-
-## Remaining references to remove (the compiler will point at each)
-
-After deleting the files above, these staying files still call into them — clean
-them up (all are obsolete in the relay model):
-
-- **`Views/SettingsView.swift`**
-  - `handleBundleScanResult(_:)` — the `virtues-bundle:` off-LAN pairing path is
-    obsolete (the relay URL works off-LAN directly). Delete the method and the QR
-    branch that routes to it; keep only `handleQRScanResult` (the `/pair#t=`
-    path).
-  - `resetApp()` — delete the `VirtuesTunnelManager.shared.teardown()` line.
-  - Remove any navigation to `ConnectionSettingsView`.
-- **`Managers/Sync/BatchUploadCoordinator.swift`** — delete the
-  `VirtuesTunnelManager.shared.teardown()` call (~line 221).
-- **`Core/Keychain/KeychainStore.swift`** — `saveWgPrivateKey` / WG-private
-  entries are now unused; remove once nothing references them (the `wipeAll`
-  path can drop the WG key cleanup).
-- **`Views/QRScannerView.swift`** — if it distinguishes `virtues-bundle:` QRs
-  from `/pair#t=` URLs, drop the bundle branch.
-
-## Provision-QR contract (Mac→phone hand-off) — NEW, implement the scanner
-
-The desktop-relayed provision flow (an already-paired Mac asks the box to
-provision the phone, then shows a QR) **replaces** the old `virtues-bundle:` WG
-blob. The box now renders the QR of a compact JSON payload (see
-`virtues-core/src/api/pair.rs` `provision_handler`):
-
-```json
-{ "v": 1,
-  "box_url": "https://<boxhash>.virtues.ch",
-  "bearer": "<device bearer>",
-  "credential_id": "<credential id>",
-  "device_id": "<device id>" }
+```sh
+./crates/virtues-iroh-ffi/build-ios.sh
 ```
 
-The phone scanner must: parse this JSON, store `apiEndpoint = box_url` and the
-`bearer` (same Keychain slots the `/pair#t=` path uses), and start uploading —
-no WG, no key generation, no second round-trip to the box. The QR carries the
-bearer in cleartext, so it has a short TTL (120s) and the provisioned device is
-revoked if the user cancels before the phone comes online (the web modal handles
-that side). The box only emits this QR once it is relay-registered (`box_url`
-present); otherwise `qr_svg` is empty (there is no off-LAN address to hand off).
+This builds the static lib for device + simulator, assembles
+`crates/virtues-iroh-ffi/generated/VirtuesIroh.xcframework` (git-ignored build
+artifact, referenced by the Xcode project), regenerates the Swift bindings, and
+copies `VirtuesIroh.swift` into `apps/ios/Virtues/Managers/Tunnel/` (committed as
+source). Requires the rustup iOS targets + Xcode. The app links
+`SystemConfiguration.framework` (iroh network-interface discovery) via
+`OTHER_LDFLAGS`.
 
-So `handleBundleScanResult` isn't just deleted — its QR branch is **repointed**
-to a small JSON decoder for the payload above. The `ProvisionResponse` already
-carries `box_url` too, if the web prefers to build the QR client-side via the
-bundled `qrcode` lib instead of displaying `qr_svg` (either works; pick one).
+## Known follow-up
 
-## Sanity check after cleanup
-
-1. `grep -rn 'VirtuesTunnelManager\|virtues_tunnel\|wg_public_key\|verifyAndStoreBundle\|BoxBundle' apps/ios/Virtues` → should return nothing.
-2. Build for a device/simulator.
-3. Pair against a relay-configured box: scanning the box's `/pair#t=` QR should
-   store `apiEndpoint = https://<boxhash>.boxes.virtues.com` and uploads should
-   succeed over HTTPS with `Authorization: Bearer <token>`.
+- The **provision path** registers the device's EndpointId post-scan over iroh,
+  which only lands once the box can reach the device — on a fresh provision the
+  first attempt may fail and the user completes via the QR-consume path (primary).
+  A backend tweak (accept the device node_id at provision time) would close this.
