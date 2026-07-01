@@ -87,6 +87,9 @@ jobs:
           else
             echo "CARGO_PROFILE=release" >> "$GITHUB_ENV"
           fi
+          # Bake the exact release tag into --version (build.rs reads this; the
+          # shallow checkout has no tags for `git describe` to find).
+          echo "VIRTUES_BUILD_VERSION=$V" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
