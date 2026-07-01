@@ -31,15 +31,34 @@ On a clean Debian/Ubuntu host (e.g. an OVH VPS):
 ```sh
 git clone … && cd virtues/deploy/relay      # or scp just this dir
 sudo ./provision.sh                          # sysctls + ufw(22/443/9443) + unit
-sudoedit /etc/virtues-relay.env              # set VIRTUES_RELAY_SECRET (matches atlas)
+sudoedit /etc/virtues-relay.env              # set VIRTUES_RELAY_PUBLIC_KEY (atlas's pubkey)
 sudo ./update.sh https://github.com/virtues-os/virtues/releases/download/relay-vX/virtues-relay-x86_64-linux
 sudo systemctl start virtues-relay
 journalctl -u virtues-relay -f
 ```
 
-`VIRTUES_RELAY_SECRET` **must equal** atlas's `VIRTUES_RELAY_SECRET` (atlas mints,
-relay verifies). Then point DNS (`*.virtues.ch A → this host`) at the new IP.
-Low DNS TTL makes the repoint fast — the core of the single-region DR runbook.
+`VIRTUES_RELAY_PUBLIC_KEY` **must be the public half** of atlas's
+`VIRTUES_RELAY_SIGNING_KEY` (atlas signs with the private key, the relay verifies
+with the public key — the relay never holds a minting key). Then point DNS
+(`*.virtues.ch A → this host`) at the new IP. Low DNS TTL makes the repoint fast —
+the core of the single-region DR runbook.
+
+## Generate the relay keypair
+
+atlas holds the Ed25519 **private** key; the relay holds only the **public** key.
+Generate **one** keypair, then extract both halves as raw hex (the raw 32-byte key
+is the last 32 bytes of the DER encoding):
+
+```sh
+openssl genpkey -algorithm ed25519 -out /tmp/relay-key.pem
+# Private seed → atlas.env ONLY (never on the relay):
+openssl pkey -in /tmp/relay-key.pem -outform DER        | tail -c 32 | xxd -p -c 64
+#   → VIRTUES_RELAY_SIGNING_KEY   (atlas)
+# Matching public key → relay env (not a secret):
+openssl pkey -in /tmp/relay-key.pem -pubout -outform DER | tail -c 32 | xxd -p -c 64
+#   → VIRTUES_RELAY_PUBLIC_KEY    (relay)
+rm /tmp/relay-key.pem
+```
 
 ## Update the binary
 
@@ -52,20 +71,23 @@ and verifies the service is active + listening on `:443` and `:9443`. If it isn'
 it **restores `.bak` and restarts** — a bad binary never leaves the relay down.
 Boxes reconnect automatically (jittered backoff) across the brief restart.
 
-## Rotate the relay secret (zero-downtime)
+## Rotate the signing key (zero-downtime)
 
-The relay accepts tokens minted under the current **or** previous secret, so:
+The relay accepts tokens signed by the current **or** previous atlas key, so:
 
-1. Set `VIRTUES_RELAY_SECRET_PREV` = the current secret, `VIRTUES_RELAY_SECRET` =
-   the new one, in **both** `/etc/virtues-relay.env` and atlas's env. Restart both.
-2. Wait ≥ one box token-refresh interval (~12h) for the fleet to re-fetch tokens
-   minted under the new secret.
-3. Clear `VIRTUES_RELAY_SECRET_PREV` (unset/blank) and restart the relay.
+1. Generate a new keypair (above). Set the relay's `VIRTUES_RELAY_PUBLIC_KEY_PREV`
+   = the **old** public key and `VIRTUES_RELAY_PUBLIC_KEY` = the **new** public
+   key; restart the relay. (The relay now trusts both.)
+2. Switch atlas's `VIRTUES_RELAY_SIGNING_KEY` to the **new** private key; restart
+   atlas. It now signs with the new key.
+3. Wait ≥ one box token-refresh interval (~12h) for the fleet to re-fetch tokens
+   signed by the new key.
+4. Clear `VIRTUES_RELAY_PUBLIC_KEY_PREV` (unset/blank) and restart the relay.
 
-> Roadmap (#6′): replace this shared symmetric secret with **asymmetric signing**
-> — atlas signs tokens with a private key, the relay verifies with a **public**
-> key. The secret then lives only in atlas; the relay holds nothing confidential,
-> so a relay compromise leaks nothing and there is no secret to keep in sync here.
+Only **public** material is ever distributed to the relay, and the private key
+lives only in atlas — so a relay compromise leaks nothing forgeable, and there is
+no shared secret to keep in sync. (The clean end-state is holding atlas's private
+key in AWS KMS so it never materializes in atlas's process at all.)
 
 ## Operations
 

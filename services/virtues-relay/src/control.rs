@@ -51,27 +51,25 @@ async fn handle_control(
     token: String,
     state: AppState,
 ) -> Result<()> {
-    // Authorize the registration. With a per-SNI secret, accept the token for the
-    // current OR previous bucket — the ±1 window absorbs clock skew and the day
-    // boundary, and accepting only these two buckets is what expires a revoked
-    // box's token (atlas stops re-minting → it falls out of the window). If a
-    // previous *secret* is configured (a zero-downtime secret rotation in
-    // progress), tokens minted under it are accepted too, so boxes that haven't
-    // yet re-fetched a token minted with the new secret keep registering. All
-    // candidates are derived on the fly (no per-box state) and OR-ed in constant
-    // time (no short-circuit → no timing oracle on which candidate matched).
-    let authorized = match &state.config.secret {
-        Some(secret) => {
+    // Authorize the registration by VERIFYING atlas's Ed25519 signature over
+    // "<sni>:<bucket>" — the relay holds only the public key, so it can check but
+    // never mint. Accept the current OR previous bucket (±1 absorbs clock skew and
+    // the day boundary; accepting only these two is what expires a revoked box's
+    // token once atlas stops re-signing). If a previous *public key* is configured
+    // (a zero-downtime key rotation in progress), tokens signed by the old key are
+    // accepted too. No secret is in this path (a public key isn't secret), so no
+    // constant-time compare is needed — signature verification is the check.
+    let authorized = match &state.config.public_key {
+        Some(pk) => {
             let now = virtues_protocol::relay::current_bucket();
-            let secrets = [Some(secret), state.config.secret_prev.as_ref()];
-            let mut ok = subtle::Choice::from(0u8);
-            for s in secrets.into_iter().flatten() {
-                for bucket in [now, now.saturating_sub(1)] {
-                    let cand = virtues_protocol::relay::derive_token(s, &sni, bucket);
-                    ok |= token.as_bytes().ct_eq(cand.as_bytes());
-                }
-            }
-            bool::from(ok)
+            [Some(pk), state.config.public_key_prev.as_ref()]
+                .into_iter()
+                .flatten()
+                .any(|key| {
+                    [now, now.saturating_sub(1)]
+                        .into_iter()
+                        .any(|bucket| virtues_protocol::relay::verify_token(key, &sni, bucket, &token))
+                })
         }
         None => bool::from(token.as_bytes().ct_eq(state.config.token.as_bytes())),
     };

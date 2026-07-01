@@ -81,8 +81,8 @@ async fn browser_reaches_box_through_relay() {
     let state = AppState::new(Config {
         client_addr: client_addr.to_string(),
         control_addr: control_addr.to_string(),
-        secret: None, // shared-bearer path; per-SNI HMAC is covered by a unit test
-        secret_prev: None,
+        public_key: None, // shared-bearer path; signed-token auth is covered by auth.rs
+        public_key_prev: None,
         token: token.to_string(),
     });
     let state_probe = state.clone();

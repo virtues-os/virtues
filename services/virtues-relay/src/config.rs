@@ -44,63 +44,73 @@ pub struct Config {
     pub client_addr: String,
     /// Box-facing listener: boxes dial out here (control + work connections).
     pub control_addr: String,
-    /// Per-SNI HMAC secret (`VIRTUES_RELAY_SECRET`). When set, a box must present
-    /// `derive_token(secret, sni, bucket)` to `Register`, so a box can register only its
-    /// own SNI — closing the cross-tenant hijack a flat shared bearer allows.
-    /// **Strongly recommended in production.** When unset, the relay falls back
-    /// to the shared [`Self::token`] bearer (dev/single-tenant).
-    pub secret: Option<String>,
-    /// Previous per-SNI HMAC secret (`VIRTUES_RELAY_SECRET_PREV`), accepted
-    /// alongside [`Self::secret`] during a **zero-downtime secret rotation**. Set
-    /// this to the old secret when rotating the new one in; the relay then admits
-    /// tokens minted under *either* secret, so boxes that haven't yet re-fetched a
-    /// token minted with the new secret keep registering. Clear it once the fleet
-    /// has rolled over (≥1 token-refresh interval). Only meaningful when
-    /// [`Self::secret`] is set.
-    pub secret_prev: Option<String>,
-    /// Shared bearer fallback used only when [`Self::secret`] is unset (v1 dev
+    /// atlas's Ed25519 **public** key (`VIRTUES_RELAY_PUBLIC_KEY`, hex). When set,
+    /// a box must present an atlas-signed `sign_token(sni, bucket)` at `Register`,
+    /// which the relay *verifies* with this key — so a box can register only its
+    /// own SNI, and the relay holds **nothing that can mint** (a compromise leaks
+    /// only a public key). **Required in production.** When unset, the relay falls
+    /// back to the shared [`Self::token`] bearer (dev/single-tenant only).
+    pub public_key: Option<ed25519_dalek::VerifyingKey>,
+    /// Previous atlas public key (`VIRTUES_RELAY_PUBLIC_KEY_PREV`, hex), accepted
+    /// alongside [`Self::public_key`] during a **zero-downtime key rotation**: set
+    /// it to the old public key while atlas switches to a new signing key, and the
+    /// relay admits tokens signed by *either* until the fleet re-fetches. Clear it
+    /// once rolled over (≥1 token-refresh interval). Non-secret, like all pubkeys.
+    pub public_key_prev: Option<ed25519_dalek::VerifyingKey>,
+    /// Shared bearer fallback used only when [`Self::public_key`] is unset (v1 dev
     /// auth; blinded tokens in P3).
     pub token: String,
 }
 
+/// Parse a hex Ed25519 public key from `name`, or `None` if unset/empty. A set
+/// but malformed key is a fatal misconfig (exit) — never silently ignored, which
+/// would drop the relay to the insecure fallback.
+fn pubkey_from_env(name: &str) -> Option<ed25519_dalek::VerifyingKey> {
+    let raw = std::env::var(name).ok().filter(|s| !s.is_empty())?;
+    match virtues_protocol::relay::parse_verifying_key(&raw) {
+        Some(k) => Some(k),
+        None => {
+            eprintln!(
+                "FATAL: {name} is set but is not a valid hex-encoded 32-byte Ed25519 public key."
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 impl Config {
     pub fn from_env() -> Self {
-        let secret = std::env::var("VIRTUES_RELAY_SECRET")
-            .ok()
-            .filter(|s| !s.is_empty());
-        let secret_prev = std::env::var("VIRTUES_RELAY_SECRET_PREV")
-            .ok()
-            .filter(|s| !s.is_empty());
+        let public_key = pubkey_from_env("VIRTUES_RELAY_PUBLIC_KEY");
+        let public_key_prev = pubkey_from_env("VIRTUES_RELAY_PUBLIC_KEY_PREV");
         let token = std::env::var("VIRTUES_RELAY_TOKEN")
             .ok()
             .filter(|s| !s.is_empty());
 
-        // Fail closed. With neither a per-SNI secret nor an explicit shared
+        // Fail closed. With neither atlas's public key nor an explicit shared
         // bearer, the relay would otherwise authenticate every box against a
         // source-known default token — letting anyone register any SNI and
-        // intercept that box's inbound TLS (the exact cross-tenant hijack the
-        // HMAC path exists to close). Refuse to boot in that state unless the
-        // operator explicitly opts into the insecure dev fallback.
-        let token = match (&secret, token) {
-            // Per-SNI HMAC governs auth; the shared bearer is unused.
+        // intercept that box's inbound TLS. Refuse to boot in that state unless
+        // the operator explicitly opts into the insecure dev fallback.
+        let token = match (&public_key, token) {
+            // Signed-token verification governs auth; the shared bearer is unused.
             (Some(_), _) => String::new(),
             (None, Some(t)) => {
                 tracing::warn!(
-                    "VIRTUES_RELAY_SECRET unset — using a flat shared bearer; set a secret \
-                     for per-SNI HMAC auth in production"
+                    "VIRTUES_RELAY_PUBLIC_KEY unset — using a flat shared bearer; set the atlas \
+                     public key for signed per-SNI auth in production"
                 );
                 t
             }
             (None, None) => {
                 if std::env::var("VIRTUES_RELAY_ALLOW_INSECURE").is_ok() {
                     tracing::warn!(
-                        "INSECURE: no VIRTUES_RELAY_SECRET/VIRTUES_RELAY_TOKEN set — accepting the \
-                         well-known 'dev-token' for ANY SNI. Dev only."
+                        "INSECURE: no VIRTUES_RELAY_PUBLIC_KEY/VIRTUES_RELAY_TOKEN set — accepting \
+                         the well-known 'dev-token' for ANY SNI. Dev only."
                     );
                     "dev-token".to_string()
                 } else {
                     eprintln!(
-                        "FATAL: relay has no auth configured. Set VIRTUES_RELAY_SECRET \
+                        "FATAL: relay has no auth configured. Set VIRTUES_RELAY_PUBLIC_KEY \
                          (recommended) or VIRTUES_RELAY_TOKEN, or VIRTUES_RELAY_ALLOW_INSECURE=1 \
                          for local dev. Refusing to start with a default token."
                     );
@@ -114,8 +124,8 @@ impl Config {
                 .unwrap_or_else(|_| "[::]:8443".to_string()),
             control_addr: std::env::var("VIRTUES_RELAY_CONTROL_ADDR")
                 .unwrap_or_else(|_| "[::]:9443".to_string()),
-            secret,
-            secret_prev,
+            public_key,
+            public_key_prev,
             token,
         }
     }

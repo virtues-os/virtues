@@ -58,8 +58,9 @@ pub struct PreorderPolicy {
 /// Relay control-plane params (Option A minting). See `routes::relay`.
 #[derive(Clone)]
 pub struct RelayPolicy {
-    /// Master secret shared with `virtues-relay`. Empty → minting disabled.
-    pub secret: String,
+    /// Ed25519 **signing** (private) key — atlas is the sole minter. `None` →
+    /// minting disabled (503). The relay holds only the matching public key.
+    pub signing_key: Option<ed25519_dalek::SigningKey>,
     /// Public relay control address boxes dial (host:port). Empty → disabled.
     pub control_addr: String,
     /// SNI base domain, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.

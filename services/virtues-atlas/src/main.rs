@@ -70,6 +70,29 @@ async fn main() -> Result<()> {
         Some(aws_sdk_route53::Client::new(&aws_cfg))
     };
 
+    // Parse atlas's Ed25519 relay-token signing key once at startup. A malformed
+    // key is a fatal misconfig (fail loud, don't silently disable minting); an
+    // empty key means relay minting is intentionally off (→ 503 on /relay/config).
+    let relay_signing_key = if cfg.relay_signing_key.is_empty() {
+        tracing::info!("VIRTUES_RELAY_SIGNING_KEY unset — relay token minting disabled");
+        None
+    } else {
+        match virtues_protocol::relay::parse_signing_key(&cfg.relay_signing_key) {
+            Some(k) => {
+                tracing::info!("relay token signing key loaded (Ed25519)");
+                Some(k)
+            }
+            None => {
+                eprintln!(
+                    "FATAL: VIRTUES_RELAY_SIGNING_KEY is set but not a valid hex-encoded \
+                     32-byte Ed25519 private key. Generate one and set it, or unset it to \
+                     disable relay minting."
+                );
+                std::process::exit(1);
+            }
+        }
+    };
+
     let state = routes::AppState {
         pool,
         virtues_api,
@@ -96,7 +119,7 @@ async fn main() -> Result<()> {
             email_reply_to: cfg.preorder_email_reply_to.clone(),
         },
         relay: routes::RelayPolicy {
-            secret: cfg.relay_secret.clone(),
+            signing_key: relay_signing_key,
             control_addr: cfg.relay_control_addr.clone(),
             base_domain: cfg.relay_base_domain.clone(),
             route53_zone_id: cfg.route53_zone_id.clone(),

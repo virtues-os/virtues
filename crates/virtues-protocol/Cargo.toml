@@ -18,9 +18,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 sha2 = "0.10"
-hmac = "0.12"
 hex = "0.4"
 base64 = "0.22"
+# Relay registration tokens are Ed25519-signed by atlas (private key) and
+# verified by the relay (public key only) — so the exposed relay holds nothing
+# that can mint. `>= 2.2` avoids RUSTSEC-2022-0093 (double-pubkey signing oracle).
+ed25519-dalek = "2.2"
 
 [dev-dependencies]
 serde_json = "1.0"
