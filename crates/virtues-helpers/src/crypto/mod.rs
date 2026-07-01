@@ -548,7 +548,12 @@ pub fn verify_stripe_signature(
     Err(StripeWebhookError::SignatureMismatch)
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// Length-independent-of-content byte comparison: returns `true` iff `a == b`,
+/// taking time proportional to the (equal) length rather than short-circuiting
+/// at the first differing byte. Use for comparing secrets/MACs/bearers so a
+/// caller can't recover them via a timing side-channel. (Length itself is not
+/// hidden — an early `false` on length mismatch is fine for fixed-size tokens.)
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }

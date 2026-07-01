@@ -11,10 +11,12 @@
 //! the box web UI extracts it client-side and POSTs it to `/api/pair/consume`.
 //! We do the same — parse the URL, pluck the token, and POST.
 //!
-//! In the relay model the box hands back a bearer + its canonical reachable URL
-//! (`https://<boxhash>.boxes.virtues.com`); there's no tunnel to bring up and no
-//! key material to install. We persist a small [`crate::keychain::PairedBox`] and
-//! we're done — the browser reaches the box at that URL directly.
+//! In the iroh model this client generates its own device iroh key, submits its
+//! EndpointId (so the box allowlists it), and gets back a bearer + the box's reach
+//! ticket (`{box_node_id, relay_url}`). We persist a small
+//! [`crate::keychain::PairedBox`]; `virtues-client up` then dials the box over
+//! iroh and serves it to the browser on `localhost:7117`. There's no tunnel to
+//! bring up and no long-lived transport keys beyond the device seed.
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde::{Deserialize, Serialize};

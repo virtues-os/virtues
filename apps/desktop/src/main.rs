@@ -18,8 +18,8 @@
 //!   mDNS unless `--server` is given).
 //! - `discover` — list Virtues boxes found on the LAN via mDNS (`--json`).
 //! - `up` — serve the paired box at `http://localhost:7117` over iroh.
-//! - `open` — open the paired box in the default browser.
-//! - `status` — report the paired box + reachability.
+//! - `open` — open the box in the default browser (via the `:7117` helper).
+//! - `status` — report the paired box + whether the `:7117` helper reaches it.
 //! - `revoke` (alias `reset`) — clear local creds + drop this credential on the box.
 
 use anyhow::{Context, Result};
@@ -72,10 +72,11 @@ enum Command {
     /// the browser and Tauri app talk to). Runs until stopped.
     Up,
 
-    /// Open the paired box in the default browser.
+    /// Open the paired box in the default browser (via the `:7117` helper).
+    /// Run `virtues-client up` first so the helper is serving.
     Open,
 
-    /// Report the paired box URL and whether it's reachable.
+    /// Report the paired box + whether the `:7117` helper can reach it.
     Status,
 
     /// Clear local creds + remove this device's credential from the box.
@@ -129,12 +130,18 @@ async fn run_discover(json: bool) -> Result<()> {
     Ok(())
 }
 
+/// The local helper (`virtues-client up`) serves the box here over iroh. Since
+/// the box no longer has a public URL, every "reach the box" command goes through
+/// this loopback address rather than dialing the box directly.
+const HELPER_URL: &str = "http://localhost:7117";
+
 fn run_open() -> Result<()> {
-    let rec = keychain::load_box()?.ok_or_else(|| {
+    keychain::load_box()?.ok_or_else(|| {
         anyhow::anyhow!("no paired box — run `virtues-client pair <pair-url>` first")
     })?;
-    open_in_browser(&rec.box_url)?;
-    println!("opening {} …", rec.box_url);
+    open_in_browser(HELPER_URL)?;
+    println!("opening {HELPER_URL} …");
+    println!("(if the page doesn't load, run `virtues-client up` first)");
     Ok(())
 }
 
@@ -180,18 +187,22 @@ async fn run_status() -> Result<()> {
     };
 
     println!("paired:      yes");
-    println!("box url:     {}", rec.box_url);
+    match (&rec.box_node_id, &rec.relay_url) {
+        (Some(n), Some(r)) => println!("iroh reach:  {n} via {r}"),
+        _ => println!("reach:       LAN only ({})", rec.box_url),
+    }
     println!("bearer:      present");
 
-    // Lightweight reachability probe — hit the box's health endpoint.
+    // Reachability probe — hit the box's health endpoint *through the `:7117`
+    // helper* (the box has no public URL; the helper dials it over iroh).
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
         .build()?;
-    let health = format!("{}/api/health", rec.box_url.trim_end_matches('/'));
+    let health = format!("{HELPER_URL}/api/health");
     match client.get(&health).send().await {
-        Ok(r) if r.status().is_success() => println!("reachable:   yes ({})", r.status()),
-        Ok(r) => println!("reachable:   responded {} (box up, endpoint differs)", r.status()),
-        Err(e) => println!("reachable:   no ({e})"),
+        Ok(r) if r.status().is_success() => println!("reachable:   yes, via helper ({})", r.status()),
+        Ok(r) => println!("reachable:   helper responded {} (box up, endpoint differs)", r.status()),
+        Err(_) => println!("reachable:   helper not running — run `virtues-client up`, then retry"),
     }
     Ok(())
 }
@@ -216,16 +227,15 @@ async fn revoke() -> Result<()> {
         }
     };
 
-    // Best-effort: tell the box to drop this device's credential row. The DELETE
-    // endpoint matches on the *credential* id, not the device id.
+    // Best-effort: tell the box to drop this device's credential row, through the
+    // `:7117` helper (the box has no public URL). The DELETE endpoint matches on
+    // the *credential* id, not the device id. If the helper isn't running we still
+    // clear local creds — the owner can finish removal from the Devices page.
     if let Some(credential_id) = &rec.credential_id {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
-        let url = format!(
-            "{}/api/credentials/{credential_id}",
-            rec.box_url.trim_end_matches('/')
-        );
+        let url = format!("{HELPER_URL}/api/credentials/{credential_id}");
         match client
             .delete(&url)
             .header("Authorization", format!("Bearer {}", rec.bearer))
@@ -237,8 +247,9 @@ async fn revoke() -> Result<()> {
                 "warning: box returned {} — clearing local creds anyway",
                 r.status()
             ),
-            Err(e) => eprintln!(
-                "warning: could not reach the box ({e}) — clearing local creds anyway"
+            Err(_) => eprintln!(
+                "warning: `:7117` helper not running — clearing local creds anyway. \
+                 Remove this device from the box's Devices page to fully de-authorize it."
             ),
         }
     } else {

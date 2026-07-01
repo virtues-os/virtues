@@ -196,23 +196,19 @@ async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
     Arc::new(allow)
 }
 
-/// Re-read the allowlist from the DB and hot-swap it into the live endpoint.
-/// Called after a device pairs or is revoked. No-op if the endpoint isn't up.
-pub async fn refresh_allowlist(db: &PgPool) {
-    if let Some(allow) = ALLOW.get() {
-        let ids = allowed_ids(db).await;
-        tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
-        allow.replace(ids);
-    }
-}
-
 /// Report this box's EndpointId + its paired devices' EndpointIds to atlas so the
 /// relay's active-sub gate (`/relay/authorize`) recognises them. Best-effort.
 pub async fn report_endpoints(db: &PgPool) {
+    report_endpoints_with(db, &allowed_ids(db).await).await;
+}
+
+/// As [`report_endpoints`], but reusing an allowlist already read from the DB so
+/// callers that just fetched it (e.g. [`after_pairing_change`]) don't query twice.
+async fn report_endpoints_with(db: &PgPool, device_ids: &[EndpointId]) {
     let Some(box_id) = box_endpoint_id() else { return };
     let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await else { return };
     let mut endpoint_ids = vec![box_id];
-    for id in allowed_ids(db).await {
+    for id in device_ids {
         endpoint_ids.push(id.to_string());
     }
     let http = crate::http_client::virtues_api_client();
@@ -233,7 +229,13 @@ pub async fn report_endpoints(db: &PgPool) {
 /// after a pairing or revocation. Non-blocking so pairing handlers don't wait.
 pub fn after_pairing_change(db: PgPool) {
     tokio::spawn(async move {
-        refresh_allowlist(&db).await;
-        report_endpoints(&db).await;
+        // Read the allowlist once, then use it for BOTH the local hot-swap and the
+        // atlas report (they need the same set — no reason to query twice).
+        let ids = allowed_ids(&db).await;
+        if let Some(allow) = ALLOW.get() {
+            tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
+            allow.replace(ids.clone());
+        }
+        report_endpoints_with(&db, &ids).await;
     });
 }
