@@ -64,6 +64,12 @@ pub struct RelayPolicy {
     pub control_addr: String,
     /// SNI base domain, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.
     pub base_domain: String,
+    /// Route 53 hosted-zone id for `base_domain`. Empty → the ACME DNS-01
+    /// TXT-writer endpoint (`/relay/acme-challenge`) is disabled (503).
+    pub route53_zone_id: String,
+    /// Route 53 client (built at startup iff `route53_zone_id` is set). `None`
+    /// disables the TXT-writer. Cheap to clone (Arc inside).
+    pub route53: Option<aws_sdk_route53::Client>,
 }
 
 /// Shared route state for atlas.

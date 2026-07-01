@@ -13,9 +13,15 @@
 # ── Stage 1: build ──────────────────────────────────────────────────────────
 FROM rust:1.94-slim-bookworm AS builder
 
+# build-essential (gcc/make) + cmake + clang are required by aws-lc-sys (pulled in
+# by aws-sdk-route53's aws-lc-rs TLS backend) to build the AWS-LC C library and its
+# bindings. pkg-config/libssl-dev remain for the rest of the graph.
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    build-essential \
+    cmake \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /repo
