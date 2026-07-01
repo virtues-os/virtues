@@ -10,7 +10,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
-use virtues_helpers::ios::{parse_timestamp, stream_id_or_new, IOS_PROVIDER, LOCATION_STREAM_TABLE};
+use virtues_helpers::ios::{parse_timestamp, stream_id_or_hash, IOS_PROVIDER, LOCATION_STREAM_TABLE};
 
 #[allow(clippy::type_complexity)]
 type LocationRow = (
@@ -42,7 +42,7 @@ pub async fn write_locations(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, LOCATION_STREAM_TABLE);
 
         let altitude = record.get("altitude").and_then(|v| v.as_f64());
         // GPS returns -1.0 when speed is invalid/unavailable — normalize to NULL
