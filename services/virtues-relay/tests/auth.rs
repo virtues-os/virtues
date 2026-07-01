@@ -13,6 +13,14 @@ use virtues_relay_client::{serve_once, RelayClientConfig};
 /// The returned state is a clone sharing the same registry, so the test can
 /// observe registrations.
 async fn start_relay(secret: Option<String>) -> (AppState, String) {
+    start_relay_rotating(secret, None).await
+}
+
+/// Like [`start_relay`] but also configures a previous secret (rotation window).
+async fn start_relay_rotating(
+    secret: Option<String>,
+    secret_prev: Option<String>,
+) -> (AppState, String) {
     let client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let control_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let client_addr = client_listener.local_addr().unwrap().to_string();
@@ -22,6 +30,7 @@ async fn start_relay(secret: Option<String>) -> (AppState, String) {
         client_addr,
         control_addr: control_addr.clone(),
         secret,
+        secret_prev,
         token: "shared-unused".into(),
     });
     let observe = state.clone();
@@ -112,6 +121,35 @@ async fn token_expires_outside_current_or_previous_bucket() {
     let registered =
         wait_until(|| state.registry.lookup(sni).is_some(), Duration::from_secs(5)).await;
     assert!(registered, "relay rejected a previous-bucket token");
+}
+
+#[tokio::test]
+async fn secret_rotation_accepts_old_and_new_secret() {
+    // Zero-downtime secret rotation: the relay runs with the NEW secret as primary
+    // and the OLD secret as `secret_prev`. A box still presenting a token minted
+    // under the old secret must keep registering (it re-fetches a new-secret token
+    // on its next refresh), while a token under the new secret works immediately.
+    let old = "old-relay-secret";
+    let new = "new-relay-secret";
+    let sni = "rotating.boxes.virtues.com";
+    let (state, addr) = start_relay_rotating(Some(new.into()), Some(old.into())).await;
+    let bucket = virtues_protocol::relay::current_bucket();
+
+    // Token minted under the OLD secret → still accepted during the window.
+    let old_tok = derive_token(old, sni, bucket);
+    let old_cfg = cfg(&addr, sni, &old_tok, Duration::from_secs(30));
+    tokio::spawn(async move {
+        let _ = serve_once(&old_cfg).await;
+    });
+    assert!(
+        wait_until(|| state.registry.lookup(sni).is_some(), Duration::from_secs(5)).await,
+        "relay rejected an old-secret token during rotation"
+    );
+
+    // A token under neither secret is still rejected (rotation isn't a free pass).
+    let bad = derive_token("some-other-secret", sni, bucket);
+    let r = serve_once(&cfg(&addr, "other.boxes.virtues.com", &bad, Duration::from_millis(200))).await;
+    assert!(r.is_err(), "relay accepted a token minted under an unknown secret");
 }
 
 #[tokio::test]

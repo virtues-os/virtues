@@ -54,17 +54,24 @@ async fn handle_control(
     // Authorize the registration. With a per-SNI secret, accept the token for the
     // current OR previous bucket — the ±1 window absorbs clock skew and the day
     // boundary, and accepting only these two buckets is what expires a revoked
-    // box's token (atlas stops re-minting → it falls out of the window). Derived
-    // on the fly from the one secret, so the relay holds no per-box state. Both
-    // candidates are compared in constant time (no short-circuit).
+    // box's token (atlas stops re-minting → it falls out of the window). If a
+    // previous *secret* is configured (a zero-downtime secret rotation in
+    // progress), tokens minted under it are accepted too, so boxes that haven't
+    // yet re-fetched a token minted with the new secret keep registering. All
+    // candidates are derived on the fly (no per-box state) and OR-ed in constant
+    // time (no short-circuit → no timing oracle on which candidate matched).
     let authorized = match &state.config.secret {
         Some(secret) => {
             let now = virtues_protocol::relay::current_bucket();
-            let cur = virtues_protocol::relay::derive_token(secret, &sni, now);
-            let prev = virtues_protocol::relay::derive_token(secret, &sni, now.saturating_sub(1));
-            bool::from(
-                token.as_bytes().ct_eq(cur.as_bytes()) | token.as_bytes().ct_eq(prev.as_bytes()),
-            )
+            let secrets = [Some(secret), state.config.secret_prev.as_ref()];
+            let mut ok = subtle::Choice::from(0u8);
+            for s in secrets.into_iter().flatten() {
+                for bucket in [now, now.saturating_sub(1)] {
+                    let cand = virtues_protocol::relay::derive_token(s, &sni, bucket);
+                    ok |= token.as_bytes().ct_eq(cand.as_bytes());
+                }
+            }
+            bool::from(ok)
         }
         None => bool::from(token.as_bytes().ct_eq(state.config.token.as_bytes())),
     };

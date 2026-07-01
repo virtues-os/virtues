@@ -7,7 +7,9 @@ use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use crate::config::{SPLICE_IDLE, WORK_DEADLINE};
+use crate::config::{
+    MAX_INFLIGHT_PER_SNI, RATE_BURST_PER_SNI, RATE_REFILL_PER_SEC, SPLICE_IDLE, WORK_DEADLINE,
+};
 use crate::state::AppState;
 
 /// Route a peeked client to its box. `buffered` is the exact ClientHello bytes
@@ -22,6 +24,26 @@ pub async fn route_client(
     let Some(handle) = state.registry.lookup(&sni) else {
         tracing::debug!(%sni, registered = state.registry.len(), "no box for SNI; closing");
         return Ok(());
+    };
+
+    // Per-SNI abuse floor (checked only after the SNI resolves to a registered
+    // box, so the limiter's keyset stays fleet-bounded). Rate first (cheap), then
+    // reserve a concurrent-connection slot held for the life of the splice. Both
+    // are keyed on SNI, not source IP — CGNAT-safe. On trip we just close the
+    // client; the box is never asked to dial a work connection.
+    if !state
+        .limits
+        .allow_rate(&sni, RATE_BURST_PER_SNI, RATE_REFILL_PER_SEC)
+    {
+        tracing::debug!(%sni, "per-SNI connect rate exceeded; closing");
+        return Ok(());
+    }
+    let _slot = match state.limits.try_acquire(&sni, MAX_INFLIGHT_PER_SNI) {
+        Some(g) => g,
+        None => {
+            tracing::debug!(%sni, cap = MAX_INFLIGHT_PER_SNI, "per-SNI connection cap reached; closing");
+            return Ok(());
+        }
     };
 
     let conn_id = Uuid::new_v4();

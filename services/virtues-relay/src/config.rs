@@ -27,6 +27,17 @@ pub const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// token bucket so re-verification happens at least once per bucket.
 pub const MAX_CONN_AGE: Duration = Duration::from_secs(20 * 3600);
 
+/// Max concurrent inbound client connections per SNI (abuse floor, CGNAT-safe —
+/// keyed on the box's tunnel identity, not source IP). Generous: a single box
+/// legitimately fans out to many browser tabs + long-lived WS/SSE streams, so
+/// this only trips on genuine flooding of one box's name.
+pub const MAX_INFLIGHT_PER_SNI: u32 = 256;
+/// New-connection token bucket per SNI: burst capacity + steady refill/sec.
+/// Absorbs a normal page load's parallel connections while capping sustained
+/// connect churn against one box.
+pub const RATE_BURST_PER_SNI: f64 = 64.0;
+pub const RATE_REFILL_PER_SEC: f64 = 32.0;
+
 pub struct Config {
     /// Browser/client-facing listener (TLS passthrough — peek SNI, splice
     /// ciphertext, never terminate). Production fronts this on TCP/443.
@@ -39,6 +50,14 @@ pub struct Config {
     /// **Strongly recommended in production.** When unset, the relay falls back
     /// to the shared [`Self::token`] bearer (dev/single-tenant).
     pub secret: Option<String>,
+    /// Previous per-SNI HMAC secret (`VIRTUES_RELAY_SECRET_PREV`), accepted
+    /// alongside [`Self::secret`] during a **zero-downtime secret rotation**. Set
+    /// this to the old secret when rotating the new one in; the relay then admits
+    /// tokens minted under *either* secret, so boxes that haven't yet re-fetched a
+    /// token minted with the new secret keep registering. Clear it once the fleet
+    /// has rolled over (≥1 token-refresh interval). Only meaningful when
+    /// [`Self::secret`] is set.
+    pub secret_prev: Option<String>,
     /// Shared bearer fallback used only when [`Self::secret`] is unset (v1 dev
     /// auth; blinded tokens in P3).
     pub token: String,
@@ -47,6 +66,9 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Self {
         let secret = std::env::var("VIRTUES_RELAY_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let secret_prev = std::env::var("VIRTUES_RELAY_SECRET_PREV")
             .ok()
             .filter(|s| !s.is_empty());
         let token = std::env::var("VIRTUES_RELAY_TOKEN")
@@ -93,6 +115,7 @@ impl Config {
             control_addr: std::env::var("VIRTUES_RELAY_CONTROL_ADDR")
                 .unwrap_or_else(|_| "[::]:9443".to_string()),
             secret,
+            secret_prev,
             token,
         }
     }
