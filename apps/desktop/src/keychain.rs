@@ -6,13 +6,13 @@
 //! - **Linux**   — Secret Service / `libsecret` (KWallet / GNOME Keyring)
 //! - **Windows** — Credential Manager
 //!
-//! In the relay model a vanilla browser reaches the box directly at its HTTPS
-//! URL (the relay terminates nothing — the box holds a browser-trusted cert), so
-//! the client no longer brings up a tunnel and holds no WG keys or SPKI pin. All
-//! it persists is a small [`PairedBox`]: where the box is and the bearer that
-//! authorizes it. Stored as JSON under service `virtues-client`, account
-//! `default-box`, with a `~/.virtues/box.json` (0600) fallback for keychain
-//! setups that silently no-op (macOS data-protection keychain without an
+//! In the iroh model the box has no public URL; the `:7117` helper dials it over
+//! iroh by its EndpointId. The client no longer brings up a tunnel and holds no
+//! WG keys or SPKI pin. It persists a small [`PairedBox`]: the box's reach ticket
+//! (`box_node_id` + `relay_url`), this device's iroh seed, and the bearer that
+//! authorizes its API calls. Stored as JSON under service `virtues-client`,
+//! account `default-box`, with a `~/.virtues/box.json` (0600) fallback for
+//! keychain setups that silently no-op (macOS data-protection keychain without an
 //! entitlement, headless Linux, etc.).
 
 use anyhow::{Context, Result};
@@ -36,8 +36,9 @@ const LEGACY_ACCOUNTS: &[&str] = &[
 /// and authorize the box.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairedBox {
-    /// Canonical browser-reachable URL, e.g. `https://a1b2c3.boxes.virtues.com`
-    /// (the box's relay URL when configured, else the origin we paired against).
+    /// LAN origin we paired against, e.g. `http://10.0.0.5:8000` — the reach
+    /// fallback for a LAN-only box. Remote reach goes through the `:7117` helper
+    /// (see `box_node_id`/`relay_url`), not this URL.
     pub box_url: String,
     /// Server-issued bearer that authorizes this device's API calls.
     pub bearer: String,

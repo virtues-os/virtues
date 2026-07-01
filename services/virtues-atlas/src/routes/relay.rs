@@ -87,6 +87,18 @@ async fn iroh_register(
         .filter(|s| !s.is_empty())
         .collect();
 
+    // Guard the reconcile below: `endpoint_id <> ALL('{}')` is vacuously TRUE, so
+    // an empty set would DELETE every one of this account's registrations. A box
+    // always reports at least its own EndpointId, so an empty list is a malformed
+    // request — reject it rather than let it wipe the account's reach.
+    if ids.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "no_endpoint_ids" })),
+        )
+            .into_response();
+    }
+
     // Claim each EndpointId for this account. The `ON CONFLICT ... WHERE` makes
     // the update a no-op when the row is already owned by a DIFFERENT account, so
     // a caller can't hijack another account's EndpointId (they aren't secret —
@@ -144,10 +156,12 @@ async fn relay_authorize(State(state): State<AppState>, headers: HeaderMap) -> a
         return (StatusCode::SERVICE_UNAVAILABLE, "false").into_response();
     }
     // Service-to-service bearer (shared with iroh-relay's access.http.bearer_token).
+    // Constant-time compare so the secret can't be recovered via a timing oracle.
+    let expected = format!("Bearer {}", state.relay.relay_auth_secret);
     let ok = headers
         .get(AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .map(|h| h == format!("Bearer {}", state.relay.relay_auth_secret))
+        .map(|h| virtues_helpers::crypto::constant_time_eq(h.as_bytes(), expected.as_bytes()))
         .unwrap_or(false);
     if !ok {
         return (StatusCode::UNAUTHORIZED, "false").into_response();
