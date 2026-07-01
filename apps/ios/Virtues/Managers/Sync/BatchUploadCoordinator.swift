@@ -211,14 +211,10 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         guard tryBeginUpload() else { return false }
         defer {
             endUpload()
-            // Drop the in-app WG tunnel between upload bursts so we don't hold an
-            // idle keepalive (the dominant battery cost — see the audit research).
-            // The next off-LAN burst re-establishes it (~1 RTT). No-op on-LAN,
-            // where the tunnel was never brought up. This is the battery half of
-            // the location-keepalive model: the app stays alive via background
-            // location, fires this 5-min cycle, tunnels the burst, then lets the
-            // tunnel go until the next cycle.
-            VirtuesTunnelManager.shared.teardown()
+            // iroh keeps a single warm connection in BoxTransport; there's no
+            // per-burst tunnel to tear down. iroh's own idle timers reclaim the
+            // path when nothing is in flight, and the next burst reuses (or
+            // transparently redials) the connection.
         }
 
         #if DEBUG

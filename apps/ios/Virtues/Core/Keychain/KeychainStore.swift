@@ -54,6 +54,12 @@ final class KeychainStore {
         /// is refused unless the user explicitly confirms a rotation — catches a
         /// silent server-identity substitution on re-pair.
         case wgServerPin = "virtues.wg.serverpin"
+
+        /// This device's iroh secret seed (32-byte hex), generated at pairing.
+        /// Its EndpointId is submitted to the box (to be allowlisted); the app
+        /// builds its iroh endpoint from this seed to reach the box. Never leaves
+        /// the device.
+        case irohSeed = "virtues.iroh.seed"
     }
 
     // ─── Bearer ────────────────────────────────────────────────────────
@@ -99,6 +105,17 @@ final class KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
+    // ─── iroh device seed ──────────────────────────────────────────────
+
+    func saveIrohSeed(_ hex: String) throws {
+        try save(hex.data(using: .utf8)!, for: .irohSeed)
+    }
+
+    func loadIrohSeed() -> String? {
+        guard let data = load(.irohSeed) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
     /// Wipe everything pair-related — used after a `/api/devices/:id`
     /// revoke reflects in the iOS app, or at the start of a new pair.
     func wipeAll() {
@@ -106,6 +123,7 @@ final class KeychainStore {
         delete(.wgPrivateKey)
         delete(.wgBundle)
         delete(.wgServerPin)
+        delete(.irohSeed)
     }
 
     // ─── Primitives ────────────────────────────────────────────────────

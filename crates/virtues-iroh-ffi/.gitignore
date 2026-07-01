@@ -1,0 +1,5 @@
+# Build artifacts produced by build-ios.sh — regenerated from source, not tracked
+# (mirrors how the old virtues-tunnel xcframework was kept out of git). The
+# generated Swift wrapper is committed in the app tree (apps/ios/.../VirtuesIroh.swift).
+/generated/
+/build/

@@ -4,38 +4,88 @@
 //
 //  One choke point for every HTTP call to the box.
 //
-//  In the relay model the box is reachable at its own HTTPS URL — the blind
-//  relay (`https://<boxhash>.boxes.virtues.com`) off-LAN, or the LAN URL on
-//  network — and terminates TLS itself with a browser-trusted cert. So box
-//  traffic goes over ordinary HTTPS via `URLSession`; there is no in-app tunnel
-//  and no plaintext-on-LAN concern (TLS is end-to-end to the box; the relay only
-//  ever moves ciphertext). NetworkManager builds requests against the box's
-//  `apiEndpoint` and calls `BoxTransport.shared.send(...)`, unchanged.
+//  In the iroh model the box has no public URL: it's an iroh `Endpoint` reached
+//  by its Ed25519 EndpointId — LAN-direct, hole-punched, or via our relay. This
+//  transport holds a warm `IrohTransport` (the uniffi/Rust client, from
+//  VirtuesIroh.xcframework), dialed once from the pairing reach ticket
+//  (`{box_node_id, relay_url}` + this device's iroh seed) and reused across the
+//  5-minute upload timer and background bursts — a cold dial won't fit the ~30s
+//  background budget. `send()` serializes the caller's `URLRequest` to HTTP/1
+//  bytes, sends them over a fresh bi-stream, and parses the reply back into
+//  `(Data, HTTPURLResponse)`, so NetworkManager and BatchUploadCoordinator are
+//  unchanged above this line.
 //
-//  NOTE (relay migration): the WireGuard tunnel files under this directory
-//  (`VirtuesTunnelManager.swift`, `virtues_tunnel.swift`) and the tunnel UI
-//  (`ConnectionSettingsView.swift`) are now unused and should be removed in
-//  Xcode. This transport no longer references them.
+//  Auth is layered: iroh enforces the box's EndpointId allowlist at the
+//  transport; the app-layer `Authorization: Bearer <token>` remains the
+//  authorization keystone on top (unchanged).
 //
 
 import Foundation
 
-final class BoxTransport {
+/// Serializes dialing + guards the one warm connection. An `actor` so concurrent
+/// callers (upload timer, health check, action-id refetch) share a single dial
+/// and never race on the cached transport.
+actor BoxTransport {
     static let shared = BoxTransport()
     private init() {}
 
-    /// Send a request to the box over HTTPS. Returns the same shape as
-    /// `URLSession.data(for:)`.
-    ///
-    /// The box terminates TLS with its own browser-trusted cert (obtained via
-    /// ACME), so `URLSession`'s default validation against the public CA roots is
-    /// the confidentiality + authentication boundary. The relay in the middle is
-    /// blind — it only forwards ciphertext.
-    func send(_ request: URLRequest, session: URLSession) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
+    /// The warm iroh client, dialed lazily on first use and reused. Dropped on
+    /// any transport error so the next call redials (box restart / network
+    /// change / relay hiccup).
+    private var transport: IrohTransport?
+
+    /// Send a request to the box over iroh. Returns the same shape as
+    /// `URLSession.data(for:)`. The `session` argument is ignored (kept so the
+    /// call sites that used to pass a `URLSession` compile unchanged).
+    func send(_ request: URLRequest, session: URLSession = .shared) async throws -> (Data, HTTPURLResponse) {
+        _ = session
+        guard let url = request.url else { throw NetworkError.invalidURL }
+
+        let client = try await transportOrDial()
+        let reqBytes = try HTTPWire.serialize(request)
+        do {
+            let respBytes = try await client.request(rawHttp: reqBytes)
+            return try HTTPWire.parseResponse(respBytes, url: url)
+        } catch {
+            // Drop the cached connection so the next call redials a fresh one.
+            transport = nil
+            throw Self.mapTransportError(error)
         }
-        return (data, http)
+    }
+
+    /// Force the next `send` to redial — e.g. after the reach ticket changes at
+    /// (re)pair, or on explicit reset.
+    func reset() {
+        transport = nil
+    }
+
+    // MARK: - Dialing
+
+    private func transportOrDial() async throws -> IrohTransport {
+        if let t = transport { return t }
+        guard let ticket = DeviceManager.currentReachTicket() else {
+            // Not paired for iroh reach (no ticket) — surface as an auth-ish
+            // config error so the UI prompts a (re)pair rather than retrying.
+            throw NetworkError.invalidToken
+        }
+        do {
+            let t = try await IrohTransport.dial(
+                relayUrl: ticket.relayUrl,
+                boxIdHex: ticket.boxNodeId,
+                deviceSeedHex: ticket.deviceSeed
+            )
+            transport = t
+            return t
+        } catch {
+            throw Self.mapTransportError(error)
+        }
+    }
+
+    /// Map an iroh/FFI error to the app's `NetworkError` so the upload queue's
+    /// existing retry/circuit-breaker logic treats it as a transient network
+    /// failure (keep the data, retry next cycle).
+    private static func mapTransportError(_ error: Error) -> NetworkError {
+        if let ne = error as? NetworkError { return ne }
+        return .noConnection
     }
 }

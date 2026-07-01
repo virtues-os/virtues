@@ -1,0 +1,32 @@
+[package]
+name = "virtues-iroh-ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# uniffi wrapper that exposes `virtues-iroh`'s VirtuesIrohClient to Swift (iOS)
+# and Kotlin (Android later). It reuses the Rust client's `request()` — including
+# the redial-once + "don't FIN before read" QUIC handling — rather than
+# reimplementing that framing in Swift. Built as a staticlib, wrapped in an
+# XCFramework, and linked by the iOS app (see build-ios.sh).
+
+[lib]
+name = "virtues_iroh_ffi"
+# staticlib → the .a slices for the XCFramework; cdylib → uniffi-bindgen loads the
+# built library to emit Swift; lib → the uniffi-bindgen host binary links it.
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[dependencies]
+virtues-iroh = { path = "../virtues-iroh" }
+# `tokio` = uniffi's async-runtime bridge; `cli` = `uniffi_bindgen_main` for the
+# host bindgen binary. Proc-macro mode (`setup_scaffolding!`) needs no UDL/build.rs.
+uniffi = { version = "0.28", features = ["tokio", "cli"] }
+# iroh needs a live multi-thread reactor; the base crate only enables `rt`.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+thiserror = "1"
+
+[[bin]]
+# Host binary uniffi uses to generate the Swift bindings from the built library.
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

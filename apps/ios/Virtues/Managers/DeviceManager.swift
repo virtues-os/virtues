@@ -14,6 +14,15 @@ enum DeviceConfigurationState {
     case configured           // Server URL is set, device ID is used as auth
 }
 
+/// The everything-needed-to-dial-the-box triple, resolved from persisted state:
+/// the box's EndpointId + relay URL (from `DeviceConfiguration`) and this
+/// device's iroh seed (from the Keychain). Read off any thread by `BoxTransport`.
+struct IrohTicket {
+    let boxNodeId: String
+    let relayUrl: String
+    let deviceSeed: String
+}
+
 class DeviceManager: ObservableObject {
     static let shared = DeviceManager()
     
@@ -24,13 +33,16 @@ class DeviceManager: ObservableObject {
     @Published var lastError: String?
     @Published var updateRequired: Bool = false
     private let userDefaults = UserDefaults.standard
-    private let configKey = "com.virtues.deviceConfiguration"
-    
+    /// UserDefaults key for the persisted `DeviceConfiguration`. Static so the
+    /// thread-safe `currentReachTicket()` reader can decode it without touching
+    /// the `@Published` in-memory copy.
+    static let configKey = "com.virtues.deviceConfiguration"
+
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
         // Load saved configuration or create new one
-        if let savedData = userDefaults.data(forKey: configKey),
+        if let savedData = userDefaults.data(forKey: Self.configKey),
            let savedConfig = try? JSONDecoder().decode(DeviceConfiguration.self, from: savedData) {
             self.configuration = savedConfig
             self.isConfigured = savedConfig.isConfigured
@@ -87,6 +99,33 @@ class DeviceManager: ObservableObject {
         saveConfiguration(configuration)
     }
 
+    /// Persist the box's iroh reach ticket (`box_node_id` + `relay_url`) from a
+    /// pair/provision response. Non-secret; the device seed lives in the Keychain.
+    /// Also drops `BoxTransport`'s warm connection so the next call redials with
+    /// the new ticket.
+    func updateReach(boxNodeId: String?, relayUrl: String?) {
+        Task { @MainActor in
+            self.configuration.boxNodeId = (boxNodeId?.isEmpty == false) ? boxNodeId : nil
+            self.configuration.relayUrl = (relayUrl?.isEmpty == false) ? relayUrl : nil
+            self.saveConfiguration(self.configuration)
+        }
+        Task { await BoxTransport.shared.reset() }
+    }
+
+    /// Resolve the full dial ticket from persisted state, readable off any thread
+    /// (UserDefaults + Keychain are thread-safe). Returns `nil` unless the box
+    /// EndpointId, relay URL, and this device's seed are all present.
+    static func currentReachTicket() -> IrohTicket? {
+        guard
+            let data = UserDefaults.standard.data(forKey: Self.configKey),
+            let cfg = try? JSONDecoder().decode(DeviceConfiguration.self, from: data),
+            let node = cfg.boxNodeId, !node.isEmpty,
+            let relay = cfg.relayUrl, !relay.isEmpty,
+            let seed = KeychainStore.shared.loadIrohSeed(), !seed.isEmpty
+        else { return nil }
+        return IrohTicket(boxNodeId: node, relayUrl: relay, deviceSeed: seed)
+    }
+
     /// Replace the stored `function_name → action_id` map. Called after a
     /// successful pair or after a refetch from `/api/devices/action-ids`.
     func updateActionIds(_ actionIds: [String: String]) {
@@ -130,7 +169,7 @@ class DeviceManager: ObservableObject {
 
     private func saveConfiguration(_ config: DeviceConfiguration) {
         if let encoded = try? JSONEncoder().encode(config) {
-            userDefaults.set(encoded, forKey: configKey)
+            userDefaults.set(encoded, forKey: Self.configKey)
         } else {
             print("❌ Failed to encode configuration for saving")
         }
@@ -140,7 +179,7 @@ class DeviceManager: ObservableObject {
         // Keep the same deviceId when clearing (it's the device's permanent identifier)
         let existingDeviceId = configuration.deviceId
         configuration = DeviceConfiguration(deviceId: existingDeviceId)
-        userDefaults.removeObject(forKey: configKey)
+        userDefaults.removeObject(forKey: Self.configKey)
 
         isConfigured = false
         configurationState = .notConfigured

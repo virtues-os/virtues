@@ -113,4 +113,12 @@ impl VirtuesIrohClient {
     pub async fn close(self) {
         self.endpoint.close().await;
     }
+
+    /// Graceful shutdown by shared reference — for `Arc`-managed callers (the
+    /// uniffi/iOS FFI wrapper holds the client behind an `Arc` and can't consume
+    /// it). `Endpoint::close` is idempotent, so this is safe to call once on the
+    /// last handle drop. Native callers that own the client use [`close`] instead.
+    pub async fn shutdown(&self) {
+        self.endpoint.close().await;
+    }
 }
