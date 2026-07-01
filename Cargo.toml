@@ -4,7 +4,6 @@ members = [
     "crates/virtues-helpers",
     "crates/virtues-iroh",
     "crates/virtues-iroh-ffi",
-    "crates/virtues-protocol",
     "crates/virtues-registry",
     "actions",
     "apps/desktop",

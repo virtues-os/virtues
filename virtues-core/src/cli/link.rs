@@ -18,7 +18,10 @@
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 
-use virtues_protocol::INTERNAL_PORT;
+/// Port the box's HTTP server listens on (LAN / loopback / the `:7117` helper).
+/// A box-internal concern now that devices reach the box over iroh rather than
+/// baking a port into a pairing bundle — previously `virtues_protocol::INTERNAL_PORT`.
+pub const INTERNAL_PORT: u16 = 8000;
 
 /// Local port we suggest for the `ssh -L` forward when the laptop's own
 /// `INTERNAL_PORT` (8000) is already taken: `10000 + INTERNAL_PORT`. High
