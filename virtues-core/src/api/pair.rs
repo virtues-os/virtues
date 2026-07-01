@@ -1394,7 +1394,7 @@ fn format_pair_url(token: &str, fpr: Option<&str>) -> String {
             format!(
                 "http://{}:{}",
                 crate::cli::link::forward_host(),
-                virtues_protocol::INTERNAL_PORT
+                crate::cli::link::INTERNAL_PORT
             )
         }
         Err(_) => {

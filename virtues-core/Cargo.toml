@@ -54,7 +54,6 @@ virtues-iroh = { path = "../crates/virtues-iroh" }
 # client, etc.). Pure data + serde; no I/O. virtues-core re-exports these so
 # existing call sites (`crate::wireguard::{PairingBundle, INTERNAL_HOST, ...}`)
 # don't break.
-virtues-protocol = { path = "../crates/virtues-protocol" }
 
 # CLI
 clap = { version = "4.5", features = ["derive"] }
