@@ -310,7 +310,10 @@ async fn cert_task(
                 Err(e) => tracing::warn!(error = %e, "issued cert failed to load; retrying"),
             },
             Err(e) => {
-                tracing::warn!(error = %e, ?backoff, "initial ACME issuance failed; retrying (on self-signed bootstrap until then)")
+                // `{:#}` prints the full anyhow context chain (e.g. "obtain ACME
+                // cert: create ACME account: <LE problem detail>") — the top-level
+                // Display alone hides the actual cause, which is what we need here.
+                tracing::warn!(error = %format!("{e:#}"), ?backoff, "initial ACME issuance failed; retrying (on self-signed bootstrap until then)")
             }
         }
         tokio::time::sleep(backoff).await;
@@ -336,7 +339,7 @@ async fn cert_task(
                     Err(e) => tracing::warn!(error = %e, "renewed cert failed to load"),
                 }
             }
-            Err(e) => tracing::warn!(error = %e, "ACME renewal failed; will retry"),
+            Err(e) => tracing::warn!(error = %format!("{e:#}"), "ACME renewal failed; will retry"),
         }
     }
 }
