@@ -73,3 +73,16 @@ The relay accepts tokens minted under the current **or** previous secret, so:
 - Restart: `sudo systemctl restart virtues-relay`
 - Listeners: `ss -ltn '( sport = :443 or sport = :9443 )'`
 - Reachability smoke test (from anywhere): `curl -sv https://<fake>.virtues.ch/ --resolve <fake>.virtues.ch:443:<relay-ip>` → a TLS error/`exit 35` means the relay was reached + peeked (no box for that SNI), which is the expected "alive" signal.
+
+## Monitoring
+
+The relay is the critical path for *remote* access, so knowing it's up matters.
+Keep it minimal — this is an uptime check, not a metrics platform:
+
+- **Zero-maintenance:** point an external uptime service (healthchecks.io,
+  UptimeRobot, or a Route 53 health check) at `tcp://<relay>:443`. Nothing to host.
+- **Self-hosted:** `canary.sh <relay-ip>` from **off** the relay host (exit 0 =
+  healthy). Compose it with anything — e.g. cron: `*/2 * * * * canary.sh <ip> && curl -fsS https://hc-ping.com/<uuid>` (a missed ping alerts), or a systemd timer with `OnFailure=`.
+
+Deliberately not here (deferred, post-launch): privacy-preserving aggregate
+throughput metrics + box→owner remote-access-status notifications.
