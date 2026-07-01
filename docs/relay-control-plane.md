@@ -213,6 +213,133 @@ max-age eviction → atlas mint current bucket → box periodic refresh +
 present-fresh-on-reconnect. Each with a test (bucket-boundary, ±1 acceptance,
 max-age eviction, refresh-rotates-token).
 
+## Path selection — the future tiers (LAN-direct, native P2P, QUIC) and why v1 stays relay-only
+
+This section records a deep ideation (June 2026) so we don't re-litigate it. **The v1
+decision is unchanged: ship the blind TCP relay + ACME. Everything below is v2+.**
+
+### The governing reframe: capability vs. cost
+
+**LAN-direct + relay together already cover 100% of *capability*** — reach at home,
+reach from anywhere, on any device including a vanilla browser. Every "direct" path
+beyond that (IPv6-direct, NAT hole-punching, QUIC) adds **zero new reach**. It only
+changes two things: our **relay bandwidth bill** and **latency** for native-app users
+away from home. So those paths are **cost/latency optimizations layered on a complete
+system**, not missing capabilities — which is exactly why they can be deferred without
+leaving a hole. The relay's role shifts from "the road" to "the always-there floor."
+
+### "WAN-direct" is two different animals
+
+- **WAN-direct via IPv6** — both ends have public routable v6, so they just connect.
+  No hole-punching. Cheap. (This was the old WireGuard model.) Coverage is
+  unpredictable — v4-only/v6-blocked networks (WeWork) kill it — so it can only ever
+  be a *fast-path attempt that silently falls back to relay*, never relied on.
+- **WAN-direct via IPv4 hole-punching** — both behind NAT, need a coordinator to
+  choreograph simultaneous-open (DCUtR / ICE / iroh magicsock). Complex, **70% global
+  success (libp2p, independently measured) to ~90% (Tailscale/iroh, first-party)**,
+  and **structurally fails on symmetric NAT / CGNAT** — the exact networks that drove
+  us to the relay. The stubborn 10–30% tail is permanent → **the relay never goes away.**
+
+### Library landscape (2025–2026)
+
+- **iroh 1.0** (n0-computer, shipped 2026-06-15; wire+API stability guarantee) is the
+  strongest off-the-shelf match for **native** P2P: dial-by-public-key, magicsock-style
+  relay→direct upgrade (~90% direct), a **self-hostable blind relay that is the same
+  ciphertext-only shape we built** (but routes by node-id — see caveat), mDNS LAN-direct,
+  and **official Swift bindings that run in-process on iOS with no Network Extension /
+  VPN slot.** Apache-2.0 OR MIT.
+- **rust-libp2p / DCUtR** — protocol-rich but **no production iOS story** (swift-libp2p
+  is experimental); good reference for *how* hole-punching works, weak as our stack.
+- **ICE/STUN/TURN** (pion/Go, str0m/Rust + coturn/turn-rs) — the RFC-grade alternative;
+  a TURN server *is* a standardized blind relay. You build the signaling yourself.
+- **Tailscale** — best *reference architecture* (magicsock / DISCO / DERP / Call-Me-Maybe);
+  as a library only via Go (`tsnet`) or a system-wide Network Extension.
+
+**Verdict:** if/when we build native direct paths, it's **iroh — or nothing**. It's the
+only option satisfying Rust core + real in-process iOS + blind relay + actual stability.
+Do **not** hand-build DCUtR/ICE.
+
+**iroh caveat vs. our doctrine:** iroh's relay routes by ed25519 public key, so it learns
+*"endpoint X talks to Y, N bytes"* (blind to content, **not** blinded-token anonymous).
+That violates the `networking-relay-tee` unlinkability goal. **Lean: keep our blind L4
+relay as the privacy-maximal floor; layer iroh only for native direct paths.** With ~90%
+going direct, iroh's weaker relay metadata only ever touches bootstrap + the 10% tail.
+
+### iOS reality (decides the shape)
+
+In-process UDP hole-punching is **allowed and does NOT consume the VPN slot** — the slot
+is only `NEPacketTunnelProvider` (system-wide VPN). Talking to the relay or a remote peer
+over the public internet is **permission-prompt-free**; only **LAN-direct** trips the
+one-time "Local Network" prompt. **Background P2P is unreliable on iOS regardless** →
+relay + APNs-wake stays the background story no matter what (`project_apns_push_primitive`).
+
+### iroh in the browser — does NOT change the browser story
+
+iroh's WASM build is real but **relay-only**: *"All connections from browsers to somewhere
+else need to flow via a relay server"* (browser sandbox can't send UDP → no hole-punch).
+So for browsers iroh is architecturally **the same as our relay**, minus our unlinkability,
+plus a protocol rewrite. **Browsers stay on our relay.** (Watch item: iroh's roadmap to add
+WebTransport/WebRTC direct-from-browser — see below.)
+
+### WebTransport + `serverCertificateHashes` — cert-trust, not reachability
+
+A browser primitive (shipped in **all four engines incl. Safari/iOS 26.4, March 2026**)
+that lets a browser trust a **self-signed** cert by **SHA-256 hash** passed out-of-band
+(via pairing) — native certificate pinning, no CA. Buildable directly on the Rust
+**`wtransport`** crate, **independent of iroh**. Constraints: ECDSA P-256, **cert validity
+≤ 14 days** (no revocation; short life is the substitute), hash is over the **full DER
+cert** (every rotation → new hash → must re-distribute to clients), runs over **HTTP/3
+(QUIC/UDP)**, IP-literals allowed (no DNS needed), calling page must be a secure context.
+
+**Crucial limit: it does ZERO NAT traversal.** It needs the box already reachable (LAN,
+public v6, or port-forward). It solves **cert trust**, not **reachability**.
+
+- **LAN-direct: genuine win.** Browser on the same network hits `https://<lan-ip>:<port>`,
+  pins the box hash from pairing, gets a real padlock, **no DNS / no CA / no ACME / no
+  trust-on-first-use prompt.** This **supersedes the split-horizon-DNS and mDNS+local-CA
+  options** for LAN-direct (Open Q #5 / todo #13). The only costs: the 14-day rotation +
+  hash-redistribution choreography, and an **iOS ≤ 26.3 fallback** (plaintext / relay).
+- **Remote: blocked by reachability**, not by the API. CGNAT box stays unreachable → relay
+  still required.
+
+### Why we did NOT build "QUIC v3" (eliminate ACME everywhere) now
+
+The dream: make the **relay a QUIC/WebTransport passthrough** + have browsers pin the box
+hash even over the relay → drop ACME/public-CA for *every* path. It breaks on the
+**TCP-fallback tail**:
+
+1. **QUIC is UDP/443.** Most networks pass it (QUIC is mainstream) — including UDP-open /
+   v6-blocked nets like WeWork, where a QUIC relay *would* work (v6-blocked ≠ UDP-blocked;
+   these are unrelated failures). **But** a real tail of networks **deliberately block
+   UDP/443** (enterprises forcing TCP so inspection middleboxes can see traffic).
+2. **WebTransport has no automatic TCP fallback** — if UDP is blocked it just fails. So
+   the deliberate-blocker tail needs a TCP path or they're locked out.
+3. **Browsers have ZERO cert-pinning over TCP** — `serverCertificateHashes` is
+   WebTransport-only. Over a TCP relay the browser uses ordinary HTTPS → must validate
+   against a **public CA → needs ACME.**
+
+So even granting UDP works on most networks, **you keep a TCP relay + ACME for the tail,
+because there's no fallback and no TCP cert-pinning.** The "everything simpler" resolves to
+*"most users get a CA-free QUIC path"* — **not** *"ACME goes away."* And QUIC-relay-now is a
+large **parallel** build (UDP flow-relaying, QUIC SNI peek, HTTP-over-WebTransport
+forwarder, 14-day hash treadmill, iOS tail) that **adds** surface rather than replacing
+anything. **Mental model: TCP is the floor because it's the only thing always allowed;
+QUIC/UDP is a fast-path you can offer where the network permits and that deletes nothing.**
+
+> Open data question if we ever pursue QUIC-relay: pin down the real **UDP/443 blocking
+> rate** (Google/Cloudflare QUIC-fallback stats, academic reachability studies) to size the
+> TCP-fallback tail before committing to two transports.
+
+### Phasing summary
+
+| Tier | What | When |
+|---|---|---|
+| **v1** | blind **TCP** relay + **ACME** (apex) — reaches 100% of browsers on every network today | **now** |
+| **v2a** | **WebTransport + hash** for **LAN-direct** (no DNS/CA; supersedes split-horizon/mDNS) | post-launch |
+| **v2b** | **iroh** for **native** paths (desktop/iOS/CLI/box-to-box): dial-by-key, ~90% hole-punch, mDNS LAN; our relay stays the blind floor | when relay-bandwidth cost bites |
+| **v3** | QUIC/WebTransport relay as a **CA-free fast-path** for the UDP-open majority; **TCP+ACME stays as the permanent tail fallback** (does NOT eliminate ACME) | evaluate after iOS-26.4 adoption is high |
+| **never** | hand-built DCUtR/ICE; requiring an agent for *any* access (browsers must always work via relay, no install) | — |
+
 ## Open questions
 
 1. Exact `boxhash` derivation (which key, hash, truncation length vs. collision/
