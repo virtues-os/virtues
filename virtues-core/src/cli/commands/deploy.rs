@@ -24,7 +24,7 @@ pub async fn handle_status(virtues: &Virtues) -> Result<()> {
     println!("Virtues box status");
     println!("──────────────────");
     println!("  identity:");
-    println!("    TLS cert (ACME)      {}", yn(s.identity.tls_cert));
+    println!("    iroh endpoint up     {}", yn(s.identity.endpoint_up));
 
     // Inference resolution (sidecar engine + per-model on-disk/missing).
     let r = inference_report::resolution_report();

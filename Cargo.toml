@@ -2,14 +2,13 @@
 members = [
     "virtues-core",
     "crates/virtues-helpers",
+    "crates/virtues-iroh",
     "crates/virtues-protocol",
     "crates/virtues-registry",
-    "crates/virtues-relay-client",
     "actions",
     "apps/desktop",
     "services/virtues-api",
     "services/virtues-atlas",
-    "services/virtues-relay",
     "tools/virtues-installer",
 ]
 # The Tauri desktop app is a standalone crate built by the `tauri` CLI, with
@@ -17,6 +16,9 @@ members = [
 # workspace member, or `cargo metadata` (which the tauri CLI runs) fails.
 exclude = [
     "apps/web/src-tauri",
+    # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
+    # build so iroh's dep tree can't destabilize it during the spike.
+    "spike-iroh",
 ]
 resolver = "2"
 

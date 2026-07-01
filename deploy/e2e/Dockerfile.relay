@@ -1,9 +1,0 @@
-# Blind relay, built from the repo. Build context = repo root.
-FROM rust:1-bookworm AS build
-WORKDIR /src
-COPY . .
-RUN cargo build --release -p virtues-relay
-
-FROM debian:bookworm-slim
-COPY --from=build /src/target/release/virtues-relay /usr/local/bin/virtues-relay
-ENTRYPOINT ["virtues-relay"]

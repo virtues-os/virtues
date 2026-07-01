@@ -1,11 +1,10 @@
-//! Relay reachability config, provisioned by atlas (Option A control plane).
+//! Relay reachability config, provisioned by atlas.
 //!
-//! The box holds **no relay signing key**. At link, atlas signs this box's per-SNI
-//! registration token (`sign_token(atlas_ed25519_priv, sni, bucket)`) and
-//! returns `{relay_addr, sni, token}`; the box persists it in `box_secrets` and
-//! the relay subsystem ([`crate::relay`]) reads it at startup. The token is
-//! sealed (it's a bearer); `relay_addr`/`sni` are public, stored in metadata.
-//! See `docs/relay-control-plane.md`.
+//! At claim/link atlas returns `{ relay_url }` (the iroh relay this box homes
+//! on). The box persists it in `box_secrets` and the iroh reach subsystem
+//! ([`crate::relay`]) reads it to build its endpoint's relay map. `relay_url` is
+//! public (not a secret); it's stored in the secret slot purely for reuse of the
+//! `box_secrets` key/value store.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -17,24 +16,18 @@ pub const BOX_SECRET_KEY: &str = "relay_config";
 /// Relay reachability config for this box.
 #[derive(Debug, Clone)]
 pub struct RelayConfig {
-    /// Relay control address the box dials out to (host:port).
-    pub relay_addr: String,
-    /// This box's SNI, e.g. `abc123.virtues.ch`.
-    pub sni: String,
-    /// Per-SNI registration token (HMAC, minted by atlas).
-    pub token: String,
+    /// The iroh relay URL this box homes on, e.g. `https://relay.virtues.ch`.
+    pub relay_url: String,
 }
 
 #[derive(Deserialize)]
 struct RelayConfigResponse {
-    relay_addr: String,
-    sni: String,
-    token: String,
+    relay_url: String,
 }
 
 /// Fetch this box's relay config from atlas (authenticated by `api_key`) and
-/// persist it in `box_secrets`. Best-effort: the caller should log and continue
-/// on error — the box still works on LAN without relay reach.
+/// persist it. Best-effort: the caller should log and continue on error — the
+/// box still works on LAN (and via `VIRTUES_RELAY_URL`) without this.
 pub async fn fetch_and_store(
     db: &PgPool,
     http: &reqwest::Client,
@@ -53,92 +46,21 @@ pub async fn fetch_and_store(
         return Err(anyhow!("atlas /relay/config returned {status}"));
     }
     let body: RelayConfigResponse = resp.json().await.context("parse relay config")?;
-    store(
-        db,
-        &RelayConfig {
-            relay_addr: body.relay_addr,
-            sni: body.sni,
-            token: body.token,
-        },
-    )
-    .await
+    store(db, &RelayConfig { relay_url: body.relay_url }).await
 }
 
-/// Persist relay config: token sealed as the secret, addr+sni in public metadata.
+/// Persist the relay config.
 pub async fn store(db: &PgPool, cfg: &RelayConfig) -> Result<()> {
-    let metadata = serde_json::json!({ "relay_addr": cfg.relay_addr, "sni": cfg.sni });
-    crate::box_secrets::put(db, BOX_SECRET_KEY, &cfg.token, &metadata).await
+    crate::box_secrets::put(db, BOX_SECRET_KEY, &cfg.relay_url, &serde_json::json!({})).await
 }
 
-/// Load the provisioned relay config from `box_secrets`, if complete.
+/// Load the provisioned relay config from `box_secrets`, if present.
 pub async fn load(db: &PgPool) -> Result<Option<RelayConfig>> {
-    let Some((token, metadata)) = crate::box_secrets::get(db, BOX_SECRET_KEY).await? else {
+    let Some((relay_url, _metadata)) = crate::box_secrets::get(db, BOX_SECRET_KEY).await? else {
         return Ok(None);
     };
-    let relay_addr = metadata["relay_addr"].as_str().unwrap_or_default().to_string();
-    let sni = metadata["sni"].as_str().unwrap_or_default().to_string();
-    if relay_addr.is_empty() || sni.is_empty() {
+    if relay_url.is_empty() {
         return Ok(None);
     }
-    Ok(Some(RelayConfig {
-        relay_addr,
-        sni,
-        token,
-    }))
-}
-
-/// The box's provisioned relay SNI, if any — for advertising `box_url` at pairing.
-pub async fn sni(db: &PgPool) -> Option<String> {
-    load(db).await.ok().flatten().map(|c| c.sni)
-}
-
-/// ACME DNS-01 publisher that writes the box's `_acme-challenge` TXT **through
-/// atlas** (`POST /relay/acme-challenge`), authenticated by the box's `api_key`.
-///
-/// The box can't touch Route 53 directly (no creds, by design) and must not be
-/// able to write another box's record — so atlas derives the record *name* from
-/// the authenticated account and the box only supplies the challenge *values*.
-/// This is the per-box-scoped half of the sandcats "authority writes the TXT"
-/// model. Preferred over [`crate::acme::HttpDnsPublisher`] (a generic shared-token
-/// writer kept only for dev/manual setups) whenever the box is atlas-linked.
-pub struct AtlasDnsPublisher {
-    db: PgPool,
-    http: reqwest::Client,
-    atlas_url: String,
-}
-
-impl AtlasDnsPublisher {
-    pub fn new(db: PgPool) -> Self {
-        Self {
-            db,
-            http: crate::http_client::virtues_api_client(),
-            atlas_url: crate::virtues_api::atlas_url(),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl crate::acme::DnsPublisher for AtlasDnsPublisher {
-    /// `name` is ignored: atlas derives the (only) name this box may write from
-    /// the authenticated account. We send just the challenge `values`.
-    async fn publish_txt(&self, _name: &str, values: &[String]) -> Result<()> {
-        let api_key = crate::virtues_api::renew::read_api_key(&self.db)
-            .await?
-            .ok_or_else(|| anyhow!("box not linked; cannot publish ACME challenge"))?;
-        let resp = self
-            .http
-            .post(format!(
-                "{}/relay/acme-challenge",
-                self.atlas_url.trim_end_matches('/')
-            ))
-            .json(&serde_json::json!({ "api_key": api_key, "values": values }))
-            .send()
-            .await
-            .context("atlas /relay/acme-challenge request")?;
-        let status = resp.status();
-        if !status.is_success() {
-            return Err(anyhow!("atlas /relay/acme-challenge returned {status}"));
-        }
-        Ok(())
-    }
+    Ok(Some(RelayConfig { relay_url }))
 }

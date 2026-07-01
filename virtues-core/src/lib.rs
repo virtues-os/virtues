@@ -24,7 +24,6 @@ pub mod inference_report;
 pub mod maintenance;
 pub mod mcp;
 pub mod middleware;
-pub mod acme;
 pub mod box_secrets;
 pub mod net_check;
 pub mod relay;

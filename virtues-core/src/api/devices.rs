@@ -247,6 +247,9 @@ pub async fn revoke_handler(
             .into_response();
     }
 
+    // Drop the revoked device's EndpointId from the iroh transport allowlist
+    // (and re-report the shrunk set to atlas) so it can no longer reach the box.
+    crate::relay::after_pairing_change(pool.clone());
 
     // Event log.
     let _ = sqlx::query(
@@ -260,6 +263,46 @@ pub async fn revoke_handler(
     .await;
 
     (StatusCode::OK, Json(json!({"ok": true}))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+pub struct SelfNodeIdRequest {
+    /// The calling device's iroh EndpointId (hex).
+    pub node_id: String,
+}
+
+/// `POST /api/devices/self/node-id { node_id }` — the calling device (authed by
+/// its own bearer) reports its iroh EndpointId so the box allowlists it on its
+/// iroh transport. This is how a device provisioned off-LAN (QR/iOS), which
+/// wasn't present at consume time to submit `device_node_id`, becomes reachable.
+pub async fn set_self_node_id(
+    State(pool): State<PgPool>,
+    user: AuthUser,
+    Json(body): Json<SelfNodeIdRequest>,
+) -> impl IntoResponse {
+    let node_id = body.node_id.trim();
+    if node_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_node_id"}))).into_response();
+    }
+    match sqlx::query("UPDATE app_device SET node_id = $1 WHERE id = $2 AND revoked_at IS NULL")
+        .bind(node_id)
+        .bind(&user.device_id)
+        .execute(&pool)
+        .await
+    {
+        Ok(_) => {
+            // Hot-swap the allowlist + re-report to atlas so the device can reach
+            // the box immediately.
+            crate::relay::after_pairing_change(pool.clone());
+            (StatusCode::OK, Json(json!({"ok": true}))).into_response()
+        }
+        Err(e) => {
+            // Most likely a unique violation — another active device already
+            // holds this EndpointId.
+            tracing::warn!(error = %e, "set_self_node_id failed");
+            (StatusCode::CONFLICT, Json(json!({"error": "node_id_conflict"}))).into_response()
+        }
+    }
 }
 
 // WG peer eviction is no longer done inline here. Kernel `wg0` state has a

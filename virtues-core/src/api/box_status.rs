@@ -15,10 +15,10 @@ use crate::inference_report::{self, ModelSource};
 use crate::server::webhook::AppState;
 #[derive(Debug, Clone, Serialize)]
 pub struct BoxStatus {
-    /// True once the box can serve over TLS. In the relay model this is always
-    /// satisfiable — the box self-signs a bootstrap cert and is reached via the
-    /// relay (no per-box WG identity to mint first). Kept for the setup state
-    /// machine's `identity` gate.
+    /// True once the box can serve requests. In the iroh model this is always
+    /// satisfiable — the box binds its iroh endpoint + serves `:8000` locally; no
+    /// per-box cert to mint first. Kept for the setup state machine's `identity`
+    /// gate.
     pub ready: bool,
     pub identity: IdentityStatus,
     pub subscription: SubscriptionStatus,
@@ -27,10 +27,10 @@ pub struct BoxStatus {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IdentityStatus {
-    /// Whether a persisted (ACME-issued) TLS cert is present on disk. The box
-    /// also self-signs a bootstrap cert at runtime, so reachability does not
-    /// depend on this being true.
-    pub tls_cert: bool,
+    /// Whether the box's iroh endpoint is bound and homed on the relay (i.e.
+    /// reachable by EndpointId from off-LAN). Informational — LAN reach + local
+    /// serving don't depend on it.
+    pub endpoint_up: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,11 +47,9 @@ pub struct DeviceStatus {
     pub paired_wg: i64,
 }
 
-/// Whether the box has a persisted TLS cert on disk (ACME-issued). The runtime
-/// self-signed bootstrap covers the box even when this is false.
-fn tls_cert_present() -> bool {
-    let dir = std::env::var("VIRTUES_TLS_CERT_DIR").unwrap_or_else(|_| "./data/tls".to_string());
-    std::path::Path::new(&dir).join("cert.pem").exists()
+/// Whether the box's iroh endpoint is up (bound + homed on the relay).
+fn endpoint_up() -> bool {
+    crate::relay::is_relay_registered()
 }
 
 /// Compute the box's health snapshot. Shared by the CLI (`virtues status`) and
@@ -70,7 +68,7 @@ pub async fn compute_status(pool: &PgPool) -> Result<BoxStatus> {
     Ok(BoxStatus {
         ready: true,
         identity: IdentityStatus {
-            tls_cert: tls_cert_present(),
+            endpoint_up: endpoint_up(),
         },
         subscription: SubscriptionStatus { linked },
         devices: DeviceStatus { paired_wg },
@@ -251,7 +249,6 @@ pub struct SetupState {
 /// with `/api/box/status`.
 pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     let s = compute_status(pool).await?;
-    let net = crate::net_check::compute_net_status();
 
     // Claimed = at least one device has paired (the pair token was consumed
     // by an owner's browser or phone). Ownership-by-proximity, see
@@ -485,7 +482,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
             detail: None,
             kind: None,
         },
-        remote_access_step(&net),
+        remote_access_step(crate::relay::is_relay_registered()),
         SetupStep {
             id: "first_sync",
             title: "First data synced",
@@ -545,25 +542,29 @@ fn narrative_identity_kind(ready: bool, running: bool) -> Option<&'static str> {
 /// (Tailscale, a foreign WireGuard, …) IS reachable — at the overlay address —
 /// so the step is honestly `done`. `kind` qualifies the three states for
 /// renderers; behavior keys off `done`, copy off `detail`.
-fn remote_access_step(net: &crate::net_check::NetStatus) -> SetupStep {
-    let (done, kind) = if net.ipv6_global.is_some() {
-        // The doctrine's happy path: a global IPv6 to be reached at directly.
-        (true, "ipv6_direct")
-    } else if net.byo.is_some() {
-        // No direct path, but the user already runs their own transport.
-        (true, "byo")
+fn remote_access_step(endpoint_up: bool) -> SetupStep {
+    // iroh model: "reachable from anywhere" == the box's iroh endpoint is bound
+    // and homed on our relay. From there any paired device reaches it by
+    // EndpointId — via the relay, upgrading to hole-punched direct when possible
+    // — so NAT/IPv6 no longer gate reach (iroh traverses them).
+    let (done, kind, detail) = if endpoint_up {
+        (
+            true,
+            "iroh_relay",
+            "Reachable from anywhere — connections go direct when possible, via the relay otherwise.",
+        )
     } else {
-        // Not reachable from here — a weather report, not an error. The box
-        // re-checks per poll, so the step flips on its own wherever it lives.
-        (false, net.class.as_str())
+        (
+            false,
+            "pending",
+            "Connecting to the relay so your box is reachable from anywhere…",
+        )
     };
     SetupStep {
         id: "remote_access",
         title: "Reachable from anywhere",
         done,
-        // `verdict_line` already prefers IPv6-direct, then the BYO transport,
-        // then the class headline — one copy source, no drift.
-        detail: Some(net.verdict_line()),
+        detail: Some(detail.to_string()),
         kind: Some(kind),
     }
 }
@@ -607,30 +608,18 @@ mod tests {
     }
 
     #[test]
-    fn remote_access_three_states() {
-        // Global IPv6 → done via the direct path, headline as detail.
-        let step = remote_access_step(&net(NetClass::Ipv6Direct, Some("2001:db8::1"), None));
+    fn remote_access_reflects_iroh_endpoint() {
+        // Endpoint up + homed on the relay → reachable from anywhere.
+        let step = remote_access_step(true);
         assert!(step.done);
-        assert_eq!(step.kind, Some("ipv6_direct"));
-        assert_eq!(step.detail.as_deref(), Some("headline"));
+        assert_eq!(step.kind, Some("iroh_relay"));
 
-        // NAT'd but on a user-run overlay → honestly done ("auto-notice,
-        // never auto-enable"), with the BYO verdict as detail.
-        let step = remote_access_step(&net(NetClass::NatNoIpv6, None, Some("tailscale0")));
-        assert!(step.done);
-        assert_eq!(step.kind, Some("byo"));
-        assert_eq!(
-            step.detail.as_deref(),
-            Some("Available via your own network (tailscale0).")
-        );
-
-        // No direct path, no overlay → not done; kind carries the net class.
-        let step = remote_access_step(&net(NetClass::NatNoIpv6, None, None));
+        // Endpoint not yet up → pending (a weather report, flips on its own).
+        let step = remote_access_step(false);
         assert!(!step.done);
-        assert_eq!(step.kind, Some("behind_nat"));
-        assert_eq!(step.detail.as_deref(), Some("headline"));
+        assert_eq!(step.kind, Some("pending"));
 
-        // id/title are stable across all three states.
+        // id/title stable across states.
         assert_eq!(step.id, "remote_access");
         assert_eq!(step.title, "Reachable from anywhere");
     }

@@ -55,43 +55,11 @@ async fn main() -> Result<()> {
     );
     let stripe = stripe_api::StripeClient::new(cfg.stripe_secret_key.clone());
 
-    // Route 53 client for the per-box ACME DNS-01 TXT-writer. Built only when a
-    // hosted-zone id is configured; otherwise the writer endpoint returns 503 and
-    // boxes stay on the self-signed bootstrap cert. Pinned to the legacy ring TLS
-    // stack (see Cargo.toml) so no aws-lc-sys/cmake is needed. Credentials come
-    // from the standard chain (env vars or the EC2 instance role via IMDS).
-    let route53 = if cfg.route53_zone_id.is_empty() {
-        tracing::info!("VIRTUES_ROUTE53_ZONE_ID unset — ACME DNS-01 TXT-writer disabled");
-        None
+    if cfg.relay_url.is_empty() {
+        tracing::info!("VIRTUES_RELAY_URL unset — relay reachability disabled (/relay/config → 503)");
     } else {
-        let aws_cfg =
-            aws_config::defaults(aws_config::BehaviorVersion::latest()).load().await;
-        tracing::info!(zone = %cfg.route53_zone_id, "Route 53 ACME TXT-writer enabled");
-        Some(aws_sdk_route53::Client::new(&aws_cfg))
-    };
-
-    // Parse atlas's Ed25519 relay-token signing key once at startup. A malformed
-    // key is a fatal misconfig (fail loud, don't silently disable minting); an
-    // empty key means relay minting is intentionally off (→ 503 on /relay/config).
-    let relay_signing_key = if cfg.relay_signing_key.is_empty() {
-        tracing::info!("VIRTUES_RELAY_SIGNING_KEY unset — relay token minting disabled");
-        None
-    } else {
-        match virtues_protocol::relay::parse_signing_key(&cfg.relay_signing_key) {
-            Some(k) => {
-                tracing::info!("relay token signing key loaded (Ed25519)");
-                Some(k)
-            }
-            None => {
-                eprintln!(
-                    "FATAL: VIRTUES_RELAY_SIGNING_KEY is set but not a valid hex-encoded \
-                     32-byte Ed25519 private key. Generate one and set it, or unset it to \
-                     disable relay minting."
-                );
-                std::process::exit(1);
-            }
-        }
-    };
+        tracing::info!(relay = %cfg.relay_url, "iroh relay reachability enabled");
+    }
 
     let state = routes::AppState {
         pool,
@@ -119,11 +87,8 @@ async fn main() -> Result<()> {
             email_reply_to: cfg.preorder_email_reply_to.clone(),
         },
         relay: routes::RelayPolicy {
-            signing_key: relay_signing_key,
-            control_addr: cfg.relay_control_addr.clone(),
-            base_domain: cfg.relay_base_domain.clone(),
-            route53_zone_id: cfg.route53_zone_id.clone(),
-            route53,
+            relay_url: cfg.relay_url.clone(),
+            relay_auth_secret: cfg.relay_auth_secret.clone(),
         },
         resend_api_key: cfg.resend_api_key.clone(),
         allow_promotion_codes: cfg.allow_promotion_codes,
