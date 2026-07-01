@@ -84,7 +84,7 @@ pub fn maybe_spawn(db: PgPool, http_port: u16) {
         let tls_front = std::env::var("VIRTUES_RELAY_TLS_FRONT")
             .unwrap_or_else(|_| "127.0.0.1:8443".to_string());
         let upstream = format!("127.0.0.1:{http_port}");
-        if let Err(e) = run(relay_addr, sni, token_cell, tls_front, upstream).await {
+        if let Err(e) = run(db, relay_addr, sni, token_cell, tls_front, upstream).await {
             tracing::error!(error = %e, "relay subsystem exited");
         }
     });
@@ -178,6 +178,7 @@ async fn lazy_provision(db: &PgPool) -> Option<(String, String, String)> {
 }
 
 async fn run(
+    db: PgPool,
     relay_addr: String,
     sni: String,
     token_cell: Arc<RwLock<String>>,
@@ -201,16 +202,31 @@ async fn run(
     tracing::info!(%tls_front, %upstream, %sni, "relay TLS-front up (bootstrap cert); box reachable via relay");
 
     // Concurrently obtain a browser-trusted ACME cert and keep it renewed,
-    // hot-swapping it into the live listener — only when ACME + a DNS authority
-    // are configured. Otherwise we stay on the self-signed bootstrap.
-    match (
-        crate::acme::AcmeConfig::from_env(),
-        crate::acme::HttpDnsPublisher::from_env(),
-    ) {
-        (Some(acme_cfg), Some(publisher)) => {
-            tokio::spawn(cert_task(acme_cfg, publisher, reloader));
+    // hot-swapping it into the live listener — only when ACME is configured *and*
+    // a DNS publisher is available. Prefer the atlas-scoped publisher (box is
+    // linked → atlas writes `_acme-challenge.<sni>` from the authenticated
+    // account); fall back to the generic env-based writer (dev/manual). Otherwise
+    // stay on the self-signed bootstrap.
+    match crate::acme::AcmeConfig::from_env(&sni) {
+        Some(acme_cfg) => {
+            let publisher: Option<Box<dyn crate::acme::DnsPublisher>> =
+                if matches!(crate::virtues_api::renew::read_api_key(&db).await, Ok(Some(_))) {
+                    Some(Box::new(crate::virtues_api::relay::AtlasDnsPublisher::new(db.clone())))
+                } else {
+                    crate::acme::HttpDnsPublisher::from_env()
+                        .map(|p| Box::new(p) as Box<dyn crate::acme::DnsPublisher>)
+                };
+            match publisher {
+                Some(p) => {
+                    tokio::spawn(cert_task(acme_cfg, p, reloader));
+                }
+                None => tracing::info!(
+                    %sni,
+                    "ACME configured but no DNS publisher (box not linked and no VIRTUES_DNS_TXT_URL); staying on self-signed bootstrap"
+                ),
+            }
         }
-        _ => tracing::info!(%sni, "ACME not configured; staying on self-signed bootstrap cert"),
+        None => tracing::info!(%sni, "ACME not configured; staying on self-signed bootstrap cert"),
     }
 
     // TLS-front accept loop: terminate TLS, splice decrypted HTTP to the local
@@ -274,7 +290,7 @@ async fn run(
 /// keeps serving the last good cert in the meantime).
 async fn cert_task(
     cfg: crate::acme::AcmeConfig,
-    publisher: crate::acme::HttpDnsPublisher,
+    publisher: Box<dyn crate::acme::DnsPublisher>,
     reloader: tls::CertReloader,
 ) {
     // Initial issuance (load cached-if-fresh, else obtain). Retry aggressively
@@ -284,7 +300,7 @@ async fn cert_task(
     // mean a transient ACME/DNS hiccup leaves the box dark for half a day.
     let mut backoff = INITIAL_ISSUE_BACKOFF;
     loop {
-        match crate::acme::ensure_cert(&cfg, &publisher).await {
+        match crate::acme::ensure_cert(&cfg, publisher.as_ref()).await {
             Ok(m) => match tls::server_config_from_pem(&m.cert_pem, &m.key_pem) {
                 Ok(c) => {
                     reloader.reload(c);
@@ -307,7 +323,7 @@ async fn cert_task(
         if !crate::acme::cert_stale(&cfg.cert_dir) {
             continue;
         }
-        match crate::acme::obtain(&cfg, &publisher).await {
+        match crate::acme::obtain(&cfg, publisher.as_ref()).await {
             Ok(m) => {
                 if let Err(e) = crate::acme::save_to_disk(&cfg.cert_dir, &m).await {
                     tracing::warn!(error = %e, "failed to cache renewed cert (continuing in-memory)");

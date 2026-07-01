@@ -55,6 +55,21 @@ async fn main() -> Result<()> {
     );
     let stripe = stripe_api::StripeClient::new(cfg.stripe_secret_key.clone());
 
+    // Route 53 client for the per-box ACME DNS-01 TXT-writer. Built only when a
+    // hosted-zone id is configured; otherwise the writer endpoint returns 503 and
+    // boxes stay on the self-signed bootstrap cert. Pinned to the legacy ring TLS
+    // stack (see Cargo.toml) so no aws-lc-sys/cmake is needed. Credentials come
+    // from the standard chain (env vars or the EC2 instance role via IMDS).
+    let route53 = if cfg.route53_zone_id.is_empty() {
+        tracing::info!("VIRTUES_ROUTE53_ZONE_ID unset — ACME DNS-01 TXT-writer disabled");
+        None
+    } else {
+        let aws_cfg =
+            aws_config::defaults(aws_config::BehaviorVersion::latest()).load().await;
+        tracing::info!(zone = %cfg.route53_zone_id, "Route 53 ACME TXT-writer enabled");
+        Some(aws_sdk_route53::Client::new(&aws_cfg))
+    };
+
     let state = routes::AppState {
         pool,
         virtues_api,
@@ -84,6 +99,8 @@ async fn main() -> Result<()> {
             secret: cfg.relay_secret.clone(),
             control_addr: cfg.relay_control_addr.clone(),
             base_domain: cfg.relay_base_domain.clone(),
+            route53_zone_id: cfg.route53_zone_id.clone(),
+            route53,
         },
         resend_api_key: cfg.resend_api_key.clone(),
         allow_promotion_codes: cfg.allow_promotion_codes,

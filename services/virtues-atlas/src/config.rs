@@ -38,6 +38,10 @@ pub struct Config {
     /// Base domain for box SNIs, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.
     /// Env: `VIRTUES_RELAY_BASE_DOMAIN` (default `virtues.ch`).
     pub relay_base_domain: String,
+    /// Route 53 hosted-zone id for `relay_base_domain`, used by the per-box ACME
+    /// DNS-01 TXT-writer. Empty → the writer endpoint is disabled (503).
+    /// Env: `VIRTUES_ROUTE53_ZONE_ID`.
+    pub route53_zone_id: String,
 
     /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
     pub renewal_micros: i64,
@@ -127,6 +131,10 @@ impl Config {
         let relay_control_addr = std::env::var("VIRTUES_RELAY_CONTROL_ADDR").unwrap_or_default();
         let relay_base_domain =
             std::env::var("VIRTUES_RELAY_BASE_DOMAIN").unwrap_or_else(|_| "virtues.ch".to_string());
+        // Route 53 hosted-zone id for `relay_base_domain`. Empty → the ACME
+        // DNS-01 TXT-writer endpoint is disabled (503), so boxes stay on the
+        // self-signed bootstrap cert. Env: `VIRTUES_ROUTE53_ZONE_ID`.
+        let route53_zone_id = std::env::var("VIRTUES_ROUTE53_ZONE_ID").unwrap_or_default();
 
         // Wallet economics — linked prepaid model.
         //   * Monthly renewal credit: $20 (overwrites wallet to the full
@@ -206,6 +214,7 @@ impl Config {
             relay_secret,
             relay_control_addr,
             relay_base_domain,
+            route53_zone_id,
             renewal_micros,
             auto_topup_micros,
             topup_min_micros,

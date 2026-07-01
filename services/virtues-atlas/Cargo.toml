@@ -61,6 +61,16 @@ rand = "0.9"
 sha2 = "0.10"
 hex = "0.4"
 
+# Route 53 — atlas is the per-box-scoped DNS-01 TXT writer for the box's ACME
+# cert (the box holds the key; atlas only writes `_acme-challenge.<sni>`). Uses
+# the modern default stack (hyper 1.x + rustls + aws-lc-rs). aws-lc-rs pulls
+# `aws-lc-sys`, which needs `cmake` + a C compiler at build time — added to the
+# Dockerfile builder stage. atlas still installs **ring** as the *process* rustls
+# provider (see main.rs); the SDK builds its own aws-lc-backed connector
+# independently, so the two coexist.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "client-hyper"] }
+aws-sdk-route53 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
+
 # Environment
 dotenvy = "0.15"
 

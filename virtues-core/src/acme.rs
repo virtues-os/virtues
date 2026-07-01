@@ -34,8 +34,15 @@ const ORDER_READY_TIMEOUT: Duration = Duration::from_secs(180);
 const CERT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 
 use instant_acme::{
-    Account, AuthorizationStatus, ChallengeType, Identifier, NewAccount, NewOrder, OrderStatus,
+    Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, NewAccount,
+    NewOrder, OrderStatus,
 };
+
+/// Filename (under `cert_dir`) for the cached ACME account credentials. Holds the
+/// account key — reused across issuances so we don't register a new account every
+/// time (Let's Encrypt rate-limits *account creation*, and a stable account is the
+/// prerequisite for ARI-driven renewals).
+const ACCOUNT_FILE: &str = "account.json";
 
 /// Issued cert material — both PEM strings, ready for
 /// [`virtues_helpers::transport::tls::server_config_from_pem`].
@@ -78,13 +85,24 @@ pub struct AcmeConfig {
 }
 
 impl AcmeConfig {
-    /// Build from env, or `None` if not configured. Requires `VIRTUES_ACME_DIRECTORY`
-    /// and at least one name (`VIRTUES_RELAY_SNI`).
-    pub fn from_env() -> Option<Self> {
+    /// Build from env for the resolved box `sni`, or `None` if ACME isn't
+    /// configured (`VIRTUES_ACME_DIRECTORY` unset) or `sni` is empty.
+    ///
+    /// The certified name is the **resolved** relay SNI passed in — NOT read from
+    /// env. An atlas-provisioned box receives its SNI in `box_secrets`, so
+    /// `VIRTUES_RELAY_SNI` is typically unset in its environment; reading it here
+    /// would leave every provisioned box stuck on the self-signed bootstrap.
+    pub fn from_env(sni: &str) -> Option<Self> {
         let directory_url = std::env::var("VIRTUES_ACME_DIRECTORY").ok().filter(|s| !s.is_empty())?;
-        let sni = std::env::var("VIRTUES_RELAY_SNI").ok().filter(|s| !s.is_empty())?;
-        // Per-box wildcard covers the LAN dashed-IP name too.
-        let names = vec![sni.clone(), format!("*.{sni}")];
+        if sni.is_empty() {
+            return None;
+        }
+        // v1 is **apex-only** (just `<boxhash>.virtues.ch`). No wildcard: its only
+        // purpose was the LAN dashed-IP name, and LAN-direct is moving to
+        // WebTransport + self-signed-cert-by-hash (no public cert needed locally) —
+        // see docs/relay-control-plane.md "Path selection". Apex-only also halves
+        // the DNS-01 authorizations and sidesteps the wildcard rate-limit class.
+        let names = vec![sni.to_string()];
         let cert_dir = std::env::var("VIRTUES_TLS_CERT_DIR")
             .unwrap_or_else(|_| "./data/tls".to_string())
             .into();
@@ -149,19 +167,24 @@ pub async fn obtain(cfg: &AcmeConfig, publisher: &dyn DnsPublisher) -> Result<Ce
         .unwrap_or_default();
     let contact_refs: Vec<&str> = contact.iter().map(|s| s.as_str()).collect();
 
-    // TODO(P3): persist + reuse AccountCredentials rather than creating a fresh
-    // account per issuance (LE rate-limits accounts too).
-    let (account, _credentials) = Account::create(
-        &NewAccount {
-            contact: &contact_refs,
-            terms_of_service_agreed: true,
-            only_return_existing: false,
+    // Reuse the cached account if we have one; otherwise register once and cache
+    // the credentials. LE rate-limits *account creation*, and a stable account is
+    // also the anchor for ARI-driven renewals — so we never want a fresh account
+    // per issuance. A cached account that fails to load (corrupt/rotated key) falls
+    // through to a fresh registration rather than wedging issuance.
+    let account = match load_account(&cfg.cert_dir).await {
+        Some(creds) => match Account::from_credentials(creds).await {
+            Ok(a) => {
+                tracing::debug!("reusing cached ACME account");
+                a
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cached ACME account unusable; registering a new one");
+                register_account(cfg, &contact_refs).await?
+            }
         },
-        &cfg.directory_url,
-        None,
-    )
-    .await
-    .context("create ACME account")?;
+        None => register_account(cfg, &contact_refs).await?,
+    };
 
     let identifiers: Vec<Identifier> = cfg.names.iter().cloned().map(Identifier::Dns).collect();
     let mut order = account
@@ -271,6 +294,43 @@ fn group_txt_values(entries: &[(String, String)]) -> std::collections::BTreeMap<
             .push(value.clone());
     }
     m
+}
+
+/// Register a fresh ACME account and cache its credentials under `cert_dir` for
+/// reuse on the next issuance. A failure to cache is non-fatal (we just re-register
+/// next time) — but logged, because repeated re-registration risks LE's account
+/// rate limit.
+async fn register_account(cfg: &AcmeConfig, contact_refs: &[&str]) -> Result<Account> {
+    let (account, credentials) = Account::create(
+        &NewAccount {
+            contact: contact_refs,
+            terms_of_service_agreed: true,
+            only_return_existing: false,
+        },
+        &cfg.directory_url,
+        None,
+    )
+    .await
+    .context("create ACME account")?;
+    if let Err(e) = save_account(&cfg.cert_dir, &credentials).await {
+        tracing::warn!(error = %e, "failed to cache ACME account (will re-register next issuance)");
+    }
+    Ok(account)
+}
+
+/// Load cached ACME account credentials, if present and parseable.
+async fn load_account(dir: &Path) -> Option<AccountCredentials> {
+    let raw = tokio::fs::read_to_string(dir.join(ACCOUNT_FILE)).await.ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+/// Persist ACME account credentials (contains the account key — same sensitivity
+/// as `key.pem`, same dir).
+async fn save_account(dir: &Path, credentials: &AccountCredentials) -> Result<()> {
+    tokio::fs::create_dir_all(dir).await?;
+    let json = serde_json::to_string(credentials).context("serialize ACME account")?;
+    tokio::fs::write(dir.join(ACCOUNT_FILE), json).await?;
+    Ok(())
 }
 
 async fn load_from_disk(dir: &Path) -> Option<CertMaterial> {

@@ -91,3 +91,54 @@ pub async fn load(db: &PgPool) -> Result<Option<RelayConfig>> {
 pub async fn sni(db: &PgPool) -> Option<String> {
     load(db).await.ok().flatten().map(|c| c.sni)
 }
+
+/// ACME DNS-01 publisher that writes the box's `_acme-challenge` TXT **through
+/// atlas** (`POST /relay/acme-challenge`), authenticated by the box's `api_key`.
+///
+/// The box can't touch Route 53 directly (no creds, by design) and must not be
+/// able to write another box's record — so atlas derives the record *name* from
+/// the authenticated account and the box only supplies the challenge *values*.
+/// This is the per-box-scoped half of the sandcats "authority writes the TXT"
+/// model. Preferred over [`crate::acme::HttpDnsPublisher`] (a generic shared-token
+/// writer kept only for dev/manual setups) whenever the box is atlas-linked.
+pub struct AtlasDnsPublisher {
+    db: PgPool,
+    http: reqwest::Client,
+    atlas_url: String,
+}
+
+impl AtlasDnsPublisher {
+    pub fn new(db: PgPool) -> Self {
+        Self {
+            db,
+            http: crate::http_client::virtues_api_client(),
+            atlas_url: crate::virtues_api::atlas_url(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::acme::DnsPublisher for AtlasDnsPublisher {
+    /// `name` is ignored: atlas derives the (only) name this box may write from
+    /// the authenticated account. We send just the challenge `values`.
+    async fn publish_txt(&self, _name: &str, values: &[String]) -> Result<()> {
+        let api_key = crate::virtues_api::renew::read_api_key(&self.db)
+            .await?
+            .ok_or_else(|| anyhow!("box not linked; cannot publish ACME challenge"))?;
+        let resp = self
+            .http
+            .post(format!(
+                "{}/relay/acme-challenge",
+                self.atlas_url.trim_end_matches('/')
+            ))
+            .json(&serde_json::json!({ "api_key": api_key, "values": values }))
+            .send()
+            .await
+            .context("atlas /relay/acme-challenge request")?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(anyhow!("atlas /relay/acme-challenge returned {status}"));
+        }
+        Ok(())
+    }
+}
