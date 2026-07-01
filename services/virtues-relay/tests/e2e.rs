@@ -82,6 +82,7 @@ async fn browser_reaches_box_through_relay() {
         client_addr: client_addr.to_string(),
         control_addr: control_addr.to_string(),
         secret: None, // shared-bearer path; per-SNI HMAC is covered by a unit test
+        secret_prev: None,
         token: token.to_string(),
     });
     let state_probe = state.clone();
