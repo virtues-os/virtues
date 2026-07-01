@@ -52,7 +52,11 @@ virtues-helpers = { path = "../crates/virtues-helpers", features = ["tls"] }
 virtues-relay-client = { path = "../crates/virtues-relay-client" }
 # ACME (DNS-01) for the box's own per-box cert — the box holds the key; our
 # authority only writes the _acme-challenge TXT. rcgen mints the local keypair/CSR.
-instant-acme = "0.7"
+# 0.8.5+ fixes deserialization of token-less challenges (LE's dns-persist-01,
+# 2026-02-18) which broke 0.7's `order.authorizations()`. Pinned to the `ring`
+# provider (not the 0.8 default aws-lc-rs) so the box CI needs no cmake/C toolchain.
+# `rcgen` feature: order.finalize() generates the cert keypair on the box.
+instant-acme = { version = "0.8.5", default-features = false, features = ["hyper-rustls", "rcgen", "ring"] }
 rcgen = "0.13"
 # Wire-protocol types shared with every paired-device daemon (iOS, desktop
 # client, etc.). Pure data + serde; no I/O. virtues-core re-exports these so

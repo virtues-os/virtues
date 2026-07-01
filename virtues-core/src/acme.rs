@@ -22,20 +22,9 @@ use std::time::Duration;
 /// days, so renewing at 60 leaves a 30-day window to retry on failure.
 pub const RENEW_AFTER: Duration = Duration::from_secs(60 * 24 * 3600);
 
-/// Max time to wait for the CA to validate the order after challenges are ready.
-/// DNS-01 validation can lag minutes under CA load / slow propagation, so a tight
-/// cap would abort a perfectly good issuance and leave the box on the (browser-
-/// rejected) self-signed bootstrap. Generous, since the box is unreachable to
-/// browsers until this succeeds.
-const ORDER_READY_TIMEOUT: Duration = Duration::from_secs(180);
-/// Max time to wait for the finalized certificate to become downloadable. Bounds
-/// the post-finalize poll so a CA stuck "valid but not downloadable" can't wedge
-/// the issuance task forever.
-const CERT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
-
 use instant_acme::{
     Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, NewAccount,
-    NewOrder, OrderStatus,
+    NewOrder, OrderStatus, RetryPolicy,
 };
 
 /// Filename (under `cert_dir`) for the cached ACME account credentials. Holds the
@@ -173,7 +162,11 @@ pub async fn obtain(cfg: &AcmeConfig, publisher: &dyn DnsPublisher) -> Result<Ce
     // per issuance. A cached account that fails to load (corrupt/rotated key) falls
     // through to a fresh registration rather than wedging issuance.
     let account = match load_account(&cfg.cert_dir).await {
-        Some(creds) => match Account::from_credentials(creds).await {
+        Some(creds) => match Account::builder()
+            .context("build ACME client")?
+            .from_credentials(creds)
+            .await
+        {
             Ok(a) => {
                 tracing::debug!("reusing cached ACME account");
                 a
@@ -188,112 +181,56 @@ pub async fn obtain(cfg: &AcmeConfig, publisher: &dyn DnsPublisher) -> Result<Ce
 
     let identifiers: Vec<Identifier> = cfg.names.iter().cloned().map(Identifier::Dns).collect();
     let mut order = account
-        .new_order(&NewOrder {
-            identifiers: &identifiers,
-        })
+        .new_order(&NewOrder::new(&identifiers))
         .await
         .context("create ACME order")?;
 
-    // Collect the DNS-01 challenge values, grouped by TXT record name. The apex
-    // and its wildcard share `_acme-challenge.<base>` with different values, so
-    // we must publish both values for that name together (one atomic RRset),
-    // else the second publish clobbers the first and one authz fails.
-    let authorizations = order.authorizations().await.context("fetch authorizations")?;
-    let mut entries: Vec<(String, String)> = Vec::with_capacity(authorizations.len());
-    let mut challenge_urls = Vec::with_capacity(authorizations.len());
-    for authz in &authorizations {
-        match authz.status {
-            AuthorizationStatus::Pending => {}
-            AuthorizationStatus::Valid => continue,
-            other => anyhow::bail!("unexpected authorization status: {other:?}"),
-        }
-        let challenge = authz
-            .challenges
-            .iter()
-            .find(|c| c.r#type == ChallengeType::Dns01)
-            .ok_or_else(|| anyhow::anyhow!("no dns-01 challenge offered"))?;
-        // `authz.identifier` for a wildcard order carries the *base* domain (the
-        // `*.` is stripped), so apex + wildcard collapse to the same TXT name.
-        let Identifier::Dns(domain) = &authz.identifier;
-        let value = order.key_authorization(challenge).dns_value();
-        entries.push((domain.clone(), value));
-        challenge_urls.push(challenge.url.clone());
-    }
-    for (name, values) in &group_txt_values(&entries) {
-        publisher
-            .publish_txt(name, values)
-            .await
-            .with_context(|| format!("publish TXT for {name}"))?;
-    }
-
-    // Give DNS time to propagate, then tell the CA the challenges are ready.
-    tokio::time::sleep(Duration::from_secs(cfg.propagation_secs)).await;
-    for url in &challenge_urls {
-        order.set_challenge_ready(url).await.context("set challenge ready")?;
-    }
-
-    // Poll until the order is Ready (or Invalid), with exponential backoff up to
-    // a generous deadline — DNS-01 validation is often slow, and giving up early
-    // strands the box on the self-signed bootstrap until the next renewal tick.
-    let mut delay = Duration::from_millis(250);
-    let deadline = tokio::time::Instant::now() + ORDER_READY_TIMEOUT;
-    loop {
-        tokio::time::sleep(delay).await;
-        let state = order.refresh().await.context("refresh order")?;
-        match state.status {
-            OrderStatus::Ready => break,
-            OrderStatus::Invalid => anyhow::bail!("ACME order became invalid"),
-            other => {
-                if tokio::time::Instant::now() >= deadline {
-                    anyhow::bail!(
-                        "ACME order not ready within {ORDER_READY_TIMEOUT:?} (last status: {other:?})"
-                    );
-                }
-                delay = (delay * 2).min(Duration::from_secs(8));
+    // Publish each pending authorization's DNS-01 TXT, wait for propagation, then
+    // mark it ready. v1 is apex-only (one identifier → one authorization); the loop
+    // still handles multiple. `Authorizations` is a stream, not an iterator — drive
+    // it with `.next().await`. The borrow is scoped so `order` is free to poll after.
+    {
+        let mut authorizations = order.authorizations();
+        while let Some(result) = authorizations.next().await {
+            let mut authz = result.context("fetch authorization")?;
+            match authz.status {
+                AuthorizationStatus::Pending => {}
+                AuthorizationStatus::Valid => continue,
+                other => anyhow::bail!("unexpected authorization status: {other:?}"),
             }
+            let mut challenge = authz
+                .challenge(ChallengeType::Dns01)
+                .ok_or_else(|| anyhow::anyhow!("no dns-01 challenge offered"))?;
+            let name = format!("_acme-challenge.{}", challenge.identifier());
+            let value = challenge.key_authorization().dns_value();
+            publisher
+                .publish_txt(&name, &[value])
+                .await
+                .with_context(|| format!("publish TXT for {name}"))?;
+            // The atlas writer already blocks until the record is INSYNC in Route 53;
+            // this extra slack covers resolver caching before the CA validates.
+            tokio::time::sleep(Duration::from_secs(cfg.propagation_secs)).await;
+            challenge.set_ready().await.context("set challenge ready")?;
         }
     }
 
-    // Finalize with a locally-generated key (the box holds it) + CSR.
-    let key_pair = rcgen::KeyPair::generate().context("generate key pair")?;
-    let mut params = rcgen::CertificateParams::new(cfg.names.clone()).context("cert params")?;
-    params.distinguished_name = rcgen::DistinguishedName::new();
-    let csr = params.serialize_request(&key_pair).context("serialize CSR")?;
-    order.finalize(csr.der()).await.context("finalize order")?;
-
-    let cert_deadline = tokio::time::Instant::now() + CERT_DOWNLOAD_TIMEOUT;
-    let cert_pem = loop {
-        match order.certificate().await.context("download certificate")? {
-            Some(pem) => break pem,
-            None => {
-                if tokio::time::Instant::now() >= cert_deadline {
-                    anyhow::bail!(
-                        "certificate not downloadable within {CERT_DOWNLOAD_TIMEOUT:?}"
-                    );
-                }
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        }
-    };
-
-    Ok(CertMaterial {
-        cert_pem,
-        key_pem: key_pair.serialize_pem(),
-    })
-}
-
-/// Group DNS-01 challenge values by their `_acme-challenge.<domain>` TXT name.
-/// The apex and its wildcard share one TXT name with **different** values, so
-/// they must be published together as one RRset — this is what prevents the
-/// second publish from clobbering the first. `entries` is `(domain, value)`.
-fn group_txt_values(entries: &[(String, String)]) -> std::collections::BTreeMap<String, Vec<String>> {
-    let mut m: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
-    for (domain, value) in entries {
-        m.entry(format!("_acme-challenge.{domain}"))
-            .or_default()
-            .push(value.clone());
+    // Poll to Ready (honors Retry-After + backoff), finalize (instant-acme's rcgen
+    // generates the cert keypair **on the box** and returns the private key PEM —
+    // the key never leaves the box), then download the chain.
+    let status = order
+        .poll_ready(&RetryPolicy::default())
+        .await
+        .context("poll ACME order ready")?;
+    if status != OrderStatus::Ready {
+        anyhow::bail!("ACME order not ready (status: {status:?})");
     }
-    m
+    let key_pem = order.finalize().await.context("finalize ACME order")?;
+    let cert_pem = order
+        .poll_certificate(&RetryPolicy::default())
+        .await
+        .context("download certificate")?;
+
+    Ok(CertMaterial { cert_pem, key_pem })
 }
 
 /// Register a fresh ACME account and cache its credentials under `cert_dir` for
@@ -301,17 +238,19 @@ fn group_txt_values(entries: &[(String, String)]) -> std::collections::BTreeMap<
 /// next time) — but logged, because repeated re-registration risks LE's account
 /// rate limit.
 async fn register_account(cfg: &AcmeConfig, contact_refs: &[&str]) -> Result<Account> {
-    let (account, credentials) = Account::create(
-        &NewAccount {
-            contact: contact_refs,
-            terms_of_service_agreed: true,
-            only_return_existing: false,
-        },
-        &cfg.directory_url,
-        None,
-    )
-    .await
-    .context("create ACME account")?;
+    let (account, credentials) = Account::builder()
+        .context("build ACME client")?
+        .create(
+            &NewAccount {
+                contact: contact_refs,
+                terms_of_service_agreed: true,
+                only_return_existing: false,
+            },
+            cfg.directory_url.clone(),
+            None,
+        )
+        .await
+        .context("create ACME account")?;
     if let Err(e) = save_account(&cfg.cert_dir, &credentials).await {
         tracing::warn!(error = %e, "failed to cache ACME account (will re-register next issuance)");
     }
@@ -382,38 +321,6 @@ impl HttpDnsPublisher {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn apex_and_wildcard_share_one_txt_name_with_both_values() {
-        // What `from_env` builds for sni "h.boxes.virtues.com": the apex and the
-        // wildcard. instant-acme strips the `*.`, so both authorizations report
-        // the same base domain — and thus the same `_acme-challenge` TXT name —
-        // with different challenge values.
-        let entries = vec![
-            ("h.boxes.virtues.com".to_string(), "value-apex".to_string()),
-            ("h.boxes.virtues.com".to_string(), "value-wildcard".to_string()),
-            ("other.example".to_string(), "value-other".to_string()),
-        ];
-        let grouped = group_txt_values(&entries);
-
-        // Two distinct TXT names, not three: apex+wildcard collapsed.
-        assert_eq!(grouped.len(), 2);
-        // Both values published together under the one shared name (order
-        // preserved) — so the authority sets the full RRset and neither
-        // authorization's value clobbers the other.
-        assert_eq!(
-            grouped["_acme-challenge.h.boxes.virtues.com"],
-            vec!["value-apex".to_string(), "value-wildcard".to_string()]
-        );
-        assert_eq!(
-            grouped["_acme-challenge.other.example"],
-            vec!["value-other".to_string()]
-        );
-    }
-}
 
 #[async_trait::async_trait]
 impl DnsPublisher for HttpDnsPublisher {
