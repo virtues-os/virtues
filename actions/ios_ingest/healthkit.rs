@@ -13,7 +13,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
-use virtues_helpers::ios::{parse_timestamp, stream_id_or_new, HEALTHKIT_STREAM_TABLE, IOS_PROVIDER};
+use virtues_helpers::ios::{parse_timestamp, stream_id_or_hash, HEALTHKIT_STREAM_TABLE, IOS_PROVIDER};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Heart Rate
@@ -37,7 +37,7 @@ pub async fn write_heart_rate(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
         let raw_data = record.get("raw_data").cloned();
 
         let measurement_context = raw_data
@@ -128,7 +128,7 @@ pub async fn write_hrv(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
         let raw_data = record.get("raw_data").cloned();
 
         let measurement_type = raw_data
@@ -219,7 +219,7 @@ pub async fn write_steps(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
         let raw_data = record.get("raw_data").cloned();
 
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
@@ -301,7 +301,7 @@ pub async fn write_active_energy(db: &PgPool, records: &[Value]) -> Result<usize
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
         let raw_data = record.get("raw_data").cloned();
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
 
@@ -382,7 +382,7 @@ pub async fn write_distance(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
         let raw_data = record.get("raw_data").cloned();
         let metadata = serde_json::json!({ "healthkit_raw": raw_data });
 
@@ -477,7 +477,7 @@ pub async fn write_sleep(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
         let raw_data = record.get("raw_data").cloned();
 
         let sleep_stage = record
@@ -600,7 +600,7 @@ pub async fn write_workout(db: &PgPool, records: &[Value]) -> Result<usize> {
         };
 
         let timestamp = parse_timestamp(record, "timestamp");
-        let stream_id = stream_id_or_new(record);
+        let stream_id = stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE);
 
         let workout_duration = record
             .get("workout_duration")
