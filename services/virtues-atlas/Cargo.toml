@@ -17,11 +17,6 @@ path = "src/main.rs"
 # `crates/virtues-helpers/src/crypto/` (Lint 3 keeps HMAC primitives there).
 virtues-helpers = { path = "../../crates/virtues-helpers" }
 
-# Shared relay wire protocol — `derive_token` mints the per-SNI registration
-# token the relay verifies. Single source of the HMAC so atlas + relay can't
-# drift. Pure-data crate (no tokio).
-virtues-protocol = { path = "../../crates/virtues-protocol" }
-
 # HTTP server
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.4"
@@ -60,20 +55,6 @@ rand = "0.9"
 # not SHA-256).
 sha2 = "0.10"
 hex = "0.4"
-
-# Ed25519 signing key type for minting relay registration tokens (atlas is the
-# sole signer; the relay verifies with the public key only). Pinned >= 2.2.
-ed25519-dalek = "2.2"
-
-# Route 53 — atlas is the per-box-scoped DNS-01 TXT writer for the box's ACME
-# cert (the box holds the key; atlas only writes `_acme-challenge.<sni>`). Uses
-# the modern default stack (hyper 1.x + rustls + aws-lc-rs). aws-lc-rs pulls
-# `aws-lc-sys`, which needs `cmake` + a C compiler at build time — added to the
-# Dockerfile builder stage. atlas still installs **ring** as the *process* rustls
-# provider (see main.rs); the SDK builds its own aws-lc-backed connector
-# independently, so the two coexist.
-aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "client-hyper"] }
-aws-sdk-route53 = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio"] }
 
 # Environment
 dotenvy = "0.15"

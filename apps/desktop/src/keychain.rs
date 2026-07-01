@@ -46,6 +46,18 @@ pub struct PairedBox {
     /// returned one.
     #[serde(default)]
     pub credential_id: Option<String>,
+    /// The box's iroh **EndpointId** (hex) — dialed by the `:7117` helper. `None`
+    /// on a LAN-only box (no relay reach).
+    #[serde(default)]
+    pub box_node_id: Option<String>,
+    /// The relay URL to reach `box_node_id` through. Paired with it as the ticket.
+    #[serde(default)]
+    pub relay_url: Option<String>,
+    /// This device's own iroh secret key (hex 32-byte seed), generated at pairing.
+    /// Its EndpointId is submitted to the box so it's allowlisted; the `:7117`
+    /// helper builds its iroh endpoint from this. `None` for legacy pairings.
+    #[serde(default)]
+    pub device_secret_hex: Option<String>,
 }
 
 fn entry(account: &str) -> Result<keyring::Entry> {

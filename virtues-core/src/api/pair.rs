@@ -576,6 +576,12 @@ pub struct ConsumeRequest {
     /// `mobile_app` defaults to `"ios"`. Absent/`"__device__"` → no fan-out
     /// (correct for the WG desktop daemon, which is not a collector).
     pub source: Option<String>,
+    /// The enrolling device's own iroh **EndpointId** (hex). The device
+    /// generates its keypair locally and submits its EndpointId here; the box
+    /// records it on `app_device` and allowlists it on its iroh transport so the
+    /// device can dial the box by the box's EndpointId. Absent for the box's own
+    /// browser / non-iroh clients.
+    pub device_node_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -598,32 +604,27 @@ pub struct ConsumeResponse {
     /// for browser pairings (browsers don't run actions).
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
-    /// The box's canonical browser-reachable URL (`https://<relay-sni>`) when the
-    /// box is configured for relay reach. Clients store this so they know where to
-    /// open the box from anywhere; `None` on a LAN-only box (the client then
-    /// falls back to the origin it paired against).
+    /// The box's iroh **EndpointId** (hex) — the device dials this to reach the
+    /// box. Present once the box's iroh endpoint is up; `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub box_url: Option<String>,
+    pub box_node_id: Option<String>,
+    /// The relay URL to reach the box's EndpointId through (`https://relay…`).
+    /// Paired with `box_node_id` as the reach ticket; `None` on a dev/LAN box.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_url: Option<String>,
 }
 
-/// The box's canonical browser-reachable URL derived from its relay SNI — but
-/// only while the box is **currently registered** with the relay (review #10), so
-/// a client never persists a URL the box isn't actually reachable at over a
-/// working LAN origin. `None` on a LAN-only box, or before/after registration.
-///
-/// A client that pairs during the brief pre-registration window gets the LAN
-/// origin and can pick up the relay URL later from `box/status` once registered.
-async fn box_reach_url(pool: &PgPool) -> Option<String> {
+/// The box's iroh reach ticket: `(EndpointId, relay_url)`. A device dials the
+/// box's EndpointId through the relay (then upgrades to hole-punched direct).
+/// `None` until the box's iroh endpoint is up; the client can pick it up later
+/// from `box/status`.
+fn box_reach() -> Option<(String, String)> {
     if !crate::relay::is_relay_registered() {
         return None;
     }
-    let sni = match crate::virtues_api::relay::sni(pool).await {
-        Some(s) => s,
-        None => std::env::var("VIRTUES_RELAY_SNI")
-            .ok()
-            .filter(|s| !s.is_empty())?,
-    };
-    Some(format!("https://{sni}"))
+    let node_id = crate::relay::box_endpoint_id()?;
+    let relay_url = crate::relay::box_relay_url()?;
+    Some((node_id, relay_url))
 }
 
 /// `POST /api/pair/consume` — anonymous, but valid token required.
@@ -793,7 +794,17 @@ pub async fn consume_handler(
         }
     };
 
-    if let Err(e) = insert_device_row(&mut tx, &device_id, kind, &label, &device_info, ip.as_deref()).await {
+    if let Err(e) = insert_device_row(
+        &mut tx,
+        &device_id,
+        kind,
+        &label,
+        &device_info,
+        ip.as_deref(),
+        body.device_node_id.as_deref(),
+    )
+    .await
+    {
         tracing::warn!("pair consume: device insert failed: {e:#}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -925,6 +936,14 @@ pub async fn consume_handler(
             .max_age(time::Duration::days(SESSION_TTL_DAYS))
             .build();
         let jar = jar.add(cookie);
+        // Hot-swap the iroh allowlist + re-report to atlas (browser rows have no
+        // node_id, so this is a no-op set-wise, but keeps the path uniform).
+        crate::relay::after_pairing_change(pool.clone());
+        // Compute the reach ticket once so both halves are consistent.
+        let (box_node_id, relay_url) = match box_reach() {
+            Some((n, r)) => (Some(n), Some(r)),
+            None => (None, None),
+        };
         return (
             jar,
             (
@@ -935,7 +954,8 @@ pub async fn consume_handler(
                     redirect: "/".to_string(),
                     bearer: None,
                     action_ids: std::collections::HashMap::new(),
-                    box_url: box_reach_url(&pool).await,
+                    box_node_id,
+                    relay_url,
                 }),
             ),
         )
@@ -964,6 +984,14 @@ pub async fn consume_handler(
         }
     };
 
+    // Newly-paired device carries its iroh EndpointId → allowlist it now.
+    crate::relay::after_pairing_change(pool.clone());
+
+    // Compute the reach ticket once so both halves are consistent.
+    let (box_node_id, relay_url) = match box_reach() {
+        Some((n, r)) => (Some(n), Some(r)),
+        None => (None, None),
+    };
     (
         StatusCode::OK,
         Json(ConsumeResponse {
@@ -972,7 +1000,8 @@ pub async fn consume_handler(
             redirect: "/".to_string(),
             bearer: Some(bp.bearer),
             action_ids,
-            box_url: box_reach_url(&pool).await,
+            box_node_id,
+            relay_url,
         }),
     )
         .into_response()
@@ -998,14 +1027,15 @@ pub struct ProvisionResponse {
     pub bearer: String,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
-    /// SVG QR for the new device to scan. Empty in the relay model (no WG bundle
-    /// to hand off); retained for response-shape stability.
+    /// SVG QR for the new device to scan (carries the box reach ticket + bearer).
+    /// Empty when the box isn't reachable yet.
     pub qr_svg: String,
-    /// The box's relay-reachable URL, so the provisioned device knows where to
-    /// reach the box off-LAN. Mirrors [`ConsumeResponse::box_url`]; `None` when
-    /// the box isn't currently relay-registered (review #11).
+    /// The box's iroh reach ticket, so the provisioned device can dial it off-LAN.
+    /// `None` when the box's iroh endpoint isn't up yet.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub box_url: Option<String>,
+    pub box_node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_url: Option<String>,
 }
 
 /// `POST /api/pair/provision` — AUTHENTICATED. An already-paired device (reached
@@ -1069,7 +1099,9 @@ pub async fn provision_handler(
                 .into_response();
         }
     };
-    if let Err(e) = insert_device_row(&mut tx, &device_id, kind, &label, &device_info, ip.as_deref()).await {
+    // node_id is None here: the provisioned device isn't present to submit its
+    // EndpointId; it reports it on first authenticated contact (follow-up).
+    if let Err(e) = insert_device_row(&mut tx, &device_id, kind, &label, &device_info, ip.as_deref(), None).await {
         tracing::warn!("pair provision: device insert failed: {e:#}");
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "device_insert_failed"})))
             .into_response();
@@ -1116,17 +1148,18 @@ pub async fn provision_handler(
         }
     };
 
-    // Relay model: the QR hands the phone everything it needs to reach the box
-    // off-LAN immediately — the box's relay URL plus this device's bearer. Only
-    // meaningful once the box is relay-registered (box_url present); otherwise
-    // there's no off-LAN address to convey, so the QR is left empty. Payload
+    // iroh model: the QR hands the phone everything it needs to reach the box
+    // off-LAN — the box's iroh reach ticket (EndpointId + relay URL) plus this
+    // device's bearer. Only meaningful once the box's iroh endpoint is up;
+    // otherwise there's no address to convey, so the QR is left empty. Payload
     // contract (the iOS scanner must match) is in apps/ios/RELAY_MIGRATION.md.
-    let box_url = box_reach_url(&pool).await;
-    let qr_svg = match &box_url {
-        Some(url) => render_qr_svg(
+    let reach = box_reach();
+    let qr_svg = match &reach {
+        Some((node_id, relay_url)) => render_qr_svg(
             &serde_json::json!({
-                "v": 1,
-                "box_url": url,
+                "v": 2,
+                "box_node_id": node_id,
+                "relay_url": relay_url,
                 "bearer": &bp.bearer,
                 "credential_id": &bp.credential_id,
                 "device_id": &device_id,
@@ -1144,7 +1177,8 @@ pub async fn provision_handler(
             bearer: bp.bearer,
             action_ids,
             qr_svg,
-            box_url,
+            box_node_id: reach.as_ref().map(|(n, _)| n.clone()),
+            relay_url: reach.as_ref().map(|(_, r)| r.clone()),
         }),
     )
         .into_response()
@@ -1180,11 +1214,12 @@ async fn insert_device_row(
     label: &str,
     device_info: &Value,
     ip: Option<&str>,
+    node_id: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO app_device \
-         (id, user_id, kind, label, device_info, paired_from_ip, last_seen_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, now())",
+         (id, user_id, kind, label, device_info, paired_from_ip, node_id, last_seen_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now())",
     )
     .bind(device_id)
     .bind(OWNER_USER_ID)
@@ -1192,6 +1227,7 @@ async fn insert_device_row(
     .bind(label)
     .bind(device_info)
     .bind(ip)
+    .bind(node_id)
     .execute(&mut **tx)
     .await
     .map(|_| ())

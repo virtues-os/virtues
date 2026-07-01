@@ -34,20 +34,26 @@ struct ConsumeRequest {
     kind: &'static str,
     /// Free-form device metadata; we send hostname + OS for the Devices page.
     device_info: serde_json::Value,
+    /// This device's iroh EndpointId (hex) — the box allowlists it so the `:7117`
+    /// helper can reach the box over iroh.
+    device_node_id: String,
 }
 
-/// Response the box returns from `/api/pair/consume`. We only need the bearer,
-/// the revocable credential id, and the box's reachable URL.
+/// Response the box returns from `/api/pair/consume`. We need the bearer, the
+/// revocable credential id, and the box's iroh reach ticket.
 #[derive(Debug, Deserialize)]
 struct ConsumeResponse {
     #[serde(default)]
     bearer: Option<String>,
     #[serde(default)]
     credential_id: Option<String>,
-    /// The box's canonical browser-reachable URL (`https://<relay-sni>`). Absent
-    /// on a LAN-only box — we fall back to the origin we paired against.
+    /// The box's iroh EndpointId (hex) — dialed by the helper. Absent on a
+    /// LAN-only box.
     #[serde(default)]
-    box_url: Option<String>,
+    box_node_id: Option<String>,
+    /// The relay URL to reach `box_node_id` through.
+    #[serde(default)]
+    relay_url: Option<String>,
 }
 
 pub async fn run(pair_url: &str) -> Result<()> {
@@ -84,10 +90,22 @@ async fn consume(origin: String, token: String) -> Result<()> {
         "version":     env!("CARGO_PKG_VERSION"),
     });
 
+    // Generate this device's iroh identity. Its EndpointId goes to the box (to be
+    // allowlisted); the secret is persisted so the `:7117` helper can reach the
+    // box over iroh.
+    let mut seed = [0u8; 32];
+    {
+        use rand::RngCore;
+        rand::rng().fill_bytes(&mut seed);
+    }
+    let device_secret_hex = hex::encode(seed);
+    let device_node_id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();
+
     let body = ConsumeRequest {
         token,
         kind: "desktop_app",
         device_info,
+        device_node_id: device_node_id.clone(),
     };
 
     let client = reqwest::Client::builder()
@@ -120,26 +138,30 @@ async fn consume(origin: String, token: String) -> Result<()> {
         )
     })?;
 
-    // Where to reach the box from now on: the relay URL the box advertised, or
-    // the origin we paired against on a LAN-only box.
-    let box_url = parsed
-        .box_url
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| origin.clone());
+    // LAN fallback origin (the box's own :8000) for when there's no relay reach.
+    let box_url = origin.clone();
+    let box_node_id = parsed.box_node_id.filter(|s| !s.is_empty());
+    let relay_url = parsed.relay_url.filter(|s| !s.is_empty());
 
     let rec = PairedBox {
         box_url: box_url.clone(),
         bearer,
         credential_id: parsed.credential_id,
+        box_node_id: box_node_id.clone(),
+        relay_url: relay_url.clone(),
+        device_secret_hex: Some(device_secret_hex),
     };
     keychain::save_box(&rec).context("store paired box")?;
 
     println!();
     println!("✓ paired with {origin}");
-    println!("  box url:       {box_url}");
+    match (&box_node_id, &relay_url) {
+        (Some(n), Some(r)) => println!("  iroh reach:    {n} via {r}"),
+        _ => println!("  reach:         LAN only ({box_url})"),
+    }
     println!("  creds stored:  OS keychain (service = 'virtues-client') + ~/.virtues/box.json");
     println!();
-    println!("next: run `virtues-client open` to open your box in the browser.");
+    println!("next: run `virtues-client up` to serve the box at http://localhost:7117");
 
     Ok(())
 }

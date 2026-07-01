@@ -52,7 +52,7 @@ jobs:
           shared-key: ci
 
       - name: Build (debug — exercises the Linux cfg paths)
-        run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-relay -p virtues-relay-client
+        run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-iroh
 
       - name: Clippy
         run: cargo clippy -p virtues -p virtues-installer

@@ -27,23 +27,14 @@ pub struct Config {
     /// verification URL and the Stripe success/cancel URLs.
     pub public_url: String,
 
-    /// Relay token **signing** key: hex-encoded 32-byte Ed25519 private key. atlas
-    /// is the sole signer — it mints each box's per-SNI token as
-    /// `sign_token(signing_key, sni, bucket)`; the relay holds only the matching
-    /// **public** key and verifies. The relay never holds this, so a relay
-    /// compromise can't mint. Empty → relay-config minting disabled (503).
-    /// Env: `VIRTUES_RELAY_SIGNING_KEY`. Generate: `openssl genpkey -algorithm ed25519`.
-    pub relay_signing_key: String,
-    /// Public relay control address boxes dial out to (host:port). Handed to the
-    /// box as `relay_addr`. Empty → minting disabled. Env: `VIRTUES_RELAY_CONTROL_ADDR`.
-    pub relay_control_addr: String,
-    /// Base domain for box SNIs, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.
-    /// Env: `VIRTUES_RELAY_BASE_DOMAIN` (default `virtues.ch`).
-    pub relay_base_domain: String,
-    /// Route 53 hosted-zone id for `relay_base_domain`, used by the per-box ACME
-    /// DNS-01 TXT-writer. Empty → the writer endpoint is disabled (503).
-    /// Env: `VIRTUES_ROUTE53_ZONE_ID`.
-    pub route53_zone_id: String,
+    /// The iroh relay URL boxes home on and clients dial through, e.g.
+    /// `https://relay.virtues.ch`. Empty → `/relay/config` returns 503.
+    /// Env: `VIRTUES_RELAY_URL`.
+    pub relay_url: String,
+    /// Shared bearer iroh-relay presents to `/relay/authorize` (matches the
+    /// relay's `access.http.bearer_token`). Empty → callout unauthenticated (dev).
+    /// Env: `VIRTUES_RELAY_AUTH_SECRET`.
+    pub relay_auth_secret: String,
 
     /// Monthly renewal credit (micros USD). Default $20/mo (full sub value).
     pub renewal_micros: i64,
@@ -127,16 +118,10 @@ impl Config {
         let public_url = std::env::var("VIRTUES_ATLAS_PUBLIC_URL")
             .unwrap_or_else(|_| format!("http://localhost:{port}"));
 
-        // Relay control plane (Option A): atlas mints per-SNI tokens. Empty
-        // secret/addr → /relay/config returns 503 (relay reachability disabled).
-        let relay_signing_key = std::env::var("VIRTUES_RELAY_SIGNING_KEY").unwrap_or_default();
-        let relay_control_addr = std::env::var("VIRTUES_RELAY_CONTROL_ADDR").unwrap_or_default();
-        let relay_base_domain =
-            std::env::var("VIRTUES_RELAY_BASE_DOMAIN").unwrap_or_else(|_| "virtues.ch".to_string());
-        // Route 53 hosted-zone id for `relay_base_domain`. Empty → the ACME
-        // DNS-01 TXT-writer endpoint is disabled (503), so boxes stay on the
-        // self-signed bootstrap cert. Env: `VIRTUES_ROUTE53_ZONE_ID`.
-        let route53_zone_id = std::env::var("VIRTUES_ROUTE53_ZONE_ID").unwrap_or_default();
+        // iroh reach: which relay boxes home on. Empty → /relay/config → 503.
+        let relay_url = std::env::var("VIRTUES_RELAY_URL").unwrap_or_default();
+        // Shared bearer iroh-relay presents to /relay/authorize.
+        let relay_auth_secret = std::env::var("VIRTUES_RELAY_AUTH_SECRET").unwrap_or_default();
 
         // Wallet economics — linked prepaid model.
         //   * Monthly renewal credit: $20 (overwrites wallet to the full
@@ -213,10 +198,8 @@ impl Config {
             stripe_webhook_secret,
             stripe_price_id,
             public_url,
-            relay_signing_key,
-            relay_control_addr,
-            relay_base_domain,
-            route53_zone_id,
+            relay_url,
+            relay_auth_secret,
             renewal_micros,
             auto_topup_micros,
             topup_min_micros,

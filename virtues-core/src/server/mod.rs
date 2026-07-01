@@ -282,6 +282,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
         // ─── Devices: unified list + revoke ───────────────────────────
         .route("/api/devices",            get(crate::api::devices::list_handler))
+        .route("/api/devices/self/node-id", post(crate::api::devices::set_self_node_id))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
         // ─── Sudo: gate for high-sensitivity actions ──────────────────
         .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
@@ -801,11 +802,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         app
     };
 
-    // Relay reachability: if configured (VIRTUES_RELAY_ADDR), dial out to the
-    // blind relay and front the local HTTP server with a box-held-cert TLS
-    // terminator, so the box is reachable from any browser with no public
-    // inbound port. No-op when unconfigured. See `crate::relay`.
-    crate::relay::maybe_spawn(client.database.pool().clone(), port);
+    // iroh reach: the box is an iroh Endpoint that serves this same axum app
+    // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
+    // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
+    // keeps serving LAN/loopback + the desktop :7117 helper. See `crate::relay`.
+    crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
 
     let transport = build_transport(host, port);
     let listener = transport.bind().await?;

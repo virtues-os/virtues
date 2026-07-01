@@ -55,22 +55,15 @@ pub struct PreorderPolicy {
     pub email_reply_to: String,
 }
 
-/// Relay control-plane params (Option A minting). See `routes::relay`.
+/// Relay control-plane params for the iroh reach layer. See `routes::relay`.
 #[derive(Clone)]
 pub struct RelayPolicy {
-    /// Ed25519 **signing** (private) key — atlas is the sole minter. `None` →
-    /// minting disabled (503). The relay holds only the matching public key.
-    pub signing_key: Option<ed25519_dalek::SigningKey>,
-    /// Public relay control address boxes dial (host:port). Empty → disabled.
-    pub control_addr: String,
-    /// SNI base domain, e.g. `virtues.ch` → `<boxhash>.virtues.ch`.
-    pub base_domain: String,
-    /// Route 53 hosted-zone id for `base_domain`. Empty → the ACME DNS-01
-    /// TXT-writer endpoint (`/relay/acme-challenge`) is disabled (503).
-    pub route53_zone_id: String,
-    /// Route 53 client (built at startup iff `route53_zone_id` is set). `None`
-    /// disables the TXT-writer. Cheap to clone (Arc inside).
-    pub route53: Option<aws_sdk_route53::Client>,
+    /// The relay URL boxes home on and clients dial through, e.g.
+    /// `https://relay.virtues.ch`. Empty → `/relay/config` returns 503.
+    pub relay_url: String,
+    /// Shared bearer that iroh-relay presents to `/relay/authorize`
+    /// (`access.http.bearer_token`). Empty → the callout is unauthenticated (dev).
+    pub relay_auth_secret: String,
 }
 
 /// Shared route state for atlas.

@@ -35,21 +35,11 @@ anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 
-# Box-held-cert TLS termination for the LAN-direct listener (relay model). Behind
-# the `tls` feature so action subprocess binaries don't pull rustls/rcgen.
-tokio-rustls = { version = "0.26", optional = true, default-features = false, features = ["ring"] }
-rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std"] }
-rustls-pemfile = { version = "2", optional = true }
-rcgen = { version = "0.13", optional = true }
-
 [features]
 # Enables the dev-local transport profile (loopback HTTP, no WG, no TLS,
 # no pairing). Compile-time only — never present in release binaries.
 # See `src/transport/mod.rs`.
 dev-transport = []
-# Enables the box-held-cert TLS-terminating listener (`transport::tls`). Only the
-# box server (virtues-core) needs it; keeps rustls/rcgen out of action binaries.
-tls = ["dep:tokio-rustls", "dep:rustls", "dep:rustls-pemfile", "dep:rcgen"]
 
 [dev-dependencies]
 serial_test = "3.1"

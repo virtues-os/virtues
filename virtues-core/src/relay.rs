@@ -1,345 +1,239 @@
-//! Box-side relay integration.
+//! Box-side iroh reach integration.
 //!
-//! Makes the box reachable from any browser via the blind relay without exposing
-//! any public inbound port:
+//! The box is an **iroh `Endpoint`** whose Ed25519 `EndpointId` *is* its identity
+//! (mutual-key auth, no CA). It serves the box's existing axum app over iroh
+//! ([`virtues_iroh::serve`]) and, in prod, homes on our relay so any paired
+//! device reaches it by `EndpointId` — LAN-direct, hole-punched, or via the relay
+//! — with **no public inbound port**. The plain-HTTP `:8000` listener stays for
+//! LAN/loopback and the desktop `:7117` helper.
 //!
-//! 1. A **TLS-front** terminates TLS with the box's own cert and splices the
-//!    decrypted HTTP to the existing plain-HTTP server on localhost. (The relay
-//!    only ever sees ciphertext because TLS terminates *here*, on the box.)
-//! 2. The **relay-client** dials out to the relay, registers the box's SNI, and
-//!    forwards each inbound client to the TLS-front.
+//! Security is layered: iroh enforces an [`AllowPolicy`](virtues_iroh::AllowPolicy)
+//! over paired-device EndpointIds at the transport; the app-layer bearer/cookie
+//! remains the authorization keystone on top.
 //!
-//! Enabled when the box has been provisioned with relay config (atlas mints it
-//! at link, stored in `box_secrets`; see [`crate::virtues_api::relay`]) — or,
-//! for dev/manual setups, when `VIRTUES_RELAY_ADDR` is set in the environment.
-//! The bootstrap cert is self-signed; ACME/DNS-01 (a browser-trusted per-box
-//! cert) replaces it next.
-//!
-//! Env fallback (dev/manual; box_secrets takes precedence):
-//! - `VIRTUES_RELAY_ADDR`  — relay control address to dial out to (host:port).
-//! - `VIRTUES_RELAY_SNI`   — this box's name, e.g. `abc.virtues.ch`.
-//! - `VIRTUES_RELAY_TOKEN` — registration token for `Register`.
-//! - `VIRTUES_RELAY_TLS_FRONT` — local TLS-front bind addr (default `127.0.0.1:8443`).
+//! Config (env for now; atlas `/relay/config` → relay_url and DB-backed allowlist
+//! land in Steps 4/5):
+//! - `VIRTUES_RELAY_URL`   — our relay, e.g. `https://relay.virtues.ch`. Unset =
+//!   dev mode (n0 relays + discovery).
+//! - `VIRTUES_IROH_ALLOW`  — comma-separated device EndpointIds allowed to connect
+//!   (interim until pairing populates `app_device.node_id`).
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
-use virtues_helpers::transport::tls;
+use virtues_iroh::{build_endpoint, serve, AllowPolicy, EndpointId, RelayUrl, SecretKey, StaticAllow};
 
-/// How often the background task checks whether the ACME cert needs renewing.
-const RENEW_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 3600);
-/// How often the box re-fetches its relay token from atlas. Must be shorter than
-/// the token bucket (24h) so the presented token is always within the relay's
-/// current-or-previous window; a revoked box stops getting fresh tokens here and
-/// falls out of that window within ~2 buckets. See `docs/relay-control-plane.md`.
-const TOKEN_REFRESH_INTERVAL: Duration = Duration::from_secs(12 * 3600);
-/// Initial-issuance retry backoff. Until the first browser-trusted cert lands the
-/// box serves the self-signed bootstrap, which browsers reject — so retry fast
-/// (not at the 12h renewal cadence), backing off to a ceiling on repeated failure.
-const INITIAL_ISSUE_BACKOFF: Duration = Duration::from_secs(30);
-const INITIAL_ISSUE_BACKOFF_MAX: Duration = Duration::from_secs(15 * 60);
+/// `box_secrets` key holding this box's persistent iroh secret key (hex of the
+/// 32-byte seed) — so the box keeps a stable `EndpointId` across restarts.
+const BOX_IROH_SECRET: &str = "iroh_secret_key";
 
-/// Process-wide live-registration flag: `true` only while the box currently
-/// holds a registered control connection to the relay. Set by the relay-client,
-/// read by pairing ([`crate::api`]) to advertise `box_url` only when the box is
-/// actually reachable (review #10).
-static RELAY_REGISTERED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+/// Process-wide "iroh endpoint is bound and homed on the relay" flag. Read by
+/// pairing to advertise the box's reach ticket only when it's actually up.
+static ENDPOINT_UP: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+/// This box's own `EndpointId` (hex), set once the endpoint binds — handed to
+/// devices at pairing so they can dial by it.
+static BOX_ENDPOINT_ID: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+/// The relay URL this box homed on (if any) — the other half of the reach ticket.
+static BOX_RELAY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
-fn registered_flag() -> Arc<AtomicBool> {
-    RELAY_REGISTERED
-        .get_or_init(|| Arc::new(AtomicBool::new(false)))
-        .clone()
+fn endpoint_up_flag() -> Arc<AtomicBool> {
+    ENDPOINT_UP.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
 }
 
-/// Whether the box currently holds a live, registered relay control connection.
+/// Whether the box's iroh endpoint is bound (and reachable). Kept under the old
+/// name so pairing call sites are unchanged; Step 7 renames to `endpoint_up`.
 pub fn is_relay_registered() -> bool {
-    RELAY_REGISTERED
-        .get()
-        .map(|f| f.load(Ordering::Relaxed))
-        .unwrap_or(false)
+    ENDPOINT_UP.get().map(|f| f.load(Ordering::Relaxed)).unwrap_or(false)
 }
 
-/// Spawn the relay subsystem if configured. Prefers the atlas-provisioned config
-/// in `box_secrets`; falls back to env vars (dev/manual). No-op otherwise.
-pub fn maybe_spawn(db: PgPool, http_port: u16) {
-    tokio::spawn(async move {
-        let resolved = match load_runtime_config(&db).await {
-            Some(c) => Some(c),
-            // Lazy-provision: a box linked before provisioning existed (or whose
-            // provisioning failed) has an api_key but no stored config. Fetch it.
-            None => lazy_provision(&db).await,
-        };
-        let Some((relay_addr, sni, token)) = resolved else {
-            tracing::debug!("relay not provisioned (no box_secrets/env config, not lazily provisionable) — reachability disabled");
-            return;
-        };
-        // Live token cell: the refresh task keeps it on the current bucket so each
-        // reconnect presents a fresh token (and a revoked box stops getting one).
-        let token_cell = Arc::new(RwLock::new(token));
-        spawn_token_refresh(db.clone(), token_cell.clone());
-
-        let tls_front = std::env::var("VIRTUES_RELAY_TLS_FRONT")
-            .unwrap_or_else(|_| "127.0.0.1:8443".to_string());
-        let upstream = format!("127.0.0.1:{http_port}");
-        if let Err(e) = run(db, relay_addr, sni, token_cell, tls_front, upstream).await {
-            tracing::error!(error = %e, "relay subsystem exited");
-        }
-    });
+/// This box's iroh `EndpointId` (hex), once bound — for the pairing reach ticket.
+pub fn box_endpoint_id() -> Option<String> {
+    BOX_ENDPOINT_ID.get().and_then(|c| c.read().ok().and_then(|g| g.clone()))
 }
 
-/// Periodically re-fetch this box's relay token from atlas and update the live
-/// cell. atlas mints only the current bucket for an active, non-revoked account,
-/// so this both rotates the token forward each bucket and is the point at which a
-/// revoked/lapsed box stops receiving valid tokens. Best-effort: a failed refresh
-/// keeps the current token (still valid for up to ~2 buckets).
-fn spawn_token_refresh(db: PgPool, cell: Arc<RwLock<String>>) {
+/// The relay URL this box homed on, if any — the other half of the reach ticket.
+pub fn box_relay_url() -> Option<String> {
+    BOX_RELAY_URL.get().and_then(|c| c.read().ok().and_then(|g| g.clone()))
+}
+
+/// Spawn the iroh reach subsystem: bind the endpoint and serve `app` over it.
+/// `app` is the box's fully-built axum `Router` (cloned from the one served on
+/// `:8000`). No-op-safe: logs and exits on fatal setup errors (box stays LAN-only).
+pub fn maybe_spawn(db: PgPool, app: axum::Router) {
     tokio::spawn(async move {
-        loop {
-            // Refresh immediately on spawn (a box offline > 1 bucket has a stale
-            // stored token), then once per interval.
-            if let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(&db).await {
-                let http = crate::http_client::virtues_api_client();
-                let atlas = crate::virtues_api::atlas_url();
-                match crate::virtues_api::relay::fetch_and_store(&db, &http, &atlas, &api_key).await {
-                    Ok(()) => {
-                        if let Ok(Some(rc)) = crate::virtues_api::relay::load(&db).await {
-                            if let Ok(mut g) = cell.write() {
-                                *g = rc.token;
-                            }
-                            tracing::debug!("relay token refreshed");
-                        }
-                    }
-                    Err(e) => tracing::debug!(error = %e, "relay token refresh skipped"),
+        let secret = match load_or_create_secret(&db).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %format!("{e:#}"), "iroh: failed to load/create secret key — reach disabled");
+                return;
+            }
+        };
+        let relay_url = resolve_relay_url(&db).await;
+        if let Some(u) = &relay_url {
+            BOX_RELAY_URL.get_or_init(|| RwLock::new(None));
+            if let Some(cell) = BOX_RELAY_URL.get() {
+                if let Ok(mut g) = cell.write() {
+                    *g = Some(u.to_string());
                 }
             }
-            tokio::time::sleep(TOKEN_REFRESH_INTERVAL).await;
         }
+        let endpoint = match build_endpoint(secret, relay_url.clone()).await {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::error!(error = %format!("{e:#}"), "iroh: failed to bind endpoint — reach disabled");
+                return;
+            }
+        };
+        let eid = endpoint.id().to_string();
+        BOX_ENDPOINT_ID.get_or_init(|| RwLock::new(None));
+        if let Some(cell) = BOX_ENDPOINT_ID.get() {
+            if let Ok(mut g) = cell.write() {
+                *g = Some(eid.clone());
+            }
+        }
+        endpoint_up_flag().store(true, Ordering::Relaxed);
+        match &relay_url {
+            Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, "iroh endpoint bound; box reachable by EndpointId via our relay"),
+            None => tracing::info!(endpoint_id = %eid, "iroh endpoint bound (dev: n0 relays + discovery)"),
+        }
+
+        let allow = load_allowlist(&db).await;
+        // Register this box + its paired devices with atlas BEFORE homing on the
+        // relay, so the relay's active-sub gate already recognises the box when it
+        // connects (best-effort; retried on each pairing change).
+        report_endpoints(&db).await;
+        // Serve the existing axum app over iroh. Hold the router handle for the
+        // life of the process (dropping it aborts the accept loop).
+        let _router = serve(endpoint, app, allow);
+        std::future::pending::<()>().await;
     });
 }
 
-/// Resolve the relay runtime config: prefer the atlas-provisioned `box_secrets`
-/// entry, else the env-var fallback (dev/manual). `None` when neither is set.
-async fn load_runtime_config(db: &PgPool) -> Option<(String, String, String)> {
+/// Resolve our relay URL: the atlas-provisioned config (stored at claim/link)
+/// first, then the `VIRTUES_RELAY_URL` env fallback (dev/manual). `None` → dev
+/// mode (n0 relays + discovery).
+async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
     if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
-        tracing::info!(sni = %rc.sni, "relay config loaded from box_secrets (atlas-provisioned)");
-        return Some((rc.relay_addr, rc.sni, rc.token));
+        if let Ok(u) = RelayUrl::from_str(&rc.relay_url) {
+            return Some(u);
+        }
     }
-    let relay_addr = std::env::var("VIRTUES_RELAY_ADDR")
-        .ok()
-        .filter(|s| !s.is_empty())?;
-    let sni = std::env::var("VIRTUES_RELAY_SNI").unwrap_or_default();
-    if sni.is_empty() {
-        tracing::warn!("VIRTUES_RELAY_ADDR set but VIRTUES_RELAY_SNI is empty — relay disabled");
-        return None;
+    let raw = std::env::var("VIRTUES_RELAY_URL").ok().filter(|s| !s.is_empty())?;
+    match RelayUrl::from_str(&raw) {
+        Ok(u) => Some(u),
+        Err(e) => {
+            tracing::warn!(error = %e, url = %raw, "VIRTUES_RELAY_URL is not a valid relay URL — dev mode");
+            None
+        }
     }
-    let token = std::env::var("VIRTUES_RELAY_TOKEN").unwrap_or_default();
-    tracing::info!(%sni, "relay config loaded from environment (dev/manual)");
-    Some((relay_addr, sni, token))
 }
 
-/// Fetch + persist relay config from atlas for a linked box that has no stored
-/// config yet (linked before provisioning existed, or an earlier provision
-/// failed). Retries transient failures with backoff; gives up — leaving the box
-/// LAN-only — if the box isn't linked or the deployment has no relay (atlas 503).
-async fn lazy_provision(db: &PgPool) -> Option<(String, String, String)> {
-    let api_key = match crate::virtues_api::renew::read_api_key(db).await {
-        Ok(Some(k)) => k,
-        _ => return None, // not linked → nothing to provision against
-    };
+/// Load the box's persistent iroh secret key from `box_secrets`, generating and
+/// persisting a fresh one on first boot so the `EndpointId` is stable.
+async fn load_or_create_secret(db: &PgPool) -> Result<SecretKey> {
+    if let Some((hex_seed, _meta)) = crate::box_secrets::get(db, BOX_IROH_SECRET).await? {
+        let bytes = hex::decode(hex_seed.trim()).context("decode stored iroh secret")?;
+        let arr: [u8; 32] = bytes.as_slice().try_into().context("iroh secret is not 32 bytes")?;
+        return Ok(SecretKey::from_bytes(&arr));
+    }
+    let mut seed = [0u8; 32];
+    {
+        use rand::RngCore;
+        rand::rng().fill_bytes(&mut seed);
+    }
+    let secret = SecretKey::from_bytes(&seed);
+    crate::box_secrets::put(db, BOX_IROH_SECRET, &hex::encode(seed), &serde_json::json!({}))
+        .await
+        .context("persist iroh secret key")?;
+    tracing::info!("iroh: generated + persisted new box secret key");
+    Ok(secret)
+}
+
+/// The live allowlist handle, so pairing/revocation can hot-swap it without
+/// restarting the endpoint (both this and the `Arc<dyn AllowPolicy>` handed to
+/// `serve` share the same inner set).
+static ALLOW: OnceLock<StaticAllow> = OnceLock::new();
+
+/// Non-revoked device EndpointIds from the DB, plus any `VIRTUES_IROH_ALLOW`
+/// (dev/manual). The box's own EndpointId is implicitly trusted (it never dials
+/// itself) so it's not included.
+async fn allowed_ids(db: &PgPool) -> Vec<EndpointId> {
+    let mut ids = Vec::new();
+    let rows: Result<Vec<(String,)>, _> = sqlx::query_as(
+        "SELECT node_id FROM app_device WHERE node_id IS NOT NULL AND revoked_at IS NULL",
+    )
+    .fetch_all(db)
+    .await;
+    match rows {
+        Ok(rows) => {
+            for (nid,) in rows {
+                if let Ok(id) = EndpointId::from_str(nid.trim()) {
+                    ids.push(id);
+                }
+            }
+        }
+        Err(e) => tracing::warn!(error = %e, "iroh allowlist DB query failed"),
+    }
+    if let Ok(raw) = std::env::var("VIRTUES_IROH_ALLOW") {
+        for tok in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match EndpointId::from_str(tok) {
+                Ok(id) => ids.push(id),
+                Err(e) => tracing::warn!(error = %e, token = %tok, "VIRTUES_IROH_ALLOW: skipping invalid EndpointId"),
+            }
+        }
+    }
+    ids
+}
+
+/// Build + install the live allowlist for `serve`.
+async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
+    let ids = allowed_ids(db).await;
+    tracing::info!(count = ids.len(), "iroh allowlist loaded");
+    let allow = ALLOW.get_or_init(StaticAllow::default).clone();
+    allow.replace(ids);
+    Arc::new(allow)
+}
+
+/// Re-read the allowlist from the DB and hot-swap it into the live endpoint.
+/// Called after a device pairs or is revoked. No-op if the endpoint isn't up.
+pub async fn refresh_allowlist(db: &PgPool) {
+    if let Some(allow) = ALLOW.get() {
+        let ids = allowed_ids(db).await;
+        tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
+        allow.replace(ids);
+    }
+}
+
+/// Report this box's EndpointId + its paired devices' EndpointIds to atlas so the
+/// relay's active-sub gate (`/relay/authorize`) recognises them. Best-effort.
+pub async fn report_endpoints(db: &PgPool) {
+    let Some(box_id) = box_endpoint_id() else { return };
+    let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await else { return };
+    let mut endpoint_ids = vec![box_id];
+    for id in allowed_ids(db).await {
+        endpoint_ids.push(id.to_string());
+    }
     let http = crate::http_client::virtues_api_client();
     let atlas = crate::virtues_api::atlas_url();
-    let mut backoff = Duration::from_secs(30);
-    loop {
-        match crate::virtues_api::relay::fetch_and_store(db, &http, &atlas, &api_key).await {
-            Ok(()) => {
-                tracing::info!("relay config lazily provisioned from atlas");
-                return crate::virtues_api::relay::load(db)
-                    .await
-                    .ok()
-                    .flatten()
-                    .map(|c| (c.relay_addr, c.sni, c.token));
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                // 503 = this deployment has no relay configured; don't spin.
-                if msg.contains("503") {
-                    tracing::info!("relay not enabled on this deployment — LAN-only reach");
-                    return None;
-                }
-                tracing::warn!(error = %msg, ?backoff, "lazy relay provisioning failed; retrying");
-            }
-        }
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(INITIAL_ISSUE_BACKOFF_MAX);
+    let resp = http
+        .post(format!("{}/iroh/register", atlas.trim_end_matches('/')))
+        .json(&serde_json::json!({ "api_key": api_key, "endpoint_ids": endpoint_ids }))
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => tracing::debug!("iroh endpoints registered with atlas"),
+        Ok(r) => tracing::debug!(status = %r.status(), "iroh endpoint register non-success"),
+        Err(e) => tracing::debug!(error = %e, "iroh endpoint register skipped"),
     }
 }
 
-async fn run(
-    db: PgPool,
-    relay_addr: String,
-    sni: String,
-    token_cell: Arc<RwLock<String>>,
-    tls_front: String,
-    upstream: String,
-) -> Result<()> {
-    // Bind the TLS-front *immediately* with a self-signed bootstrap cert so the
-    // box is reachable via the relay on cold start without waiting on ACME (which
-    // can take 15s+ for DNS propagation). A browser-trusted ACME cert is obtained
-    // concurrently below and hot-swapped in when ready.
-    let (cert_pem, key_pem) =
-        tls::self_signed(vec![sni.clone()]).context("generate bootstrap cert")?;
-    let server_config =
-        tls::server_config_from_pem(&cert_pem, &key_pem).context("build TLS server config")?;
-
-    let listener = TcpListener::bind(&tls_front)
-        .await
-        .with_context(|| format!("bind TLS-front {tls_front}"))?;
-    let tls_listener = tls::TlsListener::new(listener, server_config);
-    let reloader = tls_listener.reloader();
-    tracing::info!(%tls_front, %upstream, %sni, "relay TLS-front up (bootstrap cert); box reachable via relay");
-
-    // Concurrently obtain a browser-trusted ACME cert and keep it renewed,
-    // hot-swapping it into the live listener — only when ACME is configured *and*
-    // a DNS publisher is available. Prefer the atlas-scoped publisher (box is
-    // linked → atlas writes `_acme-challenge.<sni>` from the authenticated
-    // account); fall back to the generic env-based writer (dev/manual). Otherwise
-    // stay on the self-signed bootstrap.
-    match crate::acme::AcmeConfig::from_env(&sni) {
-        Some(acme_cfg) => {
-            let publisher: Option<Box<dyn crate::acme::DnsPublisher>> =
-                if matches!(crate::virtues_api::renew::read_api_key(&db).await, Ok(Some(_))) {
-                    Some(Box::new(crate::virtues_api::relay::AtlasDnsPublisher::new(db.clone())))
-                } else {
-                    crate::acme::HttpDnsPublisher::from_env()
-                        .map(|p| Box::new(p) as Box<dyn crate::acme::DnsPublisher>)
-                };
-            match publisher {
-                Some(p) => {
-                    tokio::spawn(cert_task(acme_cfg, p, reloader));
-                }
-                None => tracing::info!(
-                    %sni,
-                    "ACME configured but no DNS publisher (box not linked and no VIRTUES_DNS_TXT_URL); staying on self-signed bootstrap"
-                ),
-            }
-        }
-        None => tracing::info!(%sni, "ACME not configured; staying on self-signed bootstrap cert"),
-    }
-
-    // TLS-front accept loop: terminate TLS, splice decrypted HTTP to the local
-    // plain-HTTP server. Runs for the life of the process. The handshake runs in
-    // the spawned task (via accept_raw + handshake), never inline in the loop, so
-    // one slow/stalled client handshake can't block every other visitor.
+/// Fire-and-forget: refresh the local allowlist and re-report endpoints to atlas
+/// after a pairing or revocation. Non-blocking so pairing handlers don't wait.
+pub fn after_pairing_change(db: PgPool) {
     tokio::spawn(async move {
-        loop {
-            match tls_listener.accept_raw().await {
-                Ok((tcp, _peer, tls_config)) => {
-                    let upstream = upstream.clone();
-                    tokio::spawn(async move {
-                        let tls_stream = match tls::TlsListener::handshake(tls_config, tcp).await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                tracing::debug!(error = %e, "TLS-front handshake failed");
-                                return;
-                            }
-                        };
-                        match TcpStream::connect(&upstream).await {
-                            Ok(http) => {
-                                // Idle-reaped so a half-open remote client can't pin
-                                // a task + an upstream socket on the box forever.
-                                let _ = virtues_relay_client::splice(
-                                    tls_stream,
-                                    http,
-                                    virtues_relay_client::SPLICE_IDLE,
-                                )
-                                .await;
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, %upstream, "TLS-front upstream connect failed")
-                            }
-                        }
-                    });
-                }
-                Err(e) => tracing::debug!(error = %e, "TLS-front accept error"),
-            }
-        }
+        refresh_allowlist(&db).await;
+        report_endpoints(&db).await;
     });
-
-    // Dial out to the relay and serve forever (reconnects internally).
-    let token_fallback = token_cell.read().map(|g| g.clone()).unwrap_or_default();
-    virtues_relay_client::run(virtues_relay_client::RelayClientConfig {
-        relay_addr,
-        sni,
-        token: token_fallback,
-        token_cell: Some(token_cell),
-        local_addr: tls_front,
-        read_timeout: None,
-        registered: Some(registered_flag()),
-    })
-    .await;
-
-    Ok(())
-}
-
-/// Obtain the initial ACME cert (hot-swapping it over the bootstrap cert) and
-/// then renew it before expiry, hot-swapping each renewal in. Never returns; a
-/// failed issuance/renewal is logged and retried on the next tick (the listener
-/// keeps serving the last good cert in the meantime).
-async fn cert_task(
-    cfg: crate::acme::AcmeConfig,
-    publisher: Box<dyn crate::acme::DnsPublisher>,
-    reloader: tls::CertReloader,
-) {
-    // Initial issuance (load cached-if-fresh, else obtain). Retry aggressively
-    // until the first browser-trusted cert lands — until then the box serves the
-    // self-signed bootstrap, which every browser rejects, so the box is
-    // effectively unreachable. Waiting the 12h renewal cadence to retry would
-    // mean a transient ACME/DNS hiccup leaves the box dark for half a day.
-    let mut backoff = INITIAL_ISSUE_BACKOFF;
-    loop {
-        match crate::acme::ensure_cert(&cfg, publisher.as_ref()).await {
-            Ok(m) => match tls::server_config_from_pem(&m.cert_pem, &m.key_pem) {
-                Ok(c) => {
-                    reloader.reload(c);
-                    tracing::info!("ACME cert active (box-held key)");
-                    break;
-                }
-                Err(e) => tracing::warn!(error = %e, "issued cert failed to load; retrying"),
-            },
-            Err(e) => {
-                // `{:#}` prints the full anyhow context chain (e.g. "obtain ACME
-                // cert: create ACME account: <LE problem detail>") — the top-level
-                // Display alone hides the actual cause, which is what we need here.
-                tracing::warn!(error = %format!("{e:#}"), ?backoff, "initial ACME issuance failed; retrying (on self-signed bootstrap until then)")
-            }
-        }
-        tokio::time::sleep(backoff).await;
-        backoff = (backoff * 2).min(INITIAL_ISSUE_BACKOFF_MAX);
-    }
-
-    // Renewal loop.
-    loop {
-        tokio::time::sleep(RENEW_CHECK_INTERVAL).await;
-        if !crate::acme::cert_stale(&cfg.cert_dir) {
-            continue;
-        }
-        match crate::acme::obtain(&cfg, publisher.as_ref()).await {
-            Ok(m) => {
-                if let Err(e) = crate::acme::save_to_disk(&cfg.cert_dir, &m).await {
-                    tracing::warn!(error = %e, "failed to cache renewed cert (continuing in-memory)");
-                }
-                match tls::server_config_from_pem(&m.cert_pem, &m.key_pem) {
-                    Ok(c) => {
-                        reloader.reload(c);
-                        tracing::info!("ACME cert renewed and hot-swapped");
-                    }
-                    Err(e) => tracing::warn!(error = %e, "renewed cert failed to load"),
-                }
-            }
-            Err(e) => tracing::warn!(error = %format!("{e:#}"), "ACME renewal failed; will retry"),
-        }
-    }
 }

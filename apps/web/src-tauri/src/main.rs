@@ -317,33 +317,28 @@ async fn pair_with_code(
     }
 }
 
-/// Install the localhost proxy after pairing, pointed at the box address you
-/// just paired against (`server`, e.g. `http://100.104.55.76:8000`).
+/// Start the localhost helper after pairing. In the iroh model the helper
+/// (`virtues-client up`) reaches the box by its stored EndpointId reach ticket
+/// (from pairing) over iroh — LAN-direct → hole-punched → relay — and serves it
+/// at `http://localhost:7117`. The browser then talks plain loopback HTTP, so
+/// same-origin cookies/CSRF are untouched. No WireGuard, no root daemon.
 ///
-/// This is the "direct" path: the proxy forwards `localhost:7117` straight to
-/// that address over whatever transport reached it (Tailscale / LAN / SSH-forward
-/// / IPv6). No WireGuard tunnel, no root daemon, no admin prompt — it works
-/// anywhere the box's HTTP port is reachable, which is every case where you were
-/// able to pair. (WireGuard remains in the binary for a future encrypted-LAN
-/// mode; it's just not on the default path.)
+/// `up` is long-running (it's the proxy), so we spawn it rather than await it.
+/// TODO(iroh): persist it across app restarts via a LaunchAgent/Tauri sidecar so
+/// it survives an app quit; today it runs for the app session.
 ///
 /// The collector (data collection) is NOT installed here — it pairs as its own
 /// device and needs Full Disk Access / Accessibility grants, so it stays an
 /// explicit opt-in via `install_collector`.
 #[tauri::command]
-async fn install_helpers(app: AppHandle, server: String) -> Result<(), String> {
-    let upstream = origin_to_hostport(&server);
-    let out = virtues_client_command(&app)?
-        .args(["install", "--upstream", &upstream])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(format!(
-            "proxy install failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        ));
-    }
+async fn install_helpers(app: AppHandle, _server: String) -> Result<(), String> {
+    let (_events, _child) = virtues_client_command(&app)?
+        .args(["up"])
+        .spawn()
+        .map_err(|e| format!("helper spawn failed: {e}"))?;
+    // Keep the proxy running for the app session; the child is managed by the
+    // Tauri shell plugin and torn down with the app.
+    std::mem::forget(_child);
     Ok(())
 }
 

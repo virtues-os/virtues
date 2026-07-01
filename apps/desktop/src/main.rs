@@ -3,22 +3,23 @@
 //! A small CLI for pairing this machine to a Virtues box and opening it in the
 //! browser.
 //!
-//! In the relay model the box is reachable from any browser at its own HTTPS URL
-//! — `https://<boxhash>.boxes.virtues.com` via the blind relay, or the LAN
-//! dashed-IP name on-network — with a browser-trusted cert the box holds itself.
-//! So there is no tunnel to bring up and no localhost proxy: this client just
-//! pairs (exchanges a one-time token for a bearer + the box URL) and opens that
-//! URL. The old WireGuard tunnel + reverse-proxy daemon is gone.
+//! In the iroh model the box is an iroh `Endpoint` reached by its Ed25519
+//! EndpointId — LAN-direct, hole-punched, or via our relay. At pairing this
+//! client generates its own device iroh key, submits its EndpointId (so the box
+//! allowlists it), and stores the box's reach ticket (`{box_node_id, relay_url}`)
+//! plus a bearer. `up` then runs a local `:7117` proxy that dials the box over
+//! iroh and serves it to the browser on loopback (same-origin cookies intact).
 //!
 //! ## Subcommands
 //!
-//! - `pair <pair-url>` — consume a one-time pair URL from the box; store the
-//!   bearer + box URL in the OS keychain.
+//! - `pair <pair-url>` — consume a one-time pair URL; generate a device key, send
+//!   its EndpointId, store the reach ticket + bearer in the OS keychain.
 //! - `pair-code <code>` — same, via the short code the box prints (box found over
 //!   mDNS unless `--server` is given).
 //! - `discover` — list Virtues boxes found on the LAN via mDNS (`--json`).
+//! - `up` — serve the paired box at `http://localhost:7117` over iroh.
 //! - `open` — open the paired box in the default browser.
-//! - `status` — report the paired box URL + reachability.
+//! - `status` — report the paired box + reachability.
 //! - `revoke` (alias `reset`) — clear local creds + drop this credential on the box.
 
 use anyhow::{Context, Result};
@@ -27,6 +28,7 @@ use clap::{Parser, Subcommand};
 mod discover;
 mod keychain;
 mod pair;
+mod proxy;
 
 #[derive(Parser)]
 #[command(name = "virtues-client")]
@@ -66,6 +68,10 @@ enum Command {
         json: bool,
     },
 
+    /// Serve the paired box at http://localhost:7117 over iroh (the local helper
+    /// the browser and Tauri app talk to). Runs until stopped.
+    Up,
+
     /// Open the paired box in the default browser.
     Open,
 
@@ -88,6 +94,7 @@ async fn main() -> Result<()> {
         Command::Pair { pair_url } => pair::run(&pair_url).await,
         Command::PairCode { code, server } => run_pair_code(code, server).await,
         Command::Discover { json } => run_discover(json).await,
+        Command::Up => proxy::run().await,
         Command::Open => run_open(),
         Command::Status => run_status().await,
         Command::Revoke => revoke().await,

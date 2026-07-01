@@ -21,16 +21,6 @@ use crate::config::InstallConfig;
 use crate::steps::{run_step, PkgMgr, Target};
 use crate::ui;
 
-/// ACME directory the box uses to obtain its browser-trusted relay cert
-/// (`VIRTUES_ACME_DIRECTORY`). The box runs DNS-01 and holds its own key; atlas
-/// writes the `_acme-challenge` TXT (see `virtues-core/src/acme.rs`).
-///
-/// **Currently Let's Encrypt STAGING** for the launch-validation phase: it
-/// exercises the full Route 53 → DNS-01 flow without burning prod rate limits,
-/// but issues browser-*untrusted* certs. FLIP TO PROD before onboarding real
-/// users → `https://acme-v02.api.letsencrypt.org/directory`.
-const ACME_DIRECTORY: &str = "https://acme-staging-v02.api.letsencrypt.org/directory";
-
 // ────────────────────────────────────────────────────────────────────────
 // System dependencies (apt/dnf): Postgres, Avahi, ca-certs
 // ────────────────────────────────────────────────────────────────────────
@@ -585,8 +575,7 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
          VIRTUES_ACTIONS_DIR={actions_dir}\n\
          VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n\
          VIRTUES_EMBED_URL=http://127.0.0.1:18181\n\
-         VIRTUES_RERANK_URL=http://127.0.0.1:18182\n\
-         VIRTUES_ACME_DIRECTORY={acme_dir}\n",
+         VIRTUES_RERANK_URL=http://127.0.0.1:18182\n",
         static_dir = cfg.web_dir().display(),
         storage_path = cfg.data_dir.join("lake").display(),
         atlas = cfg.atlas_url,
@@ -594,7 +583,6 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
         models_dir = cfg.models_dir().display(),
         actions_dir = cfg.actions_dir().display(),
         actions_bin_dir = cfg.actions_bin_dir().display(),
-        acme_dir = ACME_DIRECTORY,
     );
     fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
     let mut cmd = Command::new("chown");
@@ -644,7 +632,6 @@ async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<(
         ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
         ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
         ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
-        ("VIRTUES_ACME_DIRECTORY", ACME_DIRECTORY.to_string()),
     ];
 
     let missing: Vec<&(&str, String)> = want.iter().filter(|(k, _)| !present.contains(*k)).collect();
