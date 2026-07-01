@@ -54,7 +54,10 @@ async fn relay_config(
         Err(resp) => return resp,
     };
 
-    if state.relay.secret.is_empty() || state.relay.control_addr.is_empty() {
+    let (Some(signing_key), false) = (
+        state.relay.signing_key.as_ref(),
+        state.relay.control_addr.is_empty(),
+    ) else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({
@@ -63,15 +66,16 @@ async fn relay_config(
             })),
         )
             .into_response();
-    }
+    };
 
     let sni = format!("{}.{}", boxhash(&account_id), state.relay.base_domain);
-    // Mint the *current bucket's* token only. The box re-fetches each bucket; if
-    // this account is later revoked/lapses, resolve_active_customer above fails
-    // and we stop minting, so the box's token expires within ~2 buckets (the
-    // relay accepts only current/previous). That's revocation without relay state.
-    let token = virtues_protocol::relay::derive_token(
-        &state.relay.secret,
+    // Sign the *current bucket's* token only, with atlas's Ed25519 private key.
+    // The box re-fetches each bucket; if this account is later revoked/lapses,
+    // resolve_active_customer above fails and we stop minting, so the box's token
+    // expires within ~2 buckets (the relay accepts only current/previous). That's
+    // revocation without relay state — and the relay never holds a minting key.
+    let token = virtues_protocol::relay::sign_token(
+        signing_key,
         &sni,
         virtues_protocol::relay::current_bucket(),
     );
@@ -233,14 +237,19 @@ mod tests {
     }
 
     #[test]
-    fn minted_token_matches_relay_verification() {
-        // The token atlas mints (current bucket) must equal what the relay
-        // re-derives for the same bucket.
-        let secret = "relay-master-secret";
+    fn atlas_signed_token_verifies_with_relay_public_key() {
+        // The token atlas signs (current bucket, private key) must verify under
+        // the matching public key the relay holds — and NOT under a different key.
+        use ed25519_dalek::SigningKey;
+        let signing_key = SigningKey::from_bytes(&[42u8; 32]);
+        let public_key = signing_key.verifying_key();
         let sni = format!("{}.virtues.ch", boxhash("acct_xyz"));
         let bucket = virtues_protocol::relay::current_bucket();
-        let minted = virtues_protocol::relay::derive_token(secret, &sni, bucket);
-        let verified = virtues_protocol::relay::derive_token(secret, &sni, bucket);
-        assert_eq!(minted, verified);
+
+        let minted = virtues_protocol::relay::sign_token(&signing_key, &sni, bucket);
+        assert!(virtues_protocol::relay::verify_token(&public_key, &sni, bucket, &minted));
+        // A relay holding a different public key can't accept atlas's tokens.
+        let other = SigningKey::from_bytes(&[7u8; 32]).verifying_key();
+        assert!(!virtues_protocol::relay::verify_token(&other, &sni, bucket, &minted));
     }
 }

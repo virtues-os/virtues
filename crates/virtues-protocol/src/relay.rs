@@ -36,26 +36,60 @@ pub fn current_bucket() -> u64 {
     bucket_at(now)
 }
 
-/// Derive a box's per-SNI, per-bucket registration token:
-/// `hex(HMAC-SHA256(secret, "<sni>:<bucket>"))`.
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+
+/// The canonical message signed for a box's per-SNI, per-bucket registration.
+/// Both the signer (atlas) and the verifier (relay) must construct it identically.
+fn token_message(sni: &str, bucket: u64) -> String {
+    format!("{sni}:{bucket}")
+}
+
+/// Sign a box's per-SNI, per-bucket registration token with atlas's Ed25519
+/// **private** key. Returns `hex(signature)` (128 hex chars).
 ///
-/// The relay holds the `secret` and derives the expected token for the `sni` a
-/// box claims at `Register` (checking the current and previous `bucket`); atlas
-/// mints the same value for the current bucket. Binding to the SNI means a box
-/// (or a leaked token) can register only its **own** name — it can't compute a
-/// valid token for another tenant's SNI without the secret. Binding to the
-/// `bucket` means a token naturally expires after ~2 buckets unless atlas keeps
-/// re-minting it, which is how a stateless relay supports revocation. Compare in
-/// constant time.
-pub fn derive_token(secret: &str, sni: &str, bucket: u64) -> String {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
-    mac.update(sni.as_bytes());
-    mac.update(b":");
-    mac.update(bucket.to_string().as_bytes());
-    hex::encode(mac.finalize().into_bytes())
+/// **Asymmetric by design:** only atlas holds the signing key. The relay holds
+/// only the matching **public** key and *verifies* ([`verify_token`]) — it can
+/// never mint, so a relay compromise leaks nothing forgeable (unlike a shared
+/// HMAC secret, where the verifier could also mint). Binding to the SNI means a
+/// leaked token authorizes only its own name; binding to the bucket means it
+/// expires after ~2 buckets unless atlas keeps re-minting — stateless revocation.
+/// See `docs/relay-control-plane.md`.
+pub fn sign_token(signing_key: &SigningKey, sni: &str, bucket: u64) -> String {
+    let sig = signing_key.sign(token_message(sni, bucket).as_bytes());
+    hex::encode(sig.to_bytes())
+}
+
+/// Verify a `hex(signature)` registration token against atlas's Ed25519 **public**
+/// key for the given `sni`+`bucket`. No secret is involved (a public key is not
+/// secret), so the relay holds nothing that can forge a token. Uses strict
+/// verification (rejects malleable / non-canonical signatures). Returns `false`
+/// on any malformed input rather than erroring — never panics on network data.
+pub fn verify_token(verifying_key: &VerifyingKey, sni: &str, bucket: u64, token: &str) -> bool {
+    let Ok(bytes) = hex::decode(token) else {
+        return false;
+    };
+    let Ok(sig) = Signature::from_slice(&bytes) else {
+        return false;
+    };
+    verifying_key
+        .verify_strict(token_message(sni, bucket).as_bytes(), &sig)
+        .is_ok()
+}
+
+/// Parse a hex-encoded 32-byte Ed25519 **signing** (private) key — held by atlas
+/// only. `None` if the hex is malformed or not exactly 32 bytes.
+pub fn parse_signing_key(hex_key: &str) -> Option<SigningKey> {
+    let bytes = hex::decode(hex_key.trim()).ok()?;
+    let arr: [u8; 32] = bytes.try_into().ok()?;
+    Some(SigningKey::from_bytes(&arr))
+}
+
+/// Parse a hex-encoded 32-byte Ed25519 **verifying** (public) key — held by the
+/// relay (non-secret). `None` if malformed, wrong length, or not a valid point.
+pub fn parse_verifying_key(hex_key: &str) -> Option<VerifyingKey> {
+    let bytes = hex::decode(hex_key.trim()).ok()?;
+    let arr: [u8; 32] = bytes.try_into().ok()?;
+    VerifyingKey::from_bytes(&arr).ok()
 }
 
 /// First line on any box→relay connection: declares its purpose.
@@ -129,19 +163,45 @@ mod tests {
     }
 
     #[test]
-    fn derive_token_is_sni_bucket_bound_and_stable() {
-        let secret = "relay-secret";
+    fn token_signs_verifies_and_is_sni_bucket_bound() {
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let vk = sk.verifying_key();
         let bucket = 20_000;
-        let a = derive_token(secret, "a.virtues.ch", bucket);
-        let b = derive_token(secret, "b.virtues.ch", bucket);
-        // Same inputs → same token (atlas and relay must agree).
-        assert_eq!(a, derive_token(secret, "a.virtues.ch", bucket));
-        // Different SNI → different token (can't reuse one box's token for another).
-        assert_ne!(a, b);
-        // Different bucket → different token (this is what makes it expire).
-        assert_ne!(a, derive_token(secret, "a.virtues.ch", bucket + 1));
-        // Hex-encoded SHA-256 HMAC is 64 chars.
-        assert_eq!(a.len(), 64);
+        let t = sign_token(&sk, "a.virtues.ch", bucket);
+
+        // Correct sni+bucket under the matching public key verifies.
+        assert!(verify_token(&vk, "a.virtues.ch", bucket, &t));
+        // Wrong SNI fails (a leaked token can't be reused for another box).
+        assert!(!verify_token(&vk, "b.virtues.ch", bucket, &t));
+        // Wrong bucket fails (this is what makes it expire).
+        assert!(!verify_token(&vk, "a.virtues.ch", bucket + 1, &t));
+        // A DIFFERENT key can't verify — the relay only accepts atlas-signed
+        // tokens, and holding the public key does NOT let it mint.
+        let other_vk = SigningKey::from_bytes(&[9u8; 32]).verifying_key();
+        assert!(!verify_token(&other_vk, "a.virtues.ch", bucket, &t));
+        // Ed25519 signing is deterministic → atlas and any re-mint agree.
+        assert_eq!(t, sign_token(&sk, "a.virtues.ch", bucket));
+        // hex(64-byte signature) = 128 chars.
+        assert_eq!(t.len(), 128);
+        // Malformed tokens return false, never panic (network-facing).
+        assert!(!verify_token(&vk, "a.virtues.ch", bucket, "not-hex"));
+        assert!(!verify_token(&vk, "a.virtues.ch", bucket, "deadbeef"));
+        assert!(!verify_token(&vk, "a.virtues.ch", bucket, ""));
+    }
+
+    #[test]
+    fn key_parsers_roundtrip_and_reject_garbage() {
+        let sk = SigningKey::from_bytes(&[3u8; 32]);
+        let vk = sk.verifying_key();
+        let sk2 = parse_signing_key(&hex::encode(sk.to_bytes())).unwrap();
+        let vk2 = parse_verifying_key(&hex::encode(vk.to_bytes())).unwrap();
+        // A token signed by the parsed key verifies under the parsed public key.
+        let t = sign_token(&sk2, "x.virtues.ch", 1);
+        assert!(verify_token(&vk2, "x.virtues.ch", 1, &t));
+        // Garbage / wrong-length hex is rejected, not panicked.
+        assert!(parse_signing_key("xyz").is_none());
+        assert!(parse_signing_key("dead").is_none()); // too short
+        assert!(parse_verifying_key("xyz").is_none());
     }
 
     #[test]

@@ -27,11 +27,13 @@ pub struct Config {
     /// verification URL and the Stripe success/cancel URLs.
     pub public_url: String,
 
-    /// Relay master secret, shared with `virtues-relay`. atlas mints each box's
-    /// per-SNI token as `derive_token(relay_secret, sni, bucket)`; the relay verifies
-    /// with the same secret. Empty → relay-config minting disabled (503).
-    /// Env: `VIRTUES_RELAY_SECRET`.
-    pub relay_secret: String,
+    /// Relay token **signing** key: hex-encoded 32-byte Ed25519 private key. atlas
+    /// is the sole signer — it mints each box's per-SNI token as
+    /// `sign_token(signing_key, sni, bucket)`; the relay holds only the matching
+    /// **public** key and verifies. The relay never holds this, so a relay
+    /// compromise can't mint. Empty → relay-config minting disabled (503).
+    /// Env: `VIRTUES_RELAY_SIGNING_KEY`. Generate: `openssl genpkey -algorithm ed25519`.
+    pub relay_signing_key: String,
     /// Public relay control address boxes dial out to (host:port). Handed to the
     /// box as `relay_addr`. Empty → minting disabled. Env: `VIRTUES_RELAY_CONTROL_ADDR`.
     pub relay_control_addr: String,
@@ -127,7 +129,7 @@ impl Config {
 
         // Relay control plane (Option A): atlas mints per-SNI tokens. Empty
         // secret/addr → /relay/config returns 503 (relay reachability disabled).
-        let relay_secret = std::env::var("VIRTUES_RELAY_SECRET").unwrap_or_default();
+        let relay_signing_key = std::env::var("VIRTUES_RELAY_SIGNING_KEY").unwrap_or_default();
         let relay_control_addr = std::env::var("VIRTUES_RELAY_CONTROL_ADDR").unwrap_or_default();
         let relay_base_domain =
             std::env::var("VIRTUES_RELAY_BASE_DOMAIN").unwrap_or_else(|_| "virtues.ch".to_string());
@@ -211,7 +213,7 @@ impl Config {
             stripe_webhook_secret,
             stripe_price_id,
             public_url,
-            relay_secret,
+            relay_signing_key,
             relay_control_addr,
             relay_base_domain,
             route53_zone_id,

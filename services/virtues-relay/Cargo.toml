@@ -29,6 +29,11 @@ nom = "7"
 # Concurrent registry (sni -> box control handle)
 dashmap = "6.0"
 
+# Ed25519 public-key verification of atlas-signed registration tokens. The relay
+# holds ONLY the public key (VIRTUES_RELAY_PUBLIC_KEY) — verify but never mint.
+# Pinned >= 2.2 (RUSTSEC-2022-0093).
+ed25519-dalek = "2.2"
+
 # IDs for pairing client conns with box work conns
 uuid = { version = "1.10", features = ["v4"] }
 
