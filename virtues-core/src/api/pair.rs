@@ -35,7 +35,6 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::{Duration, Utc};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -43,7 +42,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
-use crate::middleware::auth::{AuthUser, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_SECURE};
+use crate::middleware::auth::AuthUser;
 use crate::middleware::{client_ip, is_secure_environment, rate_limit_ip, OWNER_USER_ID};
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -54,10 +53,6 @@ const AUTHORIZED_REDEEM_TTL_MIN: i64 = 5;
 /// CLI-minted tokens get a longer window — they're typed into the desktop app,
 /// and the user may need a few minutes to download it the first time.
 const CLI_REDEEM_TTL_MIN: i64 = 30;
-
-/// Session cookie hard expiry (idle expiry is shorter and enforced in
-/// middleware via `last_used_at`).
-const SESSION_TTL_DAYS: i64 = 30;
 
 /// Claim deadline for a desktop-relayed `provision` credential. Unlike the
 /// consume path (the credential is minted only when the device redeems a
@@ -93,12 +88,6 @@ fn random_pair_code() -> String {
         }
     }
     code
-}
-
-fn random_32_session_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
 }
 
 fn random_32_bearer() -> String {
@@ -659,7 +648,6 @@ pub(crate) fn box_reach() -> Option<(String, String)> {
 pub async fn consume_handler(
     State(pool): State<PgPool>,
     headers: axum::http::HeaderMap,
-    jar: CookieJar,
     Json(body): Json<ConsumeRequest>,
 ) -> axum::response::Response {
     let token = body.token.trim();
@@ -685,7 +673,7 @@ pub async fn consume_handler(
     }
 
     let kind = match body.kind.as_str() {
-        "browser" | "mobile_app" | "desktop_app" | "sensor" => body.kind.as_str(),
+        "mobile_app" | "desktop_app" | "sensor" | "cli" => body.kind.as_str(),
         _ => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
                 .into_response()
@@ -694,17 +682,15 @@ pub async fn consume_handler(
 
     // Idempotency replay: if this key already produced a bearer (a prior consume
     // whose response the client lost), re-return the SAME result without touching
-    // the (now-consumed) token. Non-browser only.
+    // the (now-consumed) token.
     let idem_key = body
         .idempotency_key
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if kind != "browser" {
-        if let Some(key) = idem_key {
-            if let Some(resp) = replay_consume_idem(&pool, key).await {
-                return resp;
-            }
+    if let Some(key) = idem_key {
+        if let Some(resp) = replay_consume_idem(&pool, key).await {
+            return resp;
         }
     }
 
@@ -743,30 +729,12 @@ pub async fn consume_handler(
         .clone()
         .unwrap_or_else(|| json!({}));
 
-    // For non-browser devices, pre-encrypt the bearer so a slow KMS call
-    // doesn't hold the DB transaction open.
-    let bearer_pack = if kind == "browser" {
-        None
-    } else {
-        match build_bearer_pack(kind, &label, &body.device_info) {
-            Ok(p) => Some(p),
-            Err(e) => return e.into_response(),
-        }
-    };
-
-    // Browser session token is also pre-generated (cheap), so the tx is
-    // purely DB writes.
-    let session_pack = if kind == "browser" {
-        Some(SessionPack {
-            id: crate::ids::generate_id(
-                crate::ids::AUTH_SESSION_PREFIX,
-                &[&device_id, &Utc::now().to_rfc3339()],
-            ),
-            token: random_32_session_token(),
-            expires_at: Utc::now() + Duration::days(SESSION_TTL_DAYS),
-        })
-    } else {
-        None
+    // Pre-encrypt the bearer so a slow KMS call doesn't hold the DB transaction
+    // open. (This bearer serves programmatic/webhook callers; interactive
+    // clients authenticate over iroh by their allowlisted key.)
+    let bearer_pack = match build_bearer_pack(kind, &label, &body.device_info) {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
     };
 
     // ─── Single transaction: claim token + create device + create credential
@@ -850,39 +818,17 @@ pub async fn consume_handler(
             .into_response();
     }
 
-    if kind == "browser" {
-        let sp = session_pack.as_ref().expect("session_pack for browser");
-        if let Err(e) = sqlx::query(
-            "INSERT INTO app_auth_session \
-             (id, session_token, device_id, expires_at, last_used_at) \
-             VALUES ($1, $2, $3, $4, now())",
+    // No claim deadline on the consume path — the credential is minted only
+    // when the device itself redeems the token, so it's permanent.
+    if let Err(e) =
+        insert_credential_row(&mut tx, &bearer_pack, &source_id, &label, &device_id, None).await
+    {
+        tracing::warn!("pair consume: credential insert failed: {e:#}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "credential_insert_failed"})),
         )
-        .bind(&sp.id)
-        .bind(&sp.token)
-        .bind(&device_id)
-        .bind(sp.expires_at)
-        .execute(&mut *tx)
-        .await
-        {
-            tracing::warn!("pair consume: session insert failed: {e:#}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "session_insert_failed"})),
-            )
-                .into_response();
-        }
-    } else {
-        let bp = bearer_pack.as_ref().expect("bearer_pack for non-browser");
-        // No claim deadline on the consume path — the credential is minted only
-        // when the device itself redeems the token, so it's permanent.
-        if let Err(e) = insert_credential_row(&mut tx, bp, &source_id, &label, &device_id, None).await {
-            tracing::warn!("pair consume: credential insert failed: {e:#}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "credential_insert_failed"})),
-            )
-                .into_response();
-        }
+            .into_response();
     }
 
     if let Err(e) = tx.commit().await {
@@ -925,8 +871,8 @@ pub async fn consume_handler(
         }
     }
 
-    // Post-commit: log the pairing event (best-effort) and assemble the
-    // response (cookie for browsers, bearer for everything else).
+    // Post-commit: log the pairing event (best-effort) and assemble the bearer
+    // response.
     let _ = log_event(
         &pool,
         Some(&device_id),
@@ -941,56 +887,11 @@ pub async fn consume_handler(
     )
     .await;
 
-    if let Some(sp) = session_pack {
-        let is_secure = is_secure_environment();
-        let cookie_name = if is_secure {
-            SESSION_COOKIE_NAME_SECURE
-        } else {
-            SESSION_COOKIE_NAME
-        };
-        let cookie = Cookie::build((cookie_name, sp.token))
-            .path("/")
-            .http_only(true)
-            .secure(is_secure)
-            .same_site(SameSite::Lax)
-            .max_age(time::Duration::days(SESSION_TTL_DAYS))
-            .build();
-        let jar = jar.add(cookie);
-        // Hot-swap the iroh allowlist + re-report to atlas (browser rows have no
-        // node_id, so this is a no-op set-wise, but keeps the path uniform).
-        crate::relay::after_pairing_change(pool.clone());
-        // Compute the reach ticket once so both halves are consistent.
-        let (box_node_id, relay_url) = match box_reach() {
-            Some((n, r)) => (Some(n), Some(r)),
-            None => (None, None),
-        };
-        return (
-            jar,
-            (
-                StatusCode::OK,
-                Json(ConsumeResponse {
-                    device_id,
-                    credential_id: None,
-                    redirect: "/".to_string(),
-                    bearer: None,
-                    action_ids: std::collections::HashMap::new(),
-                    box_node_id,
-                    relay_url,
-                }),
-            ),
-        )
-            .into_response();
-    }
-
-    // App / sensor pairing: assemble the per-device action fan-out so the
-    // device knows which `app_actions.id` to POST each stream flush to, and
-    // (when a WG pubkey was supplied) the WG provisioning bundle. Both are
-    // post-commit best-effort: a failure here doesn't undo the pairing, the
-    // device just shows up paired but with no per-credential actions until
-    // a manual `virtues reconcile` (or the next legacy flow sync). The
-    // device handler can call `/api/devices/<id>/reconcile` to retry. For
-    // v1, we log loudly and let the user re-pair if they hit this.
-    let bp = bearer_pack.expect("bearer_pack present for non-browser");
+    // Assemble the per-device action fan-out so the device knows which
+    // `app_actions.id` to POST each stream flush to. Post-commit best-effort: a
+    // failure here doesn't undo the pairing — the device shows up paired but with
+    // no per-credential actions until a `/api/devices/<id>/reconcile` retry.
+    let bp = bearer_pack;
 
     let action_ids = match assemble_action_fanout(&pool, &bp.credential_id).await {
         Ok(map) => map,
@@ -1478,12 +1379,6 @@ pub(crate) struct BearerPack {
     pub(crate) ciphertext: String,
     pub(crate) lookup_hash: String,
     pub(crate) metadata: Value,
-}
-
-struct SessionPack {
-    id: String,
-    token: String,
-    expires_at: chrono::DateTime<Utc>,
 }
 
 /// Failure modes from the bearer-pack builder. Kept domain-flavored (no

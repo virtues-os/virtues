@@ -226,7 +226,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(crate::api::pair::link_redeem_handler),
         )
         .route("/auth/session", get(api::auth_session_handler))
-        .route("/auth/signout", post(api::auth_signout_handler))
         // Internal API (virtues-api integration — has its own header-based auth)
         .route("/internal/hydrate", post(api::hydrate_profile_handler))
         .route(
@@ -760,7 +759,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
-        .layer(middleware::from_fn(crate::middleware::security::csrf_layer))
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
         .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
 
@@ -835,11 +833,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         };
         tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
     }
-
-    // BYO-networking safety check: warn if the box is advertised at a plain-HTTP
-    // origin on a non-local host, where browser session cookies would be either
-    // rejected (secure env) or sent in cleartext (dev env). Advisory only.
-    crate::middleware::security::warn_insecure_cookie_origin();
 
     // Run the server with graceful shutdown — Ctrl+C / SIGTERM triggers
     // SIGTERM to all `app`-runtime children before we exit.
