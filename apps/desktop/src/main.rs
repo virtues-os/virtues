@@ -95,7 +95,12 @@ async fn main() -> Result<()> {
         Command::Pair { pair_url } => pair::run(&pair_url).await,
         Command::PairCode { code, server } => run_pair_code(code, server).await,
         Command::Discover { json } => run_discover(json).await,
-        Command::Up => proxy::run().await,
+        Command::Up => {
+            // Pick up the box's iroh reach ticket if we paired before it was
+            // relay-ready (best-effort) so `up` serves over iroh, not LAN-only.
+            let _ = pair::refresh_reach().await;
+            proxy::run().await
+        }
         Command::Open => run_open(),
         Command::Status => run_status().await,
         Command::Revoke => revoke().await,

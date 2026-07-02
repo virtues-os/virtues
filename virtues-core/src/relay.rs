@@ -58,6 +58,20 @@ pub fn box_relay_url() -> Option<String> {
     BOX_RELAY_URL.get().and_then(|c| c.read().ok().and_then(|g| g.clone()))
 }
 
+/// The box's *configured* iroh reach `(endpoint_id, relay_url)`, read from
+/// persistent state (DB) rather than the in-process endpoint. `virtues doctor`
+/// runs in a separate process that never binds the endpoint, so it can't use the
+/// in-memory getters above — it derives the EndpointId from the stored secret and
+/// reads the stored relay config. `None` if either isn't provisioned (LAN-only).
+pub async fn reach_status(db: &PgPool) -> Option<(String, String)> {
+    let (hex_seed, _) = crate::box_secrets::get(db, BOX_IROH_SECRET).await.ok()??;
+    let bytes = hex::decode(hex_seed.trim()).ok()?;
+    let arr: [u8; 32] = bytes.as_slice().try_into().ok()?;
+    let endpoint_id = SecretKey::from_bytes(&arr).public().to_string();
+    let relay = crate::virtues_api::relay::load(db).await.ok()??.relay_url;
+    Some((endpoint_id, relay))
+}
+
 /// Spawn the iroh reach subsystem: bind the endpoint and serve `app` over it.
 /// `app` is the box's fully-built axum `Router` (cloned from the one served on
 /// `:8000`). No-op-safe: logs and exits on fatal setup errors (box stays LAN-only).
@@ -118,6 +132,27 @@ async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
     if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
         if let Ok(u) = RelayUrl::from_str(&rc.relay_url) {
             return Some(u);
+        }
+    }
+    // Not stored yet — e.g. the box was claimed before the relay existed, or the
+    // claim-time fetch (best-effort) failed/503'd. Without this, such a box binds
+    // in dev mode (n0 relays) and is stranded LAN-only until a manual re-claim.
+    // Fetch from atlas on every startup so it self-heals once the relay is live.
+    if let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await {
+        let http = crate::http_client::virtues_api_client();
+        let atlas = crate::virtues_api::atlas_url();
+        match crate::virtues_api::relay::fetch_and_store(db, &http, &atlas, &api_key).await {
+            Ok(()) => {
+                if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
+                    if let Ok(u) = RelayUrl::from_str(&rc.relay_url) {
+                        tracing::info!(relay = %rc.relay_url, "iroh: fetched relay config from atlas on startup");
+                        return Some(u);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(error = %format!("{e:#}"), "iroh: startup relay-config fetch skipped (LAN-only for now)");
+            }
         }
     }
     let raw = std::env::var("VIRTUES_RELAY_URL").ok().filter(|s| !s.is_empty())?;
