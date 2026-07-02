@@ -209,17 +209,29 @@ class NetworkManager: ObservableObject {
         let seed = Self.ensureIrohSeed()
         let deviceNodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
 
+        // Stable per-attempt idempotency key: if the response is lost and we
+        // retry below, the box replays the SAME bearer instead of failing on the
+        // now-consumed token.
+        let idempotencyKey = UUID().uuidString
         let body = PairConsumeRequest(
             token: pairToken,
             kind: "mobile_app",
             label: deviceName,
             device_info: deviceInfo,
-            device_node_id: deviceNodeId
+            device_node_id: deviceNodeId,
+            idempotency_key: idempotencyKey
         )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
 
-        let (data, response) = try await session.data(for: request)
+        // Retry ONCE on a transport error (lost response) with the same body →
+        // same idempotency key → the box re-returns the original bearer.
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            (data, response) = try await session.data(for: request)
+        }
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
@@ -468,6 +480,9 @@ struct PairConsumeRequest: Codable {
     /// This device's iroh EndpointId (hex), derived from its locally-generated
     /// seed. The box allowlists it so the device can reach the box over iroh.
     let device_node_id: String?
+    /// Idempotency key so a retried consume (lost response) re-returns the same
+    /// bearer instead of burning the single-use token.
+    let idempotency_key: String?
 }
 
 /// `POST /api/pair/consume` response — see `virtues-core/src/api/pair.rs`
