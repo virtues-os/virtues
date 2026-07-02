@@ -107,7 +107,30 @@ fn random_32_bearer() -> String {
     hex::encode(bytes)
 }
 
-fn hash_token(token: &str) -> String {
+/// A device-link code: 10 chars from an unambiguous alphabet (~50 bits) —
+/// human-typeable but far stronger than the 6-digit pair code, since a link
+/// code's hash sits on atlas and a weak code would be offline-brute-forceable.
+/// Grouped `XXXXX-XXXXX` for entry. See docs/reach-enrollment.md.
+pub(crate) fn random_link_code() -> String {
+    const ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTVWXYZ"; // no 0/1/O/I/U
+    let n = ALPHABET.len() as u8; // 31
+    let cutoff = 256 - (256 % ALPHABET.len()); // reject bias
+    let mut out = String::with_capacity(11);
+    let mut buf = [0u8; 1];
+    let mut rng = rand::rng();
+    while out.chars().filter(|c| *c != '-').count() < 10 {
+        rng.fill_bytes(&mut buf);
+        if (buf[0] as usize) < cutoff {
+            out.push(ALPHABET[(buf[0] % n) as usize] as char);
+            if out.chars().filter(|c| *c != '-').count() == 5 && !out.contains('-') {
+                out.push('-');
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn hash_token(token: &str) -> String {
     let mut h = Sha256::new();
     h.update(token.as_bytes());
     hex::encode(h.finalize())
@@ -1005,6 +1028,75 @@ pub async fn consume_handler(
             box_node_id,
             relay_url,
         }),
+    )
+        .into_response()
+}
+
+// ─── Link redeem (fully-remote enrollment — the new device pulls its bearer) ─
+
+#[derive(Debug, Deserialize)]
+pub struct LinkRedeemRequest {
+    pub code: String,
+}
+
+/// `POST /api/pair/link-redeem` — the new device, now allowlisted (its EndpointId
+/// was approved by a voucher via `link/approve`), dials the box over iroh and
+/// redeems the one-time linking code for the bearer stashed at approve.
+/// Anonymous (bearer-less): gated by the code over the already-allowlisted +
+/// encrypted iroh channel, and one-time (the row flips to `redeemed`). The bearer
+/// never transited atlas. See docs/reach-enrollment.md.
+pub async fn link_redeem_handler(
+    State(pool): State<PgPool>,
+    Json(body): Json<LinkRedeemRequest>,
+) -> axum::response::Response {
+    let code = body.code.trim();
+    if code.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_code"}))).into_response();
+    }
+    let code_hash = hash_token(code);
+    // Atomically claim: approved + unexpired → redeemed (one-time).
+    let row: Option<(Option<String>, Option<String>, Value)> = sqlx::query_as(
+        "UPDATE app_link_session SET status = 'redeemed' \
+         WHERE code_hash = $1 AND status = 'approved' AND expires_at > now() \
+         RETURNING bearer_ciphertext, credential_id, action_ids",
+    )
+    .bind(&code_hash)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+    let (ciphertext, credential_id, action_ids_json) = match row {
+        Some((Some(ct), cred, ids)) => (ct, cred, ids),
+        _ => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not_approved_or_expired"}))).into_response();
+        }
+    };
+    let bearer = match crate::crypto::TokenEncryptor::from_env()
+        .ok()
+        .and_then(|enc| enc.decrypt(&ciphertext).ok())
+        .and_then(|pt| serde_json::from_str::<Value>(&pt).ok())
+        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(String::from))
+    {
+        Some(b) => b,
+        None => {
+            tracing::warn!("link_redeem: bearer decrypt failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+        }
+    };
+    let action_ids: std::collections::HashMap<String, String> =
+        serde_json::from_value(action_ids_json).unwrap_or_default();
+    let (box_node_id, relay_url) = match box_reach() {
+        Some((n, r)) => (Some(n), Some(r)),
+        None => (None, None),
+    };
+    (
+        StatusCode::OK,
+        Json(json!({
+            "bearer": bearer,
+            "credential_id": credential_id,
+            "action_ids": action_ids,
+            "box_node_id": box_node_id,
+            "relay_url": relay_url,
+        })),
     )
         .into_response()
 }

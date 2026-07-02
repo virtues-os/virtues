@@ -350,84 +350,349 @@ pub async fn enroll_peer(
     _user: AuthUser,
     Json(body): Json<EnrollPeerRequest>,
 ) -> impl IntoResponse {
-    let peer_node_id = body.peer_node_id.trim();
+    match enroll_peer_core(
+        &pool,
+        &body.peer_node_id,
+        &body.kind,
+        body.label.as_deref(),
+        body.device_info.as_ref(),
+    )
+    .await
+    {
+        Ok(p) => {
+            let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
+                Some((n, r)) => (Some(n), Some(r)),
+                None => (None, None),
+            };
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "device_id": p.device_id,
+                    "credential_id": p.credential_id,
+                    "bearer": p.bearer,
+                    "action_ids": p.action_ids,
+                    "box_node_id": box_node_id,
+                    "relay_url": relay_url,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+/// The result of enrolling a peer device — the caller decides how to deliver the
+/// bearer (HTTP response for `enroll-peer`, or stashed for later iroh redeem in
+/// the link-a-device flow).
+pub(crate) struct EnrolledPeer {
+    pub device_id: String,
+    pub credential_id: String,
+    pub bearer: String,
+    /// Encrypted `{"token": bearer}` (same form as `credentials.secrets_ciphertext`)
+    /// — for stashing the bearer at rest until a later redeem.
+    pub bearer_ciphertext: String,
+    pub action_ids: std::collections::HashMap<String, String>,
+}
+
+pub(crate) enum EnrollError {
+    MissingPeer,
+    InvalidKind,
+    UnknownSource,
+    /// The EndpointId is already an active device (unique-index violation).
+    Conflict,
+    Bearer(crate::api::pair::BearerPackError),
+    Internal,
+}
+
+impl EnrollError {
+    pub(crate) fn into_response(self) -> axum::response::Response {
+        match self {
+            EnrollError::MissingPeer => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_peer_node_id"}))).into_response()
+            }
+            EnrollError::InvalidKind => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"}))).into_response()
+            }
+            EnrollError::UnknownSource => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": "unknown_source"}))).into_response()
+            }
+            EnrollError::Conflict => {
+                (StatusCode::CONFLICT, Json(json!({"error": "peer_already_enrolled"}))).into_response()
+            }
+            EnrollError::Bearer(e) => e.into_response(),
+            EnrollError::Internal => {
+                (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
+            }
+        }
+    }
+}
+
+/// Core peer enrollment shared by `enroll_peer` (HTTP) and the link-a-device
+/// approve step: insert `app_device{node_id=peer}`, mint the credential, fan out
+/// actions, and allowlist + register the EndpointId with atlas. Returns the
+/// minted bearer (+ its ciphertext) for the caller to deliver.
+pub(crate) async fn enroll_peer_core(
+    pool: &PgPool,
+    peer_node_id: &str,
+    kind: &str,
+    label: Option<&str>,
+    device_info: Option<&Value>,
+) -> Result<EnrolledPeer, EnrollError> {
+    let peer_node_id = peer_node_id.trim();
     if peer_node_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_peer_node_id"}))).into_response();
+        return Err(EnrollError::MissingPeer);
     }
-    let kind = body.kind.trim();
+    let kind = kind.trim();
     if !matches!(kind, "mobile_app" | "desktop_app" | "sensor") {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"}))).into_response();
+        return Err(EnrollError::InvalidKind);
     }
-    let source_id = match crate::api::pair::resolve_source_id(kind, None) {
-        Ok(s) => s,
-        Err(()) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "unknown_source"}))).into_response(),
-    };
-    let label = body
-        .label
-        .as_deref()
+    let source_id = crate::api::pair::resolve_source_id(kind, None).map_err(|()| EnrollError::UnknownSource)?;
+    let label = label
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| kind.to_string());
 
+    let di = device_info.cloned();
+    let device_info_val = di.clone().unwrap_or_else(|| json!({}));
     // Mint the encrypted bearer OUTSIDE the tx (crypto/KMS).
-    let bp = match crate::api::pair::build_bearer_pack(kind, &label, &body.device_info) {
-        Ok(p) => p,
-        Err(e) => return e.into_response(),
-    };
+    let bp = crate::api::pair::build_bearer_pack(kind, &label, &di).map_err(EnrollError::Bearer)?;
     let device_id = crate::ids::generate_id(
         crate::ids::DEVICE_PREFIX,
         &[peer_node_id, &Utc::now().to_rfc3339()],
     );
-    let device_info = body.device_info.clone().unwrap_or_else(|| json!({}));
 
-    let mut tx = match pool.begin().await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(error = %e, "enroll_peer: begin tx failed");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
-        }
-    };
-    if let Err(e) = crate::api::pair::insert_device_row(
-        &mut tx, &device_id, kind, &label, &device_info, None, Some(peer_node_id),
-    )
-    .await
-    {
-        // Unique-index violation → this EndpointId is already an active device.
-        tracing::warn!(error = %e, "enroll_peer: device insert failed");
-        return (StatusCode::CONFLICT, Json(json!({"error": "peer_already_enrolled"}))).into_response();
-    }
-    if let Err(e) = crate::api::pair::insert_credential_row(&mut tx, &bp, &source_id, &label, &device_id, None).await {
-        tracing::warn!(error = %e, "enroll_peer: credential insert failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "credential_insert_failed"}))).into_response();
-    }
-    if let Err(e) = tx.commit().await {
-        tracing::warn!(error = %e, "enroll_peer: commit failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
-    }
+    let mut tx = pool.begin().await.map_err(|e| {
+        tracing::warn!(error = %e, "enroll_peer_core: begin tx failed");
+        EnrollError::Internal
+    })?;
+    crate::api::pair::insert_device_row(&mut tx, &device_id, kind, &label, &device_info_val, None, Some(peer_node_id))
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "enroll_peer_core: device insert failed (likely duplicate node_id)");
+            EnrollError::Conflict
+        })?;
+    crate::api::pair::insert_credential_row(&mut tx, &bp, &source_id, &label, &device_id, None)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "enroll_peer_core: credential insert failed");
+            EnrollError::Internal
+        })?;
+    tx.commit().await.map_err(|e| {
+        tracing::warn!(error = %e, "enroll_peer_core: commit failed");
+        EnrollError::Internal
+    })?;
 
-    // Fan out per-credential actions, then allowlist the new EndpointId + register
-    // it with atlas so the relay admits it.
-    let action_ids = crate::api::pair::assemble_action_fanout(&pool, &bp.credential_id)
+    // Fan out per-credential actions, then allowlist the EndpointId + register it
+    // with atlas so the relay admits it.
+    let action_ids = crate::api::pair::assemble_action_fanout(pool, &bp.credential_id)
         .await
         .unwrap_or_default();
     crate::relay::after_pairing_change(pool.clone());
 
+    Ok(EnrolledPeer {
+        device_id,
+        credential_id: bp.credential_id,
+        bearer: bp.bearer,
+        bearer_ciphertext: bp.ciphertext,
+        action_ids,
+    })
+}
+
+// ─── Link a device (fully-remote enrollment via atlas rendezvous) ───────────
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LinkStartRequest {
+    /// The future device's kind (default `mobile_app`).
+    pub kind: Option<String>,
+    pub label: Option<String>,
+}
+
+/// `POST /api/devices/link/start` — a voucher (already-paired, AuthUser) opens a
+/// link session: mint a one-time code, store `H(code)` locally, open an atlas
+/// rendezvous, and return the code to display. See docs/reach-enrollment.md.
+pub async fn link_start(
+    State(pool): State<PgPool>,
+    _user: AuthUser,
+    Json(_body): Json<LinkStartRequest>,
+) -> impl IntoResponse {
     let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
-        Some((n, r)) => (Some(n), Some(r)),
-        None => (None, None),
+        Some(v) => v,
+        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "box_not_relay_ready"}))).into_response(),
     };
-    (
-        StatusCode::OK,
-        Json(json!({
-            "device_id": device_id,
-            "credential_id": bp.credential_id,
-            "bearer": bp.bearer,
-            "action_ids": action_ids,
-            "box_node_id": box_node_id,
-            "relay_url": relay_url,
-        })),
+    let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
+        Ok(Some(k)) => k,
+        _ => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "no_api_key"}))).into_response(),
+    };
+    let code = crate::api::pair::random_link_code();
+    let code_hash = crate::api::pair::hash_token(&code);
+    let ttl: i64 = 600;
+    let expires = Utc::now() + chrono::Duration::seconds(ttl);
+    let _ = sqlx::query("DELETE FROM app_link_session WHERE expires_at < now()").execute(&pool).await;
+    if let Err(e) = sqlx::query(
+        "INSERT INTO app_link_session (code_hash, status, expires_at) VALUES ($1, 'pending', $2)",
     )
-        .into_response()
+    .bind(&code_hash)
+    .bind(expires)
+    .execute(&pool)
+    .await
+    {
+        tracing::warn!(error = %e, "link_start: local insert failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+    }
+    // Open the atlas rendezvous (blind — code hash + public reach only).
+    let http = crate::http_client::virtues_api_client();
+    let atlas = crate::virtues_api::atlas_url();
+    let ok = matches!(
+        http.post(format!("{}/link/session", atlas.trim_end_matches('/')))
+            .json(&json!({"api_key": api_key, "code_hash": code_hash, "box_node_id": box_node_id, "relay_url": relay_url, "ttl_secs": ttl}))
+            .send()
+            .await,
+        Ok(r) if r.status().is_success()
+    );
+    if !ok {
+        tracing::warn!("link_start: atlas session open failed");
+        let _ = sqlx::query("DELETE FROM app_link_session WHERE code_hash = $1").bind(&code_hash).execute(&pool).await;
+        return (StatusCode::BAD_GATEWAY, Json(json!({"error": "atlas_unreachable"}))).into_response();
+    }
+    (StatusCode::OK, Json(json!({"code": code, "expires_in": ttl}))).into_response()
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LinkCodeRequest {
+    pub code: String,
+}
+
+/// `POST /api/devices/link/status` — voucher polls whether the new device has
+/// shown up (so it can offer Approve). Returns the atlas-side status.
+pub async fn link_status(
+    State(pool): State<PgPool>,
+    _user: AuthUser,
+    Json(body): Json<LinkCodeRequest>,
+) -> impl IntoResponse {
+    let code_hash = crate::api::pair::hash_token(body.code.trim());
+    let local: Option<(String,)> = sqlx::query_as(
+        "SELECT status FROM app_link_session WHERE code_hash = $1 AND expires_at > now()",
+    )
+    .bind(&code_hash)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten();
+    let Some((local_status,)) = local else {
+        return (StatusCode::OK, Json(json!({"status": "expired"}))).into_response();
+    };
+    if local_status != "pending" {
+        return (StatusCode::OK, Json(json!({"status": local_status, "device_waiting": false}))).into_response();
+    }
+    let (status, waiting) = match atlas_link_poll(&pool, &code_hash).await {
+        Some(v) => (v.0.clone(), v.0 == "requested"),
+        None => ("pending".to_string(), false),
+    };
+    (StatusCode::OK, Json(json!({"status": status, "device_waiting": waiting}))).into_response()
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LinkApproveRequest {
+    pub code: String,
+    pub kind: Option<String>,
+    pub label: Option<String>,
+}
+
+/// `POST /api/devices/link/approve` — voucher approves: verify the MAC binds the
+/// new device's EndpointId (detects an atlas-swapped id), enroll the peer, stash
+/// the bearer for iroh redeem, and mark the atlas session approved.
+pub async fn link_approve(
+    State(pool): State<PgPool>,
+    _user: AuthUser,
+    Json(body): Json<LinkApproveRequest>,
+) -> impl IntoResponse {
+    let code = body.code.trim().to_string();
+    let code_hash = crate::api::pair::hash_token(&code);
+    // Local session must be pending.
+    match sqlx::query_as::<_, (String,)>(
+        "SELECT status FROM app_link_session WHERE code_hash = $1 AND expires_at > now()",
+    )
+    .bind(&code_hash)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    {
+        Some((s,)) if s == "pending" => {}
+        Some(_) => return (StatusCode::CONFLICT, Json(json!({"error": "already_handled"}))).into_response(),
+        None => return (StatusCode::GONE, Json(json!({"error": "expired"}))).into_response(),
+    }
+    // Fetch the device's submitted EndpointId + MAC from atlas.
+    let Some((status, endpoint_id, mac)) = atlas_link_poll(&pool, &code_hash).await else {
+        return (StatusCode::BAD_GATEWAY, Json(json!({"error": "atlas_unreachable"}))).into_response();
+    };
+    let (endpoint_id, mac) = match (status.as_str(), endpoint_id, mac) {
+        ("requested", Some(e), Some(m)) if !e.is_empty() && !m.is_empty() => (e, m),
+        _ => return (StatusCode::CONFLICT, Json(json!({"error": "no_device_yet"}))).into_response(),
+    };
+    // Verify the MAC binds this EndpointId to the code (atlas can't forge it
+    // without the code; a mismatch means the id was tampered with in transit).
+    let expected = virtues_helpers::crypto::hmac_sha256_hex(code.as_bytes(), endpoint_id.as_bytes());
+    if !virtues_helpers::crypto::constant_time_eq(expected.as_bytes(), mac.as_bytes()) {
+        tracing::warn!("link_approve: MAC mismatch — endpoint_id may have been tampered");
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "mac_mismatch"}))).into_response();
+    }
+    // Enroll the peer (mint credential + allowlist + register with atlas).
+    let kind = body.kind.as_deref().unwrap_or("mobile_app");
+    let enrolled = match enroll_peer_core(&pool, &endpoint_id, kind, body.label.as_deref(), None).await {
+        Ok(e) => e,
+        Err(e) => return e.into_response(),
+    };
+    // Stash the bearer (ciphertext) for the iroh redeem + mark approved.
+    let action_ids_json = serde_json::to_value(&enrolled.action_ids).unwrap_or_else(|_| json!({}));
+    if let Err(e) = sqlx::query(
+        "UPDATE app_link_session SET status = 'approved', device_endpoint_id = $2, \
+         bearer_ciphertext = $3, credential_id = $4, action_ids = $5 WHERE code_hash = $1",
+    )
+    .bind(&code_hash)
+    .bind(&endpoint_id)
+    .bind(&enrolled.bearer_ciphertext)
+    .bind(&enrolled.credential_id)
+    .bind(&action_ids_json)
+    .execute(&pool)
+    .await
+    {
+        tracing::warn!(error = %e, "link_approve: stash failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+    }
+    // Tell atlas the device may proceed to redeem (best-effort).
+    if let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(&pool).await {
+        let http = crate::http_client::virtues_api_client();
+        let atlas = crate::virtues_api::atlas_url();
+        let _ = http
+            .post(format!("{}/link/approve", atlas.trim_end_matches('/')))
+            .json(&json!({"api_key": api_key, "code_hash": code_hash}))
+            .send()
+            .await;
+    }
+    (StatusCode::OK, Json(json!({"ok": true, "device_id": enrolled.device_id}))).into_response()
+}
+
+/// Poll atlas `/link/status` → `(status, device_endpoint_id, mac)`. `None` on a
+/// transport/auth failure.
+async fn atlas_link_poll(pool: &PgPool, code_hash: &str) -> Option<(String, Option<String>, Option<String>)> {
+    let api_key = crate::virtues_api::renew::read_api_key(pool).await.ok().flatten()?;
+    let http = crate::http_client::virtues_api_client();
+    let atlas = crate::virtues_api::atlas_url();
+    let resp = http
+        .post(format!("{}/link/status", atlas.trim_end_matches('/')))
+        .json(&json!({"api_key": api_key, "code_hash": code_hash}))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: Value = resp.json().await.ok()?;
+    let status = v.get("status")?.as_str()?.to_string();
+    let endpoint_id = v.get("device_endpoint_id").and_then(|x| x.as_str()).map(String::from);
+    let mac = v.get("mac").and_then(|x| x.as_str()).map(String::from);
+    Some((status, endpoint_id, mac))
 }
 
 // WG peer eviction is no longer done inline here. Kernel `wg0` state has a

@@ -548,6 +548,18 @@ pub fn verify_stripe_signature(
     Err(StripeWebhookError::SignatureMismatch)
 }
 
+/// HMAC-SHA256(key, msg) as lowercase hex. Used to authenticate a value with a
+/// shared secret across services/devices (e.g. the link-a-device MAC that binds a
+/// device EndpointId to the one-time code). Lives here because Lint 3 forbids HMAC
+/// primitives outside this module.
+pub fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = <Hmac<Sha256>>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(msg);
+    hex::encode(mac.finalize().into_bytes())
+}
+
 /// Length-independent-of-content byte comparison: returns `true` iff `a == b`,
 /// taking time proportional to the (equal) length rather than short-circuiting
 /// at the first differing byte. Use for comparing secrets/MACs/bearers so a

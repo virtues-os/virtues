@@ -219,6 +219,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pair/consume",
             post(crate::api::pair::consume_handler),
         )
+        // Anonymous like consume: gated by the one-time link code, reached over
+        // the allowlisted iroh channel (link-a-device redeem).
+        .route(
+            "/api/pair/link-redeem",
+            post(crate::api::pair::link_redeem_handler),
+        )
         .route("/auth/session", get(api::auth_session_handler))
         .route("/auth/signout", post(api::auth_signout_handler))
         // Internal API (virtues-api integration — has its own header-based auth)
@@ -285,6 +291,9 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/devices/self/node-id", post(crate::api::devices::set_self_node_id))
         .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
         .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
+        .route("/api/devices/link/start",   post(crate::api::devices::link_start))
+        .route("/api/devices/link/status",  post(crate::api::devices::link_status))
+        .route("/api/devices/link/approve", post(crate::api::devices::link_approve))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
         // ─── Sudo: gate for high-sensitivity actions ──────────────────
         .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
