@@ -7,7 +7,7 @@
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import SystemSection from "./SystemSection.svelte";
 	import PinnedSection from "./PinnedSection.svelte";
-	import { SYSTEM_SECTIONS } from "$lib/sidebar/sections";
+	import { SECTION_GROUPS } from "$lib/sidebar/sections";
 	import SearchModal from "./SearchModal.svelte";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
@@ -39,8 +39,14 @@
 	});
 
 	function handleKeydown(e: KeyboardEvent) {
+		// Cmd+Shift+T - New temporary (ghost) chat
+		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "t") {
+			e.preventDefault();
+			handleNewTemporaryChat();
+			return;
+		}
 		// Cmd+Shift+N - New page
-		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "n") {
+		if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "n") {
 			e.preventDefault();
 			handleNewPage();
 			return;
@@ -90,6 +96,14 @@
 		// Always open a new chat tab (forceNew ensures we don't reuse existing)
 		windowShellStore.openTabFromRoute("/", {
 			label: "New Chat",
+			forceNew: true,
+		});
+	}
+
+	function handleNewTemporaryChat() {
+		// Ghost chat — never saved to history
+		windowShellStore.openTabFromRoute("/?temporary=1", {
+			label: "Temporary Chat",
 			forceNew: true,
 		});
 	}
@@ -157,19 +171,8 @@
 		<WorkspaceHeader
 			collapsed={isCollapsed}
 			animationDelay={STAGGER_DELAY}
+			onSearch={handleSearch}
 		/>
-
-		<!-- Command bar -->
-		<button
-			class="command-bar"
-			class:collapsed={isCollapsed}
-			onclick={handleSearch}
-			title="Command (⌘K)"
-			style="animation-delay: {STAGGER_DELAY * 2}ms; --stagger-delay: {STAGGER_DELAY * 2}ms"
-		>
-			<span class="command-label">Command</span>
-			<kbd class="command-kbd">⌘K</kbd>
-		</button>
 
 		<nav
 			class="workspace-nav"
@@ -184,13 +187,21 @@
 				<!-- Pinned (user-curated; renders nothing when empty) -->
 				<PinnedSection collapsed={isCollapsed} />
 
-				<!-- System sections (from constants) -->
-				{#each SYSTEM_SECTIONS as section (section.id)}
-					<SystemSection
-						{section}
-						collapsed={isCollapsed}
-						accentColor={null}
-					/>
+				<!-- System destinations, grouped nouns-vs-verbs (from constants).
+				     The sidebar is a stable contents-page, not a mode rail. -->
+				{#each SECTION_GROUPS as group (group.id)}
+					<div class="nav-group">
+						{#if group.label && !isCollapsed}
+							<div class="nav-group-header">{group.label}</div>
+						{/if}
+						{#each group.items as section (section.id)}
+							<SystemSection
+								{section}
+								collapsed={isCollapsed}
+								accentColor={null}
+							/>
+						{/each}
+					</div>
 				{/each}
 			{/if}
 		</nav>
@@ -272,6 +283,26 @@
 		align-items: center;
 	}
 
+	/* Group header — the "contents-page" treatment: serif smallcaps,
+	   letterspaced, quiet. Carries the classical register of the panel. */
+	/* The reflect↔work seam: a blank gap between groups, no text header. */
+	.nav-group + .nav-group {
+		margin-top: 14px;
+	}
+
+	.nav-group-header {
+		font-family: var(--font-serif);
+		font-size: 11px;
+		font-weight: 500;
+		text-transform: uppercase;
+		letter-spacing: 0.14em;
+		color: var(--color-foreground-subtle);
+		padding: 0 8px;
+		margin: 16px 0 4px;
+		user-select: none;
+		animation: fadeSlideIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
+	}
+
 	.loading-state {
 		display: flex;
 		align-items: center;
@@ -285,49 +316,4 @@
 		animation: spin 1s linear infinite;
 	}
 
-	/* Command bar — visual separator between header and content */
-	.command-bar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 4px;
-		margin: 0 0 4px 8px;
-		padding: 5px 8px;
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
-		border: 1px solid transparent;
-		border-radius: 6px;
-		font-family: var(--font-sans);
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		transition: all 0.15s ease;
-		animation: fadeSlideIn 200ms cubic-bezier(0.2, 0, 0, 1) backwards;
-	}
-
-	.command-bar:hover {
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		color: var(--color-foreground-muted);
-	}
-
-	.command-bar.collapsed {
-		opacity: 0;
-		transform: translateX(-8px);
-		pointer-events: none;
-		transition:
-			opacity 150ms cubic-bezier(0.2, 0, 0, 1),
-			transform 150ms cubic-bezier(0.2, 0, 0, 1);
-	}
-
-	.command-label {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.command-kbd {
-		font-family: inherit;
-		font-size: 10px;
-		color: var(--color-foreground-subtle);
-		opacity: 0.7;
-	}
 </style>

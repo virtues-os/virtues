@@ -64,6 +64,43 @@ class ChatSessionStore {
 	}
 
 	/**
+	 * Apply a title locally (optimistic) so every surface bound to this store
+	 * updates immediately, independent of the server-persist / refetch race.
+	 * Upserts a stub row if the brand-new chat isn't in the list yet.
+	 */
+	applyTitle(chatId: string, title: string) {
+		const existing = this.sessions.find(s => s.conversation_id === chatId);
+		if (existing) {
+			this.sessions = this.sessions.map(s =>
+				s.conversation_id === chatId ? { ...s, title } : s
+			);
+		} else {
+			this.sessions = [
+				{
+					conversation_id: chatId,
+					title,
+					icon: null,
+					space_id: null,
+					last_updated: null,
+					first_message_at: '',
+					last_message_at: '',
+					message_count: 0,
+					model_used: null,
+					provider: '',
+				},
+				...this.sessions,
+			];
+		}
+	}
+
+	/**
+	 * Remove a chat locally (optimistic) after a successful delete.
+	 */
+	remove(chatId: string) {
+		this.sessions = this.sessions.filter(s => s.conversation_id !== chatId);
+	}
+
+	/**
 	 * Clear all sessions
 	 */
 	clear() {

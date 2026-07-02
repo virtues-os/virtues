@@ -166,7 +166,7 @@
 						try {
 							if (entityType === 'page') {
 								await updatePage(entityId, { icon });
-								await pagesStore.load();
+								pagesStore.updatePageLocally(entityId, { icon });
 							} else if (entityType === 'chat') {
 								await updateChat(entityId, { icon });
 								chatSessions.updateSessionIcon(entityId, icon);
@@ -201,7 +201,9 @@
 							windowShellStore.closeTabsByRoute(`/chat/${entityId}`);
 							// Delete the chat
 							await deleteChat(entityId);
-							// Invalidate cache and refresh sidebar
+							// Keep the shared session store (which the sidebar list now
+							// binds to) in sync, plus the page cache.
+							chatSessions.remove(entityId);
 							windowShellStore.invalidateViewCache();
 						}
 					} catch (err) {

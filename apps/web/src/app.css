@@ -34,13 +34,26 @@
 	background-attachment: fixed;
 }
 
-/* Google Sans Flex (sans) — self-hosted so it renders off-Apple (Jetson/Linux),
-   not just where it's a system font. One variable file covers the full 1–1000
-   weight range, so any weight resolves natively without nearest-weight matching. */
+/* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
+   where it's a system font. Three static weights cover regular/medium/bold. */
 @font-face {
-	font-family: 'Google Sans Flex';
-	src: url('/fonts/GoogleSansFlex-VariableFont.woff2') format('woff2');
-	font-weight: 1 1000;
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Bold.woff2') format('woff2');
+	font-weight: 700;
 	font-style: normal;
 	font-display: swap;
 }
@@ -133,8 +146,6 @@ h6 {
 	@apply text-2xl font-normal font-serif mb-5;
 	color: var(--color-foreground);
 	line-height: 1.5;
-	padding-bottom: 0.25rem;
-	border-bottom: 1px solid var(--color-border);
 }
 
 .markdown h3 {

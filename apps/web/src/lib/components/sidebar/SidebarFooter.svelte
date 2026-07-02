@@ -4,7 +4,6 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import SidebarNavItem from "./SidebarNavItem.svelte";
 	import SidebarTooltip from "./SidebarTooltip.svelte";
-	import SidebarSetupItem from "./SidebarSetupItem.svelte";
 	import type { SidebarNavItemData } from "./types";
 
 	interface Props {
@@ -95,10 +94,6 @@
 			</button>
 		</SidebarTooltip>
 	{:else}
-		<!-- The one persistent onboarding entry (replaces the old chat checklist
-		     + floating nudge). Self-hides once guided setup is done. -->
-		<SidebarSetupItem />
-
 		<!-- Settings folder header — icon↔chevron toggle (matches UnifiedFolder) -->
 		<button
 			onclick={toggleSettings}
