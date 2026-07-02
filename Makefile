@@ -68,14 +68,17 @@ VIRTUES_DEV_SKIP_SETUP ?= 1
 # (gitignored) and are reused — same GGUFs + llama-server flags the appliance
 # installer pins (see tools/virtues-installer/src/install.rs). `dev-core` points
 # at this dir so `virtues doctor` reports them baked.
-# `make dev` runs the embed/rerank sidecars by default (~2.5–3.5 GB RAM, ~0% CPU
+# `make dev` runs the embed/rerank sidecars by default (~1 GB RAM, ~0% CPU
 # idle). Skip them for a UI-only or low-RAM session: `make dev WITH_EMBED=0`.
 WITH_EMBED ?= 1
 VIRTUES_MODELS_DIR ?= $(CURDIR)/.data/models
-EMBED_GGUF  := bge-m3-FP16.gguf
-RERANK_GGUF := bge-reranker-v2-m3-Q8_0.gguf
-EMBED_GGUF_URL  := https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/$(EMBED_GGUF)
-RERANK_GGUF_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/$(RERANK_GGUF)
+# Must match the GGUFs virtues-core expects (see virtues-core/src/inference_report.rs):
+# EmbeddingGemma-300M is 768-dim + mean-pooled + task-prompted (embedder.rs);
+# serving bge-m3 here emits 1024-dim vectors that core rejects.
+EMBED_GGUF  := embeddinggemma-300m-qat-Q8_0.gguf
+RERANK_GGUF := gte-reranker-modernbert-base-Q8_0.gguf
+EMBED_GGUF_URL  := https://huggingface.co/ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/resolve/main/$(EMBED_GGUF)
+RERANK_GGUF_URL := https://huggingface.co/keisuke-miyako/gte-reranker-modernbert-base-gguf-q8_0/resolve/main/$(RERANK_GGUF)
 
 # Brew Postgres binaries (formula installs to opt/postgresql@17/bin).
 PG_BIN ?= $(shell brew --prefix postgresql@17 2>/dev/null)/bin
@@ -177,26 +180,28 @@ dev-web: ## Run the SvelteKit dev server on :$(DEV_WEB_PORT)
 
 # Ensure the llama-server binary + both GGUFs are present (idempotent; the
 # download runs once, then the `test -s` guards skip it). `make dev` calls this
-# up front so the ~1.8 GB fetch happens before the concurrent stack starts,
+# up front so the ~480 MB fetch happens before the concurrent stack starts,
 # rather than racing the cargo/vite output.
 _embed-ensure:
 	@command -v llama-server >/dev/null || { echo "→ installing llama.cpp (provides llama-server)"; brew install llama.cpp; }
 	@mkdir -p "$(VIRTUES_MODELS_DIR)"
 	@test -s "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)" || { \
-	  echo "→ downloading $(EMBED_GGUF) (~1.2 GB, one-time)…"; \
+	  echo "→ downloading $(EMBED_GGUF) (~320 MB, one-time)…"; \
 	  curl -fL --progress-bar "$(EMBED_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF).part" \
 	    && mv "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"; }
 	@test -s "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" || { \
-	  echo "→ downloading $(RERANK_GGUF) (~640 MB, one-time)…"; \
+	  echo "→ downloading $(RERANK_GGUF) (~160 MB, one-time)…"; \
 	  curl -fL --progress-bar "$(RERANK_GGUF_URL)" -o "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" \
 	    && mv "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF).part" "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)"; }
 
-# Run the two sidecars (assumes models present; ~2.5–3.5 GB resident, ~0% CPU
+# Run the two sidecars (assumes models present; ~1 GB resident, ~0% CPU
 # idle). `-lv 1` quiets llama.cpp's startup spam (device-info/slot/warmup) while
 # keeping the "model loaded / listening" line, warnings, and errors.
+# `--pooling mean` matches EmbeddingGemma (and the installer's unit); cls pooling
+# would emit the wrong sentence vector.
 _embed-run:
 	@trap 'kill 0' INT TERM; \
-	  llama-server -lv 1 --embedding --pooling cls -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192 & \
+	  llama-server -lv 1 --embedding --pooling mean -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192 & \
 	  llama-server -lv 1 --rerank                  -m "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192 & \
 	  wait
 

@@ -254,6 +254,33 @@ pub async fn run(
         }
     }
 
+    // Model-set drift check. `virtues upgrade` swaps binaries but does NOT
+    // fetch model GGUFs or rewrite the sidecar `-m`/pooling in the unit files —
+    // those are provisioned by the installer. So a release that changes the
+    // model set (e.g. bge → EmbeddingGemma) leaves the box serving the OLD
+    // models against a runtime that expects the new ones (embeds get rejected
+    // at the native-dim check). Detect it and tell the user exactly how to
+    // reconcile, instead of degrading search silently.
+    let missing: Vec<&str> = crate::inference_report::resolution_report()
+        .models
+        .iter()
+        .filter(|m| matches!(m.source, crate::inference_report::ModelSource::Download))
+        .map(|m| m.gguf_file)
+        .collect();
+    if !missing.is_empty() {
+        eprintln!();
+        eprintln!("  ⚠ this release expects models not present on the box:");
+        for f in &missing {
+            eprintln!("      · {f}");
+        }
+        eprintln!("    `virtues upgrade` doesn't migrate the model set — the sidecars are");
+        eprintln!("    still on the old GGUFs, so search/embeddings will fail until you");
+        eprintln!("    re-run the installer (fetches the new models + rewrites the units):");
+        eprintln!();
+        eprintln!("      curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION={target_tag} sh");
+        eprintln!();
+    }
+
     println!();
     println!("✓ upgraded to {target_tag}. Rollback copy kept at {bak}.");
     Ok(())

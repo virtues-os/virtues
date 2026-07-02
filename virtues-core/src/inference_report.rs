@@ -90,7 +90,7 @@ pub fn resolution_report() -> ResolutionReport {
     ];
     ResolutionReport {
         accelerator: "llama-server".to_string(),
-        precision: "F16 embed / Q8_0 rerank".to_string(),
+        precision: "Q8_0 (QAT) embed / Q8_0 rerank".to_string(),
         models_dir: Some(dir),
         models,
     }
