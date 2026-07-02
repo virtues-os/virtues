@@ -96,17 +96,31 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let pool = PgPool::from_ref(state);
 
-        // 1. Device bearer — transport-agnostic app-layer credential. A paired
-        //    non-browser device presents `Authorization: Bearer <token>`. The
-        //    bearer IS the credential, so this authenticates over ANY transport
-        //    (Virtues WG, a BYO overlay, plain LAN) — the network is never the
-        //    trust boundary. An explicit bearer means "I am a device": a bad
-        //    one fails closed rather than falling through to cookie/loopback.
+        // 1. iroh transport identity — the primary credential for app/iroh
+        //    clients. The QUIC raw-public-key handshake PROVED the peer's
+        //    EndpointId, and `serve()` only forwards allowlisted (paired) peers,
+        //    stamping the proven id as `ProvenPeer`. Map it to the device: the
+        //    allowlisted key IS the credential. Unspoofable — a typed extension
+        //    set post-handshake, never a header, and only the iroh serve path
+        //    sets it (the plain :8000 listener never does). A proven id that
+        //    isn't a known device falls through to the paths below.
+        if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
+            let node_id = peer.0.to_string();
+            if let Some(user) = validate_iroh_peer(&pool, &node_id).await {
+                return Ok(user);
+            }
+        }
+
+        // 2. Device bearer — external/programmatic callers (webhooks) and any
+        //    non-iroh client present `Authorization: Bearer <token>`. The bearer
+        //    IS the credential, so this authenticates over ANY transport — the
+        //    network is never the trust boundary. A bad one fails closed rather
+        //    than falling through to cookie/loopback.
         if let Some(token) = read_bearer(&parts.headers) {
             return validate_bearer(&pool, &token).await.ok_or_else(unauthorized);
         }
 
-        // 2. Loopback console — a process on the box itself, connecting
+        // 3. Loopback console — a process on the box itself, connecting
         //    directly to 127.0.0.1 / ::1. Physical access wins the threat
         //    model. Refused when a forwarding header is present, because a
         //    reverse proxy in front of the box also connects from loopback
@@ -126,7 +140,8 @@ where
             });
         }
 
-        // 3. Session cookie — a browser.
+        // 4. Session cookie — a browser (legacy; slated for removal in the
+        //    iroh-identity collapse — apps now auth by key via method #1).
         let jar = CookieJar::from_headers(&parts.headers);
         if let Some(session_token) = read_session_cookie(&jar) {
             if let Some(user) = validate_and_touch(&pool, &session_token).await {
@@ -134,7 +149,7 @@ where
             }
         }
 
-        // 4. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
+        // 5. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
         //    isn't exposed; the request reaches us through the vite proxy, which
         //    defeats the loopback bypass above). Authenticate as the console
         //    owner so `make dev` lands straight in the app with no pairing — the
@@ -201,6 +216,37 @@ pub(crate) async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUs
 
     // Best-effort last-seen touch on both the credential and the device row.
     let _ = crate::api::credentials::update_last_seen(pool, &credential_id).await;
+    let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
+        .bind(&device_id)
+        .execute(pool)
+        .await;
+
+    Some(AuthUser {
+        id: user_id,
+        device_id,
+        device_label,
+    })
+}
+
+/// Authenticate a device by its proven, allowlisted iroh EndpointId (hex).
+/// Mirrors [`validate_bearer`]'s join but keyed on `app_device.node_id` — no
+/// bearer/credential row involved. The caller has already established (via the
+/// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
+/// a live device row owning it is sufficient to authenticate. Touches last-seen.
+pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<AuthUser> {
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT u.id, d.id, d.label \
+         FROM app_device d \
+         JOIN app_auth_user u ON u.id = d.user_id \
+         WHERE d.node_id = $1 AND d.revoked_at IS NULL",
+    )
+    .bind(node_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let (user_id, device_id, device_label) = row?;
+
     let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
         .bind(&device_id)
         .execute(pool)
