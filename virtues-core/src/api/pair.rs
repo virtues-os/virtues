@@ -547,7 +547,7 @@ pub async fn deny_handler(
 /// This is the fix for the `__device__`-matches-nothing bug: a collector that
 /// declares its real source now gets `reconcile_templates` to create its
 /// per-credential webhook actions.
-fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<String, ()> {
+pub(crate) fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<String, ()> {
     match source.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => {
             if crate::action_templates::lookup_source(s).is_none() {
@@ -617,8 +617,8 @@ pub struct ConsumeResponse {
 /// The box's iroh reach ticket: `(EndpointId, relay_url)`. A device dials the
 /// box's EndpointId through the relay (then upgrades to hole-punched direct).
 /// `None` until the box's iroh endpoint is up; the client can pick it up later
-/// from `box/status`.
-fn box_reach() -> Option<(String, String)> {
+/// from `box/status` or `GET /api/devices/self/reach`.
+pub(crate) fn box_reach() -> Option<(String, String)> {
     if !crate::relay::is_relay_registered() {
         return None;
     }
@@ -751,44 +751,20 @@ pub async fn consume_handler(
     // successful pair). `consumed_by_device` is back-filled after the device
     // INSERT below (the FK would reject it here). On error we surface the DB
     // message so a real bug doesn't masquerade as `invalid_or_expired_token`.
-    let claimed: Option<(String,)> = match sqlx::query_as(
-        "WITH matched AS ( \
-             SELECT id, kind FROM app_pair_token \
-             WHERE token_hash = $1 \
-               AND status = 'authorized' \
-               AND expires_at > now() \
-             FOR UPDATE \
-         ), \
-         consumed AS ( \
-             UPDATE app_pair_token t \
-             SET status = 'consumed', consumed_at = now() \
-             FROM matched m \
-             WHERE t.id = m.id AND m.kind = 'oneoff' \
-             RETURNING t.id \
-         ) \
-         SELECT id FROM matched",
-    )
-    .bind(&token_hash)
-    .fetch_optional(&mut *tx)
-    .await
-    {
-        Ok(row) => row,
+    let token_id = match claim_pair_token(&mut tx, &token_hash).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "invalid_or_expired_token"})),
+            )
+                .into_response();
+        }
         Err(e) => {
             tracing::warn!("pair consume: token claim failed: {e:#}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "internal"})),
-            )
-                .into_response();
-        }
-    };
-
-    let token_id = match claimed {
-        Some((id,)) => id,
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({"error": "invalid_or_expired_token"})),
             )
                 .into_response();
         }
@@ -1195,7 +1171,7 @@ pub async fn provision_handler(
 /// uses to route stream flushes to `POST /webhook/<action_id>`. Lifted
 /// out of the legacy `pair_complete_handler` so the unified pair flow
 /// produces identical device-side behavior.
-async fn assemble_action_fanout(
+pub(crate) async fn assemble_action_fanout(
     pool: &PgPool,
     credential_id: &str,
 ) -> Result<std::collections::HashMap<String, String>, crate::Error> {
@@ -1205,9 +1181,41 @@ async fn assemble_action_fanout(
         .map_err(|e| crate::Error::Other(format!("fanout_action_ids: {e}")))
 }
 
+/// Atomically claim a pair token by its hash: locks the valid 'authorized' row
+/// `FOR UPDATE` (so concurrent redeems of a one-off serialize), marks a `oneoff`
+/// token 'consumed' (a `standing` code is validated but left multi-use), and
+/// returns the token id. `Ok(None)` = no valid/unexpired token. Shared by the
+/// HTTP consume handler and any other enrollment path.
+pub(crate) async fn claim_pair_token(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    token_hash: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "WITH matched AS ( \
+             SELECT id, kind FROM app_pair_token \
+             WHERE token_hash = $1 \
+               AND status = 'authorized' \
+               AND expires_at > now() \
+             FOR UPDATE \
+         ), \
+         consumed AS ( \
+             UPDATE app_pair_token t \
+             SET status = 'consumed', consumed_at = now() \
+             FROM matched m \
+             WHERE t.id = m.id AND m.kind = 'oneoff' \
+             RETURNING t.id \
+         ) \
+         SELECT id FROM matched",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row.map(|(id,)| id))
+}
+
 /// Insert the `app_device` row for a freshly-paired/provisioned device. Shared
-/// by `consume_handler` and `provision_handler`.
-async fn insert_device_row(
+/// by `consume_handler`, `provision_handler`, and `enroll_peer`.
+pub(crate) async fn insert_device_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: &str,
     kind: &str,
@@ -1240,7 +1248,7 @@ async fn insert_device_row(
 /// credential is minted at claim time and is permanent), `Some(deadline)` for
 /// the provision path (minted live before the device scans, so it must lapse if
 /// never claimed — see `credentials::validate_device_token` / `update_last_seen`).
-async fn insert_credential_row(
+pub(crate) async fn insert_credential_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     bp: &BearerPack,
     source_id: &str,
@@ -1269,12 +1277,12 @@ async fn insert_credential_row(
 
 // ─── Bearer pack builder (extracted from consume_handler for tx hygiene) ────
 
-struct BearerPack {
-    credential_id: String,
-    bearer: String,
-    ciphertext: String,
-    lookup_hash: String,
-    metadata: Value,
+pub(crate) struct BearerPack {
+    pub(crate) credential_id: String,
+    pub(crate) bearer: String,
+    pub(crate) ciphertext: String,
+    pub(crate) lookup_hash: String,
+    pub(crate) metadata: Value,
 }
 
 struct SessionPack {
@@ -1287,14 +1295,14 @@ struct SessionPack {
 /// HTTP types) so the helper stays testable; the caller maps to a response
 /// at the boundary.
 #[derive(Debug)]
-enum BearerPackError {
+pub(crate) enum BearerPackError {
     EncryptionUnavailable,
     EncryptionFailed,
     LookupHashFailed,
 }
 
 impl BearerPackError {
-    fn into_response(self) -> axum::response::Response {
+    pub(crate) fn into_response(self) -> axum::response::Response {
         let code = match self {
             BearerPackError::EncryptionUnavailable => "encryption_unavailable",
             BearerPackError::EncryptionFailed => "encryption_failed",
@@ -1307,7 +1315,7 @@ impl BearerPackError {
 /// Mint a bearer + its encrypted form + lookup hash + metadata blob. Anything
 /// CPU- or IO-bound (KMS, hashing) happens here, BEFORE we open a DB
 /// transaction in `consume_handler`.
-fn build_bearer_pack(
+pub(crate) fn build_bearer_pack(
     kind: &str,
     label: &str,
     device_info: &Option<Value>,

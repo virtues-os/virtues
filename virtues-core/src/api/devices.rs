@@ -305,6 +305,131 @@ pub async fn set_self_node_id(
     }
 }
 
+/// `GET /api/devices/self/reach` — the calling device (authed by its own bearer)
+/// re-reads the box's *current* iroh reach ticket `{box_node_id, relay_url}`.
+///
+/// Devices freeze the ticket at pair time; this lets them refresh it (on launch
+/// or after a dial failure) instead of being stuck if the box had no relay reach
+/// when they paired, or the relay URL later changed. Read-only; no state change.
+pub async fn get_self_reach(State(_pool): State<PgPool>, _user: AuthUser) -> impl IntoResponse {
+    let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
+        Some((n, r)) => (Some(n), Some(r)),
+        None => (None, None),
+    };
+    (
+        StatusCode::OK,
+        Json(json!({ "box_node_id": box_node_id, "relay_url": relay_url })),
+    )
+        .into_response()
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct EnrollPeerRequest {
+    /// The new device's iroh EndpointId (hex), generated on that device and
+    /// handed to this (already-paired) device out-of-band.
+    pub peer_node_id: String,
+    /// The new device's kind: `mobile_app` | `desktop_app` | `sensor`.
+    pub kind: String,
+    /// Optional human label for the Devices page.
+    pub label: Option<String>,
+    /// Optional device metadata (name/model/os) for the Devices page.
+    pub device_info: Option<Value>,
+}
+
+/// `POST /api/devices/enroll-peer` — peer-vouched enrollment. An **already-paired**
+/// device (authed by its own bearer) vouches for a NEW device by its EndpointId:
+/// the box mints the new device's credential + allowlists its EndpointId, so the
+/// new device can reach the box over the relay *once it's registered* (no relay
+/// grace-pass, no chicken-egg). The returned bearer is relayed back to the new
+/// device by the vouching device over a trusted out-of-band channel.
+///
+/// This is the iroh-native replacement for the off-LAN "provision" QR: the new
+/// device generates its own key first, so its EndpointId is known at enrollment.
+pub async fn enroll_peer(
+    State(pool): State<PgPool>,
+    _user: AuthUser,
+    Json(body): Json<EnrollPeerRequest>,
+) -> impl IntoResponse {
+    let peer_node_id = body.peer_node_id.trim();
+    if peer_node_id.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_peer_node_id"}))).into_response();
+    }
+    let kind = body.kind.trim();
+    if !matches!(kind, "mobile_app" | "desktop_app" | "sensor") {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"}))).into_response();
+    }
+    let source_id = match crate::api::pair::resolve_source_id(kind, None) {
+        Ok(s) => s,
+        Err(()) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "unknown_source"}))).into_response(),
+    };
+    let label = body
+        .label
+        .as_deref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| kind.to_string());
+
+    // Mint the encrypted bearer OUTSIDE the tx (crypto/KMS).
+    let bp = match crate::api::pair::build_bearer_pack(kind, &label, &body.device_info) {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+    let device_id = crate::ids::generate_id(
+        crate::ids::DEVICE_PREFIX,
+        &[peer_node_id, &Utc::now().to_rfc3339()],
+    );
+    let device_info = body.device_info.clone().unwrap_or_else(|| json!({}));
+
+    let mut tx = match pool.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(error = %e, "enroll_peer: begin tx failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+        }
+    };
+    if let Err(e) = crate::api::pair::insert_device_row(
+        &mut tx, &device_id, kind, &label, &device_info, None, Some(peer_node_id),
+    )
+    .await
+    {
+        // Unique-index violation → this EndpointId is already an active device.
+        tracing::warn!(error = %e, "enroll_peer: device insert failed");
+        return (StatusCode::CONFLICT, Json(json!({"error": "peer_already_enrolled"}))).into_response();
+    }
+    if let Err(e) = crate::api::pair::insert_credential_row(&mut tx, &bp, &source_id, &label, &device_id, None).await {
+        tracing::warn!(error = %e, "enroll_peer: credential insert failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "credential_insert_failed"}))).into_response();
+    }
+    if let Err(e) = tx.commit().await {
+        tracing::warn!(error = %e, "enroll_peer: commit failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+    }
+
+    // Fan out per-credential actions, then allowlist the new EndpointId + register
+    // it with atlas so the relay admits it.
+    let action_ids = crate::api::pair::assemble_action_fanout(&pool, &bp.credential_id)
+        .await
+        .unwrap_or_default();
+    crate::relay::after_pairing_change(pool.clone());
+
+    let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
+        Some((n, r)) => (Some(n), Some(r)),
+        None => (None, None),
+    };
+    (
+        StatusCode::OK,
+        Json(json!({
+            "device_id": device_id,
+            "credential_id": bp.credential_id,
+            "bearer": bp.bearer,
+            "action_ids": action_ids,
+            "box_node_id": box_node_id,
+            "relay_url": relay_url,
+        })),
+    )
+        .into_response()
+}
+
 // WG peer eviction is no longer done inline here. Kernel `wg0` state has a
 // single writer — the `virtues-wireguard` daemon — which reconciles from the
 // active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
