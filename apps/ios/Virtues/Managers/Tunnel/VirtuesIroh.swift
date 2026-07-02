@@ -399,6 +399,30 @@ fileprivate class UniffiHandleMap<T> {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -477,8 +501,9 @@ public protocol IrohTransportProtocol : AnyObject {
      * response bytes. Swift serializes its `URLRequest` to bytes and parses the
      * returned bytes back into a response — the box serves each stream as a
      * normal hyper HTTP/1 connection.
+     * `background` = called from an iOS background task → shorter `REQUEST_TIMEOUT_BG`.
      */
-    func request(rawHttp: Data) async throws  -> Data
+    func request(rawHttp: Data, background: Bool) async throws  -> Data
     
 }
 
@@ -540,12 +565,14 @@ open class IrohTransport:
      * Dial the box: `relay_url` = our relay, `box_id_hex` = the box's EndpointId
      * (from the pairing ticket), `device_seed_hex` = this device's 32-byte iroh
      * seed (generated at pairing; its EndpointId is on the box's allowlist).
+     * `background` = dialing from an iOS background task → use the shorter
+     * `DIAL_TIMEOUT_BG` budget so a cold dial bails instead of getting killed.
      */
-public static func dial(relayUrl: String, boxIdHex: String, deviceSeedHex: String)async throws  -> IrohTransport {
+public static func dial(relayUrl: String, boxIdHex: String, deviceSeedHex: String, background: Bool)async throws  -> IrohTransport {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_virtues_iroh_ffi_fn_constructor_irohtransport_dial(FfiConverterString.lower(relayUrl),FfiConverterString.lower(boxIdHex),FfiConverterString.lower(deviceSeedHex)
+                uniffi_virtues_iroh_ffi_fn_constructor_irohtransport_dial(FfiConverterString.lower(relayUrl),FfiConverterString.lower(boxIdHex),FfiConverterString.lower(deviceSeedHex),FfiConverterBool.lower(background)
                 )
             },
             pollFunc: ffi_virtues_iroh_ffi_rust_future_poll_pointer,
@@ -585,14 +612,15 @@ open func close()async  {
      * response bytes. Swift serializes its `URLRequest` to bytes and parses the
      * returned bytes back into a response — the box serves each stream as a
      * normal hyper HTTP/1 connection.
+     * `background` = called from an iOS background task → shorter `REQUEST_TIMEOUT_BG`.
      */
-open func request(rawHttp: Data)async throws  -> Data {
+open func request(rawHttp: Data, background: Bool)async throws  -> Data {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_virtues_iroh_ffi_fn_method_irohtransport_request(
                     self.uniffiClonePointer(),
-                    FfiConverterData.lower(rawHttp)
+                    FfiConverterData.lower(rawHttp),FfiConverterBool.lower(background)
                 )
             },
             pollFunc: ffi_virtues_iroh_ffi_rust_future_poll_rust_buffer,
@@ -838,10 +866,10 @@ private var initializationResult: InitializationResult = {
     if (uniffi_virtues_iroh_ffi_checksum_method_irohtransport_close() != 16468) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_virtues_iroh_ffi_checksum_method_irohtransport_request() != 57181) {
+    if (uniffi_virtues_iroh_ffi_checksum_method_irohtransport_request() != 51441) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_virtues_iroh_ffi_checksum_constructor_irohtransport_dial() != 1302) {
+    if (uniffi_virtues_iroh_ffi_checksum_constructor_irohtransport_dial() != 44278) {
         return InitializationResult.apiChecksumMismatch
     }
 

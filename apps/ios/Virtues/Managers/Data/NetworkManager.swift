@@ -279,6 +279,33 @@ class NetworkManager: ObservableObject {
         _ = try? await BoxTransport.shared.send(request, session: session)
     }
 
+    /// Best-effort: re-pull the box's CURRENT reach ticket and persist it, so a
+    /// device whose `relay_url` changed (or that paired before the box had relay
+    /// reach) self-heals without a re-pair. Uses the existing iroh transport, so
+    /// it only helps while the current ticket still reaches the box (e.g. the
+    /// relay URL rotated); a fully-broken ticket still needs a re-pair. Never
+    /// throws; never clears a good ticket if the box reports no reach.
+    func refreshReach() async {
+        guard let base = DeviceManager.shared.configuration.baseURL,
+              let bearer = KeychainStore.shared.loadBearer(),
+              let url = URL(string: "\(base.absoluteString)/api/devices/self/reach")
+        else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 15
+        guard let (data, http) = try? await BoxTransport.shared.send(request, session: session),
+              http.statusCode == 200 else { return }
+        struct ReachResponse: Decodable { let boxNodeId: String?; let relayUrl: String? }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let reach = try? decoder.decode(ReachResponse.self, from: data),
+              let node = reach.boxNodeId, !node.isEmpty else { return }
+        await MainActor.run {
+            DeviceManager.shared.updateReach(boxNodeId: node, relayUrl: reach.relayUrl)
+        }
+    }
+
     // MARK: - Action runs (server-side outcome, 2B)
 
     /// Fetch recent server-side run history for one of this device's actions via
