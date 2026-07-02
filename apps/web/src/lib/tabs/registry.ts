@@ -13,6 +13,7 @@ import type { TabType, ParsedRoute } from './types';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 // Import all view components
+import HomeView from '$lib/components/tabs/views/HomeView.svelte';
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
 import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
@@ -78,18 +79,37 @@ export interface TabDefinition {
 // Complete tab registry with namespace-based URL patterns
 export const tabRegistry: Record<TabType, TabDefinition> = {
 	// ========================================================================
+	// HOME: /home — the default landing / "Return" page (synthesis surface)
+	// ========================================================================
+	home: {
+		match: (path) => path === '/home',
+		parse: () => ({
+			type: 'home',
+			label: 'Home',
+			icon: 'ri:sparkling-2-line',
+		}),
+		serialize: () => 'home',
+		deserialize: () => '/home',
+		icon: 'ri:sparkling-2-line',
+		defaultLabel: 'Home',
+		component: HomeView,
+	},
+
+	// ========================================================================
 	// CHAT NAMESPACE: /, /chat, /chat/chat_{id}
 	// ========================================================================
 	chat: {
 		match: (path) => path === '/' || path === '/chat' || /^\/chat\/chat_[^/]+$/.test(path),
-		parse: (path) => {
+		parse: (path, params) => {
 			// Root or /chat = new chat
 			if (path === '/' || path === '/chat') {
+				// Preserve the temporary/ghost flag so ChatView can start in ghost mode.
+				const temporary = params?.get('temporary') === '1';
 				return {
 					type: 'chat',
-					label: 'New Chat',
-					icon: 'ri:chat-1-line',
-					normalizedRoute: '/chat',
+					label: temporary ? 'Temporary Chat' : 'New Chat',
+					icon: temporary ? 'ri:ghost-line' : 'ri:chat-1-line',
+					normalizedRoute: temporary ? '/chat?temporary=1' : '/chat',
 				};
 			}
 			// Detail view
@@ -468,7 +488,9 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// NARRATIVE IDENTITY: /narrative-identity
 	// ========================================================================
 	'narrative-identity': {
-		match: (path) => path === '/narrative-identity',
+		match: (path) =>
+			path === '/narrative-identity' ||
+			/^\/narrative-identity\/(past|present|future)$/.test(path),
 		parse: () => ({
 			type: 'narrative-identity',
 			label: 'Narrative Identity',
@@ -810,6 +832,8 @@ export function parseRoute(route: string): ParsedRoute {
 	// Try to match against registry in priority order
 	// Note: Order matters for overlapping patterns
 	const orderedTypes: TabType[] = [
+		// Landing surface (exact /home; no overlap with '/')
+		'home',
 		// Specific patterns first
 		'source', // Source list and detail views
 		'tools', // Tools management page

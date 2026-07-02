@@ -4,7 +4,10 @@
 	import { cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
+	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import { thingsStore } from "$lib/stores/things.svelte";
+	import { spaceStore } from "$lib/stores/space.svelte";
 	import {
 		getAvailableThemes,
 		getThemeDisplayName,
@@ -95,6 +98,17 @@
 			action: () => windowShellStore.openTabFromRoute("/"),
 		},
 		{
+			id: "new-temp-chat",
+			label: "New Temporary Chat",
+			icon: "ri:ghost-line",
+			shortcut: "⌘⇧T",
+			action: () =>
+				windowShellStore.openTabFromRoute("/?temporary=1", {
+					label: "Temporary Chat",
+					forceNew: true,
+				}),
+		},
+		{
 			id: "new-page",
 			label: "New Page",
 			icon: "ri:file-text-line",
@@ -129,49 +143,82 @@
 		},
 	];
 
-	// Filter results based on search
+	// Type scope — a leading `#chats` / `#pages` / `#actions` / `#things` / `#spaces`
+	// token narrows results to one kind. Singular and plural both work (`#chat` ==
+	// `#chats`). The token is stripped from the text that's actually matched.
+	type Scope = "chats" | "pages" | "actions" | "things" | "spaces";
+	const SCOPE_ALIASES: Record<string, Scope> = {
+		chat: "chats", chats: "chats",
+		page: "pages", pages: "pages",
+		action: "actions", actions: "actions",
+		thing: "things", things: "things",
+		space: "spaces", spaces: "spaces",
+	};
+	const scope = $derived.by<Scope | null>(() => {
+		const token = searchQuery.trimStart().match(/^#(\w+)/)?.[1]?.toLowerCase();
+		return token ? (SCOPE_ALIASES[token] ?? null) : null;
+	});
+	// Only strip the leading token when it resolved to a real scope, so a bare `#`
+	// or an unknown `#foo` is still searched literally.
+	const effectiveQuery = $derived(
+		scope ? searchQuery.trim().replace(/^#\w+\s*/, "") : searchQuery.trim(),
+	);
+
+	// Filter results based on search (respecting any active type scope). Things and
+	// spaces only surface once there's a query (or their explicit scope), so the
+	// bare ⌘K stays lean — actions/chats/pages recents only.
 	const filteredResults = $derived.by(() => {
-		const query = searchQuery.toLowerCase().trim();
-
-		if (!query) {
-			// Show quick actions, recent chats, and recent pages when empty
-			return {
-				actions: quickActions,
-				chats: chatSessions.sessions.slice(0, 5),
-				pages: pagesStore.pages.slice(0, 5),
-			};
-		}
-
-		// Filter quick actions
-		const matchedActions = quickActions.filter((a) =>
-			a.label.toLowerCase().includes(query),
-		);
-
-		// Filter chats
-		const matchedChats = chatSessions.sessions
-			.filter((c) =>
-				(c.title || "Untitled").toLowerCase().includes(query),
-			)
-			.slice(0, 5);
-
-		// Filter pages
-		const matchedPages = pagesStore.pages
-			.filter((p) =>
-				(p.title || "Untitled").toLowerCase().includes(query),
-			)
-			.slice(0, 5);
+		const query = effectiveQuery.toLowerCase().trim();
+		const limit = scope ? 25 : 5;
+		const match = (name: string | null) =>
+			!query || (name || "Untitled").toLowerCase().includes(query);
+		const inScope = (s: Scope) => scope === s || (!scope && !!query);
 
 		return {
-			actions: matchedActions,
-			chats: matchedChats,
-			pages: matchedPages,
+			actions:
+				!scope || scope === "actions"
+					? quickActions.filter((a) => !query || a.label.toLowerCase().includes(query))
+					: [],
+			chats:
+				!scope || scope === "chats"
+					? chatSessions.sessions.filter((c) => match(c.title)).slice(0, limit)
+					: [],
+			pages:
+				!scope || scope === "pages"
+					? pagesStore.pages.filter((p) => match(p.title)).slice(0, limit)
+					: [],
+			things: inScope("things")
+				? thingsStore.things.filter((t) => match(t.name)).slice(0, limit)
+				: [],
+			spaces: inScope("spaces")
+				? spaceStore.spaces.filter((s) => match(s.name)).slice(0, limit)
+				: [],
 		};
 	});
 
-	// Total results count for keyboard navigation
-	const totalResults = $derived(
-		filteredResults.actions.length + filteredResults.chats.length + filteredResults.pages.length,
-	);
+	// "Ask Virtues" — when there's free text (and no #scope), the top row opens a
+	// real chat with the query. It occupies index 0, shifting nav results down.
+	const showAsk = $derived(!scope && effectiveQuery.trim().length > 0);
+	const askOffset = $derived(showAsk ? 1 : 0);
+
+	// One flat, ordered list of selectable rows — the single source of truth for
+	// keyboard nav and Enter. Order must match the render order below.
+	type Row =
+		| { kind: "ask" }
+		| { kind: "action"; item: (typeof quickActions)[number] }
+		| { kind: "chat"; item: (typeof chatSessions.sessions)[number] }
+		| { kind: "page"; item: (typeof pagesStore.pages)[number] }
+		| { kind: "thing"; item: (typeof thingsStore.things)[number] }
+		| { kind: "space"; item: (typeof spaceStore.spaces)[number] };
+	const orderedRows = $derived.by<Row[]>(() => [
+		...(showAsk ? [{ kind: "ask" } as Row] : []),
+		...filteredResults.actions.map((item) => ({ kind: "action", item }) as Row),
+		...filteredResults.chats.map((item) => ({ kind: "chat", item }) as Row),
+		...filteredResults.pages.map((item) => ({ kind: "page", item }) as Row),
+		...filteredResults.things.map((item) => ({ kind: "thing", item }) as Row),
+		...filteredResults.spaces.map((item) => ({ kind: "space", item }) as Row),
+	]);
+	const totalResults = $derived(orderedRows.length);
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (mode === "theme") {
@@ -213,39 +260,42 @@
 	}
 
 	function selectCurrentItem() {
-		const actionsCount = filteredResults.actions.length;
-		const chatsCount = filteredResults.chats.length;
+		const row = orderedRows[selectedIndex];
+		if (!row) return;
 
-		if (selectedIndex < actionsCount) {
-			// It's an action
-			const action = filteredResults.actions[selectedIndex];
-			action.action();
-			if (!action.keepOpen) {
+		switch (row.kind) {
+			case "ask":
+				askVirtues(effectiveQuery.trim());
 				onClose();
-			}
-		} else if (selectedIndex < actionsCount + chatsCount) {
-			// It's a chat
-			const chatIndex = selectedIndex - actionsCount;
-			const chat = filteredResults.chats[chatIndex];
-			if (chat) {
-				windowShellStore.openTabFromRoute(
-					`/chat/${chat.conversation_id}`,
-					{
-						label: chat.title || "Chat",
-					},
-				);
-				onClose();
-			}
-		} else {
-			// It's a page
-			const pageIndex = selectedIndex - actionsCount - chatsCount;
-			const page = filteredResults.pages[pageIndex];
-			if (page) {
-				windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-					label: page.title || "Untitled",
+				break;
+			case "action":
+				row.item.action();
+				if (!row.item.keepOpen) onClose();
+				break;
+			case "chat":
+				windowShellStore.openTabFromRoute(`/chat/${row.item.conversation_id}`, {
+					label: row.item.title || "Chat",
 				});
 				onClose();
-			}
+				break;
+			case "page":
+				windowShellStore.openTabFromRoute(`/page/${row.item.id}`, {
+					label: row.item.title || "Untitled",
+				});
+				onClose();
+				break;
+			case "thing":
+				windowShellStore.openTabFromRoute(`/thing/${row.item.id}`, {
+					label: row.item.name || "Untitled",
+				});
+				onClose();
+				break;
+			case "space":
+				windowShellStore.openTabFromRoute(`/space/${row.item.id}`, {
+					label: row.item.name || "Untitled",
+				});
+				onClose();
+				break;
 		}
 	}
 
@@ -267,8 +317,25 @@
 			if (pagesStore.pages.length === 0 && !pagesStore.pagesLoading) {
 				pagesStore.loadPages();
 			}
+			// Load chat sessions so #chats search has data even on a fresh load
+			if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) {
+				chatSessions.load();
+			}
+			// Same for things and spaces so their scopes have data to match.
+			if (thingsStore.things.length === 0 && !thingsStore.loading) {
+				thingsStore.load();
+			}
+			if (spaceStore.spaces.length === 0 && !spaceStore.loading) {
+				spaceStore.load();
+			}
 		}
 		wasOpen = open;
+	});
+
+	// Keep the highlighted row valid as the result set changes with the query.
+	$effect(() => {
+		void searchQuery;
+		selectedIndex = 0;
 	});
 
 	// Focus input when modal is open and input is available
@@ -356,11 +423,14 @@
 						width="18"
 						class="search-icon"
 					/>
+					{#if scope}
+						<span class="scope-chip">#{scope}</span>
+					{/if}
 					<input
 						bind:this={inputEl}
 						bind:value={searchQuery}
 						type="text"
-						placeholder="Search chats, pages, or actions..."
+						placeholder="Search… (try #chats, #pages, #things, #spaces)"
 						class="search-input"
 					/>
 					<kbd class="escape-hint">Esc</kbd>
@@ -368,21 +438,38 @@
 
 				<!-- Results -->
 				<div class="results">
+				{#if showAsk}
+					<button
+						class="result-item ask-row"
+						class:selected={selectedIndex === 0}
+						data-result-index={0}
+						onclick={() => {
+							askVirtues(effectiveQuery.trim());
+							onClose();
+						}}
+						onmouseenter={() => (selectedIndex = 0)}
+					>
+						<Icon icon="ri:sparkling-2-line" width="16" class="result-icon" />
+						<span class="result-label">Ask Virtues — <span class="ask-q">"{effectiveQuery.trim()}"</span></span>
+						<kbd class="result-shortcut">⏎</kbd>
+					</button>
+				{/if}
 				{#if filteredResults.actions.length > 0}
 					<div class="result-group">
 						<span class="group-label">Quick Actions</span>
 						{#each filteredResults.actions as action, i}
+							{@const index = askOffset + i}
 							<button
 								class="result-item"
-								class:selected={selectedIndex === i}
-								data-result-index={i}
+								class:selected={selectedIndex === index}
+								data-result-index={index}
 								onclick={() => {
 									action.action();
 									if (!action.keepOpen) {
 										onClose();
 									}
 								}}
-								onmouseenter={() => (selectedIndex = i)}
+								onmouseenter={() => (selectedIndex = index)}
 							>
 								<Icon
 									icon={action.icon}
@@ -404,7 +491,7 @@
 					<div class="result-group">
 						<span class="group-label">Recent Chats</span>
 						{#each filteredResults.chats as chat, i}
-							{@const index = filteredResults.actions.length + i}
+							{@const index = askOffset + filteredResults.actions.length + i}
 							<button
 								class="result-item"
 								class:selected={selectedIndex === index}
@@ -437,7 +524,7 @@
 					<div class="result-group">
 						<span class="group-label">Recent Pages</span>
 						{#each filteredResults.pages as page, i}
-							{@const index = filteredResults.actions.length + filteredResults.chats.length + i}
+							{@const index = askOffset + filteredResults.actions.length + filteredResults.chats.length + i}
 							<button
 								class="result-item"
 								class:selected={selectedIndex === index}
@@ -458,6 +545,65 @@
 								<span class="result-label"
 									>{page.title || "Untitled"}</span
 								>
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				{#if filteredResults.things.length > 0}
+					<div class="result-group">
+						<span class="group-label">Things</span>
+						{#each filteredResults.things as thing, i}
+							{@const index =
+								askOffset +
+								filteredResults.actions.length +
+								filteredResults.chats.length +
+								filteredResults.pages.length +
+								i}
+							<button
+								class="result-item"
+								class:selected={selectedIndex === index}
+								data-result-index={index}
+								onclick={() => {
+									windowShellStore.openTabFromRoute(`/thing/${thing.id}`, {
+										label: thing.name || "Untitled",
+									});
+									onClose();
+								}}
+								onmouseenter={() => (selectedIndex = index)}
+							>
+								<Icon icon={thing.icon || "ri:shapes-line"} width="16" class="result-icon" />
+								<span class="result-label">{thing.name || "Untitled"}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
+
+				{#if filteredResults.spaces.length > 0}
+					<div class="result-group">
+						<span class="group-label">Spaces</span>
+						{#each filteredResults.spaces as space, i}
+							{@const index =
+								askOffset +
+								filteredResults.actions.length +
+								filteredResults.chats.length +
+								filteredResults.pages.length +
+								filteredResults.things.length +
+								i}
+							<button
+								class="result-item"
+								class:selected={selectedIndex === index}
+								data-result-index={index}
+								onclick={() => {
+									windowShellStore.openTabFromRoute(`/space/${space.id}`, {
+										label: space.name || "Untitled",
+									});
+									onClose();
+								}}
+								onmouseenter={() => (selectedIndex = index)}
+							>
+								<Icon icon={space.icon || "ri:layout-grid-line"} width="16" class="result-icon" />
+								<span class="result-label">{space.name || "Untitled"}</span>
 							</button>
 						{/each}
 					</div>
@@ -510,6 +656,17 @@
 	:global(.search-icon) {
 		color: var(--foreground-muted) !important;
 		flex-shrink: 0;
+	}
+
+	.scope-chip {
+		flex-shrink: 0;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		font-weight: 500;
+		padding: 3px 7px;
+		border-radius: 6px;
+		background: var(--primary-subtle);
+		color: var(--primary);
 	}
 
 	.search-input {
@@ -598,6 +755,18 @@
 		background: var(--surface-elevated);
 		border-radius: 4px;
 		color: var(--foreground-subtle);
+	}
+
+	.ask-row {
+		margin-bottom: 4px;
+	}
+
+	.ask-row :global(.result-icon) {
+		color: var(--primary) !important;
+	}
+
+	.ask-q {
+		color: var(--foreground-muted);
 	}
 
 	.no-results {

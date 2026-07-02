@@ -13,6 +13,7 @@
 	import StoppedNotice from "$lib/components/StoppedNotice.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import SelectionPopover from "$lib/components/SelectionPopover.svelte";
+	import ContextIndicator from "$lib/components/ContextIndicator.svelte";
 	import { fetchModels, type ModelOption } from "$lib/config/models";
 	import { normalizeImage } from "$lib/multimodal/normalizeImage";
 	import { CitationPanel } from "$lib/components/citations";
@@ -22,10 +23,15 @@
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick } from "svelte";
+	import { fade, fly } from "svelte/transition";
+	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import ChatSpaceBreadcrumb from "$lib/components/chat/ChatSpaceBreadcrumb.svelte";
+	import { updateChat, deleteChat } from "$lib/api/client";
+	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import type { Chat } from "@ai-sdk/svelte";
 	// Active page editing imports
 	import { editAllowListStore, type EditableResourceType } from "$lib/stores/editAllowList.svelte";
@@ -88,6 +94,15 @@
 		return pathOnly === '/' || pathOnly === '/chat';
 	}
 
+	// Temporary ("ghost") chat — opened via /?temporary=1. Never persisted to
+	// history; nothing is written to the sidebar/session list. The request also
+	// carries a `temporary` flag so the backend can skip storage.
+	function isTemporaryRoute(route: string): boolean {
+		return /[?&]temporary=1\b/.test(route);
+	}
+	// svelte-ignore state_referenced_locally
+	let isGhost = $state(isTemporaryRoute(tab.route));
+
 	// Capture initial conversationId from tab prop (intentionally captures initial value only)
 	// svelte-ignore state_referenced_locally
 	const initialConversationId = extractConversationId(tab.route);
@@ -113,7 +128,6 @@
 		id: string;
 		messageId: string;
 		text: string;
-		comment: string;
 		range: Range;
 	};
 	type SelectionDraft = {
@@ -150,7 +164,7 @@
 		}
 	}
 
-	function addStagedRef(comment: string) {
+	function addStagedRef() {
 		if (!selectionDraft) return;
 		const d = selectionDraft;
 		stagedRefs = [
@@ -159,7 +173,6 @@
 				id: crypto?.randomUUID?.() ?? `ref-${stagedRefs.length}-${d.text.length}`,
 				messageId: d.messageId,
 				text: d.text,
-				comment,
 				range: d.range,
 			},
 		];
@@ -178,19 +191,14 @@
 		repaintHighlights();
 	}
 
-	function copySelectionDraft() {
-		if (selectionDraft) navigator.clipboard?.writeText(selectionDraft.text).catch(() => {});
-	}
-
-	// Paint staged refs + the pending selection with the CSS Custom Highlight API
-	// under one name — no DOM mutation, no reflow, themed via --color-highlight.
-	// Painting the pending range keeps the highlight visible after the comment
-	// field steals focus (which collapses the native browser selection).
+	// Paint staged refs with the CSS Custom Highlight API under one name — no DOM
+	// mutation, no reflow, themed via --color-highlight. Only committed refs are
+	// painted; the pending selection keeps the browser's own native highlight so
+	// it never double-marks (and Cmd+C keeps copying it).
 	function repaintHighlights() {
 		const cssAny = CSS as any;
 		if (typeof CSS === "undefined" || !cssAny.highlights || typeof (window as any).Highlight === "undefined") return;
 		const ranges = stagedRefs.map((r) => r.range);
-		if (selectionDraft) ranges.push(selectionDraft.range);
 		if (ranges.length === 0) {
 			cssAny.highlights.delete("vref");
 			return;
@@ -202,16 +210,14 @@
 		}
 	}
 
-	// Repaint whenever the staged set or the pending selection changes.
+	// Repaint whenever the staged set changes.
 	$effect(() => {
 		void stagedRefs;
-		void selectionDraft;
 		repaintHighlights();
 	});
 
 	function serializeRef(r: StagedRef): string {
-		const quote = `> ${r.text.replace(/\s*\n\s*/g, " ")}`;
-		return r.comment ? `${quote}\n\n${r.comment}` : quote;
+		return `> ${r.text.replace(/\s*\n\s*/g, " ")}`;
 	}
 
 	// Track E1: multimodal attachments. Files are read to base64 data URLs (so they
@@ -767,6 +773,7 @@
 				},
 				getPersona: () => selectedPersona,
 				getAgentMode: () => selectedAgentMode,
+				getTemporary: () => isGhost,
 			});
 			currentChatConversationId = conversationId;
 		}
@@ -885,6 +892,10 @@
 	onMount(() => {
 		// Load Spaces so the room breadcrumb can resolve name/accent immediately.
 		spaceStore.load();
+
+		// Claim any prompt handed off from Home / ⌘K "Ask Virtues" (consume-once,
+		// synchronously — so only this freshly-opened chat sends it).
+		const initialPrompt = pendingPrompt.take();
 		(async () => {
 			// Stage 1: Models must load first (other code depends on model list)
 			await getInitializationPromise();
@@ -972,6 +983,12 @@
 				scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
+
+			// Auto-send the handed-off prompt on a brand-new chat. handleChatSubmit
+			// queues internally if the instance isn't "ready" yet, so this is safe.
+			if (initialPrompt && isNewChat(tab.route)) {
+				handleChatSubmit(initialPrompt);
+			}
 
 			// Auto-start onboarding for new users with no messages
 			// DISABLED for demo — onboarding was repeating the same message
@@ -1110,6 +1127,94 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
+	// Chat title (header breadcrumb tail). Sourced from the persisted session so it
+	// stays in sync with the sidebar; only shown once the chat has earned a title.
+	let editingTitle = $state(false);
+	let titleDraft = $state("");
+	let titleInputEl = $state<HTMLInputElement | null>(null);
+	const chatTitle = $derived(
+		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.title ?? "",
+	);
+	const showTitle = $derived((!!chatTitle || editingTitle) && !isEmpty && !isGhost);
+
+	function startRename() {
+		titleDraft = chatTitle;
+		editingTitle = true;
+		tick().then(() => {
+			titleInputEl?.focus();
+			titleInputEl?.select();
+		});
+	}
+
+	// A real, saved chat the user can act on (not the empty new-chat state, not a ghost).
+	const canManageChat = $derived(!isEmpty && !isGhost);
+
+	async function deleteThisChat() {
+		try {
+			windowShellStore.closeTabsByRoute(`/chat/${conversationId}`);
+			await deleteChat(conversationId);
+			chatSessions.remove(conversationId);
+			windowShellStore.invalidateViewCache("chat");
+		} catch (e) {
+			console.error("[ChatView] Failed to delete chat:", e);
+		}
+	}
+
+	function openChatMenu(e: MouseEvent) {
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
+		const items: ContextMenuItem[] = [
+			{ id: "rename", label: "Rename", icon: "ri:edit-line", action: startRename },
+			{
+				id: "pin",
+				label: pinned ? "Unpin tab" : "Pin tab",
+				icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
+				action: () => windowShellStore.togglePin(tab.id),
+			},
+			{
+				id: "delete",
+				label: "Delete chat",
+				icon: "ri:delete-bin-line",
+				variant: "destructive",
+				dividerBefore: true,
+				action: deleteThisChat,
+			},
+		];
+		contextMenu.show(
+			{ x: rect.right, y: rect.bottom },
+			items,
+			{
+				anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+				placement: "bottom-end",
+			},
+		);
+	}
+
+	async function saveTitle() {
+		const next = titleDraft.trim();
+		editingTitle = false;
+		if (!next || next === chatTitle) return;
+		// Optimistic across all store-bound surfaces (header + sidebar), then persist.
+		chatSessions.applyTitle(conversationId, next);
+		windowShellStore.updateTab(tab.id, { label: next });
+		try {
+			await updateChat(conversationId, { title: next });
+		} catch (e) {
+			console.error("[ChatView] Failed to rename chat:", e);
+			await chatSessions.refresh(); // roll back to server truth on failure
+		}
+	}
+
+	function titleKeydown(e: KeyboardEvent) {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			saveTitle();
+		} else if (e.key === "Escape") {
+			e.preventDefault();
+			editingTitle = false;
+		}
+	}
+
 
 	// Generate title after first assistant response
 	async function generateTitle() {
@@ -1131,10 +1236,15 @@
 
 			if (response.ok) {
 				const data = await response.json();
-				titleGenerated = true;
-				// Update tab label with the new title
+				// Only mark done once we actually have a title, so an ok-but-empty
+				// response retries on the next turn instead of giving up silently.
 				if (data.title) {
+					titleGenerated = true;
 					windowShellStore.updateTab(tab.id, { label: data.title });
+					// Optimistically seed the shared session store so the header
+					// breadcrumb (and any store-bound surface) updates immediately,
+					// without waiting on the server-persist → refetch round-trip.
+					chatSessions.applyTitle(conversationId, data.title);
 				}
 			}
 		} catch (error) {
@@ -1253,8 +1363,9 @@
 
 		try {
 			// Sync permissions to backend BEFORE sending (so AI tool calls have them during streaming)
-			// add_permission endpoint handles chat creation via INSERT OR IGNORE INTO chats
-			if (isNewChat(tab.route) && editAllowListStore.hasItems) {
+			// add_permission endpoint handles chat creation via INSERT OR IGNORE INTO chats.
+			// Ghost chats are never created server-side, so skip this.
+			if (!isGhost && isNewChat(tab.route) && editAllowListStore.hasItems) {
 				await editAllowListStore.markChatCreated();
 			}
 
@@ -1262,7 +1373,7 @@
 				files.length > 0 ? { text: messageToSend, files } : { text: messageToSend },
 			);
 
-			if (chat.messages.length === 2) {
+			if (chat.messages.length >= 2 && !isGhost && !titleGenerated) {
 				await generateTitle();
 				// Update tab route if it's a new chat
 				if (isNewChat(tab.route)) {
@@ -1320,6 +1431,13 @@
 	function removeQueued(index: number) {
 		queuedMessages = queuedMessages.filter((_, i) => i !== index);
 	}
+
+	// Flip the current (empty) chat into a temporary/ghost chat, or back. Only
+	// allowed before the first message — we can't retroactively un-persist a turn.
+	function toggleGhost() {
+		if (!isEmpty) return;
+		isGhost = !isGhost;
+	}
 </script>
 
 <svelte:window onmouseup={handleWindowMouseup} />
@@ -1328,7 +1446,6 @@
 	<SelectionPopover
 		rect={selectionDraft.rect}
 		onAdd={addStagedRef}
-		onCopy={copySelectionDraft}
 		onClose={() => (selectionDraft = null)}
 	/>
 {/if}
@@ -1391,10 +1508,68 @@
 
 		<div class="chat-container">
 			<!-- Main chat area -->
-			<div class="chat-area">
-				<!-- Room breadcrumb — the Space this chat lives in (top chrome) -->
+			<div class="chat-area" class:ghost={isGhost}>
+				<!-- Breadcrumb — the Space this chat lives in, then its title (top chrome) -->
 				<div class="chat-topbar">
 					<ChatSpaceBreadcrumb spaceId={chatSpaceId} onChange={setChatSpace} />
+					{#if showTitle}
+						{#if chatSpaceId}
+							<Icon icon="ri:arrow-right-s-line" width="15" class="crumb-sep" />
+						{/if}
+						{#if editingTitle}
+							<!-- svelte-ignore a11y_autofocus -->
+							<input
+								bind:this={titleInputEl}
+								class="title-input"
+								bind:value={titleDraft}
+								onblur={saveTitle}
+								onkeydown={titleKeydown}
+								aria-label="Rename chat"
+							/>
+						{:else}
+							<button class="chat-title" onclick={startRename} title="Rename chat">
+								{chatTitle}
+							</button>
+						{/if}
+					{/if}
+				</div>
+				<!-- Top-right chrome: temporary-chat toggle + live context ring -->
+				<div class="chat-topbar-right">
+					{#if !isGhost && contextUsage && extractConversationId(tab.route)}
+						<ContextIndicator
+							conversationId={extractConversationId(tab.route)!}
+							usagePercentage={contextUsage.percentage}
+							totalTokens={contextUsage.tokens}
+							contextWindow={contextUsage.window}
+							status={contextUsage.status}
+							onclick={handleContextClick}
+						/>
+					{/if}
+					{#if isEmpty || isGhost}
+						<button
+							type="button"
+							class="ghost-toggle"
+							class:active={isGhost}
+							disabled={!isEmpty}
+							onclick={toggleGhost}
+							aria-pressed={isGhost}
+							title={isGhost ? "Temporary chat — won't be saved" : "Start a temporary chat"}
+						>
+							<Icon icon="ri:ghost-line" width="16" />
+						</button>
+					{/if}
+					{#if canManageChat}
+						<button
+							type="button"
+							class="chat-menu-btn"
+							onclick={openChatMenu}
+							aria-haspopup="menu"
+							aria-label="Chat options"
+							title="Chat options"
+						>
+							<Icon icon="ri:more-2-fill" width="16" />
+						</button>
+					{/if}
 				</div>
 				<div class="page-container" class:is-empty={isEmpty}>
 					<!-- Messages area -->
@@ -1668,6 +1843,18 @@
 						</div>
 					</div>
 
+					{#if isEmpty && isGhost}
+						<div
+							class="ghost-hero"
+							in:fade={{ duration: 300 }}
+							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
+						>
+							<Icon icon="ri:ghost-line" width="30" class="ghost-hero-icon" />
+							<h1 class="ghost-hero-title">Temporary Chat</h1>
+							<p class="ghost-hero-sub">This chat won't be saved to your history.</p>
+						</div>
+					{/if}
+
 					<!-- ChatInput -->
 					<div
 						class="chat-input-wrapper"
@@ -1742,9 +1929,6 @@
 										/>
 										<div class="staged-ref-body">
 											<span class="staged-ref-quote">{r.text}</span>
-											{#if r.comment}
-												<span class="staged-ref-comment">{r.comment}</span>
-											{/if}
 										</div>
 										<button
 											type="button"
@@ -1781,22 +1965,11 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							bind:selectedModel={selectedModelValue}
-							bind:selectedAgentMode={selectedAgentMode}
-							bind:selectedPersona={selectedPersona}
 							disabled={false}
 							sendDisabled={chat.status !== "ready"}
 							isStreaming={chat.status === "streaming"}
 							maxWidth="max-w-3xl"
-							showToolbar={true}
-							conversationId={extractConversationId(tab.route)}
-							{contextUsage}
-							onContextClick={handleContextClick}
-							editableItems={editAllowListStore.items.filter((i) => i.type !== 'action')}
-							pageBinding={getBoundPage() ? { pageId: getBoundPage()!.id, pageTitle: getBoundPage()!.title || 'Untitled' } : undefined}
-							onPageClear={handlePageClear}
-							onRemoveItem={handleRemoveItem}
-							onPageSelect={handlePageSelect}
-							onSelectEntities={handleSelectEntities}
+							placeholder={isGhost ? "Write a message (temporary)…" : "Write a message..."}
 							on:submit={(e) => handleChatSubmit(e.detail)}
 							on:stop={() => handleChatStop()}
 						/>
@@ -1891,14 +2064,6 @@
 		white-space: nowrap;
 	}
 
-	.staged-ref-comment {
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
 	.chat-container {
 		display: flex;
 		height: 100%;
@@ -1920,11 +2085,209 @@
 		z-index: 5;
 		display: flex;
 		align-items: center;
+		gap: 1px;
+		max-width: min(60%, 34rem);
 		padding: 2px;
 		border-radius: 9px;
 		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
 		backdrop-filter: blur(8px);
 		-webkit-backdrop-filter: blur(8px);
+	}
+
+	.chat-topbar :global(.crumb-sep) {
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
+		opacity: 0.7;
+	}
+
+	.chat-title {
+		min-width: 0;
+		max-width: 22rem;
+		height: 24px;
+		padding: 0 6px;
+		border: 1px solid transparent;
+		border-radius: 7px;
+		background: transparent;
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		cursor: text;
+		transition: background 0.12s ease;
+	}
+
+	.chat-title:hover {
+		background: var(--color-surface-elevated);
+	}
+
+	.title-input {
+		max-width: 22rem;
+		height: 24px;
+		padding: 0 6px;
+		border: 1px solid color-mix(in srgb, var(--color-primary) 50%, transparent);
+		border-radius: 7px;
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+		font-size: 12px;
+		font-weight: 500;
+		outline: none;
+	}
+
+	.chat-topbar-right {
+		position: absolute;
+		top: 8px;
+		right: 12px;
+		z-index: 6;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.ghost-toggle {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 9px;
+		color: var(--color-foreground-subtle);
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
+		cursor: pointer;
+	}
+
+	.ghost-toggle:hover:not(:disabled) {
+		color: var(--color-foreground);
+		background: var(--color-surface-elevated);
+	}
+
+	.ghost-toggle.active {
+		color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+	}
+
+	.ghost-toggle:disabled {
+		cursor: default;
+	}
+
+	.chat-menu-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		border-radius: 9px;
+		color: var(--color-foreground-subtle);
+		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+		backdrop-filter: blur(8px);
+		-webkit-backdrop-filter: blur(8px);
+		transition:
+			color 0.15s ease,
+			background-color 0.15s ease;
+		cursor: pointer;
+	}
+
+	.chat-menu-btn:hover {
+		color: var(--color-foreground);
+		background: var(--color-surface-elevated);
+	}
+
+	.chat-topbar-right > :global(*) {
+		animation: topbar-pop-in 260ms cubic-bezier(0.34, 1.4, 0.64, 1) backwards;
+	}
+
+	@keyframes topbar-pop-in {
+		from {
+			opacity: 0;
+			transform: scale(0.7);
+		}
+		to {
+			opacity: 1;
+			transform: scale(1);
+		}
+	}
+
+	/* Ghost/temporary chat — faint tiled ghost field, theme-aware via mask. The
+	   field reveals as a circle expanding from the composer (screen center) so the
+	   ghosts ripple outward from the middle. */
+	.chat-area.ghost::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 0;
+		pointer-events: none;
+		background: var(--color-foreground);
+		opacity: 0.035;
+		-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
+		mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 2.5-2 2.5 2 2.5-2 2.5 2V10a8 8 0 0 0-8-8z' fill='%23000'/%3E%3C/svg%3E");
+		-webkit-mask-size: 46px 46px;
+		mask-size: 46px 46px;
+		-webkit-mask-repeat: repeat;
+		mask-repeat: repeat;
+		animation: ghost-wave-in 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+	}
+
+	@keyframes ghost-wave-in {
+		from {
+			opacity: 0;
+			clip-path: circle(0% at 50% 50%);
+		}
+		to {
+			opacity: 0.035;
+			clip-path: circle(120% at 50% 50%);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.chat-area.ghost::before,
+		.chat-topbar-right > :global(*) {
+			animation: none;
+		}
+		.chat-input-wrapper.transitions-enabled,
+		.chat-layout {
+			transition: opacity 0.2s ease;
+		}
+	}
+
+	.ghost-hero {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: calc(50% + 52px);
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.375rem;
+		text-align: center;
+		padding: 0 1.5rem;
+		pointer-events: none;
+	}
+
+	.ghost-hero :global(.ghost-hero-icon) {
+		color: var(--color-foreground-subtle);
+		margin-bottom: 0.125rem;
+	}
+
+	.ghost-hero-title {
+		font-family: var(--font-serif);
+		font-size: 1.75rem;
+		font-weight: 400;
+		color: var(--color-foreground);
+	}
+
+	.ghost-hero-sub {
+		font-size: 0.875rem;
+		color: var(--color-foreground-muted);
+		max-width: 30rem;
 	}
 
 	.page-container {
@@ -1936,7 +2299,11 @@
 		height: 100%;
 		opacity: 0;
 		pointer-events: none;
-		transition: opacity 0.2s ease-in-out;
+		/* Fade + rise in as the composer glides down (matched to the ~400ms glide). */
+		transform: translateY(10px);
+		transition:
+			opacity 0.32s ease,
+			transform 0.4s cubic-bezier(0.76, 0, 0.24, 1);
 		position: relative;
 		z-index: 1;
 		/* Keep scroll position stable as streamed content grows above the fold */
@@ -1949,6 +2316,7 @@
 
 	.chat-layout.visible {
 		opacity: 1;
+		transform: translateY(0);
 		pointer-events: auto;
 	}
 
@@ -1982,6 +2350,11 @@
 		background-blend-mode: multiply;
 		box-sizing: border-box;
 		z-index: 10;
+		/* Docked resting state. The empty state centers itself relative to this same
+		   bottom-anchored box (bottom:50% + translateY) so the whole center→dock
+		   travel is one interpolatable transition — no snap, no position swap. */
+		transform: translateY(0);
+		will-change: bottom, transform;
 	}
 
 	.queued-messages {
@@ -2231,23 +2604,23 @@
 	}
 
 	.chat-input-wrapper.transitions-enabled {
+		/* Deliberate ~600ms ease-in-out glide. The surface mask fades in only near
+		   the end (delayed) so it doesn't read as a panel sliding over the messages. */
 		transition:
-			bottom 0.6s cubic-bezier(0.4, 0, 0.2, 1),
-			transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+			bottom 0.4s cubic-bezier(0.76, 0, 0.24, 1),
+			transform 0.4s cubic-bezier(0.76, 0, 0.24, 1),
+			background-color 0.22s ease 0.2s;
 	}
 
 	.chat-input-wrapper.is-empty {
-		bottom: auto;
-		top: 50%;
-		transform: translateY(-50%);
-	}
-
-	.chat-input-wrapper.has-messages {
-		padding-bottom: 1.5rem;
-	}
-
-	.page-container:not(.is-empty) .chat-input-wrapper {
-		position: sticky;
+		/* Centered relative to the same bottom anchor: bottom edge to mid-container,
+		   then nudged down half its own height → exact vertical center, any height. */
+		bottom: 50%;
+		transform: translateY(50%);
+		/* Nothing to mask when centered — let the background (incl. ghost field)
+		   show through instead of a solid surface block around the composer. */
+		background-color: transparent;
+		background-image: none;
 	}
 
 	.hero-section {
@@ -2291,12 +2664,17 @@
 		margin-top: 0;
 	}
 
-	/* User message card styling */
+	/* User message card styling — hugs its content (left-aligned). Radius mirrors
+	   the composer's language: big enough that a one-line bubble caps into a pill
+	   (radius ≥ half its height) to match the input, but still leaves flat sides
+	   once the text wraps, so 2+ lines read as a clean rounded rect, not a lozenge. */
 	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: 1.5rem;
 		padding: 10px 16px;
+		width: fit-content;
+		max-width: 80%;
 	}
 
 	/* A user turn with attachments hugs its content (photo + caption) instead of

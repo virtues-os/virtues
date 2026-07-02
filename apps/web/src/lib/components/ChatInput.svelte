@@ -3,30 +3,8 @@
 	import { createEventDispatcher, onMount } from "svelte";
 	import { Spring } from "svelte/motion";
 	import type { ModelOption } from "$lib/config/models";
-	import { type AgentModeId, getNextMode, getModeById } from "$lib/config/agentModes";
 	import { createEntityBadgeElement } from "$lib/utils/entityBadge";
-	import AgentModePicker from "./AgentModePicker.svelte";
-	import ContextIndicator from "./ContextIndicator.svelte";
 	import EntityPicker, { type EntityResult } from "./EntityPicker.svelte";
-
-	interface ContextUsage {
-		percentage: number;
-		tokens: number;
-		window: number;
-		status: 'healthy' | 'warning' | 'critical';
-	}
-
-	interface PageBinding {
-		pageId: string;
-		pageTitle: string;
-	}
-
-	interface EditableItem {
-		type: 'page' | 'folder' | 'wiki_entry';
-		id: string;
-		title: string;
-		icon?: string;
-	}
 
 	let {
 		value = $bindable(""),
@@ -37,16 +15,7 @@
 		maxWidth = "max-w-3xl",
 		focused = $bindable(false),
 		selectedModel = $bindable<ModelOption | undefined>(undefined),
-		selectedPersona = $bindable<string>('default'),
-		selectedAgentMode = $bindable<AgentModeId>('chat'),
-		showToolbar = true,
-		conversationId = undefined as string | undefined,
-		contextUsage = undefined as ContextUsage | undefined,
-		onContextClick = (() => {}) as () => void,
-		pageBinding = undefined as PageBinding | undefined,
-		editableItems = [] as EditableItem[],
-		onRemoveItem = ((_type: string, _id: string) => {}) as (type: string, id: string) => void,
-		onSelectEntities = undefined as ((entities: EntityResult[]) => void) | undefined,
+		placeholder = "Write a message...",
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 	}: {
 		value?: string;
@@ -57,16 +26,7 @@
 		maxWidth?: string;
 		focused?: boolean;
 		selectedModel?: ModelOption;
-		selectedPersona?: string;
-		selectedAgentMode?: AgentModeId;
-		showToolbar?: boolean;
-		conversationId?: string;
-		contextUsage?: ContextUsage;
-		onContextClick?: () => void;
-		pageBinding?: PageBinding;
-		editableItems?: EditableItem[];
-		onRemoveItem?: (type: string, id: string) => void;
-		onSelectEntities?: (entities: EntityResult[]) => void;
+		placeholder?: string;
 		onAttach?: (files: File[]) => void;
 	} = $props();
 
@@ -90,12 +50,14 @@
 	let isFocused = $state(false);
 	let inputIsEmpty = $state(true);
 
-	const MIN_HEIGHT = 56;
-	const MAX_HEIGHT = 220;
+	const MIN_HEIGHT = 24;
+	const MAX_HEIGHT = 200;
 	const inputHeight = new Spring(MIN_HEIGHT, { stiffness: 0.18, damping: 0.8 });
 
 	// Only enable scrolling when at max height to prevent scrollbar flash during animation
 	const shouldScroll = $derived(inputHeight.current >= MAX_HEIGHT - 1);
+	// Bottom-align the controls once the field wraps past a single line.
+	const isMultiline = $derived(inputHeight.current > MIN_HEIGHT + 6);
 
 	// @ mention state - uses EntityPicker
 	let showEntityPicker = $state(false);
@@ -106,12 +68,58 @@
 	// Store entity references by ID for expansion on submit
 	let entityMentions = $state<Map<string, EntityResult>>(new Map());
 
+	// Can we submit? (has content, or staged refs/attachments allow an empty send)
+	const canSubmit = $derived((!inputIsEmpty || allowEmptySubmit) && !sendDisabled);
+	// The turn is in flight (content queued/sending) — show the spinner.
+	const isBusy = $derived(sendDisabled && (!inputIsEmpty || allowEmptySubmit));
 
-	// Derive placeholder based on toolbar visibility
-	const placeholderText = $derived(showToolbar ? "What can I do for you?" : "Message...");
+	// --- Dictation (Web Speech API, progressive enhancement) ---
+	const micSupported = $derived(
+		typeof window !== "undefined" &&
+			!!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition),
+	);
+	let recognizing = $state(false);
+	let recognition: any = null;
+	function toggleMic() {
+		if (!micSupported) return;
+		if (recognizing) {
+			recognition?.stop();
+			return;
+		}
+		const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+		recognition = new SR();
+		recognition.lang = navigator.language || "en-US";
+		recognition.interimResults = false;
+		recognition.continuous = false;
+		recognition.onresult = (e: any) => {
+			const text = Array.from(e.results)
+				.map((r: any) => r[0]?.transcript || "")
+				.join(" ")
+				.trim();
+			if (text) {
+				inputEl?.focus();
+				document.execCommand("insertText", false, (value ? " " : "") + text);
+				handleInput();
+			}
+		};
+		recognition.onend = () => (recognizing = false);
+		recognition.onerror = () => (recognizing = false);
+		recognizing = true;
+		recognition.start();
+	}
 
-	// Derive mode color for border/glow (null means use default primary)
-	const modeColor = $derived(getModeById(selectedAgentMode)?.color || 'var(--color-primary)');
+	// Which action the single trailing button performs right now.
+	const trailingMode = $derived(
+		isStreaming ? "stop" : !inputIsEmpty || allowEmptySubmit || !micSupported ? "send" : "mic",
+	);
+	const trailingLabel = $derived(
+		trailingMode === "stop" ? "Stop" : trailingMode === "mic" ? (recognizing ? "Stop dictation" : "Dictate") : "Send",
+	);
+	function trailingAction() {
+		if (trailingMode === "stop") handleStop();
+		else if (trailingMode === "send") handleSubmit();
+		else toggleMic();
+	}
 
 	// Sync internal focus state with external bindable prop
 	$effect(() => {
@@ -119,7 +127,6 @@
 	});
 
 	// Focus input when focused prop is set to true externally
-	// Only focus if no modal/overlay is blocking and no other input is focused
 	$effect(() => {
 		if (focused && inputEl && !isFocused) {
 			// Don't steal focus if a modal/overlay is open
@@ -132,7 +139,6 @@
 				active.tagName === 'TEXTAREA' ||
 				(active as HTMLElement).isContentEditable
 			);
-			// Don't steal focus from other inputs (like SearchModal)
 			if (!isOtherInputFocused) {
 				inputEl.focus();
 			}
@@ -166,7 +172,6 @@
 						node = next;
 						continue;
 					} else {
-						// Go up and find next
 						let parent = walker.parentNode();
 						while (parent && !walker.nextSibling()) {
 							parent = walker.parentNode();
@@ -213,7 +218,6 @@
 		const range = selection.getRangeAt(0);
 		if (!range.collapsed) return;
 
-		// Get text before cursor
 		const textNode = range.startContainer;
 		if (textNode.nodeType !== Node.TEXT_NODE) return;
 
@@ -221,9 +225,7 @@
 		const cursorPos = range.startOffset;
 		const textBeforeCursor = text.slice(0, cursorPos);
 
-		// Check if @ was just typed
 		if (textBeforeCursor.endsWith("@")) {
-			// Save the text node and cursor position before picker steals focus
 			savedTextNode = textNode as Text;
 			savedCursorOffset = cursorPos;
 			showEntityPicker = true;
@@ -231,7 +233,6 @@
 	}
 
 	function handleEntityPickerSelect(entity: EntityResult) {
-		// Use saved text node and cursor position (saved when @ was typed)
 		if (!savedTextNode || !savedTextNode.parentNode) {
 			closeEntityPicker();
 			return;
@@ -240,18 +241,14 @@
 		const text = savedTextNode.textContent || "";
 		const cursorPos = savedCursorOffset;
 
-		// Find @ before cursor
 		const atIndex = text.lastIndexOf("@", cursorPos - 1);
 		if (atIndex !== -1) {
-			// Create mention chip element using shared utility (@name format)
 			const chip = createEntityBadgeElement(entity.name, entity.url, {
 				className: 'mention-chip',
 			});
 
-			// Create a space after
 			const space = document.createTextNode(" ");
 
-			// Split text node and insert chip
 			const beforeText = text.slice(0, atIndex);
 			const afterText = text.slice(cursorPos);
 
@@ -263,7 +260,6 @@
 			parent.insertBefore(space, chip.nextSibling);
 			parent.insertBefore(afterNode, space.nextSibling);
 
-			// Move cursor after space
 			const selection = window.getSelection();
 			if (selection) {
 				const newRange = document.createRange();
@@ -273,7 +269,6 @@
 				selection.addRange(newRange);
 			}
 
-			// Store entity reference
 			entityMentions.set(entity.id, entity);
 		}
 
@@ -290,19 +285,11 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		// When entity picker is open, let it handle keyboard events
 		if (showEntityPicker) {
 			if (e.key === "Escape") {
 				e.preventDefault();
 				closeEntityPicker();
 			}
-			return;
-		}
-
-		// Shift+Tab cycles through agent modes
-		if (e.shiftKey && e.key === "Tab") {
-			e.preventDefault();
-			cycleAgentMode();
 			return;
 		}
 
@@ -314,12 +301,10 @@
 
 	function handleSubmit() {
 		const content = getExpandedContent().trim();
-		// allowEmptySubmit lets staged highlight references send with an empty composer.
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		dispatch("submit", content);
 
-		// Clear input
 		if (inputEl) {
 			inputEl.innerHTML = "";
 		}
@@ -335,13 +320,7 @@
 
 	function handleWrapperClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
-		if (
-			target.tagName === "BUTTON" ||
-			target.closest("button") ||
-			target.classList.contains("z-50") ||
-			target.closest(".z-50") ||
-			target.closest(".toolbar")
-		) {
+		if (target.tagName === "BUTTON" || target.closest("button")) {
 			return;
 		}
 		if (inputEl) {
@@ -349,16 +328,10 @@
 		}
 	}
 
-	function cycleAgentMode() {
-		const nextMode = getNextMode(selectedAgentMode);
-		selectedAgentMode = nextMode.id;
-	}
-
 	function handlePaste(e: ClipboardEvent) {
 		const dt = e.clipboardData;
 		if (!dt) return;
 
-		// Image(s) in the clipboard (screenshots, copied images) → attach.
 		const imgs: File[] = [];
 		for (const it of Array.from(dt.items || [])) {
 			if (it.kind === "file" && it.type.startsWith("image/")) {
@@ -378,20 +351,17 @@
 		}
 
 		const text = dt.getData("text/plain") || "";
-		// Long blob → attach as a text file instead of flooding the composer.
 		if (text.length > 1500 && onAttach) {
 			e.preventDefault();
 			onAttach([new File([text], "Pasted Text.txt", { type: "text/plain" })]);
 			return;
 		}
 
-		// Short text → normal inline paste.
 		e.preventDefault();
 		document.execCommand("insertText", false, text);
 	}
 
 	onMount(() => {
-		// Set initial content if value is provided
 		if (value && inputEl) {
 			inputEl.textContent = value;
 		}
@@ -404,146 +374,88 @@
 		aria-label="Chat input"
 		class="chat-input-wrapper bg-surface border border-border-strong cursor-text"
 		class:focused={isFocused}
-		style="--mode-color: {modeColor}"
+		class:multiline={isMultiline}
 		onclick={handleWrapperClick}
 		role="textbox"
 		tabindex="-1"
 	>
 		<label for="chat-input" class="sr-only">Message</label>
 
-		<div class="input-row relative flex items-start w-full">
-			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-			<div
-				id="chat-input"
-				bind:this={inputEl}
-				contenteditable={!disabled}
-				oninput={handleInput}
-				onkeydown={handleKeydown}
-				onpaste={handlePaste}
-				onfocus={() => {
-					isFocused = true;
-				}}
-				onblur={() => {
-					isFocused = false;
-				}}
-				class="chat-input w-full resize-none outline-none text-foreground font-sans text-base bg-transparent px-4 pt-4 pb-2"
-				class:empty={inputIsEmpty}
-				data-placeholder={placeholderText}
-				role="textbox"
-				aria-multiline="true"
-				tabindex="0"
-				style:height="{inputHeight.current}px"
-				style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
-			></div>
-			{#if !showToolbar}
-				{#if isStreaming}
-					<button
-						type="button"
-						onclick={handleStop}
-						class="stop-button absolute right-3 top-3 w-8 h-8 btn-primary cursor-pointer rounded-lg transition-all flex items-center justify-center"
-					>
-						<Icon icon="ri:stop-fill" width="16" style="color: inherit" />
-					</button>
-				{:else}
-					<button
-						type="button"
-						onclick={handleSubmit}
-						disabled={(!value.trim() && !allowEmptySubmit) || sendDisabled}
-						class="send-button absolute right-3 top-3 w-8 h-8 btn-primary cursor-pointer rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
-					>
-						{#if sendDisabled}
-							<Icon
-								icon="ri:loader-4-line"
-								class="animate-spin"
-								style="color: inherit"
-								width="16"
-							/>
-						{:else}
-							<Icon
-								icon="ri:arrow-up-line"
-								width="16"
-								class="transition-transform duration-300 group-hover:rotate-45"
-								style="color: inherit"
-							/>
-						{/if}
-					</button>
-				{/if}
-			{/if}
-		</div>
-
-		{#if showToolbar}
-			<div class="toolbar flex items-center gap-1.5 px-2 pb-2 pt-1">
-				{#if onAttach}
-					<button
-						type="button"
-						onclick={pickFiles}
-						class="attach-button w-6 h-6 cursor-pointer rounded-full flex items-center justify-center text-foreground-muted hover:bg-surface-elevated transition-colors"
-						aria-label="Attach files"
-						title="Attach images, PDFs, or audio"
-					>
-						<Icon icon="ri:add-line" width="16" />
-					</button>
-					<input
-						bind:this={fileInputEl}
-						type="file"
-						multiple
-						accept="image/*,application/pdf,audio/*,text/*,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.toml,.ini,.log,.ts,.tsx,.js,.jsx,.py,.rb,.rs,.go,.java,.c,.h,.cpp,.cs,.php,.swift,.kt,.sh,.sql,.css,.scss"
-						class="sr-only"
-						onchange={onFilesPicked}
-					/>
-				{/if}
-				<div>
-					<AgentModePicker
-						bind:value={selectedAgentMode}
-					/>
-				</div>
-				{#if conversationId && contextUsage}
-					<div>
-						<ContextIndicator
-							{conversationId}
-							usagePercentage={contextUsage.percentage}
-							totalTokens={contextUsage.tokens}
-							contextWindow={contextUsage.window}
-							status={contextUsage.status}
-							onclick={onContextClick}
-						/>
-					</div>
-				{/if}
-				<div class="flex-1"></div>
-				{#if isStreaming}
-					<button
-						type="button"
-						onclick={handleStop}
-						class="stop-button-toolbar w-6 h-6 btn-primary cursor-pointer rounded-full transition-all flex items-center justify-center"
-					>
-						<Icon icon="ri:stop-fill" width="12" style="color: inherit" />
-					</button>
-				{:else}
-					<button
-						type="button"
-						onclick={handleSubmit}
-						disabled={(!value.trim() && !allowEmptySubmit) || sendDisabled}
-						class="send-button-toolbar w-6 h-6 btn-primary cursor-pointer rounded-full disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center group"
-					>
-						{#if sendDisabled}
-							<Icon
-								icon="ri:loader-4-line"
-								class="animate-spin"
-								style="color: inherit"
-								width="12"
-							/>
-						{:else}
-							<Icon
-								icon="ri:arrow-up-line"
-								width="12"
-								class="transition-transform duration-300 group-hover:rotate-45"
-								style="color: inherit"
-							/>
-						{/if}
-					</button>
-				{/if}
-			</div>
+		{#if onAttach}
+			<button
+				type="button"
+				onclick={pickFiles}
+				class="pill-btn attach-button"
+				aria-label="Attach files"
+				title="Attach images, PDFs, or audio"
+			>
+				<Icon icon="ri:add-line" width="18" />
+			</button>
+			<input
+				bind:this={fileInputEl}
+				type="file"
+				multiple
+				accept="image/*,application/pdf,audio/*,text/*,.md,.markdown,.csv,.tsv,.json,.html,.htm,.xml,.yaml,.yml,.toml,.ini,.log,.ts,.tsx,.js,.jsx,.py,.rb,.rs,.go,.java,.c,.h,.cpp,.cs,.php,.swift,.kt,.sh,.sql,.css,.scss"
+				class="sr-only"
+				onchange={onFilesPicked}
+			/>
 		{/if}
+
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+		<div
+			id="chat-input"
+			bind:this={inputEl}
+			contenteditable={!disabled}
+			oninput={handleInput}
+			onkeydown={handleKeydown}
+			onpaste={handlePaste}
+			onfocus={() => {
+				isFocused = true;
+			}}
+			onblur={() => {
+				isFocused = false;
+			}}
+			class="chat-input resize-none outline-none text-foreground font-sans text-base bg-transparent"
+			class:empty={inputIsEmpty}
+			data-placeholder={placeholder}
+			role="textbox"
+			aria-multiline="true"
+			tabindex="0"
+			style:height="{inputHeight.current}px"
+			style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
+		></div>
+
+		<!-- Trailing controls: mic / send -->
+		<div class="composer-actions">
+			<!-- One persistent trailing button — its icon flips between mic ↔ send
+			     (↔ stop) so typing the first character animates rather than swaps. -->
+			<button
+				type="button"
+				onclick={trailingAction}
+				disabled={trailingMode === "send" && !canSubmit}
+				class="pill-btn action-btn"
+				class:btn-primary={trailingMode !== "mic"}
+				class:mic-btn={trailingMode === "mic"}
+				class:recording={recognizing}
+				aria-label={trailingLabel}
+				title={trailingMode === "mic" ? "Dictate" : undefined}
+			>
+				<span class="icon-swap">
+					<span class="swap-icon" class:active={trailingMode === "mic"}>
+						<Icon icon={recognizing ? "ri:stop-circle-line" : "ri:mic-line"} width="16" />
+					</span>
+					<span class="swap-icon" class:active={trailingMode === "send" && !isBusy}>
+						<Icon icon="ri:arrow-up-line" width="15" style="color: inherit" />
+					</span>
+					<span class="swap-icon" class:active={trailingMode === "send" && isBusy}>
+						<Icon icon="ri:loader-4-line" class="animate-spin" width="15" style="color: inherit" />
+					</span>
+					<span class="swap-icon" class:active={trailingMode === "stop"}>
+						<Icon icon="ri:stop-fill" width="15" style="color: inherit" />
+					</span>
+				</span>
+			</button>
+		</div>
 
 		{#if showEntityPicker}
 			<EntityPicker
@@ -571,26 +483,36 @@
 
 	.chat-input-wrapper {
 		position: relative;
-		border-radius: 8px;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.4375rem 0.5rem 0.4375rem 0.5625rem;
+		border-radius: 1.75rem;
 		transition:
 			border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
 			box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 	}
 
+	/* Once the field wraps to multiple lines, anchor controls to the bottom and
+	   ease off the full pill radius into a rounded box. */
+	.chat-input-wrapper.multiline {
+		align-items: flex-end;
+		border-radius: 1.25rem;
+	}
+
 	.chat-input-wrapper:hover {
-		border-color: color-mix(in srgb, var(--mode-color) 60%, transparent);
+		border-color: color-mix(in srgb, var(--color-foreground) 28%, var(--color-border-strong));
 	}
 
 	.chat-input-wrapper.focused {
-		border-color: var(--mode-color) !important;
-		box-shadow:
-			0 1px 2px 0 rgb(0 0 0 / 0.05),
-			0 0 0 3px color-mix(in srgb, var(--mode-color) 40%, transparent) !important;
+		border-color: var(--color-primary) !important;
 	}
 
 	.chat-input {
+		flex: 1;
+		min-width: 0;
 		line-height: 1.5;
-		padding-right: 3.5rem;
+		padding: 0.125rem 0.25rem;
 		white-space: pre-wrap;
 		word-wrap: break-word;
 		font-family: var(--font-sans);
@@ -604,26 +526,91 @@
 		position: absolute;
 	}
 
-	/* Custom scrollbar for input */
 	.chat-input::-webkit-scrollbar {
 		width: 6px;
 	}
-
 	.chat-input::-webkit-scrollbar-track {
 		background: transparent;
 	}
-
 	.chat-input::-webkit-scrollbar-thumb {
 		background: var(--color-border-subtle);
 		border-radius: 3px;
 	}
-
 	.chat-input::-webkit-scrollbar-thumb:hover {
 		background: var(--color-border-strong);
 	}
 
-	.toolbar {
+	/* Round icon buttons that sit inside the pill */
+	.pill-btn {
+		flex-shrink: 0;
 		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 2rem;
+		height: 2rem;
+		border-radius: 9999px;
+		cursor: pointer;
+		transition:
+			background-color 0.15s ease,
+			opacity 0.15s ease;
 	}
 
+	.attach-button {
+		color: var(--color-foreground-muted);
+	}
+	.attach-button:hover {
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+	}
+
+	.composer-actions {
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.action-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Icon crossfade/flip: all states share one stacked box; the active one
+	   rotates+fades in while the outgoing one rotates+fades out. */
+	.icon-swap {
+		position: relative;
+		width: 1.125rem;
+		height: 1.125rem;
+	}
+
+	.swap-icon {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		opacity: 0;
+		transform: rotate(-90deg) scale(0.5);
+		transition:
+			opacity 0.16s ease,
+			transform 0.24s cubic-bezier(0.34, 1.35, 0.64, 1);
+		pointer-events: none;
+	}
+
+	.swap-icon.active {
+		opacity: 1;
+		transform: rotate(0deg) scale(1);
+	}
+
+	.mic-btn {
+		color: var(--color-foreground-muted);
+	}
+	.mic-btn:hover {
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+	}
+	.mic-btn.recording {
+		color: var(--color-primary);
+		background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+	}
 </style>

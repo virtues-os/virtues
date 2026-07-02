@@ -400,8 +400,8 @@ class WindowShellStore {
 	}
 
 	private openDefaultTab(): void {
-		// Always open a new chat when there are no tabs
-		this.openTab({ type: 'chat', label: 'New Chat', route: '/chat', icon: 'ri:chat-1-line' });
+		// Fresh sessions land on Home (the "Return" surface), not an empty chat.
+		this.openTab({ type: 'home', label: 'Home', route: '/home', icon: 'ri:sparkling-2-line' });
 	}
 
 	/**
