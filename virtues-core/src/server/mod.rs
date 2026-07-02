@@ -283,6 +283,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // ─── Devices: unified list + revoke ───────────────────────────
         .route("/api/devices",            get(crate::api::devices::list_handler))
         .route("/api/devices/self/node-id", post(crate::api::devices::set_self_node_id))
+        .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
+        .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
         // ─── Sudo: gate for high-sensitivity actions ──────────────────
         .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
