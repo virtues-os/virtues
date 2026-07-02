@@ -24,11 +24,12 @@ pub struct InstallConfig {
     /// `.github/workflows/models-release.yml` workflow populates that tag
     /// from vetted upstream GGUFs, with `.sha256` sidecars.
     pub models_base: String,
-    /// GGUF file names the inference sidecars load. F16 for embedding (to
-    /// match the precision existing search_vectors rows were embedded
-    /// with), Q8_0 for the reranker (stateless, so smaller/faster wins).
+    /// GGUF file names the inference sidecars load. EmbeddingGemma-300M
+    /// (QAT Q8_0, 768-dim native → Matryoshka-256) for embedding;
+    /// gte-reranker-modernbert-base (Q8_0, stateless) for the reranker.
     /// Must stay in sync with virtues-core's `inference_report::{EMBED_GGUF,
-    /// RERANK_GGUF}`.
+    /// RERANK_GGUF}` — the sidecar `-m` path and the runtime's dim/pooling
+    /// expectations have to agree or embeds are rejected at runtime.
     pub embed_gguf: String,
     pub rerank_gguf: String,
     /// Production environment URLs. Written into the box's env file so
@@ -62,8 +63,8 @@ impl InstallConfig {
                         .unwrap_or_else(|_| "virtues".to_string()),
                 )
             }),
-            embed_gguf: "bge-m3-FP16.gguf".to_string(),
-            rerank_gguf: "bge-reranker-v2-m3-Q8_0.gguf".to_string(),
+            embed_gguf: "embeddinggemma-300m-qat-Q8_0.gguf".to_string(),
+            rerank_gguf: "gte-reranker-modernbert-base-Q8_0.gguf".to_string(),
             atlas_url: "https://atlas.virtues.com".to_string(),
             virtues_api_url: "https://api.virtues.com".to_string(),
         }

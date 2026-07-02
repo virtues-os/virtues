@@ -22,9 +22,9 @@ pub struct Report {
 pub async fn run() -> Result<Report> {
     let mut warnings = 0u32;
 
-    // Disk space — the GGUFs are ~1.8 GB (bge-m3 F16 ~1.2 GB + reranker
-    // Q8_0 ~0.6 GB); PG18 adds another ~1 GB; binaries + web +
-    // working room another GB. We want ≥ 4 GB free on /.
+    // Disk space — the GGUFs are ~0.5 GB (embeddinggemma-300m Q8_0 ~0.3 GB +
+    // gte-reranker-modernbert-base Q8_0 ~0.2 GB); PG18 adds another ~1 GB;
+    // binaries + web + working room another GB. We want ≥ 4 GB free on /.
     match free_gb(Path::new("/")) {
         Some(gb) if gb >= 4 => ui::ok(&format!("Disk space ({gb} GB free on /)")),
         Some(gb) => {

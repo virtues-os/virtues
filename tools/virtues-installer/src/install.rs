@@ -256,7 +256,7 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 /// entirely on a CPU-only host — an undefined supplementary group would make
 /// systemd fail the unit (216/GROUP), which is worse than CPU fallback.
 const EMBED_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues embedding sidecar (llama-server, bge-m3)
+Description=Virtues embedding sidecar (llama-server, embeddinggemma-300m)
 Documentation=https://virtues.com/docs
 After=network.target
 
@@ -284,7 +284,7 @@ WantedBy=multi-user.target
 "#;
 
 const RERANK_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues rerank sidecar (llama-server, bge-reranker-v2-m3)
+Description=Virtues rerank sidecar (llama-server, gte-reranker-modernbert-base)
 Documentation=https://virtues.com/docs
 After=network.target
 
