@@ -91,6 +91,11 @@ struct VirtuesApp: App {
                 Task {
                     await deviceManager.checkMinimumVersion()
                 }
+                // Best-effort: refresh the box reach ticket (relay URL may have
+                // changed since pairing). No-op if unpaired / unreachable.
+                Task {
+                    await NetworkManager.shared.refreshReach()
+                }
             }
             .fullScreenCover(isPresented: Binding(
                 get: { deviceManager.updateRequired },

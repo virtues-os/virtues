@@ -21,6 +21,7 @@
 //
 
 import Foundation
+import UIKit
 
 /// Serializes dialing + guards the one warm connection. An `actor` so concurrent
 /// callers (upload timer, health check, action-id refetch) share a single dial
@@ -41,10 +42,11 @@ actor BoxTransport {
         _ = session
         guard let url = request.url else { throw NetworkError.invalidURL }
 
-        let client = try await transportOrDial()
+        let bg = await Self.isBackground()
+        let client = try await transportOrDial(background: bg)
         let reqBytes = try HTTPWire.serialize(request)
         do {
-            let respBytes = try await client.request(rawHttp: reqBytes)
+            let respBytes = try await client.request(rawHttp: reqBytes, background: bg)
             return try HTTPWire.parseResponse(respBytes, url: url)
         } catch {
             // Drop the cached connection so the next call redials a fresh one.
@@ -61,7 +63,7 @@ actor BoxTransport {
 
     // MARK: - Dialing
 
-    private func transportOrDial() async throws -> IrohTransport {
+    private func transportOrDial(background: Bool) async throws -> IrohTransport {
         if let t = transport { return t }
         guard let ticket = DeviceManager.currentReachTicket() else {
             // Not paired for iroh reach (no ticket) — surface as an auth-ish
@@ -72,13 +74,20 @@ actor BoxTransport {
             let t = try await IrohTransport.dial(
                 relayUrl: ticket.relayUrl,
                 boxIdHex: ticket.boxNodeId,
-                deviceSeedHex: ticket.deviceSeed
+                deviceSeedHex: ticket.deviceSeed,
+                background: background
             )
             transport = t
             return t
         } catch {
             throw Self.mapTransportError(error)
         }
+    }
+
+    /// Are we running in an iOS background task? Determines the dial/request
+    /// budget so a cold background wake bails fast instead of being force-killed.
+    private static func isBackground() async -> Bool {
+        await MainActor.run { UIApplication.shared.applicationState != .active }
     }
 
     /// Map an iroh/FFI error to the app's `NetworkError` so the upload queue's

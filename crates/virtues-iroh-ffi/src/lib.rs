@@ -19,14 +19,21 @@ use virtues_iroh::{build_endpoint, EndpointId, RelayUrl, SecretKey, VirtuesIrohC
 
 uniffi::setup_scaffolding!();
 
-/// Wall-clock cap on binding the endpoint + first connect. Bounds a cold dial so
-/// iOS's ~30s background budget isn't consumed by a hung relay/box.
+/// Wall-clock cap on binding the endpoint + first connect (foreground). Bounds a
+/// cold dial so it can't hang indefinitely.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(20);
+/// Shorter cap when dialing from an iOS background task (~30s total budget): bail
+/// fast rather than get force-killed mid-dial. Data stays durable in the client's
+/// queue and drains on the next wake.
+const DIAL_TIMEOUT_BG: Duration = Duration::from_secs(8);
 /// Wall-clock cap on a single request (connect-if-needed + write + read). Without
 /// this a stuck stream would block the caller's transport forever — iOS drives
 /// this from a serialized actor, so one hang would wedge all uploads. Matches the
 /// old URLSession 30s.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Shorter request cap in an iOS background task (connect + first byte must fit
+/// the ~30s budget alongside a cold dial). Warm-path requests finish well under.
+const REQUEST_TIMEOUT_BG: Duration = Duration::from_secs(12);
 
 /// Errors surfaced to Swift. Each variant maps to a Swift enum case with an
 /// attached message, so the app can log/branch without string-matching.
@@ -88,11 +95,14 @@ impl IrohTransport {
     /// Dial the box: `relay_url` = our relay, `box_id_hex` = the box's EndpointId
     /// (from the pairing ticket), `device_seed_hex` = this device's 32-byte iroh
     /// seed (generated at pairing; its EndpointId is on the box's allowlist).
+    /// `background` = dialing from an iOS background task → use the shorter
+    /// `DIAL_TIMEOUT_BG` budget so a cold dial bails instead of getting killed.
     #[uniffi::constructor]
     pub async fn dial(
         relay_url: String,
         box_id_hex: String,
         device_seed_hex: String,
+        background: bool,
     ) -> Result<Arc<Self>, IrohError> {
         let seed = decode_32(&device_seed_hex, "device seed")?;
         let secret = SecretKey::from_bytes(&seed);
@@ -104,7 +114,8 @@ impl IrohTransport {
             .trim()
             .parse()
             .map_err(|e| IrohError::BadRelayUrl(format!("{e}")))?;
-        let endpoint = match tokio::time::timeout(DIAL_TIMEOUT, build_endpoint(secret, Some(relay.clone()))).await {
+        let dial_timeout = if background { DIAL_TIMEOUT_BG } else { DIAL_TIMEOUT };
+        let endpoint = match tokio::time::timeout(dial_timeout, build_endpoint(secret, Some(relay.clone()))).await {
             Ok(r) => r.map_err(|e| IrohError::Dial(format!("{e:#}")))?,
             Err(_) => return Err(IrohError::Dial("timed out binding iroh endpoint".into())),
         };
@@ -116,10 +127,12 @@ impl IrohTransport {
     /// response bytes. Swift serializes its `URLRequest` to bytes and parses the
     /// returned bytes back into a response — the box serves each stream as a
     /// normal hyper HTTP/1 connection.
-    pub async fn request(&self, raw_http: Vec<u8>) -> Result<Vec<u8>, IrohError> {
-        match tokio::time::timeout(REQUEST_TIMEOUT, self.client.request(&raw_http)).await {
+    /// `background` = called from an iOS background task → shorter `REQUEST_TIMEOUT_BG`.
+    pub async fn request(&self, raw_http: Vec<u8>, background: bool) -> Result<Vec<u8>, IrohError> {
+        let timeout = if background { REQUEST_TIMEOUT_BG } else { REQUEST_TIMEOUT };
+        match tokio::time::timeout(timeout, self.client.request(&raw_http)).await {
             Ok(r) => r.map_err(|e| IrohError::Request(format!("{e:#}"))),
-            Err(_) => Err(IrohError::Request("timed out after 30s".into())),
+            Err(_) => Err(IrohError::Request(format!("timed out after {}s", timeout.as_secs()))),
         }
     }
 

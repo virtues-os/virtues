@@ -32,7 +32,10 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     private let networkMonitor: NetworkMonitor
 
     private var uploadTimer: ReliableTimer?
-    private let uploadInterval: TimeInterval = 300 // 5 minutes
+    private let uploadInterval: TimeInterval = 900 // 15 minutes — fewer wakeups
+    // (battery), bigger batches, aligns with iOS's opportunistic background
+    // scheduling. Life-logging tolerates ~15-min freshness; data is durable in
+    // SQLite between cycles.
     private let backgroundTaskIdentifier = "com.virtues.ios.sync"
 
     private var isPerformingUpload = false
