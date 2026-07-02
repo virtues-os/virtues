@@ -70,7 +70,15 @@ enum Command {
 
     /// Serve the paired box at http://localhost:7117 over iroh (the local helper
     /// the browser and Tauri app talk to). Runs until stopped.
-    Up,
+    Up {
+        /// Deprecated + ignored. The pre-iroh proxy passed the box's LAN origin
+        /// here; the current helper reaches the box over iroh via the stored
+        /// reach ticket (falling back to box.json's box_url). Accepted only so a
+        /// stale LaunchAgent plist (`up --upstream <addr>`) doesn't crash the
+        /// helper when the binary is swapped to a newer build.
+        #[arg(long)]
+        upstream: Option<String>,
+    },
 
     /// Open the paired box in the default browser (via the `:7117` helper).
     /// Run `virtues-client up` first so the helper is serving.
@@ -95,7 +103,7 @@ async fn main() -> Result<()> {
         Command::Pair { pair_url } => pair::run(&pair_url).await,
         Command::PairCode { code, server } => run_pair_code(code, server).await,
         Command::Discover { json } => run_discover(json).await,
-        Command::Up => {
+        Command::Up { upstream: _ } => {
             // Pick up the box's iroh reach ticket if we paired before it was
             // relay-ready (best-effort) so `up` serves over iroh, not LAN-only.
             let _ = pair::refresh_reach().await;
