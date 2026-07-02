@@ -108,8 +108,10 @@ class DeviceManager: ObservableObject {
             self.configuration.boxNodeId = (boxNodeId?.isEmpty == false) ? boxNodeId : nil
             self.configuration.relayUrl = (relayUrl?.isEmpty == false) ? relayUrl : nil
             self.saveConfiguration(self.configuration)
+            // Reset the warm transport AFTER the new ticket is persisted, so a
+            // concurrent send() can't redial off the old ticket in between.
+            await BoxTransport.shared.reset()
         }
-        Task { await BoxTransport.shared.reset() }
     }
 
     /// Resolve the full dial ticket from persisted state, readable off any thread

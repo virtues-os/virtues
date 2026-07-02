@@ -22,8 +22,8 @@ virtues-iroh = { path = "../virtues-iroh" }
 # `tokio` = uniffi's async-runtime bridge; `cli` = `uniffi_bindgen_main` for the
 # host bindgen binary. Proc-macro mode (`setup_scaffolding!`) needs no UDL/build.rs.
 uniffi = { version = "0.28", features = ["tokio", "cli"] }
-# iroh needs a live multi-thread reactor; the base crate only enables `rt`.
-tokio = { version = "1", features = ["rt-multi-thread"] }
+# iroh needs a live multi-thread reactor; `time` powers the dial/request timeouts.
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 thiserror = "1"
 
 [[bin]]

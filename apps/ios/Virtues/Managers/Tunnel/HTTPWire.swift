@@ -101,11 +101,18 @@ enum HTTPWire {
             headers[name] = value
         }
 
-        // If a Content-Length is present and smaller than what we buffered, trust
-        // it (defensive; equal in practice with Connection: close).
+        // Honor Content-Length when present: trim trailing bytes if we over-read,
+        // but treat an UNDER-read (fewer bytes than declared) as a truncated
+        // response — an error the caller retries, not silently-partial data.
         if let clStr = headers["Content-Length"] ?? headers["content-length"],
-           let cl = Int(clStr), cl <= body.count {
-            body = body.subdata(in: body.startIndex..<(body.startIndex + cl))
+           let cl = Int(clStr) {
+            if cl <= body.count {
+                body = body.subdata(in: body.startIndex..<(body.startIndex + cl))
+            } else {
+                throw HTTPWireError.malformedResponse(
+                    "truncated body: got \(body.count) bytes, Content-Length \(cl)"
+                )
+            }
         }
 
         guard let response = HTTPURLResponse(
