@@ -39,6 +39,9 @@ struct ConsumeRequest {
     /// This device's iroh EndpointId (hex) — the box allowlists it so the `:7117`
     /// helper can reach the box over iroh.
     device_node_id: String,
+    /// Idempotency key so a retried consume (lost response) re-returns the same
+    /// bearer instead of burning the single-use token.
+    idempotency_key: String,
 }
 
 /// Response the box returns from `/api/pair/consume`. We need the bearer, the
@@ -103,11 +106,19 @@ async fn consume(origin: String, token: String) -> Result<()> {
     let device_secret_hex = hex::encode(seed);
     let device_node_id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();
 
+    // Stable idempotency key: if the response is lost and we retry, the box
+    // replays the same bearer instead of failing on the consumed token.
+    let mut idem = [0u8; 16];
+    {
+        use rand::RngCore;
+        rand::rng().fill_bytes(&mut idem);
+    }
     let body = ConsumeRequest {
         token,
         kind: "desktop_app",
         device_info,
         device_node_id: device_node_id.clone(),
+        idempotency_key: hex::encode(idem),
     };
 
     let client = reqwest::Client::builder()
@@ -115,12 +126,17 @@ async fn consume(origin: String, token: String) -> Result<()> {
         .build()?;
 
     let url = format!("{origin}/api/pair/consume");
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .with_context(|| format!("POST {url}"))?;
+    // Retry ONCE on a transport error (lost response) with the same body → same
+    // idempotency key → the box re-returns the original bearer.
+    let resp = match client.post(&url).json(&body).send().await {
+        Ok(r) => r,
+        Err(_) => client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?,
+    };
 
     let status = resp.status();
     if !status.is_success() {

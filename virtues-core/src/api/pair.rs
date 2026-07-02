@@ -582,6 +582,11 @@ pub struct ConsumeRequest {
     /// device can dial the box by the box's EndpointId. Absent for the box's own
     /// browser / non-iroh clients.
     pub device_node_id: Option<String>,
+    /// Client-generated idempotency key (persisted per pairing attempt). If a
+    /// consume response is lost and the client retries with the same key, the box
+    /// re-returns the SAME bearer instead of failing on the already-consumed
+    /// token. Non-browser only. Absent → no idempotency (legacy behavior).
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -663,6 +668,22 @@ pub async fn consume_handler(
                 .into_response()
         }
     };
+
+    // Idempotency replay: if this key already produced a bearer (a prior consume
+    // whose response the client lost), re-return the SAME result without touching
+    // the (now-consumed) token. Non-browser only.
+    let idem_key = body
+        .idempotency_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if kind != "browser" {
+        if let Some(key) = idem_key {
+            if let Some(resp) = replay_consume_idem(&pool, key).await {
+                return resp;
+            }
+        }
+    }
 
     // Resolve the credential's source (see `resolve_source_id`). A bad explicit
     // source is a loud 400, not a silent no-fan-out.
@@ -963,6 +984,11 @@ pub async fn consume_handler(
     // Newly-paired device carries its iroh EndpointId → allowlist it now.
     crate::relay::after_pairing_change(pool.clone());
 
+    // Record for idempotent replay (best-effort) so a lost response is recoverable.
+    if let Some(key) = idem_key {
+        store_consume_idem(&pool, key, &device_id, &bp, &action_ids).await;
+    }
+
     // Compute the reach ticket once so both halves are consistent.
     let (box_node_id, relay_url) = match box_reach() {
         Some((n, r)) => (Some(n), Some(r)),
@@ -1211,6 +1237,83 @@ pub(crate) async fn claim_pair_token(
     .fetch_optional(&mut **tx)
     .await?;
     Ok(row.map(|(id,)| id))
+}
+
+/// Idempotency replay for consume: if `key` already produced a bearer, decrypt +
+/// re-return the identical `ConsumeResponse`. `None` = no prior result (fall
+/// through to a normal consume). Never fails the request on its own error.
+async fn replay_consume_idem(pool: &PgPool, key: &str) -> Option<axum::response::Response> {
+    let row: Option<(String, String, String, Value)> = sqlx::query_as(
+        "SELECT device_id, credential_id, bearer_ciphertext, action_ids \
+         FROM app_pair_consume_idem WHERE idempotency_key = $1",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+    let (device_id, credential_id, ciphertext, action_ids_json) = row?;
+
+    // Decrypt the stored bearer ({"token": <bearer>}) — same form as credentials.
+    let encryptor = crate::crypto::TokenEncryptor::from_env().ok()?;
+    let plaintext = encryptor.decrypt(&ciphertext).ok()?;
+    let bearer = serde_json::from_str::<Value>(&plaintext)
+        .ok()?
+        .get("token")?
+        .as_str()?
+        .to_string();
+    let action_ids: std::collections::HashMap<String, String> =
+        serde_json::from_value(action_ids_json).unwrap_or_default();
+    let (box_node_id, relay_url) = match box_reach() {
+        Some((n, r)) => (Some(n), Some(r)),
+        None => (None, None),
+    };
+    Some(
+        (
+            StatusCode::OK,
+            Json(ConsumeResponse {
+                device_id,
+                credential_id: Some(credential_id),
+                redirect: "/".to_string(),
+                bearer: Some(bearer),
+                action_ids,
+                box_node_id,
+                relay_url,
+            }),
+        )
+            .into_response(),
+    )
+}
+
+/// Persist a consume result for idempotent replay (best-effort) + sweep rows
+/// older than an hour. The bearer is stored only as ciphertext.
+async fn store_consume_idem(
+    pool: &PgPool,
+    key: &str,
+    device_id: &str,
+    bp: &BearerPack,
+    action_ids: &std::collections::HashMap<String, String>,
+) {
+    let action_ids_json = serde_json::to_value(action_ids).unwrap_or_else(|_| json!({}));
+    if let Err(e) = sqlx::query(
+        "INSERT INTO app_pair_consume_idem \
+         (idempotency_key, device_id, credential_id, bearer_ciphertext, action_ids) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (idempotency_key) DO NOTHING",
+    )
+    .bind(key)
+    .bind(device_id)
+    .bind(&bp.credential_id)
+    .bind(&bp.ciphertext)
+    .bind(&action_ids_json)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!("pair consume: idempotency store failed: {e:#}");
+    }
+    // Opportunistic sweep — these are only needed for a brief retry window.
+    let _ = sqlx::query("DELETE FROM app_pair_consume_idem WHERE created_at < now() - interval '1 hour'")
+        .execute(pool)
+        .await;
 }
 
 /// Insert the `app_device` row for a freshly-paired/provisioned device. Shared
