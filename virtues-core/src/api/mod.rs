@@ -60,7 +60,7 @@ pub use assistant_profile::{
     get_assistant_name, get_assistant_profile, update_assistant_profile,
     UpdateAssistantProfileRequest,
 };
-pub use auth::{session_handler, signout_handler, SessionResponse, SessionUser};
+pub use auth::{session_handler, SessionResponse, SessionUser};
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
 pub use credentials::{
     check_pairing_status, delete_pending_credential, list_credentials, list_pending_pairings,

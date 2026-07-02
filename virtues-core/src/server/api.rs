@@ -2348,47 +2348,11 @@ pub async fn remove_chat_permission_handler(
 // Auth API Handlers
 // =============================================================================
 
-/// POST /auth/signout — sign out of this tab; device row untouched.
-pub async fn auth_signout_handler(
-    State(state): State<AppState>,
-    jar: axum_extra::extract::cookie::CookieJar,
-) -> Response {
-    crate::api::auth::signout_handler(axum::extract::State(state.db.pool().clone()), jar)
-        .await
-        .into_response()
-}
-
-/// GET /auth/session — current session (or null if not paired).
-///
-/// Loopback peers (localhost — the box's own browser, or dev via the vite proxy)
-/// are auto-authenticated as the owner, mirroring the `AuthUser` extractor's
-/// loopback bypass — INCLUDING the same forwarding-header guard: a reverse
-/// proxy also connects from loopback, so a proxied request (carrying
-/// `X-Forwarded-For` / `Forwarded`) must NOT be reported as owner. Without this,
-/// the probe would tell a proxied remote browser it's the owner. Remote peers
-/// fall through to the cookie check.
-pub async fn auth_session_handler(
-    State(state): State<AppState>,
-    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
-    headers: axum::http::HeaderMap,
-    jar: axum_extra::extract::cookie::CookieJar,
-) -> Response {
-    let is_proxied =
-        headers.contains_key("x-forwarded-for") || headers.contains_key("forwarded");
-    if addr.ip().is_loopback() && !is_proxied {
-        return axum::Json(crate::api::auth::SessionResponse {
-            user: Some(crate::api::auth::SessionUser {
-                id: crate::middleware::http::OWNER_USER_ID.to_string(),
-                device_id: crate::middleware::auth::CONSOLE_DEVICE_ID.to_string(),
-                device_label: crate::middleware::auth::CONSOLE_DEVICE_LABEL.to_string(),
-            }),
-            expires: None,
-        })
-        .into_response();
-    }
-    crate::api::auth::session_handler(axum::extract::State(state.db.pool().clone()), headers, jar)
-        .await
-        .into_response()
+/// GET /auth/session — current session (or null if not paired). Authenticated by
+/// the `AuthUser` extractor (proven iroh key / loopback console / dev fallback);
+/// there is no cookie/signout — the credential is the device's iroh key.
+pub async fn auth_session_handler(user: Option<crate::middleware::auth::AuthUser>) -> Response {
+    crate::api::auth::session_handler(user).await.into_response()
 }
 
 // =============================================================================
