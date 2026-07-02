@@ -11,6 +11,14 @@ Files here:
 - `virtues-iroh-relay.service` → `/etc/systemd/system/virtues-iroh-relay.service`
 - `relay.env` (create on host, NOT in git) → `/etc/iroh-relay/relay.env`
 
+> **Note — the OVH host is already live** (deployed 2026-07-01). It runs the
+> binary under a slightly different unit than the reference here: `iroh-relay.service`
+> with `DynamicUser=yes` + a drop-in `iroh-relay.service.d/10-access.conf` that
+> sets `EnvironmentFile=/etc/iroh-relay/relay.env`, and the bearer comes from that
+> env (not from `config.toml`). These files are the **clean-install reference**
+> for a fresh host; on the existing host, edit `/etc/iroh-relay/config.toml` +
+> `/etc/iroh-relay/relay.env` in place and `systemctl restart iroh-relay`.
+
 ## 0. DNS (Route53)
 
 ```

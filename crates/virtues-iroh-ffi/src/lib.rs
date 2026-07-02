@@ -13,10 +13,20 @@
 //! needs the multi-thread flavor for iroh's reactor — hence `rt-multi-thread`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use virtues_iroh::{build_endpoint, EndpointId, RelayUrl, SecretKey, VirtuesIrohClient};
 
 uniffi::setup_scaffolding!();
+
+/// Wall-clock cap on binding the endpoint + first connect. Bounds a cold dial so
+/// iOS's ~30s background budget isn't consumed by a hung relay/box.
+const DIAL_TIMEOUT: Duration = Duration::from_secs(20);
+/// Wall-clock cap on a single request (connect-if-needed + write + read). Without
+/// this a stuck stream would block the caller's transport forever — iOS drives
+/// this from a serialized actor, so one hang would wedge all uploads. Matches the
+/// old URLSession 30s.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Errors surfaced to Swift. Each variant maps to a Swift enum case with an
 /// attached message, so the app can log/branch without string-matching.
@@ -46,14 +56,21 @@ fn decode_32(hex_str: &str, what: &str) -> Result<[u8; 32], IrohError> {
         .map_err(|_| IrohError::BadHex(format!("{what}: expected 32 bytes, got {}", bytes.len())))
 }
 
-/// Minimal hex decoder so the FFI crate doesn't pull the `hex` crate just for this.
+/// Minimal hex decoder so the FFI crate doesn't pull the `hex` crate just for
+/// this. Operates on bytes (never string slices) so non-ASCII input returns
+/// `None` instead of panicking on a non-char-boundary slice.
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    let b = s.as_bytes();
+    if b.len() % 2 != 0 {
         return None;
     }
-    (0..s.len())
+    (0..b.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .map(|i| {
+            let hi = (b[i] as char).to_digit(16)?;
+            let lo = (b[i + 1] as char).to_digit(16)?;
+            Some((hi * 16 + lo) as u8)
+        })
         .collect()
 }
 
@@ -87,9 +104,10 @@ impl IrohTransport {
             .trim()
             .parse()
             .map_err(|e| IrohError::BadRelayUrl(format!("{e}")))?;
-        let endpoint = build_endpoint(secret, Some(relay.clone()))
-            .await
-            .map_err(|e| IrohError::Dial(format!("{e:#}")))?;
+        let endpoint = match tokio::time::timeout(DIAL_TIMEOUT, build_endpoint(secret, Some(relay.clone()))).await {
+            Ok(r) => r.map_err(|e| IrohError::Dial(format!("{e:#}")))?,
+            Err(_) => return Err(IrohError::Dial("timed out binding iroh endpoint".into())),
+        };
         let client = VirtuesIrohClient::from_relay(endpoint, box_id, relay);
         Ok(Arc::new(Self { client }))
     }
@@ -99,10 +117,10 @@ impl IrohTransport {
     /// returned bytes back into a response — the box serves each stream as a
     /// normal hyper HTTP/1 connection.
     pub async fn request(&self, raw_http: Vec<u8>) -> Result<Vec<u8>, IrohError> {
-        self.client
-            .request(&raw_http)
-            .await
-            .map_err(|e| IrohError::Request(format!("{e:#}")))
+        match tokio::time::timeout(REQUEST_TIMEOUT, self.client.request(&raw_http)).await {
+            Ok(r) => r.map_err(|e| IrohError::Request(format!("{e:#}"))),
+            Err(_) => Err(IrohError::Request("timed out after 30s".into())),
+        }
     }
 
     /// Graceful close — flush the QUIC close frame. Optional; dropping the last
@@ -145,5 +163,12 @@ mod tests {
     #[test]
     fn rejects_non_hex() {
         assert!(endpoint_id_from_seed("zz".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn non_ascii_seed_does_not_panic() {
+        // Multi-byte UTF-8 at a non-char-boundary must return an error, not panic.
+        assert!(endpoint_id_from_seed("€".repeat(32)).is_err());
+        assert!(hex_decode("a€").is_none());
     }
 }
