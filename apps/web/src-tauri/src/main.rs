@@ -395,24 +395,6 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
-/// Reduce a paired server origin to the `host:port` the proxy forwards to.
-/// `http://100.104.55.76:8000` -> `100.104.55.76:8000`; `adam.local:8000` stays.
-/// Defaults the port to 8000 (the box's HTTP port) when none is present and the
-/// host isn't a bracketed IPv6 literal.
-fn origin_to_hostport(origin: &str) -> String {
-    let s = origin.trim();
-    let s = s
-        .strip_prefix("http://")
-        .or_else(|| s.strip_prefix("https://"))
-        .unwrap_or(s);
-    let hostport = s.split('/').next().unwrap_or(s).trim_end_matches('/');
-    if hostport.contains(':') || hostport.starts_with('[') {
-        hostport.to_string()
-    } else {
-        format!("{hostport}:8000")
-    }
-}
-
 /// Get collector daemon status by invoking CLI
 #[tauri::command]
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {

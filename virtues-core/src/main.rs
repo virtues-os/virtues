@@ -118,6 +118,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // pinhole or kernel-WG dependency to check. Just report the net class.
         let net = virtues::net_check::compute_net_status();
         println!("  network:       {}", net.headline);
+
+        // Best-effort iroh reach: doctor is otherwise DB-free, so open a pool
+        // only if we can and report the box's actual EndpointId + relay. Silent
+        // if there's no DB; explicit if the box is still LAN-only (the state
+        // that cost us real debugging time — surface it here).
+        if let Ok(cfg) = virtues::setup::recommended_config() {
+            if let Ok(db) = virtues::database::Database::new(&cfg.database_url) {
+                match virtues::relay::reach_status(db.pool()).await {
+                    Some((eid, relay)) => {
+                        println!("  iroh reach:    {eid}");
+                        println!("  relay:         {relay}");
+                    }
+                    None => println!(
+                        "  iroh reach:    not provisioned — LAN-only until relay config is fetched"
+                    ),
+                }
+            }
+        }
         return Ok(());
     }
 
@@ -129,7 +147,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
 
         let embedder = virtues::search::get_embedder().await?;
-        println!("✅ Embedder ready (dim={})", embedder.dimension());
+        // Actually embed once, don't just connect: this runs the sidecar's
+        // native-dim validation, so a wrong GGUF (e.g. bge's 1024 vs
+        // EmbeddingGemma's 768) fails HERE instead of "passing" a connect-only
+        // check and silently corrupting the index.
+        let probe = embedder.embed_query_async("virtues warm-up probe").await?;
+        println!(
+            "✅ Embedder ready (stored dim={}, native validated)",
+            probe.len()
+        );
 
         let _reranker = virtues::search::get_reranker().await?;
         println!("✅ Reranker ready");

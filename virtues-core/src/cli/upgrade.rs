@@ -261,29 +261,54 @@ pub async fn run(
     // models against a runtime that expects the new ones (embeds get rejected
     // at the native-dim check). Detect it and tell the user exactly how to
     // reconcile, instead of degrading search silently.
-    let missing: Vec<&str> = crate::inference_report::resolution_report()
-        .models
-        .iter()
-        .filter(|m| matches!(m.source, crate::inference_report::ModelSource::Download))
-        .map(|m| m.gguf_file)
-        .collect();
-    if !missing.is_empty() {
-        eprintln!();
-        eprintln!("  ⚠ this release expects models not present on the box:");
-        for f in &missing {
-            eprintln!("      · {f}");
+    //
+    // Only meaningful on a box that actually runs the local AI sidecars — a
+    // DIY/AI-less box (no embed unit) legitimately has no GGUFs, so skip it
+    // there rather than nag on every upgrade. And resolve the models dir from
+    // the box env file first: `sudo virtues upgrade` doesn't inherit the
+    // systemd EnvironmentFile, so without this a custom DATA_DIR box would
+    // probe the wrong (default) path and always report "missing".
+    if Path::new("/etc/systemd/system/virtues-embed.service").exists() {
+        if let Some(dir) = read_box_env_var("VIRTUES_MODELS_DIR") {
+            std::env::set_var("VIRTUES_MODELS_DIR", dir);
         }
-        eprintln!("    `virtues upgrade` doesn't migrate the model set — the sidecars are");
-        eprintln!("    still on the old GGUFs, so search/embeddings will fail until you");
-        eprintln!("    re-run the installer (fetches the new models + rewrites the units):");
-        eprintln!();
-        eprintln!("      curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION={target_tag} sh");
-        eprintln!();
+        let report = crate::inference_report::resolution_report();
+        let missing = report.missing();
+        if !missing.is_empty() {
+            eprintln!();
+            eprintln!("  ⚠ this release expects models not present on the box:");
+            for f in &missing {
+                eprintln!("      · {f}");
+            }
+            eprintln!("    `virtues upgrade` doesn't migrate the model set — the sidecars are");
+            eprintln!("    still on the old GGUFs, so search/embeddings will fail until you");
+            eprintln!("    re-run the installer (fetches the new models + rewrites the units):");
+            eprintln!();
+            eprintln!("      curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION={target_tag} sh");
+            eprintln!();
+        }
     }
 
     println!();
     println!("✓ upgraded to {target_tag}. Rollback copy kept at {bak}.");
     Ok(())
+}
+
+/// Read a single `KEY=value` from the box env file (`/var/lib/virtues/virtues.env`).
+/// `sudo virtues upgrade` doesn't inherit the systemd EnvironmentFile, so this is
+/// how the upgrade path recovers box-specific settings (e.g. a custom models dir).
+fn read_box_env_var(key: &str) -> Option<String> {
+    let contents = fs::read_to_string("/var/lib/virtues/virtues.env").ok()?;
+    for line in contents.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
+            let val = rest.trim().trim_matches('"');
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Resolved on-box install destinations. The binaries live next to

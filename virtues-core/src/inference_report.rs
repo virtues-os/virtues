@@ -37,6 +37,20 @@ pub struct ResolutionReport {
     pub models: Vec<ModelEntry>,
 }
 
+impl ResolutionReport {
+    /// GGUF file names of models not present on disk (`ModelSource::Download`).
+    /// One place to answer "which models are missing" so the several callers
+    /// (`doctor`, `upgrade`, `deploy`, box status) don't each open-code the
+    /// `ModelSource::Download` match and drift apart.
+    pub fn missing(&self) -> Vec<&str> {
+        self.models
+            .iter()
+            .filter(|m| matches!(m.source, ModelSource::Download))
+            .map(|m| m.gguf_file)
+            .collect()
+    }
+}
+
 /// The GGUFs the installer provisions.
 /// - Embed: EmbeddingGemma-300M, QAT Q8_0 (quantization-aware-trained →
 ///   robust quant; on-device-designed, mean pooling, 768-dim native that we

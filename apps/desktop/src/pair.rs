@@ -171,6 +171,18 @@ async fn consume(origin: String, token: String) -> Result<()> {
     };
     keychain::save_box(&rec).context("store paired box")?;
 
+    // If the box wasn't relay-ready at consume time it returns no ticket; pick it
+    // up now so we don't get stuck LAN-only until the next launch.
+    let (box_node_id, relay_url) = if box_node_id.is_none() || relay_url.is_none() {
+        let _ = refresh_reach().await;
+        match keychain::load_box() {
+            Ok(Some(r)) => (r.box_node_id, r.relay_url),
+            _ => (box_node_id, relay_url),
+        }
+    } else {
+        (box_node_id, relay_url)
+    };
+
     println!();
     println!("✓ paired with {origin}");
     match (&box_node_id, &relay_url) {
@@ -181,6 +193,54 @@ async fn consume(origin: String, token: String) -> Result<()> {
     println!();
     println!("next: run `virtues-client up` to serve the box at http://localhost:7117");
 
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct SelfReach {
+    #[serde(default)]
+    box_node_id: Option<String>,
+    #[serde(default)]
+    relay_url: Option<String>,
+}
+
+/// Refresh the box's iroh reach ticket from `GET /api/devices/self/reach`.
+///
+/// Devices freeze the ticket at pair time; if the box had no relay reach then (a
+/// box claimed before the relay was live) or the relay URL later changed, this
+/// picks up the current one. Best-effort + idempotent: a no-op if we already
+/// have a ticket, aren't paired, or the box still isn't relay-ready. Called at
+/// the end of `consume` and on `up` startup.
+pub async fn refresh_reach() -> Result<()> {
+    let Some(mut rec) = keychain::load_box()? else {
+        return Ok(());
+    };
+    if rec.box_node_id.is_some() && rec.relay_url.is_some() {
+        return Ok(());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+    let url = format!(
+        "{}/api/devices/self/reach",
+        rec.box_url.trim_end_matches('/')
+    );
+    let resp = match client.get(&url).bearer_auth(&rec.bearer).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(()), // box unreachable or not relay-ready yet
+    };
+    let reach: SelfReach = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    let node = reach.box_node_id.filter(|s| !s.is_empty());
+    let relay = reach.relay_url.filter(|s| !s.is_empty());
+    if node.is_some() && relay.is_some() {
+        rec.box_node_id = node;
+        rec.relay_url = relay;
+        keychain::save_box(&rec).context("persist refreshed reach ticket")?;
+        eprintln!("↻ refreshed iroh reach ticket from the box");
+    }
     Ok(())
 }
 

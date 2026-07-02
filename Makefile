@@ -201,7 +201,7 @@ _embed-ensure:
 # would emit the wrong sentence vector.
 _embed-run:
 	@trap 'kill 0' INT TERM; \
-	  llama-server -lv 1 --embedding --pooling mean -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 8192 -b 8192 -ub 8192 & \
+	  llama-server -lv 1 --embedding --pooling mean -m "$(VIRTUES_MODELS_DIR)/$(EMBED_GGUF)"  --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 & \
 	  llama-server -lv 1 --rerank                  -m "$(VIRTUES_MODELS_DIR)/$(RERANK_GGUF)" --host 127.0.0.1 --port 18182 -c 8192 -b 8192 -ub 8192 & \
 	  wait
 
