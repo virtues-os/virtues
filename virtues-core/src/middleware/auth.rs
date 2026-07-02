@@ -102,16 +102,8 @@ where
             }
         }
 
-        // 2. Device bearer — external/programmatic callers (webhooks) and any
-        //    non-iroh client present `Authorization: Bearer <token>`. The bearer
-        //    IS the credential, so this authenticates over ANY transport — the
-        //    network is never the trust boundary. A bad one fails closed rather
-        //    than falling through to cookie/loopback.
-        if let Some(token) = read_bearer(&parts.headers) {
-            return validate_bearer(&pool, &token).await.ok_or_else(unauthorized);
-        }
-
-        // 3. Loopback console — a process on the box itself, connecting
+        // 2. Loopback console — a process on the box itself (on-box CLI),
+        //    connecting
         //    directly to 127.0.0.1 / ::1. Physical access wins the threat
         //    model. Refused when a forwarding header is present, because a
         //    reverse proxy in front of the box also connects from loopback
@@ -131,13 +123,13 @@ where
             });
         }
 
-        // 4. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
+        // 3. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
         //    isn't exposed; the request reaches us through the vite proxy, which
         //    defeats the loopback bypass above). Authenticate as the console
         //    owner so `make dev` lands straight in the app with no pairing — the
         //    complement to VIRTUES_DEV_SKIP_SETUP. A real box NEVER sets
-        //    ENVIRONMENT=dev, so this is inert in production. Last resort: a real
-        //    bearer/cookie still wins above.
+        //    ENVIRONMENT=dev, so this is inert in production. Last resort: the
+        //    proven iroh key / loopback still win above.
         if is_dev() {
             return Ok(AuthUser {
                 id: crate::middleware::http::OWNER_USER_ID.to_string(),
@@ -154,60 +146,6 @@ where
 /// auto-login + skip-pairing conveniences; never set on a real appliance.
 pub fn is_dev() -> bool {
     std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false)
-}
-
-/// Extract a token from an `Authorization: Bearer <token>` header.
-pub(crate) fn read_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
-    let raw = headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?;
-    let token = raw
-        .strip_prefix("Bearer ")
-        .or_else(|| raw.strip_prefix("bearer "))?
-        .trim();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token.to_string())
-    }
-}
-
-/// Validate a device bearer into an `AuthUser`. HMAC-looks-up the credential,
-/// joins it to its paired device + owner, and enforces the device-list ACL
-/// (credential `active`, device `revoked_at IS NULL`). Touches last-seen on
-/// success. Transport-independent — this is what makes the box reachable over
-/// a BYO overlay with no special-casing.
-pub(crate) async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUser> {
-    let credential_id = crate::api::credentials::validate_device_token(pool, token)
-        .await
-        .ok()?;
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT u.id, d.id, d.label \
-         FROM credentials c \
-         JOIN app_device d ON d.id = c.device_id \
-         JOIN app_auth_user u ON u.id = d.user_id \
-         WHERE c.id = $1 AND c.status = 'active' AND d.revoked_at IS NULL",
-    )
-    .bind(&credential_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    let (user_id, device_id, device_label) = row?;
-
-    // Best-effort last-seen touch on both the credential and the device row.
-    let _ = crate::api::credentials::update_last_seen(pool, &credential_id).await;
-    let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
-        .bind(&device_id)
-        .execute(pool)
-        .await;
-
-    Some(AuthUser {
-        id: user_id,
-        device_id,
-        device_label,
-    })
 }
 
 /// Authenticate a device by its proven, allowlisted iroh EndpointId (hex).
