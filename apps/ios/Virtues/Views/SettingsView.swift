@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var showingStorageDetails = false
     @State private var showingEndpointEdit = false
     @State private var showQRScanner = false
+    @State private var showLinkCodeEntry = false
     @State private var isCompletingPairing = false
     @State private var pairingError: String?
     @State private var showCopiedToast = false
@@ -86,6 +87,18 @@ struct SettingsView: View {
                             }
                         }
                         .foregroundColor(.warmPrimary)
+                    }
+                    .disabled(isCompletingPairing)
+
+                    // Enter a linking code (fully-remote — pair through a device
+                    // you already have, no QR / no LAN needed).
+                    Button(action: {
+                        Haptics.light()
+                        pairingError = nil
+                        showLinkCodeEntry = true
+                    }) {
+                        Label("Enter Linking Code", systemImage: "keyboard")
+                            .foregroundColor(.warmPrimary)
                     }
                     .disabled(isCompletingPairing)
 
@@ -330,6 +343,12 @@ struct SettingsView: View {
                     onCancel: { showQRScanner = false }
                 )
             }
+            .sheet(isPresented: $showLinkCodeEntry) {
+                ManualCodeEntryView(
+                    onEnter: handleLinkCode,
+                    onCancel: { showLinkCodeEntry = false }
+                )
+            }
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
                     Text("Device ID copied to clipboard")
@@ -354,6 +373,33 @@ struct SettingsView: View {
     /// `kind = "mobile_app"`, persist the server-issued bearer into the
     /// Keychain (done inside `consumePairToken`), and persist the endpoint
     /// + action_ids into `DeviceConfiguration`.
+    /// Fully-remote link: the user typed a code shown on an already-paired device.
+    /// Resolve the box via atlas, wait for approval, pull the bearer over iroh.
+    private func handleLinkCode(_ code: String) {
+        showLinkCodeEntry = false
+        isCompletingPairing = true
+        pairingError = nil
+        Task {
+            do {
+                try await NetworkManager.shared.linkDevice(code: code)
+                await MainActor.run {
+                    isCompletingPairing = false
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isCompletingPairing = false
+                    if let networkError = error as? NetworkError {
+                        pairingError = networkError.errorDescription
+                    } else {
+                        pairingError = error.localizedDescription
+                    }
+                    Haptics.error()
+                }
+            }
+        }
+    }
+
     private func handleQRScanResult(endpoint: String, pairToken: String, fingerprint: String?) {
         showQRScanner = false
         isCompletingPairing = true
