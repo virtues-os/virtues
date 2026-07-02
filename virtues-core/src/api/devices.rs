@@ -305,13 +305,13 @@ pub async fn set_self_node_id(
     }
 }
 
-/// `GET /api/devices/self/reach` — the calling device (authed by its own bearer)
-/// re-reads the box's *current* iroh reach ticket `{box_node_id, relay_url}`.
-///
-/// Devices freeze the ticket at pair time; this lets them refresh it (on launch
-/// or after a dial failure) instead of being stuck if the box had no relay reach
-/// when they paired, or the relay URL later changed. Read-only; no state change.
-pub async fn get_self_reach(State(_pool): State<PgPool>, _user: AuthUser) -> impl IntoResponse {
+/// `GET /api/devices/self/reach` — read the box's *current* iroh reach ticket
+/// `{box_node_id, relay_url}`. **Anonymous**: the reach ticket is the box's
+/// public address (its EndpointId + relay URL) — not a secret — and a device
+/// needs it precisely to bootstrap its first iroh dial (before which it has no
+/// key-authenticated channel). Connecting still requires an allowlisted key, so
+/// exposing the address grants nothing. Read-only; no state change.
+pub async fn get_self_reach(State(_pool): State<PgPool>) -> impl IntoResponse {
     let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
         Some((n, r)) => (Some(n), Some(r)),
         None => (None, None),
@@ -700,7 +700,3 @@ async fn atlas_link_poll(pool: &PgPool, code_hash: &str) -> Option<(String, Opti
 // active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
 // and fires `NOTIFY wg_reconcile`; the daemon drops the peer. This removes the
 // previous dual-writer (a direct `remove_peer` here racing the daemon's poll).
-
-// Silence unused `Value` import if the file evolves.
-#[allow(dead_code)]
-fn _value_ref(_: &Value) {}

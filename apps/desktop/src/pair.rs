@@ -225,7 +225,9 @@ pub async fn refresh_reach() -> Result<()> {
         "{}/api/devices/self/reach",
         rec.box_url.trim_end_matches('/')
     );
-    let resp = match client.get(&url).bearer_auth(&rec.bearer).send().await {
+    // Anonymous: the reach ticket is the box's public address (see
+    // get_self_reach). No credential needed to bootstrap the first iroh dial.
+    let resp = match client.get(&url).send().await {
         Ok(r) if r.status().is_success() => r,
         _ => return Ok(()), // box unreachable or not relay-ready yet
     };
