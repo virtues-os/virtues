@@ -2,7 +2,6 @@
 
 use std::env;
 use virtues::cli::types::{Cli, Commands};
-use virtues::search::Embedder;
 use virtues::VirtuesBuilder;
 
 #[tokio::main]

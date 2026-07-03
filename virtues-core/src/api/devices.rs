@@ -207,8 +207,10 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // Revoke credential rows belonging to this device (apps/sensors). Browser
-    // sessions are deleted instead — they're cookies, not long-lived secrets.
+    // Revoke credential rows belonging to this device (webhook/OAuth tokens).
+    // The device's iroh key is de-allowlisted by the `app_device.revoked_at`
+    // update above (the reconciler drops it from the allowlist), so the next
+    // dial is refused at the handshake — there is no session row to delete.
     if let Err(e) = sqlx::query(
         "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
                                 status_reason = 'device_revoked', updated_at = now() \
@@ -219,18 +221,6 @@ pub async fn revoke_handler(
     .await
     {
         tracing::warn!("devices revoke: credential revoke failed: {e:#}");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "internal"})),
-        )
-            .into_response();
-    }
-    if let Err(e) = sqlx::query("DELETE FROM app_auth_session WHERE device_id = $1")
-        .bind(&device_id)
-        .execute(&mut *tx)
-        .await
-    {
-        tracing::warn!("devices revoke: session delete failed: {e:#}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": "internal"})),

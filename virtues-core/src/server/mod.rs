@@ -212,7 +212,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
-        // Auth — pair-only model. Public consume + session probe + signout.
+        // Auth — pair-only model. Public consume + session probe (returns the
+        // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
         // protected_routes block below.
         .route(
@@ -751,11 +752,12 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
-        // Blanket auth: all routes in this group require a valid session cookie
+        // Blanket auth: all routes in this group require a resolved AuthUser
+        // (proven iroh key / loopback console / dev fallback).
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()));
 
     // Merge public + protected, apply shared state and body limits, then
-    // wrap in the security layers (CSRF gate + response headers).
+    // wrap in the security layers (response headers).
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
