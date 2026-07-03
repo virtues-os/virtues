@@ -1,26 +1,25 @@
 //! Authentication middleware.
 //!
-//! **Auth lives at the app layer; the network is a dumb transport.** The box
-//! authenticates every request from its own credentials — NOT from the path it
-//! arrived over — so the same auth works whether a request comes over Virtues'
-//! WireGuard, a user's BYO overlay (Tailscale/Headscale/VPS), or plain LAN.
-//! See `[[project_networking_doctrine]]`.
+//! **The allowlisted iroh key is the credential.** A paired device holds an
+//! iroh EndpointId that the box has allowlisted; the QUIC raw-public-key
+//! handshake proves the key on every connection, so authentication is just
+//! "is the proven key a live device?" — no bearer, no cookie, no second secret.
 //!
 //! Three accepted credentials, checked in order:
-//!   1. **Device bearer** (`Authorization: Bearer <token>`) — a paired
-//!      non-browser device (iOS/Mac/custom). HMAC-lookup against `credentials`,
-//!      joined to its `app_device` (enforcing `revoked_at IS NULL`). Pure
-//!      capability, works over any transport.
+//!   1. **Proven iroh peer** — the primary path for every interactive client
+//!      (iOS, desktop + its webview via the daemon, CLI-over-iroh). `serve()`
+//!      only forwards allowlisted peers and stamps the proven EndpointId as a
+//!      `ProvenPeer` extension; we map it to its `app_device` row (enforcing
+//!      `revoked_at IS NULL`). Unspoofable — a typed extension, never a header.
 //!   2. **Loopback console** — a process on the box itself connecting directly
 //!      to `127.0.0.1`/`::1`. Gated: refused when a forwarding header is
 //!      present (a reverse proxy also connects from loopback — see below).
-//!   3. **Session cookie** — a browser, validated against the three-table model
-//!      (`app_auth_session` → `app_device` → `app_auth_user`) with hard expiry,
-//!      soft revoke, and an 8h idle ceiling.
+//!   3. **Dev fallback** — `ENVIRONMENT=dev` only, so `make dev` lands in the
+//!      app with no pairing. Inert on a real appliance.
 //!
-//! Each authenticated request bumps `last_used_at` / `last_seen_at`. Idle
-//! timeout means a forgotten browser tab can't re-enter the box after the user
-//! walks away — they have to re-pair.
+//! Each authenticated request bumps `last_seen_at`. Webhook / OAuth bearers are
+//! a separate, surviving token class (see `validate_device_token`) — they are
+//! NOT an app credential and are not checked here.
 
 use axum::{
     async_trait,
@@ -36,7 +35,7 @@ use std::net::SocketAddr;
 /// Synthetic device id for the "I'm sitting at the box's monitor + keyboard"
 /// session. The auth extractor returns an `AuthUser` with this id when the
 /// request's socket peer is loopback (`127.0.0.1` / `::1`) AND no forwarding
-/// header is present, bypassing the cookie + pair-token requirement.
+/// header is present, bypassing the iroh-key requirement.
 ///
 /// Safe because the threat model is "physical access = you" — a process on
 /// the box can already read `/var/lib/virtues/lake/` and `/etc/virtues/env`,
@@ -52,12 +51,12 @@ use std::net::SocketAddr;
 pub const CONSOLE_DEVICE_ID: &str = "local-console";
 pub const CONSOLE_DEVICE_LABEL: &str = "Local console";
 
-/// Authenticated principal extracted from the cookie.
+/// Authenticated principal for a request.
 ///
 /// `id` is the owner-user id (always the singleton in v1). `device_id` is the
-/// specific paired device the cookie belongs to — handlers that need to scope
-/// to "this device" (e.g. minting a pair token on behalf of the minting
-/// device, or revoking your own session vs another) read from here.
+/// specific paired device the proven iroh key resolved to — handlers that need
+/// to scope to "this device" (e.g. minting a pair token on behalf of the
+/// minting device, or revoking one device vs another) read from here.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub id: String,
@@ -149,7 +148,7 @@ pub fn is_dev() -> bool {
 }
 
 /// Authenticate a device by its proven, allowlisted iroh EndpointId (hex).
-/// Mirrors [`validate_bearer`]'s join but keyed on `app_device.node_id` — no
+/// Joins `app_device` to its owner keyed on `app_device.node_id` — no
 /// bearer/credential row involved. The caller has already established (via the
 /// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
 /// a live device row owning it is sufficient to authenticate. Touches last-seen.
@@ -180,10 +179,9 @@ pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<A
 }
 
 /// Idempotent upsert for the synthetic console device row. Called at server
-/// startup so the FK in `app_auth_session` (and any future row that references
-/// the console session) stays valid. The row is created revoked=NULL,
-/// last_seen_at=NULL — `last_seen_at` gets touched on real use via the same
-/// validate_and_touch path (loopback bypass updates it best-effort, see below).
+/// startup so any row that references the console device (e.g. a pair token
+/// minted from the on-box CLI) has a valid FK target. The row is created
+/// revoked=NULL, last_seen_at=NULL.
 pub async fn ensure_console_device(pool: &PgPool) -> crate::Result<()> {
     sqlx::query(
         "INSERT INTO app_device (id, user_id, kind, label, paired_from_ip) \

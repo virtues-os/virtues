@@ -485,7 +485,7 @@ pub struct ProvisionStatusResponse {
 /// phone scanned the bundle QR + brought up WG), not merely when the box
 /// accepted the provision. The signal is `last_seen_at > paired_at` (with a
 /// small guard against the provision-time `now()` jitter); `last_seen_at` is
-/// touched on every authenticated request via `validate_bearer`.
+/// touched on every authenticated request.
 pub async fn provision_status_handler(
     State(pool): State<PgPool>,
     _user: AuthUser,

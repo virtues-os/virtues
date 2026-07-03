@@ -47,7 +47,6 @@ struct StatusJson {
 #[derive(Debug, Serialize)]
 struct AuthSection {
     devices_paired: i64,
-    sessions_active: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -153,16 +152,8 @@ async fn collect_auth(pool: &PgPool) -> AuthSection {
     .await
     .ok()
     .flatten();
-    let sessions: Option<(i64,)> = sqlx::query_as(
-        "SELECT COUNT(*) FROM app_auth_session WHERE expires_at > now()",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
     AuthSection {
         devices_paired: devices.map(|(n,)| n).unwrap_or(0),
-        sessions_active: sessions.map(|(n,)| n).unwrap_or(0),
     }
 }
 
