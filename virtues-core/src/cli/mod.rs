@@ -36,6 +36,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Sudo command should be handled in main.rs");
         }
 
+        Commands::Device { .. } => {
+            // Same — handled in main.rs against a bare DB pool.
+            unreachable!("Device command should be handled in main.rs");
+        }
+
         Commands::Backup { .. } => {
             // Handled in main.rs — runs against a bare DB pool, doesn't
             // need the full Virtues client.
