@@ -119,20 +119,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  network:       {}", net.headline);
 
         // Best-effort iroh reach: doctor is otherwise DB-free, so open a pool
-        // only if we can and report the box's actual EndpointId + relay. Silent
-        // if there's no DB; explicit if the box is still LAN-only (the state
-        // that cost us real debugging time — surface it here).
+        // only if we can and report each reach leg's ACTUAL state — endpoint,
+        // relay home, and allowlist size — so a still-LAN-only box (the state
+        // that cost us real debugging time) is impossible to miss.
         if let Ok(cfg) = virtues::setup::recommended_config() {
             if let Ok(db) = virtues::database::Database::new(&cfg.database_url) {
-                match virtues::relay::reach_status(db.pool()).await {
-                    Some((eid, relay)) => {
-                        println!("  iroh reach:    {eid}");
-                        println!("  relay:         {relay}");
-                    }
+                let r = virtues::relay::reach_report(db.pool()).await;
+                match r.endpoint_id {
+                    Some(eid) => println!("  iroh reach:    {eid}"),
+                    None => println!("  iroh reach:    not provisioned (no iroh secret yet)"),
+                }
+                match r.relay_url {
+                    Some(relay) => println!("  relay:         {relay}"),
                     None => println!(
-                        "  iroh reach:    not provisioned — LAN-only until relay config is fetched"
+                        "  relay:         LAN-only — no relay config (box unclaimed or atlas unreachable)"
                     ),
                 }
+                println!("  allowlist:     {} device(s) permitted", r.allowlisted_devices);
             }
         }
         return Ok(());
