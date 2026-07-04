@@ -2,10 +2,18 @@
 //!
 //! Single route: `POST /webhook/:action_id`.
 //!
-//! Auth: `Authorization: Bearer <device_token>`. The token is decrypted and
-//! matched against a credential via `validate_device_token`; the returned
-//! credential_id must match the target action's `credential_id`, otherwise
-//! a token leaked from one device can't be used to post at another's action.
+//! Auth — two accepted callers, checked in order:
+//!   1. **A proven owner device** (iOS, the Mac collector, the on-box console).
+//!      These reach the box over iroh, so the transport already proved their
+//!      allowlisted key and `AuthUser` resolves it — ingest is gated by the
+//!      SAME allowlist as every other route, with no long-lived bearer as a
+//!      bypass. Single-owner appliance: the proven owner may drive any of their
+//!      own actions (the action itself defines what happens to the payload).
+//!   2. **A genuinely external, non-iroh caller** (a third-party service posting
+//!      to a webhook action). It can't speak iroh, so it presents
+//!      `Authorization: Bearer <token>`, validated via `validate_device_token`
+//!      and scoped to the one action it owns (`credential_id` must match) — so a
+//!      token leaked from one external integration can't post at another's.
 //!
 //! The unified `action_runner::run_action` enforces trigger validation,
 //! condition evaluation, and dispatch. This handler only does auth + routing.
@@ -23,6 +31,7 @@ use serde_json::Value;
 use crate::action_runner::{ActionRunStatus, RunnerDeps};
 use crate::api::chat::ChatCancellationState;
 use crate::database::Database;
+use crate::middleware::auth::AuthUser;
 
 #[derive(Debug, Serialize)]
 pub struct WebhookResponse {
@@ -67,15 +76,20 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// Handler for `POST /webhook/:action_id`.
 ///
 /// Flow:
-/// 1. Extract bearer → 401 if missing.
-/// 2. `validate_device_token` → 401 on fail; returns the caller's credential_id.
-/// 3. Fetch action → 404 if missing.
-/// 4. Assert `action.credential_id == Some(caller_credential_id)` → 403 otherwise.
-/// 5. Dispatch via `run_action(.., "webhook", payload)`.
+/// 1. Authenticate the caller: proven owner key (`AuthUser`) or, failing that,
+///    an external bearer (`validate_device_token`) → 401 if neither.
+/// 2. Fetch action → 404 if missing.
+/// 3. For the external-bearer path only, assert `action.credential_id` matches
+///    the caller's credential → 403 otherwise (owner key needs no such scope).
+/// 4. Dispatch via `run_action(.., "webhook", payload)`.
+///
+/// `maybe_user` is `Option<AuthUser>` (not a hard extractor) so the route stays
+/// open to the external bearer path when there's no proven key.
 pub async fn webhook(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
     headers: HeaderMap,
+    maybe_user: Option<AuthUser>,
     payload: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Response {
     // Do NOT swallow a body-parse failure into Value::Null and dispatch anyway.
@@ -142,20 +156,20 @@ pub async fn webhook(
             .into_response();
     }
 
-    let Some(device_token) = extract_bearer(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Missing bearer token",
-                "hint": "Include 'Authorization: Bearer <device_token>' header"
-            })),
-        )
-            .into_response();
-    };
-
-    let caller_credential_id =
+    // Authenticate FIRST (before touching the action, so an unauthenticated
+    // caller can't probe action existence). `None` => a proven owner device
+    // (its key/loopback was already established by AuthUser); `Some(cred_id)` =>
+    // an external bearer caller that must still pass the ownership check below.
+    let external_credential: Option<String> = if let Some(user) = maybe_user {
+        tracing::debug!(
+            device_id = %user.device_id,
+            action_id = %action_id,
+            "webhook authed by proven key"
+        );
+        None
+    } else if let Some(device_token) = extract_bearer(&headers) {
         match crate::api::validate_device_token(state.db.pool(), &device_token).await {
-            Ok(id) => id,
+            Ok(id) => Some(id),
             Err(e) => {
                 return (
                     StatusCode::UNAUTHORIZED,
@@ -166,11 +180,18 @@ pub async fn webhook(
                 )
                     .into_response();
             }
-        };
-
-    if let Err(e) = crate::api::update_last_seen(state.db.pool(), &caller_credential_id).await {
-        tracing::warn!("Failed to update last_seen: {}", e);
-    }
+        }
+    } else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "Missing credential",
+                "hint": "Reach the box over iroh as a paired device, or include \
+                         'Authorization: Bearer <token>' for an external caller"
+            })),
+        )
+            .into_response();
+    };
 
     let action = match crate::scheduler::actions::get_action(state.db.pool(), &action_id).await {
         Ok(a) => a,
@@ -183,20 +204,27 @@ pub async fn webhook(
         }
     };
 
-    if action.credential_id.as_deref() != Some(caller_credential_id.as_str()) {
-        tracing::warn!(
-            action_id = %action_id,
-            caller_credential_id = %caller_credential_id,
-            action_credential_id = ?action.credential_id,
-            "webhook auth mismatch: caller credential does not own this action"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": "token does not authorize this action",
-            })),
-        )
-            .into_response();
+    // External bearer callers are scoped to the single action they own; a proven
+    // owner (external_credential == None) may drive any of their own actions.
+    if let Some(caller_credential_id) = &external_credential {
+        if let Err(e) = crate::api::update_last_seen(state.db.pool(), caller_credential_id).await {
+            tracing::warn!("Failed to update last_seen: {}", e);
+        }
+        if action.credential_id.as_deref() != Some(caller_credential_id.as_str()) {
+            tracing::warn!(
+                action_id = %action_id,
+                caller_credential_id = %caller_credential_id,
+                action_credential_id = ?action.credential_id,
+                "webhook auth mismatch: caller credential does not own this action"
+            );
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": "token does not authorize this action",
+                })),
+            )
+                .into_response();
+        }
     }
 
     let deps = RunnerDeps {
