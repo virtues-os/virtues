@@ -37,19 +37,12 @@
 	}
 
 	async function handleLogout() {
-		try {
-			const response = await fetch("/auth/signout", { method: "POST" });
-			if (response.ok) {
-				windowShellStore.closeAllTabs();
-				await goto("/pair");
-			} else {
-				console.error("[Logout] Failed to sign out:", response.status);
-				await goto("/pair");
-			}
-		} catch (error) {
-			console.error("[Logout] Error:", error);
-			await goto("/pair");
-		}
+		// Auth is the device's proven iroh key — there is no server session to
+		// end, so "sign out" is a soft lock: close the workspace and return to
+		// the pair screen. To fully drop this device, revoke it from Devices
+		// (or "Disconnect this Mac" in the desktop app).
+		windowShellStore.closeAllTabs();
+		await goto("/pair");
 	}
 
 	const settingsItems: SidebarNavItemData[] = [
