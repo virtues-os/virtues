@@ -18,14 +18,12 @@
 	// wordmark and the separate search row — the corner now *does* something.
 
 	async function handleLogout() {
-		try {
-			await fetch("/auth/signout", { method: "POST" });
-		} catch (err) {
-			console.error("[Logout] Error:", err);
-		} finally {
-			windowShellStore.closeAllTabs();
-			await goto("/pair");
-		}
+		// Auth is the device's proven iroh key — there is no server session to
+		// end, so "sign out" is a soft lock: close the workspace and return to
+		// the pair screen. To fully drop this device, revoke it from Devices
+		// (or "Disconnect this Mac" in the desktop app).
+		windowShellStore.closeAllTabs();
+		await goto("/pair");
 	}
 
 	function open(route: string, label: string, preferEmptyPane = false) {
