@@ -323,6 +323,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues device <ls|rm|add>` ───────────────────────────────────────
+    // The allowlist as a CLI — "who can reach this box?" is one list. `ls`
+    // shows non-revoked devices, `rm` de-allowlists one (next dial refused at
+    // the handshake), `add` prints the standing pair code (same as `pair`).
+    // Bare-pool: the on-box operator is the owner (physical access = you).
+    if let Some(Commands::Device { action }) = &cli.command {
+        use virtues::cli::types::DeviceCommands;
+        let database_url = virtues::database::normalize_database_url()?;
+        let db = virtues::database::Database::new(&database_url)?;
+        let pool = db.pool();
+        match action {
+            DeviceCommands::Ls => {
+                let devices = virtues::api::devices::list_devices_cli(pool).await?;
+                if devices.is_empty() {
+                    println!();
+                    println!("  No devices on the allowlist. Run `virtues device add` to pair one.");
+                    println!();
+                    return Ok(());
+                }
+                println!();
+                println!(
+                    "  {:<30}  {:<12}  {:<22}  {:<14}  {}",
+                    "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                );
+                for (id, kind, label, node_id, last_seen) in &devices {
+                    let key = node_id
+                        .as_deref()
+                        .map(|n| format!("{}…", &n[..n.len().min(10)]))
+                        .unwrap_or_else(|| "—".to_string());
+                    let seen = last_seen
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_else(|| "never".to_string());
+                    let label = if label.chars().count() > 22 {
+                        format!("{}…", label.chars().take(21).collect::<String>())
+                    } else {
+                        label.clone()
+                    };
+                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {seen}");
+                }
+                println!();
+                return Ok(());
+            }
+            DeviceCommands::Rm { id } => match virtues::api::devices::revoke_device_cli(pool, id).await {
+                Ok(true) => {
+                    println!("✓ revoked {id} — its key is de-allowlisted; the next dial is refused.");
+                    return Ok(());
+                }
+                Ok(false) => {
+                    eprintln!("error: no active device with id {id} (already revoked or unknown)");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("error: revoke failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+            DeviceCommands::Add => match virtues::api::pair::ensure_standing(pool).await {
+                Ok(minted) => {
+                    print_link_output(&minted);
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("error: could not produce a pair code: {e}");
+                    std::process::exit(1);
+                }
+            },
+        }
+    }
+
     // ─── `virtues report-crash` ─────────────────────────────────────────────
     // systemd post-stop hook. ALWAYS exits 0 — a failed diag post must
     // never cascade into a "post-stop hook failed" event. Handled here

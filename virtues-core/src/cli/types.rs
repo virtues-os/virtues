@@ -19,6 +19,26 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+/// `virtues device <action>` — the allowlist as a CLI.
+#[derive(Subcommand)]
+pub enum DeviceCommands {
+    /// List the devices currently allowed to reach this box (non-revoked).
+    #[command(alias = "list")]
+    Ls,
+
+    /// Revoke a device by id — de-allowlists its iroh key so its next dial is
+    /// refused, and revokes any credential rows it owns.
+    #[command(alias = "revoke")]
+    Rm {
+        /// The device id (as shown by `virtues device ls`).
+        id: String,
+    },
+
+    /// Print a one-time pair code to bring a new device onto the allowlist.
+    /// Alias for `virtues pair` scoped to the allowlist framing.
+    Add,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Interactive setup wizard. Mostly historical — fresh hardware boots use
@@ -66,6 +86,17 @@ pub enum Commands {
         /// Deny instead of approve.
         #[arg(long, conflicts_with = "id")]
         deny: bool,
+    },
+
+    /// Manage the devices allowed to reach this box.
+    ///
+    /// A paired device = a row in `app_device` holding an allowlisted iroh
+    /// EndpointId. The allowlist IS the auth boundary: `ls` shows who can reach
+    /// the box, `rm` de-allowlists a device (its next dial is refused at the
+    /// handshake), and `add` prints a pair code to bring a new device on.
+    Device {
+        #[command(subcommand)]
+        action: DeviceCommands,
     },
 
     /// Run database migrations

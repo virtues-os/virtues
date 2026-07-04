@@ -4,11 +4,13 @@
 //! and supports revocation. Revoke is the single operation that ends all of
 //! a device's authority in one step:
 //!
-//!   1. Mark `app_device.revoked_at = now()` — the middleware sees this on the
-//!      next request and refuses both cookies and bearers linked to the row.
+//!   1. Mark `app_device.revoked_at = now()` — the reconciler drops the device's
+//!      iroh key from the allowlist, so its next dial is refused at the QUIC
+//!      handshake (existing connections aren't force-evicted; iroh has no
+//!      per-conn revoke — next dial is the boundary).
 //!   2. Move any attached `credentials.status` to `'revoked'` and clear the
-//!      `secret_lookup_hash` so the bearer can no longer be matched O(1) at
-//!      `validate_device_token` time.
+//!      `secret_lookup_hash` so any webhook/OAuth token it owns can no longer be
+//!      matched O(1) at `validate_device_token` time.
 //!   3. If the credential metadata carries a `wg_public_key`, call
 //!      `virtues_wg::manager::remove_peer(pubkey)` so the tunnel drops on the
 //!      kernel side immediately (Linux-only; no-op on the macOS dev host).
@@ -83,6 +85,52 @@ pub async fn list_handler(State(pool): State<PgPool>, user: AuthUser) -> impl In
                 .into_response()
         }
     }
+}
+
+/// Bare-pool device list for the `virtues device ls` CLI. No `AuthUser` — the
+/// on-box operator is the owner (physical access = you). Non-revoked devices,
+/// newest-active first. Returns `(id, kind, label, node_id, last_seen_at)`.
+pub async fn list_devices_cli(
+    pool: &PgPool,
+) -> Result<Vec<(String, String, String, Option<String>, Option<DateTime<Utc>>)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, kind, label, node_id, last_seen_at \
+         FROM app_device \
+         WHERE revoked_at IS NULL \
+         ORDER BY last_seen_at DESC NULLS LAST, paired_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Bare-pool device revoke for the `virtues device rm` CLI. Mirrors the HTTP
+/// revoke's core in one transaction (mark the device revoked + revoke its
+/// credential rows), then kicks `after_pairing_change` so the de-allowlist +
+/// atlas re-report happen immediately. `Ok(false)` if no such active device.
+pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let affected = sqlx::query(
+        "UPDATE app_device SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+    )
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query(
+        "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
+                                status_reason = 'device_revoked', updated_at = now() \
+         WHERE device_id = $1",
+    )
+    .bind(device_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    crate::relay::after_pairing_change(pool.clone());
+    Ok(true)
 }
 
 /// `DELETE /api/devices/:id` — revoke a paired device. Refuses if it's the
