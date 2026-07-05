@@ -157,19 +157,25 @@ pub async fn webhook(
     }
 
     // Authenticate FIRST (before touching the action, so an unauthenticated
-    // caller can't probe action existence). `None` => a proven owner device
-    // (its key/loopback was already established by AuthUser); `Some(cred_id)` =>
-    // an external bearer caller that must still pass the ownership check below.
-    let external_credential: Option<String> = if let Some(user) = maybe_user {
+    // caller can't probe action existence). Exactly one is set:
+    //   `proven_device` => a proven owner device (key/loopback via AuthUser)
+    //   `external_credential` => an external bearer caller
+    let proven_device: Option<String>;
+    let external_credential: Option<String>;
+    if let Some(user) = maybe_user {
         tracing::debug!(
             device_id = %user.device_id,
             action_id = %action_id,
             "webhook authed by proven key"
         );
-        None
+        proven_device = Some(user.device_id);
+        external_credential = None;
     } else if let Some(device_token) = extract_bearer(&headers) {
         match crate::api::validate_device_token(state.db.pool(), &device_token).await {
-            Ok(id) => Some(id),
+            Ok(id) => {
+                proven_device = None;
+                external_credential = Some(id);
+            }
             Err(e) => {
                 return (
                     StatusCode::UNAUTHORIZED,
@@ -191,7 +197,7 @@ pub async fn webhook(
             })),
         )
             .into_response();
-    };
+    }
 
     let action = match crate::scheduler::actions::get_action(state.db.pool(), &action_id).await {
         Ok(a) => a,
@@ -204,9 +210,37 @@ pub async fn webhook(
         }
     };
 
-    // External bearer callers are scoped to the single action they own; a proven
-    // owner (external_credential == None) may drive any of their own actions.
-    if let Some(caller_credential_id) = &external_credential {
+    // Ownership. A proven owner device may only drive actions anchored to IT
+    // (app_actions.device_id) — the on-box console (CONSOLE_DEVICE_ID) and
+    // non-device-anchored actions fall through to owner-level allow. An external
+    // bearer caller is scoped to the single action its credential owns.
+    if let Some(device_id) = &proven_device {
+        if device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
+            let action_device: Option<String> =
+                sqlx::query_scalar("SELECT device_id FROM app_actions WHERE id = $1")
+                    .bind(&action_id)
+                    .fetch_one(state.db.pool())
+                    .await
+                    .unwrap_or(None);
+            if let Some(owner_device) = action_device {
+                if &owner_device != device_id {
+                    tracing::warn!(
+                        action_id = %action_id,
+                        proven_device = %device_id,
+                        action_device = %owner_device,
+                        "webhook: proven device does not own this action"
+                    );
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(serde_json::json!({
+                            "error": "device does not own this action",
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    } else if let Some(caller_credential_id) = &external_credential {
         if let Err(e) = crate::api::update_last_seen(state.db.pool(), caller_credential_id).await {
             tracing::warn!("Failed to update last_seen: {}", e);
         }

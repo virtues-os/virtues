@@ -519,21 +519,24 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 )));
             }
 
-            let credential_ids: Vec<(String,)> = sqlx::query_as(
-                "SELECT id FROM credentials WHERE source_id = $1 AND status = 'active'",
+            let credential_ids: Vec<(String, Option<String>)> = sqlx::query_as(
+                "SELECT id, device_id FROM credentials WHERE source_id = $1 AND status = 'active'",
             )
             .bind(source_id)
             .fetch_all(db)
             .await?;
 
-            for (cred_id,) in credential_ids {
+            for (cred_id, device_id) in credential_ids {
                 let action_id = format!("{}_{}", id_prefix, cred_id);
-                upsert_row(db, template, &action_id, Some(&cred_id)).await?;
+                // Record the owning device (when this credential is a device
+                // bearer) so ingest is anchored on the device identity, not just
+                // the credential. OAuth credentials have device_id = NULL.
+                upsert_row(db, template, &action_id, Some(&cred_id), device_id.as_deref()).await?;
                 live_ids.push(action_id);
                 upserted += 1;
             }
         } else {
-            upsert_row(db, template, id_prefix, None).await?;
+            upsert_row(db, template, id_prefix, None, None).await?;
             live_ids.push(id_prefix.to_string());
             upserted += 1;
         }
@@ -585,6 +588,7 @@ async fn upsert_row(
     template: &Template,
     action_id: &str,
     credential_id: Option<&str>,
+    device_id: Option<&str>,
 ) -> Result<()> {
     let triggers_json = serde_json::to_string(&template.triggers)
         .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
@@ -635,20 +639,21 @@ async fn upsert_row(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir
+            triggers, credential_id, runtime, command, dir, device_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             dir            = EXCLUDED.dir,
+            device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
     } else {
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir
+            triggers, credential_id, runtime, command, dir, device_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -660,6 +665,7 @@ async fn upsert_row(
             runtime        = EXCLUDED.runtime,
             command        = EXCLUDED.command,
             dir            = EXCLUDED.dir,
+            device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
     };
@@ -678,6 +684,7 @@ async fn upsert_row(
         .bind(&template.runtime)
         .bind(&command_json)
         .bind(&template.dir)
+        .bind(device_id)
         .execute(db)
         .await?;
 
