@@ -11,13 +11,10 @@
 //!   2. Move any attached `credentials.status` to `'revoked'` and clear the
 //!      `secret_lookup_hash` so any webhook/OAuth token it owns can no longer be
 //!      matched O(1) at `validate_device_token` time.
-//!   3. If the credential metadata carries a `wg_public_key`, call
-//!      `virtues_wg::manager::remove_peer(pubkey)` so the tunnel drops on the
-//!      kernel side immediately (Linux-only; no-op on the macOS dev host).
-//!   4. Append an `app_auth_event` row tagged `revoked`.
+//!   3. Append an `app_auth_event` row tagged `revoked`.
 //!
-//! Steps 1–2 happen in a single transaction; the WG step + event log are
-//! best-effort and logged on failure but don't block the revocation.
+//! Steps 1–2 happen in a single transaction; the allowlist refresh + event log
+//! are best-effort and logged on failure but don't block the revocation.
 
 use axum::{
     extract::{Path, State},
@@ -220,25 +217,6 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // Capture the WG pubkey before clearing the credential's lookup hash. Two
-    // storage shapes: the consume path records it top-level as `wg_public_key`
-    // (the device supplied its own pubkey), while the relay/provision path only
-    // has the peer record at `wg.device_public_key` (the box generated the
-    // keypair). COALESCE both so a provisioned device's revoke also triggers an
-    // immediate reconcile + logs `had_wg_peer` accurately — otherwise its peer
-    // lingers until the daemon's next backstop poll.
-    let wg_pubkey: Option<String> = sqlx::query_scalar(
-        "SELECT COALESCE(metadata->>'wg_public_key', metadata->'wg'->>'device_public_key') \
-         FROM credentials \
-         WHERE device_id = $1 AND status = 'active' \
-         LIMIT 1",
-    )
-    .bind(&device_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-
     // Apply the revoke.
     if let Err(e) = sqlx::query(
         "UPDATE app_device SET revoked_at = now() WHERE id = $1",
@@ -296,7 +274,7 @@ pub async fn revoke_handler(
     )
     .bind(&user.id)
     .bind(&device_id)
-    .bind(json!({"revoked_by_device": &user.device_id, "had_wg_peer": wg_pubkey.is_some()}))
+    .bind(json!({"revoked_by_device": &user.device_id}))
     .execute(&pool)
     .await;
 

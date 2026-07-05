@@ -16,11 +16,11 @@
 //!     `POST /api/pair/deny/:id` (the modal fires it on close).
 //!
 //! Consume path (`POST /api/pair/consume`)
-//!   - Accepts `{token, kind, label, device_info, wg_public_key?}`.
-//!   - For `kind = browser`: creates a device row + session cookie.
-//!   - For `kind = mobile_app | desktop_app | sensor`: creates a device row +
-//!     a `credentials` row with a server-issued bearer (HMAC-lookup, encrypted
-//!     at rest) + optional WG bundle if `wg_public_key` was supplied.
+//!   - Accepts `{token, kind, label, device_info, device_node_id?}`.
+//!   - For `kind = mobile_app | desktop_app | sensor | cli`: creates a device
+//!     row (recording the device's iroh `node_id` for the allowlist) + a
+//!     `credentials` row with a server-issued bearer (HMAC-lookup, encrypted at
+//!     rest). Reach is over iroh — no WG bundle.
 //!
 //! Status path (`GET /api/pair/status/:id`) — RFC 8628-shaped polling that the
 //! "+ Add Device" modal hits to know when the new device has finished.
@@ -1048,8 +1048,7 @@ pub async fn provision_handler(
     Json(body): Json<ProvisionRequest>,
 ) -> axum::response::Response {
     let kind = match body.kind.as_deref().unwrap_or("mobile_app") {
-        // `browser` is excluded: a browser's credential is a session cookie with
-        // no WG bundle, so there's nothing to hand off via QR.
+        // `browser` is excluded: bare browsers can't pair (no session path).
         k @ ("mobile_app" | "desktop_app" | "sensor") => k,
         _ => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
@@ -1078,9 +1077,8 @@ pub async fn provision_handler(
         .unwrap_or_else(|| default_label_for(kind, None, &body.device_info));
     let device_info = body.device_info.clone().unwrap_or_else(|| json!({}));
 
-    // The box generates the device's keypair (relay path), so no wg_public_key
-    // is supplied to the bearer pack — the pubkey is recorded on the peer record
-    // by `assemble_bundle_generated` instead.
+    // The box generates the device's iroh keypair (relay path); its EndpointId
+    // is recorded for the allowlist by the bundle assembly below.
     let bp = match build_bearer_pack(kind, &label, &body.device_info) {
         Ok(p) => p,
         Err(e) => return e.into_response(),
@@ -1179,11 +1177,11 @@ pub async fn provision_handler(
         .into_response()
 }
 
-// ─── Post-commit fan-out + WG bundle assembly ──────────────────────────────
+// ─── Post-commit fan-out ────────────────────────────────────────────────────
 //
-// Both run AFTER the consume transaction commits — failure logs but doesn't
-// undo the pairing. They're shaped as their own helpers so the consume
-// handler stays the easy-to-read top-level flow.
+// Runs AFTER the consume transaction commits — failure logs but doesn't undo
+// the pairing. Shaped as its own helper so the consume handler stays the
+// easy-to-read top-level flow.
 
 /// Reconcile action templates (so per-credential `app_actions` rows are
 /// fanned out) and read back the binary-name → action-id map the device
@@ -1517,46 +1515,15 @@ fn default_label_for(kind: &str, ua: Option<&str>, info: &Option<Value>) -> Stri
             _ => {}
         }
     }
-    match (kind, ua) {
-        ("browser", Some(ua)) => parse_browser_label(ua),
-        ("browser", None) => "Browser".to_string(),
-        ("mobile_app", _) => "Mobile app".to_string(),
-        ("desktop_app", _) => "Desktop app".to_string(),
-        ("sensor", _) => "Sensor".to_string(),
+    // Bare browsers can't pair (no session cookie path anymore); kinds are
+    // app/sensor/cli only.
+    let _ = ua;
+    match kind {
+        "mobile_app" => "Mobile app".to_string(),
+        "desktop_app" => "Desktop app".to_string(),
+        "sensor" => "Sensor".to_string(),
         _ => "Device".to_string(),
     }
-}
-
-fn parse_browser_label(ua: &str) -> String {
-    // Cheap UA classifier — not exhaustive, just enough to give the user
-    // something recognizable in the device list. Hardware first.
-    let hardware = if ua.contains("iPhone") {
-        "iPhone"
-    } else if ua.contains("iPad") {
-        "iPad"
-    } else if ua.contains("Android") {
-        "Android"
-    } else if ua.contains("Macintosh") {
-        "Mac"
-    } else if ua.contains("Windows") {
-        "Windows"
-    } else if ua.contains("Linux") {
-        "Linux"
-    } else {
-        "Browser"
-    };
-    let browser = if ua.contains("Edg/") {
-        " · Edge"
-    } else if ua.contains("Chrome/") && !ua.contains("Chromium") {
-        " · Chrome"
-    } else if ua.contains("Firefox/") {
-        " · Firefox"
-    } else if ua.contains("Safari/") {
-        " · Safari"
-    } else {
-        ""
-    };
-    format!("{hardware}{browser}")
 }
 
 async fn log_event(
