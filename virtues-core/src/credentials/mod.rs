@@ -15,7 +15,6 @@
 //! intentionally generic so future connectors (OAuth, Plaid Hosted Link,
 //! API-key MCP servers) plug in without schema changes.
 
-pub mod migrate;
 pub mod types;
 
 pub use types::{Credential, CredentialStatus, IosSecrets};

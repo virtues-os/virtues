@@ -101,11 +101,6 @@ impl Database {
         // Run migrations
         self.run_migrations().await?;
 
-        // Post-migration hooks: anything that needs Rust-side state (e.g. the
-        // master encryption key) to finish what a SQL migration started.
-        // Idempotent — safe to run on every startup.
-        crate::credentials::migrate::run(&self.pool).await?;
-
         Ok(())
     }
 
