@@ -68,12 +68,13 @@ class NetworkManager: ObservableObject {
     
     // MARK: - Data Upload
     
-    func uploadData<T: Encodable>(_ data: T, deviceToken: String, endpoint: URL) async throws -> UploadResponse {
+    func uploadData<T: Encodable>(_ data: T, endpoint: URL) async throws -> UploadResponse {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(deviceToken)", forHTTPHeaderField: "Authorization")
-        
+        // No Authorization header: the upload goes over BoxTransport (iroh), so
+        // the box authenticates it by this device's proven, allowlisted key.
+
         // Encode data
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -210,17 +211,12 @@ class NetworkManager: ObservableObject {
         let seed = Self.ensureIrohSeed()
         let deviceNodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
 
-        // Stable per-attempt idempotency key: if the response is lost and we
-        // retry below, the box replays the SAME bearer instead of failing on the
-        // now-consumed token.
-        let idempotencyKey = UUID().uuidString
         let body = PairConsumeRequest(
             token: pairToken,
             kind: "mobile_app",
             label: deviceName,
             device_info: deviceInfo,
-            device_node_id: deviceNodeId,
-            idempotency_key: idempotencyKey
+            device_node_id: deviceNodeId
         )
         let encoder = JSONEncoder()
         request.httpBody = try encoder.encode(body)
@@ -243,12 +239,7 @@ class NetworkManager: ObservableObject {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let parsed = try decoder.decode(PairConsumeResponse.self, from: data)
-            // Park the bearer in the Keychain immediately — it's returned
-            // exactly once by the server and we never want it to live in
-            // process memory longer than this function.
-            if let bearer = parsed.bearer, !bearer.isEmpty {
-                try? KeychainStore.shared.saveBearer(bearer)
-            }
+            // No bearer to store — auth is this device's allowlisted iroh key.
             // iroh model: the box's identity is its Ed25519 EndpointId, returned
             // in the reach ticket (`box_node_id`) and dialed with mutual-key auth
             // (no CA). There's no separate fingerprint to pin out-of-band, so
@@ -281,13 +272,12 @@ class NetworkManager: ObservableObject {
     /// the next scheduled upload will register liveness anyway.
     func confirmPairOnline() async {
         guard let base = DeviceManager.shared.configuration.baseURL,
-              let bearer = KeychainStore.shared.loadBearer(),
               let url = URL(string: "\(base.absoluteString)/api/devices/action-ids")
         else { return }
 
+        // Over BoxTransport (iroh) — the box authenticates by our proven key.
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15
         _ = try? await BoxTransport.shared.send(request, session: session)
     }
@@ -300,12 +290,11 @@ class NetworkManager: ObservableObject {
     /// throws; never clears a good ticket if the box reports no reach.
     func refreshReach() async {
         guard let base = DeviceManager.shared.configuration.baseURL,
-              let bearer = KeychainStore.shared.loadBearer(),
               let url = URL(string: "\(base.absoluteString)/api/devices/self/reach")
         else { return }
+        // `/self/reach` is anonymous (the reach ticket is public); over BoxTransport.
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15
         guard let (data, http) = try? await BoxTransport.shared.send(request, session: session),
               http.statusCode == 200 else { return }
@@ -348,12 +337,10 @@ class NetworkManager: ObservableObject {
         let reach = try await atlasLinkLookup(codeHash: codeHash, endpointId: endpointId, mac: mac)
         // 2. Wait for the voucher to approve.
         try await atlasWaitApproved(codeHash: codeHash)
-        // 3. Redeem the bearer from the box over iroh (retry for allowlist propagation).
+        // 3. Redeem our action map from the box over iroh (retry for allowlist
+        //    propagation). No bearer — this device is already allowlisted.
         let redeemed = try await linkRedeemOverIroh(reach: reach, seed: seed, code: code)
 
-        if let bearer = redeemed.bearer, !bearer.isEmpty {
-            try? KeychainStore.shared.saveBearer(bearer)
-        }
         await MainActor.run {
             // `apiEndpoint` is only a path base over iroh (host ignored by the box).
             DeviceManager.shared.updateConfiguration(apiEndpoint: "http://virtues.box:8000")
@@ -457,24 +444,23 @@ class NetworkManager: ObservableObject {
     // MARK: - Action runs (server-side outcome, 2B)
 
     /// Fetch recent server-side run history for one of this device's actions via
-    /// `GET /api/devices/actions/{id}/runs` (device-bearer auth, ownership-scoped
-    /// on the box). Goes through `BoxTransport`, so it tunnels like every other
-    /// box call. On-demand only (StreamInfo view appear / refresh) — never in the
-    /// background upload loop.
+    /// `GET /api/devices/actions/{id}/runs` (key-auth, ownership-scoped by
+    /// device_id on the box). Goes through `BoxTransport`, so it tunnels like
+    /// every other box call. On-demand only (StreamInfo view appear / refresh) —
+    /// never in the background upload loop.
     func fetchActionRuns(actionId: String, limit: Int = 5) async throws -> [ActionRun] {
         guard let base = DeviceManager.shared.configuration.baseURL else {
             throw NetworkError.invalidURL
         }
-        let token = DeviceManager.shared.configuration.deviceToken
         guard let url = URL(
             string: "\(base.absoluteString)/api/devices/actions/\(actionId)/runs?limit=\(limit)"
         ) else {
             throw NetworkError.invalidURL
         }
 
+        // Over BoxTransport (iroh) — authenticated by this device's proven key.
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 15
 
         let (data, http) = try await BoxTransport.shared.send(request, session: session)
@@ -506,19 +492,18 @@ class NetworkManager: ObservableObject {
     }
 
     /// Register this device's iroh EndpointId with the box (provision path, where
-    /// the device wasn't able to submit it in-band at consume). Authenticated with
-    /// the device bearer; the box updates `app_device.node_id` for the caller.
-    /// Best-effort — returns whether the box accepted it. Goes over `BoxTransport`
-    /// (iroh), so the box must already reach this device's EndpointId; if it
-    /// can't yet (freshly provisioned), the user re-pairs via the QR consume path.
-    func registerSelfNodeId(base: URL, bearer: String, nodeId: String) async -> Bool {
+    /// the device wasn't able to submit it in-band at consume). The box updates
+    /// `app_device.node_id` for the caller. Best-effort — returns whether the box
+    /// accepted it. Goes over `BoxTransport` (iroh), so it's authenticated by the
+    /// device's proven key; if the box can't reach this EndpointId yet (freshly
+    /// provisioned), the user re-pairs via the QR consume path.
+    func registerSelfNodeId(base: URL, nodeId: String) async -> Bool {
         guard let url = URL(string: "\(base.absoluteString)/api/devices/self/node-id") else {
             return false
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["node_id": nodeId])
         request.timeoutInterval = 15
         guard let (_, http) = try? await BoxTransport.shared.send(request, session: session) else {
@@ -592,10 +577,10 @@ struct LinkLookupResponse: Decodable {
     let relayUrl: String
 }
 
-/// box `/api/pair/link-redeem` (over iroh) → the bearer + reach + action map.
+/// box `/api/pair/link-redeem` (over iroh) → device_id + reach + action map.
+/// No bearer — this device is already allowlisted by the voucher's approve.
 struct LinkRedeemResponse: Decodable {
-    let bearer: String?
-    let credentialId: String?
+    let deviceId: String?
     let actionIds: [String: String]?
     let boxNodeId: String?
     let relayUrl: String?
@@ -631,22 +616,15 @@ struct PairConsumeRequest: Codable {
     let label: String?
     let device_info: PairingDeviceInfo
     /// This device's iroh EndpointId (hex), derived from its locally-generated
-    /// seed. The box allowlists it so the device can reach the box over iroh.
+    /// seed. The box allowlists it — this IS the credential; no bearer.
     let device_node_id: String?
-    /// Idempotency key so a retried consume (lost response) re-returns the same
-    /// bearer instead of burning the single-use token.
-    let idempotency_key: String?
 }
 
 /// `POST /api/pair/consume` response — see `virtues-core/src/api/pair.rs`
-/// `ConsumeResponse`. `actionIds` and `bearer` are the fields that matter
-/// to the iOS app today; `bundle` is the future WG provisioning blob.
+/// `ConsumeResponse`. Auth is the allowlisted iroh key, so no bearer is returned.
 struct PairConsumeResponse: Codable {
     let deviceId: String
     let redirect: String
-    /// Returned exactly once. Caller stores in Keychain; the in-memory
-    /// copy on this struct should be discarded immediately after.
-    let bearer: String?
     /// Backend `function_name → action_id` map the device persists and uses
     /// when posting each stream flush to `POST /webhook/{action_id}`.
     let actionIds: [String: String]
