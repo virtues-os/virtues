@@ -303,33 +303,6 @@ pub enum Commands {
     #[command(hide = true)]
     ComputeAutonomic,
 
-    /// Pair an iOS device manually (dev shortcut — bypasses the QR flow).
-    ///
-    /// Mints a `credentials` row with a **server-issued random bearer** (printed
-    /// for you to paste into the app's keychain) and fans out the per-device iOS
-    /// `app_actions`. The device id is stored only as a label, never as the
-    /// bearer.
-    #[command(hide = true)]
-    PairIos {
-        /// Device label (e.g. the app's install id). Stored as metadata only —
-        /// NOT used as the auth token.
-        device_id: String,
-
-        /// Friendly name for the device
-        #[arg(long, default_value = "iPhone")]
-        name: String,
-    },
-
-    /// Diagnose token encryption: pull stored device tokens, try to decrypt
-    /// them with the current `VIRTUES_ENCRYPTION_KEY`, and report what happens
-    /// for each. Pass an optional bearer token to compare against the
-    /// decrypted plaintext.
-    #[command(hide = true)]
-    VerifyTokens {
-        /// Optional bearer token (raw, no "Bearer " prefix) to match against
-        bearer: Option<String>,
-    },
-
     /// Generate the day summary (autobiography + 24h event timeline) for a date.
     ///
     /// Calls `api::day_summary::generate_day_summary`, which gathers the day's
