@@ -869,39 +869,59 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 }
 
 
+/// Resolve the caller's device credential_id for the device-scoped endpoints,
+/// preferring the proven iroh key (`AuthUser` → its `app_device` → that device's
+/// active credential row) and falling back to the legacy device bearer. `None`
+/// ⇒ 401. Additive during the bearer sunset: a key-authed device (over iroh)
+/// needs no bearer, but a client still sending one keeps working. Once every
+/// device is key-authed this collapses to the key branch and the bearer +
+/// `validate_device_token` go away entirely (see the ingest re-anchoring plan).
+async fn resolve_device_credential(
+    pool: &sqlx::PgPool,
+    maybe_user: &Option<crate::middleware::auth::AuthUser>,
+    headers: &axum::http::HeaderMap,
+) -> Option<String> {
+    if let Some(user) = maybe_user {
+        if let Ok(Some((cred_id,))) = sqlx::query_as::<_, (String,)>(
+            "SELECT id FROM credentials \
+             WHERE device_id = $1 AND status = 'active' AND secret_lookup_hash IS NOT NULL \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&user.device_id)
+        .fetch_optional(pool)
+        .await
+        {
+            return Some(cred_id);
+        }
+    }
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))?;
+    crate::api::credentials::validate_device_token(pool, token)
+        .await
+        .ok()
+}
+
 /// GET /api/devices/action-ids — devices refresh their action_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
 /// templates.toml adds a new stream, or the device reinstalls and lost its
-/// Keychain). Auth is the same `Bearer <device_token>` as `/webhook/{action_id}`.
+/// Keychain). Authenticates by the proven iroh key (the device's allowlisted
+/// EndpointId), falling back to the legacy `Bearer <device_token>`.
 pub async fn device_action_ids_handler(
     State(state): State<AppState>,
+    maybe_user: Option<crate::middleware::auth::AuthUser>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-
-    let Some(token) = token else {
+    let Some(credential_id) =
+        resolve_device_credential(state.db.pool(), &maybe_user, &headers).await
+    else {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Missing bearer token" })),
+            Json(serde_json::json!({ "error": "Unauthorized — no proven device key or valid token" })),
         )
             .into_response();
-    };
-
-    let credential_id = match crate::api::credentials::validate_device_token(state.db.pool(), token)
-        .await
-    {
-        Ok(id) => id,
-        Err(_) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({ "error": "Invalid or revoked device token" })),
-            )
-                .into_response();
-        }
     };
 
     match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &credential_id).await {
@@ -926,41 +946,27 @@ pub async fn device_action_ids_handler(
 /// (success/failure/timing/error) per stream rather than just "did the POST
 /// return 2xx."
 ///
-/// Device-bearer auth, same as `/webhook/{action_id}` and
-/// `/api/devices/action-ids`. The action's `credential_id` must match the
-/// caller's credential or it's 403 — a token leaked from one device can't read
-/// another device's run history. This is the device-scoped sibling of the
-/// session-authed `list_action_runs_handler`.
+/// Authenticates by the proven iroh key (falling back to the legacy device
+/// bearer), same as `/webhook/{action_id}` and `/api/devices/action-ids`. The
+/// action's `credential_id` must match the caller's credential or it's 403 — one
+/// device can't read another device's run history. This is the device-scoped
+/// sibling of the session-authed `list_action_runs_handler`.
 pub async fn device_action_runs_handler(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
+    maybe_user: Option<crate::middleware::auth::AuthUser>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "));
-
-    let Some(token) = token else {
+    let Some(credential_id) =
+        resolve_device_credential(state.db.pool(), &maybe_user, &headers).await
+    else {
         return (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Missing bearer token" })),
+            Json(serde_json::json!({ "error": "Unauthorized — no proven device key or valid token" })),
         )
             .into_response();
     };
-
-    let credential_id =
-        match crate::api::credentials::validate_device_token(state.db.pool(), token).await {
-            Ok(id) => id,
-            Err(_) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({ "error": "Invalid or revoked device token" })),
-                )
-                    .into_response();
-            }
-        };
 
     // Ownership: the action must belong to this credential. EXISTS returns a
     // non-null bool, so a missing action and a foreign action both → false.
@@ -999,58 +1005,21 @@ pub async fn device_action_runs_handler(
     }
 }
 
-/// Health check endpoint for devices to validate their authentication
+/// Health check endpoint for devices to validate their authentication.
 ///
-/// This lightweight endpoint allows devices to verify their token is still valid
-/// without creating any side effects. Used for startup validation and periodic health checks.
-pub async fn device_health_check_handler(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-) -> Response {
-    // Extract device token from Authorization header or X-Device-Token header
-    let token = if let Some(value) = headers.get(axum::http::header::AUTHORIZATION) {
-        let auth_str = value.to_str().unwrap_or("");
-        if let Some(t) = auth_str.strip_prefix("Bearer ") {
-            t.to_string()
-        } else {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "error": "Invalid Authorization header format. Expected: Bearer <token>"
-                })),
-            )
-                .into_response();
-        }
-    } else if let Some(value) = headers.get("X-Device-Token") {
-        value.to_str().unwrap_or("").to_string()
-    } else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Missing authentication header. Provide Authorization: Bearer <token> or X-Device-Token: <token>"
-            })),
-        )
-            .into_response();
-    };
-
-    // Validate the device token
-    match crate::api::credentials::validate_device_token(state.db.pool(), &token).await {
-        Ok(source_id) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "active",
-                "source_id": source_id,
-            })),
-        )
-            .into_response(),
-        Err(_) => (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Invalid or revoked device token"
-            })),
-        )
-            .into_response(),
-    }
+/// Lightweight, side-effect-free: a device confirms it can still reach + auth to
+/// the box before syncing. It lives behind the `AuthUser` route_layer, so simply
+/// reaching this handler means the proven iroh key (or loopback / dev) already
+/// authenticated — no bearer needed. Returns the resolved device identity.
+pub async fn device_health_check_handler(user: crate::middleware::auth::AuthUser) -> Response {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "active",
+            "device_id": user.device_id,
+        })),
+    )
+        .into_response()
 }
 
 // =============================================================================
