@@ -204,7 +204,7 @@ async fn run_status() -> Result<()> {
         (Some(n), Some(r)) => println!("iroh reach:  {n} via {r}"),
         _ => println!("reach:       LAN only ({})", rec.box_url),
     }
-    println!("bearer:      present");
+    println!("auth:        iroh key (allowlisted)");
 
     // Reachability probe — hit the box's health endpoint *through the `:7117`
     // helper* (the box has no public URL; the helper dials it over iroh).
@@ -240,21 +240,16 @@ async fn revoke() -> Result<()> {
         }
     };
 
-    // Best-effort: tell the box to drop this device's credential row, through the
-    // `:7117` helper (the box has no public URL). The DELETE endpoint matches on
-    // the *credential* id, not the device id. If the helper isn't running we still
-    // clear local creds — the owner can finish removal from the Devices page.
-    if let Some(credential_id) = &rec.credential_id {
+    // Best-effort: tell the box to revoke this device, through the `:7117` helper
+    // (the box has no public URL). The helper dials over iroh, so the request is
+    // authenticated by this device's proven key — no bearer. If the helper isn't
+    // running we still clear local creds; the owner can finish from Devices.
+    if let Some(device_id) = &rec.device_id {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()?;
-        let url = format!("{HELPER_URL}/api/credentials/{credential_id}");
-        match client
-            .delete(&url)
-            .header("Authorization", format!("Bearer {}", rec.bearer))
-            .send()
-            .await
-        {
+        let url = format!("{HELPER_URL}/api/devices/{device_id}");
+        match client.delete(&url).send().await {
             Ok(r) if r.status().is_success() => eprintln!("✓ removed device from the box"),
             Ok(r) => eprintln!(
                 "warning: box returned {} — clearing local creds anyway",
@@ -267,7 +262,7 @@ async fn revoke() -> Result<()> {
         }
     } else {
         eprintln!(
-            "note: no stored credential id — clearing local creds only. Remove this \
+            "note: no stored device id — clearing local creds only. Remove this \
              device from the box's Devices page to fully de-authorize it."
         );
     }
