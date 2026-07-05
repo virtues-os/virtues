@@ -2,18 +2,12 @@
 //!
 //! Single route: `POST /webhook/:action_id`.
 //!
-//! Auth — two accepted callers, checked in order:
-//!   1. **A proven owner device** (iOS, the Mac collector, the on-box console).
-//!      These reach the box over iroh, so the transport already proved their
-//!      allowlisted key and `AuthUser` resolves it — ingest is gated by the
-//!      SAME allowlist as every other route, with no long-lived bearer as a
-//!      bypass. Single-owner appliance: the proven owner may drive any of their
-//!      own actions (the action itself defines what happens to the payload).
-//!   2. **A genuinely external, non-iroh caller** (a third-party service posting
-//!      to a webhook action). It can't speak iroh, so it presents
-//!      `Authorization: Bearer <token>`, validated via `validate_device_token`
-//!      and scoped to the one action it owns (`credential_id` must match) — so a
-//!      token leaked from one external integration can't post at another's.
+//! Auth: the caller's **proven, allowlisted iroh key**. Devices (iOS, the Mac
+//! collector) reach the box over iroh, so the transport proved their key and
+//! `AuthUser` resolves it — ingest is gated by the SAME allowlist as every other
+//! route, with no long-lived bearer anywhere. A proven device may only drive
+//! actions anchored to IT (`app_actions.device_id`); the on-box console
+//! (loopback) may drive any action.
 //!
 //! The unified `action_runner::run_action` enforces trigger validation,
 //! condition evaluation, and dispatch. This handler only does auth + routing.
@@ -76,20 +70,17 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// Handler for `POST /webhook/:action_id`.
 ///
 /// Flow:
-/// 1. Authenticate the caller: proven owner key (`AuthUser`) or, failing that,
-///    an external bearer (`validate_device_token`) → 401 if neither.
+/// 1. `AuthUser` (proven iroh key / loopback console) — a hard extractor, so an
+///    unauthenticated caller is rejected before this runs.
 /// 2. Fetch action → 404 if missing.
-/// 3. For the external-bearer path only, assert `action.credential_id` matches
-///    the caller's credential → 403 otherwise (owner key needs no such scope).
+/// 3. Ownership: the proven device must own the action (`app_actions.device_id`);
+///    the on-box console may drive any action → 403 otherwise.
 /// 4. Dispatch via `run_action(.., "webhook", payload)`.
-///
-/// `maybe_user` is `Option<AuthUser>` (not a hard extractor) so the route stays
-/// open to the external bearer path when there's no proven key.
 pub async fn webhook(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
+    user: AuthUser,
     headers: HeaderMap,
-    maybe_user: Option<AuthUser>,
     payload: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Response {
     // Do NOT swallow a body-parse failure into Value::Null and dispatch anyway.
@@ -156,108 +147,47 @@ pub async fn webhook(
             .into_response();
     }
 
-    // Authenticate FIRST (before touching the action, so an unauthenticated
-    // caller can't probe action existence). Exactly one is set:
-    //   `proven_device` => a proven owner device (key/loopback via AuthUser)
-    //   `external_credential` => an external bearer caller
-    let proven_device: Option<String>;
-    let external_credential: Option<String>;
-    if let Some(user) = maybe_user {
-        tracing::debug!(
-            device_id = %user.device_id,
-            action_id = %action_id,
-            "webhook authed by proven key"
-        );
-        proven_device = Some(user.device_id);
-        external_credential = None;
-    } else if let Some(device_token) = extract_bearer(&headers) {
-        match crate::api::validate_device_token(state.db.pool(), &device_token).await {
-            Ok(id) => {
-                proven_device = None;
-                external_credential = Some(id);
-            }
-            Err(e) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({
-                        "error": "Invalid or revoked device token",
-                        "message": e.to_string()
-                    })),
-                )
-                    .into_response();
-            }
-        }
-    } else {
+    // `user` (AuthUser) is already proven by the hard extractor above: the
+    // request arrived over iroh with an allowlisted key (or from the on-box
+    // console). Confirm the action exists, then that this device owns it.
+    tracing::debug!(device_id = %user.device_id, action_id = %action_id, "webhook authed by proven key");
+
+    if crate::scheduler::actions::get_action(state.db.pool(), &action_id)
+        .await
+        .is_err()
+    {
         return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Missing credential",
-                "hint": "Reach the box over iroh as a paired device, or include \
-                         'Authorization: Bearer <token>' for an external caller"
-            })),
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "action not found" })),
         )
             .into_response();
     }
 
-    let action = match crate::scheduler::actions::get_action(state.db.pool(), &action_id).await {
-        Ok(a) => a,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "action not found" })),
-            )
-                .into_response();
-        }
-    };
-
-    // Ownership. A proven owner device may only drive actions anchored to IT
-    // (app_actions.device_id) — the on-box console (CONSOLE_DEVICE_ID) and
-    // non-device-anchored actions fall through to owner-level allow. An external
-    // bearer caller is scoped to the single action its credential owns.
-    if let Some(device_id) = &proven_device {
-        if device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
-            let action_device: Option<String> =
-                sqlx::query_scalar("SELECT device_id FROM app_actions WHERE id = $1")
-                    .bind(&action_id)
-                    .fetch_one(state.db.pool())
-                    .await
-                    .unwrap_or(None);
-            if let Some(owner_device) = action_device {
-                if &owner_device != device_id {
-                    tracing::warn!(
-                        action_id = %action_id,
-                        proven_device = %device_id,
-                        action_device = %owner_device,
-                        "webhook: proven device does not own this action"
-                    );
-                    return (
-                        StatusCode::FORBIDDEN,
-                        Json(serde_json::json!({
-                            "error": "device does not own this action",
-                        })),
-                    )
-                        .into_response();
-                }
+    // Ownership: a proven device may only drive actions anchored to IT
+    // (`app_actions.device_id`). The on-box console (loopback) may drive any
+    // action; an action with no device anchor (e.g. an OAuth action reachable
+    // only from the owner's own devices) is likewise owner-level.
+    if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
+        let action_device: Option<String> =
+            sqlx::query_scalar("SELECT device_id FROM app_actions WHERE id = $1")
+                .bind(&action_id)
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap_or(None);
+        if let Some(owner_device) = action_device {
+            if owner_device != user.device_id {
+                tracing::warn!(
+                    action_id = %action_id,
+                    proven_device = %user.device_id,
+                    action_device = %owner_device,
+                    "webhook: proven device does not own this action"
+                );
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({ "error": "device does not own this action" })),
+                )
+                    .into_response();
             }
-        }
-    } else if let Some(caller_credential_id) = &external_credential {
-        if let Err(e) = crate::api::update_last_seen(state.db.pool(), caller_credential_id).await {
-            tracing::warn!("Failed to update last_seen: {}", e);
-        }
-        if action.credential_id.as_deref() != Some(caller_credential_id.as_str()) {
-            tracing::warn!(
-                action_id = %action_id,
-                caller_credential_id = %caller_credential_id,
-                action_credential_id = ?action.credential_id,
-                "webhook auth mismatch: caller credential does not own this action"
-            );
-            return (
-                StatusCode::FORBIDDEN,
-                Json(serde_json::json!({
-                    "error": "token does not authorize this action",
-                })),
-            )
-                .into_response();
         }
     }
 
@@ -332,13 +262,4 @@ pub async fn webhook(
                 .into_response()
         }
     }
-}
-
-/// Extract a bearer token from `Authorization: Bearer <token>`.
-fn extract_bearer(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
 }

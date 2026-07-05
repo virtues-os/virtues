@@ -203,14 +203,16 @@ async fn prepare_run(
         }));
     }
 
-    // 2b. Webhook invariant: webhook triggers require a credential_id.
-    if trigger == "webhook" && action.credential_id.is_none() {
+    // 2b. Webhook invariant: a webhook action must resolve to an identity that
+    // authorizes the post — a device_id (device ingest, keyed on the proven iroh
+    // key) or a credential_id (OAuth/api). One or the other must be set.
+    if trigger == "webhook" && action.credential_id.is_none() && action.device_id.is_none() {
         tracing::error!(
             action_id,
-            "webhook trigger on action with no credential_id — rejected"
+            "webhook trigger on action with no device_id or credential_id — rejected"
         );
         return Ok(PrepareOutcome::Early(ActionRunResult::forbidden(
-            "webhook trigger requires credential_id".to_string(),
+            "webhook trigger requires a device_id or credential_id".to_string(),
         )));
     }
 

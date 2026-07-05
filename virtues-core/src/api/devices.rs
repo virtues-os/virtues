@@ -1,20 +1,18 @@
 //! Devices — the unified "+ paired things" surface.
 //!
-//! Lists every active paired device (browsers, mobile apps, sensors, the CLI)
-//! and supports revocation. Revoke is the single operation that ends all of
-//! a device's authority in one step:
+//! Lists every active paired device (mobile apps, sensors, the CLI) and supports
+//! revocation. A device's only credential is its allowlisted iroh key, so revoke
+//! is simply:
 //!
 //!   1. Mark `app_device.revoked_at = now()` — the reconciler drops the device's
 //!      iroh key from the allowlist, so its next dial is refused at the QUIC
 //!      handshake (existing connections aren't force-evicted; iroh has no
-//!      per-conn revoke — next dial is the boundary).
-//!   2. Move any attached `credentials.status` to `'revoked'` and clear the
-//!      `secret_lookup_hash` so any webhook/OAuth token it owns can no longer be
-//!      matched O(1) at `validate_device_token` time.
-//!   3. Append an `app_auth_event` row tagged `revoked`.
+//!      per-conn revoke — next dial is the boundary). The same reconcile GCs the
+//!      device's device-anchored ingest actions.
+//!   2. Append an `app_auth_event` row tagged `revoked`.
 //!
-//! Steps 1–2 happen in a single transaction; the allowlist refresh + event log
-//! are best-effort and logged on failure but don't block the revocation.
+//! The allowlist refresh + event log are best-effort and logged on failure but
+//! don't block the revocation.
 
 use axum::{
     extract::{Path, State},
@@ -117,15 +115,9 @@ pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, s
         tx.rollback().await?;
         return Ok(false);
     }
-    sqlx::query(
-        "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
-                                status_reason = 'device_revoked', updated_at = now() \
-         WHERE device_id = $1",
-    )
-    .bind(device_id)
-    .execute(&mut *tx)
-    .await?;
     tx.commit().await?;
+    // De-allowlist the device's iroh key (+ GC its device-anchored ingest actions
+    // on the next reconcile). Devices hold no credential row to revoke.
     crate::relay::after_pairing_change(pool.clone());
     Ok(true)
 }
@@ -233,27 +225,10 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // Revoke credential rows belonging to this device (webhook/OAuth tokens).
     // The device's iroh key is de-allowlisted by the `app_device.revoked_at`
-    // update above (the reconciler drops it from the allowlist), so the next
-    // dial is refused at the handshake — there is no session row to delete.
-    if let Err(e) = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', secret_lookup_hash = NULL, \
-                                status_reason = 'device_revoked', updated_at = now() \
-         WHERE device_id = $1",
-    )
-    .bind(&device_id)
-    .execute(&mut *tx)
-    .await
-    {
-        tracing::warn!("devices revoke: credential revoke failed: {e:#}");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "internal"})),
-        )
-            .into_response();
-    }
-
+    // update above (the reconciler drops it from the allowlist), so the next dial
+    // is refused at the handshake. Devices hold no credential row to revoke, and
+    // their device-anchored ingest actions are GC'd by the next reconcile.
     if let Err(e) = tx.commit().await {
         tracing::warn!("devices revoke: tx commit failed: {e:#}");
         return (
@@ -384,8 +359,6 @@ pub async fn enroll_peer(
                 StatusCode::OK,
                 Json(json!({
                     "device_id": p.device_id,
-                    "credential_id": p.credential_id,
-                    "bearer": p.bearer,
                     "action_ids": p.action_ids,
                     "box_node_id": box_node_id,
                     "relay_url": relay_url,
@@ -397,16 +370,10 @@ pub async fn enroll_peer(
     }
 }
 
-/// The result of enrolling a peer device — the caller decides how to deliver the
-/// bearer (HTTP response for `enroll-peer`, or stashed for later iroh redeem in
-/// the link-a-device flow).
+/// The result of enrolling a peer device: the device row + its ingest action
+/// map. No bearer — the peer authenticates by its allowlisted iroh key.
 pub(crate) struct EnrolledPeer {
     pub device_id: String,
-    pub credential_id: String,
-    pub bearer: String,
-    /// Encrypted `{"token": bearer}` (same form as `credentials.secrets_ciphertext`)
-    /// — for stashing the bearer at rest until a later redeem.
-    pub bearer_ciphertext: String,
     pub action_ids: std::collections::HashMap<String, String>,
 }
 
@@ -416,7 +383,6 @@ pub(crate) enum EnrollError {
     UnknownSource,
     /// The EndpointId is already an active device (unique-index violation).
     Conflict,
-    Bearer(crate::api::pair::BearerPackError),
     Internal,
 }
 
@@ -435,7 +401,6 @@ impl EnrollError {
             EnrollError::Conflict => {
                 (StatusCode::CONFLICT, Json(json!({"error": "peer_already_enrolled"}))).into_response()
             }
-            EnrollError::Bearer(e) => e.into_response(),
             EnrollError::Internal => {
                 (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
             }
@@ -444,9 +409,9 @@ impl EnrollError {
 }
 
 /// Core peer enrollment shared by `enroll_peer` (HTTP) and the link-a-device
-/// approve step: insert `app_device{node_id=peer}`, mint the credential, fan out
-/// actions, and allowlist + register the EndpointId with atlas. Returns the
-/// minted bearer (+ its ciphertext) for the caller to deliver.
+/// approve step: insert `app_device{node_id=peer, source_id}`, allowlist +
+/// register the EndpointId with atlas, then fan out the device's ingest actions.
+/// No bearer changes hands — the peer's proven key is its credential.
 pub(crate) async fn enroll_peer_core(
     pool: &PgPool,
     peer_node_id: &str,
@@ -468,10 +433,7 @@ pub(crate) async fn enroll_peer_core(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| kind.to_string());
 
-    let di = device_info.cloned();
-    let device_info_val = di.clone().unwrap_or_else(|| json!({}));
-    // Mint the encrypted bearer OUTSIDE the tx (crypto/KMS).
-    let bp = crate::api::pair::build_bearer_pack(kind, &label, &di).map_err(EnrollError::Bearer)?;
+    let device_info_val = device_info.cloned().unwrap_or_else(|| json!({}));
     let device_id = crate::ids::generate_id(
         crate::ids::DEVICE_PREFIX,
         &[peer_node_id, &Utc::now().to_rfc3339()],
@@ -481,35 +443,35 @@ pub(crate) async fn enroll_peer_core(
         tracing::warn!(error = %e, "enroll_peer_core: begin tx failed");
         EnrollError::Internal
     })?;
-    crate::api::pair::insert_device_row(&mut tx, &device_id, kind, &label, &device_info_val, None, Some(peer_node_id))
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "enroll_peer_core: device insert failed (likely duplicate node_id)");
-            EnrollError::Conflict
-        })?;
-    crate::api::pair::insert_credential_row(&mut tx, &bp, &source_id, &label, &device_id, None)
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "enroll_peer_core: credential insert failed");
-            EnrollError::Internal
-        })?;
+    crate::api::pair::insert_device_row(
+        &mut tx,
+        &device_id,
+        kind,
+        &label,
+        &device_info_val,
+        None,
+        Some(peer_node_id),
+        Some(source_id.as_str()),
+    )
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, "enroll_peer_core: device insert failed (likely duplicate node_id)");
+        EnrollError::Conflict
+    })?;
     tx.commit().await.map_err(|e| {
         tracing::warn!(error = %e, "enroll_peer_core: commit failed");
         EnrollError::Internal
     })?;
 
-    // Fan out per-credential actions, then allowlist the EndpointId + register it
-    // with atlas so the relay admits it.
-    let action_ids = crate::api::pair::assemble_action_fanout(pool, &bp.credential_id)
+    // Allowlist the EndpointId + register it with atlas so the relay admits it,
+    // THEN fan out the device's ingest actions (anchored on device_id).
+    crate::relay::after_pairing_change(pool.clone());
+    let action_ids = crate::api::pair::assemble_action_fanout(pool, &device_id)
         .await
         .unwrap_or_default();
-    crate::relay::after_pairing_change(pool.clone());
 
     Ok(EnrolledPeer {
         device_id,
-        credential_id: bp.credential_id,
-        bearer: bp.bearer,
-        bearer_ciphertext: bp.ciphertext,
         action_ids,
     })
 }
@@ -653,22 +615,23 @@ pub async fn link_approve(
         tracing::warn!("link_approve: MAC mismatch — endpoint_id may have been tampered");
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "mac_mismatch"}))).into_response();
     }
-    // Enroll the peer (mint credential + allowlist + register with atlas).
+    // Enroll the peer (allowlist its EndpointId + register with atlas + fan out
+    // its ingest actions). No bearer — auth is the proven key.
     let kind = body.kind.as_deref().unwrap_or("mobile_app");
     let enrolled = match enroll_peer_core(&pool, &endpoint_id, kind, body.label.as_deref(), None).await {
         Ok(e) => e,
         Err(e) => return e.into_response(),
     };
-    // Stash the bearer (ciphertext) for the iroh redeem + mark approved.
+    // Stash the enrolled device_id + its action map for the iroh redeem + mark
+    // approved. The device is already allowlisted; redeem just hands it the map.
     let action_ids_json = serde_json::to_value(&enrolled.action_ids).unwrap_or_else(|_| json!({}));
     if let Err(e) = sqlx::query(
         "UPDATE app_link_session SET status = 'approved', device_endpoint_id = $2, \
-         bearer_ciphertext = $3, credential_id = $4, action_ids = $5 WHERE code_hash = $1",
+         device_id = $3, action_ids = $4 WHERE code_hash = $1",
     )
     .bind(&code_hash)
     .bind(&endpoint_id)
-    .bind(&enrolled.bearer_ciphertext)
-    .bind(&enrolled.credential_id)
+    .bind(&enrolled.device_id)
     .bind(&action_ids_json)
     .execute(&pool)
     .await

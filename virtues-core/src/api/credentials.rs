@@ -6,17 +6,17 @@
 //! HTTP handlers in `core/src/api/source_auth.rs`.
 //!
 //! Functions here:
-//!   - `validate_device_token` — webhook bearer auth, O(1) HMAC lookup
-//!   - `update_last_seen` — touch `last_seen_at` after a webhook post
 //!   - `list_credentials` / `rename_credential` / `revoke_credential` —
 //!     management API
 //!   - `DeviceInfo` / `CredentialListItem` — response shapes
 //!   - `device_info_from_metadata` — parse `metadata` JSON into a typed shape
+//!
+//! Credentials are OUTBOUND secrets (OAuth / API keys). Inbound auth is the
+//! proven, allowlisted iroh key — there is no device bearer to validate here.
 
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
-use crate::crypto::TokenEncryptor;
 use crate::error::{Error, Result};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,53 +48,6 @@ pub enum PairingStatus {
     Pending,
     Active(DeviceInfo),
     Revoked,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Webhook auth — O(1) bearer lookup
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Validate a device-supplied bearer token and return the credential id.
-///
-/// The token is HMAC'd with the master-key-derived pepper and looked up
-/// against the unique `secret_lookup_hash` index — O(1) regardless of the
-/// number of paired devices.
-pub async fn validate_device_token(db: &PgPool, token: &str) -> Result<String> {
-    let encryptor = TokenEncryptor::from_env()?;
-    let lookup_hash = encryptor.lookup_hash(token)?;
-
-    // `expires_at` is a CLAIM DEADLINE, used only by the desktop-relayed
-    // provision path: that credential is minted live *before* the new device
-    // scans the QR, so it carries a short deadline to bound the window in which
-    // an unclaimed (secret-displayed) credential is usable. It is cleared to
-    // NULL on first authenticated use (see `update_last_seen` — "promote on
-    // claim"). Every other credential has `expires_at = NULL` (= permanent), so
-    // the guard is a no-op for them.
-    let row: Option<(String,)> = sqlx::query_as(
-        r#"SELECT id FROM credentials
-           WHERE secret_lookup_hash = $1 AND status = 'active'
-             AND (expires_at IS NULL OR expires_at > now())"#,
-    )
-    .bind(&lookup_hash)
-    .fetch_optional(db)
-    .await?;
-
-    row.map(|(id,)| id)
-        .ok_or_else(|| Error::Unauthorized("Invalid or revoked device token".to_string()))
-}
-
-/// Touch `last_seen_at` on a credential and, for a provision-claimed credential,
-/// clear its claim deadline so it becomes permanent ("promote on claim"). This
-/// runs only after `validate_device_token` has already accepted the token, so a
-/// credential whose deadline already passed is rejected *before* reaching here —
-/// no resurrection. Clearing `expires_at` is a no-op for the common case (it's
-/// already NULL).
-pub async fn update_last_seen(db: &PgPool, credential_id: &str) -> Result<()> {
-    sqlx::query("UPDATE credentials SET last_seen_at = now(), expires_at = NULL WHERE id = $1")
-        .bind(credential_id)
-        .execute(db)
-        .await?;
-    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,27 +183,13 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
             "credential not found: {credential_id}"
         )));
     }
-    // Tier -1 "doorplate": renaming a device-backed credential marks the device
-    // as deliberately named (drives the `device_named` onboarding step). No-op
-    // for cloud-source credentials (device_id IS NULL → subquery matches nothing).
-    let _ = sqlx::query(
-        "UPDATE app_device SET named_at = now() \
-         WHERE id = (SELECT device_id FROM credentials WHERE id = $1) \
-           AND named_at IS NULL",
-    )
-    .bind(credential_id)
-    .execute(db)
-    .await;
     Ok(())
 }
 
 /// Revoke a credential and delete its fan-out `app_actions` rows.
 ///
 /// Flow:
-/// 1. Set `status = 'revoked'` so `validate_device_token` rejects future
-///    webhook posts and template reconcile skips this credential. Also
-///    clear `secret_lookup_hash` so the unique partial index doesn't tie
-///    a future re-pair to this row.
+/// 1. Set `status = 'revoked'` so template reconcile skips this credential.
 /// 2. Nullify `action_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
@@ -262,8 +201,7 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let affected = sqlx::query(
         r#"UPDATE credentials
               SET status = 'revoked',
-                  status_reason = 'user_revoked',
-                  secret_lookup_hash = NULL
+                  status_reason = 'user_revoked'
             WHERE id = $1"#,
     )
     .bind(credential_id)

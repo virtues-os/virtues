@@ -9,28 +9,12 @@
 
 use std::collections::HashMap;
 
-use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
-use ring::rand::{SecureRandom, SystemRandom};
-use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::auth::error::{AuthError, Result};
 use crate::crypto::TokenEncryptor;
-
-/// Mint a fresh random 32-byte bearer, base64url-encoded (no padding). The
-/// *server* issues the device's bearer at pairing so no stable device
-/// identifier (e.g. a UUID) is ever used as a credential — the no-stable-bearer
-/// rule. RNG failure is catastrophic and treated as infallible, matching
-/// `crypto::OauthStateClaims::new`.
-pub fn generate_bearer() -> String {
-    let mut bytes = [0u8; 32];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .expect("SystemRandom should always produce bytes");
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-}
 
 /// Credential lifecycle state. Mirrors `credentials.status` in the schema.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,65 +129,6 @@ pub async fn finalize_credential(
                     credential_id,
                     "finalize_credential: row already active (double-callback dedup)"
                 );
-                return Ok(());
-            }
-            Some((status,)) => {
-                return Err(AuthError::Conflict(format!(
-                    "cannot finalize credential in status '{status}'"
-                )))
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Atomic finalize for `self_issued_bearer` flows: encrypts the bearer as
-/// `{"token": "..."}`, computes HMAC lookup hash for O(1) webhook auth,
-/// flips status to `active`. Same idempotency as `finalize_credential`.
-pub async fn finalize_self_issued_bearer(
-    db: &PgPool,
-    credential_id: &str,
-    plaintext_token: &str,
-    metadata: &serde_json::Value,
-) -> Result<()> {
-    if plaintext_token.trim().is_empty() {
-        return Err(AuthError::InvalidInput("token cannot be empty".into()));
-    }
-
-    let encryptor = TokenEncryptor::from_env()?;
-    let secrets_payload = json!({ "token": plaintext_token }).to_string();
-    let secrets_ct = encryptor.encrypt(&secrets_payload)?;
-    let lookup_hash = encryptor.lookup_hash(plaintext_token)?;
-    let metadata_json = metadata.clone();
-
-    let result = sqlx::query(
-        r#"UPDATE credentials
-              SET status = 'active',
-                  status_reason = NULL,
-                  secrets_ciphertext = $1,
-                  secret_lookup_hash = $2,
-                  metadata = $3,
-                  last_seen_at = now()
-            WHERE id = $4 AND status = 'pending'"#,
-    )
-    .bind(&secrets_ct)
-    .bind(&lookup_hash)
-    .bind(&metadata_json)
-    .bind(credential_id)
-    .execute(db)
-    .await?;
-
-    if result.rows_affected() == 0 {
-        let current: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM credentials WHERE id = $1")
-                .bind(credential_id)
-                .fetch_optional(db)
-                .await?;
-        match current {
-            None => return Err(AuthError::NotFound(credential_id.to_string())),
-            Some((status,)) if status == "active" => {
-                tracing::info!(credential_id, "finalize_self_issued_bearer: already active");
                 return Ok(());
             }
             Some((status,)) => {
@@ -335,20 +260,20 @@ pub async fn mark_credential_status(
     Ok(())
 }
 
-/// Return the per-credential fan-out map: `command-name → app_actions.id` for
-/// every action row keyed to this credential. The key is `command[0]` (the
+/// Return the per-device fan-out map: `command-name → app_actions.id` for every
+/// ingest action row anchored to this device. The key is `command[0]` (the
 /// action's program name, e.g. `ios_ingest`), which the device uses to route a
 /// flush to `POST /webhook/{action_id}`. All iOS streams share the single
 /// `ios_ingest` action and disambiguate via the `stream` field in the body.
 pub async fn fanout_action_ids(
     db: &PgPool,
-    credential_id: &str,
+    device_id: &str,
 ) -> Result<HashMap<String, String>> {
     let rows: Vec<(Option<String>, String)> = sqlx::query_as(
         r#"SELECT command::jsonb->>0, id FROM app_actions
-           WHERE credential_id = $1 AND command IS NOT NULL"#,
+           WHERE device_id = $1 AND command IS NOT NULL"#,
     )
-    .bind(credential_id)
+    .bind(device_id)
     .fetch_all(db)
     .await?;
 

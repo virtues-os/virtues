@@ -64,8 +64,8 @@ pub use auth::{session_handler, SessionResponse, SessionUser};
 pub use code::{execute_code, ExecuteCodeRequest, ExecuteCodeResponse};
 pub use credentials::{
     check_pairing_status, delete_pending_credential, list_credentials, list_pending_pairings,
-    rename_credential, revoke_credential, update_last_seen, validate_device_token,
-    CredentialListItem, DeviceInfo, PairingStatus, PendingPairing,
+    rename_credential, revoke_credential, CredentialListItem, DeviceInfo, PairingStatus,
+    PendingPairing,
 };
 pub use drive::{
     check_quota as check_drive_quota,

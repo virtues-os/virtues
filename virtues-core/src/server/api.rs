@@ -869,66 +869,21 @@ pub async fn list_tables_handler(State(state): State<AppState>) -> Response {
 }
 
 
-/// Resolve the caller's device credential_id for the device-scoped endpoints,
-/// preferring the proven iroh key (`AuthUser` → its `app_device` → that device's
-/// active credential row) and falling back to the legacy device bearer. `None`
-/// ⇒ 401. Additive during the bearer sunset: a key-authed device (over iroh)
-/// needs no bearer, but a client still sending one keeps working. Once every
-/// device is key-authed this collapses to the key branch and the bearer +
-/// `validate_device_token` go away entirely (see the ingest re-anchoring plan).
-async fn resolve_device_credential(
-    pool: &sqlx::PgPool,
-    maybe_user: &Option<crate::middleware::auth::AuthUser>,
-    headers: &axum::http::HeaderMap,
-) -> Option<String> {
-    if let Some(user) = maybe_user {
-        if let Ok(Some((cred_id,))) = sqlx::query_as::<_, (String,)>(
-            "SELECT id FROM credentials \
-             WHERE device_id = $1 AND status = 'active' AND secret_lookup_hash IS NOT NULL \
-             ORDER BY created_at DESC LIMIT 1",
-        )
-        .bind(&user.device_id)
-        .fetch_optional(pool)
-        .await
-        {
-            return Some(cred_id);
-        }
-    }
-    let token = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))?;
-    crate::api::credentials::validate_device_token(pool, token)
-        .await
-        .ok()
-}
-
 /// GET /api/devices/action-ids — devices refresh their action_id routing map.
 ///
 /// Used by paired devices when their local routing table goes stale (e.g. after
-/// templates.toml adds a new stream, or the device reinstalls and lost its
-/// Keychain). Authenticates by the proven iroh key (the device's allowlisted
-/// EndpointId), falling back to the legacy `Bearer <device_token>`.
+/// templates.toml adds a new stream, or the device reinstalls). Authenticated by
+/// the proven iroh key (`AuthUser`, a hard extractor) — the map is the device's
+/// own ingest actions, keyed on its `device_id`.
 pub async fn device_action_ids_handler(
     State(state): State<AppState>,
-    maybe_user: Option<crate::middleware::auth::AuthUser>,
-    headers: axum::http::HeaderMap,
+    user: crate::middleware::auth::AuthUser,
 ) -> Response {
-    let Some(credential_id) =
-        resolve_device_credential(state.db.pool(), &maybe_user, &headers).await
-    else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Unauthorized — no proven device key or valid token" })),
-        )
-            .into_response();
-    };
-
-    match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &credential_id).await {
+    match virtues_helpers::auth::fanout_action_ids(state.db.pool(), &user.device_id).await {
         Ok(action_ids) => (
             StatusCode::OK,
             Json(serde_json::json!({
-                "credential_id": credential_id,
+                "device_id": user.device_id,
                 "action_ids": action_ids,
             })),
         )
@@ -946,35 +901,22 @@ pub async fn device_action_ids_handler(
 /// (success/failure/timing/error) per stream rather than just "did the POST
 /// return 2xx."
 ///
-/// Authenticates by the proven iroh key (falling back to the legacy device
-/// bearer), same as `/webhook/{action_id}` and `/api/devices/action-ids`. The
-/// action's `credential_id` must match the caller's credential or it's 403 — one
-/// device can't read another device's run history. This is the device-scoped
-/// sibling of the session-authed `list_action_runs_handler`.
+/// Authenticated by the proven iroh key. The action's `device_id` must match the
+/// caller's device or it's 403 — one device can't read another's run history.
+/// Device-scoped sibling of the session-authed `list_action_runs_handler`.
 pub async fn device_action_runs_handler(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
     axum::extract::Query(q): axum::extract::Query<RunsQuery>,
-    maybe_user: Option<crate::middleware::auth::AuthUser>,
-    headers: axum::http::HeaderMap,
+    user: crate::middleware::auth::AuthUser,
 ) -> Response {
-    let Some(credential_id) =
-        resolve_device_credential(state.db.pool(), &maybe_user, &headers).await
-    else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Unauthorized — no proven device key or valid token" })),
-        )
-            .into_response();
-    };
-
-    // Ownership: the action must belong to this credential. EXISTS returns a
+    // Ownership: the action must belong to this device. EXISTS returns a
     // non-null bool, so a missing action and a foreign action both → false.
     let owned: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = $1 AND credential_id = $2)",
+        "SELECT EXISTS(SELECT 1 FROM app_actions WHERE id = $1 AND device_id = $2)",
     )
     .bind(&action_id)
-    .bind(&credential_id)
+    .bind(&user.device_id)
     .fetch_one(state.db.pool())
     .await
     .unwrap_or(false);
