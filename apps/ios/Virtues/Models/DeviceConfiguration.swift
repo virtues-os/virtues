@@ -11,14 +11,12 @@ import UIKit
 /// Device configuration including API endpoint, device ID, and per-stream
 /// action_ids.
 ///
-/// **Authentication Design (v1, pair-only):**
-/// The bearer token is **server-issued** at pair time and stored in the OS
-/// Keychain via `KeychainStore.shared`. The `deviceId` on this struct is a
-/// non-secret label only — it identifies which device this is in the box's
-/// `/virtues/devices` UI, but it has zero authentication weight.
-///
-/// The legacy `deviceToken: String { deviceId }` accessor was removed in v1.
-/// Callers use `KeychainStore.shared.loadBearer()` to read the bearer.
+/// **Authentication Design (iroh-key, no bearer):**
+/// This device authenticates by its own iroh key — a 32-byte seed generated at
+/// pairing and stored in the OS Keychain (`KeychainStore.shared.irohSeed`). Its
+/// EndpointId is submitted to the box, which allowlists it; every request over
+/// `BoxTransport` (iroh) is then authenticated by that proven key. There is no
+/// bearer token. `deviceId` is a non-secret label for the box's Devices page.
 ///
 /// **Webhook routing:**
 /// Each ingest stream (healthkit, location, microphone, etc.) has its own
@@ -78,40 +76,17 @@ struct DeviceConfiguration: Codable {
         self.relayUrl = try? c.decodeIfPresent(String.self, forKey: .relayUrl)
     }
 
-    /// Bearer token read from the Keychain. Set by the pair flow; returns
-    /// `nil` if the device hasn't been paired (or was revoked + wiped).
-    var bearerToken: String? {
-        if let kc = KeychainStore.shared.loadBearer(), !kc.isEmpty {
-            return kc
-        }
-        return nil
-    }
-
-    /// `Authorization: Bearer <token>` value used on every box API call.
-    /// Required by the `ConfigurationProvider` protocol (callers expect a
-    /// `String`, not `String?`).
-    ///
-    /// The legacy `deviceId`-as-bearer fallback was retired in v1.1: pairing now
-    /// always provisions a real bearer (and a WG bundle) in the Keychain. If no
-    /// bearer is present the device simply isn't paired — we return an empty
-    /// string so the box rejects the call (401) and the UI prompts a re-pair,
-    /// rather than silently sending a non-credential the box never honored.
-    var deviceToken: String {
-        bearerToken ?? ""
-    }
-
-    /// True when this device has both an endpoint AND a usable bearer
-    /// (Keychain or legacy). The onboarding gate uses this to decide
-    /// whether to allow data collection to begin.
+    /// True when this device has an endpoint. The onboarding gate uses this to
+    /// decide whether to allow data collection to begin.
     var isConfigured: Bool {
         !apiEndpoint.isEmpty
     }
 
-    /// True when the user has set an endpoint but hasn't completed a pair
-    /// via the v1 pair-only flow (no Keychain bearer). The UI uses this to
-    /// show "pair to finish setup" rather than "you're paired."
+    /// True when the user has set an endpoint but hasn't completed a pair. Auth
+    /// is the device's iroh key, so "paired" = an iroh seed exists in the
+    /// Keychain; without one the UI shows "pair to finish setup".
     var awaitingPair: Bool {
-        !apiEndpoint.isEmpty && bearerToken == nil
+        !apiEndpoint.isEmpty && KeychainStore.shared.loadIrohSeed() == nil
     }
 
     /// Terse iOS internal stream names → canonical backend function_names.

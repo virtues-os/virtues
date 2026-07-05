@@ -418,9 +418,9 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     private func refetchActionIds() async -> Bool {
         guard let url = configProvider.actionIdsFetchURL else { return false }
 
+        // Over BoxTransport (iroh) — authenticated by this device's proven key.
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(configProvider.deviceToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 30
 
         do {
@@ -473,10 +473,9 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
 
             let combinedData = processor.combine(allItems, deviceId: configProvider.deviceId)
 
-            // Upload combined data
+            // Upload combined data (key-authed over BoxTransport).
             let response = try await networkManager.uploadData(
                 combinedData,
-                deviceToken: configProvider.deviceToken,
                 endpoint: url
             )
 
