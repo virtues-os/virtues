@@ -240,10 +240,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/s/:token/files/:file_id",
             get(api::shared_file_download_handler),
         )
-        // Webhook ingestion. Authenticated via Bearer device-token (looked up
-        // O(1) by HMAC against `credentials.secret_lookup_hash`), NOT via web
-        // session cookies. Lives in public_routes because the AuthUser
-        // extractor only knows how to read session cookies.
+        // Webhook ingestion. Authenticated primarily by the proven iroh key
+        // (Option<AuthUser>) — the owner's devices POST over iroh — with the
+        // legacy Bearer device-token kept only as a fallback for external,
+        // non-iroh callers. Lives in public_routes so the bearer fallback path
+        // isn't force-rejected by the AuthUser route_layer.
         // Per-route body limit override (router-wide cap is 105MB): iOS audio
         // batches are base64 AAC and can dwarf the other streams on backfill.
         // A body over the cap is rejected by the Json extractor before the
