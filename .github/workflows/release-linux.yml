@@ -146,8 +146,8 @@ jobs:
           cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-actions --bins --target ${{ matrix.target }}
 
       # llama-server — the engine behind the virtues-embed/-rerank sidecars
-      # (one CPU binary per arch; the Jetson CUDA flavor is the separate
-      # llama-jetson-cuda job). GGML_NATIVE=OFF keeps the build portable
+      # (one CPU binary per arch — the universal floor for Manual mode and the
+      # Dragon fallback). GGML_NATIVE=OFF keeps the build portable
       # across the arch instead of tuned to the runner's CPU; static libs
       # so the tarball ships one self-contained executable.
       #
@@ -346,99 +346,12 @@ jobs:
           fail_on_unmatched_files: true
           draft: true
 
-  # llama-server CUDA build for the Jetson appliance (sm_87). Built inside
-  # NVIDIA's L4T JetPack container on the arm64 runner (native aarch64 — no
-  # qemu), so the binary links against the same CUDA the box has. Uploaded
-  # as a STANDALONE asset, not into the aarch64 tarball: that tarball also
-  # serves non-Jetson aarch64 boxes, where a CUDA-linked binary won't load.
-  # The installer detects Jetson (/etc/nv_tegra_release) and swaps this in,
-  # falling back to the tarball's CPU build when the asset is missing —
-  # which is why this whole job is continue-on-error: it must never block
-  # a release while the Jetson pipeline is young.
-  #
-  # NOTE: first run is the validation run — the L4T image is ~10 GB (slow
-  # pull) and CUDA cross-arch quirks are real. Until this job has shipped a
-  # binary that's been verified on a physical Jetson (sidecars healthy,
-  # `virtues warm-models` green), treat the appliance as CPU-inference.
-  llama-jetson-cuda:
-    name: Build llama-server (Jetson CUDA, sm_87)
-    runs-on: blacksmith-8vcpu-ubuntu-2204-arm
-    continue-on-error: true
-    container:
-      image: nvcr.io/nvidia/l4t-jetpack:r36.4.0
-    steps:
-      - name: Resolve version tag
-        id: tag
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build deps (git, cmake)
-        run: |
-          apt-get update -qq
-          apt-get install -y -qq git cmake build-essential
-
-      # Same output-cache strategy as the CPU build, separate key (CUDA flags +
-      # sm_87 → a different binary). actions/cache@v4 runs fine inside the L4T
-      # container — GitHub mounts the node runtime for container jobs. Skips the
-      # ~5 min CUDA compile on a hit; bump `-vN` if the cmake flags below change.
-      - name: Cache llama-server (CUDA, sm_87)
-        id: llama_cuda
-        uses: actions/cache@v4
-        with:
-          path: /tmp/llama-bin
-          key: llama-server-${{ env.LLAMA_CPP_TAG }}-aarch64-cuda87-v1
-
-      - name: Build llama-server (CUDA, sm_87)
-        if: steps.llama_cuda.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
-            https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
-          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DGGML_CUDA=ON \
-            -DCMAKE_CUDA_ARCHITECTURES=87 \
-            -DGGML_NATIVE=OFF \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DLLAMA_CURL=OFF \
-            -DLLAMA_BUILD_TESTS=OFF \
-            -DLLAMA_BUILD_EXAMPLES=OFF \
-            -DLLAMA_BUILD_SERVER=ON
-          cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
-          mkdir -p /tmp/llama-bin
-          cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
-          # No --version smoke: the runner has no GPU, and a CUDA binary may
-          # refuse to initialize without one. Physical-Jetson verification is
-          # the gate (see job comment).
-
-      - name: Package + checksum
-        run: |
-          mkdir -p dist
-          NAME="llama-server-${{ steps.tag.outputs.version }}-aarch64-cuda-linux"
-          cp /tmp/llama-bin/llama-server "dist/${NAME}"
-          (cd dist && sha256sum "${NAME}" > "${NAME}.sha256")
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.version }}
-          files: |
-            dist/llama-server-*
-          fail_on_unmatched_files: true
-          draft: true
-
   # After both arches built + uploaded, flip the draft release to live.
   # Keeping this as a separate job so a single-arch failure doesn't ship
   # a half-baked release.
   publish:
     name: Publish release
-    # llama-jetson-cuda is continue-on-error, so listing it here only makes
-    # publish WAIT for it (so its asset lands before the draft flips), it
-    # can't block the release.
-    needs: [build, llama-jetson-cuda]
+    needs: [build]
     runs-on: blacksmith-4vcpu-ubuntu-2204
     permissions:
       contents: write
