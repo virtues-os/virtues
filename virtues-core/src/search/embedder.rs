@@ -151,11 +151,6 @@ struct EmbeddingRow {
 pub struct LocalEmbedder {
     client: reqwest::Client,
     base_url: String,
-    /// Set when the installer pinned an endpoint fingerprint (manual
-    /// inference mode). When present, the fingerprint check owns model
-    /// identity and the fixed `NATIVE_DIM` check is skipped — the pinned
-    /// model may legitimately have different native dims.
-    fingerprint_pinned: bool,
     /// The `model` field sent on every /v1/embeddings request. llama.cpp
     /// ignores it; Ollama routes by it and 404s on unknown names. Set from
     /// `VIRTUES_EMBED_MODEL` (written by the installer's manual flow); the
@@ -230,7 +225,6 @@ impl LocalEmbedder {
         let embedder = Self {
             client,
             base_url,
-            fingerprint_pinned: is_pinned,
             model,
             query_prompt,
             doc_prompt,
@@ -370,6 +364,49 @@ fn resolve_base_url() -> String {
     std::env::var("VIRTUES_EMBED_URL")
         .map(|s| s.trim_end_matches('/').to_string())
         .unwrap_or_else(|_| DEFAULT_URL.to_string())
+}
+
+/// Probe the currently-configured embedding endpoint WITHOUT the boot-time
+/// fingerprint guard. `configure-inference` needs to inspect an endpoint whose
+/// model may have changed — the exact case `LocalEmbedder::new` refuses — so it
+/// can't go through the normal constructor. Returns the freshly-computed
+/// fingerprint and the endpoint's native dims.
+pub async fn probe_current_endpoint() -> Result<(String, usize)> {
+    crate::http_client::ensure_crypto_provider();
+    let base_url = resolve_base_url();
+    let model = std::env::var("VIRTUES_EMBED_MODEL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "default".to_string());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let resp = client
+        .post(format!("{base_url}/v1/embeddings"))
+        .json(&serde_json::json!({ "input": FINGERPRINT_PROBES, "model": model }))
+        .send()
+        .await
+        .with_context(|| format!("probing embedding endpoint {base_url}"))?
+        .error_for_status()
+        .with_context(|| format!("probing embedding endpoint {base_url}"))?;
+    let body: EmbeddingsResponse =
+        resp.json().await.context("parsing /v1/embeddings response")?;
+    if body.data.len() != FINGERPRINT_PROBES.len() {
+        return Err(anyhow!(
+            "endpoint returned {} vectors for {} probe strings",
+            body.data.len(),
+            FINGERPRINT_PROBES.len()
+        ));
+    }
+    let mut rows = body.data;
+    rows.sort_by_key(|r| r.index);
+    let vecs: Vec<Vec<f32>> = rows.into_iter().map(|r| r.embedding).collect();
+    let dims = vecs.first().map(|v| v.len()).unwrap_or(0);
+    if dims == 0 {
+        return Err(anyhow!("endpoint returned empty vectors"));
+    }
+    Ok((fingerprint_vectors(&vecs), dims))
 }
 
 static EMBEDDER: OnceCell<Arc<LocalEmbedder>> = OnceCell::const_new();

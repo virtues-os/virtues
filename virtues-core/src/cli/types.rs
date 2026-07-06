@@ -288,6 +288,20 @@ pub enum Commands {
     #[command(hide = true)]
     WarmModels,
 
+    /// Re-validate the embedding endpoint after a model change and recover the
+    /// index. Run this when the box reports a fingerprint/dims mismatch (manual
+    /// inference mode): re-probes the endpoint and, on confirmation, wipes the
+    /// derived vector index and re-embeds from source with the new model.
+    #[command(name = "configure-inference")]
+    ConfigureInference {
+        /// Re-embed without the interactive confirmation if the model changed.
+        #[arg(long)]
+        reembed: bool,
+        /// Skip confirmation prompts (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Report the inference stack's hardware resolution without downloading:
     /// detected accelerator, whether this build links CUDA, the chosen ONNX
     /// precision, and whether each model is baked or would be downloaded. The
