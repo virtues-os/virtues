@@ -47,6 +47,12 @@ CLIENT_BIN="$REPO_ROOT/target/release/virtues-client"
 [[ -x "$CLIENT_BIN" ]] || { echo "error: $CLIENT_BIN not found"; exit 1; }
 
 # ── 2. virtues-collector (Swift) sidecar ────────────────────────────────────
+# The collector links VirtuesIrohMac.xcframework (uniffi FFI) to reach the box
+# over iroh. It's gitignored (a build artifact), so (re)generate it first —
+# idempotent; safe on every build.
+echo "→ building iroh FFI xcframework (macOS)…"
+"$REPO_ROOT/crates/virtues-iroh-ffi/build-macos.sh"
+
 echo "→ building virtues-collector (release)…"
 ( cd "$SWIFT_DIR" && swift build -c release )
 COLLECTOR_BIN="$(cd "$SWIFT_DIR" && swift build -c release --show-bin-path)/virtues-collector"
