@@ -19,6 +19,8 @@ use semver::Version;
 
 use sha2::{Digest, Sha256};
 
+use super::ui;
+
 const BINARY_PATH: &str = "/usr/local/bin/virtues";
 const RELEASE_REPO: &str = "virtues-os/virtues";
 const USER_AGENT: &str = concat!("virtues-upgrade/", env!("CARGO_PKG_VERSION"));
@@ -37,15 +39,17 @@ pub async fn run(
     let current = env!("CARGO_PKG_VERSION");
     let target = target_tag.trim_start_matches('v');
 
-    println!("→ current version: {current}");
-    println!("→ target  version: {target}");
+    ui::section("Upgrade");
+    ui::kv("current", current);
+    ui::kv("target", target);
+    println!();
 
     if target == current {
-        println!("✓ already on {current}; nothing to do.");
+        ui::ok(&format!("already on {current} — nothing to do"));
         return Ok(());
     }
     if check {
-        println!("→ an upgrade is available (run `virtues upgrade` to apply).");
+        ui::ok(&format!("{target} is available — run `virtues upgrade` to apply"));
         return Ok(());
     }
 
@@ -91,15 +95,16 @@ pub async fn run(
     let work_path: &Path = work.as_ref();
     let asset_path = work_path.join(&asset_name);
 
-    println!("→ downloading {asset_url}…");
+    ui::step(&format!("downloading {asset_name}…"));
     download(&asset_url, &asset_path).await?;
 
-    println!("→ verifying sha256 from {sha_url}…");
+    ui::step("verifying sha256…");
     let expected = fetch_text(&sha_url).await?;
     let expected_hex = expected.split_whitespace().next().unwrap_or("").to_string();
     verify_sha(&asset_path, &expected_hex)?;
+    ui::ok("sha256 verified");
 
-    println!("→ extracting…");
+    ui::step("extracting…");
     // Unpacks the whole tarball under `work_path/extracted/` and returns the
     // `virtues` binary; the sibling artifacts (sidecars, web/, actions/,
     // actions-bin/) are pulled out of the same tree below.
@@ -128,7 +133,7 @@ pub async fn run(
     // replacing their binaries — restarting the sidecars reloads multi-GB GGUFs
     // (slow), so don't pay that cost for a binary-only app upgrade. A running process holds the old inode until restarted, so the
     // stop→swap→start ordering is what makes the new bytes take effect.
-    println!("→ stopping virtues.service…");
+    ui::step("stopping virtues.service…");
     service_stop("virtues");
     if new_llama.is_some() {
         service_stop("virtues-embed");
@@ -159,7 +164,7 @@ pub async fn run(
             return Err(e);
         }
     };
-    println!("→ swapped {BINARY_PATH} (rollback copy at {bak})");
+    ui::ok(&format!("swapped {BINARY_PATH} (rollback copy at {bak})"));
 
     // ── Swap the sidecar binaries (best-effort; they sit next to `virtues`) ─
     // A failed sidecar swap must not abort an otherwise-good app upgrade —
@@ -168,8 +173,8 @@ pub async fn run(
     if let Some(src) = &new_llama {
         let dst = dirs.bin_dir.join("llama-server");
         match swap_with_bak(src, &dst) {
-            Ok(_) => println!("→ swapped {}", dst.display()),
-            Err(e) => eprintln!("  ⚠ llama-server not swapped ({e}); prior binary kept"),
+            Ok(_) => ui::ok(&format!("swapped {}", dst.display())),
+            Err(e) => ui::warn(&format!("llama-server not swapped ({e}); prior binary kept")),
         }
     }
 
@@ -189,7 +194,7 @@ pub async fn run(
         refresh_named("action binaries", src, &dirs.actions_bin);
     }
 
-    println!("→ running migrations under new binary…");
+    ui::step("running migrations under the new binary…");
     let migrate = Command::new(BINARY_PATH).arg("migrate").status();
     match migrate {
         Ok(s) if s.success() => {}
@@ -217,7 +222,7 @@ pub async fn run(
     // hint); the sidecars are best-effort restarts that won't undo a good app
     // upgrade — but a sidecar that won't start means degraded search, so warn
     // loudly.
-    println!("→ starting virtues.service…");
+    ui::step("starting virtues.service…");
     match service_start("virtues") {
         Ok(true) => {}
         Ok(false) => {
@@ -236,7 +241,9 @@ pub async fn run(
     if new_llama.is_some() {
         for unit in ["virtues-embed", "virtues-rerank"] {
             if let Ok(false) | Err(_) = service_start(unit) {
-                eprintln!("  ⚠ {unit} did not start — search/embeddings degraded; check `systemctl status {unit}`");
+                ui::warn(&format!(
+                    "{unit} did not start — search/embeddings degraded; check `systemctl status {unit}`"
+                ));
             }
         }
     }
@@ -262,22 +269,29 @@ pub async fn run(
         let report = crate::inference_report::resolution_report();
         let missing = report.missing();
         if !missing.is_empty() {
-            eprintln!();
-            eprintln!("  ⚠ this release expects models not present on the box:");
+            println!();
+            ui::warn("this release expects models not present on the box:");
             for f in &missing {
-                eprintln!("      · {f}");
+                ui::skip(f);
             }
-            eprintln!("    `virtues upgrade` doesn't migrate the model set — the sidecars are");
-            eprintln!("    still on the old GGUFs, so search/embeddings will fail until you");
-            eprintln!("    re-run the installer (fetches the new models + rewrites the units):");
-            eprintln!();
-            eprintln!("      curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION={target_tag} sh");
-            eprintln!();
+            println!("     `virtues upgrade` doesn't migrate the model set — the sidecars are");
+            println!("     still on the old GGUFs, so search/embeddings will fail until you");
+            println!("     re-run the installer (fetches the new models + rewrites the units):");
+            println!();
+            println!(
+                "       {}",
+                console::style(format!(
+                    "curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION={target_tag} sh"
+                ))
+                .cyan()
+            );
+            println!();
         }
     }
 
     println!();
-    println!("✓ upgraded to {target_tag}. Rollback copy kept at {bak}.");
+    ui::ok(&format!("upgraded to {target_tag} — rollback copy kept at {bak}"));
+    println!();
     Ok(())
 }
 
@@ -360,8 +374,8 @@ fn swap_with_bak(new: &Path, dest: &Path) -> Result<Option<String>, crate::Error
 /// stages into a sibling and only swaps on success) and never aborts the run.
 fn refresh_named(label: &str, src: &Path, dst: &Path) {
     match install_web(src, dst) {
-        Ok(()) => println!("→ refreshed {label} → {}", dst.display()),
-        Err(e) => eprintln!("  ⚠ {label} not refreshed ({e}); prior copy still in effect"),
+        Ok(()) => ui::ok(&format!("refreshed {label} → {}", dst.display())),
+        Err(e) => ui::warn(&format!("{label} not refreshed ({e}); prior copy still in effect")),
     }
 }
 
@@ -379,7 +393,7 @@ fn disable_legacy_wireguard() {
     if !std::path::Path::new("/etc/systemd/system/virtues-wireguard.service").exists() {
         return;
     }
-    println!("→ retiring legacy virtues-wireguard.service (relay model)…");
+    ui::step("retiring legacy virtues-wireguard.service (relay model)…");
     let _ = Command::new("systemctl").arg("stop").arg(UNIT).status();
     let _ = Command::new("systemctl").arg("disable").arg(UNIT).status();
     let _ = std::fs::remove_file("/etc/systemd/system/virtues-wireguard.service");
@@ -472,8 +486,8 @@ fn remove_stale_setup_sudoers() {
     const PATH: &str = "/etc/sudoers.d/virtues-setup";
     if Path::new(PATH).exists() {
         match fs::remove_file(PATH) {
-            Ok(()) => println!("→ removed dead box-rename sudoers rule"),
-            Err(e) => eprintln!("→ note: couldn't remove stale {PATH} ({e})"),
+            Ok(()) => ui::ok("removed dead box-rename sudoers rule"),
+            Err(e) => ui::warn(&format!("couldn't remove stale {PATH} ({e})")),
         }
     }
 }
@@ -766,13 +780,15 @@ fn swap_binary(new_binary: &Path, dest: &Path) -> Result<(), crate::Error> {
     Ok(())
 }
 
+/// Stays on stderr and deliberately unstyled beyond the marker: this is the
+/// paste-at-2AM block, and it must survive any capture/pipe intact.
 fn print_rollback_hint(bak: &str) {
     eprintln!();
-    eprintln!("⚠  upgrade failed mid-swap. Roll back with:");
+    eprintln!("  ✖  upgrade failed mid-swap. Roll back with:");
     eprintln!();
-    eprintln!("      sudo systemctl stop virtues");
-    eprintln!("      sudo mv {bak} {BINARY_PATH}");
-    eprintln!("      sudo systemctl start virtues");
+    eprintln!("       sudo systemctl stop virtues");
+    eprintln!("       sudo mv {bak} {BINARY_PATH}");
+    eprintln!("       sudo systemctl start virtues");
     eprintln!();
 }
 
