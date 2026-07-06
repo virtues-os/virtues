@@ -125,17 +125,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Ok(cfg) = virtues::setup::recommended_config() {
             if let Ok(db) = virtues::database::Database::new(&cfg.database_url) {
                 let r = virtues::relay::reach_report(db.pool()).await;
-                match r.endpoint_id {
-                    Some(eid) => println!("  iroh reach:    {eid}"),
-                    None => println!("  iroh reach:    not provisioned (no iroh secret yet)"),
+                if !r.db_reachable {
+                    // We never reached the box DB, so we know nothing about reach.
+                    // Say so instead of printing authoritative-looking zeros — the
+                    // usual cause is running doctor as a user that can't read the
+                    // box env file (DB URL falls back to the wrong role).
+                    println!("  iroh reach:    unknown — couldn't read the box database");
+                    println!("  relay:         unknown — couldn't read the box database");
+                    println!("  allowlist:     unknown — couldn't read the box database");
+                    println!("                 run as the box user:  sudo -u virtues virtues doctor");
+                } else {
+                    match r.endpoint_id {
+                        Some(eid) => println!("  iroh reach:    {eid}"),
+                        None => println!("  iroh reach:    not provisioned (no iroh secret yet)"),
+                    }
+                    match r.relay_url {
+                        Some(relay) => println!("  relay:         {relay}"),
+                        None => println!(
+                            "  relay:         LAN-only — no relay config (box unclaimed or atlas unreachable)"
+                        ),
+                    }
+                    println!("  allowlist:     {} device(s) permitted", r.allowlisted_devices);
                 }
-                match r.relay_url {
-                    Some(relay) => println!("  relay:         {relay}"),
-                    None => println!(
-                        "  relay:         LAN-only — no relay config (box unclaimed or atlas unreachable)"
-                    ),
-                }
-                println!("  allowlist:     {} device(s) permitted", r.allowlisted_devices);
             }
         }
         return Ok(());

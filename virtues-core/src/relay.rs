@@ -73,6 +73,12 @@ async fn endpoint_id_from_secret(db: &PgPool) -> Option<String> {
 /// never binds the endpoint). Each field is independently optional so the report
 /// can show *exactly* which leg is unprovisioned — no more "works regardless".
 pub struct ReachReport {
+    /// Whether we could actually read the box database. `false` means every other
+    /// field is meaningless (we never reached the DB) — doctor must say "unknown"
+    /// rather than report authoritative-looking zeros. The usual cause is running
+    /// `virtues doctor` as a user that can't read the box's env file, so the DB
+    /// URL falls back to `postgres:///virtues` and connects as the wrong role.
+    pub db_reachable: bool,
     /// The box's EndpointId (from its stored secret), or `None` pre-provision.
     pub endpoint_id: Option<String>,
     /// The stored relay URL, or `None` when LAN-only (unclaimed / atlas down).
@@ -83,7 +89,19 @@ pub struct ReachReport {
 
 /// Read each reach leg's actual state for `virtues doctor`.
 pub async fn reach_report(db: &PgPool) -> ReachReport {
+    // Probe connectivity first: an unreachable DB makes every leg below collapse
+    // to None/0, which is indistinguishable from a genuinely fresh box. Establish
+    // the difference explicitly so doctor can report "unknown" honestly.
+    if sqlx::query("SELECT 1").execute(db).await.is_err() {
+        return ReachReport {
+            db_reachable: false,
+            endpoint_id: None,
+            relay_url: None,
+            allowlisted_devices: 0,
+        };
+    }
     ReachReport {
+        db_reachable: true,
         endpoint_id: endpoint_id_from_secret(db).await,
         relay_url: crate::virtues_api::relay::load(db)
             .await
