@@ -34,7 +34,7 @@ NPU stacks plug in behind Manual mode rather than being ported by us.
 | Chunking: **128-token-target windows** (96 words, 15% overlap, 2048-char cap) | 2025-26 retrieval research converges on 64–128 tokens for short factual content; model-agnostic; greenfield (nothing launched → no migration). |
 | Beta hardware: **Radxa Dragon Q8B** (10 units, ships ~Jul 31) + a few manual-mode testers | Q8B acceleration = **Adreno 690 GPU via llama.cpp Vulkan or OpenCL** (the a690 is the ThinkPad X13s GPU — mature turnip support). The Q8B NPU is a day-one timeboxed experiment, never a dependency (8cx Gen 3's DSP stack never shipped for Linux). |
 | **Q6A retired; Jetson = dev box, through Manual mode** | The Jetson runs its own CUDA llama-server and goes through the exact BYO flow — every day of dev work dogfoods the customer path. All Jetson special-casing deleted from installer/upgrade. |
-| Manual mode is **hard-line: recipes only** | We never install Ollama/llama.cpp for the user — that re-inherits the driver-support business the two-mode split exists to escape. |
+| Manual mode is **recipes only** (no GPU/driver babysitting) — but a **bundled CPU "quick trial"** is allowed | We never install *GPU/NPU* inference for the user (that re-inherits the driver-support business the split exists to escape). But the **CPU llama-server we already build + smoke-test in CI** has zero hardware variance, so offering it as a zero-setup, honestly-labeled *"quick trial (CPU, not for production)"* is doctrine-safe. GPU/scale/other-model all stay behind Manual/BYO. Rationale: EmbeddingGemma is actually *faster on CPU* than GPU on the Orin (fp32 activations), so CPU-bundled isn't a big compromise for the embed path. |
 | Fingerprint mismatch → **hard-stop writes + user-choice recovery** | Never automatic, never silent. See `configure-inference` below. |
 | v1 ships **without disk encryption**, but user data lives on **its own partition** | Matches the entire consumer market; the partition hedge makes LUKS a later migration instead of a nightmare. (Design for later: LUKS2 + vendor-hosted Tang over the relay; QCS-class boards have no TPM.) |
 | No fleet machinery for beta | 10 reachable boxes: heartbeat timer + ssh, not A/B OS images, not observability stacks. The `upgrade.rs` self-updater gets auto-rollback + health probe + signing instead. |
@@ -71,6 +71,13 @@ merged:
   `VIRTUES_ALLOW_REMOTE_INFERENCE=1` is the logged expert override.
 - **Recipes**: two per endpoint — embeddings (llama.cpp, Ollama) + rerank
   (llama.cpp GPU/CPU), all on the pinned contracts.
+- **Inference picker** (non-Dragon, interactive): choose **Bring your own
+  endpoint** (BYO — GPU/Ollama/another box, the daily-use path) or **Quick
+  trial (bundled, CPU-only)** (`InferenceMode::Bundled` → same local-sidecar
+  provisioning as Dragon, honestly labeled "not for production; slow on large
+  data"). Fixes the dead-end where Manual demanded a URL before any endpoint
+  existed. Headless: `VIRTUES_INFERENCE=bundled`. GPU is never auto-managed on
+  non-Dragon hardware (compile-time + per-vendor) — it stays BYO.
 - **Composable prompt prefixes**: runtime reads
   `VIRTUES_EMBED_QUERY_PROMPT`/`_DOC_PROMPT` (empty = none); installer resolves
   them with a **maintenance-free ladder** — explicit env → the model's own HF

@@ -48,11 +48,11 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference mode resolution (Dragon board auto-detect, else manual endpoint prompts + validation)");
+        ui::skip("  • Inference: Dragon auto-detect, else pick bundled-CPU (turnkey) or manual BYO endpoint");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip(&format!(
-            "  • Inference sidecars (Dragon mode only, llama-server): {} + {}",
+            "  • Inference sidecars (Dragon/bundled only, llama-server): {} + {}",
             cfg.embed_gguf, cfg.rerank_gguf
         ));
         ui::skip("  • mDNS (hostname → virtues, _http._tcp on :8000)");
@@ -70,7 +70,9 @@ pub async fn run(cli: Config) -> Result<()> {
     ui::section("Inference");
     let inference = InferenceMode::resolve()?;
     let validation = match &inference {
-        InferenceMode::Dragon => None,
+        // Dragon + Bundled both provision our own local sidecars — nothing to
+        // validate (we control the endpoint).
+        InferenceMode::Dragon | InferenceMode::Bundled => None,
         InferenceMode::Manual { embed_url, embed_model, rerank_url, hf_repo } => Some(
             mode::validate_manual(
                 embed_url,
@@ -93,11 +95,11 @@ pub async fn run(cli: Config) -> Result<()> {
     // ─── Virtues ────────────────────────────────────────────────────────
     ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
-    // Dragon: after the tarball, provision the sidecars (they need the
+    // Dragon/Bundled: after the tarball, provision the sidecars (they need the
     // llama-server binary it ships). Manual: the user's endpoints were
     // already validated above — no llama-server, no GGUF fetch, no units.
     match &inference {
-        InferenceMode::Dragon => install::install_inference(&cfg).await?,
+        InferenceMode::Dragon | InferenceMode::Bundled => install::install_inference(&cfg).await?,
         InferenceMode::Manual { .. } => {
             ui::skip("Manual inference — skipping local sidecar provisioning")
         }

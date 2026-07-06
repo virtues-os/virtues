@@ -26,6 +26,12 @@ use crate::ui;
 pub enum InferenceMode {
     /// Our board, detected automatically; sidecars provisioned locally.
     Dragon,
+    /// User opted into the bundled local engine on non-Dragon hardware: same
+    /// local-sidecar provisioning as Dragon, but **CPU-only** (the portable
+    /// llama-server we build + test in CI — no GPU/driver babysitting). A
+    /// zero-setup "quick trial" path, honestly not the production choice for
+    /// large corpora; for GPU/scale the user runs their own endpoint (Manual).
+    Bundled,
     /// User-run endpoints on any other machine. `embed_model` is the model
     /// name sent in every `/v1/embeddings` request body — llama.cpp ignores
     /// it, but Ollama (the most common BYO server) 404s unless it names a
@@ -55,6 +61,10 @@ impl InferenceMode {
             Some("dragon") => {
                 ui::ok("Inference mode: dragon (VIRTUES_INFERENCE=dragon)");
                 return Ok(Self::Dragon);
+            }
+            Some("bundled") => {
+                ui::ok("Inference mode: bundled local CPU engine (VIRTUES_INFERENCE=bundled)");
+                return Ok(Self::Bundled);
             }
             Some("manual") => {
                 let embed_url = std::env::var("VIRTUES_EMBED_URL")
@@ -88,7 +98,7 @@ impl InferenceMode {
                 return Ok(Self::Manual { embed_url, embed_model, rerank_url, hf_repo });
             }
             Some(other) => bail!(
-                "unrecognized VIRTUES_INFERENCE={other} — expected \"dragon\" or \"manual\""
+                "unrecognized VIRTUES_INFERENCE={other} — expected \"bundled\", \"manual\", or \"dragon\""
             ),
             None => {}
         }
@@ -100,19 +110,48 @@ impl InferenceMode {
             return Ok(Self::Dragon);
         }
 
-        // 3. Interactive manual flow. cliclack reads /dev/tty directly, so
-        //    this works under `curl | sh` (stdin = pipe) — but not with no
-        //    controlling terminal at all (CI, systemd), where the env
-        //    override is the only path.
+        // 3. Interactive flow. cliclack reads /dev/tty directly, so this works
+        //    under `curl | sh` (stdin = pipe) — but not with no controlling
+        //    terminal at all (CI, systemd), where the env override is the only
+        //    path.
         if !has_tty() {
             bail!(
-                "not our hardware and no terminal to ask on — set \
-                 VIRTUES_INFERENCE=manual and VIRTUES_EMBED_URL=<your /v1/embeddings \
-                 endpoint> (optionally VIRTUES_RERANK_URL) and re-run, or run the \
-                 installer from an interactive terminal"
+                "not our hardware and no terminal to ask on — set VIRTUES_INFERENCE to \
+                 \"bundled\" (local CPU engine) or \"manual\" (+ VIRTUES_EMBED_URL=<your \
+                 /v1/embeddings endpoint>, optionally VIRTUES_RERANK_URL) and re-run, or \
+                 run the installer from an interactive terminal"
             );
         }
+
+        // Pick the path BEFORE demanding a URL — otherwise a user who hasn't
+        // stood up an endpoint yet is stuck (Ctrl-C, set it up, start over).
+        let choice = cliclack::select("How should Virtues run inference?")
+            .item(
+                "byo",
+                "Bring your own endpoint",
+                "run llama.cpp / Ollama yourself — uses your GPU; the right choice for daily use",
+            )
+            .item(
+                "bundled",
+                "Quick trial (bundled, CPU-only)",
+                "we set up a local engine + our two models, no config — CPU inference, fine to \
+                 kick the tires, slow on large data; switch to your own endpoint for real use",
+            )
+            .interact()
+            .context("choosing an inference path")?;
+
+        if choice == "bundled" {
+            ui::ok("Bundled local CPU engine — no setup needed");
+            return Ok(Self::Bundled);
+        }
+
+        // Manual (bring-your-own). Show recipes + how to stand a server up, then
+        // ask for the URL. Re-running the installer is always safe (idempotent),
+        // so "Ctrl-C, start your server, re-run" is a fine path too.
         print_recipes();
+        println!("  Start one of the above first (it must be reachable at the URL you enter).");
+        println!("  Not ready? Ctrl-C, get your endpoint running, then re-run this installer.");
+        println!();
 
         let embed_url: String = cliclack::input("Embedding endpoint URL")
             .placeholder("http://localhost:11434")
