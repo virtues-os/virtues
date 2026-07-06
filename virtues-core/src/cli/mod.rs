@@ -36,6 +36,11 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Sudo command should be handled in main.rs");
         }
 
+        Commands::Device { .. } => {
+            // Same — handled in main.rs against a bare DB pool.
+            unreachable!("Device command should be handled in main.rs");
+        }
+
         Commands::Backup { .. } => {
             // Handled in main.rs — runs against a bare DB pool, doesn't
             // need the full Virtues client.
@@ -160,97 +165,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             println!("   places_resolved: {}", stats.places_resolved);
             println!("   people_resolved: {}", stats.people_resolved);
             println!("   duration:        {}ms", stats.duration_ms);
-        }
-
-        Commands::VerifyTokens { bearer } => {
-            use crate::crypto::TokenEncryptor;
-            println!("Loading encryptor from VIRTUES_ENCRYPTION_KEY...");
-            let encryptor = match TokenEncryptor::from_env() {
-                Ok(e) => {
-                    println!("  ✓ encryptor loaded");
-                    e
-                }
-                Err(e) => {
-                    println!("  ✗ FAILED: {e}");
-                    return Ok(());
-                }
-            };
-            println!();
-
-            let rows: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-                r#"SELECT id, status, secret_lookup_hash, secrets_ciphertext
-                     FROM credentials WHERE source_id = 'ios'"#,
-            )
-            .fetch_all(virtues.database.pool())
-            .await?;
-
-            let bearer_hash = bearer
-                .as_deref()
-                .map(|b| encryptor.lookup_hash(b))
-                .transpose()?;
-
-            println!("Found {} iOS row(s) in credentials:", rows.len());
-            for (id, status, lookup_hash, secrets_ciphertext) in &rows {
-                println!();
-                println!("  id={id}");
-                println!("  status={status}");
-                match lookup_hash {
-                    Some(h) => {
-                        let prefix = &h[..h.len().min(16)];
-                        println!("  secret_lookup_hash: {prefix}…");
-                        if let Some(ref bh) = bearer_hash {
-                            if h == bh {
-                                println!("  ✓ MATCHES bearer hash");
-                            } else {
-                                println!("  ✗ does NOT match bearer hash");
-                            }
-                        }
-                    }
-                    None => {
-                        println!("  secret_lookup_hash: NULL (pending or revoked)");
-                    }
-                }
-                match encryptor.decrypt(secrets_ciphertext) {
-                    Ok(plaintext) => {
-                        let preview = if plaintext.len() > 60 {
-                            format!("{}…", &plaintext[..60])
-                        } else {
-                            plaintext
-                        };
-                        println!("  ✓ DECRYPT OK → {preview}");
-                    }
-                    Err(e) => println!("  ✗ DECRYPT FAILED: {e}"),
-                }
-            }
-        }
-
-        Commands::PairIos { device_id, name } => {
-            // Make sure the schema is in place before we touch it
-            println!("Running migrations...");
-            virtues.database.initialize().await?;
-
-            println!("Pairing iOS device '{name}'...");
-            let pool = virtues.database.pool();
-            let credential_id =
-                virtues_helpers::auth::mint_pending_credential(pool, "ios", &name).await?;
-            // The SERVER mints the bearer — never the device id (no
-            // stable-device-id-as-bearer). The supplied `device_id` is kept only
-            // as a non-secret label in metadata.
-            let bearer = virtues_helpers::auth::generate_bearer();
-            let device_info = serde_json::json!({ "device_id": device_id });
-            virtues_helpers::auth::finalize_self_issued_bearer(
-                pool,
-                &credential_id,
-                &bearer,
-                &device_info,
-            )
-            .await?;
-            crate::action_templates::reconcile_templates(pool).await?;
-
-            println!();
-            println!("✅ Paired");
-            println!("   credential_id:  {credential_id}");
-            println!("   bearer (paste into the app's keychain): {bearer}");
         }
 
         Commands::WarmModels => {

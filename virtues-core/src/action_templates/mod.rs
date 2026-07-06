@@ -421,40 +421,33 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
         guard.clone()
     };
 
-    // GC pass: delete fan-out action rows whose credential is no longer
-    // active. The revoke_credential endpoint handles this inline, but any
-    // state drift (direct SQL, import, bug) leaves orphans. We nullify
-    // run FKs first so history is preserved under `action_id = NULL`.
-    let pruned = sqlx::query(
-        r#"UPDATE app_action_runs SET action_id = NULL
-           WHERE action_id IN (
-               SELECT id FROM app_actions
-               WHERE credential_id IS NOT NULL
-                 AND credential_id NOT IN (
-                     SELECT id FROM credentials WHERE status = 'active'
-                 )
-           )"#,
-    )
+    // GC pass: delete fan-out action rows whose anchor is gone — an inactive
+    // credential (OAuth/api actions) or a revoked/absent device (ingest
+    // actions). The revoke paths handle this inline, but any state drift
+    // (direct SQL, import, bug) leaves orphans. Nullify run FKs first so history
+    // is preserved under `action_id = NULL`.
+    const ORPHAN_PREDICATE: &str = "(credential_id IS NOT NULL \
+             AND credential_id NOT IN (SELECT id FROM credentials WHERE status = 'active')) \
+          OR (device_id IS NOT NULL \
+             AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
+    let pruned = sqlx::query(&format!(
+        "UPDATE app_action_runs SET action_id = NULL \
+         WHERE action_id IN (SELECT id FROM app_actions WHERE {ORPHAN_PREDICATE})"
+    ))
     .execute(db)
     .await?
     .rows_affected();
 
-    let deleted = sqlx::query(
-        r#"DELETE FROM app_actions
-           WHERE credential_id IS NOT NULL
-             AND credential_id NOT IN (
-                 SELECT id FROM credentials WHERE status = 'active'
-             )"#,
-    )
-    .execute(db)
-    .await?
-    .rows_affected();
+    let deleted = sqlx::query(&format!("DELETE FROM app_actions WHERE {ORPHAN_PREDICATE}"))
+        .execute(db)
+        .await?
+        .rows_affected();
 
     if deleted > 0 {
         tracing::info!(
             deleted,
             runs_nullified = pruned,
-            "reconcile GC: removed fan-out actions for inactive credentials"
+            "reconcile GC: removed fan-out actions for inactive credentials / revoked devices"
         );
     }
 
@@ -487,14 +480,12 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
             )));
         }
 
-        // Webhook invariant: any action accepting webhook posts MUST have a
-        // credential_id so bearer auth can resolve to an identity. The only
-        // way a template gets a credential_id today is via per_credential
-        // fan-out; a non-per-credential webhook template would be
-        // unauthenticated.
+        // Webhook invariant: any action accepting webhook posts MUST resolve to
+        // an identity to authorize the post — a device_id (device sources) or a
+        // credential_id (OAuth/api). Both come only from per_credential fan-out.
         if template.triggers.iter().any(|t| t == "webhook") && !template.per_credential {
             return Err(Error::Other(format!(
-                "template {} has 'webhook' trigger but per_credential=false — webhook actions must have a credential",
+                "template {} has 'webhook' trigger but per_credential=false — webhook actions must fan out per device/credential",
                 id_prefix
             )));
         }
@@ -511,29 +502,47 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                     ))
                 })?;
 
-            // Validate the source reference resolves to a [[source]] entry.
-            if lookup_source(source_id).is_none() {
-                return Err(Error::Other(format!(
+            let source = lookup_source(source_id).ok_or_else(|| {
+                Error::Other(format!(
                     "template {} references unknown source '{}' — add a [[source]] block to sources.toml",
                     id_prefix, source_id
-                )));
-            }
+                ))
+            })?;
 
-            let credential_ids: Vec<(String,)> = sqlx::query_as(
-                "SELECT id FROM credentials WHERE source_id = $1 AND status = 'active'",
-            )
-            .bind(source_id)
-            .fetch_all(db)
-            .await?;
-
-            for (cred_id,) in credential_ids {
-                let action_id = format!("{}_{}", id_prefix, cred_id);
-                upsert_row(db, template, &action_id, Some(&cred_id)).await?;
-                live_ids.push(action_id);
-                upserted += 1;
+            if matches!(source.auth, SourceAuth::SelfIssuedBearer) {
+                // Device source (iOS/Mac/sensor): fan out per DEVICE. The device's
+                // allowlisted iroh key authorizes its `/webhook/:action_id` posts,
+                // so the action is anchored on device_id — no credential/bearer.
+                let device_ids: Vec<(String,)> = sqlx::query_as(
+                    "SELECT id FROM app_device WHERE source_id = $1 AND revoked_at IS NULL",
+                )
+                .bind(source_id)
+                .fetch_all(db)
+                .await?;
+                for (device_id,) in device_ids {
+                    let action_id = format!("{}_{}", id_prefix, device_id);
+                    upsert_row(db, template, &action_id, None, Some(&device_id)).await?;
+                    live_ids.push(action_id);
+                    upserted += 1;
+                }
+            } else {
+                // OAuth / API-key source: fan out per credential (the outbound
+                // secret the action uses to call the provider).
+                let credential_ids: Vec<(String,)> = sqlx::query_as(
+                    "SELECT id FROM credentials WHERE source_id = $1 AND status = 'active'",
+                )
+                .bind(source_id)
+                .fetch_all(db)
+                .await?;
+                for (cred_id,) in credential_ids {
+                    let action_id = format!("{}_{}", id_prefix, cred_id);
+                    upsert_row(db, template, &action_id, Some(&cred_id), None).await?;
+                    live_ids.push(action_id);
+                    upserted += 1;
+                }
             }
         } else {
-            upsert_row(db, template, id_prefix, None).await?;
+            upsert_row(db, template, id_prefix, None, None).await?;
             live_ids.push(id_prefix.to_string());
             upserted += 1;
         }
@@ -585,6 +594,7 @@ async fn upsert_row(
     template: &Template,
     action_id: &str,
     credential_id: Option<&str>,
+    device_id: Option<&str>,
 ) -> Result<()> {
     let triggers_json = serde_json::to_string(&template.triggers)
         .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
@@ -635,20 +645,21 @@ async fn upsert_row(
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir
+            triggers, credential_id, runtime, command, dir, device_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             dir            = EXCLUDED.dir,
+            device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
     } else {
         r#"
         INSERT INTO app_actions (
             id, name, owner, agent, cron_schedule, enabled, config, condition,
-            triggers, credential_id, runtime, command, dir
+            triggers, credential_id, runtime, command, dir, device_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -660,6 +671,7 @@ async fn upsert_row(
             runtime        = EXCLUDED.runtime,
             command        = EXCLUDED.command,
             dir            = EXCLUDED.dir,
+            device_id      = EXCLUDED.device_id,
             updated_at     = now()
         "#
     };
@@ -678,6 +690,7 @@ async fn upsert_row(
         .bind(&template.runtime)
         .bind(&command_json)
         .bind(&template.dir)
+        .bind(device_id)
         .execute(db)
         .await?;
 

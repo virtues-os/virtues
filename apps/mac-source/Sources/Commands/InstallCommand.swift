@@ -33,14 +33,16 @@ struct InstallCommand: ParsableCommand {
             }
 
             let config = Config(
-                bearer: pair.bearer,
                 deviceId: pair.deviceId,
                 apiEndpoint: pair.endpoint,
                 actionIds: pair.actionIds,
-                createdAt: Date()
+                boxNodeId: pair.boxNodeId,
+                relayUrl: pair.relayUrl,
+                createdAt: Date(),
+                deviceSeed: pair.seed
             )
             try config.save()
-            print("\u{2713} Paired (\(pair.endpoint))")
+            print("\u{2713} Paired (auth: iroh key — reach \(pair.boxNodeId))")
         } else {
             // Check if already configured
             guard Config.load() != nil else {

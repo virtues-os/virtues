@@ -19,9 +19,6 @@ protocol ConfigurationProvider {
     /// The API endpoint URL
     var apiEndpoint: String { get }
 
-    /// The device token for authentication
-    var deviceToken: String { get }
-
     /// Backend function_name → action_id map. Empty for devices that haven't
     /// been paired (or re-paired) since the webhook unification.
     var actionIds: [String: String] { get }

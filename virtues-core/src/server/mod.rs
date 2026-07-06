@@ -212,7 +212,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/setup/state",
             get(crate::api::box_status::setup_state_handler),
         )
-        // Auth — pair-only model. Public consume + session probe + signout.
+        // Auth — pair-only model. Public consume + session probe (returns the
+        // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
         // protected_routes block below.
         .route(
@@ -226,7 +227,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             post(crate::api::pair::link_redeem_handler),
         )
         .route("/auth/session", get(api::auth_session_handler))
-        .route("/auth/signout", post(api::auth_signout_handler))
         // Internal API (virtues-api integration — has its own header-based auth)
         .route("/internal/hydrate", post(api::hydrate_profile_handler))
         .route(
@@ -240,10 +240,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/s/:token/files/:file_id",
             get(api::shared_file_download_handler),
         )
-        // Webhook ingestion. Authenticated via Bearer device-token (looked up
-        // O(1) by HMAC against `credentials.secret_lookup_hash`), NOT via web
-        // session cookies. Lives in public_routes because the AuthUser
-        // extractor only knows how to read session cookies.
+        // Webhook ingestion. Authenticated primarily by the proven iroh key
+        // (Option<AuthUser>) — the owner's devices POST over iroh — with the
+        // legacy Bearer device-token kept only as a fallback for external,
+        // non-iroh callers. Lives in public_routes so the bearer fallback path
+        // isn't force-rejected by the AuthUser route_layer.
         // Per-route body limit override (router-wide cap is 105MB): iOS audio
         // batches are base64 AAC and can dwarf the other streams on backfill.
         // A body over the cap is rejected by the Json extractor before the
@@ -752,15 +753,15 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         )
         // Yjs WebSocket (real-time collaborative editing)
         .route("/ws/yjs/:page_id", get(yjs_websocket_handler))
-        // Blanket auth: all routes in this group require a valid session cookie
+        // Blanket auth: all routes in this group require a resolved AuthUser
+        // (proven iroh key / loopback console / dev fallback).
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()));
 
     // Merge public + protected, apply shared state and body limits, then
-    // wrap in the security layers (CSRF gate + response headers).
+    // wrap in the security layers (response headers).
     let app = public_routes
         .merge(protected_routes)
         .with_state(state.clone())
-        .layer(middleware::from_fn(crate::middleware::security::csrf_layer))
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
         .layer(DefaultBodyLimit::max(105 * 1024 * 1024)); // 105MB (slightly above 100MB file limit for multipart overhead)
 
@@ -835,11 +836,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         };
         tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
     }
-
-    // BYO-networking safety check: warn if the box is advertised at a plain-HTTP
-    // origin on a non-local host, where browser session cookies would be either
-    // rejected (secure env) or sent in cleartext (dev env). Advisory only.
-    crate::middleware::security::warn_insecure_cookie_origin();
 
     // Run the server with graceful shutdown — Ctrl+C / SIGTERM triggers
     // SIGTERM to all `app`-runtime children before we exit.

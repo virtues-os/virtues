@@ -18,6 +18,15 @@ pub trait AllowPolicy: Send + Sync + 'static {
     fn is_allowed(&self, remote: EndpointId) -> bool;
 }
 
+/// The cryptographically-proven remote `EndpointId` the current request arrived
+/// on, injected into each request's extensions by [`serve`]. The box's auth layer
+/// reads this to authenticate the peer by its allowlisted key. It is set ONLY here
+/// — after the QUIC raw-public-key handshake proved the peer — and is a typed
+/// request extension, never an HTTP header, so a client cannot forge it (the
+/// plain `:8000` listener never sets it).
+#[derive(Clone, Copy, Debug)]
+pub struct ProvenPeer(pub EndpointId);
+
 /// A simple in-memory allowlist that the box can hot-swap as devices pair/revoke.
 #[derive(Clone, Default)]
 pub struct StaticAllow(Arc<RwLock<HashSet<EndpointId>>>);
@@ -81,7 +90,11 @@ impl ProtocolHandler for HttpHandler {
                     move |req: hyper::Request<hyper::body::Incoming>| {
                         let app = app.clone();
                         async move {
-                            let req = req.map(axum::body::Body::new);
+                            let mut req = req.map(axum::body::Body::new);
+                            // Stamp the proven peer id so the app's auth layer can
+                            // authenticate by the allowlisted key (unspoofable —
+                            // typed extension set post-handshake, not a header).
+                            req.extensions_mut().insert(ProvenPeer(remote));
                             app.oneshot(req).await // Router error is Infallible
                         }
                     },

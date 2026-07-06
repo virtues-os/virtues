@@ -18,6 +18,7 @@ use crate::brand;
 use crate::config::InstallConfig;
 use crate::download;
 use crate::install;
+use crate::mode::{self, InferenceMode};
 use crate::preflight;
 use crate::steps;
 use crate::ui;
@@ -26,7 +27,6 @@ pub struct Config {
     pub version: Option<String>,
     pub dry_run: bool,
     pub no_init: bool,
-    pub assume_yes: bool,
 }
 
 pub async fn run(cli: Config) -> Result<()> {
@@ -48,10 +48,11 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
+        ui::skip("  • Inference mode resolution (Dragon board auto-detect, else manual endpoint prompts + validation)");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip(&format!(
-            "  • Inference sidecars (llama-server): {} + {}",
+            "  • Inference sidecars (Dragon mode only, llama-server): {} + {}",
             cfg.embed_gguf, cfg.rerank_gguf
         ));
         ui::skip("  • mDNS (hostname → virtues, _http._tcp on :8000)");
@@ -61,6 +62,19 @@ pub async fn run(cli: Config) -> Result<()> {
         ui::skip("  • virtues bringup + systemd unit");
         return Ok(());
     }
+
+    // ─── Inference mode ─────────────────────────────────────────────────
+    // Resolved (and, for manual, validated) BEFORE anything mutates the
+    // system: a user whose endpoint is broken should learn that before we
+    // start installing packages, not after.
+    ui::section("Inference");
+    let inference = InferenceMode::resolve()?;
+    let validation = match &inference {
+        InferenceMode::Dragon => None,
+        InferenceMode::Manual { embed_url, embed_model, rerank_url } => {
+            Some(mode::validate_manual(embed_url, embed_model, rerank_url.as_deref()).await?)
+        }
+    };
 
     // ─── System packages ────────────────────────────────────────────────
     ui::section("System packages");
@@ -73,9 +87,16 @@ pub async fn run(cli: Config) -> Result<()> {
     // ─── Virtues ────────────────────────────────────────────────────────
     ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
-    // After the tarball: the sidecars need the llama-server binary it ships.
-    install::install_inference(&cfg).await?;
-    install::write_env_file(&cfg).await?;
+    // Dragon: after the tarball, provision the sidecars (they need the
+    // llama-server binary it ships). Manual: the user's endpoints were
+    // already validated above — no llama-server, no GGUF fetch, no units.
+    match &inference {
+        InferenceMode::Dragon => install::install_inference(&cfg).await?,
+        InferenceMode::Manual { .. } => {
+            ui::skip("Manual inference — skipping local sidecar provisioning")
+        }
+    }
+    install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
 
@@ -86,7 +107,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");
-    let issues = install::health_check(&cfg).await?;
+    let issues = install::health_check(&cfg, matches!(inference, InferenceMode::Dragon)).await?;
     if issues > 0 {
         ui::warn(&format!("{issues} post-install issue(s) — run `virtues doctor` for details"));
     }

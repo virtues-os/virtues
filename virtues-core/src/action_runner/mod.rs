@@ -203,14 +203,16 @@ async fn prepare_run(
         }));
     }
 
-    // 2b. Webhook invariant: webhook triggers require a credential_id.
-    if trigger == "webhook" && action.credential_id.is_none() {
+    // 2b. Webhook invariant: a webhook action must resolve to an identity that
+    // authorizes the post — a device_id (device ingest, keyed on the proven iroh
+    // key) or a credential_id (OAuth/api). One or the other must be set.
+    if trigger == "webhook" && action.credential_id.is_none() && action.device_id.is_none() {
         tracing::error!(
             action_id,
-            "webhook trigger on action with no credential_id — rejected"
+            "webhook trigger on action with no device_id or credential_id — rejected"
         );
         return Ok(PrepareOutcome::Early(ActionRunResult::forbidden(
-            "webhook trigger requires credential_id".to_string(),
+            "webhook trigger requires a device_id or credential_id".to_string(),
         )));
     }
 
@@ -580,6 +582,20 @@ async fn run_app_trigger(
 /// upload gives up far sooner; the box still finishes idempotently if it can.)
 const SUBPROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Per-action ceiling override. The embedding indexer drains its whole backlog
+/// in one run (see `search::indexer`) — initial onboarding embeds an entire
+/// corpus, which is hours of legitimate work, not a hang. Its drain loop
+/// enforces its own 2-hour wall-clock ceiling and commits per record, so the
+/// subprocess gets that ceiling plus margin and the internal limit exits
+/// cleanly rather than being SIGKILLed mid-drain. Keyed on the manifest dir
+/// (stable), not the id (which gets collision-suffixed on rename).
+fn subprocess_timeout(action: &Action) -> std::time::Duration {
+    match action.dir.as_str() {
+        "embedding_index" => std::time::Duration::from_secs(2 * 3600 + 300),
+        _ => SUBPROCESS_TIMEOUT,
+    }
+}
+
 /// What a successful subprocess phase produced: the one-line summary plus the
 /// processed-record count (for `app_action_runs.records_processed`).
 struct SubprocessOutcome {
@@ -635,14 +651,15 @@ async fn run_subprocess(
     // block every future webhook for this action) indefinitely. On timeout the
     // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
     // caller records the run as `error`, freeing the lock.
-    let output = match tokio::time::timeout(SUBPROCESS_TIMEOUT, child.wait_with_output()).await {
+    let ceiling = subprocess_timeout(action);
+    let output = match tokio::time::timeout(ceiling, child.wait_with_output()).await {
         Ok(res) => {
             res.map_err(|e| Error::Other(format!("failed to wait for action subprocess: {e}")))?
         }
         Err(_) => {
             return Err(Error::Other(format!(
                 "action subprocess timed out after {}s",
-                SUBPROCESS_TIMEOUT.as_secs()
+                ceiling.as_secs()
             )));
         }
     };

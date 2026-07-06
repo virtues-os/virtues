@@ -2,7 +2,6 @@
 
 use std::env;
 use virtues::cli::types::{Cli, Commands};
-use virtues::search::Embedder;
 use virtues::VirtuesBuilder;
 
 #[tokio::main]
@@ -120,20 +119,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  network:       {}", net.headline);
 
         // Best-effort iroh reach: doctor is otherwise DB-free, so open a pool
-        // only if we can and report the box's actual EndpointId + relay. Silent
-        // if there's no DB; explicit if the box is still LAN-only (the state
-        // that cost us real debugging time — surface it here).
+        // only if we can and report each reach leg's ACTUAL state — endpoint,
+        // relay home, and allowlist size — so a still-LAN-only box (the state
+        // that cost us real debugging time) is impossible to miss.
         if let Ok(cfg) = virtues::setup::recommended_config() {
             if let Ok(db) = virtues::database::Database::new(&cfg.database_url) {
-                match virtues::relay::reach_status(db.pool()).await {
-                    Some((eid, relay)) => {
-                        println!("  iroh reach:    {eid}");
-                        println!("  relay:         {relay}");
-                    }
+                let r = virtues::relay::reach_report(db.pool()).await;
+                match r.endpoint_id {
+                    Some(eid) => println!("  iroh reach:    {eid}"),
+                    None => println!("  iroh reach:    not provisioned (no iroh secret yet)"),
+                }
+                match r.relay_url {
+                    Some(relay) => println!("  relay:         {relay}"),
                     None => println!(
-                        "  iroh reach:    not provisioned — LAN-only until relay config is fetched"
+                        "  relay:         LAN-only — no relay config (box unclaimed or atlas unreachable)"
                     ),
                 }
+                println!("  allowlist:     {} device(s) permitted", r.allowlisted_devices);
             }
         }
         return Ok(());
@@ -321,6 +323,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("hint: is the database reachable? DATABASE_URL={}", database_url);
                 std::process::exit(1);
             }
+        }
+    }
+
+    // ─── `virtues device <ls|rm|add>` ───────────────────────────────────────
+    // The allowlist as a CLI — "who can reach this box?" is one list. `ls`
+    // shows non-revoked devices, `rm` de-allowlists one (next dial refused at
+    // the handshake), `add` prints the standing pair code (same as `pair`).
+    // Bare-pool: the on-box operator is the owner (physical access = you).
+    if let Some(Commands::Device { action }) = &cli.command {
+        use virtues::cli::types::DeviceCommands;
+        let database_url = virtues::database::normalize_database_url()?;
+        let db = virtues::database::Database::new(&database_url)?;
+        let pool = db.pool();
+        match action {
+            DeviceCommands::Ls => {
+                let devices = virtues::api::devices::list_devices_cli(pool).await?;
+                if devices.is_empty() {
+                    println!();
+                    println!("  No devices on the allowlist. Run `virtues device add` to pair one.");
+                    println!();
+                    return Ok(());
+                }
+                println!();
+                println!(
+                    "  {:<30}  {:<12}  {:<22}  {:<14}  {}",
+                    "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                );
+                for (id, kind, label, node_id, last_seen) in &devices {
+                    let key = node_id
+                        .as_deref()
+                        .map(|n| format!("{}…", &n[..n.len().min(10)]))
+                        .unwrap_or_else(|| "—".to_string());
+                    let seen = last_seen
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_else(|| "never".to_string());
+                    let label = if label.chars().count() > 22 {
+                        format!("{}…", label.chars().take(21).collect::<String>())
+                    } else {
+                        label.clone()
+                    };
+                    println!("  {id:<30}  {kind:<12}  {label:<22}  {key:<14}  {seen}");
+                }
+                println!();
+                return Ok(());
+            }
+            DeviceCommands::Rm { id } => match virtues::api::devices::revoke_device_cli(pool, id).await {
+                Ok(true) => {
+                    println!("✓ revoked {id} — its key is de-allowlisted; the next dial is refused.");
+                    return Ok(());
+                }
+                Ok(false) => {
+                    eprintln!("error: no active device with id {id} (already revoked or unknown)");
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    eprintln!("error: revoke failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+            DeviceCommands::Add => match virtues::api::pair::ensure_standing(pool).await {
+                Ok(minted) => {
+                    print_link_output(&minted);
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("error: could not produce a pair code: {e}");
+                    std::process::exit(1);
+                }
+            },
         }
     }
 

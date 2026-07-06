@@ -12,9 +12,12 @@
 //! cross-encoder GGUF through `/api/embed` silently returns hidden-state
 //! garbage). llama-server hosts both model classes behind the same JSON
 //! conventions, so the reranker (`reranker.rs`) is now this file's twin.
-//! The even-earlier in-process ORT build died on glibc: pyke's prebuilt
-//! blobs need glibc ≥2.38, JetPack 6.x ships 2.35. Compiling llama.cpp
-//! per-arch in our own CI sidesteps that class of problem permanently.
+//!
+//! In **manual inference mode** the endpoint is user-run rather than a
+//! sidecar we provisioned; the installer pins a fingerprint of the model at
+//! setup time (`VIRTUES_EMBED_FINGERPRINT`) and we re-check it at boot so a
+//! silently-swapped model can't corrupt the vector index (see
+//! `verify_fingerprint`).
 //!
 //! ## Model
 //!
@@ -24,7 +27,7 @@
 //! is `vector(256)`). Asymmetric: queries and documents get different prompt
 //! prefixes (see `QUERY_PROMPT`/`DOC_PROMPT`). The sidecar must emit 768-dim
 //! vectors (`validate_native_dim`); run it on CPU — its activations require
-//! bf16/fp32, so the Orin CUDA path forces fp32 and is slower than CPU.
+//! bf16/fp32, so fp16 GPU paths force fp32 and end up slower than CPU.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
@@ -45,6 +48,31 @@ const DEFAULT_URL: &str = "http://127.0.0.1:18181";
 /// is free recall.
 const QUERY_PROMPT: &str = "task: search result | query: ";
 const DOC_PROMPT: &str = "title: none | text: ";
+
+/// Fixed probe strings for the endpoint fingerprint. Embedded RAW (no
+/// query/doc prompt prefix) so setup time and boot time hash the exact same
+/// inputs. MUST match the installer's copy in
+/// `tools/virtues-installer/src/mode.rs` — the installer pins the
+/// fingerprint at setup, we recompute it here at boot.
+const FINGERPRINT_PROBES: [&str; 2] =
+    ["virtues fingerprint probe 0", "virtues fingerprint probe 1"];
+
+/// SHA256 over the probe vectors with each component quantized to
+/// `(x * 10000).round() as i32` (LE bytes). Quantization keeps the hash
+/// stable across float formatting / minor backend jitter while still
+/// changing on any real model swap. MUST match
+/// `tools/virtues-installer/src/mode.rs::fingerprint_vectors`.
+fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for v in vectors {
+        for &x in v {
+            let q = (x as f64 * 10000.0).round() as i32;
+            h.update(q.to_le_bytes());
+        }
+    }
+    hex::encode(h.finalize())
+}
 
 /// Truncate a native (768-dim) embedding to `EMBED_DIM` and L2-renormalize
 /// (Matryoshka). Renormalization is required for cosine after truncation.
@@ -79,6 +107,18 @@ struct EmbeddingRow {
 pub struct LocalEmbedder {
     client: reqwest::Client,
     base_url: String,
+    /// Set when the installer pinned an endpoint fingerprint (manual
+    /// inference mode). When present, the fingerprint check owns model
+    /// identity and the fixed `NATIVE_DIM` check is skipped — the pinned
+    /// model may legitimately have different native dims.
+    fingerprint_pinned: bool,
+    /// The `model` field sent on every /v1/embeddings request. llama.cpp
+    /// ignores it; Ollama routes by it and 404s on unknown names. Set from
+    /// `VIRTUES_EMBED_MODEL` (written by the installer's manual flow); the
+    /// literal `"default"` otherwise. MUST match what the installer's
+    /// setup-time probes sent, or the boot fingerprint check would compare
+    /// vectors from different requests.
+    model: String,
 }
 
 impl LocalEmbedder {
@@ -111,7 +151,47 @@ impl LocalEmbedder {
                 )
             })?;
 
-        Ok(Self { client, base_url })
+        let pinned = std::env::var("VIRTUES_EMBED_FINGERPRINT")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
+        let model = std::env::var("VIRTUES_EMBED_MODEL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "default".to_string());
+        let embedder = Self {
+            client,
+            base_url,
+            fingerprint_pinned: pinned.is_some(),
+            model,
+        };
+        if let Some(expected) = pinned {
+            embedder.verify_fingerprint(expected.trim()).await?;
+        }
+        Ok(embedder)
+    }
+
+    /// Boot-time model-identity check for manual inference mode: re-embed
+    /// the fixed probe strings and compare the quantized hash of the NATIVE
+    /// (pre-truncation) vectors against the fingerprint the installer
+    /// recorded at setup. A user swapping the model behind their endpoint
+    /// would otherwise silently produce vectors incompatible with every
+    /// vector already in the index.
+    async fn verify_fingerprint(&self, expected: &str) -> Result<()> {
+        let vecs = self
+            .request_native(FINGERPRINT_PROBES.iter().map(|s| s.to_string()).collect())
+            .await
+            .context("embedding the fingerprint probes")?;
+        let actual = fingerprint_vectors(&vecs);
+        if !actual.eq_ignore_ascii_case(expected) {
+            return Err(anyhow!(
+                "embedding endpoint is serving a different model than this index was \
+                 built with (fingerprint mismatch) — run `virtues configure-inference` \
+                 to re-validate, or restore the original endpoint. Continuing would \
+                 corrupt search results."
+            ));
+        }
+        Ok(())
     }
 
     /// Embed a **query** (asymmetric — uses the query prompt). Use this for
@@ -137,12 +217,15 @@ impl LocalEmbedder {
         self.request(prompted).await
     }
 
-    async fn request(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>> {
+    /// POST to `/v1/embeddings` and return NATIVE (untruncated, unvalidated)
+    /// vectors in input order. The fingerprint check hashes these raw; the
+    /// search path goes through `request` below.
+    async fn request_native(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>> {
         let n = input.len();
         let resp = self
             .client
             .post(format!("{}/v1/embeddings", self.base_url))
-            .json(&serde_json::json!({ "input": input }))
+            .json(&serde_json::json!({ "input": input, "model": self.model }))
             .send()
             .await
             .map_err(|e| anyhow!("embed request failed: {e}"))?
@@ -162,11 +245,22 @@ impl LocalEmbedder {
         // than trusting array order.
         let mut rows = body.data;
         rows.sort_by_key(|r| r.index);
+        Ok(rows.into_iter().map(|r| r.embedding).collect())
+    }
+
+    async fn request(&self, input: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        let rows = self.request_native(input).await?;
         let mut out = Vec::with_capacity(rows.len());
-        for mut r in rows {
-            validate_native_dim(&r.embedding)?;
-            matryoshka_truncate(&mut r.embedding); // 768 -> EMBED_DIM, re-normalized
-            out.push(r.embedding);
+        for mut v in rows {
+            // With a pinned fingerprint the boot-time check already proved
+            // the endpoint serves the exact model the index was built with;
+            // the fixed NATIVE_DIM check only applies to the un-pinned
+            // (Dragon sidecar) case where EmbeddingGemma is the contract.
+            if !self.fingerprint_pinned {
+                validate_native_dim(&v)?;
+            }
+            matryoshka_truncate(&mut v); // native -> EMBED_DIM, re-normalized
+            out.push(v);
         }
         Ok(out)
     }

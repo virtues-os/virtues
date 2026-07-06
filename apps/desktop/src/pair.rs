@@ -37,21 +37,17 @@ struct ConsumeRequest {
     /// Free-form device metadata; we send hostname + OS for the Devices page.
     device_info: serde_json::Value,
     /// This device's iroh EndpointId (hex) — the box allowlists it so the `:7117`
-    /// helper can reach the box over iroh.
+    /// helper can reach the box over iroh. This IS the credential; no bearer.
     device_node_id: String,
-    /// Idempotency key so a retried consume (lost response) re-returns the same
-    /// bearer instead of burning the single-use token.
-    idempotency_key: String,
 }
 
-/// Response the box returns from `/api/pair/consume`. We need the bearer, the
-/// revocable credential id, and the box's iroh reach ticket.
+/// Response the box returns from `/api/pair/consume`: this device's id (for
+/// self-revoke) + the box's iroh reach ticket. Auth is the allowlisted key, so
+/// there's no bearer to carry back.
 #[derive(Debug, Deserialize)]
 struct ConsumeResponse {
     #[serde(default)]
-    bearer: Option<String>,
-    #[serde(default)]
-    credential_id: Option<String>,
+    device_id: Option<String>,
     /// The box's iroh EndpointId (hex) — dialed by the helper. Absent on a
     /// LAN-only box.
     #[serde(default)]
@@ -106,19 +102,11 @@ async fn consume(origin: String, token: String) -> Result<()> {
     let device_secret_hex = hex::encode(seed);
     let device_node_id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();
 
-    // Stable idempotency key: if the response is lost and we retry, the box
-    // replays the same bearer instead of failing on the consumed token.
-    let mut idem = [0u8; 16];
-    {
-        use rand::RngCore;
-        rand::rng().fill_bytes(&mut idem);
-    }
     let body = ConsumeRequest {
         token,
         kind: "desktop_app",
         device_info,
         device_node_id: device_node_id.clone(),
-        idempotency_key: hex::encode(idem),
     };
 
     let client = reqwest::Client::builder()
@@ -126,8 +114,9 @@ async fn consume(origin: String, token: String) -> Result<()> {
         .build()?;
 
     let url = format!("{origin}/api/pair/consume");
-    // Retry ONCE on a transport error (lost response) with the same body → same
-    // idempotency key → the box re-returns the original bearer.
+    // Retry ONCE on a transport error (lost response). Pairing is idempotent
+    // enough: a second consume of an already-consumed token just fails and the
+    // user re-pairs with a fresh code.
     let resp = match client.post(&url).json(&body).send().await {
         Ok(r) => r,
         Err(_) => client
@@ -149,13 +138,6 @@ async fn consume(origin: String, token: String) -> Result<()> {
         .await
         .context("decode /api/pair/consume response")?;
 
-    let bearer = parsed.bearer.ok_or_else(|| {
-        anyhow!(
-            "server returned no bearer — a desktop pairing must yield one. \
-             (Browser pairings use a cookie session and have none.)"
-        )
-    })?;
-
     // LAN fallback origin (the box's own :8000) for when there's no relay reach.
     let box_url = origin.clone();
     let box_node_id = parsed.box_node_id.filter(|s| !s.is_empty());
@@ -163,8 +145,7 @@ async fn consume(origin: String, token: String) -> Result<()> {
 
     let rec = PairedBox {
         box_url: box_url.clone(),
-        bearer,
-        credential_id: parsed.credential_id,
+        device_id: parsed.device_id,
         box_node_id: box_node_id.clone(),
         relay_url: relay_url.clone(),
         device_secret_hex: Some(device_secret_hex),
@@ -225,7 +206,9 @@ pub async fn refresh_reach() -> Result<()> {
         "{}/api/devices/self/reach",
         rec.box_url.trim_end_matches('/')
     );
-    let resp = match client.get(&url).bearer_auth(&rec.bearer).send().await {
+    // Anonymous: the reach ticket is the box's public address (see
+    // get_self_reach). No credential needed to bootstrap the first iroh dial.
+    let resp = match client.get(&url).send().await {
         Ok(r) if r.status().is_success() => r,
         _ => return Ok(()), // box unreachable or not relay-ready yet
     };

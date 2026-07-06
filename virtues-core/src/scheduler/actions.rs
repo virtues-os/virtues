@@ -68,7 +68,11 @@ pub struct Action {
     pub condition: Option<String>,
     pub triggers: Vec<String>,
     pub memory: Option<String>,
+    /// Outbound OAuth/API-key actions anchor here (the secret they call with).
     pub credential_id: Option<String>,
+    /// Device-ingest (webhook) actions anchor here — the owning device whose
+    /// proven iroh key authorizes posts to this action.
+    pub device_id: Option<String>,
     pub runtime: String,
     pub command: Option<Vec<String>>,
     /// Manifest folder relative to the repo's `actions/` root.
@@ -793,6 +797,7 @@ pub fn action_from_row(row: &sqlx::postgres::PgRow) -> Result<Action> {
         triggers,
         memory: row.try_get("memory")?,
         credential_id: row.try_get("credential_id")?,
+        device_id: row.try_get("device_id")?,
         runtime,
         command,
         dir: row.try_get("dir").unwrap_or_default(),

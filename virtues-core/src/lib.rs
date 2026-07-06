@@ -54,8 +54,6 @@ pub use api::{
     // Credential management (post-Phase-6: pair flows live in source_auth.rs)
     check_pairing_status,
     list_pending_pairings,
-    update_last_seen,
-    validate_device_token,
     DeviceInfo,
     PairingStatus,
     PendingPairing,

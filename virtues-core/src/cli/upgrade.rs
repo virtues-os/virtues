@@ -126,8 +126,7 @@ pub async fn run(
     // ── Stop affected services ──────────────────────────────────────────────
     // The main app always. The inference sidecars only when we're actually
     // replacing their binaries — restarting the sidecars reloads multi-GB GGUFs
-    // (slow, esp. on Jetson), so don't pay that cost for a binary-only app
-    // upgrade. A running process holds the old inode until restarted, so the
+    // (slow), so don't pay that cost for a binary-only app upgrade. A running process holds the old inode until restarted, so the
     // stop→swap→start ordering is what makes the new bytes take effect.
     println!("→ stopping virtues.service…");
     service_stop("virtues");
@@ -171,18 +170,6 @@ pub async fn run(
         match swap_with_bak(src, &dst) {
             Ok(_) => println!("→ swapped {}", dst.display()),
             Err(e) => eprintln!("  ⚠ llama-server not swapped ({e}); prior binary kept"),
-        }
-        // Every tarball ships the CPU llama-server. On Jetson the installer
-        // then swaps in the CUDA (sm_87) build from a separate asset — replays
-        // that here, else the upgrade would silently downgrade inference from
-        // GPU to CPU. Best-effort: the CPU build already in place is a valid
-        // fallback if the CUDA asset is missing or the fetch fails.
-        if is_jetson() {
-            match fetch_jetson_cuda_llama(&base, &target_tag, &dst).await {
-                Ok(true) => println!("→ swapped in CUDA llama-server (Jetson, sm_87)"),
-                Ok(false) => println!("  · no CUDA llama-server on this release — sidecars run on CPU"),
-                Err(e) => eprintln!("  ⚠ CUDA llama-server fetch failed ({e}); sidecars run on CPU"),
-            }
         }
     }
 
@@ -455,61 +442,6 @@ fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
             }
         }
     }
-}
-
-/// L4T's marker file — present on every Jetson, absent everywhere else.
-/// Mirrors `is_jetson()` in `virtues-installer`.
-fn is_jetson() -> bool {
-    Path::new("/etc/nv_tegra_release").exists()
-}
-
-/// Replace the CPU `llama-server` at `dest` with the Jetson CUDA (sm_87) build
-/// attached to the same release. Returns `Ok(false)` when the asset isn't
-/// published for this release (its CI job is allowed to fail); `Err` only on a
-/// real fetch/verify failure. Mirrors the installer's `fetch_jetson_cuda_llama`,
-/// including the mandatory SHA256 sidecar check (this binary runs as a daemon).
-async fn fetch_jetson_cuda_llama(
-    base: &str,
-    tag: &str,
-    dest: &Path,
-) -> Result<bool, crate::Error> {
-    let name = format!("llama-server-{tag}-aarch64-cuda-linux");
-    let url = format!("{base}/{name}");
-
-    let resp = build_client(false)?
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?;
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(false);
-    }
-    let bytes = resp
-        .error_for_status()
-        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))?
-        .bytes()
-        .await
-        .map_err(|e| crate::Error::Other(format!("read {name}: {e}")))?;
-
-    let expected = fetch_text(&format!("{url}.sha256")).await?;
-    let expected = expected.split_whitespace().next().unwrap_or("");
-    let got = {
-        let mut h = Sha256::new();
-        h.update(&bytes);
-        format!("{:x}", h.finalize())
-    };
-    if !expected.eq_ignore_ascii_case(&got) {
-        return Err(crate::Error::Other(format!(
-            "sha256 mismatch on {name} (expected {expected}, got {got})"
-        )));
-    }
-
-    // Stage next to the destination (same fs → atomic swap) then install.
-    let staged = dest.with_extension("cuda-tmp");
-    fs::write(&staged, &bytes)
-        .map_err(|e| crate::Error::Other(format!("stage CUDA llama-server: {e}")))?;
-    swap_binary(&staged, dest)?;
-    Ok(true)
 }
 
 fn running_as_root() -> bool {

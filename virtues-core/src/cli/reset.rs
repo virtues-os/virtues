@@ -1,7 +1,7 @@
 //! `virtues reset` — wipe a box back to a fresh state for testing.
 //!
 //! HIDDEN, destructive, no `--keep-data` (yet). Drops the entire `public`
-//! schema (all data PLUS the box's identity — CA, WireGuard keys, paired
+//! schema (all data PLUS the box's identity — iroh secret, paired
 //! devices, subscription link), re-runs migrations to an empty schema, then
 //! clears the data lake. The encryption key in the env file is left untouched.
 //! Because `box_secrets` is gone, the box must re-register with atlas and
@@ -38,7 +38,7 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
     println!();
     println!("⚠  virtues reset — this DESTROYS everything on this box:");
     println!("     • the entire Postgres database: all data AND the box's");
-    println!("       identity (CA, WireGuard keys, paired devices, billing link)");
+    println!("       identity (iroh secret, paired devices, billing link)");
     println!("     • the data lake at {lake}");
     println!("   The box will re-register with atlas and you must re-pair every");
     println!("   device afterward. The encryption key in the env file is kept.");
