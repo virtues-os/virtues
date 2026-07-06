@@ -101,7 +101,88 @@ impl Database {
         // Run migrations
         self.run_migrations().await?;
 
+        // Size the vector columns to the configured embedding model. Migrations
+        // create them at the Dragon default (256); a manual endpoint with
+        // different native dims needs a resize before anything is indexed.
+        self.ensure_embedding_dims().await?;
+
         Ok(())
+    }
+
+    /// Ensure the pgvector embedding columns match the configured model's stored
+    /// width (`search::embedder::configured_embed_dim`). No-op when they already
+    /// match (Dragon's 256 = the migration default). Safe only on an empty index
+    /// (fresh install, or just after a `configure-inference` wipe); refuses to
+    /// silently drop a populated index — resizing a live index is a re-embed,
+    /// which `virtues configure-inference` owns.
+    async fn ensure_embedding_dims(&self) -> Result<()> {
+        let target = crate::search::embedder::configured_embed_dim();
+        let max = crate::search::embedder::MAX_INDEXED_DIM;
+        if target > max {
+            return Err(Error::Database(format!(
+                "configured embedding width {target} exceeds pgvector's {max}-dim HNSW \
+                 limit; this build supports vector({max}) at most — use a model with \
+                 ≤{max} dims (or one that supports Matryoshka truncation)"
+            )));
+        }
+
+        let current = self.vector_column_dim("search_vectors", "embedding").await?;
+        if current == Some(target) {
+            return Ok(());
+        }
+
+        // Changing the width drops the existing vectors' shape — only safe when
+        // nothing is stored yet.
+        let populated: i64 = sqlx::query_scalar(
+            "SELECT (SELECT count(*) FROM search_vectors) \
+                  + (SELECT count(*) FROM search_topic_cache)",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("counting stored vectors: {e}")))?;
+        if populated > 0 {
+            let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
+            return Err(Error::Database(format!(
+                "embedding index is vector({from}) but the configured model needs \
+                 vector({target}), and {populated} vectors are already stored — run \
+                 `virtues configure-inference` to re-embed (wipes the derived vectors, \
+                 keeps your data)"
+            )));
+        }
+
+        tracing::info!(from = ?current, to = target, "sizing embedding columns to the configured model");
+        // target is a validated usize (≤ max), so the format! interpolation is
+        // injection-safe. Rebuild the HNSW index at the new width.
+        for stmt in [
+            "DROP INDEX IF EXISTS search_vectors_hnsw".to_string(),
+            format!("ALTER TABLE search_vectors ALTER COLUMN embedding TYPE vector({target})"),
+            format!("ALTER TABLE search_topic_cache ALTER COLUMN embedding TYPE vector({target})"),
+            "CREATE INDEX search_vectors_hnsw ON search_vectors \
+             USING hnsw (embedding vector_cosine_ops)"
+                .to_string(),
+        ] {
+            sqlx::query(&stmt)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("resizing embedding columns: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// The declared dimension of a pgvector column, e.g. `vector(256)` → 256.
+    /// `None` if the column has no dimension modifier or isn't found.
+    async fn vector_column_dim(&self, table: &str, col: &str) -> Result<Option<usize>> {
+        let ty: Option<String> = sqlx::query_scalar(
+            "SELECT format_type(a.atttypid, a.atttypmod) \
+             FROM pg_attribute a \
+             WHERE a.attrelid = $1::regclass AND a.attname = $2 AND NOT a.attisdropped",
+        )
+        .bind(table)
+        .bind(col)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("reading {table}.{col} type: {e}")))?;
+        Ok(ty.and_then(|s| parse_vector_dim(&s)))
     }
 
     /// Poll `SELECT 1` until Postgres responds or we exhaust the budget.
@@ -232,9 +313,27 @@ pub struct HealthStatus {
     pub message: String,
 }
 
+/// Parse the dimension out of a pgvector `format_type` string, e.g.
+/// `vector(256)` → `Some(256)`, `halfvec(3072)` → `Some(3072)`, bare `vector`
+/// (no modifier) → `None`.
+fn parse_vector_dim(ty: &str) -> Option<usize> {
+    let open = ty.find('(')?;
+    let close = ty.find(')')?;
+    ty.get(open + 1..close)?.trim().parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_vector_dim_cases() {
+        assert_eq!(parse_vector_dim("vector(256)"), Some(256));
+        assert_eq!(parse_vector_dim("vector(768)"), Some(768));
+        assert_eq!(parse_vector_dim("halfvec(3072)"), Some(3072));
+        assert_eq!(parse_vector_dim("vector"), None);
+        assert_eq!(parse_vector_dim("text"), None);
+    }
 
     // Tests go through the pure `normalize_from`, never the env: set_var/
     // remove_var here raced the #[sqlx::test] suites (env is process-global,
