@@ -31,6 +31,12 @@ struct StartCommand: ParsableCommand {
         // before anything is granted. (A stat would not trip TCC.)
         _ = MessageMonitor.canReadMessagesDB()
         
+        // Wire the box reach ticket + iroh seed into the transport so uploads
+        // dial the box over iroh (authenticated by this device's key).
+        let semaphore = DispatchSemaphore(value: 0)
+        Task { await config.activateTransport(); semaphore.signal() }
+        semaphore.wait()
+
         // Initialize components
         let queue = try Queue()
         let monitor = Monitor(queue: queue)

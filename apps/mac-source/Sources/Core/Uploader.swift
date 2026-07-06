@@ -158,6 +158,8 @@ class Uploader {
                 "imessages": imessages,
             ]
 
+            // Host is ignored over iroh (the box is dialed by EndpointId); only
+            // the path matters. Auth is this device's allowlisted key — no bearer.
             guard let url = URL(string: "\(config.apiEndpoint)/webhook/\(actionId)") else {
                 print("Invalid API endpoint")
                 return (0, pending)
@@ -166,13 +168,9 @@ class Uploader {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(config.bearer)", forHTTPHeaderField: "Authorization")
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                return (0, pending)
-            }
+            let (data, httpResponse) = try await BoxTransport.shared.send(request)
 
             if httpResponse.statusCode == 200 {
                 try queue.markEventsAsUploaded(eventsWithIds.map { $0.id })
@@ -253,12 +251,12 @@ class Uploader {
         guard let url = URL(string: "\(config.apiEndpoint)/api/devices/action-ids") else {
             return nil
         }
+        // Over iroh (BoxTransport) — authenticated by this device's proven key.
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(config.bearer)", forHTTPHeaderField: "Authorization")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+            let (data, http) = try await BoxTransport.shared.send(request)
+            guard http.statusCode == 200,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let ids = json["action_ids"] as? [String: String] else {
                 return nil
