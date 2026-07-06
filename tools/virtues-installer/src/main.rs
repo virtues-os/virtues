@@ -29,6 +29,7 @@ mod config;
 mod download;
 mod flow;
 mod install;
+mod mode;
 mod preflight;
 mod steps;
 mod ui;

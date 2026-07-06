@@ -55,7 +55,7 @@ impl ResolutionReport {
 /// - Embed: EmbeddingGemma-300M, QAT Q8_0 (quantization-aware-trained →
 ///   robust quant; on-device-designed, mean pooling, 768-dim native that we
 ///   Matryoshka-truncate to 256). NOTE: its activations require bf16/fp32,
-///   not fp16 — run it on CPU (the Orin CUDA path forces fp32 and is slower
+///   not fp16 — run it on CPU (fp16 GPU paths force fp32 and end up slower
 ///   than CPU); see embedder.rs.
 /// - Rerank: gte-reranker-modernbert-base, Q8_0 (Q4 doesn't help — the
 ///   workload is overhead/layer-bound at this size, not bandwidth-bound).
