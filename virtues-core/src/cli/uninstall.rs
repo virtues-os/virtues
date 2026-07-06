@@ -29,6 +29,8 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use std::process::Command;
 
+use super::ui;
+
 /// Filesystem artifacts the installer creates, probed at runtime.
 const UNITS: &[&str] = &[
     "virtues.service",
@@ -67,7 +69,7 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
 
     let m = probe(purge_models);
     if m.is_empty() {
-        println!("Nothing to remove — no Virtues install artifacts found.");
+        ui::skip("nothing to remove — no Virtues install artifacts found");
         return Ok(());
     }
 
@@ -145,8 +147,8 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
 
     // ── Data tier (skipped with --keep-data) ────────────────────────────
     if keep_data {
-        println!("  ∙ kept {DATA_DIR} (env, encryption key, lake)");
-        println!("  ∙ kept Postgres database/role 'virtues' + system user");
+        ui::skip(&format!("kept {DATA_DIR} (env, encryption key, lake)"));
+        ui::skip("kept Postgres database/role 'virtues' + system user");
     } else {
         if m.pg {
             report(
@@ -171,11 +173,15 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
 
     println!();
     if keep_data {
-        println!("✓ Virtues removed (data kept). Reinstall any time:");
+        ui::ok("Virtues removed (data kept). Reinstall any time:");
     } else {
-        println!("✓ Virtues fully removed. Reinstall any time:");
+        ui::ok("Virtues fully removed. Reinstall any time:");
     }
-    println!("    curl -fsSL https://virtues.com/sh | sudo sh");
+    println!(
+        "       {}",
+        console::style("curl -fsSL https://virtues.com/sh | sudo sh").cyan()
+    );
+    println!();
     Ok(())
 }
 
@@ -226,40 +232,52 @@ impl Manifest {
     }
 }
 
+/// Ledger column for the manifest ("mDNS advertisement" is the longest key).
+const MANIFEST_COL: usize = 20;
+
 fn print_manifest(m: &Manifest, keep_data: bool) {
+    ui::section("Uninstall");
     println!();
-    println!("The following will be removed from this machine:");
+    println!("    The following will be removed from this machine:");
+    println!();
     for u in &m.units {
-        println!("  • systemd unit       /etc/systemd/system/{u}  (stopped + disabled)");
+        ui::kv_at(MANIFEST_COL, "systemd unit", &format!("/etc/systemd/system/{u}  (stopped + disabled)"));
     }
     for b in &m.binaries {
-        println!("  • binary             {b}");
+        ui::kv_at(MANIFEST_COL, "binary", b);
     }
     if m.web_dir {
-        println!("  • web UI             {WEB_DIR}");
+        ui::kv_at(MANIFEST_COL, "web UI", WEB_DIR);
     }
     if m.avahi {
-        println!("  • mDNS advertisement {AVAHI_SERVICE}");
+        ui::kv_at(MANIFEST_COL, "mDNS advertisement", AVAHI_SERVICE);
     }
     if m.wg_iface {
-        println!("  • WireGuard iface    {WG_IFNAME}");
+        ui::kv_at(MANIFEST_COL, "WireGuard iface", WG_IFNAME);
     }
     if m.models_dir {
-        println!("  • GGUF models        {MODELS_DIR}  (re-download on reinstall)");
+        ui::kv_at(MANIFEST_COL, "GGUF models", &format!("{MODELS_DIR}  (re-download on reinstall)"));
     }
     if keep_data {
         if m.data_dir || m.pg || m.system_user {
-            println!("  KEPT (--keep-data):  {DATA_DIR}, Postgres db/role, system user");
+            println!();
+            ui::skip(&format!(
+                "kept (--keep-data): {DATA_DIR}, Postgres db/role, system user"
+            ));
         }
     } else {
         if m.pg {
-            println!("  • Postgres           database + role 'virtues'  (server stays)");
+            ui::kv_at(MANIFEST_COL, "Postgres", "database + role 'virtues'  (server stays)");
         }
         if m.data_dir {
-            println!("  • data               {DATA_DIR}  (env, ENCRYPTION KEY, lake)");
+            ui::kv_at(
+                MANIFEST_COL,
+                "data",
+                &format!("{DATA_DIR}  (env, ENCRYPTION KEY, lake)"),
+            );
         }
         if m.system_user {
-            println!("  • system user        virtues");
+            ui::kv_at(MANIFEST_COL, "system user", "virtues");
         }
     }
 }
@@ -296,12 +314,12 @@ fn run_quiet(bin: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// Per-item result line: `✓` on success, `∙ skipped` when the artifact
-/// resisted (already gone, command unavailable) — never a hard failure.
+/// Per-item result line: `✓` on success, `·` when the artifact resisted
+/// (already gone, command unavailable) — never a hard failure.
 fn report(ok: bool, what: &str) {
     if ok {
-        println!("  ✓ {what}");
+        ui::ok(what);
     } else {
-        println!("  ∙ skipped: {what}");
+        ui::skip(&format!("skipped: {what}"));
     }
 }
