@@ -65,6 +65,10 @@ impl InferenceMode {
                     .filter(|s| !s.trim().is_empty())
                     .map(|u| normalize_url(&u).context("VIRTUES_RERANK_URL is not a valid http(s) URL"))
                     .transpose()?;
+                ensure_local(&embed_url, "Embedding endpoint")?;
+                if let Some(u) = &rerank_url {
+                    ensure_local(u, "Rerank endpoint")?;
+                }
                 let embed_model = embed_model_from_env();
                 ui::ok(&format!("Inference mode: manual (embed: {embed_url})"));
                 return Ok(Self::Manual { embed_url, embed_model, rerank_url });
@@ -105,6 +109,7 @@ impl InferenceMode {
             .interact()
             .context("reading embedding endpoint URL")?;
         let embed_url = normalize_url(&embed_url)?;
+        ensure_local(&embed_url, "Embedding endpoint")?;
 
         let rerank_raw: String = cliclack::input(
             "Rerank endpoint URL (Enter to skip — search still works without one, slightly lower precision)",
@@ -125,7 +130,9 @@ impl InferenceMode {
         let rerank_url = if rerank_raw.trim().is_empty() {
             None
         } else {
-            Some(normalize_url(&rerank_raw)?)
+            let u = normalize_url(&rerank_raw)?;
+            ensure_local(&u, "Rerank endpoint")?;
+            Some(u)
         };
 
         // Model name: llama.cpp serves whatever it loaded regardless, but
@@ -183,16 +190,33 @@ fn has_tty() -> bool {
     std::fs::File::open("/dev/tty").is_ok()
 }
 
-/// The short "what do I point this at" block shown before the URL prompts.
+/// The "what do I point this at" block shown before the URL prompts. Two
+/// recipes per endpoint, all speaking the contracts we pin: embeddings is the
+/// universal OpenAI `/v1/embeddings` (llama.cpp or Ollama both work); rerank is
+/// pinned to llama.cpp's `/v1/rerank` shape (our own Dragon sidecar), shown in
+/// GPU and CPU flavors. Cloud APIs are intentionally absent — see `ensure_local`.
 fn print_recipes() {
     use console::style;
     println!();
-    println!("  Virtues needs an embedding endpoint you run (OpenAI-style /v1/embeddings).");
-    println!("  A reranker (/v1/rerank) is optional.");
+    println!("  Virtues runs inference on a service YOU host — this box, a machine on your");
+    println!("  LAN, or one over your VPN. It needs an OpenAI-style /v1/embeddings endpoint;");
+    println!("  a /v1/rerank endpoint is optional (search still works without one).");
+    println!("  Cloud APIs (OpenAI, Cohere, …) are not supported — your data stays yours.");
     println!();
-    println!("  {}", style("Quick recipes:").bold());
-    println!("    Ollama:     ollama pull embeddinggemma  →  http://localhost:11434");
-    println!("    llama.cpp:  llama-server --embedding -m embeddinggemma-300m-qat-Q8_0.gguf --port 18181");
+    println!("  {}", style("Embedding endpoint — pick one:").bold());
+    println!("    llama.cpp:  llama-server --embeddings --pooling mean \\");
+    println!("                  -m embeddinggemma-300m-qat-Q8_0.gguf --port 18181");
+    println!("                → URL http://localhost:18181   (model name: any)");
+    println!("    Ollama:     ollama pull embeddinggemma");
+    println!("                → URL http://localhost:11434   (model name: embeddinggemma)");
+    println!();
+    println!("  {}", style("Rerank endpoint (optional) — pick one:").bold());
+    println!("    llama.cpp (GPU):  llama-server --reranking --pooling rank -ngl 99 \\");
+    println!("                        -m gte-reranker-modernbert-base-Q8_0.gguf --port 18182");
+    println!("    llama.cpp (CPU):  llama-server --reranking --pooling rank \\");
+    println!("                        -m gte-reranker-modernbert-base-Q8_0.gguf --port 18182");
+    println!("                      → URL http://localhost:18182");
+    println!();
     println!("  {}", style("Docs: https://virtues.com/docs/inference").dim());
     println!();
 }
@@ -209,6 +233,114 @@ fn normalize_url(raw: &str) -> Result<String> {
         bail!("URL has no host");
     }
     Ok(s.to_string())
+}
+
+/// The host portion of a normalized `http(s)://host[:port][/path]` URL, with any
+/// port and IPv6 brackets stripped. Best-effort string surgery (we avoid the
+/// `url` crate) — enough to hand to `parse::<IpAddr>()` or a DNS lookup.
+fn host_of(normalized_url: &str) -> String {
+    let after_scheme = normalized_url
+        .strip_prefix("http://")
+        .or_else(|| normalized_url.strip_prefix("https://"))
+        .unwrap_or(normalized_url);
+    let authority = after_scheme.split('/').next().unwrap_or(after_scheme);
+    // IPv6 literal: [::1]:8080 → ::1
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest).to_string();
+    }
+    // host[:port] → host
+    authority.split(':').next().unwrap_or(authority).to_string()
+}
+
+/// Is this IP on the user's own machine, LAN, or VPN — i.e. traffic to it never
+/// leaves their network? Loopback, RFC1918 private, link-local, CGNAT/100.64
+/// (Tailscale et al.), and IPv6 unique-local (fc00::/7, incl. Tailscale's
+/// fd7a::/8) all count. A global address (the box's own public IPv6, a cloud
+/// API) does not. Classified by hand to avoid std's unstable `ip` feature.
+fn is_local_ip(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()        // 127.0.0.0/8
+                || v4.is_private()  // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local() // 169.254.0.0/16
+                || {                // 100.64.0.0/10 (carrier-grade NAT / Tailscale)
+                    let o = v4.octets();
+                    o[0] == 100 && (o[1] & 0xc0) == 0x40
+                }
+        }
+        IpAddr::V6(v6) => {
+            let head = v6.segments()[0];
+            v6.is_loopback()               // ::1
+                || (head & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || (head & 0xfe00) == 0xfc00 // fc00::/7 unique-local
+        }
+    }
+}
+
+fn public_endpoint_msg(label: &str, host: &str) -> String {
+    format!(
+        "{label} ({host}) looks like a public address. Virtues runs inference on a \
+         service you host — this box, a machine on your LAN, or one over your VPN — so \
+         your data never leaves your network. Cloud embedding APIs (OpenAI, Cohere, …) \
+         are deliberately not supported. Point this at a local endpoint (see the recipes \
+         above). Expert override (traffic may leave your network): \
+         VIRTUES_ALLOW_REMOTE_INFERENCE=1."
+    )
+}
+
+/// Refuse an inference endpoint that isn't on the user's own machine/LAN/VPN.
+/// This is the enforcement behind "no cloud APIs": a public host (or a name that
+/// resolves to one) is rejected. `VIRTUES_ALLOW_REMOTE_INFERENCE=1` is the
+/// logged escape hatch for the expert running their own model off-network.
+fn ensure_local(url: &str, label: &str) -> Result<()> {
+    use std::net::ToSocketAddrs;
+
+    if std::env::var("VIRTUES_ALLOW_REMOTE_INFERENCE").as_deref() == Ok("1") {
+        ui::warn(&format!(
+            "{label} locality check bypassed (VIRTUES_ALLOW_REMOTE_INFERENCE=1) — \
+             inference traffic may leave your network"
+        ));
+        return Ok(());
+    }
+
+    let host = host_of(url);
+    // localhost + mDNS names are LAN by definition (and .local may not resolve
+    // yet — avahi is installed after this check runs).
+    if host.eq_ignore_ascii_case("localhost") || host.to_lowercase().ends_with(".local") {
+        return Ok(());
+    }
+    // Literal IP → classify directly.
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_local_ip(ip) {
+            return Ok(());
+        }
+        bail!(public_endpoint_msg(label, &host));
+    }
+    // Hostname → resolve; require every resolved address to be local. If it
+    // can't be resolved right now (private DNS not reachable at install time),
+    // don't hard-block a plausibly-local name — a cloud API always resolves.
+    match (host.as_str(), 0u16).to_socket_addrs() {
+        Ok(addrs) => {
+            let ips: Vec<std::net::IpAddr> = addrs.map(|s| s.ip()).collect();
+            if ips.is_empty() || ips.iter().all(|ip| is_local_ip(*ip)) {
+                if ips.is_empty() {
+                    ui::warn(&format!(
+                        "{label}: couldn't resolve {host} to verify it's local — proceeding"
+                    ));
+                }
+                Ok(())
+            } else {
+                bail!(public_endpoint_msg(label, &host))
+            }
+        }
+        Err(_) => {
+            ui::warn(&format!(
+                "{label}: couldn't resolve {host} to verify it's local — proceeding"
+            ));
+            Ok(())
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -417,4 +549,52 @@ async fn probe_rerank(client: &reqwest::Client, base: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn local_ips_are_allowed() {
+        for s in [
+            "127.0.0.1",     // loopback
+            "10.0.0.5",      // RFC1918
+            "172.16.3.4",    // RFC1918
+            "192.168.1.233", // RFC1918
+            "169.254.1.1",   // link-local
+            "100.104.55.76", // CGNAT / Tailscale
+            "::1",           // v6 loopback
+            "fe80::1",       // v6 link-local
+            "fd7a:115c:a1e0::1", // v6 unique-local (Tailscale)
+        ] {
+            assert!(is_local_ip(ip(s)), "{s} should be local");
+        }
+    }
+
+    #[test]
+    fn public_ips_are_rejected() {
+        for s in [
+            "1.1.1.1",
+            "104.18.0.1",                       // cloud
+            "2603:8080:1500:1d00::1",           // the box's own global IPv6 class
+            "2606:4700::1",                      // global v6
+        ] {
+            assert!(!is_local_ip(ip(s)), "{s} should be public");
+        }
+    }
+
+    #[test]
+    fn host_extraction() {
+        assert_eq!(host_of("http://localhost:11434"), "localhost");
+        assert_eq!(host_of("http://192.168.1.5:18181/v1"), "192.168.1.5");
+        assert_eq!(host_of("https://api.openai.com"), "api.openai.com");
+        assert_eq!(host_of("http://[::1]:8080"), "::1");
+        assert_eq!(host_of("http://[fd7a:115c::1]:18181/x"), "fd7a:115c::1");
+    }
 }
