@@ -563,8 +563,18 @@ fn inference_env_keys(
     validation: Option<&ValidationReport>,
 ) -> Vec<(&'static str, String)> {
     match mode {
-        InferenceMode::Dragon => vec![
-            ("VIRTUES_INFERENCE", "dragon".to_string()),
+        // Dragon + Bundled both talk to locally-provisioned sidecars on
+        // loopback; the runtime uses the EmbeddingGemma defaults (256-dim
+        // truncation, gemma prompts) since it's our own model — no fingerprint
+        // pin. `VIRTUES_INFERENCE` records which path chose it.
+        InferenceMode::Dragon | InferenceMode::Bundled => vec![
+            (
+                "VIRTUES_INFERENCE",
+                match mode {
+                    InferenceMode::Bundled => "bundled".to_string(),
+                    _ => "dragon".to_string(),
+                },
+            ),
             ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
             ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
         ],
