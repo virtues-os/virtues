@@ -568,7 +568,7 @@ fn inference_env_keys(
             ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
             ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
         ],
-        InferenceMode::Manual { embed_url, embed_model, rerank_url } => {
+        InferenceMode::Manual { embed_url, embed_model, rerank_url, .. } => {
             let mut keys = vec![
                 ("VIRTUES_INFERENCE", "manual".to_string()),
                 ("VIRTUES_EMBED_URL", embed_url.clone()),
@@ -580,10 +580,31 @@ fn inference_env_keys(
             if let Some(v) = validation {
                 keys.push(("VIRTUES_EMBED_FINGERPRINT", v.fingerprint.clone()));
                 keys.push(("VIRTUES_EMBED_DIMS", v.dims.to_string()));
+                // Only pin non-empty prompts; an empty prefix is the runtime
+                // embedder's default for a manual endpoint, so writing it adds
+                // noise. A wrong/absent prefix never corrupts the index (it's
+                // not part of the fingerprint), only recall quality.
+                // Quote prompt values: they carry significant trailing spaces
+                // (e.g. "query: ") that both systemd EnvironmentFile and dotenv
+                // strip from unquoted values. Quoting preserves them verbatim.
+                if !v.query_prompt.is_empty() {
+                    keys.push(("VIRTUES_EMBED_QUERY_PROMPT", quote_env_value(&v.query_prompt)));
+                }
+                if !v.doc_prompt.is_empty() {
+                    keys.push(("VIRTUES_EMBED_DOC_PROMPT", quote_env_value(&v.doc_prompt)));
+                }
             }
             keys
         }
     }
+}
+
+/// Wrap a value in double quotes so systemd's EnvironmentFile and dotenv both
+/// preserve significant leading/trailing whitespace (which they strip from
+/// unquoted values). Both parsers unescape `\\` and `\"` inside double quotes,
+/// so escape those two.
+fn quote_env_value(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 pub async fn write_env_file(

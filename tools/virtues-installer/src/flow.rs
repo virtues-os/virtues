@@ -71,9 +71,15 @@ pub async fn run(cli: Config) -> Result<()> {
     let inference = InferenceMode::resolve()?;
     let validation = match &inference {
         InferenceMode::Dragon => None,
-        InferenceMode::Manual { embed_url, embed_model, rerank_url } => {
-            Some(mode::validate_manual(embed_url, embed_model, rerank_url.as_deref()).await?)
-        }
+        InferenceMode::Manual { embed_url, embed_model, rerank_url, hf_repo } => Some(
+            mode::validate_manual(
+                embed_url,
+                embed_model,
+                rerank_url.as_deref(),
+                hf_repo.as_deref(),
+            )
+            .await?,
+        ),
     };
 
     // ─── System packages ────────────────────────────────────────────────

@@ -45,7 +45,12 @@ const DEFAULT_URL: &str = "http://127.0.0.1:18181";
 /// EmbeddingGemma is asymmetric — queries and documents get different prompt
 /// prefixes (official Gemma formats). On personal data, where queries
 /// ("why have I felt off?") look nothing like passages (event records), this
-/// is free recall.
+/// is free recall. These are the **Dragon defaults**; in manual mode the
+/// installer resolves the right prefixes for the user's model (from its
+/// HuggingFace `config_sentence_transformers.json`, a known-family table, or
+/// none) and pins them via `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`. Prompt
+/// prefixes never touch the fingerprint (probes are embedded raw), so changing
+/// them can't trip the boot guard.
 const QUERY_PROMPT: &str = "task: search result | query: ";
 const DOC_PROMPT: &str = "title: none | text: ";
 
@@ -119,6 +124,12 @@ pub struct LocalEmbedder {
     /// setup-time probes sent, or the boot fingerprint check would compare
     /// vectors from different requests.
     model: String,
+    /// Asymmetric prompt prefixes prepended to queries / documents before
+    /// embedding. Dragon → EmbeddingGemma's official formats; manual → whatever
+    /// the installer resolved for the user's model (possibly empty). Empty
+    /// string = no prefix.
+    query_prompt: String,
+    doc_prompt: String,
 }
 
 impl LocalEmbedder {
@@ -159,11 +170,24 @@ impl LocalEmbedder {
             .filter(|s| !s.trim().is_empty())
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|| "default".to_string());
+        let is_pinned = pinned.is_some();
+        // Prompt prefixes: an explicitly-set env var wins (installer-resolved or
+        // power-user), honoring even an empty value ("no prefix"). Unset falls
+        // back to the EmbeddingGemma defaults for Dragon, and to no prefix for a
+        // pinned (manual) endpoint whose model we couldn't identify.
+        let query_prompt = std::env::var("VIRTUES_EMBED_QUERY_PROMPT")
+            .ok()
+            .unwrap_or_else(|| if is_pinned { String::new() } else { QUERY_PROMPT.to_string() });
+        let doc_prompt = std::env::var("VIRTUES_EMBED_DOC_PROMPT")
+            .ok()
+            .unwrap_or_else(|| if is_pinned { String::new() } else { DOC_PROMPT.to_string() });
         let embedder = Self {
             client,
             base_url,
-            fingerprint_pinned: pinned.is_some(),
+            fingerprint_pinned: is_pinned,
             model,
+            query_prompt,
+            doc_prompt,
         };
         if let Some(expected) = pinned {
             embedder.verify_fingerprint(expected.trim()).await?;
@@ -198,13 +222,13 @@ impl LocalEmbedder {
     /// the search-time side; everything that embeds stored content uses the
     /// document-prompt variants below.
     pub async fn embed_query_async(self: &Arc<Self>, text: &str) -> Result<Vec<f32>> {
-        let mut vecs = self.request(vec![format!("{QUERY_PROMPT}{text}")]).await?;
+        let mut vecs = self.request(vec![format!("{}{text}", self.query_prompt)]).await?;
         vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))
     }
 
     /// Embed a single **document/content** string (document prompt).
     pub async fn embed_async(self: &Arc<Self>, text: &str) -> Result<Vec<f32>> {
-        let mut vecs = self.request(vec![format!("{DOC_PROMPT}{text}")]).await?;
+        let mut vecs = self.request(vec![format!("{}{text}", self.doc_prompt)]).await?;
         vecs.pop().ok_or_else(|| anyhow!("embedding sidecar returned no embedding"))
     }
 
@@ -213,7 +237,8 @@ impl LocalEmbedder {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-        let prompted: Vec<String> = texts.into_iter().map(|t| format!("{DOC_PROMPT}{t}")).collect();
+        let prompted: Vec<String> =
+            texts.into_iter().map(|t| format!("{}{t}", self.doc_prompt)).collect();
         self.request(prompted).await
     }
 
