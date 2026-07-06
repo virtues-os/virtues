@@ -59,11 +59,46 @@ NPU stacks plug in behind Manual mode rather than being ported by us.
   `action_runner` (keyed on `action.dir`). Onboarding: weeks → hours.
 - Jetson machinery deleted (installer download.rs, cli/upgrade.rs).
 
+## Landed 2026-07-06 (branch `feat/iroh-pivot`)
+
+The DIY-composability decisions from the 2026-07-06 strategy session, built and
+merged:
+
+- **Local-only enforcement** (`installer/mode.rs::ensure_local`): manual mode
+  refuses a public embed/rerank endpoint (loopback / RFC1918 / link-local /
+  CGNAT-100.64 / IPv6-ULA pass; global fails). This *is* the "no cloud embedding
+  APIs" rule — and it let us skip API-key/cost plumbing entirely.
+  `VIRTUES_ALLOW_REMOTE_INFERENCE=1` is the logged expert override.
+- **Recipes**: two per endpoint — embeddings (llama.cpp, Ollama) + rerank
+  (llama.cpp GPU/CPU), all on the pinned contracts.
+- **Composable prompt prefixes**: runtime reads
+  `VIRTUES_EMBED_QUERY_PROMPT`/`_DOC_PROMPT` (empty = none); installer resolves
+  them with a **maintenance-free ladder** — explicit env → the model's own HF
+  `config_sentence_transformers.json` (optional repo-id, substring key match) →
+  a 5-family table (embeddinggemma/e5/nomic/bge/gte) → none. Written quoted so
+  trailing spaces survive systemd/dotenv. Never touches the fingerprint.
+- **Step 2 done — dims-at-setup**: `search::embedder::configured_embed_dim()` is
+  the single source of truth; manual stores native dims (no truncation), Dragon
+  keeps 768→256. `database::ensure_embedding_dims` (runs after migrations) sizes
+  `search_vectors` + `search_topic_cache` and rebuilds the HNSW index; no-op when
+  correct, safe only on an empty index, refuses >2000 dims. **`halfvec` (>2000)
+  is the one deferred piece** — cloud is blocked, so local >2000-dim models are
+  rare; revisit if a beta tester needs one.
+- **Step 1 done — `virtues configure-inference`**: the recovery command the boot
+  guard/dims errors point at. Re-probes the endpoint (guard-free), reports
+  fingerprint/dims changes, and on confirmation wipes the derived index (source
+  safe), re-pins fingerprint+dims, and resizes columns. **Refinement still open:**
+  it compares fingerprints (exact match), not the plan's *cosine verdict* — the
+  "same model, different quantization → keep your index" optimization needs the
+  probe **vectors** stored at setup (today only the hash is). A quant change
+  currently reads as "different model" → a (safe but unnecessary) re-embed.
+
 ## Next steps, in order
 
-### 1. `virtues configure-inference` + recovery (the dangling reference)
-The boot guard's error message points at this subcommand; it doesn't exist
-yet. Design (refined 2026-07-06 — this supersedes plain wipe-first):
+### 1. `virtues configure-inference` + recovery ✅ SHIPPED (fingerprint-based)
+See "Landed 2026-07-06" above. Built with exact-fingerprint comparison + safe
+re-embed. The cosine-verdict refinement below is **still open** (needs probe
+vectors stored at setup). Original design (refined 2026-07-06):
 
 - **Store the probe VECTORS at setup** (2×768 floats, alongside the hash),
   not hash-only. A mismatch then gets a cosine verdict:
@@ -79,7 +114,9 @@ yet. Design (refined 2026-07-06 — this supersedes plain wipe-first):
   is already stamped per row, so old-model vectors can keep serving while
   the new set builds, then flip atomically.
 
-### 2. Dims-at-setup — **known gap, currently half-done**
+### 2. Dims-at-setup ✅ SHIPPED
+See "Landed 2026-07-06" above (`halfvec` >2000 deferred). Original scope:
+
 The installer records `VIRTUES_EMBED_DIMS` and the embedder skips the
 `NATIVE_DIM` check when a fingerprint is pinned, **but the schema is still
 `vector(256)` with a hardcoded 768→256 Matryoshka truncation**
