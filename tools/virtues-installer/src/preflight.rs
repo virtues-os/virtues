@@ -15,13 +15,7 @@ use reqwest::Client;
 
 use crate::ui;
 
-pub struct Report {
-    pub warnings: u32,
-}
-
-pub async fn run() -> Result<Report> {
-    let mut warnings = 0u32;
-
+pub async fn run() -> Result<()> {
     // Disk space — the GGUFs are ~0.5 GB (embeddinggemma-300m Q8_0 ~0.3 GB +
     // gte-reranker-modernbert-base Q8_0 ~0.2 GB); PG18 adds another ~1 GB;
     // binaries + web + working room another GB. We want ≥ 4 GB free on /.
@@ -29,11 +23,9 @@ pub async fn run() -> Result<Report> {
         Some(gb) if gb >= 4 => ui::ok(&format!("Disk space ({gb} GB free on /)")),
         Some(gb) => {
             ui::warn(&format!("Disk space ({gb} GB free on / — recommend ≥ 4 GB)"));
-            warnings += 1;
         }
         None => {
             ui::warn("Disk space (could not query free space)");
-            warnings += 1;
         }
     }
 
@@ -50,11 +42,9 @@ pub async fn run() -> Result<Report> {
             Ok(r) if r.status().is_success() || r.status().is_redirection() => {}
             Ok(r) => {
                 failed_hosts.push(format!("{host} (HTTP {})", r.status()));
-                warnings += 1;
             }
             Err(_) => {
                 failed_hosts.push(host.to_string());
-                warnings += 1;
             }
         }
     }
@@ -78,15 +68,14 @@ pub async fn run() -> Result<Report> {
     ] {
         if port_in_use(port) {
             ui::warn(&format!("Port {port} ({name}) in use — re-run on existing install?"));
-            warnings += 1;
         }
     }
 
     // Reachability class — will *remote* access work on this network? Purely
     // informational: it never blocks the install (local + LAN access always
     // work), it just tells the user up front instead of letting them discover a
-    // walled network the hard way after pairing. Does NOT count toward
-    // `warnings` (a home box behind IPv4 NAT is normal, not an install problem).
+    // walled network the hard way after pairing. Not treated as a warning
+    // (a home box behind IPv4 NAT is normal, not an install problem).
     match egress_class() {
         EgressClass::Ipv6 => {
             ui::ok("Network: global IPv6 — direct remote access will work")
@@ -111,7 +100,7 @@ pub async fn run() -> Result<Report> {
     // dials out to the blind relay over TCP/443 (no WireGuard, no inbound port),
     // so there is nothing to gate on here. Reachability is verified at runtime.
 
-    Ok(Report { warnings })
+    Ok(())
 }
 
 /// The box's outbound reachability class, for the preflight verdict. Mirrors

@@ -45,8 +45,6 @@ struct Cli {
     dry_run: bool,
     #[arg(long)]
     no_init: bool,
-    #[arg(short = 'y', long)]
-    yes: bool,
 }
 
 #[tokio::main]
@@ -72,7 +70,6 @@ async fn main() -> Result<()> {
         version: cli.version,
         dry_run: cli.dry_run,
         no_init: cli.no_init,
-        assume_yes: cli.yes,
     })
     .await;
 

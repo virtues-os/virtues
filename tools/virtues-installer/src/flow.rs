@@ -26,7 +26,6 @@ pub struct Config {
     pub version: Option<String>,
     pub dry_run: bool,
     pub no_init: bool,
-    pub assume_yes: bool,
 }
 
 pub async fn run(cli: Config) -> Result<()> {
