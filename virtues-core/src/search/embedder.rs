@@ -21,26 +21,65 @@
 //!
 //! ## Model
 //!
-//! `EmbeddingGemma-300M` (QAT Q8_0): a Gemma-3-lineage bidirectional encoder,
-//! mean-pooled, **768-dim native** which we Matryoshka-truncate to `EMBED_DIM`
-//! (256) and re-normalize — a 4× lighter HNSW index (`search_vectors.embedding`
-//! is `vector(256)`). Asymmetric: queries and documents get different prompt
-//! prefixes (see `QUERY_PROMPT`/`DOC_PROMPT`). The sidecar must emit 768-dim
-//! vectors (`validate_native_dim`); run it on CPU — its activations require
-//! bf16/fp32, so fp16 GPU paths force fp32 and end up slower than CPU.
+//! **Dragon** runs `EmbeddingGemma-300M` (QAT Q8_0): a Gemma-3-lineage
+//! bidirectional encoder, mean-pooled, **768-dim native** which we
+//! Matryoshka-truncate to 256 and re-normalize — a 4× lighter HNSW index. The
+//! sidecar must emit 768-dim vectors (`validate_native_dim`); run it on CPU —
+//! its activations require bf16/fp32, so fp16 GPU paths force fp32 and end up
+//! slower than CPU.
+//!
+//! **Manual** runs whatever model the user pointed us at: the stored width is
+//! its native dims (no truncation — most models aren't Matryoshka-trained),
+//! resolved from `VIRTUES_EMBED_DIMS`, and the vector column is sized to match
+//! at bringup (`database::ensure_embedding_dims`). Asymmetric query/document
+//! prompt prefixes are configurable (`VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`,
+//! resolved by the installer); Dragon defaults to EmbeddingGemma's formats.
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-/// EmbeddingGemma's native output is 768-dim; we keep only the first
-/// `EMBED_DIM` (Matryoshka truncation) and re-normalize — a 3× storage/RAM
-/// cut on the index for ~minimal quality loss. `search_vectors.embedding`
-/// is `vector(256)` (migration 0017).
+/// EmbeddingGemma's native output is 768-dim; on Dragon we keep only the first
+/// `DRAGON_STORED_DIM` (Matryoshka truncation) and re-normalize — a 3× storage/
+/// RAM cut on the index for ~minimal quality loss. A manual endpoint stores its
+/// **native** dims (no truncation — most models aren't Matryoshka-trained), so
+/// the stored width is model-dependent and resolved from `VIRTUES_EMBED_DIMS`
+/// at boot (see `configured_embed_dim`); the vector column is sized to match at
+/// bringup (`database::embedding_dims`).
 const NATIVE_DIM: usize = 768;
-const EMBED_DIM: usize = 256;
+const DRAGON_STORED_DIM: usize = 256;
+/// pgvector's HNSW index tops out at 2000 dims for the `vector` type. Larger
+/// models would need `halfvec` (≤4000) or truncation — not in this build.
+pub const MAX_INDEXED_DIM: usize = 2000;
 const DEFAULT_URL: &str = "http://127.0.0.1:18181";
+
+/// Is a model fingerprint pinned? True in manual inference mode — the installer
+/// probed the user's endpoint and recorded its fingerprint + native dims.
+fn fingerprint_pinned_env() -> bool {
+    std::env::var("VIRTUES_EMBED_FINGERPRINT")
+        .ok()
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// The stored vector width the index must use — the single source of truth for
+/// both the runtime embedder and the bringup column-sizing step. Manual: the
+/// probed native dims (`VIRTUES_EMBED_DIMS`, no truncation). Dragon/dev: 256
+/// (Matryoshka truncation of EmbeddingGemma's 768).
+pub fn configured_embed_dim() -> usize {
+    if fingerprint_pinned_env() {
+        std::env::var("VIRTUES_EMBED_DIMS")
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .filter(|d| *d > 0)
+            // Installer writes DIMS alongside the fingerprint; a missing value
+            // means a hand-edited env — fall back to native (no truncation)
+            // rather than silently truncating the user's model.
+            .unwrap_or(NATIVE_DIM)
+    } else {
+        DRAGON_STORED_DIM
+    }
+}
 
 /// EmbeddingGemma is asymmetric — queries and documents get different prompt
 /// prefixes (official Gemma formats). On personal data, where queries
@@ -79,10 +118,10 @@ fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
     hex::encode(h.finalize())
 }
 
-/// Truncate a native (768-dim) embedding to `EMBED_DIM` and L2-renormalize
-/// (Matryoshka). Renormalization is required for cosine after truncation.
-fn matryoshka_truncate(v: &mut Vec<f32>) {
-    v.truncate(EMBED_DIM);
+/// Truncate a native embedding to `dim` and L2-renormalize (Matryoshka).
+/// Renormalization is required for cosine after truncation.
+fn matryoshka_truncate(v: &mut Vec<f32>, dim: usize) {
+    v.truncate(dim);
     let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 0.0 {
         for x in v.iter_mut() {
@@ -130,6 +169,13 @@ pub struct LocalEmbedder {
     /// string = no prefix.
     query_prompt: String,
     doc_prompt: String,
+    /// The width vectors are stored at (= the vector column's dims). Dragon:
+    /// 256 (truncated). Manual: the model's native dims.
+    stored_dim: usize,
+    /// Whether to Matryoshka-truncate native vectors down to `stored_dim`.
+    /// Only Dragon's EmbeddingGemma is Matryoshka-trained; manual endpoints
+    /// store native vectors untouched.
+    truncate: bool,
 }
 
 impl LocalEmbedder {
@@ -188,6 +234,10 @@ impl LocalEmbedder {
             model,
             query_prompt,
             doc_prompt,
+            // Manual endpoints store native dims (no truncation); Dragon
+            // Matryoshka-truncates EmbeddingGemma's 768 to 256.
+            stored_dim: configured_embed_dim(),
+            truncate: !is_pinned,
         };
         if let Some(expected) = pinned {
             embedder.verify_fingerprint(expected.trim()).await?;
@@ -277,14 +327,23 @@ impl LocalEmbedder {
         let rows = self.request_native(input).await?;
         let mut out = Vec::with_capacity(rows.len());
         for mut v in rows {
-            // With a pinned fingerprint the boot-time check already proved
-            // the endpoint serves the exact model the index was built with;
-            // the fixed NATIVE_DIM check only applies to the un-pinned
-            // (Dragon sidecar) case where EmbeddingGemma is the contract.
-            if !self.fingerprint_pinned {
+            if self.truncate {
+                // Dragon: EmbeddingGemma is the contract — assert its native
+                // dim, then Matryoshka-truncate to the stored width.
                 validate_native_dim(&v)?;
+                matryoshka_truncate(&mut v, self.stored_dim);
+            } else if v.len() != self.stored_dim {
+                // Manual: vectors are stored native. A width other than what
+                // the index was sized for can't be inserted; fail with a clear
+                // message rather than a raw pgvector dimension error. (A model
+                // swap that changes dims is already caught by the fingerprint.)
+                return Err(anyhow!(
+                    "embedding endpoint returned {}-dim vectors but the index is sized \
+                     for {} — run `virtues configure-inference` to re-validate the model",
+                    v.len(),
+                    self.stored_dim
+                ));
             }
-            matryoshka_truncate(&mut v); // native -> EMBED_DIM, re-normalized
             out.push(v);
         }
         Ok(out)
@@ -293,7 +352,7 @@ impl LocalEmbedder {
 
 impl Embedder for LocalEmbedder {
     fn dimension(&self) -> usize {
-        EMBED_DIM
+        self.stored_dim
     }
 }
 
