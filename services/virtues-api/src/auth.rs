@@ -5,12 +5,10 @@
 //!
 //! Headers:
 //!   X-Internal-Secret: <shared_secret>  (required)
-//!   X-User-Id: <user_id>                (optional, defaults to "system")
 //!
 //! Security model:
 //! - Network isolation ensures only Core can reach virtues-api (host sidecar)
 //! - Shared secret validates request origin
-//! - User ID tracks budget usage
 
 use axum::{
     extract::FromRequestParts,
@@ -22,16 +20,10 @@ use crate::AppState;
 
 /// Header names for internal authentication
 pub const INTERNAL_SECRET_HEADER: &str = "x-internal-secret";
-pub const USER_ID_HEADER: &str = "x-user-id";
 
-/// Default user ID for system/background operations
-pub const SYSTEM_USER_ID: &str = "system";
-
-/// Authenticated request with validated credentials
+/// Authenticated request — a validated shared-secret gate (carries no payload).
 #[derive(Debug, Clone)]
-pub struct AuthenticatedRequest {
-    pub user_id: String,
-}
+pub struct AuthenticatedRequest;
 
 /// Error type for authentication failures
 #[derive(Debug)]
@@ -77,7 +69,7 @@ virtues_helpers::impl_into_response!(AuthError);
 /// Axum extractor for authenticated requests
 ///
 /// Validates X-Internal-Secret header against config.
-/// Extracts X-User-Id header (defaults to "system" if not provided).
+/// Validates the X-Internal-Secret header; carries no payload.
 #[axum::async_trait]
 impl FromRequestParts<Arc<AppState>> for AuthenticatedRequest {
     type Rejection = AuthError;
@@ -99,15 +91,7 @@ impl FromRequestParts<Arc<AppState>> for AuthenticatedRequest {
             return Err(AuthError::InvalidSecret);
         }
 
-        // Extract X-User-Id header (optional, defaults to "system")
-        let user_id = parts
-            .headers
-            .get(USER_ID_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| SYSTEM_USER_ID.to_string());
-
-        Ok(AuthenticatedRequest { user_id })
+        Ok(AuthenticatedRequest)
     }
 }
 
