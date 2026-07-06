@@ -75,6 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("backup")
                 | Some("restore")
                 | Some("reset")
+                | Some("configure-inference")
                 | Some("sudo")
                 | Some("warm-models")
         );
@@ -109,54 +110,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // Handle Doctor early (no database — pure hardware/model resolution report)
+    // Handle Doctor early (no app stack — the report opens its own DB pool
+    // best-effort, and an unreadable DB is itself a finding, not a crash).
     if matches!(cli.command, Some(Commands::Doctor)) {
-        print_resolution_report();
-
-        // Remote access is via the relay now (the box dials out) — no inbound
-        // pinhole or kernel-WG dependency to check. Just report the net class.
-        let net = virtues::net_check::compute_net_status();
-        println!("  network:       {}", net.headline);
-
-        // Best-effort iroh reach: doctor is otherwise DB-free, so open a pool
-        // only if we can and report each reach leg's ACTUAL state — endpoint,
-        // relay home, and allowlist size — so a still-LAN-only box (the state
-        // that cost us real debugging time) is impossible to miss.
-        if let Ok(cfg) = virtues::setup::recommended_config() {
-            if let Ok(db) = virtues::database::Database::new(&cfg.database_url) {
-                let r = virtues::relay::reach_report(db.pool()).await;
-                if !r.db_reachable {
-                    // We never reached the box DB, so we know nothing about reach.
-                    // Say so instead of printing authoritative-looking zeros — the
-                    // usual cause is running doctor as a user that can't read the
-                    // box env file (DB URL falls back to the wrong role).
-                    println!("  iroh reach:    unknown — couldn't read the box database");
-                    println!("  relay:         unknown — couldn't read the box database");
-                    println!("  allowlist:     unknown — couldn't read the box database");
-                    println!("                 run as the box user:  sudo -u virtues virtues doctor");
-                } else {
-                    match r.endpoint_id {
-                        Some(eid) => println!("  iroh reach:    {eid}"),
-                        None => println!("  iroh reach:    not provisioned (no iroh secret yet)"),
-                    }
-                    match r.relay_url {
-                        Some(relay) => println!("  relay:         {relay}"),
-                        None => println!(
-                            "  relay:         LAN-only — no relay config (box unclaimed or atlas unreachable)"
-                        ),
-                    }
-                    println!("  allowlist:     {} device(s) permitted", r.allowlisted_devices);
-                }
-            }
-        }
-        return Ok(());
+        std::process::exit(virtues::cli::doctor::run().await);
     }
 
     // Handle WarmModels early (no database needed — just downloads ML models)
     if matches!(cli.command, Some(Commands::WarmModels)) {
-        // Show what will be fetched (accelerator, precision, baked vs download)
-        // before pulling anything — same report `virtues doctor` prints.
-        print_resolution_report();
+        use virtues::cli::ui;
+        // Show what will be exercised (accelerator, precision, on-disk state)
+        // before pulling anything — the same ledger `virtues doctor` prints.
+        // A missing GGUF is a hard stop here: warming would fail against it
+        // anyway, so fail with the remedy instead of a sidecar error.
+        let mut issues = ui::Issues::new();
+        ui::section("Warm models");
+        virtues::cli::doctor::print_inference(
+            &virtues::inference_report::resolution_report(),
+            &mut issues,
+        );
+        if issues.has_errors() {
+            std::process::exit(issues.verdict());
+        }
         println!();
 
         let embedder = virtues::search::get_embedder().await?;
@@ -165,13 +140,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // EmbeddingGemma's 768) fails HERE instead of "passing" a connect-only
         // check and silently corrupting the index.
         let probe = embedder.embed_query_async("virtues warm-up probe").await?;
-        println!(
-            "✅ Embedder ready (stored dim={}, native validated)",
+        ui::ok(&format!(
+            "embedder ready (stored dim={}, native validated)",
             probe.len()
-        );
+        ));
 
         let _reranker = virtues::search::get_reranker().await?;
-        println!("✅ Reranker ready");
+        ui::ok("reranker ready");
+        println!();
 
         return Ok(());
     }
@@ -349,26 +325,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let pool = db.pool();
         match action {
             DeviceCommands::Ls => {
+                use virtues::cli::ui;
                 let devices = virtues::api::devices::list_devices_cli(pool).await?;
                 if devices.is_empty() {
                     println!();
-                    println!("  No devices on the allowlist. Run `virtues device add` to pair one.");
+                    ui::skip("no devices on the allowlist — run `virtues device add` to pair one");
                     println!();
                     return Ok(());
                 }
                 println!();
                 println!(
-                    "  {:<30}  {:<12}  {:<22}  {:<14}  {}",
-                    "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                    "  {}",
+                    console::style(format!(
+                        "{:<30}  {:<12}  {:<22}  {:<14}  {}",
+                        "ID", "KIND", "LABEL", "KEY", "LAST SEEN"
+                    ))
+                    .dim()
                 );
                 for (id, kind, label, node_id, last_seen) in &devices {
                     let key = node_id
                         .as_deref()
-                        .map(|n| format!("{}…", &n[..n.len().min(10)]))
+                        .map(|n| ui::ellipsize_middle(n, 14))
                         .unwrap_or_else(|| "—".to_string());
-                    let seen = last_seen
-                        .map(|t| t.to_rfc3339())
-                        .unwrap_or_else(|| "never".to_string());
+                    // Relative on a TTY (a ledger you scan); absolute RFC 3339
+                    // when piped (a log you correlate).
+                    let seen = match last_seen {
+                        Some(t) if ui::tty() => ui::rel_time(*t),
+                        Some(t) => t.to_rfc3339(),
+                        None => "never".to_string(),
+                    };
                     let label = if label.chars().count() > 22 {
                         format!("{}…", label.chars().take(21).collect::<String>())
                     } else {
@@ -381,7 +366,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             DeviceCommands::Rm { id } => match virtues::api::devices::revoke_device_cli(pool, id).await {
                 Ok(true) => {
-                    println!("✓ revoked {id} — its key is de-allowlisted; the next dial is refused.");
+                    virtues::cli::ui::ok(&format!(
+                        "revoked {id} — its key is de-allowlisted; the next dial is refused"
+                    ));
                     return Ok(());
                 }
                 Ok(false) => {
@@ -474,6 +461,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ─── `virtues configure-inference` ──────────────────────────────────────
+    // Recover after a manual endpoint's model changed. Runs BEFORE the app
+    // builds the guarded embedder — which would itself fail on the very
+    // fingerprint mismatch this command exists to fix.
+    if let Some(Commands::ConfigureInference { reembed, yes }) = &cli.command {
+        match virtues::cli::configure_inference::run(*reembed, *yes).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: configure-inference failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // ─── `virtues upgrade` ──────────────────────────────────────────────────
     // Self-update from the latest GitHub Release (or a pinned --version
     // tag). Stops the service, swaps the binary, applies migrations,
@@ -554,13 +555,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // the virtues-api sunset commitment as the closer, and every claim must stay
 // true in lockstep with shipped features.
 
-/// Print the inference stack's hardware-resolution plan: which accelerator is
-/// active, whether this build links CUDA, the chosen ONNX precision, and where
-/// each model's files come from (baked vs download). Pure — no DB, no network,
-/// Print the `virtues pair` + `virtues init` handoff: the pair code + URLs
-/// (mDNS-first, IP fallback, loopback last) + expiry + a one-line remote-access
-/// verdict. Deliberately terse — the deep network report lives behind
-/// `virtues doctor`. Shared between `Pair` and `Init`.
 /// The Virtues wordmark — a serif figlet ("Georgia11") that opens the CLI
 /// journey. Plain text on purpose: this output is frequently piped, captured,
 /// and read over SSH, so no ANSI styling that would garble in a log.
@@ -740,30 +734,5 @@ fn maybe_reexec_as_service_user() {
     std::process::exit(1);
 }
 
-/// no session construction.
-fn print_resolution_report() {
-    use virtues::inference_report::{resolution_report, ModelSource};
-
-    let r = resolution_report();
-    println!("Virtues inference resolution");
-    println!("  accelerator:   {} (GPU vs CPU decided by the sidecar binary)", r.accelerator);
-    println!("  precision:     {}", r.precision);
-    match &r.models_dir {
-        Some(d) => println!("  models dir:    {}", d.display()),
-        None => println!("  models dir:    unset"),
-    }
-    println!("  models:");
-    for m in &r.models {
-        let source = match &m.source {
-            ModelSource::Baked(p) => format!("on disk @ {}", p.display()),
-            ModelSource::Download => "MISSING — re-run the installer to fetch".to_string(),
-        };
-        println!("    - {:<9} {} :: {} [{}]", m.name, m.repo, m.gguf_file, source);
-    }
-
-    // Network reachability — the IPv6-direct doctrine's "can a device reach
-    // this box directly?" assessment. Part of `virtues doctor` so a support
-    // recipe is "paste the output of virtues doctor".
-    println!();
-    virtues::net_check::compute_net_status().print_report();
-}
+// NOTE: the doctor report (inference + reach ledgers + verdict) lives in
+// `virtues::cli::doctor`; `virtues warm-models` shares its Inference ledger.

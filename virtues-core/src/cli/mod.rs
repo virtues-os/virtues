@@ -2,12 +2,15 @@
 
 pub mod backup;
 pub mod commands;
+pub mod configure_inference;
 pub mod diag;
+pub mod doctor;
 pub mod link;
 pub mod report_crash;
 pub mod reset;
 pub mod restore;
 pub mod types;
+pub mod ui;
 pub mod uninstall;
 pub mod upgrade;
 
@@ -68,6 +71,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — destructive schema management against a bare pool,
             // like Restore/Uninstall.
             unreachable!("Reset command should be handled in main.rs");
+        }
+
+        Commands::ConfigureInference { .. } => {
+            // Same — must run before the app builds the guarded embedder, which
+            // would fail on the fingerprint mismatch this command fixes.
+            unreachable!("ConfigureInference command should be handled in main.rs");
         }
 
         Commands::Migrate => {
