@@ -69,28 +69,6 @@ class DeviceManager: ObservableObject {
         configuration.deviceId
     }
 
-    /// Bearer token used as `Authorization: Bearer <token>` on every box
-    /// API call.
-    ///
-    /// Source of truth in v1: the Keychain (`KeychainStore.shared`), populated
-    /// at pair time by `NetworkManager.consumePairToken(...)`.
-    ///
-    /// **Backwards-compat shim during the cutover:** if the Keychain is
-    /// empty but a legacy `deviceId`-as-bearer config exists, return the
-    /// deviceId so currently-paired devices keep working until the user
-    /// re-pairs. This fallback goes away in v1.1.
-    ///
-    /// The protocol type is `String` (non-optional) for callsite ergonomics
-    /// — callers that want to distinguish "paired" from "not paired" should
-    /// read `configuration.isConfigured` or `configuration.awaitingPair`
-    /// rather than treating an empty token as "no bearer."
-    var deviceToken: String {
-        if let kc = KeychainStore.shared.loadBearer(), !kc.isEmpty {
-            return kc
-        }
-        return deviceId
-    }
-
     func updateConfiguration(apiEndpoint: String) {
         configuration.apiEndpoint = apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         configuration.configuredDate = Date()

@@ -18,6 +18,7 @@ use std::path::Path;
 use tokio::process::Command;
 
 use crate::config::InstallConfig;
+use crate::mode::{InferenceMode, ValidationReport};
 use crate::steps::{run_step, PkgMgr, Target};
 use crate::ui;
 
@@ -207,13 +208,12 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
 }
 
 /// The standard Linux groups that gate access to GPU device nodes
-/// (`/dev/dri/*`, `/dev/nvidia*`, and on Jetson `/dev/nvhost-*` + `/dev/nvmap`).
-/// The llama-server sidecars run unprivileged as `virtues`; without membership
-/// in these groups the GPU backend can't open its device nodes and init fails
-/// (e.g. CUDA returns `cudaErrorUnknown`), so llama.cpp silently falls back to
-/// CPU. We only wire up groups that actually exist on the host — this is
-/// hardware-agnostic: a CPU-only DIY box has neither and correctly stays on
-/// CPU, while a GPU box (Jetson, discrete NVIDIA, AMD/Intel) gets offload.
+/// (`/dev/dri/*` and friends). The llama-server sidecars run unprivileged as
+/// `virtues`; without membership in these groups the GPU backend can't open
+/// its device nodes and init fails, so llama.cpp silently falls back to CPU.
+/// This exists for the Dragon image's GPU (offload via Vulkan/OpenCL — the
+/// mechanism is generic). We only wire up groups that actually exist on the
+/// host: a CPU-only host has neither and correctly stays on CPU.
 async fn gpu_access_groups() -> Vec<&'static str> {
     let mut groups = Vec::new();
     for g in ["video", "render"] {
@@ -233,13 +233,14 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 /// Shared shape: loopback-only, runs as `virtues`, read-only filesystem
 /// (the GGUF is mmap'd read-only; PrivateTmp covers scratch).
 ///
-/// Flags (verified on an Orin 2026-06):
+/// Flags:
 /// - **embed → `-ngl 0` (CPU), rerank → `-ngl 99` (GPU).** The two workloads
 ///   want opposite hardware: EmbeddingGemma's activations can't run fp16, so
-///   the Orin CUDA path forces fp32 and is *slower than CPU* (and CPU is fine
-///   for background embedding). gte-modernbert reranking is ~5× faster on the
-///   GPU. `-ngl 99` is a no-op on the CPU-only build and needs the GPU
-///   `SupplementaryGroups=` below or CUDA init silently falls back to CPU.
+///   fp16 GPU paths force fp32 and are *slower than CPU* (and CPU is fine
+///   for background embedding). gte-modernbert reranking is markedly faster
+///   on the Dragon image's GPU. `-ngl 99` is a no-op on a CPU-only build and
+///   needs the GPU `SupplementaryGroups=` below or backend init silently
+///   falls back to CPU.
 ///   `--pooling mean` (EmbeddingGemma) / `--pooling rank` (cross-encoder).
 /// - `-c/-b/-ub 2048` right-sizes context. Both models do longer, but our
 ///   chunks are ≤512 tok and rerank docs are capped at ~256, so 2048 is ample
@@ -249,8 +250,8 @@ async fn gpu_access_groups() -> Vec<&'static str> {
 ///   which is fine here.
 /// - `--cache-ram 0`: disables the prompt cache (an up-to-8 GB reservation)
 ///   — useless for embed/rerank where every input is unique.
-/// Together these cut each sidecar from ~2.5 GB RSS to ~1 GB, which is also
-/// what frees enough of the Orin's 7.6 GB unified pool for `-ngl 99` to fit.
+/// Together these cut each sidecar from ~2.5 GB RSS to ~1 GB, which is what
+/// leaves the Dragon's unified memory pool room for `-ngl 99` to fit.
 /// `__SUPP_GROUPS__` is replaced at install time with a `SupplementaryGroups=`
 /// line for whatever GPU groups exist (see `gpu_access_groups`), or removed
 /// entirely on a CPU-only host — an undefined supplementary group would make
@@ -551,17 +552,55 @@ async fn psql_exists(sql: &str) -> Result<bool> {
 // Env file — DATABASE_URL, encryption key, prod URLs
 // ────────────────────────────────────────────────────────────────────────
 
-pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
+/// The inference-related env keys, per mode.
+///
+/// Dragon: mode marker + the loopback sidecar defaults. Manual: mode marker,
+/// the user's endpoint URLs, plus the fingerprint + dims recorded by
+/// `mode::validate_manual` — the runtime re-embeds the probe strings at boot
+/// and refuses to serve search against a silently-swapped model.
+fn inference_env_keys(
+    mode: &InferenceMode,
+    validation: Option<&ValidationReport>,
+) -> Vec<(&'static str, String)> {
+    match mode {
+        InferenceMode::Dragon => vec![
+            ("VIRTUES_INFERENCE", "dragon".to_string()),
+            ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
+            ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
+        ],
+        InferenceMode::Manual { embed_url, embed_model, rerank_url } => {
+            let mut keys = vec![
+                ("VIRTUES_INFERENCE", "manual".to_string()),
+                ("VIRTUES_EMBED_URL", embed_url.clone()),
+                ("VIRTUES_EMBED_MODEL", embed_model.clone()),
+            ];
+            if let Some(url) = rerank_url {
+                keys.push(("VIRTUES_RERANK_URL", url.clone()));
+            }
+            if let Some(v) = validation {
+                keys.push(("VIRTUES_EMBED_FINGERPRINT", v.fingerprint.clone()));
+                keys.push(("VIRTUES_EMBED_DIMS", v.dims.to_string()));
+            }
+            keys
+        }
+    }
+}
+
+pub async fn write_env_file(
+    cfg: &InstallConfig,
+    mode: &InferenceMode,
+    validation: Option<&ValidationReport>,
+) -> Result<()> {
     let path = cfg.env_file_path();
     if path.exists() {
         // Existing file — append any missing required keys without touching
         // anything already in there. Critical: never rotate the encryption
         // key (would invalidate every stored credential).
-        return merge_env_file(&path, cfg).await;
+        return merge_env_file(&path, cfg, mode, validation).await;
     }
     let key = openssl_rand_base64_32().await?;
     let now = chrono_utc_iso();
-    let body = format!(
+    let mut body = format!(
         "# Generated by virtues-installer on {now}.\n\
          # DATABASE_URL omits host -> Unix socket -> peer auth, no password.\n\
          DATABASE_URL=postgres:///virtues\n\
@@ -573,9 +612,7 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
          VIRTUES_API_URL={api}\n\
          VIRTUES_MODELS_DIR={models_dir}\n\
          VIRTUES_ACTIONS_DIR={actions_dir}\n\
-         VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n\
-         VIRTUES_EMBED_URL=http://127.0.0.1:18181\n\
-         VIRTUES_RERANK_URL=http://127.0.0.1:18182\n",
+         VIRTUES_ACTIONS_BIN_DIR={actions_bin_dir}\n",
         static_dir = cfg.web_dir().display(),
         storage_path = cfg.data_dir.join("lake").display(),
         atlas = cfg.atlas_url,
@@ -584,6 +621,9 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
         actions_dir = cfg.actions_dir().display(),
         actions_bin_dir = cfg.actions_bin_dir().display(),
     );
+    for (k, v) in inference_env_keys(mode, validation) {
+        body.push_str(&format!("{k}={v}\n"));
+    }
     fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
     let mut cmd = Command::new("chown");
     cmd.args(["virtues:virtues", path.to_str().unwrap()]);
@@ -601,7 +641,12 @@ pub async fn write_env_file(cfg: &InstallConfig) -> Result<()> {
 /// the user stuck on an older env file that's missing new keys we added
 /// in a later version. Today the typical case is VIRTUES_ATLAS_URL and
 /// VIRTUES_API_URL, added in v0.1.1.
-async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<()> {
+async fn merge_env_file(
+    path: &std::path::Path,
+    cfg: &InstallConfig,
+    mode: &InferenceMode,
+    validation: Option<&ValidationReport>,
+) -> Result<()> {
     let existing = fs::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
 
@@ -620,7 +665,7 @@ async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<(
 
     // The full list of keys this installer would write on a fresh
     // install. Anything missing gets appended.
-    let want: &[(&str, String)] = &[
+    let mut want: Vec<(&str, String)> = vec![
         ("DATABASE_URL", "postgres:///virtues".to_string()),
         ("ENVIRONMENT", "production".to_string()),
         ("STATIC_DIR", cfg.web_dir().display().to_string()),
@@ -630,9 +675,8 @@ async fn merge_env_file(path: &std::path::Path, cfg: &InstallConfig) -> Result<(
         ("VIRTUES_MODELS_DIR", cfg.models_dir().display().to_string()),
         ("VIRTUES_ACTIONS_DIR", cfg.actions_dir().display().to_string()),
         ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
-        ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
-        ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
     ];
+    want.extend(inference_env_keys(mode, validation));
 
     let missing: Vec<&(&str, String)> = want.iter().filter(|(k, _)| !present.contains(*k)).collect();
     if missing.is_empty() {
@@ -766,7 +810,10 @@ WantedBy=multi-user.target
 // Post-install health check
 // ────────────────────────────────────────────────────────────────────────
 
-pub async fn health_check(cfg: &InstallConfig) -> Result<u32> {
+/// `check_sidecars` is true only in Dragon mode — a manual-inference box has
+/// no local sidecar units and no GGUFs on disk, and probing for them would
+/// report phantom issues on every healthy install.
+pub async fn health_check(cfg: &InstallConfig, check_sidecars: bool) -> Result<u32> {
     let mut issues = 0u32;
 
     // Postgres reachable via peer auth (no password prompt, no TCP).
@@ -782,41 +829,45 @@ pub async fn health_check(cfg: &InstallConfig) -> Result<u32> {
         issues += 1;
     }
 
-    // Inference sidecars responding. /health returns 200 only once the
-    // model is loaded, so this also catches a bad/missing GGUF. Model load
-    // can take a few seconds after `systemctl start` — retry briefly.
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3))
-        .build()?;
-    for (port, unit) in [(18181u16, "virtues-embed"), (18182, "virtues-rerank")] {
-        let url = format!("http://127.0.0.1:{port}/health");
-        let mut up = false;
-        for _ in 0..10 {
-            if matches!(client.get(&url).send().await, Ok(r) if r.status().is_success()) {
-                up = true;
-                break;
+    if check_sidecars {
+        // Inference sidecars responding. /health returns 200 only once the
+        // model is loaded, so this also catches a bad/missing GGUF. Model load
+        // can take a few seconds after `systemctl start` — retry briefly.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()?;
+        for (port, unit) in [(18181u16, "virtues-embed"), (18182, "virtues-rerank")] {
+            let url = format!("http://127.0.0.1:{port}/health");
+            let mut up = false;
+            for _ in 0..10 {
+                if matches!(client.get(&url).send().await, Ok(r) if r.status().is_success()) {
+                    up = true;
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if up {
+                ui::ok(&format!("{unit} responding on :{port}"));
+            } else {
+                ui::warn(&format!(
+                    "{unit} not responding on :{port} — journalctl -u {unit}"
+                ));
+                issues += 1;
+            }
         }
-        if up {
-            ui::ok(&format!("{unit} responding on :{port}"));
-        } else {
-            ui::warn(&format!(
-                "{unit} not responding on :{port} — journalctl -u {unit}"
-            ));
-            issues += 1;
-        }
-    }
 
-    // GGUFs on disk.
-    for gguf in [&cfg.embed_gguf, &cfg.rerank_gguf] {
-        let p = cfg.models_dir().join(gguf);
-        if p.is_file() {
-            ui::ok(&format!("Model present: {gguf}"));
-        } else {
-            ui::warn(&format!("Model missing: {} — re-run the installer", p.display()));
-            issues += 1;
+        // GGUFs on disk.
+        for gguf in [&cfg.embed_gguf, &cfg.rerank_gguf] {
+            let p = cfg.models_dir().join(gguf);
+            if p.is_file() {
+                ui::ok(&format!("Model present: {gguf}"));
+            } else {
+                ui::warn(&format!("Model missing: {} — re-run the installer", p.display()));
+                issues += 1;
+            }
         }
+    } else {
+        ui::skip("Manual inference — endpoints validated earlier, no local sidecars to probe");
     }
 
     // Binary --version (now clean, observability init is skipped for

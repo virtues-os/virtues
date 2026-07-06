@@ -2,10 +2,12 @@
 //!
 //! Single route: `POST /webhook/:action_id`.
 //!
-//! Auth: `Authorization: Bearer <device_token>`. The token is decrypted and
-//! matched against a credential via `validate_device_token`; the returned
-//! credential_id must match the target action's `credential_id`, otherwise
-//! a token leaked from one device can't be used to post at another's action.
+//! Auth: the caller's **proven, allowlisted iroh key**. Devices (iOS, the Mac
+//! collector) reach the box over iroh, so the transport proved their key and
+//! `AuthUser` resolves it — ingest is gated by the SAME allowlist as every other
+//! route, with no long-lived bearer anywhere. A proven device may only drive
+//! actions anchored to IT (`app_actions.device_id`); the on-box console
+//! (loopback) may drive any action.
 //!
 //! The unified `action_runner::run_action` enforces trigger validation,
 //! condition evaluation, and dispatch. This handler only does auth + routing.
@@ -23,6 +25,7 @@ use serde_json::Value;
 use crate::action_runner::{ActionRunStatus, RunnerDeps};
 use crate::api::chat::ChatCancellationState;
 use crate::database::Database;
+use crate::middleware::auth::AuthUser;
 
 #[derive(Debug, Serialize)]
 pub struct WebhookResponse {
@@ -67,14 +70,16 @@ impl axum::extract::FromRef<AppState> for ChatCancellationState {
 /// Handler for `POST /webhook/:action_id`.
 ///
 /// Flow:
-/// 1. Extract bearer → 401 if missing.
-/// 2. `validate_device_token` → 401 on fail; returns the caller's credential_id.
-/// 3. Fetch action → 404 if missing.
-/// 4. Assert `action.credential_id == Some(caller_credential_id)` → 403 otherwise.
-/// 5. Dispatch via `run_action(.., "webhook", payload)`.
+/// 1. `AuthUser` (proven iroh key / loopback console) — a hard extractor, so an
+///    unauthenticated caller is rejected before this runs.
+/// 2. Fetch action → 404 if missing.
+/// 3. Ownership: the proven device must own the action (`app_actions.device_id`);
+///    the on-box console may drive any action → 403 otherwise.
+/// 4. Dispatch via `run_action(.., "webhook", payload)`.
 pub async fn webhook(
     State(state): State<AppState>,
     Path(action_id): Path<String>,
+    user: AuthUser,
     headers: HeaderMap,
     payload: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Response {
@@ -142,61 +147,48 @@ pub async fn webhook(
             .into_response();
     }
 
-    let Some(device_token) = extract_bearer(&headers) else {
+    // `user` (AuthUser) is already proven by the hard extractor above: the
+    // request arrived over iroh with an allowlisted key (or from the on-box
+    // console). Confirm the action exists, then that this device owns it.
+    tracing::debug!(device_id = %user.device_id, action_id = %action_id, "webhook authed by proven key");
+
+    if crate::scheduler::actions::get_action(state.db.pool(), &action_id)
+        .await
+        .is_err()
+    {
         return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({
-                "error": "Missing bearer token",
-                "hint": "Include 'Authorization: Bearer <device_token>' header"
-            })),
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "action not found" })),
         )
             .into_response();
-    };
+    }
 
-    let caller_credential_id =
-        match crate::api::validate_device_token(state.db.pool(), &device_token).await {
-            Ok(id) => id,
-            Err(e) => {
+    // Ownership: a proven device may only drive actions anchored to IT
+    // (`app_actions.device_id`). The on-box console (loopback) may drive any
+    // action; an action with no device anchor (e.g. an OAuth action reachable
+    // only from the owner's own devices) is likewise owner-level.
+    if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {
+        let action_device: Option<String> =
+            sqlx::query_scalar("SELECT device_id FROM app_actions WHERE id = $1")
+                .bind(&action_id)
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap_or(None);
+        if let Some(owner_device) = action_device {
+            if owner_device != user.device_id {
+                tracing::warn!(
+                    action_id = %action_id,
+                    proven_device = %user.device_id,
+                    action_device = %owner_device,
+                    "webhook: proven device does not own this action"
+                );
                 return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(serde_json::json!({
-                        "error": "Invalid or revoked device token",
-                        "message": e.to_string()
-                    })),
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({ "error": "device does not own this action" })),
                 )
                     .into_response();
             }
-        };
-
-    if let Err(e) = crate::api::update_last_seen(state.db.pool(), &caller_credential_id).await {
-        tracing::warn!("Failed to update last_seen: {}", e);
-    }
-
-    let action = match crate::scheduler::actions::get_action(state.db.pool(), &action_id).await {
-        Ok(a) => a,
-        Err(_) => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": "action not found" })),
-            )
-                .into_response();
         }
-    };
-
-    if action.credential_id.as_deref() != Some(caller_credential_id.as_str()) {
-        tracing::warn!(
-            action_id = %action_id,
-            caller_credential_id = %caller_credential_id,
-            action_credential_id = ?action.credential_id,
-            "webhook auth mismatch: caller credential does not own this action"
-        );
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": "token does not authorize this action",
-            })),
-        )
-            .into_response();
     }
 
     let deps = RunnerDeps {
@@ -270,13 +262,4 @@ pub async fn webhook(
                 .into_response()
         }
     }
-}
-
-/// Extract a bearer token from `Authorization: Bearer <token>`.
-fn extract_bearer(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.strip_prefix("Bearer "))
-        .map(|s| s.to_string())
 }

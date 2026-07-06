@@ -101,9 +101,9 @@ impl InstallConfig {
         self.install_prefix.join("libexec/virtues")
     }
 
-    /// The llama-server binary that hosts both inference sidecars. Ships in
-    /// the release tarball (built per-arch in our CI at a pinned llama.cpp
-    /// tag); a CUDA build for Jetson is swapped in when available.
+    /// The llama-server binary that hosts both inference sidecars (Dragon
+    /// mode only). Ships in the release tarball (built per-arch in our CI at
+    /// a pinned llama.cpp tag).
     pub fn llama_binary_path(&self) -> PathBuf {
         self.install_prefix.join("bin/llama-server")
     }

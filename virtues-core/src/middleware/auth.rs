@@ -1,26 +1,25 @@
 //! Authentication middleware.
 //!
-//! **Auth lives at the app layer; the network is a dumb transport.** The box
-//! authenticates every request from its own credentials — NOT from the path it
-//! arrived over — so the same auth works whether a request comes over Virtues'
-//! WireGuard, a user's BYO overlay (Tailscale/Headscale/VPS), or plain LAN.
-//! See `[[project_networking_doctrine]]`.
+//! **The allowlisted iroh key is the credential.** A paired device holds an
+//! iroh EndpointId that the box has allowlisted; the QUIC raw-public-key
+//! handshake proves the key on every connection, so authentication is just
+//! "is the proven key a live device?" — no bearer, no cookie, no second secret.
 //!
 //! Three accepted credentials, checked in order:
-//!   1. **Device bearer** (`Authorization: Bearer <token>`) — a paired
-//!      non-browser device (iOS/Mac/custom). HMAC-lookup against `credentials`,
-//!      joined to its `app_device` (enforcing `revoked_at IS NULL`). Pure
-//!      capability, works over any transport.
+//!   1. **Proven iroh peer** — the primary path for every interactive client
+//!      (iOS, desktop + its webview via the daemon, CLI-over-iroh). `serve()`
+//!      only forwards allowlisted peers and stamps the proven EndpointId as a
+//!      `ProvenPeer` extension; we map it to its `app_device` row (enforcing
+//!      `revoked_at IS NULL`). Unspoofable — a typed extension, never a header.
 //!   2. **Loopback console** — a process on the box itself connecting directly
 //!      to `127.0.0.1`/`::1`. Gated: refused when a forwarding header is
 //!      present (a reverse proxy also connects from loopback — see below).
-//!   3. **Session cookie** — a browser, validated against the three-table model
-//!      (`app_auth_session` → `app_device` → `app_auth_user`) with hard expiry,
-//!      soft revoke, and an 8h idle ceiling.
+//!   3. **Dev fallback** — `ENVIRONMENT=dev` only, so `make dev` lands in the
+//!      app with no pairing. Inert on a real appliance.
 //!
-//! Each authenticated request bumps `last_used_at` / `last_seen_at`. Idle
-//! timeout means a forgotten browser tab can't re-enter the box after the user
-//! walks away — they have to re-pair.
+//! Each authenticated request bumps `last_seen_at`. Webhook / OAuth bearers are
+//! a separate, surviving token class (see `validate_device_token`) — they are
+//! NOT an app credential and are not checked here.
 
 use axum::{
     async_trait,
@@ -29,20 +28,14 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use axum_extra::extract::cookie::CookieJar;
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::net::SocketAddr;
 
-/// Idle timeout — sessions go stale after this many hours of inactivity even
-/// if their hard `expires_at` is still in the future.
-const IDLE_TIMEOUT_HOURS: i64 = 8;
-
 /// Synthetic device id for the "I'm sitting at the box's monitor + keyboard"
 /// session. The auth extractor returns an `AuthUser` with this id when the
 /// request's socket peer is loopback (`127.0.0.1` / `::1`) AND no forwarding
-/// header is present, bypassing the cookie + pair-token requirement.
+/// header is present, bypassing the iroh-key requirement.
 ///
 /// Safe because the threat model is "physical access = you" — a process on
 /// the box can already read `/var/lib/virtues/lake/` and `/etc/virtues/env`,
@@ -58,21 +51,18 @@ const IDLE_TIMEOUT_HOURS: i64 = 8;
 pub const CONSOLE_DEVICE_ID: &str = "local-console";
 pub const CONSOLE_DEVICE_LABEL: &str = "Local console";
 
-/// Authenticated principal extracted from the cookie.
+/// Authenticated principal for a request.
 ///
 /// `id` is the owner-user id (always the singleton in v1). `device_id` is the
-/// specific paired device the cookie belongs to — handlers that need to scope
-/// to "this device" (e.g. minting a pair token on behalf of the minting
-/// device, or revoking your own session vs another) read from here.
+/// specific paired device the proven iroh key resolved to — handlers that need
+/// to scope to "this device" (e.g. minting a pair token on behalf of the
+/// minting device, or revoking one device vs another) read from here.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub id: String,
     pub device_id: String,
     pub device_label: String,
 }
-
-pub const SESSION_COOKIE_NAME: &str = "virtues.session-token";
-pub const SESSION_COOKIE_NAME_SECURE: &str = "__Secure-virtues.session-token";
 
 #[derive(Debug, Serialize)]
 pub struct AuthError {
@@ -96,17 +86,23 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let pool = PgPool::from_ref(state);
 
-        // 1. Device bearer — transport-agnostic app-layer credential. A paired
-        //    non-browser device presents `Authorization: Bearer <token>`. The
-        //    bearer IS the credential, so this authenticates over ANY transport
-        //    (Virtues WG, a BYO overlay, plain LAN) — the network is never the
-        //    trust boundary. An explicit bearer means "I am a device": a bad
-        //    one fails closed rather than falling through to cookie/loopback.
-        if let Some(token) = read_bearer(&parts.headers) {
-            return validate_bearer(&pool, &token).await.ok_or_else(unauthorized);
+        // 1. iroh transport identity — the primary credential for app/iroh
+        //    clients. The QUIC raw-public-key handshake PROVED the peer's
+        //    EndpointId, and `serve()` only forwards allowlisted (paired) peers,
+        //    stamping the proven id as `ProvenPeer`. Map it to the device: the
+        //    allowlisted key IS the credential. Unspoofable — a typed extension
+        //    set post-handshake, never a header, and only the iroh serve path
+        //    sets it (the plain :8000 listener never does). A proven id that
+        //    isn't a known device falls through to the paths below.
+        if let Some(peer) = parts.extensions.get::<virtues_iroh::ProvenPeer>() {
+            let node_id = peer.0.to_string();
+            if let Some(user) = validate_iroh_peer(&pool, &node_id).await {
+                return Ok(user);
+            }
         }
 
-        // 2. Loopback console — a process on the box itself, connecting
+        // 2. Loopback console — a process on the box itself (on-box CLI),
+        //    connecting
         //    directly to 127.0.0.1 / ::1. Physical access wins the threat
         //    model. Refused when a forwarding header is present, because a
         //    reverse proxy in front of the box also connects from loopback
@@ -126,21 +122,13 @@ where
             });
         }
 
-        // 3. Session cookie — a browser.
-        let jar = CookieJar::from_headers(&parts.headers);
-        if let Some(session_token) = read_session_cookie(&jar) {
-            if let Some(user) = validate_and_touch(&pool, &session_token).await {
-                return Ok(user);
-            }
-        }
-
-        // 4. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
+        // 3. Dev fallback — `ENVIRONMENT=dev` is a developer's local stack (core
         //    isn't exposed; the request reaches us through the vite proxy, which
         //    defeats the loopback bypass above). Authenticate as the console
         //    owner so `make dev` lands straight in the app with no pairing — the
         //    complement to VIRTUES_DEV_SKIP_SETUP. A real box NEVER sets
-        //    ENVIRONMENT=dev, so this is inert in production. Last resort: a real
-        //    bearer/cookie still wins above.
+        //    ENVIRONMENT=dev, so this is inert in production. Last resort: the
+        //    proven iroh key / loopback still win above.
         if is_dev() {
             return Ok(AuthUser {
                 id: crate::middleware::http::OWNER_USER_ID.to_string(),
@@ -159,48 +147,25 @@ pub fn is_dev() -> bool {
     std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false)
 }
 
-/// Extract a token from an `Authorization: Bearer <token>` header.
-pub(crate) fn read_bearer(headers: &axum::http::HeaderMap) -> Option<String> {
-    let raw = headers
-        .get(axum::http::header::AUTHORIZATION)?
-        .to_str()
-        .ok()?;
-    let token = raw
-        .strip_prefix("Bearer ")
-        .or_else(|| raw.strip_prefix("bearer "))?
-        .trim();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token.to_string())
-    }
-}
-
-/// Validate a device bearer into an `AuthUser`. HMAC-looks-up the credential,
-/// joins it to its paired device + owner, and enforces the device-list ACL
-/// (credential `active`, device `revoked_at IS NULL`). Touches last-seen on
-/// success. Transport-independent — this is what makes the box reachable over
-/// a BYO overlay with no special-casing.
-pub(crate) async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUser> {
-    let credential_id = crate::api::credentials::validate_device_token(pool, token)
-        .await
-        .ok()?;
+/// Authenticate a device by its proven, allowlisted iroh EndpointId (hex).
+/// Joins `app_device` to its owner keyed on `app_device.node_id` — no
+/// bearer/credential row involved. The caller has already established (via the
+/// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
+/// a live device row owning it is sufficient to authenticate. Touches last-seen.
+pub(crate) async fn validate_iroh_peer(pool: &PgPool, node_id: &str) -> Option<AuthUser> {
     let row: Option<(String, String, String)> = sqlx::query_as(
         "SELECT u.id, d.id, d.label \
-         FROM credentials c \
-         JOIN app_device d ON d.id = c.device_id \
+         FROM app_device d \
          JOIN app_auth_user u ON u.id = d.user_id \
-         WHERE c.id = $1 AND c.status = 'active' AND d.revoked_at IS NULL",
+         WHERE d.node_id = $1 AND d.revoked_at IS NULL",
     )
-    .bind(&credential_id)
+    .bind(node_id)
     .fetch_optional(pool)
     .await
     .ok()
     .flatten();
     let (user_id, device_id, device_label) = row?;
 
-    // Best-effort last-seen touch on both the credential and the device row.
-    let _ = crate::api::credentials::update_last_seen(pool, &credential_id).await;
     let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
         .bind(&device_id)
         .execute(pool)
@@ -214,10 +179,9 @@ pub(crate) async fn validate_bearer(pool: &PgPool, token: &str) -> Option<AuthUs
 }
 
 /// Idempotent upsert for the synthetic console device row. Called at server
-/// startup so the FK in `app_auth_session` (and any future row that references
-/// the console session) stays valid. The row is created revoked=NULL,
-/// last_seen_at=NULL — `last_seen_at` gets touched on real use via the same
-/// validate_and_touch path (loopback bypass updates it best-effort, see below).
+/// startup so any row that references the console device (e.g. a pair token
+/// minted from the on-box CLI) has a valid FK target. The row is created
+/// revoked=NULL, last_seen_at=NULL.
 pub async fn ensure_console_device(pool: &PgPool) -> crate::Result<()> {
     sqlx::query(
         "INSERT INTO app_device (id, user_id, kind, label, paired_from_ip) \
@@ -239,113 +203,8 @@ fn unauthorized() -> AuthError {
     }
 }
 
-fn read_session_cookie(jar: &CookieJar) -> Option<String> {
-    jar.get(SESSION_COOKIE_NAME_SECURE)
-        .or_else(|| jar.get(SESSION_COOKIE_NAME))
-        .map(|c| c.value().to_string())
-}
-
-/// Look up the session, enforce expiry + revoke + idle, then touch `last_used_at`
-/// + `app_device.last_seen_at`. Returns `None` on any auth failure.
-async fn validate_and_touch(pool: &PgPool, session_token: &str) -> Option<AuthUser> {
-    // Join session → device → user. We pull `last_used_at` so we can enforce
-    // the idle ceiling in the same query and in the same row-lock.
-    let row: Option<(String, String, String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT u.id, d.id, d.label, s.last_used_at, s.expires_at \
-         FROM app_auth_session s \
-         JOIN app_device d ON d.id = s.device_id \
-         JOIN app_auth_user u ON u.id = d.user_id \
-         WHERE s.session_token = $1 \
-           AND s.expires_at > now() \
-           AND d.revoked_at IS NULL",
-    )
-    .bind(session_token)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-
-    let (user_id, device_id, device_label, last_used_at, _expires_at) = row?;
-
-    // Idle check — separate from hard expiry so the failure mode is distinct
-    // (we could log "idle_logout" vs "hard_expiry" if we wanted).
-    let idle_cutoff = Utc::now() - chrono::Duration::hours(IDLE_TIMEOUT_HOURS);
-    if last_used_at < idle_cutoff {
-        // Treat as logged out. We don't delete the row here — the periodic
-        // sweeper handles cleanup; the user just has to re-pair.
-        return None;
-    }
-
-    // Touch both timestamps. We tolerate failure here (rare) — auth still
-    // succeeds; we just don't get a fresh last-seen.
-    let _ = sqlx::query(
-        "UPDATE app_auth_session SET last_used_at = now() WHERE session_token = $1",
-    )
-    .bind(session_token)
-    .execute(pool)
-    .await;
-    let _ = sqlx::query("UPDATE app_device SET last_seen_at = now() WHERE id = $1")
-        .bind(&device_id)
-        .execute(pool)
-        .await;
-
-    Some(AuthUser {
-        id: user_id,
-        device_id,
-        device_label,
-    })
-}
-
-/// Public helper used by `/auth/session` and `/auth/signout`. Mirrors the
-/// extractor's read path but doesn't touch timestamps — useful for "just tell
-/// me if this cookie is alive" queries that shouldn't reset the idle clock.
-///
-/// Enforces the same predicates as the extractor (hard expiry + soft revoke +
-/// idle ceiling) so that `/auth/session` never reports `user = Some` for a
-/// session the very next state-changing request would reject.
-pub async fn peek_session(pool: &PgPool, session_token: &str) -> Option<AuthUser> {
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT u.id, d.id, d.label \
-         FROM app_auth_session s \
-         JOIN app_device d ON d.id = s.device_id \
-         JOIN app_auth_user u ON u.id = d.user_id \
-         WHERE s.session_token = $1 \
-           AND s.expires_at > now() \
-           AND s.last_used_at > now() - make_interval(hours => $2::int) \
-           AND d.revoked_at IS NULL",
-    )
-    .bind(session_token)
-    .bind(IDLE_TIMEOUT_HOURS as i32)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    row.map(|(id, device_id, device_label)| AuthUser {
-        id,
-        device_id,
-        device_label,
-    })
-}
-
-/// Delete a session row by cookie value. Used by `/auth/signout`.
-pub async fn delete_session(pool: &PgPool, session_token: &str) -> crate::Result<()> {
-    sqlx::query("DELETE FROM app_auth_session WHERE session_token = $1")
-        .bind(session_token)
-        .execute(pool)
-        .await
-        .map_err(|e| crate::Error::Database(format!("delete session: {e}")))?;
-    Ok(())
-}
-
-/// Periodic cleanup — drop sessions whose hard expiry has passed, and pair
-/// tokens whose TTL elapsed in a non-active state.
-pub async fn cleanup_expired(pool: &PgPool) -> crate::Result<(u64, u64)> {
-    let sessions = sqlx::query("DELETE FROM app_auth_session WHERE expires_at < now()")
-        .execute(pool)
-        .await
-        .map_err(|e| crate::Error::Database(format!("cleanup sessions: {e}")))?
-        .rows_affected();
-
+/// Periodic cleanup — drop pair tokens whose TTL elapsed in a non-active state.
+pub async fn cleanup_expired(pool: &PgPool) -> crate::Result<u64> {
     // Past expires_at, every terminal state is safe to delete — the token
     // can no longer be claimed, confirmed, or re-consumed. (`consumed`
     // tokens stay useful for ~60s as a re-claim window inside the consume
@@ -360,5 +219,5 @@ pub async fn cleanup_expired(pool: &PgPool) -> crate::Result<(u64, u64)> {
     .map_err(|e| crate::Error::Database(format!("cleanup pair tokens: {e}")))?
     .rows_affected();
 
-    Ok((sessions, tokens))
+    Ok(tokens)
 }

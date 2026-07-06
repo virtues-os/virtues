@@ -81,27 +81,14 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
     install_executable(&bin_src, &bin_dst)?;
 
     // llama-server — the inference sidecar engine (embed + rerank; see
-    // install::install_inference). Every tarball ships the CPU build; on
-    // Jetson we then try to swap in the CUDA (sm_87) build, published as a
-    // separate release asset because it only exists for aarch64 and its CI
-    // job is non-fatal (release-linux.yml). CPU fallback always works —
-    // bge-m3-class models rerank/embed fine on Orin's cores, just slower.
+    // install::install_inference). The tarball ships the per-arch build our
+    // CI compiled; on the Dragon image GPU offload comes through the generic
+    // Vulkan/OpenCL backends, so there is no per-board binary swap.
     let llama_src = tmpdir.path().join("llama-server");
     if llama_src.is_file() {
         let llama_dst = cfg.llama_binary_path();
         install_executable(&llama_src, &llama_dst)?;
         ui::ok(&format!("Installed llama-server → {}", llama_dst.display()));
-        if is_jetson() {
-            match fetch_jetson_cuda_llama(cfg, &base, &version).await {
-                Ok(true) => ui::ok("Swapped in CUDA llama-server (Jetson, sm_87)"),
-                Ok(false) => ui::warn(
-                    "No CUDA llama-server asset on this release — inference sidecars run on CPU",
-                ),
-                Err(e) => {
-                    ui::warn(&format!("CUDA llama-server fetch failed ({e}) — sidecars run on CPU"))
-                }
-            }
-        }
     } else {
         ui::warn(
             "llama-server not in tarball (pre-v0.1.1 release) — inference sidecars \
@@ -167,55 +154,6 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
 
     cfg.pinned_version = Some(version);
     Ok(())
-}
-
-/// L4T's marker file — present on every Jetson, absent everywhere else.
-fn is_jetson() -> bool {
-    Path::new("/etc/nv_tegra_release").exists()
-}
-
-/// Try to replace the CPU llama-server with the Jetson CUDA build attached
-/// to the same release. Returns Ok(false) when the asset simply isn't there
-/// (its CI job is allowed to fail without blocking the release).
-async fn fetch_jetson_cuda_llama(
-    cfg: &InstallConfig,
-    base: &str,
-    version: &str,
-) -> Result<bool> {
-    let name = format!("llama-server-{version}-aarch64-cuda-linux");
-    let url = format!("{base}/{name}");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(300))
-        .build()?;
-
-    let resp = client.get(&url).send().await.with_context(|| format!("GET {url}"))?;
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(false);
-    }
-    let bytes = resp.error_for_status()?.bytes().await?;
-
-    // SHA sidecar is mandatory here — this binary runs as a daemon.
-    let expected = client
-        .get(format!("{url}.sha256"))
-        .send()
-        .await
-        .and_then(|r| r.error_for_status())
-        .with_context(|| format!("GET {url}.sha256"))?
-        .text()
-        .await?;
-    let expected = expected
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| anyhow!("malformed sha256 sidecar for {name}"))?;
-    if !expected.eq_ignore_ascii_case(&sha256_hex(&bytes)) {
-        return Err(anyhow!("SHA256 mismatch on {name}"));
-    }
-
-    let tmpdir = tempfile::tempdir().context("creating tempdir")?;
-    let staged = tmpdir.path().join("llama-server");
-    fs::write(&staged, &bytes).context("staging CUDA llama-server")?;
-    install_executable(&staged, &cfg.llama_binary_path())?;
-    Ok(true)
 }
 
 /// Download a GGUF from the models release into the models dir, with a

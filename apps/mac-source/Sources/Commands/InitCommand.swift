@@ -29,16 +29,19 @@ struct InitCommand: ParsableCommand {
                 // The token is case-sensitive — do NOT uppercase it.
                 let pair = try await Config.pairConsume(token: token)
 
-                print("✓ Paired")
-                print("✓ Connected to: \(pair.endpoint)")
+                print("✓ Paired (auth: iroh key — no bearer)")
+                print("✓ Box reach: \(pair.boxNodeId) via \(pair.relayUrl)")
 
-                // Create and save config (bearer + action_ids from the server)
+                // Create and save config — the iroh seed is the credential; the
+                // reach ticket (boxNodeId/relayUrl) dials the box for uploads.
                 let config = Config(
-                    bearer: pair.bearer,
                     deviceId: pair.deviceId,
                     apiEndpoint: pair.endpoint,
                     actionIds: pair.actionIds,
-                    createdAt: Date()
+                    boxNodeId: pair.boxNodeId,
+                    relayUrl: pair.relayUrl,
+                    createdAt: Date(),
+                    deviceSeed: pair.seed
                 )
 
                 try config.save()

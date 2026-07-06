@@ -58,19 +58,44 @@ pub fn box_relay_url() -> Option<String> {
     BOX_RELAY_URL.get().and_then(|c| c.read().ok().and_then(|g| g.clone()))
 }
 
-/// The box's *configured* iroh reach `(endpoint_id, relay_url)`, read from
-/// persistent state (DB) rather than the in-process endpoint. `virtues doctor`
-/// runs in a separate process that never binds the endpoint, so it can't use the
-/// in-memory getters above — it derives the EndpointId from the stored secret and
-/// reads the stored relay config. `None` if either isn't provisioned (LAN-only).
-pub async fn reach_status(db: &PgPool) -> Option<(String, String)> {
+/// Derive the box's stable EndpointId from its stored iroh secret, without
+/// binding an endpoint. `virtues doctor` runs in a separate process that never
+/// binds, so it can't use the in-memory getters above. `None` before first boot
+/// provisions the secret.
+async fn endpoint_id_from_secret(db: &PgPool) -> Option<String> {
     let (hex_seed, _) = crate::box_secrets::get(db, BOX_IROH_SECRET).await.ok()??;
     let bytes = hex::decode(hex_seed.trim()).ok()?;
     let arr: [u8; 32] = bytes.as_slice().try_into().ok()?;
-    let endpoint_id = SecretKey::from_bytes(&arr).public().to_string();
-    let relay = crate::virtues_api::relay::load(db).await.ok()??.relay_url;
-    Some((endpoint_id, relay))
+    Some(SecretKey::from_bytes(&arr).public().to_string())
 }
+
+/// Honest, per-leg reach state for `virtues doctor`, read from the DB (doctor
+/// never binds the endpoint). Each field is independently optional so the report
+/// can show *exactly* which leg is unprovisioned — no more "works regardless".
+pub struct ReachReport {
+    /// The box's EndpointId (from its stored secret), or `None` pre-provision.
+    pub endpoint_id: Option<String>,
+    /// The stored relay URL, or `None` when LAN-only (unclaimed / atlas down).
+    pub relay_url: Option<String>,
+    /// How many device keys are currently on the allowlist.
+    pub allowlisted_devices: usize,
+}
+
+/// Read each reach leg's actual state for `virtues doctor`.
+pub async fn reach_report(db: &PgPool) -> ReachReport {
+    ReachReport {
+        endpoint_id: endpoint_id_from_secret(db).await,
+        relay_url: crate::virtues_api::relay::load(db)
+            .await
+            .ok()
+            .flatten()
+            .map(|rc| rc.relay_url),
+        allowlisted_devices: allowed_ids(db).await.len(),
+    }
+}
+
+/// How often the background reconcile runs to catch drift (15 min).
+const RECONCILE_INTERVAL_SECS: u64 = 900;
 
 /// Spawn the iroh reach subsystem: bind the endpoint and serve `app` over it.
 /// `app` is the box's fully-built axum `Router` (cloned from the one served on
@@ -116,12 +141,21 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
         let allow = load_allowlist(&db).await;
         // Register this box + its paired devices with atlas BEFORE homing on the
         // relay, so the relay's active-sub gate already recognises the box when it
-        // connects (best-effort; retried on each pairing change).
+        // connects (best-effort; the periodic reconcile below retries).
         report_endpoints(&db).await;
         // Serve the existing axum app over iroh. Hold the router handle for the
         // life of the process (dropping it aborts the accept loop).
         let _router = serve(endpoint, app, allow);
-        std::future::pending::<()>().await;
+        // Periodic reconcile catches drift the event-driven path (after_pairing_change)
+        // can't: atlas restarting and losing our registration, a device that paired
+        // while atlas was unreachable, or relay config that only became available
+        // after we bound. Idempotent + best-effort.
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(RECONCILE_INTERVAL_SECS));
+        tick.tick().await; // consume the immediate first tick — startup already reconciled above
+        loop {
+            tick.tick().await;
+            reconcile(&db).await;
+        }
     });
 }
 
@@ -129,30 +163,12 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
 /// first, then the `VIRTUES_RELAY_URL` env fallback (dev/manual). `None` → dev
 /// mode (n0 relays + discovery).
 async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
+    // Self-heal a missing relay config (box claimed before the relay existed, or
+    // a claim-time fetch that 503'd) before we bind.
+    ensure_relay_config(db).await;
     if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
         if let Ok(u) = RelayUrl::from_str(&rc.relay_url) {
             return Some(u);
-        }
-    }
-    // Not stored yet — e.g. the box was claimed before the relay existed, or the
-    // claim-time fetch (best-effort) failed/503'd. Without this, such a box binds
-    // in dev mode (n0 relays) and is stranded LAN-only until a manual re-claim.
-    // Fetch from atlas on every startup so it self-heals once the relay is live.
-    if let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await {
-        let http = crate::http_client::virtues_api_client();
-        let atlas = crate::virtues_api::atlas_url();
-        match crate::virtues_api::relay::fetch_and_store(db, &http, &atlas, &api_key).await {
-            Ok(()) => {
-                if let Ok(Some(rc)) = crate::virtues_api::relay::load(db).await {
-                    if let Ok(u) = RelayUrl::from_str(&rc.relay_url) {
-                        tracing::info!(relay = %rc.relay_url, "iroh: fetched relay config from atlas on startup");
-                        return Some(u);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::debug!(error = %format!("{e:#}"), "iroh: startup relay-config fetch skipped (LAN-only for now)");
-            }
         }
     }
     let raw = std::env::var("VIRTUES_RELAY_URL").ok().filter(|s| !s.is_empty())?;
@@ -162,6 +178,26 @@ async fn resolve_relay_url(db: &PgPool) -> Option<RelayUrl> {
             tracing::warn!(error = %e, url = %raw, "VIRTUES_RELAY_URL is not a valid relay URL — dev mode");
             None
         }
+    }
+}
+
+/// Fetch + store this box's relay config from atlas if it isn't stored yet.
+/// Best-effort and idempotent (no-op once homed). A freshly-fetched relay only
+/// takes effect on the next endpoint bind — the running endpoint keeps the relay
+/// it bound with; this exists so a box that came up LAN-only self-heals on the
+/// next restart (or the next `resolve_relay_url`) instead of needing a re-claim.
+async fn ensure_relay_config(db: &PgPool) {
+    if matches!(crate::virtues_api::relay::load(db).await, Ok(Some(_))) {
+        return;
+    }
+    let Ok(Some(api_key)) = crate::virtues_api::renew::read_api_key(db).await else {
+        return;
+    };
+    let http = crate::http_client::virtues_api_client();
+    let atlas = crate::virtues_api::atlas_url();
+    match crate::virtues_api::relay::fetch_and_store(db, &http, &atlas, &api_key).await {
+        Ok(()) => tracing::info!("iroh: fetched relay config from atlas"),
+        Err(e) => tracing::debug!(error = %format!("{e:#}"), "iroh: relay-config fetch skipped (LAN-only for now)"),
     }
 }
 
@@ -260,17 +296,36 @@ async fn report_endpoints_with(db: &PgPool, device_ids: &[EndpointId]) {
     }
 }
 
-/// Fire-and-forget: refresh the local allowlist and re-report endpoints to atlas
-/// after a pairing or revocation. Non-blocking so pairing handlers don't wait.
+/// Fire-and-forget reconcile after a pairing or revocation. Non-blocking so the
+/// pairing handlers don't wait on the atlas round-trip.
 pub fn after_pairing_change(db: PgPool) {
     tokio::spawn(async move {
-        // Read the allowlist once, then use it for BOTH the local hot-swap and the
-        // atlas report (they need the same set — no reason to query twice).
-        let ids = allowed_ids(&db).await;
-        if let Some(allow) = ALLOW.get() {
-            tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
-            allow.replace(ids.clone());
-        }
-        report_endpoints_with(&db, &ids).await;
+        reconcile(&db).await;
     });
+}
+
+/// The one place that makes the box's live reach state match the DB. Idempotent
+/// + best-effort, safe to run at startup, on a timer, and after any pairing or
+/// revocation:
+///   1. relay config present (self-heal a late / failed claim-time fetch)
+///   2. iroh allowlist == non-revoked device keys (hot-swapped into `serve`)
+///   3. atlas knows our box + device EndpointIds (the relay active-sub gate)
+///   4. model files present (health signal only — the installer owns fetching)
+pub async fn reconcile(db: &PgPool) {
+    ensure_relay_config(db).await;
+
+    // Read the allowlist once, use it for BOTH the local hot-swap and the atlas
+    // report (same set — no reason to query twice).
+    let ids = allowed_ids(db).await;
+    if let Some(allow) = ALLOW.get() {
+        tracing::debug!(count = ids.len(), "iroh allowlist refreshed");
+        allow.replace(ids.clone());
+    }
+    report_endpoints_with(db, &ids).await;
+
+    let report = crate::inference_report::resolution_report();
+    let missing = report.missing();
+    if !missing.is_empty() {
+        tracing::warn!(?missing, "reconcile: model files missing — re-run the installer to fetch");
+    }
 }

@@ -465,11 +465,9 @@ struct SettingsView: View {
                 guard let root = try JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
                     throw NetworkError.decodingError
                 }
-                let bearer = root["bearer"] as? String
                 let boxNodeId = root["box_node_id"] as? String
                 let relayUrl = root["relay_url"] as? String
-                guard let bearer, !bearer.isEmpty,
-                      let boxNodeId, !boxNodeId.isEmpty,
+                guard let boxNodeId, !boxNodeId.isEmpty,
                       let relayUrl, !relayUrl.isEmpty else {
                     throw NetworkError.badRequest(
                         message: "This provision QR is missing the box reach ticket. "
@@ -477,8 +475,8 @@ struct SettingsView: View {
                     )
                 }
 
-                // Persist bearer + reach ticket + this device's iroh seed.
-                try KeychainStore.shared.saveBearer(bearer)
+                // No bearer — this device authenticates by its own iroh key once
+                // it registers its EndpointId below (the box then allowlists it).
                 let seed = NetworkManager.ensureIrohSeed()
                 let nodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
 
@@ -502,9 +500,7 @@ struct SettingsView: View {
                 // land now.
                 if let nodeId, let base = DeviceManager.shared.configuration.baseURL {
                     Task.detached {
-                        _ = await NetworkManager.shared.registerSelfNodeId(
-                            base: base, bearer: bearer, nodeId: nodeId
-                        )
+                        _ = await NetworkManager.shared.registerSelfNodeId(base: base, nodeId: nodeId)
                     }
                 }
             } catch {

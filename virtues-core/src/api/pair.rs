@@ -16,11 +16,11 @@
 //!     `POST /api/pair/deny/:id` (the modal fires it on close).
 //!
 //! Consume path (`POST /api/pair/consume`)
-//!   - Accepts `{token, kind, label, device_info, wg_public_key?}`.
-//!   - For `kind = browser`: creates a device row + session cookie.
-//!   - For `kind = mobile_app | desktop_app | sensor`: creates a device row +
-//!     a `credentials` row with a server-issued bearer (HMAC-lookup, encrypted
-//!     at rest) + optional WG bundle if `wg_public_key` was supplied.
+//!   - Accepts `{token, kind, label, device_info, device_node_id?}`.
+//!   - For `kind = mobile_app | desktop_app | sensor | cli`: creates a device
+//!     row (recording the device's iroh `node_id` for the allowlist) + a
+//!     `credentials` row with a server-issued bearer (HMAC-lookup, encrypted at
+//!     rest). Reach is over iroh — no WG bundle.
 //!
 //! Status path (`GET /api/pair/status/:id`) — RFC 8628-shaped polling that the
 //! "+ Add Device" modal hits to know when the new device has finished.
@@ -35,7 +35,6 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 use chrono::{Duration, Utc};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -43,7 +42,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
-use crate::middleware::auth::{AuthUser, SESSION_COOKIE_NAME, SESSION_COOKIE_NAME_SECURE};
+use crate::middleware::auth::AuthUser;
 use crate::middleware::{client_ip, is_secure_environment, rate_limit_ip, OWNER_USER_ID};
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -54,19 +53,6 @@ const AUTHORIZED_REDEEM_TTL_MIN: i64 = 5;
 /// CLI-minted tokens get a longer window — they're typed into the desktop app,
 /// and the user may need a few minutes to download it the first time.
 const CLI_REDEEM_TTL_MIN: i64 = 30;
-
-/// Session cookie hard expiry (idle expiry is shorter and enforced in
-/// middleware via `last_used_at`).
-const SESSION_TTL_DAYS: i64 = 30;
-
-/// Claim deadline for a desktop-relayed `provision` credential. Unlike the
-/// consume path (the credential is minted only when the device redeems a
-/// token), provision mints the credential live *before* the new device scans
-/// the QR — so an unclaimed one carries this deadline and lapses if the device
-/// never comes online. Generous vs the QR's on-screen TTL (~2 min) so a code
-/// scanned at the last second still completes its tunnel bring-up + first call.
-/// Cleared to NULL on first authenticated use (`credentials::update_last_seen`).
-const PROVISION_CLAIM_TTL_MIN: i64 = 15;
 
 // ─── Token helpers ──────────────────────────────────────────────────────────
 
@@ -93,18 +79,6 @@ fn random_pair_code() -> String {
         }
     }
     code
-}
-
-fn random_32_session_token() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
-fn random_32_bearer() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    hex::encode(bytes)
 }
 
 /// A device-link code: 10 chars from an unambiguous alphabet (~50 bits) —
@@ -496,7 +470,7 @@ pub struct ProvisionStatusResponse {
 /// phone scanned the bundle QR + brought up WG), not merely when the box
 /// accepted the provision. The signal is `last_seen_at > paired_at` (with a
 /// small guard against the provision-time `now()` jitter); `last_seen_at` is
-/// touched on every authenticated request via `validate_bearer`.
+/// touched on every authenticated request.
 pub async fn provision_status_handler(
     State(pool): State<PgPool>,
     _user: AuthUser,
@@ -587,49 +561,31 @@ pub(crate) fn resolve_source_id(kind: &str, source: Option<&str>) -> Result<Stri
 #[derive(Debug, Deserialize)]
 pub struct ConsumeRequest {
     pub token: String,
-    pub kind: String,                                 // 'browser' | 'mobile_app' | 'desktop_app' | 'sensor'
+    pub kind: String,                                 // 'mobile_app' | 'desktop_app' | 'sensor' | 'cli'
     pub label: Option<String>,                        // auto-generated if absent
     pub device_info: Option<Value>,                   // arbitrary JSON describing the device
     /// The data source this collector represents (`"mac"`, `"ios"`, …, from
     /// `actions/sources.toml`). REQUIRED for a collector to receive its
-    /// per-credential action fan-out — the credential's `source_id` is set
-    /// from this so `reconcile_templates` matches the source's webhook
-    /// templates. `kind="desktop_app"` is ambiguous (the WG daemon AND
-    /// mac-source both use it), so collectors MUST declare `source` explicitly;
-    /// `mobile_app` defaults to `"ios"`. Absent/`"__device__"` → no fan-out
-    /// (correct for the WG desktop daemon, which is not a collector).
+    /// per-device ingest action fan-out — `app_device.source_id` is set from
+    /// this so `reconcile_templates` matches the source's webhook templates.
+    /// `kind="desktop_app"` is ambiguous, so collectors MUST declare `source`
+    /// explicitly; `mobile_app` defaults to `"ios"`. Absent/`"__device__"` → no
+    /// fan-out (correct for a non-collector device).
     pub source: Option<String>,
     /// The enrolling device's own iroh **EndpointId** (hex). The device
     /// generates its keypair locally and submits its EndpointId here; the box
     /// records it on `app_device` and allowlists it on its iroh transport so the
-    /// device can dial the box by the box's EndpointId. Absent for the box's own
-    /// browser / non-iroh clients.
+    /// device can dial the box by the box's EndpointId.
     pub device_node_id: Option<String>,
-    /// Client-generated idempotency key (persisted per pairing attempt). If a
-    /// consume response is lost and the client retries with the same key, the box
-    /// re-returns the SAME bearer instead of failing on the already-consumed
-    /// token. Non-browser only. Absent → no idempotency (legacy behavior).
-    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ConsumeResponse {
     pub device_id: String,
-    /// The credential row id (`AUTH_TOKEN_PREFIX`). This is the id the device
-    /// must send to `DELETE /api/credentials/:id` to revoke itself — distinct
-    /// from `device_id` (the `app_device.id`). Absent for browser pairings,
-    /// whose credential is a session cookie with no revocable row id.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credential_id: Option<String>,
     pub redirect: String,
-    /// Server-issued bearer — returned ONCE for non-browser devices. Browsers
-    /// don't see this; their credential is a session cookie set on this response.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bearer: Option<String>,
-    /// Map of `binary-name → app_actions.id` for the per-credential action
-    /// fan-out. Returned for `kind = mobile_app | desktop_app | sensor` so
-    /// the device knows which webhook id to POST each stream flush to. Empty
-    /// for browser pairings (browsers don't run actions).
+    /// Map of `binary-name → app_actions.id` for the per-device ingest fan-out,
+    /// so the device knows which webhook id to POST each stream flush to. Empty
+    /// for non-collector devices.
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
     /// The box's iroh **EndpointId** (hex) — the device dials this to reach the
@@ -659,7 +615,6 @@ pub(crate) fn box_reach() -> Option<(String, String)> {
 pub async fn consume_handler(
     State(pool): State<PgPool>,
     headers: axum::http::HeaderMap,
-    jar: CookieJar,
     Json(body): Json<ConsumeRequest>,
 ) -> axum::response::Response {
     let token = body.token.trim();
@@ -685,28 +640,12 @@ pub async fn consume_handler(
     }
 
     let kind = match body.kind.as_str() {
-        "browser" | "mobile_app" | "desktop_app" | "sensor" => body.kind.as_str(),
+        "mobile_app" | "desktop_app" | "sensor" | "cli" => body.kind.as_str(),
         _ => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
                 .into_response()
         }
     };
-
-    // Idempotency replay: if this key already produced a bearer (a prior consume
-    // whose response the client lost), re-return the SAME result without touching
-    // the (now-consumed) token. Non-browser only.
-    let idem_key = body
-        .idempotency_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    if kind != "browser" {
-        if let Some(key) = idem_key {
-            if let Some(resp) = replay_consume_idem(&pool, key).await {
-                return resp;
-            }
-        }
-    }
 
     // Resolve the credential's source (see `resolve_source_id`). A bad explicit
     // source is a loud 400, not a silent no-fan-out.
@@ -725,9 +664,9 @@ pub async fn consume_handler(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // Build everything we need OUTSIDE the transaction: the device id, label,
-    // and (for non-browser devices) the encrypted bearer. This keeps the tx
-    // short — it only does atomic DB writes, no crypto, no JSON munging.
+    // Build the device id + label outside the transaction (keeps the tx short:
+    // only atomic DB writes, no JSON munging). No bearer — the device's proven
+    // iroh key IS its credential; ingest actions anchor on its device_id.
     let device_id = crate::ids::generate_id(
         crate::ids::DEVICE_PREFIX,
         &[&token_hash[..16], &Utc::now().to_rfc3339()],
@@ -743,35 +682,9 @@ pub async fn consume_handler(
         .clone()
         .unwrap_or_else(|| json!({}));
 
-    // For non-browser devices, pre-encrypt the bearer so a slow KMS call
-    // doesn't hold the DB transaction open.
-    let bearer_pack = if kind == "browser" {
-        None
-    } else {
-        match build_bearer_pack(kind, &label, &body.device_info) {
-            Ok(p) => Some(p),
-            Err(e) => return e.into_response(),
-        }
-    };
-
-    // Browser session token is also pre-generated (cheap), so the tx is
-    // purely DB writes.
-    let session_pack = if kind == "browser" {
-        Some(SessionPack {
-            id: crate::ids::generate_id(
-                crate::ids::AUTH_SESSION_PREFIX,
-                &[&device_id, &Utc::now().to_rfc3339()],
-            ),
-            token: random_32_session_token(),
-            expires_at: Utc::now() + Duration::days(SESSION_TTL_DAYS),
-        })
-    } else {
-        None
-    };
-
-    // ─── Single transaction: claim token + create device + create credential
-    //     (or session) + back-link the token. Any failure rolls everything back
-    //     including the token claim — caller can retry with the same token. ──
+    // ─── Single transaction: claim token + create device + back-link the token.
+    //     Any failure rolls everything back including the token claim — caller
+    //     can retry with the same token. ──
     let mut tx = match pool.begin().await {
         Ok(t) => t,
         Err(e) => {
@@ -822,6 +735,7 @@ pub async fn consume_handler(
         &device_info,
         ip.as_deref(),
         body.device_node_id.as_deref(),
+        Some(source_id.as_str()),
     )
     .await
     {
@@ -848,41 +762,6 @@ pub async fn consume_handler(
             Json(json!({"error": "internal"})),
         )
             .into_response();
-    }
-
-    if kind == "browser" {
-        let sp = session_pack.as_ref().expect("session_pack for browser");
-        if let Err(e) = sqlx::query(
-            "INSERT INTO app_auth_session \
-             (id, session_token, device_id, expires_at, last_used_at) \
-             VALUES ($1, $2, $3, $4, now())",
-        )
-        .bind(&sp.id)
-        .bind(&sp.token)
-        .bind(&device_id)
-        .bind(sp.expires_at)
-        .execute(&mut *tx)
-        .await
-        {
-            tracing::warn!("pair consume: session insert failed: {e:#}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "session_insert_failed"})),
-            )
-                .into_response();
-        }
-    } else {
-        let bp = bearer_pack.as_ref().expect("bearer_pack for non-browser");
-        // No claim deadline on the consume path — the credential is minted only
-        // when the device itself redeems the token, so it's permanent.
-        if let Err(e) = insert_credential_row(&mut tx, bp, &source_id, &label, &device_id, None).await {
-            tracing::warn!("pair consume: credential insert failed: {e:#}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "credential_insert_failed"})),
-            )
-                .into_response();
-        }
     }
 
     if let Err(e) = tx.commit().await {
@@ -925,8 +804,8 @@ pub async fn consume_handler(
         }
     }
 
-    // Post-commit: log the pairing event (best-effort) and assemble the
-    // response (cookie for browsers, bearer for everything else).
+    // Post-commit: log the pairing event (best-effort) and assemble the bearer
+    // response.
     let _ = log_event(
         &pool,
         Some(&device_id),
@@ -941,76 +820,24 @@ pub async fn consume_handler(
     )
     .await;
 
-    if let Some(sp) = session_pack {
-        let is_secure = is_secure_environment();
-        let cookie_name = if is_secure {
-            SESSION_COOKIE_NAME_SECURE
-        } else {
-            SESSION_COOKIE_NAME
-        };
-        let cookie = Cookie::build((cookie_name, sp.token))
-            .path("/")
-            .http_only(true)
-            .secure(is_secure)
-            .same_site(SameSite::Lax)
-            .max_age(time::Duration::days(SESSION_TTL_DAYS))
-            .build();
-        let jar = jar.add(cookie);
-        // Hot-swap the iroh allowlist + re-report to atlas (browser rows have no
-        // node_id, so this is a no-op set-wise, but keeps the path uniform).
-        crate::relay::after_pairing_change(pool.clone());
-        // Compute the reach ticket once so both halves are consistent.
-        let (box_node_id, relay_url) = match box_reach() {
-            Some((n, r)) => (Some(n), Some(r)),
-            None => (None, None),
-        };
-        return (
-            jar,
-            (
-                StatusCode::OK,
-                Json(ConsumeResponse {
-                    device_id,
-                    credential_id: None,
-                    redirect: "/".to_string(),
-                    bearer: None,
-                    action_ids: std::collections::HashMap::new(),
-                    box_node_id,
-                    relay_url,
-                }),
-            ),
-        )
-            .into_response();
-    }
+    // Newly-paired device carries its iroh EndpointId → allowlist it now, BEFORE
+    // the fan-out, so its ingest action is created against an allowlisted device.
+    crate::relay::after_pairing_change(pool.clone());
 
-    // App / sensor pairing: assemble the per-device action fan-out so the
-    // device knows which `app_actions.id` to POST each stream flush to, and
-    // (when a WG pubkey was supplied) the WG provisioning bundle. Both are
-    // post-commit best-effort: a failure here doesn't undo the pairing, the
-    // device just shows up paired but with no per-credential actions until
-    // a manual `virtues reconcile` (or the next legacy flow sync). The
-    // device handler can call `/api/devices/<id>/reconcile` to retry. For
-    // v1, we log loudly and let the user re-pair if they hit this.
-    let bp = bearer_pack.expect("bearer_pack present for non-browser");
-
-    let action_ids = match assemble_action_fanout(&pool, &bp.credential_id).await {
+    // Assemble the per-device action fan-out so the device knows which
+    // `app_actions.id` to POST each stream flush to. Post-commit best-effort: a
+    // failure here doesn't undo the pairing — the device shows up paired but with
+    // no ingest actions until the next reconcile.
+    let action_ids = match assemble_action_fanout(&pool, &device_id).await {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!(
-                "pair consume: action fanout failed for credential {}: {e:#}; \
-                 device paired but actions not wired",
-                bp.credential_id
+                "pair consume: action fanout failed for device {device_id}: {e:#}; \
+                 device paired but actions not wired"
             );
             std::collections::HashMap::new()
         }
     };
-
-    // Newly-paired device carries its iroh EndpointId → allowlist it now.
-    crate::relay::after_pairing_change(pool.clone());
-
-    // Record for idempotent replay (best-effort) so a lost response is recoverable.
-    if let Some(key) = idem_key {
-        store_consume_idem(&pool, key, &device_id, &bp, &action_ids).await;
-    }
 
     // Compute the reach ticket once so both halves are consistent.
     let (box_node_id, relay_url) = match box_reach() {
@@ -1021,9 +848,7 @@ pub async fn consume_handler(
         StatusCode::OK,
         Json(ConsumeResponse {
             device_id,
-            credential_id: Some(bp.credential_id),
             redirect: "/".to_string(),
-            bearer: Some(bp.bearer),
             action_ids,
             box_node_id,
             relay_url,
@@ -1054,32 +879,22 @@ pub async fn link_redeem_handler(
         return (StatusCode::BAD_REQUEST, Json(json!({"error": "missing_code"}))).into_response();
     }
     let code_hash = hash_token(code);
-    // Atomically claim: approved + unexpired → redeemed (one-time).
-    let row: Option<(Option<String>, Option<String>, Value)> = sqlx::query_as(
+    // Atomically claim: approved + unexpired → redeemed (one-time). The device
+    // was already enrolled + allowlisted at approve time; redeem just hands back
+    // its id, ingest action map, and the box reach ticket. No bearer.
+    let row: Option<(Option<String>, Value)> = sqlx::query_as(
         "UPDATE app_link_session SET status = 'redeemed' \
          WHERE code_hash = $1 AND status = 'approved' AND expires_at > now() \
-         RETURNING bearer_ciphertext, credential_id, action_ids",
+         RETURNING device_id, action_ids",
     )
     .bind(&code_hash)
     .fetch_optional(&pool)
     .await
     .unwrap_or(None);
-    let (ciphertext, credential_id, action_ids_json) = match row {
-        Some((Some(ct), cred, ids)) => (ct, cred, ids),
+    let (device_id, action_ids_json) = match row {
+        Some((Some(did), ids)) => (did, ids),
         _ => {
             return (StatusCode::NOT_FOUND, Json(json!({"error": "not_approved_or_expired"}))).into_response();
-        }
-    };
-    let bearer = match crate::crypto::TokenEncryptor::from_env()
-        .ok()
-        .and_then(|enc| enc.decrypt(&ciphertext).ok())
-        .and_then(|pt| serde_json::from_str::<Value>(&pt).ok())
-        .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(String::from))
-    {
-        Some(b) => b,
-        None => {
-            tracing::warn!("link_redeem: bearer decrypt failed");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
         }
     };
     let action_ids: std::collections::HashMap<String, String> =
@@ -1091,8 +906,7 @@ pub async fn link_redeem_handler(
     (
         StatusCode::OK,
         Json(json!({
-            "bearer": bearer,
-            "credential_id": credential_id,
+            "device_id": device_id,
             "action_ids": action_ids,
             "box_node_id": box_node_id,
             "relay_url": relay_url,
@@ -1117,12 +931,10 @@ pub struct ProvisionRequest {
 #[derive(Debug, Serialize)]
 pub struct ProvisionResponse {
     pub device_id: String,
-    pub credential_id: String,
-    pub bearer: String,
     #[serde(skip_serializing_if = "std::collections::HashMap::is_empty", default)]
     pub action_ids: std::collections::HashMap<String, String>,
-    /// SVG QR for the new device to scan (carries the box reach ticket + bearer).
-    /// Empty when the box isn't reachable yet.
+    /// SVG QR for the new device to scan (carries the box reach ticket + the
+    /// device id + source). Empty when the box isn't reachable yet.
     pub qr_svg: String,
     /// The box's iroh reach ticket, so the provisioned device can dial it off-LAN.
     /// `None` when the box's iroh endpoint isn't up yet.
@@ -1147,8 +959,7 @@ pub async fn provision_handler(
     Json(body): Json<ProvisionRequest>,
 ) -> axum::response::Response {
     let kind = match body.kind.as_deref().unwrap_or("mobile_app") {
-        // `browser` is excluded: a browser's credential is a session cookie with
-        // no WG bundle, so there's nothing to hand off via QR.
+        // `browser` is excluded: bare browsers can't pair (no session path).
         k @ ("mobile_app" | "desktop_app" | "sensor") => k,
         _ => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
@@ -1177,14 +988,6 @@ pub async fn provision_handler(
         .unwrap_or_else(|| default_label_for(kind, None, &body.device_info));
     let device_info = body.device_info.clone().unwrap_or_else(|| json!({}));
 
-    // The box generates the device's keypair (relay path), so no wg_public_key
-    // is supplied to the bearer pack — the pubkey is recorded on the peer record
-    // by `assemble_bundle_generated` instead.
-    let bp = match build_bearer_pack(kind, &label, &body.device_info) {
-        Ok(p) => p,
-        Err(e) => return e.into_response(),
-    };
-
     let mut tx = match pool.begin().await {
         Ok(t) => t,
         Err(e) => {
@@ -1194,19 +997,22 @@ pub async fn provision_handler(
         }
     };
     // node_id is None here: the provisioned device isn't present to submit its
-    // EndpointId; it reports it on first authenticated contact (follow-up).
-    if let Err(e) = insert_device_row(&mut tx, &device_id, kind, &label, &device_info, ip.as_deref(), None).await {
+    // EndpointId; it generates its iroh keypair when it scans the QR and reports
+    // it via `set_self_node_id` on first contact (which allowlists it).
+    if let Err(e) = insert_device_row(
+        &mut tx,
+        &device_id,
+        kind,
+        &label,
+        &device_info,
+        ip.as_deref(),
+        None,
+        Some(source_id.as_str()),
+    )
+    .await
+    {
         tracing::warn!("pair provision: device insert failed: {e:#}");
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "device_insert_failed"})))
-            .into_response();
-    }
-    // Live-minted before the new device scans the QR → carry a claim deadline
-    // so an unclaimed credential (abandoned QR, browser closed) lapses on its
-    // own. Cleared to NULL on the device's first authenticated call.
-    let claim_deadline = Utc::now() + Duration::minutes(PROVISION_CLAIM_TTL_MIN);
-    if let Err(e) = insert_credential_row(&mut tx, &bp, &source_id, &label, &device_id, Some(claim_deadline)).await {
-        tracing::warn!("pair provision: credential insert failed: {e:#}");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "credential_insert_failed"})))
             .into_response();
     }
     if let Err(e) = tx.commit().await {
@@ -1223,40 +1029,38 @@ pub async fn provision_handler(
             "kind": kind,
             "label": &label,
             "relayed_by_device": &user.device_id,
-            "credential_id": &bp.credential_id,
         }),
         ip,
         None,
     )
     .await;
 
-    let action_ids = match assemble_action_fanout(&pool, &bp.credential_id).await {
+    let action_ids = match assemble_action_fanout(&pool, &device_id).await {
         Ok(map) => map,
         Err(e) => {
             tracing::warn!(
-                "pair provision: action fanout failed for credential {}: {e:#}; \
-                 device provisioned but actions not wired",
-                bp.credential_id
+                "pair provision: action fanout failed for device {device_id}: {e:#}; \
+                 device provisioned but actions not wired"
             );
             std::collections::HashMap::new()
         }
     };
 
-    // iroh model: the QR hands the phone everything it needs to reach the box
-    // off-LAN — the box's iroh reach ticket (EndpointId + relay URL) plus this
-    // device's bearer. Only meaningful once the box's iroh endpoint is up;
-    // otherwise there's no address to convey, so the QR is left empty. Payload
-    // contract (the iOS scanner must match) is in apps/ios/RELAY_MIGRATION.md.
+    // iroh model: the QR hands the phone what it needs to reach the box off-LAN —
+    // the box's iroh reach ticket (EndpointId + relay URL) + this device's id and
+    // source, so it can dial in, report its own EndpointId, and route ingest. No
+    // bearer: auth is the device's proven key once it reports + is allowlisted.
+    // Only meaningful once the box's iroh endpoint is up; otherwise the QR is
+    // left empty. Payload contract (iOS scanner) is in apps/ios/RELAY_MIGRATION.md.
     let reach = box_reach();
     let qr_svg = match &reach {
         Some((node_id, relay_url)) => render_qr_svg(
             &serde_json::json!({
-                "v": 2,
+                "v": 3,
                 "box_node_id": node_id,
                 "relay_url": relay_url,
-                "bearer": &bp.bearer,
-                "credential_id": &bp.credential_id,
                 "device_id": &device_id,
+                "source": &source_id,
             })
             .to_string(),
         ),
@@ -1267,8 +1071,6 @@ pub async fn provision_handler(
         StatusCode::OK,
         Json(ProvisionResponse {
             device_id,
-            credential_id: bp.credential_id,
-            bearer: bp.bearer,
             action_ids,
             qr_svg,
             box_node_id: reach.as_ref().map(|(n, _)| n.clone()),
@@ -1278,11 +1080,11 @@ pub async fn provision_handler(
         .into_response()
 }
 
-// ─── Post-commit fan-out + WG bundle assembly ──────────────────────────────
+// ─── Post-commit fan-out ────────────────────────────────────────────────────
 //
-// Both run AFTER the consume transaction commits — failure logs but doesn't
-// undo the pairing. They're shaped as their own helpers so the consume
-// handler stays the easy-to-read top-level flow.
+// Runs AFTER the consume transaction commits — failure logs but doesn't undo
+// the pairing. Shaped as its own helper so the consume handler stays the
+// easy-to-read top-level flow.
 
 /// Reconcile action templates (so per-credential `app_actions` rows are
 /// fanned out) and read back the binary-name → action-id map the device
@@ -1291,10 +1093,10 @@ pub async fn provision_handler(
 /// produces identical device-side behavior.
 pub(crate) async fn assemble_action_fanout(
     pool: &PgPool,
-    credential_id: &str,
+    device_id: &str,
 ) -> Result<std::collections::HashMap<String, String>, crate::Error> {
     crate::action_templates::reconcile_templates(pool).await?;
-    virtues_helpers::auth::fanout_action_ids(pool, credential_id)
+    virtues_helpers::auth::fanout_action_ids(pool, device_id)
         .await
         .map_err(|e| crate::Error::Other(format!("fanout_action_ids: {e}")))
 }
@@ -1331,85 +1133,9 @@ pub(crate) async fn claim_pair_token(
     Ok(row.map(|(id,)| id))
 }
 
-/// Idempotency replay for consume: if `key` already produced a bearer, decrypt +
-/// re-return the identical `ConsumeResponse`. `None` = no prior result (fall
-/// through to a normal consume). Never fails the request on its own error.
-async fn replay_consume_idem(pool: &PgPool, key: &str) -> Option<axum::response::Response> {
-    let row: Option<(String, String, String, Value)> = sqlx::query_as(
-        "SELECT device_id, credential_id, bearer_ciphertext, action_ids \
-         FROM app_pair_consume_idem WHERE idempotency_key = $1",
-    )
-    .bind(key)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten();
-    let (device_id, credential_id, ciphertext, action_ids_json) = row?;
-
-    // Decrypt the stored bearer ({"token": <bearer>}) — same form as credentials.
-    let encryptor = crate::crypto::TokenEncryptor::from_env().ok()?;
-    let plaintext = encryptor.decrypt(&ciphertext).ok()?;
-    let bearer = serde_json::from_str::<Value>(&plaintext)
-        .ok()?
-        .get("token")?
-        .as_str()?
-        .to_string();
-    let action_ids: std::collections::HashMap<String, String> =
-        serde_json::from_value(action_ids_json).unwrap_or_default();
-    let (box_node_id, relay_url) = match box_reach() {
-        Some((n, r)) => (Some(n), Some(r)),
-        None => (None, None),
-    };
-    Some(
-        (
-            StatusCode::OK,
-            Json(ConsumeResponse {
-                device_id,
-                credential_id: Some(credential_id),
-                redirect: "/".to_string(),
-                bearer: Some(bearer),
-                action_ids,
-                box_node_id,
-                relay_url,
-            }),
-        )
-            .into_response(),
-    )
-}
-
-/// Persist a consume result for idempotent replay (best-effort) + sweep rows
-/// older than an hour. The bearer is stored only as ciphertext.
-async fn store_consume_idem(
-    pool: &PgPool,
-    key: &str,
-    device_id: &str,
-    bp: &BearerPack,
-    action_ids: &std::collections::HashMap<String, String>,
-) {
-    let action_ids_json = serde_json::to_value(action_ids).unwrap_or_else(|_| json!({}));
-    if let Err(e) = sqlx::query(
-        "INSERT INTO app_pair_consume_idem \
-         (idempotency_key, device_id, credential_id, bearer_ciphertext, action_ids) \
-         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (idempotency_key) DO NOTHING",
-    )
-    .bind(key)
-    .bind(device_id)
-    .bind(&bp.credential_id)
-    .bind(&bp.ciphertext)
-    .bind(&action_ids_json)
-    .execute(pool)
-    .await
-    {
-        tracing::warn!("pair consume: idempotency store failed: {e:#}");
-    }
-    // Opportunistic sweep — these are only needed for a brief retry window.
-    let _ = sqlx::query("DELETE FROM app_pair_consume_idem WHERE created_at < now() - interval '1 hour'")
-        .execute(pool)
-        .await;
-}
-
 /// Insert the `app_device` row for a freshly-paired/provisioned device. Shared
 /// by `consume_handler`, `provision_handler`, and `enroll_peer`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn insert_device_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     device_id: &str,
@@ -1418,11 +1144,12 @@ pub(crate) async fn insert_device_row(
     device_info: &Value,
     ip: Option<&str>,
     node_id: Option<&str>,
+    source_id: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO app_device \
-         (id, user_id, kind, label, device_info, paired_from_ip, node_id, last_seen_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now())",
+         (id, user_id, kind, label, device_info, paired_from_ip, node_id, source_id, last_seen_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())",
     )
     .bind(device_id)
     .bind(OWNER_USER_ID)
@@ -1431,131 +1158,12 @@ pub(crate) async fn insert_device_row(
     .bind(device_info)
     .bind(ip)
     .bind(node_id)
-    .execute(&mut **tx)
-    .await
-    .map(|_| ())
-}
-
-/// Insert the `credentials` row (encrypted bearer) for a non-browser device.
-/// Shared by `consume_handler` and `provision_handler`.
-///
-/// `expires_at` is the claim deadline: `None` for the consume path (the
-/// credential is minted at claim time and is permanent), `Some(deadline)` for
-/// the provision path (minted live before the device scans, so it must lapse if
-/// never claimed — see `credentials::validate_device_token` / `update_last_seen`).
-pub(crate) async fn insert_credential_row(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    bp: &BearerPack,
-    source_id: &str,
-    label: &str,
-    device_id: &str,
-    expires_at: Option<chrono::DateTime<Utc>>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO credentials \
-         (id, source_id, name, device_id, status, secrets_ciphertext, \
-          secret_lookup_hash, metadata, last_seen_at, expires_at) \
-         VALUES ($1, $2, $3, $4, 'active', $5, $6, $7, now(), $8)",
-    )
-    .bind(&bp.credential_id)
     .bind(source_id)
-    .bind(label)
-    .bind(device_id)
-    .bind(&bp.ciphertext)
-    .bind(&bp.lookup_hash)
-    .bind(&bp.metadata)
-    .bind(expires_at)
     .execute(&mut **tx)
     .await
     .map(|_| ())
 }
 
-// ─── Bearer pack builder (extracted from consume_handler for tx hygiene) ────
-
-pub(crate) struct BearerPack {
-    pub(crate) credential_id: String,
-    pub(crate) bearer: String,
-    pub(crate) ciphertext: String,
-    pub(crate) lookup_hash: String,
-    pub(crate) metadata: Value,
-}
-
-struct SessionPack {
-    id: String,
-    token: String,
-    expires_at: chrono::DateTime<Utc>,
-}
-
-/// Failure modes from the bearer-pack builder. Kept domain-flavored (no
-/// HTTP types) so the helper stays testable; the caller maps to a response
-/// at the boundary.
-#[derive(Debug)]
-pub(crate) enum BearerPackError {
-    EncryptionUnavailable,
-    EncryptionFailed,
-    LookupHashFailed,
-}
-
-impl BearerPackError {
-    pub(crate) fn into_response(self) -> axum::response::Response {
-        let code = match self {
-            BearerPackError::EncryptionUnavailable => "encryption_unavailable",
-            BearerPackError::EncryptionFailed => "encryption_failed",
-            BearerPackError::LookupHashFailed => "lookup_hash_failed",
-        };
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": code}))).into_response()
-    }
-}
-
-/// Mint a bearer + its encrypted form + lookup hash + metadata blob. Anything
-/// CPU- or IO-bound (KMS, hashing) happens here, BEFORE we open a DB
-/// transaction in `consume_handler`.
-pub(crate) fn build_bearer_pack(
-    kind: &str,
-    label: &str,
-    device_info: &Option<Value>,
-) -> Result<BearerPack, BearerPackError> {
-    let bearer = random_32_bearer();
-    let credential_id = crate::ids::generate_id(
-        crate::ids::AUTH_TOKEN_PREFIX,
-        &[&bearer[..16], &Utc::now().to_rfc3339()],
-    );
-    let encryptor = crate::crypto::TokenEncryptor::from_env().map_err(|e| {
-        tracing::warn!("encryptor init failed: {e:#}");
-        BearerPackError::EncryptionUnavailable
-    })?;
-    let ciphertext = encryptor
-        .encrypt(&json!({"token": bearer}).to_string())
-        .map_err(|e| {
-            tracing::warn!("bearer encrypt failed: {e:#}");
-            BearerPackError::EncryptionFailed
-        })?;
-    let lookup_hash = encryptor.lookup_hash(&bearer).map_err(|e| {
-        tracing::warn!("bearer lookup_hash failed: {e:#}");
-        BearerPackError::LookupHashFailed
-    })?;
-    let mut metadata = json!({"label": label, "kind": kind});
-    if let Some(Value::Object(map)) = device_info {
-        if let Value::Object(meta) = &mut metadata {
-            for (k, v) in map {
-                meta.insert(k.clone(), v.clone());
-            }
-        }
-    }
-    Ok(BearerPack {
-        credential_id,
-        bearer,
-        ciphertext,
-        lookup_hash,
-        metadata,
-    })
-}
-
-// ─── Internal helpers ───────────────────────────────────────────────────────
-
-/// Render the pair URL as an SVG QR code, in-process. Kept inline (no network,
-/// no third-party service) so the token never leaves the box's process
-/// boundary on its way to the user's browser.
 fn render_qr_svg(data: &str) -> String {
     use qrcode::{render::svg, QrCode};
     match QrCode::new(data.as_bytes()) {
@@ -1622,46 +1230,15 @@ fn default_label_for(kind: &str, ua: Option<&str>, info: &Option<Value>) -> Stri
             _ => {}
         }
     }
-    match (kind, ua) {
-        ("browser", Some(ua)) => parse_browser_label(ua),
-        ("browser", None) => "Browser".to_string(),
-        ("mobile_app", _) => "Mobile app".to_string(),
-        ("desktop_app", _) => "Desktop app".to_string(),
-        ("sensor", _) => "Sensor".to_string(),
+    // Bare browsers can't pair (no session cookie path anymore); kinds are
+    // app/sensor/cli only.
+    let _ = ua;
+    match kind {
+        "mobile_app" => "Mobile app".to_string(),
+        "desktop_app" => "Desktop app".to_string(),
+        "sensor" => "Sensor".to_string(),
         _ => "Device".to_string(),
     }
-}
-
-fn parse_browser_label(ua: &str) -> String {
-    // Cheap UA classifier — not exhaustive, just enough to give the user
-    // something recognizable in the device list. Hardware first.
-    let hardware = if ua.contains("iPhone") {
-        "iPhone"
-    } else if ua.contains("iPad") {
-        "iPad"
-    } else if ua.contains("Android") {
-        "Android"
-    } else if ua.contains("Macintosh") {
-        "Mac"
-    } else if ua.contains("Windows") {
-        "Windows"
-    } else if ua.contains("Linux") {
-        "Linux"
-    } else {
-        "Browser"
-    };
-    let browser = if ua.contains("Edg/") {
-        " · Edge"
-    } else if ua.contains("Chrome/") && !ua.contains("Chromium") {
-        " · Chrome"
-    } else if ua.contains("Firefox/") {
-        " · Firefox"
-    } else if ua.contains("Safari/") {
-        " · Safari"
-    } else {
-        ""
-    };
-    format!("{hardware}{browser}")
 }
 
 async fn log_event(

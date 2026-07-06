@@ -1,30 +1,24 @@
 -- 0004 — Credentials, actions, MCP.
 --
--- `credentials` is the unified store for everything secret the box holds:
---   - OAuth tokens for source connections (Google, Notion, Plaid, …) —
---     these have `device_id = NULL` because OAuth providers aren't "devices".
---   - Self-issued bearer tokens for paired apps/sensors (iOS, Mac, ESP32) —
---     these have `device_id` set, linking back to the canonical `app_device`
---     row that owns this credential.
---
--- Revocation flows from `app_device.revoked_at` outward: when a device is
--- revoked, its credential row gets `status = 'revoked'` and the `wg0` peer
--- (if any) is evicted in the same transaction by `virtues-wg`. For OAuth
--- credentials (no device), revocation is a direct status update.
+-- `credentials` is the box's store of OUTBOUND secrets:
+--   - OAuth tokens for source connections (Google, Notion, Plaid, …)
+--   - API keys (BYO AI key, billing/virtues-api, chat import)
+-- All are outbound (the box calls out with them); none authenticate inbound
+-- requests. Inbound auth is the proven, allowlisted iroh key (see 0002) — there
+-- is no device bearer, so no `device_id` FK and no `secret_lookup_hash` here.
+-- Revocation is a direct `status = 'revoked'` update.
 
 -- ---------------------------------------------------------------------------
--- Unified credentials (encrypted-at-rest)
+-- Outbound secrets (encrypted-at-rest)
 -- ---------------------------------------------------------------------------
 CREATE TABLE credentials (
     id                  TEXT PRIMARY KEY,
     source_id           TEXT NOT NULL,
     name                TEXT NOT NULL,
-    device_id           TEXT REFERENCES app_device(id) ON DELETE CASCADE,         -- NULL for OAuth; set for self-issued-bearer
     status              TEXT NOT NULL
                             CHECK (status IN ('pending', 'active', 'revoked', 'reauth_required', 'error')),
     status_reason       TEXT,
     secrets_ciphertext  TEXT NOT NULL,
-    secret_lookup_hash  TEXT,
     scopes              JSONB,
     expires_at          TIMESTAMPTZ,
     next_refresh_at     TIMESTAMPTZ,
@@ -35,11 +29,8 @@ CREATE TABLE credentials (
 );
 CREATE INDEX idx_credentials_source       ON credentials(source_id);
 CREATE INDEX idx_credentials_status       ON credentials(status);
-CREATE INDEX idx_credentials_device       ON credentials(device_id) WHERE device_id IS NOT NULL;
 CREATE INDEX idx_credentials_next_refresh ON credentials(next_refresh_at)
     WHERE next_refresh_at IS NOT NULL AND status = 'active';
-CREATE UNIQUE INDEX idx_credentials_lookup ON credentials(secret_lookup_hash)
-    WHERE secret_lookup_hash IS NOT NULL;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON credentials
     FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
 
@@ -57,7 +48,11 @@ CREATE TABLE app_actions (
     condition      TEXT,
     triggers       JSONB   NOT NULL DEFAULT '["cron"]'::jsonb,
     memory         JSONB,
+    -- Outbound OAuth/API-key actions (google/notion/…) fan out per credential.
     credential_id  TEXT REFERENCES credentials(id),
+    -- Device-ingest actions (ios/mac webhook) fan out per DEVICE — the owning
+    -- device's iroh key authorizes its `/webhook/:action_id` posts.
+    device_id      TEXT REFERENCES app_device(id) ON DELETE CASCADE,
     runtime        TEXT NOT NULL DEFAULT 'function'
                        CHECK (runtime IN ('function', 'service', 'view')),
     command        TEXT,
@@ -68,6 +63,7 @@ CREATE TABLE app_actions (
 );
 CREATE INDEX idx_app_actions_enabled       ON app_actions(enabled);
 CREATE INDEX idx_app_actions_credential_id ON app_actions(credential_id) WHERE credential_id IS NOT NULL;
+CREATE INDEX idx_app_actions_device_id     ON app_actions(device_id) WHERE device_id IS NOT NULL;
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON app_actions
     FOR EACH ROW EXECUTE FUNCTION tg_set_updated_at();
 

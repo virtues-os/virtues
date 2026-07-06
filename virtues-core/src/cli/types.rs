@@ -19,6 +19,26 @@ pub struct Cli {
     pub command: Option<Commands>,
 }
 
+/// `virtues device <action>` — the allowlist as a CLI.
+#[derive(Subcommand)]
+pub enum DeviceCommands {
+    /// List the devices currently allowed to reach this box (non-revoked).
+    #[command(alias = "list")]
+    Ls,
+
+    /// Revoke a device by id — de-allowlists its iroh key so its next dial is
+    /// refused, and revokes any credential rows it owns.
+    #[command(alias = "revoke")]
+    Rm {
+        /// The device id (as shown by `virtues device ls`).
+        id: String,
+    },
+
+    /// Print a one-time pair code to bring a new device onto the allowlist.
+    /// Alias for `virtues pair` scoped to the allowlist framing.
+    Add,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Interactive setup wizard. Mostly historical — fresh hardware boots use
@@ -66,6 +86,17 @@ pub enum Commands {
         /// Deny instead of approve.
         #[arg(long, conflicts_with = "id")]
         deny: bool,
+    },
+
+    /// Manage the devices allowed to reach this box.
+    ///
+    /// A paired device = a row in `app_device` holding an allowlisted iroh
+    /// EndpointId. The allowlist IS the auth boundary: `ls` shows who can reach
+    /// the box, `rm` de-allowlists a device (its next dial is refused at the
+    /// handshake), and `add` prints a pair code to bring a new device on.
+    Device {
+        #[command(subcommand)]
+        action: DeviceCommands,
     },
 
     /// Run database migrations
@@ -271,33 +302,6 @@ pub enum Commands {
     /// Compute autonomic z-scores for all days with avg_hr data
     #[command(hide = true)]
     ComputeAutonomic,
-
-    /// Pair an iOS device manually (dev shortcut — bypasses the QR flow).
-    ///
-    /// Mints a `credentials` row with a **server-issued random bearer** (printed
-    /// for you to paste into the app's keychain) and fans out the per-device iOS
-    /// `app_actions`. The device id is stored only as a label, never as the
-    /// bearer.
-    #[command(hide = true)]
-    PairIos {
-        /// Device label (e.g. the app's install id). Stored as metadata only —
-        /// NOT used as the auth token.
-        device_id: String,
-
-        /// Friendly name for the device
-        #[arg(long, default_value = "iPhone")]
-        name: String,
-    },
-
-    /// Diagnose token encryption: pull stored device tokens, try to decrypt
-    /// them with the current `VIRTUES_ENCRYPTION_KEY`, and report what happens
-    /// for each. Pass an optional bearer token to compare against the
-    /// decrypted plaintext.
-    #[command(hide = true)]
-    VerifyTokens {
-        /// Optional bearer token (raw, no "Bearer " prefix) to match against
-        bearer: Option<String>,
-    },
 
     /// Generate the day summary (autobiography + 24h event timeline) for a date.
     ///

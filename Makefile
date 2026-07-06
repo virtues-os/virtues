@@ -6,7 +6,8 @@
 
 .DEFAULT_GOAL := help
 .PHONY: help init dev dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
-        dev-link dev-reset dev-wipe-mac dev-clean db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app
+        dev-link dev-reset dev-wipe-mac dev-clean db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
+        iroh-ffi-ios iroh-ffi-mac
 
 AWS_REGION ?= us-east-1
 
@@ -239,6 +240,18 @@ dev-wipe-mac: ## Unpair this Mac (clear keychain bundle + ~/.virtues/bundle.json
 
 dev-clean: dev-wipe-mac dev-reset ## Full local reset: unpair this Mac + drop/recreate dev dbs (fresh e2e from scratch)
 	@echo "✓ clean slate — run 'make dev' to bring the local stack back up"
+
+# ── iroh client FFI (uniffi Rust→Swift; consumed by the iOS app + Mac collector)
+# The clients reach the box over iroh via a generated xcframework (gitignored —
+# a build artifact). Regenerate it before building a client. `make mac-app` runs
+# the macOS one automatically; iOS devs run `make iroh-ffi-ios` before opening
+# Xcode. Both are idempotent.
+
+iroh-ffi-ios: ## Build VirtuesIroh.xcframework for the iOS app (run before Xcode)
+	crates/virtues-iroh-ffi/build-ios.sh
+
+iroh-ffi-mac: ## Build VirtuesIrohMac.xcframework for the Mac collector
+	crates/virtues-iroh-ffi/build-macos.sh
 
 # ── macOS desktop app (one signed DMG: app + both helper sidecars) ───────────
 

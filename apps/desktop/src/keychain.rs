@@ -40,13 +40,10 @@ pub struct PairedBox {
     /// fallback for a LAN-only box. Remote reach goes through the `:7117` helper
     /// (see `box_node_id`/`relay_url`), not this URL.
     pub box_url: String,
-    /// Server-issued bearer that authorizes this device's API calls.
-    pub bearer: String,
-    /// The revocable credential row id — what `revoke` sends to
-    /// `DELETE /api/credentials/:id`. Absent for pairings made before the box
-    /// returned one.
+    /// This device's `app_device.id` — sent to `DELETE /api/devices/:id` (via the
+    /// key-authed `:7117` helper) to self-revoke. `None` for legacy pairings.
     #[serde(default)]
-    pub credential_id: Option<String>,
+    pub device_id: Option<String>,
     /// The box's iroh **EndpointId** (hex) — dialed by the `:7117` helper. `None`
     /// on a LAN-only box (no relay reach).
     #[serde(default)]
