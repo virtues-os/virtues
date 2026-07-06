@@ -105,6 +105,13 @@ jobs:
       # We stage both per-arch files plus the lipo'd -universal one (used for the
       # final bundle), for each helper.
 
+      # The collector reaches the box over iroh via VirtuesIrohMac.xcframework
+      # (uniffi FFI). It's gitignored (a build artifact), so generate it here —
+      # universal, since both darwin targets are installed above — BEFORE the
+      # Swift build links against it.
+      - name: Build iroh FFI xcframework (macOS, universal)
+        run: crates/virtues-iroh-ffi/build-macos.sh
+
       - name: Build virtues-collector sidecar (Swift)
         working-directory: apps/mac-source
         run: |
