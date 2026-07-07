@@ -32,6 +32,22 @@ impl VirtuesIrohClient {
         Self::new(endpoint, EndpointAddr::new(box_id).with_relay_url(relay_url))
     }
 
+    /// Convenience: reach the box by `EndpointId` at explicit direct addresses
+    /// (LAN-direct). No relay — pure peer-to-peer on the local network. Pair
+    /// this with [`build_direct_endpoint`](crate::build_direct_endpoint) for a
+    /// zero-third-party dial to an unclaimed box on the same network.
+    pub fn from_direct(
+        endpoint: Endpoint,
+        box_id: EndpointId,
+        direct_addrs: impl IntoIterator<Item = std::net::SocketAddr>,
+    ) -> Self {
+        let mut addr = EndpointAddr::new(box_id);
+        for a in direct_addrs {
+            addr = addr.with_ip_addr(a);
+        }
+        Self::new(endpoint, addr)
+    }
+
     async fn dial(&self) -> Result<Connection> {
         self.endpoint
             .connect(self.addr.clone(), VIRTUES_ALPN)

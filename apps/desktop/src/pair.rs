@@ -55,6 +55,10 @@ struct ConsumeResponse {
     /// The relay URL to reach `box_node_id` through.
     #[serde(default)]
     relay_url: Option<String>,
+    /// The box's iroh direct socket addresses (LAN/VPN) for zero-third-party
+    /// reach on the same network.
+    #[serde(default)]
+    box_direct_addrs: Vec<String>,
 }
 
 pub async fn run(pair_url: &str) -> Result<()> {
@@ -142,32 +146,37 @@ async fn consume(origin: String, token: String) -> Result<()> {
     let box_url = origin.clone();
     let box_node_id = parsed.box_node_id.filter(|s| !s.is_empty());
     let relay_url = parsed.relay_url.filter(|s| !s.is_empty());
+    let direct = parsed.box_direct_addrs;
 
     let rec = PairedBox {
         box_url: box_url.clone(),
         device_id: parsed.device_id,
         box_node_id: box_node_id.clone(),
         relay_url: relay_url.clone(),
+        box_direct_addrs: direct.clone(),
         device_secret_hex: Some(device_secret_hex),
     };
     keychain::save_box(&rec).context("store paired box")?;
 
-    // If the box wasn't relay-ready at consume time it returns no ticket; pick it
-    // up now so we don't get stuck LAN-only until the next launch.
-    let (box_node_id, relay_url) = if box_node_id.is_none() || relay_url.is_none() {
-        let _ = refresh_reach().await;
-        match keychain::load_box() {
-            Ok(Some(r)) => (r.box_node_id, r.relay_url),
-            _ => (box_node_id, relay_url),
-        }
-    } else {
-        (box_node_id, relay_url)
-    };
+    // If the box handed us no reach at all (no relay AND no direct addrs — its
+    // endpoint wasn't up yet at consume time), pick it up now so we're not stuck
+    // until the next launch. Having direct addrs is enough for same-network use.
+    let (box_node_id, relay_url, direct) =
+        if box_node_id.is_none() || (relay_url.is_none() && direct.is_empty()) {
+            let _ = refresh_reach().await;
+            match keychain::load_box() {
+                Ok(Some(r)) => (r.box_node_id, r.relay_url, r.box_direct_addrs),
+                _ => (box_node_id, relay_url, direct),
+            }
+        } else {
+            (box_node_id, relay_url, direct)
+        };
 
     println!();
     println!("✓ paired with {origin}");
-    match (&box_node_id, &relay_url) {
-        (Some(n), Some(r)) => println!("  iroh reach:    {n} via {r}"),
+    match (&box_node_id, &relay_url, direct.is_empty()) {
+        (Some(n), Some(r), _) => println!("  iroh reach:    {n} via {r} (+ {} direct)", direct.len()),
+        (Some(n), None, false) => println!("  iroh reach:    {n} LAN-direct ({} addrs, no relay)", direct.len()),
         _ => println!("  reach:         LAN only ({box_url})"),
     }
     println!("  creds stored:  OS keychain (service = 'virtues-client') + ~/.virtues/box.json");
@@ -183,6 +192,8 @@ struct SelfReach {
     box_node_id: Option<String>,
     #[serde(default)]
     relay_url: Option<String>,
+    #[serde(default)]
+    box_direct_addrs: Vec<String>,
 }
 
 /// Refresh the box's iroh reach ticket from `GET /api/devices/self/reach`.
@@ -218,11 +229,15 @@ pub async fn refresh_reach() -> Result<()> {
     };
     let node = reach.box_node_id.filter(|s| !s.is_empty());
     let relay = reach.relay_url.filter(|s| !s.is_empty());
-    if node.is_some() && relay.is_some() {
+    let direct = reach.box_direct_addrs;
+    // Enough to reach the box if we have its node id AND at least one path
+    // (a relay for remote, or direct addrs for same-network).
+    if node.is_some() && (relay.is_some() || !direct.is_empty()) {
         rec.box_node_id = node;
         rec.relay_url = relay;
+        rec.box_direct_addrs = direct;
         keychain::save_box(&rec).context("persist refreshed reach ticket")?;
-        eprintln!("↻ refreshed iroh reach ticket from the box");
+        eprintln!("↻ refreshed iroh reach from the box");
     }
     Ok(())
 }

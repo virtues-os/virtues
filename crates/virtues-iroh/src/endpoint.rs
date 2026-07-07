@@ -21,3 +21,18 @@ pub async fn build_endpoint(secret: SecretKey, relay_url: Option<RelayUrl>) -> R
     };
     builder.bind().await.context("bind iroh endpoint")
 }
+
+/// Build a **direct-only** endpoint: no relay, no discovery, no third party.
+/// For dialing a box by its explicit direct (LAN/VPN) addresses — pure
+/// peer-to-peer on the local network. This is the reach path for an unclaimed
+/// box on the same network: nobody (not our relay, not n0, not atlas) is in the
+/// loop; if the direct addresses aren't routable (client isolation / off-LAN),
+/// the dial simply fails rather than falling back to a relay.
+pub async fn build_direct_endpoint(secret: SecretKey) -> Result<Endpoint> {
+    Endpoint::builder(presets::Minimal)
+        .secret_key(secret)
+        .relay_mode(RelayMode::Disabled)
+        .bind()
+        .await
+        .context("bind direct iroh endpoint")
+}
