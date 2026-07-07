@@ -19,8 +19,24 @@ exclude = [
     # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
     # build so iroh's dep tree can't destabilize it during the spike.
     "spike-iroh",
+    # Vendored copy of iroh's `noq-udp` carrying a temporary GSO patch (see
+    # `[patch.crates-io]` below). Not a workspace member — it replaces the
+    # crates.io dep for the whole tree via the patch, not by being built here.
+    "vendor/noq-udp",
 ]
 resolver = "2"
+
+# TEMPORARY: force GSO (UDP segmentation offload) off in iroh's UDP layer.
+# Some NICs (e.g. the Jetson Orin tegra onboard wifi) pass iroh's GSO probe but
+# then fail every GSO `sendmsg` with EIO, stalling the QUIC path so no data flows
+# over a direct connection. iroh's runtime "halting segmentation offload" doesn't
+# propagate to quinn-proto's batching, so GSO keeps being used. The vendored copy
+# reports `max_gso_segments = 1` (GSO never batches) — NIC-agnostic, no config.
+# Remove this patch + the `vendor/noq-udp` dir once quinn PR #2653 lands the
+# EIO→resend-as-singles fallback upstream and we bump iroh.
+# https://github.com/quinn-rs/quinn/issues/2399
+[patch.crates-io]
+noq-udp = { path = "vendor/noq-udp" }
 
 [workspace.package]
 version = "0.1.0"

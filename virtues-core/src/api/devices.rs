@@ -443,7 +443,9 @@ pub(crate) async fn enroll_peer_core(
         tracing::warn!(error = %e, "enroll_peer_core: begin tx failed");
         EnrollError::Internal
     })?;
-    crate::api::pair::insert_device_row(
+    // Idempotent on node_id: re-enrolling the same peer UPDATEs its row and
+    // returns the existing id (rather than 500-ing on the unique node_id).
+    let device_id = crate::api::pair::insert_device_row(
         &mut tx,
         &device_id,
         kind,
@@ -455,8 +457,8 @@ pub(crate) async fn enroll_peer_core(
     )
     .await
     .map_err(|e| {
-        tracing::warn!(error = %e, "enroll_peer_core: device insert failed (likely duplicate node_id)");
-        EnrollError::Conflict
+        tracing::warn!(error = %e, "enroll_peer_core: device insert failed");
+        EnrollError::Internal
     })?;
     tx.commit().await.map_err(|e| {
         tracing::warn!(error = %e, "enroll_peer_core: commit failed");
