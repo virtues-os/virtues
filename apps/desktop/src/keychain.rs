@@ -51,6 +51,11 @@ pub struct PairedBox {
     /// The relay URL to reach `box_node_id` through. Paired with it as the ticket.
     #[serde(default)]
     pub relay_url: Option<String>,
+    /// The box's iroh direct socket addresses (LAN/VPN `IP:port`). On the same
+    /// network the helper dials these directly — no relay, no discovery, no
+    /// third party. Present even for an unclaimed box (which has no relay).
+    #[serde(default)]
+    pub box_direct_addrs: Vec<String>,
     /// This device's own iroh secret key (hex 32-byte seed), generated at pairing.
     /// Its EndpointId is submitted to the box so it's allowlisted; the `:7117`
     /// helper builds its iroh endpoint from this. `None` for legacy pairings.

@@ -8,9 +8,13 @@
 //! (LAN-direct → hole-punched → relay fallback).
 
 use anyhow::{anyhow, bail, Context, Result};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use virtues_iroh::{build_endpoint, EndpointId, RelayUrl, SecretKey, VirtuesIrohClient};
+use virtues_iroh::{
+    build_direct_endpoint, build_endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey,
+    VirtuesIrohClient,
+};
 
 use crate::keychain;
 
@@ -21,17 +25,24 @@ pub async fn run() -> Result<()> {
         .context("load paired box")?
         .ok_or_else(|| anyhow!("not paired — run `virtues-client pair <url>` first"))?;
 
-    let (Some(node_id_hex), Some(relay_url_str), Some(secret_hex)) =
-        (rec.box_node_id, rec.relay_url, rec.device_secret_hex)
-    else {
-        bail!(
-            "this pairing has no iroh reach ticket (LAN-only). Re-pair against a \
-             relay-enabled box, or open the box directly on your LAN."
-        );
+    let (Some(node_id_hex), Some(secret_hex)) = (rec.box_node_id, rec.device_secret_hex) else {
+        bail!("this pairing is missing the box's iroh identity — re-pair to fix it.");
     };
-
     let box_id: EndpointId = node_id_hex.parse().context("parse box EndpointId")?;
-    let relay_url: RelayUrl = relay_url_str.parse().context("parse relay url")?;
+
+    // Reach paths, in preference order: direct LAN/VPN addresses (no relay, no
+    // discovery, no third party) and/or the relay (remote). iroh negotiates the
+    // best path from whatever we supply.
+    let direct: Vec<SocketAddr> =
+        rec.box_direct_addrs.iter().filter_map(|s| s.parse().ok()).collect();
+    let relay: Option<RelayUrl> = rec.relay_url.and_then(|s| s.parse().ok());
+    if direct.is_empty() && relay.is_none() {
+        bail!(
+            "this pairing has no way to reach the box — no direct addresses and no relay. \
+             Re-pair on the same network as the box, or claim it for remote access."
+        );
+    }
+
     let seed: [u8; 32] = hex::decode(secret_hex.trim())
         .context("decode device secret")?
         .as_slice()
@@ -39,10 +50,20 @@ pub async fn run() -> Result<()> {
         .map_err(|_| anyhow!("device secret is not 32 bytes"))?;
     let secret = SecretKey::from_bytes(&seed);
 
-    let endpoint = build_endpoint(secret, Some(relay_url.clone()))
-        .await
-        .context("bind iroh endpoint")?;
-    let client = Arc::new(VirtuesIrohClient::from_relay(endpoint, box_id, relay_url));
+    // With a relay, build the relay-capable endpoint (it still upgrades to direct
+    // when reachable). LAN-only: a direct-only endpoint — zero third parties.
+    let endpoint = match &relay {
+        Some(r) => build_endpoint(secret, Some(r.clone())).await.context("bind iroh endpoint")?,
+        None => build_direct_endpoint(secret).await.context("bind direct iroh endpoint")?,
+    };
+    let mut addr = EndpointAddr::new(box_id);
+    for a in &direct {
+        addr = addr.with_ip_addr(*a);
+    }
+    if let Some(r) = relay {
+        addr = addr.with_relay_url(r);
+    }
+    let client = Arc::new(VirtuesIrohClient::new(endpoint, addr));
 
     let listener = TcpListener::bind(BIND)
         .await

@@ -303,13 +303,14 @@ pub async fn set_self_node_id(
 /// key-authenticated channel). Connecting still requires an allowlisted key, so
 /// exposing the address grants nothing. Read-only; no state change.
 pub async fn get_self_reach(State(_pool): State<PgPool>) -> impl IntoResponse {
-    let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
-        Some((n, r)) => (Some(n), Some(r)),
-        None => (None, None),
-    };
+    let (box_node_id, relay_url, box_direct_addrs) = crate::api::pair::box_reach_fields();
     (
         StatusCode::OK,
-        Json(json!({ "box_node_id": box_node_id, "relay_url": relay_url })),
+        Json(json!({
+            "box_node_id": box_node_id,
+            "relay_url": relay_url,
+            "box_direct_addrs": box_direct_addrs,
+        })),
     )
         .into_response()
 }
@@ -351,10 +352,8 @@ pub async fn enroll_peer(
     .await
     {
         Ok(p) => {
-            let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
-                Some((n, r)) => (Some(n), Some(r)),
-                None => (None, None),
-            };
+            let (box_node_id, relay_url, box_direct_addrs) =
+                crate::api::pair::box_reach_fields();
             (
                 StatusCode::OK,
                 Json(json!({
@@ -362,6 +361,7 @@ pub async fn enroll_peer(
                     "action_ids": p.action_ids,
                     "box_node_id": box_node_id,
                     "relay_url": relay_url,
+                    "box_direct_addrs": box_direct_addrs,
                 })),
             )
                 .into_response()
@@ -493,9 +493,13 @@ pub async fn link_start(
     _user: AuthUser,
     Json(_body): Json<LinkStartRequest>,
 ) -> impl IntoResponse {
-    let (box_node_id, relay_url) = match crate::api::pair::box_reach() {
-        Some(v) => v,
-        None => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "box_not_relay_ready"}))).into_response(),
+    // Link-a-device is a REMOTE enrollment (atlas rendezvous), so it genuinely
+    // needs a relay — LAN-direct addrs don't help a device that isn't here yet.
+    let reach = crate::api::pair::box_reach();
+    let (Some(box_node_id), Some(relay_url)) =
+        (reach.as_ref().map(|r| r.node_id.clone()), reach.and_then(|r| r.relay_url))
+    else {
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "box_not_relay_ready"}))).into_response();
     };
     let api_key = match crate::virtues_api::renew::read_api_key(&pool).await {
         Ok(Some(k)) => k,

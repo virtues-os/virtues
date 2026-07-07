@@ -596,19 +596,46 @@ pub struct ConsumeResponse {
     /// Paired with `box_node_id` as the reach ticket; `None` on a dev/LAN box.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_url: Option<String>,
+    /// The box's iroh direct socket addresses (LAN/VPN `IP:port`). A device on
+    /// the same network dials these directly — no relay, no discovery, no third
+    /// party. This is how an **unclaimed** box (no relay) is still reachable.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub box_direct_addrs: Vec<String>,
 }
 
-/// The box's iroh reach ticket: `(EndpointId, relay_url)`. A device dials the
-/// box's EndpointId through the relay (then upgrades to hole-punched direct).
-/// `None` until the box's iroh endpoint is up; the client can pick it up later
-/// from `box/status` or `GET /api/devices/self/reach`.
-pub(crate) fn box_reach() -> Option<(String, String)> {
+/// The box's iroh reach ticket. `node_id` is present once the endpoint is bound;
+/// `relay_url` is `None` on an unclaimed/LAN box; `direct_addrs` are the box's
+/// LAN/VPN sockets for zero-third-party direct dialing. A device prefers direct
+/// (same network) and falls back to the relay (remote). Refreshable from
+/// `box/status` or `GET /api/devices/self/reach`.
+pub(crate) struct BoxReach {
+    pub node_id: String,
+    pub relay_url: Option<String>,
+    pub direct_addrs: Vec<String>,
+}
+
+pub(crate) fn box_reach() -> Option<BoxReach> {
+    // Requires the iroh endpoint to be bound (node id known). Relay is optional
+    // — an unclaimed box has no relay but is still reachable LAN-direct via its
+    // direct addresses, so we return those even when `relay_url` is None.
     if !crate::relay::is_relay_registered() {
         return None;
     }
     let node_id = crate::relay::box_endpoint_id()?;
-    let relay_url = crate::relay::box_relay_url()?;
-    Some((node_id, relay_url))
+    Some(BoxReach {
+        node_id,
+        relay_url: crate::relay::box_relay_url(),
+        direct_addrs: crate::relay::box_direct_addrs(),
+    })
+}
+
+/// Reach as flat fields for splatting into a JSON response:
+/// `(box_node_id?, relay_url?, box_direct_addrs)`.
+pub(crate) fn box_reach_fields() -> (Option<String>, Option<String>, Vec<String>) {
+    match box_reach() {
+        Some(r) => (Some(r.node_id), r.relay_url, r.direct_addrs),
+        None => (None, None, Vec::new()),
+    }
 }
 
 /// `POST /api/pair/consume` — anonymous, but valid token required.
@@ -839,11 +866,8 @@ pub async fn consume_handler(
         }
     };
 
-    // Compute the reach ticket once so both halves are consistent.
-    let (box_node_id, relay_url) = match box_reach() {
-        Some((n, r)) => (Some(n), Some(r)),
-        None => (None, None),
-    };
+    // Compute the reach ticket once so all fields are consistent.
+    let (box_node_id, relay_url, box_direct_addrs) = box_reach_fields();
     (
         StatusCode::OK,
         Json(ConsumeResponse {
@@ -852,6 +876,7 @@ pub async fn consume_handler(
             action_ids,
             box_node_id,
             relay_url,
+            box_direct_addrs,
         }),
     )
         .into_response()
@@ -899,10 +924,7 @@ pub async fn link_redeem_handler(
     };
     let action_ids: std::collections::HashMap<String, String> =
         serde_json::from_value(action_ids_json).unwrap_or_default();
-    let (box_node_id, relay_url) = match box_reach() {
-        Some((n, r)) => (Some(n), Some(r)),
-        None => (None, None),
-    };
+    let (box_node_id, relay_url, box_direct_addrs) = box_reach_fields();
     (
         StatusCode::OK,
         Json(json!({
@@ -910,6 +932,7 @@ pub async fn link_redeem_handler(
             "action_ids": action_ids,
             "box_node_id": box_node_id,
             "relay_url": relay_url,
+            "box_direct_addrs": box_direct_addrs,
         })),
     )
         .into_response()
@@ -942,6 +965,10 @@ pub struct ProvisionResponse {
     pub box_node_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_url: Option<String>,
+    /// The box's iroh direct socket addresses for LAN-direct reach (same-network
+    /// devices dial these; no relay needed).
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub box_direct_addrs: Vec<String>,
 }
 
 /// `POST /api/pair/provision` — AUTHENTICATED. An already-paired device (reached
@@ -1054,11 +1081,12 @@ pub async fn provision_handler(
     // left empty. Payload contract (iOS scanner) is in apps/ios/RELAY_MIGRATION.md.
     let reach = box_reach();
     let qr_svg = match &reach {
-        Some((node_id, relay_url)) => render_qr_svg(
+        Some(r) => render_qr_svg(
             &serde_json::json!({
                 "v": 3,
-                "box_node_id": node_id,
-                "relay_url": relay_url,
+                "box_node_id": r.node_id,
+                "relay_url": r.relay_url,
+                "box_direct_addrs": r.direct_addrs,
                 "device_id": &device_id,
                 "source": &source_id,
             })
@@ -1073,8 +1101,9 @@ pub async fn provision_handler(
             device_id,
             action_ids,
             qr_svg,
-            box_node_id: reach.as_ref().map(|(n, _)| n.clone()),
-            relay_url: reach.as_ref().map(|(_, r)| r.clone()),
+            box_node_id: reach.as_ref().map(|r| r.node_id.clone()),
+            relay_url: reach.as_ref().and_then(|r| r.relay_url.clone()),
+            box_direct_addrs: reach.map(|r| r.direct_addrs).unwrap_or_default(),
         }),
     )
         .into_response()

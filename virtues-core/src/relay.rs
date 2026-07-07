@@ -23,7 +23,9 @@ use sqlx::PgPool;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
-use virtues_iroh::{build_endpoint, serve, AllowPolicy, EndpointId, RelayUrl, SecretKey, StaticAllow};
+use virtues_iroh::{
+    build_endpoint, serve, AllowPolicy, Endpoint, EndpointId, RelayUrl, SecretKey, StaticAllow,
+};
 
 /// `box_secrets` key holding this box's persistent iroh secret key (hex of the
 /// 32-byte seed) — so the box keeps a stable `EndpointId` across restarts.
@@ -37,6 +39,10 @@ static ENDPOINT_UP: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 static BOX_ENDPOINT_ID: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 /// The relay URL this box homed on (if any) — the other half of the reach ticket.
 static BOX_RELAY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+/// The box's iroh direct socket addresses (LAN/VPN `IP:quic-port`), handed to
+/// devices at pairing so they can dial LAN-direct — no relay, no discovery, no
+/// third party — when on the same network. Refreshed on the reconcile tick.
+static BOX_DIRECT_ADDRS: OnceLock<RwLock<Vec<String>>> = OnceLock::new();
 
 fn endpoint_up_flag() -> Arc<AtomicBool> {
     ENDPOINT_UP.get_or_init(|| Arc::new(AtomicBool::new(false))).clone()
@@ -56,6 +62,27 @@ pub fn box_endpoint_id() -> Option<String> {
 /// The relay URL this box homed on, if any — the other half of the reach ticket.
 pub fn box_relay_url() -> Option<String> {
     BOX_RELAY_URL.get().and_then(|c| c.read().ok().and_then(|g| g.clone()))
+}
+
+/// The box's iroh direct socket addresses (LAN/VPN), for LAN-direct reach.
+pub fn box_direct_addrs() -> Vec<String> {
+    BOX_DIRECT_ADDRS
+        .get()
+        .and_then(|c| c.read().ok().map(|g| g.clone()))
+        .unwrap_or_default()
+}
+
+/// Snapshot the endpoint's current direct addresses into `BOX_DIRECT_ADDRS`.
+/// Called after bind and on each reconcile so a DHCP lease change is picked up.
+fn refresh_direct_addrs(endpoint: &Endpoint) {
+    let addrs: Vec<String> = endpoint.addr().ip_addrs().map(|a| a.to_string()).collect();
+    if addrs.is_empty() {
+        return; // not yet discovered — keep the last known set
+    }
+    let cell = BOX_DIRECT_ADDRS.get_or_init(|| RwLock::new(Vec::new()));
+    if let Ok(mut g) = cell.write() {
+        *g = addrs;
+    }
 }
 
 /// Derive the box's stable EndpointId from its stored iroh secret, without
@@ -156,6 +183,14 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             None => tracing::info!(endpoint_id = %eid, "iroh endpoint bound (dev: n0 relays + discovery)"),
         }
 
+        // Capture direct addresses for zero-third-party LAN reach (dial the box
+        // by its EndpointId at these LAN/VPN sockets — no relay, no discovery).
+        // Time-boxed so slow address discovery never blocks bringup; the
+        // reconcile loop refreshes them (e.g. after a DHCP lease change).
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.online()).await;
+        refresh_direct_addrs(&endpoint);
+        let ep_refresh = endpoint.clone();
+
         let allow = load_allowlist(&db).await;
         // Register this box + its paired devices with atlas BEFORE homing on the
         // relay, so the relay's active-sub gate already recognises the box when it
@@ -172,6 +207,7 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
         tick.tick().await; // consume the immediate first tick — startup already reconciled above
         loop {
             tick.tick().await;
+            refresh_direct_addrs(&ep_refresh);
             reconcile(&db).await;
         }
     });
