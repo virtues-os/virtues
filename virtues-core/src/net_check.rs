@@ -164,28 +164,6 @@ impl NetStatus {
         }
     }
 
-    /// Print a human-readable report (used by `virtues doctor`).
-    pub fn print_report(&self) {
-        println!("Virtues network reachability");
-        println!("  class:         {}", self.class.label());
-        match self.ipv6_global {
-            Some(a) => println!("  global IPv6:   {a}"),
-            None => println!("  global IPv6:   none"),
-        }
-        match self.ipv4_source {
-            Some(a) => println!("  IPv4 source:   {a}"),
-            None => println!("  IPv4 source:   none"),
-        }
-        if let Some(b) = &self.byo {
-            let addr_paren = b.addr.map(|a| format!(" ({a})")).unwrap_or_default();
-            println!(
-                "  BYO transport: {}{addr_paren} — your devices can reach your server at that address",
-                b.ifname
-            );
-        }
-        println!("  {}", self.headline);
-        println!("  → {}", self.guidance);
-    }
 }
 
 /// Outbound-socket trick: `connect()` a UDP socket to a public address (no

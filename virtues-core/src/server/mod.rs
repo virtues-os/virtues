@@ -220,12 +220,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/pair/consume",
             post(crate::api::pair::consume_handler),
         )
-        // Anonymous like consume: gated by the one-time link code, reached over
-        // the allowlisted iroh channel (link-a-device redeem).
-        .route(
-            "/api/pair/link-redeem",
-            post(crate::api::pair::link_redeem_handler),
-        )
         .route("/auth/session", get(api::auth_session_handler))
         // Internal API (virtues-api integration — has its own header-based auth)
         .route("/internal/hydrate", post(api::hydrate_profile_handler))
@@ -280,11 +274,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         // ─── Pair-only auth: "+ Add device" from a paired session ─────
         .route("/api/pair/mint",          post(crate::api::pair::mint_handler))
         .route("/api/pair/mint-collector", post(crate::api::pair::mint_collector_handler))
-        // Desktop-relayed off-LAN pairing: an already-paired device provisions a
-        // new device on its behalf (box generates the keypair) and gets a full
-        // bundle + QR to hand off out-of-band. Auth'd (the relay's injected bearer).
-        .route("/api/pair/provision",     post(crate::api::pair::provision_handler))
-        .route("/api/pair/provision-status/:device_id", get(crate::api::pair::provision_status_handler))
         .route("/api/pair/status/:id",    get(crate::api::pair::status_handler))
         .route("/api/pair/deny/:id",      post(crate::api::pair::deny_handler))
         // ─── Devices: unified list + revoke ───────────────────────────
@@ -292,9 +281,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         .route("/api/devices/self/node-id", post(crate::api::devices::set_self_node_id))
         .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
         .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
-        .route("/api/devices/link/start",   post(crate::api::devices::link_start))
-        .route("/api/devices/link/status",  post(crate::api::devices::link_status))
-        .route("/api/devices/link/approve", post(crate::api::devices::link_approve))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
         // ─── Sudo: gate for high-sensitivity actions ──────────────────
         .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
@@ -657,6 +643,11 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::get_page_handler)
                 .put(api::update_page_handler)
                 .delete(api::delete_page_handler),
+        )
+        // Page References (backlinks) API
+        .route(
+            "/api/pages/:id/backlinks",
+            get(api::get_page_backlinks_handler),
         )
         // Page Share API
         .route(

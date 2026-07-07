@@ -6,6 +6,11 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
+	import {
+		getReflectionsForDate,
+		createReflection,
+		type Page,
+	} from "$lib/api/client";
 
 	// Home — the default landing / "Return" surface. Three calm bands: ask · today
 	// · continue. Recents are real; the "today" band is placeholder data until the
@@ -60,6 +65,29 @@
 		windowShellStore.openTabFromRoute(route, { label: title });
 	}
 
+	// Journal — today's reflection pages (same entities as the day page's "Your
+	// writing"). Journaling stays opt-in: pages are pages, this is just a calm
+	// entry point into today's. Date is the local calendar day (YYYY-MM-DD).
+	const todayDate = (() => {
+		const d = new Date();
+		const y = d.getFullYear();
+		const m = String(d.getMonth() + 1).padStart(2, "0");
+		const day = String(d.getDate()).padStart(2, "0");
+		return `${y}-${m}-${day}`;
+	})();
+
+	let journal = $state<Page[]>([]);
+
+	async function newJournalEntry() {
+		try {
+			const page = await createReflection(todayDate);
+			journal = [...journal, page];
+			open(`/page/${page.id}`, page.title || "Untitled");
+		} catch (e) {
+			console.error("Failed to create journal entry:", e);
+		}
+	}
+
 	// A short glimpse of the authored self-model — first sentence or ~130 chars.
 	const narrativeGlimpse = $derived.by(() => {
 		const text = narrative?.trim();
@@ -84,6 +112,9 @@
 			.catch(() => {});
 		if (chatSessions.sessions.length === 0 && !chatSessions.isLoading) chatSessions.load();
 		if (pagesStore.pages.length === 0 && !pagesStore.pagesLoading) pagesStore.loadPages();
+		getReflectionsForDate(todayDate)
+			.then((pages) => (journal = pages))
+			.catch(() => {});
 		setTimeout(() => (inputFocused = true), 60);
 	});
 </script>
@@ -151,6 +182,43 @@
 				Open today
 				<Icon icon="ri:arrow-right-s-line" width="16" />
 			</button>
+		</section>
+
+		<!-- Band: Journal -->
+		<section class="band">
+			<div class="band-head">
+				<h2 class="band-title">Journal</h2>
+				{#if journal.length > 0}
+					<button type="button" class="band-action" onclick={newJournalEntry}>
+						<Icon icon="ri:add-line" width="15" />
+						New entry
+					</button>
+				{/if}
+			</div>
+			{#if journal.length > 0}
+				<div class="recent-list">
+					{#each journal as j (j.id)}
+						<button
+							type="button"
+							class="recent-item"
+							onclick={() => open(`/page/${j.id}`, j.title || "Untitled")}
+						>
+							<Icon
+								icon={j.icon || "ri:quill-pen-line"}
+								width="15"
+								class="recent-icon"
+							/>
+							<span class="recent-title">{j.title || "Untitled"}</span>
+							<Icon icon="ri:arrow-right-up-line" width="14" class="recent-go" />
+						</button>
+					{/each}
+				</div>
+			{:else}
+				<button type="button" class="journal-empty" onclick={newJournalEntry}>
+					<Icon icon="ri:quill-pen-line" width="15" />
+					Write today’s entry
+				</button>
+			{/if}
 		</section>
 
 		<!-- Band: Continue -->
@@ -272,6 +340,60 @@
 		font-weight: 500;
 		color: var(--color-foreground);
 		margin-bottom: 0.75rem;
+	}
+
+	/* Band header with a trailing action (e.g. Journal "New entry") */
+	.band-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 0.75rem;
+	}
+
+	.band-head .band-title {
+		margin-bottom: 0;
+	}
+
+	.band-action {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.1875rem;
+		padding: 0.25rem 0.25rem;
+		background: transparent;
+		border: none;
+		color: var(--color-foreground-muted);
+		font-size: 0.8125rem;
+		cursor: pointer;
+		transition: color 0.15s ease;
+	}
+
+	.band-action:hover {
+		color: var(--color-foreground);
+	}
+
+	/* Empty-state call to action for the Journal band */
+	.journal-empty {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4375rem;
+		align-self: flex-start;
+		padding: 0.5625rem 0.75rem;
+		border: 1px dashed var(--color-border);
+		border-radius: 0.625rem;
+		background: transparent;
+		color: var(--color-foreground-muted);
+		font-size: 0.9375rem;
+		cursor: pointer;
+		transition:
+			color 0.15s ease,
+			border-color 0.15s ease,
+			background-color 0.12s ease;
+	}
+
+	.journal-empty:hover {
+		color: var(--color-foreground);
+		border-color: var(--color-border-strong);
+		background: var(--color-surface-elevated);
 	}
 
 	.state-line {

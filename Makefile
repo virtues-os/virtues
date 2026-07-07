@@ -153,7 +153,7 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	@if [ "$(WATCH)" = "1" ] && [ -z "$(CARGO_WATCH)" ]; then \
 	  echo "→ WATCH=1 but cargo-watch not found — running once. Install: cargo install cargo-watch"; \
 	fi
-	RUST_LOG="$(RUST_LOG)" \
+	RUST_LOG="$(RUST_LOG),noq_udp=error" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \
 	ENVIRONMENT=dev \

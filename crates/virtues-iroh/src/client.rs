@@ -34,8 +34,8 @@ impl VirtuesIrohClient {
 
     /// Convenience: reach the box by `EndpointId` at explicit direct addresses
     /// (LAN-direct). No relay — pure peer-to-peer on the local network. Pair
-    /// this with [`build_direct_endpoint`](crate::build_direct_endpoint) for a
-    /// zero-third-party dial to an unclaimed box on the same network.
+    /// this with [`build_endpoint`](crate::build_endpoint)`(secret, None, None)`
+    /// for a zero-third-party dial to an unclaimed box on the same network.
     pub fn from_direct(
         endpoint: Endpoint,
         box_id: EndpointId,

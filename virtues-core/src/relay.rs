@@ -24,7 +24,8 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 use virtues_iroh::{
-    build_endpoint, serve, AllowPolicy, Endpoint, EndpointId, RelayUrl, SecretKey, StaticAllow,
+    build_endpoint, iroh_port, serve, AllowPolicy, Endpoint, EndpointId, RelayUrl, SecretKey,
+    StaticAllow,
 };
 
 /// `box_secrets` key holding this box's persistent iroh secret key (hex of the
@@ -163,7 +164,9 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
                 }
             }
         }
-        let endpoint = match build_endpoint(secret, relay_url.clone()).await {
+        // The box pins its UDP port so its `IP:port` stays stable across restarts
+        // — LAN peers resolve the IP (mDNS) and dial by NodeId, nothing frozen.
+        let endpoint = match build_endpoint(secret, relay_url.clone(), Some(iroh_port())).await {
             Ok(e) => e,
             Err(e) => {
                 tracing::error!(error = %format!("{e:#}"), "iroh: failed to bind endpoint — reach disabled");
@@ -179,8 +182,8 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
         }
         endpoint_up_flag().store(true, Ordering::Relaxed);
         match &relay_url {
-            Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, "iroh endpoint bound; box reachable by EndpointId via our relay"),
-            None => tracing::info!(endpoint_id = %eid, "iroh endpoint bound (dev: n0 relays + discovery)"),
+            Some(u) => tracing::info!(endpoint_id = %eid, relay = %u, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId via our relay (+ LAN-direct)"),
+            None => tracing::info!(endpoint_id = %eid, port = iroh_port(), "iroh endpoint bound; box reachable by EndpointId LAN-direct (no relay)"),
         }
 
         // Capture direct addresses for zero-third-party LAN reach (dial the box

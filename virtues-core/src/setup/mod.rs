@@ -7,8 +7,6 @@
 //! second wizard and no server-URL prompt (the box's reachability is computed,
 //! not configured — see [`crate::net_check`]).
 
-pub mod validation;
-
 use crate::error::Result;
 
 /// Configuration for first-boot bringup, loaded from environment defaults.

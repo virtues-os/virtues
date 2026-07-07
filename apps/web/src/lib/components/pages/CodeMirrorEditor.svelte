@@ -13,6 +13,8 @@
 		abortAiSession,
 		isAiSessionActive,
 	} from "$lib/ai/aiCursorSession";
+	import { registerPageEditor, unregisterPageEditor } from "$lib/ai/aiPresence";
+	import { aiCursor } from "$lib/codemirror/extensions/ai-cursor";
 	import type { AiIntent } from "$lib/ai/inlineComplete";
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import type { YjsDocument } from "$lib/yjs";
@@ -370,6 +372,7 @@
 			placeholder: placeholderText || "Start writing, or press / for commands…",
 			onDocChange: handleDocChange,
 			extensions: [
+				aiCursor,
 				entityPickerExt,
 				slashCommandsExt,
 				selectionToolbarExt,
@@ -433,6 +436,10 @@
 		};
 		view.contentDOM.addEventListener("beforeinput", handleUserInput);
 
+		// Make this editor reachable by pageId so chat-driven edits can drive the
+		// same AI presence animation as the inline session.
+		if (pageId) registerPageEditor(pageId, view);
+
 		cleanupListeners = () => {
 			editorContainer.removeEventListener("slash-command-image", handleImageCommand);
 			editorContainer.removeEventListener("slash-command-ai", handleAiCommand);
@@ -457,6 +464,7 @@
 		abortAiSession();
 		cleanupListeners?.();
 		cleanupListeners = null;
+		if (pageId && view) unregisterPageEditor(pageId, view);
 		view?.destroy();
 		view = null;
 	});

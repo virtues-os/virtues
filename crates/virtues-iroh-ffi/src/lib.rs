@@ -115,7 +115,8 @@ impl IrohTransport {
             .parse()
             .map_err(|e| IrohError::BadRelayUrl(format!("{e}")))?;
         let dial_timeout = if background { DIAL_TIMEOUT_BG } else { DIAL_TIMEOUT };
-        let endpoint = match tokio::time::timeout(dial_timeout, build_endpoint(secret, Some(relay.clone()))).await {
+        // A dialing client binds an ephemeral port (only the box pins one).
+        let endpoint = match tokio::time::timeout(dial_timeout, build_endpoint(secret, Some(relay.clone()), None)).await {
             Ok(r) => r.map_err(|e| IrohError::Dial(format!("{e:#}")))?,
             Err(_) => return Err(IrohError::Dial("timed out binding iroh endpoint".into())),
         };

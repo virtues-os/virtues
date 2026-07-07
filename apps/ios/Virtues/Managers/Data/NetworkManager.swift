@@ -7,7 +7,6 @@
 
 import Foundation
 import UIKit
-import CryptoKit
 
 enum NetworkError: LocalizedError {
     case invalidURL
@@ -264,24 +263,6 @@ class NetworkManager: ObservableObject {
         }
     }
 
-    /// Best-effort: make one authenticated call to the box over the freshly-built
-    /// tunnel right after a relayed-bundle import. Its only job is to bump the
-    /// box's `last_seen_at` so the relaying device's "+ Add Device" UI flips from
-    /// "waiting" to "paired" immediately (the box's `provision-status` poll keys
-    /// off `last_seen_at > paired_at`). Never throws — if the tunnel isn't up yet
-    /// the next scheduled upload will register liveness anyway.
-    func confirmPairOnline() async {
-        guard let base = DeviceManager.shared.configuration.baseURL,
-              let url = URL(string: "\(base.absoluteString)/api/devices/action-ids")
-        else { return }
-
-        // Over BoxTransport (iroh) — the box authenticates by our proven key.
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.timeoutInterval = 15
-        _ = try? await BoxTransport.shared.send(request, session: session)
-    }
-
     /// Best-effort: re-pull the box's CURRENT reach ticket and persist it, so a
     /// device whose `relay_url` changed (or that paired before the box had relay
     /// reach) self-heals without a re-pair. Uses the existing iroh transport, so
@@ -306,139 +287,6 @@ class NetworkManager: ObservableObject {
         await MainActor.run {
             DeviceManager.shared.updateReach(boxNodeId: node, relayUrl: reach.relayUrl)
         }
-    }
-
-    // MARK: - Link a device (new-device side, fully-remote enrollment)
-
-    /// atlas base URL — the new device has no box reach yet, so it talks to atlas
-    /// (public) to resolve the box + wait for approval. Prod default.
-    private static let atlasBaseURL = "https://atlas.virtues.com"
-
-    /// Run the full link-a-device flow: resolve the box via atlas, wait for the
-    /// voucher to approve, then pull the bearer from the box over iroh. On success
-    /// the device is configured + reachable. Throws with a user-facing message.
-    func linkDevice(code rawCode: String) async throws {
-        let alnum = rawCode.uppercased().filter { $0.isLetter || $0.isNumber }
-        guard alnum.count == 10 else {
-            throw NetworkError.badRequest(message: "That code doesn't look right — it should be 10 characters.")
-        }
-        let code = "\(alnum.prefix(5))-\(alnum.suffix(5))"
-        let codeHash = Self.sha256Hex(code)
-
-        // This device's iroh identity + a MAC binding its EndpointId to the code
-        // (so a tampering coordinator can't swap it without the code).
-        guard let seed = Self.ensureIrohSeed(),
-              let endpointId = try? endpointIdFromSeed(deviceSeedHex: seed) else {
-            throw NetworkError.unknown(NSError(domain: "iroh seed", code: 0))
-        }
-        let mac = Self.hmacSha256Hex(key: code, message: endpointId)
-
-        // 1. Submit our EndpointId + MAC, learn the box's reach.
-        let reach = try await atlasLinkLookup(codeHash: codeHash, endpointId: endpointId, mac: mac)
-        // 2. Wait for the voucher to approve.
-        try await atlasWaitApproved(codeHash: codeHash)
-        // 3. Redeem our action map from the box over iroh (retry for allowlist
-        //    propagation). No bearer — this device is already allowlisted.
-        let redeemed = try await linkRedeemOverIroh(reach: reach, seed: seed, code: code)
-
-        await MainActor.run {
-            // `apiEndpoint` is only a path base over iroh (host ignored by the box).
-            DeviceManager.shared.updateConfiguration(apiEndpoint: "http://virtues.box:8000")
-            DeviceManager.shared.updateReach(boxNodeId: reach.boxNodeId, relayUrl: reach.relayUrl)
-            DeviceManager.shared.updateActionIds(redeemed.actionIds ?? [:])
-            DeviceManager.shared.isConfigured = true
-            DeviceManager.shared.configurationState = .configured
-        }
-    }
-
-    private func atlasLinkLookup(codeHash: String, endpointId: String, mac: String) async throws -> LinkLookupResponse {
-        guard let url = URL(string: "\(Self.atlasBaseURL)/link/lookup") else { throw NetworkError.invalidURL }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "code_hash": codeHash, "endpoint_id": endpointId, "mac": mac,
-        ])
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NetworkError.unknown(NSError(domain: "link lookup", code: 0))
-        }
-        guard http.statusCode == 200 else {
-            throw NetworkError.badRequest(message: "Link code not found or expired. Ask for a fresh one.")
-        }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(LinkLookupResponse.self, from: data)
-    }
-
-    /// Poll atlas until the voucher approves (or the code expires / we time out).
-    private func atlasWaitApproved(codeHash: String) async throws {
-        guard let url = URL(string: "\(Self.atlasBaseURL)/link/result") else { throw NetworkError.invalidURL }
-        let body = try JSONSerialization.data(withJSONObject: ["code_hash": codeHash])
-        // ~5 minutes at 2s intervals.
-        for _ in 0..<150 {
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
-            request.timeoutInterval = 15
-            if let (data, response) = try? await session.data(for: request),
-               let http = response as? HTTPURLResponse, http.statusCode == 200,
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let status = obj["status"] as? String {
-                switch status {
-                case "approved": return
-                case "expired": throw NetworkError.badRequest(message: "The link timed out. Start again.")
-                default: break // pending / requested → keep waiting
-                }
-            }
-            try await Task.sleep(nanoseconds: 2_000_000_000)
-        }
-        throw NetworkError.timeout
-    }
-
-    /// Dial the box over iroh (now allowlisted) and redeem the bearer. Retries a
-    /// few times because allowlist registration propagates asynchronously.
-    private func linkRedeemOverIroh(reach: LinkLookupResponse, seed: String, code: String) async throws -> LinkRedeemResponse {
-        guard let url = URL(string: "http://virtues.box:8000/api/pair/link-redeem") else { throw NetworkError.invalidURL }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
-        let reqBytes = try HTTPWire.serialize(req)
-
-        let transport = try await IrohTransport.dial(
-            relayUrl: reach.relayUrl, boxIdHex: reach.boxNodeId, deviceSeedHex: seed, background: false
-        )
-        var lastError: Error?
-        for attempt in 0..<6 {
-            do {
-                let respBytes = try await transport.request(rawHttp: reqBytes, background: false)
-                let (data, http) = try HTTPWire.parseResponse(respBytes, url: url)
-                if http.statusCode == 200 {
-                    let decoder = JSONDecoder()
-                    decoder.keyDecodingStrategy = .convertFromSnakeCase
-                    return try decoder.decode(LinkRedeemResponse.self, from: data)
-                }
-                // 404 = not-approved-yet / propagation lag → retry.
-                lastError = NetworkError.serverError(http.statusCode)
-            } catch {
-                lastError = error
-            }
-            if attempt < 5 { try await Task.sleep(nanoseconds: 2_000_000_000) }
-        }
-        throw lastError ?? NetworkError.timeout
-    }
-
-    // MARK: - CryptoKit helpers (must match box: SHA-256 / HMAC-SHA256, lowercase hex)
-
-    private static func sha256Hex(_ s: String) -> String {
-        SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-    private static func hmacSha256Hex(key: String, message: String) -> String {
-        let mac = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: SymmetricKey(data: Data(key.utf8)))
-        return mac.map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Action runs (server-side outcome, 2B)
@@ -489,27 +337,6 @@ class NetworkManager: ObservableObject {
         let hex = bytes.map { String(format: "%02x", $0) }.joined()
         try? KeychainStore.shared.saveIrohSeed(hex)
         return KeychainStore.shared.loadIrohSeed()
-    }
-
-    /// Register this device's iroh EndpointId with the box (provision path, where
-    /// the device wasn't able to submit it in-band at consume). The box updates
-    /// `app_device.node_id` for the caller. Best-effort — returns whether the box
-    /// accepted it. Goes over `BoxTransport` (iroh), so it's authenticated by the
-    /// device's proven key; if the box can't reach this EndpointId yet (freshly
-    /// provisioned), the user re-pairs via the QR consume path.
-    func registerSelfNodeId(base: URL, nodeId: String) async -> Bool {
-        guard let url = URL(string: "\(base.absoluteString)/api/devices/self/node-id") else {
-            return false
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["node_id": nodeId])
-        request.timeoutInterval = 15
-        guard let (_, http) = try? await BoxTransport.shared.send(request, session: session) else {
-            return false
-        }
-        return (200...299).contains(http.statusCode)
     }
 
     /// Hardware model identifier (e.g. "iPhone16,1")
@@ -567,23 +394,6 @@ struct ErrorResponse: Codable {
     let error: String
     let details: String?
     let message: String? // Added to match backend
-}
-
-// MARK: - Link-a-device (new-device side) responses
-
-/// atlas `/link/lookup` → the box's public reach ticket.
-struct LinkLookupResponse: Decodable {
-    let boxNodeId: String
-    let relayUrl: String
-}
-
-/// box `/api/pair/link-redeem` (over iroh) → device_id + reach + action map.
-/// No bearer — this device is already allowlisted by the voucher's approve.
-struct LinkRedeemResponse: Decodable {
-    let deviceId: String?
-    let actionIds: [String: String]?
-    let boxNodeId: String?
-    let relayUrl: String?
 }
 
 // MARK: - Pair-only flow models (v1)

@@ -18,7 +18,7 @@ mod endpoint;
 mod server;
 
 pub use client::VirtuesIrohClient;
-pub use endpoint::{build_direct_endpoint, build_endpoint, VIRTUES_ALPN};
+pub use endpoint::{build_endpoint, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN};
 pub use server::{serve, AllowPolicy, ProvenPeer, StaticAllow};
 
 // Re-export the iroh types callers need so they don't depend on iroh directly.
