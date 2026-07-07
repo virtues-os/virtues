@@ -10,7 +10,6 @@ mod credits;
 mod diag;
 mod health;
 mod link;
-mod link_device;
 mod preorder;
 mod relay;
 mod settings;
@@ -94,7 +93,6 @@ pub fn router() -> Router<AppState> {
         .merge(health::router())
         .merge(claim::router())
         .merge(link::router())
-        .merge(link_device::router())
         .merge(preorder::router())
         .merge(credits::router())
         .merge(relay::router())

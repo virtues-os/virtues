@@ -96,6 +96,23 @@ pub struct PageListResponse {
     pub offset: i64,
 }
 
+/// An inbound reference — a page that links TO the queried page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Backlink {
+    pub id: String,
+    pub title: String,
+    pub icon: Option<String>,
+    /// A one-line plain-text snippet of the surrounding context.
+    pub snippet: String,
+    pub updated_at: Timestamp,
+}
+
+/// Backlinks (references) response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacklinksResponse {
+    pub backlinks: Vec<Backlink>,
+}
+
 /// Entity search result for autocomplete
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntitySearchResult {
@@ -229,6 +246,98 @@ pub async fn get_page(pool: &PgPool, id: &str) -> Result<Page> {
     .ok_or_else(|| Error::NotFound(format!("Page not found: {}", id)))?;
 
     Ok(page)
+}
+
+/// Get inbound references (backlinks) for a page.
+///
+/// Links are stored inline in markdown as `[@Label](/page/{id})`. On a
+/// single-tenant box the page count is small, so we pre-filter candidate pages
+/// with a `LIKE` on the target URL and extract a context snippet in Rust.
+pub async fn get_page_backlinks(pool: &PgPool, id: &str) -> Result<BacklinksResponse> {
+    // The trailing `)` pins the match to the exact id (so `pg_ab` doesn't match
+    // `pg_abc`) and to a real markdown link, not a bare mention of the id.
+    let needle = format!("/page/{})", id);
+    let like = format!("%{}%", needle);
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: String,
+        title: String,
+        icon: Option<String>,
+        content: String,
+        updated_at: Timestamp,
+    }
+
+    let rows = sqlx::query_as::<_, Row>(
+        r#"
+        SELECT id, title, icon, content, updated_at
+        FROM app_pages
+        WHERE id <> $1 AND content LIKE $2
+        ORDER BY updated_at DESC
+        "#,
+    )
+    .bind(id)
+    .bind(&like)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get backlinks: {}", e)))?;
+
+    let backlinks = rows
+        .into_iter()
+        .filter_map(|row| {
+            let snippet = backlink_snippet(&row.content, &needle)?;
+            Some(Backlink {
+                id: row.id,
+                title: row.title,
+                icon: row.icon,
+                snippet,
+                updated_at: row.updated_at,
+            })
+        })
+        .collect();
+
+    Ok(BacklinksResponse { backlinks })
+}
+
+/// Extract a one-line, plain-text snippet around the first link matching
+/// `needle` within markdown `content`. Returns `None` if the line is empty
+/// after stripping markup.
+fn backlink_snippet(content: &str, needle: &str) -> Option<String> {
+    let pos = content.find(needle)?;
+    // Bound the snippet to the enclosing line.
+    let start = content[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let end = content[pos..]
+        .find('\n')
+        .map(|i| pos + i)
+        .unwrap_or(content.len());
+    let plain = strip_markdown(&content[start..end]);
+    let trimmed = plain.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_chars(trimmed, 160))
+}
+
+/// Reduce a line of markdown to plain text: `[text](url)` → `text`, and strip
+/// leading heading/list/quote markers.
+fn strip_markdown(line: &str) -> String {
+    use std::sync::OnceLock;
+    static LINK_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = LINK_RE.get_or_init(|| regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)").unwrap());
+    let no_links = re.replace_all(line, "$1");
+    no_links
+        .trim_start_matches(|c: char| matches!(c, '#' | '-' | '*' | '>' | ' ' | '\t'))
+        .to_string()
+}
+
+/// Truncate to at most `max` characters (not bytes), appending an ellipsis.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
 }
 
 /// Create a new page

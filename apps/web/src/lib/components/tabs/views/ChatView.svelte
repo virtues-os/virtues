@@ -27,6 +27,7 @@
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
+	import { animateChatEdit } from "$lib/ai/aiPresence";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import { spaceStore } from "$lib/stores/space.svelte";
 	import ChatSpaceBreadcrumb from "$lib/components/chat/ChatSpaceBreadcrumb.svelte";
@@ -604,6 +605,41 @@
 	});
 
 
+
+	// Effect to drive the AI presence animation when a chat `edit_page` lands.
+	// Mirrors the create_page effect: seed historical edits on the first settled
+	// run (so we don't replay them), then animate only new ones, deduped by
+	// edit_id. The animation is a no-op if the page isn't open in a pane.
+	let editAnimSeeded = false;
+	const animatedEditIds = new Set<string>();
+	$effect(() => {
+		if (!chat?.messages || isLoading) return;
+
+		const collectNew = (animate: boolean) => {
+			for (const message of chat.messages) {
+				if (message.role !== "assistant") continue;
+				for (const part of message.parts as ToolResultPart[]) {
+					if (part.type !== "tool-edit_page" || part.state !== "output-available")
+						continue;
+					const output = part.output as any;
+					const edit = output?.edit;
+					if (!edit?.edit_id || animatedEditIds.has(edit.edit_id)) continue;
+					animatedEditIds.add(edit.edit_id);
+					if (animate && output?.applied) {
+						animateChatEdit(edit.page_id, edit.replace || "");
+					}
+				}
+			}
+		};
+
+		// First settled run: seed history without animating.
+		if (!editAnimSeeded) {
+			collectNew(false);
+			editAnimSeeded = true;
+			return;
+		}
+		collectNew(true);
+	});
 
 	// Context usage state
 	interface ContextUsageState {

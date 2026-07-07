@@ -15,10 +15,12 @@
 		yjsDoc: YjsDocument | undefined;
 		showCoverPicker?: boolean;
 		isShared?: boolean;
+		referencesActive?: boolean;
 		onIconSelect: (value: string | null) => void;
 		onCoverSelect: (url: string | null) => void;
 		onCopyMarkdown: () => void;
 		onShare?: () => void;
+		onToggleReferences?: () => void;
 		onDelete: () => void;
 	}
 
@@ -30,10 +32,12 @@
 		yjsDoc,
 		showCoverPicker = $bindable(false),
 		isShared = false,
+		referencesActive = false,
 		onIconSelect,
 		onCoverSelect,
 		onCopyMarkdown,
 		onShare,
+		onToggleReferences,
 		onDelete,
 	}: Props = $props();
 
@@ -120,6 +124,16 @@
 
 	<!-- Actions -->
 	<div class="toolbar-group">
+		{#if onToggleReferences}
+			<button
+				onclick={onToggleReferences}
+				class="toolbar-action"
+				class:active={referencesActive}
+				title="References"
+			>
+				<Icon icon="ri:links-line" width="15" />
+			</button>
+		{/if}
 		<Popover bind:open={showVersionHistory} placement="bottom-end">
 			{#snippet trigger({ toggle })}
 				<button onclick={toggle} class="toolbar-action" title="Version history">

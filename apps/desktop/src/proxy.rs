@@ -12,8 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use virtues_iroh::{
-    build_direct_endpoint, build_endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey,
-    VirtuesIrohClient,
+    build_endpoint, iroh_port, EndpointAddr, EndpointId, RelayUrl, SecretKey, VirtuesIrohClient,
 };
 
 use crate::keychain;
@@ -33,13 +32,24 @@ pub async fn run() -> Result<()> {
     // Reach paths, in preference order: direct LAN/VPN addresses (no relay, no
     // discovery, no third party) and/or the relay (remote). iroh negotiates the
     // best path from whatever we supply.
-    let direct: Vec<SocketAddr> =
-        rec.box_direct_addrs.iter().filter_map(|s| s.parse().ok()).collect();
     let relay: Option<RelayUrl> = rec.relay_url.and_then(|s| s.parse().ok());
+
+    // Direct addrs = any stored ones (e.g. a Tailscale overlay address) PLUS a
+    // fresh resolution of the box's LAN host to `IP:iroh_port`. Re-resolving each
+    // `up` is what makes LAN reach DHCP-proof: nothing is frozen but the box's
+    // NodeId — we look up where it lives right now and dial it by identity.
+    let mut direct: Vec<SocketAddr> =
+        rec.box_direct_addrs.iter().filter_map(|s| s.parse().ok()).collect();
+    for a in resolve_box_lan(&rec.box_url).await {
+        if !direct.contains(&a) {
+            direct.push(a);
+        }
+    }
     if direct.is_empty() && relay.is_none() {
         bail!(
-            "this pairing has no way to reach the box — no direct addresses and no relay. \
-             Re-pair on the same network as the box, or claim it for remote access."
+            "no way to reach the box — couldn't resolve it on this network and no relay. \
+             Run `virtues-client up` on the same network as the box, or claim it for \
+             remote access."
         );
     }
 
@@ -50,12 +60,12 @@ pub async fn run() -> Result<()> {
         .map_err(|_| anyhow!("device secret is not 32 bytes"))?;
     let secret = SecretKey::from_bytes(&seed);
 
-    // With a relay, build the relay-capable endpoint (it still upgrades to direct
-    // when reachable). LAN-only: a direct-only endpoint — zero third parties.
-    let endpoint = match &relay {
-        Some(r) => build_endpoint(secret, Some(r.clone())).await.context("bind iroh endpoint")?,
-        None => build_direct_endpoint(secret).await.context("bind direct iroh endpoint")?,
-    };
+    // One endpoint builder: `Some(relay)` → our relay (remote, upgrades to direct
+    // when reachable); `None` → relay disabled (LAN-direct only, zero third
+    // parties). The client binds an ephemeral port (only the box pins one).
+    let endpoint = build_endpoint(secret, relay.clone(), None)
+        .await
+        .context("bind iroh endpoint")?;
     let mut addr = EndpointAddr::new(box_id);
     for a in &direct {
         addr = addr.with_ip_addr(*a);
@@ -84,5 +94,27 @@ pub async fn run() -> Result<()> {
                 tracing::debug!(error = %format!("{e:#}"), "proxy stream ended");
             }
         });
+    }
+}
+
+/// Resolve the box's LAN host (from the paired `box_url`) to `IP:iroh_port`
+/// socket addresses to dial by NodeId. Re-resolved on each `up`, so a DHCP lease
+/// change on the box never strands us — the box's identity (NodeId) is the only
+/// frozen thing; its address is looked up fresh. Best-effort: returns empty when
+/// the host can't be resolved (off-LAN, or the OS can't resolve `.local`), in
+/// which case reach falls back to the relay if one is present.
+async fn resolve_box_lan(box_url: &str) -> Vec<SocketAddr> {
+    let host = match url::Url::parse(box_url).ok().and_then(|u| u.host_str().map(str::to_owned)) {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+    // Bind the result before matching so the borrow of `host` ends at the await.
+    let resolved = tokio::net::lookup_host((host.as_str(), iroh_port())).await;
+    match resolved {
+        Ok(iter) => iter.collect(),
+        Err(e) => {
+            tracing::debug!(host, error = %e, "could not resolve box LAN host");
+            Vec::new()
+        }
     }
 }

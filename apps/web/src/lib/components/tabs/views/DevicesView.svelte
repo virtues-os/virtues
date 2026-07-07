@@ -58,30 +58,6 @@
 	let consumedByLabel = $state<string | null>(null);
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
 
-	// "Link a device" (fully-remote enrollment) state. Unlike Add device (a QR the
-	// new device scans while it can reach the box), Link a device shows a short
-	// code the user types on a device that's off-LAN; atlas brokers the rendezvous
-	// and the bearer is pulled box→device over iroh once we approve here.
-	// See docs/reach-enrollment.md.
-	let linkOpen = $state(false);
-	let linkCode = $state<string | null>(null);
-	// idle → minting → waiting (code shown, no device yet) → ready (device showed
-	// up, offer Approve) → approving → approved (device pulling creds) → linked
-	// (device finished) → expired | error.
-	type LinkPhase =
-		| "idle"
-		| "minting"
-		| "waiting"
-		| "ready"
-		| "approving"
-		| "approved"
-		| "linked"
-		| "expired"
-		| "error";
-	let linkPhase = $state<LinkPhase>("idle");
-	let linkError = $state<string | null>(null);
-	let linkPollHandle: ReturnType<typeof setInterval> | null = null;
-
 	onMount(load);
 
 	async function load() {
@@ -240,111 +216,6 @@
 		}
 	}
 
-	// ─── Link a device (fully-remote) ───────────────────────────────────────
-
-	function stopLinkPolling() {
-		if (linkPollHandle) {
-			clearInterval(linkPollHandle);
-			linkPollHandle = null;
-		}
-	}
-
-	async function startLink() {
-		linkOpen = true;
-		linkError = null;
-		linkCode = null;
-		linkPhase = "minting";
-		try {
-			const resp = await fetch("/api/devices/link/start", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ kind: "mobile_app" }),
-			});
-			if (!resp.ok) {
-				const data = await resp.json().catch(() => ({}));
-				throw new Error(data.error ?? `HTTP ${resp.status}`);
-			}
-			const data = await resp.json();
-			linkCode = data.code;
-			linkPhase = "waiting";
-			linkPollHandle = setInterval(pollLink, 2000);
-		} catch (e) {
-			linkError = e instanceof Error ? e.message : "Could not start linking";
-			linkPhase = "error";
-		}
-	}
-
-	async function pollLink() {
-		if (!linkCode) return;
-		try {
-			const resp = await fetch("/api/devices/link/status", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ code: linkCode }),
-			});
-			if (!resp.ok) return;
-			const data = await resp.json();
-			// status: pending | requested | approved | redeemed | expired
-			switch (data.status) {
-				case "expired":
-					linkPhase = "expired";
-					stopLinkPolling();
-					break;
-				case "redeemed":
-					linkPhase = "linked";
-					stopLinkPolling();
-					toast.success("Device linked");
-					await load();
-					break;
-				case "approved":
-					// Approved here; device is pulling its credentials over iroh.
-					if (linkPhase !== "linked") linkPhase = "approved";
-					break;
-				case "requested":
-					// The new device entered the code and is waiting for approval.
-					if (linkPhase === "waiting") linkPhase = "ready";
-					break;
-				default:
-					break; // still pending — device hasn't shown up yet.
-			}
-		} catch {
-			/* swallow — transient */
-		}
-	}
-
-	async function approveLink() {
-		if (!linkCode) return;
-		linkPhase = "approving";
-		try {
-			const resp = await fetch("/api/devices/link/approve", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ code: linkCode, kind: "mobile_app" }),
-			});
-			if (!resp.ok) {
-				const data = await resp.json().catch(() => ({}));
-				toast.error("Approve failed", { description: data.error ?? `HTTP ${resp.status}` });
-				linkPhase = "ready";
-				return;
-			}
-			// Local session is now approved; poll drives us to `linked` once the
-			// device finishes the iroh redeem.
-			linkPhase = "approved";
-		} catch (e) {
-			toast.error("Approve failed", {
-				description: e instanceof Error ? e.message : "Network error",
-			});
-			linkPhase = "ready";
-		}
-	}
-
-	function closeLink() {
-		stopLinkPolling();
-		linkOpen = false;
-		linkPhase = "idle";
-		linkCode = null;
-	}
-
 	function kindLabel(k: Device["kind"]) {
 		switch (k) {
 			case "browser":
@@ -400,10 +271,6 @@
 				</p>
 			</div>
 			<div class="flex items-center gap-2">
-				<Button variant="ghost" onclick={startLink}>
-					<Icon icon="ri:link" />
-					Link a device
-				</Button>
 				<Button variant="primary" onclick={startAdd}>
 					<Icon icon="ri:add-line" />
 					Add device
@@ -580,96 +447,6 @@
 					{:else if pairStatus === "denied"}
 						<div class="text-sm text-foreground-muted">Pair denied.</div>
 						<Button variant="ghost" onclick={closeAdd} class="w-full">Close</Button>
-					{/if}
-				</div>
-			{/if}
-		</div>
-	</div>
-{/if}
-
-{#if linkOpen}
-	<!-- Link a device (remote): show a short code to type on the new device. -->
-	<div
-		class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4"
-		onclick={closeLink}
-		onkeydown={(e) => e.key === "Escape" && closeLink()}
-		role="dialog"
-		tabindex="-1"
-	>
-		<div
-			class="w-full max-w-md rounded-xl bg-surface border border-border shadow-xl p-6"
-			onclick={(e) => e.stopPropagation()}
-			onkeydown={(e) => e.stopPropagation()}
-			role="document"
-		>
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-lg font-semibold">Link a device</h2>
-				<button
-					onclick={closeLink}
-					class="text-foreground-muted hover:text-foreground"
-					aria-label="Close"
-				>
-					<Icon icon="ri:close-line" />
-				</button>
-			</div>
-
-			{#if linkPhase === "minting"}
-				<LoadingState />
-			{:else if linkPhase === "error"}
-				<ErrorState message={linkError ?? "Could not start linking"} />
-				<Button variant="ghost" onclick={closeLink} class="w-full mt-3">Close</Button>
-			{:else if linkPhase === "expired"}
-				<ErrorState message="This linking code expired. Close and try again." />
-				<Button variant="ghost" onclick={closeLink} class="w-full mt-3">Close</Button>
-			{:else if linkPhase === "linked"}
-				<div class="rounded-lg bg-surface-alt border border-border p-4 text-sm flex items-start gap-3">
-					<Icon icon="ri:check-line" class="text-success mt-0.5" />
-					<div class="font-medium">Device linked</div>
-				</div>
-				<Button variant="primary" onclick={closeLink} class="w-full mt-4">Done</Button>
-			{:else}
-				<div class="space-y-4">
-					<p class="text-sm text-foreground-muted">
-						On the new device, open Virtues, choose <span class="font-medium text-foreground"
-							>Enter a linking code</span
-						>, and type the code below. It works from anywhere — the device doesn't
-						need to be on your network.
-					</p>
-
-					<div
-						class="rounded-lg border border-border bg-surface-alt p-5 flex items-center justify-center"
-					>
-						<span class="text-3xl font-mono tracking-[0.2em] select-all">{linkCode}</span>
-					</div>
-
-					{#if linkPhase === "waiting"}
-						<div class="flex items-center gap-2 text-sm text-foreground-muted">
-							<Icon icon="ri:loader-4-line" class="animate-spin" />
-							<span>Waiting for the new device to enter the code…</span>
-						</div>
-					{:else if linkPhase === "ready"}
-						<div class="rounded-lg bg-surface-alt border border-border p-3 text-sm">
-							<div class="font-medium mb-1">A device wants to join</div>
-							<p class="text-foreground-muted text-xs">
-								It entered your code. Approve to grant it access to this box.
-							</p>
-							<div class="flex gap-2 mt-3">
-								<Button variant="primary" onclick={approveLink}>
-									<Icon icon="ri:check-line" /> Approve
-								</Button>
-								<Button variant="ghost" onclick={closeLink}>Cancel</Button>
-							</div>
-						</div>
-					{:else if linkPhase === "approving"}
-						<div class="flex items-center gap-2 text-sm text-foreground-muted">
-							<Icon icon="ri:loader-4-line" class="animate-spin" />
-							<span>Approving…</span>
-						</div>
-					{:else if linkPhase === "approved"}
-						<div class="flex items-center gap-2 text-sm text-foreground-muted">
-							<Icon icon="ri:loader-4-line" class="animate-spin" />
-							<span>Approved — the device is finishing up…</span>
-						</div>
 					{/if}
 				</div>
 			{/if}

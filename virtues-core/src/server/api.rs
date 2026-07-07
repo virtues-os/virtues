@@ -2707,6 +2707,14 @@ pub async fn delete_page_handler(
     }
 }
 
+/// GET /api/pages/:id/backlinks - Get inbound references (pages linking here)
+pub async fn get_page_backlinks_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::get_page_backlinks(state.db.pool(), &id).await)
+}
+
 /// GET /api/pages/reflections/:date - Get all reflections for a date
 pub async fn get_reflections_handler(
     State(state): State<AppState>,

@@ -18,8 +18,8 @@ use sqlx::Postgres;
 use std::ops::Deref;
 
 /// Space-separated datetime format (`2024-01-22 15:30:00`). Still accepted on
-/// parse: day-boundary queries (`api::wiki`) and MCP tool output (`mcp::tools`)
-/// emit this shape rather than RFC 3339.
+/// parse: day-boundary queries (`api::wiki`) and SQL tool output
+/// (`tools::sql_query`) emit this shape rather than RFC 3339.
 const SPACE_SEPARATED_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// A UTC timestamp that serializes to RFC 3339 and stores as `TIMESTAMPTZ`.

@@ -22,13 +22,12 @@ import type { YjsDocument } from "$lib/yjs";
 import { streamCompletion, type AiIntent } from "./inlineComplete";
 import { createOutputSanitizer } from "./sanitize";
 import { aiSession } from "./aiSession.svelte";
+import { aiCaret, aiTrail, aiTelegraph, aiPresenceClear } from "./aiPresence";
 import {
-	addAiTrail,
-	clearAiSession,
-	setAiCaret,
-	setAiTelegraph,
-} from "$lib/codemirror/extensions/ai-cursor";
-import { getSelectedModel, getDefaultModel } from "$lib/stores/models.svelte";
+	getSelectedModel,
+	getDefaultModel,
+	getInitializationPromise,
+} from "$lib/stores/models.svelte";
 
 const CONTEXT_CHARS = 1200;
 const FLUSH_MS = 30;
@@ -115,7 +114,7 @@ class AiCursorSession {
 	}
 
 	private dispatchCaret(pos: number, phase: "active" | "done" = "active") {
-		this.view.dispatch({ effects: setAiCaret.of({ pos, phase }) });
+		aiCaret(this.view, pos, phase);
 	}
 
 	/** Insert text at the moving anchor, tagging origin 'ai' + adding a trail. */
@@ -134,13 +133,13 @@ class AiCursorSession {
 			this.ytext.insert(at, text);
 		}, "ai");
 		if (hadPendingDelete) {
-			this.view.dispatch({ effects: setAiTelegraph.of(null) });
+			aiTelegraph(this.view, null);
 		}
 		this.didMutate = true;
 		this.insertedChars += text.length;
 		const end = at + text.length;
 		this.anchor = Y.createRelativePositionFromTypeIndex(this.ytext, end);
-		this.view.dispatch({ effects: addAiTrail.of({ from: at, to: end }) });
+		aiTrail(this.view, at, end);
 		this.dispatchCaret(end);
 		// Backstop against a runaway completion filling the document.
 		if (this.insertedChars >= MAX_OUTPUT_CHARS) this.abort();
@@ -161,6 +160,12 @@ class AiCursorSession {
 	}
 
 	async run(): Promise<void> {
+		// Models may not be loaded yet — the pages editor, unlike chat, never
+		// triggers the fetch. Ensure they're loaded before resolving one, or the
+		// first inline edit on a fresh session fails with "no model available".
+		await getInitializationPromise();
+		if (this.aborted) return this.cleanup();
+
 		const model = getSelectedModel()?.id ?? getDefaultModel()?.id;
 		if (!model) {
 			aiSession.set("error", "No model available");
@@ -190,7 +195,7 @@ class AiCursorSession {
 			// The highlight stays until the first replacement token arrives.
 			aiSession.set("telegraphing");
 			this.dispatchCaret(sel.from);
-			this.view.dispatch({ effects: setAiTelegraph.of({ from: sel.from, to: sel.to }) });
+			aiTelegraph(this.view, { from: sel.from, to: sel.to });
 			await sleep(TELEGRAPH_MS);
 			if (this.aborted) return this.cleanup();
 
@@ -274,7 +279,7 @@ class AiCursorSession {
 
 	/** Remove the caret/trail/telegraph. `resetStatus` false keeps an error visible. */
 	private cleanup(resetStatus = true) {
-		this.view.dispatch({ effects: clearAiSession.of(null) });
+		aiPresenceClear(this.view);
 		if (resetStatus) aiSession.reset();
 	}
 }

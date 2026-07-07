@@ -78,7 +78,7 @@ class DeviceManager: ObservableObject {
     }
 
     /// Persist the box's iroh reach ticket (`box_node_id` + `relay_url`) from a
-    /// pair/provision response. Non-secret; the device seed lives in the Keychain.
+    /// pair/consume response. Non-secret; the device seed lives in the Keychain.
     /// Also drops `BoxTransport`'s warm connection so the next call redials with
     /// the new ticket.
     func updateReach(boxNodeId: String?, relayUrl: String?) {

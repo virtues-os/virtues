@@ -13,7 +13,10 @@ import type { TabType, ParsedRoute } from './types';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 // Import all view components
-import HomeView from '$lib/components/tabs/views/HomeView.svelte';
+// PROTOTYPE: Home is served through the redesign harness (Original / Folio /
+// Refined). To remove: restore `import HomeView … HomeView.svelte` and set the
+// home entry's `component` back to `HomeView`.
+import HomeSwitcher from '$lib/components/tabs/views/HomeSwitcher.svelte';
 import ChatView from '$lib/components/tabs/views/ChatView.svelte';
 import HistoryView from '$lib/components/tabs/views/HistoryView.svelte';
 import WikiView from '$lib/components/tabs/views/WikiView.svelte';
@@ -92,7 +95,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		deserialize: () => '/home',
 		icon: 'ri:sparkling-2-line',
 		defaultLabel: 'Home',
-		component: HomeView,
+		component: HomeSwitcher, // PROTOTYPE: was HomeView
 	},
 
 	// ========================================================================

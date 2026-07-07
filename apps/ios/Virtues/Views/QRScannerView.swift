@@ -2,18 +2,12 @@
 //  QRScannerView.swift
 //  Virtues
 //
-//  QR code scanner for the v1 pair-only flow. Accepts QRs produced by
-//  `virtues link` on the box CLI or the "+ Add device" modal in the web
-//  Devices page. Both shapes encode a `/pair#t=<token>` URL (or its
-//  `virtues://pair?t=<token>` deep-link cousin); the scanner extracts the
-//  token + endpoint and hands them to the caller to POST against
-//  `/api/pair/consume`.
-//
-//  Legacy `{"e":..., "s":...}` JSON QRs from pre-v1 pairings are
-//  recognized AS legacy and rejected with a clear message — the backend
-//  endpoint they targeted (`/api/pairing/complete`) was removed in v1, so
-//  there's nothing the app can do with them except tell the user to scan
-//  a fresh QR.
+//  QR code scanner for the pair flow. Accepts QRs produced by `virtues link`
+//  on the box CLI or the "+ Add device" modal in the web Devices page. Both
+//  shapes encode a `/pair#t=<token>` URL (or its `virtues://pair?t=<token>`
+//  deep-link cousin); the scanner extracts the token + endpoint and hands them
+//  to the caller to POST against `/api/pair/consume`. Anything else is rejected
+//  with "Not a Virtues pair code".
 //
 
 import SwiftUI
@@ -24,10 +18,6 @@ struct QRScannerView: View {
     /// Called when a token-flow QR is decoded (same-LAN direct pairing). Hands
     /// the caller `(endpoint, pairToken, fpr)` ready for `consumePairToken(...)`.
     let onScanned: (String, String, String?) -> Void
-    /// Called when a desktop-RELAYED provision QR is decoded — a raw JSON object
-    /// `{ v:2, box_node_id, relay_url, bearer, credential_id, device_id }` the
-    /// device stores directly (no consume call). The payload is the JSON bytes.
-    let onBundleScanned: (Data) -> Void
     let onCancel: () -> Void
 
     @State private var cameraPermissionGranted = false
@@ -190,33 +180,14 @@ struct QRScannerView: View {
     }
 
     private func handleScannedCode(_ code: String) {
-        // 1. Token pair URL (primary): `/pair#t=<token>` or `virtues://pair?t=`.
+        // Token pair URL: `/pair#t=<token>` or `virtues://pair?t=`.
         if let parsed = QRScannerView.parsePairURL(code) {
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
             onScanned(parsed.endpoint, parsed.token, parsed.fpr)
             return
         }
-
-        // 2. Desktop-relayed provision JSON (Mac→phone hand-off):
-        //    `{ v:2, box_node_id, relay_url, bearer, credential_id, device_id }`.
-        if let payload = QRScannerView.parseProvisionPayload(code) {
-            let generator = UINotificationFeedbackGenerator()
-            generator.notificationOccurred(.success)
-            onBundleScanned(payload)
-            return
-        }
-
-        // 3. Legacy JSON payloads → tell the user to scan a fresh QR.
-        if let data = code.data(using: .utf8),
-           (try? JSONSerialization.jsonObject(with: data)) is [String: Any] {
-            showInvalid(
-                "This QR is from an older Virtues version. " +
-                "Scan a fresh QR from /virtues/devices on your box."
-            )
-        } else {
-            showInvalid("Not a Virtues pair code")
-        }
+        showInvalid("Not a Virtues pair code")
     }
 
     private func showInvalid(_ message: String) {
@@ -275,18 +246,6 @@ struct QRScannerView: View {
             endpoint += ":\(port)"
         }
         return (endpoint, token, fpr)
-    }
-
-    /// Recognize the desktop-relayed provision QR — a raw JSON object carrying the
-    /// box's iroh reach ticket (`box_node_id`) + bearer. Returns the JSON bytes
-    /// for `handleBundleScanResult` to decode, or `nil` for anything that isn't
-    /// this payload (so the caller falls through to the legacy/invalid branch).
-    static func parseProvisionPayload(_ raw: String) -> Data? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let data = trimmed.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              obj["box_node_id"] != nil else { return nil }
-        return data
     }
 
     private static func extractFragmentValue(named name: String, from fragment: String) -> String? {

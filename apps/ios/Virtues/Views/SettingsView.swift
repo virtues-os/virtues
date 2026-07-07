@@ -21,7 +21,6 @@ struct SettingsView: View {
     @State private var showingStorageDetails = false
     @State private var showingEndpointEdit = false
     @State private var showQRScanner = false
-    @State private var showLinkCodeEntry = false
     @State private var isCompletingPairing = false
     @State private var pairingError: String?
     @State private var showCopiedToast = false
@@ -87,18 +86,6 @@ struct SettingsView: View {
                             }
                         }
                         .foregroundColor(.warmPrimary)
-                    }
-                    .disabled(isCompletingPairing)
-
-                    // Enter a linking code (fully-remote — pair through a device
-                    // you already have, no QR / no LAN needed).
-                    Button(action: {
-                        Haptics.light()
-                        pairingError = nil
-                        showLinkCodeEntry = true
-                    }) {
-                        Label("Enter Linking Code", systemImage: "keyboard")
-                            .foregroundColor(.warmPrimary)
                     }
                     .disabled(isCompletingPairing)
 
@@ -339,14 +326,7 @@ struct SettingsView: View {
             .fullScreenCover(isPresented: $showQRScanner) {
                 QRScannerView(
                     onScanned: handleQRScanResult,
-                    onBundleScanned: handleBundleScanResult,
                     onCancel: { showQRScanner = false }
-                )
-            }
-            .sheet(isPresented: $showLinkCodeEntry) {
-                ManualCodeEntryView(
-                    onEnter: handleLinkCode,
-                    onCancel: { showLinkCodeEntry = false }
                 )
             }
             .overlay(alignment: .bottom) {
@@ -373,33 +353,6 @@ struct SettingsView: View {
     /// `kind = "mobile_app"`, persist the server-issued bearer into the
     /// Keychain (done inside `consumePairToken`), and persist the endpoint
     /// + action_ids into `DeviceConfiguration`.
-    /// Fully-remote link: the user typed a code shown on an already-paired device.
-    /// Resolve the box via atlas, wait for approval, pull the bearer over iroh.
-    private func handleLinkCode(_ code: String) {
-        showLinkCodeEntry = false
-        isCompletingPairing = true
-        pairingError = nil
-        Task {
-            do {
-                try await NetworkManager.shared.linkDevice(code: code)
-                await MainActor.run {
-                    isCompletingPairing = false
-                    Haptics.success()
-                }
-            } catch {
-                await MainActor.run {
-                    isCompletingPairing = false
-                    if let networkError = error as? NetworkError {
-                        pairingError = networkError.errorDescription
-                    } else {
-                        pairingError = error.localizedDescription
-                    }
-                    Haptics.error()
-                }
-            }
-        }
-    }
-
     private func handleQRScanResult(endpoint: String, pairToken: String, fingerprint: String?) {
         showQRScanner = false
         isCompletingPairing = true
@@ -427,81 +380,6 @@ struct SettingsView: View {
                     deviceManager.configurationState = .configured
                     isCompletingPairing = false
                     Haptics.success()
-                }
-            } catch {
-                await MainActor.run {
-                    isCompletingPairing = false
-                    if let networkError = error as? NetworkError {
-                        pairingError = networkError.errorDescription
-                    } else {
-                        pairingError = error.localizedDescription
-                    }
-                    Haptics.error()
-                }
-            }
-        }
-    }
-
-    /// Desktop-RELAYED provision (Mac→phone hand-off): an already-paired device
-    /// asks the box to mint this phone's credential, then shows a v2 QR carrying
-    /// the box's iroh reach ticket + bearer:
-    ///
-    /// ```json
-    /// { "v": 2, "box_node_id": "...", "relay_url": "...",
-    ///   "bearer": "...", "credential_id": "...", "device_id": "..." }
-    /// ```
-    ///
-    /// We store the bearer + ticket, generate this device's iroh seed, and
-    /// register its EndpointId with the box so it's allowlisted. (The box minted
-    /// the credential before the phone had a key, so the node_id is registered
-    /// here post-scan rather than in-band — see `registerSelfNodeId`.)
-    private func handleBundleScanResult(_ payload: Data) {
-        showQRScanner = false
-        isCompletingPairing = true
-        pairingError = nil
-
-        Task {
-            do {
-                guard let root = try JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
-                    throw NetworkError.decodingError
-                }
-                let boxNodeId = root["box_node_id"] as? String
-                let relayUrl = root["relay_url"] as? String
-                guard let boxNodeId, !boxNodeId.isEmpty,
-                      let relayUrl, !relayUrl.isEmpty else {
-                    throw NetworkError.badRequest(
-                        message: "This provision QR is missing the box reach ticket. "
-                            + "Regenerate it from + Add Device on your other device."
-                    )
-                }
-
-                // No bearer — this device authenticates by its own iroh key once
-                // it registers its EndpointId below (the box then allowlists it).
-                let seed = NetworkManager.ensureIrohSeed()
-                let nodeId = seed.flatMap { try? endpointIdFromSeed(deviceSeedHex: $0) }
-
-                // `apiEndpoint` is only a path base over iroh (host is ignored by
-                // the box) — provision QRs carry no LAN origin, so use a stable
-                // placeholder so webhook paths compose.
-                let pathBase = "http://virtues.box:8000"
-
-                await MainActor.run {
-                    deviceManager.updateConfiguration(apiEndpoint: pathBase)
-                    deviceManager.updateReach(boxNodeId: boxNodeId, relayUrl: relayUrl)
-                    deviceManager.isConfigured = true
-                    deviceManager.configurationState = .configured
-                    isCompletingPairing = false
-                    Haptics.success()
-                }
-
-                // Register this device's EndpointId so the box allowlists it, and
-                // bump `last_seen_at` so the relaying device flips to "paired".
-                // Best-effort + detached: the first upload retries if it doesn't
-                // land now.
-                if let nodeId, let base = DeviceManager.shared.configuration.baseURL {
-                    Task.detached {
-                        _ = await NetworkManager.shared.registerSelfNodeId(base: base, nodeId: nodeId)
-                    }
                 }
             } catch {
                 await MainActor.run {

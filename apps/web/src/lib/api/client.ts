@@ -476,53 +476,9 @@ export async function pairStatus(id: string): Promise<PairStatusResponse> {
 	return res.json();
 }
 
-export interface PairProvisionResponse {
-	/** The newly-provisioned device's id (poll {@link pairProvisionStatus}). */
-	device_id: string;
-	credential_id: string;
-	bearer: string;
-	action_ids?: Record<string, string>;
-	/** SVG QR encoding the full bundle blob the new device scans once. */
-	qr_svg: string;
-}
-
-/**
- * POST /api/pair/provision — auth'd. Desktop-relayed off-LAN pairing: this
- * already-paired device asks the box to provision a brand-new device (the box
- * generates its WG keypair) and returns a complete bundle + QR to hand off
- * out-of-band (one scan, Mac → phone). Reaches the box over the desktop's
- * existing tunnel; the proxy injects this device's bearer.
- */
-export async function pairProvision(kind = 'mobile_app'): Promise<PairProvisionResponse> {
-	const res = await fetch(`${API_BASE}/pair/provision`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ kind })
-	});
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ error: res.statusText }));
-		throw new Error(err.error || `pair_provision failed: ${res.statusText}`);
-	}
-	return res.json();
-}
-
-/**
- * GET /api/pair/provision-status/:device_id — auth'd. `online` flips true once
- * the provisioned device's tunnel is actually live (it has made an
- * authenticated call, bumping `last_seen_at` past `paired_at`) — NOT merely
- * when the box accepted the provision.
- */
-export async function pairProvisionStatus(deviceId: string): Promise<{ online: boolean }> {
-	const res = await fetch(`${API_BASE}/pair/provision-status/${encodeURIComponent(deviceId)}`);
-	if (!res.ok) throw new Error(`provision_status failed: ${res.statusText}`);
-	return res.json();
-}
-
 /**
  * DELETE /api/devices/:id — auth'd. Revoke a device (soft-delete + credential
- * teardown). Used to clean up a provisioned-but-unclaimed device when the
- * relay UI is cancelled or its bundle QR is regenerated (the old QR's secrets
- * were displayed, so the credential must not stay live).
+ * teardown).
  */
 export async function deleteDevice(id: string): Promise<void> {
 	await fetch(`${API_BASE}/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {
@@ -1475,6 +1431,28 @@ export async function createReflection(date: string): Promise<Page> {
 	const res = await fetch(`${API_BASE}/pages/reflections/${date}`, { method: 'POST' });
 	if (!res.ok) throw new Error(`Failed to create reflection: ${res.statusText}`);
 	return res.json();
+}
+
+// ============================================================================
+// Backlinks / References API
+// ============================================================================
+
+/** A page that links TO the queried page (an inbound reference). */
+export interface Backlink {
+	id: string;
+	title: string;
+	icon: string | null;
+	/** One-line plain-text snippet of the surrounding context. */
+	snippet: string;
+	updated_at: string;
+}
+
+/** Get inbound references (pages that link to the given page). */
+export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
+	const res = await fetch(`${API_BASE}/pages/${pageId}/backlinks`);
+	if (!res.ok) throw new Error(`Failed to get backlinks: ${res.statusText}`);
+	const data = await res.json();
+	return data.backlinks ?? [];
 }
 
 // ============================================================================

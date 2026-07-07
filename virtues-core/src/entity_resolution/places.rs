@@ -818,7 +818,6 @@ fn calculate_visit_radius(visit: &Visit) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
 
     #[test]
     fn test_haversine_distance() {

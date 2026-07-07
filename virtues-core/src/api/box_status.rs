@@ -591,21 +591,6 @@ pub async fn setup_state_handler(State(state): State<AppState>) -> impl IntoResp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net_check::{ByoTransport, NetClass, NetStatus};
-
-    fn net(class: NetClass, ipv6: Option<&str>, byo: Option<&str>) -> NetStatus {
-        NetStatus {
-            class,
-            ipv6_global: ipv6.map(|a| a.parse().unwrap()),
-            ipv4_source: Some("192.168.1.20".parse().unwrap()),
-            byo: byo.map(|ifname| ByoTransport {
-                ifname: ifname.to_string(),
-                addr: None,
-            }),
-            headline: "headline".to_string(),
-            guidance: String::new(),
-        }
-    }
 
     #[test]
     fn remote_access_reflects_iroh_endpoint() {

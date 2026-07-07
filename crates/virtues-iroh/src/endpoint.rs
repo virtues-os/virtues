@@ -1,38 +1,59 @@
 use anyhow::{Context, Result};
-use iroh::endpoint::presets;
+use iroh::endpoint::{presets, BindOpts};
 use iroh::{Endpoint, RelayMode, RelayUrl, SecretKey};
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// ALPN for Virtues HTTP-over-iroh. Version in the string; a wire break bumps it.
 pub const VIRTUES_ALPN: &[u8] = b"virtues/http/1";
 
-/// Build the node's iroh `Endpoint`.
-///
-/// - **prod**: pass `Some(relay_url)` → `Minimal` preset (ring crypto, no n0
-///   discovery/relay) + our relay as the only relay. A peer reaches this node
-///   with just its `EndpointId` + our relay URL; direct paths are then
-///   negotiated over the relay and upgraded to hole-punched.
-/// - **dev/spike**: pass `None` → `N0` preset (n0 relays + n0 DNS discovery).
-pub async fn build_endpoint(secret: SecretKey, relay_url: Option<RelayUrl>) -> Result<Endpoint> {
-    let builder = match relay_url {
-        Some(url) => Endpoint::builder(presets::Minimal)
-            .secret_key(secret)
-            .relay_mode(RelayMode::Custom(url.into())),
-        None => Endpoint::builder(presets::N0).secret_key(secret),
-    };
-    builder.bind().await.context("bind iroh endpoint")
+/// Default pinned UDP port for the box's iroh endpoint (overridable via
+/// `VIRTUES_IROH_PORT`). Pinned rather than OS-assigned so a restart keeps the
+/// same reachable port: a LAN peer resolves the box's current IP (mDNS) and dials
+/// `IP:PORT` by NodeId, with nothing frozen but the identity.
+pub const DEFAULT_IROH_PORT: u16 = 51820;
+
+/// The box's pinned iroh UDP port: `VIRTUES_IROH_PORT` or [`DEFAULT_IROH_PORT`].
+pub fn iroh_port() -> u16 {
+    std::env::var("VIRTUES_IROH_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(DEFAULT_IROH_PORT)
 }
 
-/// Build a **direct-only** endpoint: no relay, no discovery, no third party.
-/// For dialing a box by its explicit direct (LAN/VPN) addresses — pure
-/// peer-to-peer on the local network. This is the reach path for an unclaimed
-/// box on the same network: nobody (not our relay, not n0, not atlas) is in the
-/// loop; if the direct addresses aren't routable (client isolation / off-LAN),
-/// the dial simply fails rather than falling back to a relay.
-pub async fn build_direct_endpoint(secret: SecretKey) -> Result<Endpoint> {
-    Endpoint::builder(presets::Minimal)
-        .secret_key(secret)
-        .relay_mode(RelayMode::Disabled)
-        .bind()
-        .await
-        .context("bind direct iroh endpoint")
+/// Build the node's iroh `Endpoint` on the `Minimal` preset (ring crypto, no n0
+/// discovery, no n0 relay) — one transport, no third parties.
+///
+/// - `relay_url`: `Some` → our relay (`RelayMode::Custom`) for remote reach;
+///   `None` → `RelayMode::Disabled` (LAN-direct only — a peer reaches this node
+///   by its explicit direct addresses, nobody in the loop).
+/// - `bind_port`: `Some(port)` → bind that fixed UDP port. Use this for the
+///   **box** so its `IP:port` is stable and dialable by NodeId. `None` → an
+///   OS-assigned ephemeral port, for a **dialing client** (which needs no fixed
+///   port).
+pub async fn build_endpoint(
+    secret: SecretKey,
+    relay_url: Option<RelayUrl>,
+    bind_port: Option<u16>,
+) -> Result<Endpoint> {
+    let mut builder = Endpoint::builder(presets::Minimal).secret_key(secret);
+    builder = match relay_url {
+        Some(url) => builder.relay_mode(RelayMode::Custom(url.into())),
+        None => builder.relay_mode(RelayMode::Disabled),
+    };
+    if let Some(port) = bind_port {
+        // The builder pre-binds ephemeral `0.0.0.0:0` + `[::]:0`; replace those
+        // with the pinned port. IPv4 is required (fail loudly if the port is
+        // taken); IPv6 is best-effort — mirroring iroh's own default, where the
+        // v6 bind is allowed to fail on hosts without IPv6.
+        builder = builder
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::UNSPECIFIED, port))
+            .context("bind iroh IPv4 port")?
+            .bind_addr_with_opts(
+                (Ipv6Addr::UNSPECIFIED, port),
+                BindOpts::default().set_is_required(false),
+            )
+            .context("bind iroh IPv6 port")?;
+    }
+    builder.bind().await.context("bind iroh endpoint")
 }

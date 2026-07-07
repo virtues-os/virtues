@@ -736,20 +736,33 @@ pub struct NarrativeIdentity {
     pub created_at: DateTime<Utc>,
 }
 
-/// Get the narrative identity (singleton row, always exists).
+/// Get the narrative identity singleton. Before a draft is generated there is
+/// no row yet, so we return an empty placeholder (content = "") rather than
+/// 500ing — the clients treat empty content as "not authored yet".
 pub async fn get_narrative_identity(pool: &PgPool) -> Result<NarrativeIdentity> {
     let row = sqlx::query_as::<_, (String, String, DateTime<Utc>, DateTime<Utc>)>(
         "SELECT id, content, updated_at, created_at FROM wiki_narrative_identity LIMIT 1"
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get narrative identity: {}", e)))?;
 
-    Ok(NarrativeIdentity {
-        id: row.0,
-        content: row.1,
-        updated_at: row.2,
-        created_at: row.3,
+    Ok(match row {
+        Some(r) => NarrativeIdentity {
+            id: r.0,
+            content: r.1,
+            updated_at: r.2,
+            created_at: r.3,
+        },
+        None => {
+            let now = Utc::now();
+            NarrativeIdentity {
+                id: String::new(),
+                content: String::new(),
+                updated_at: now,
+                created_at: now,
+            }
+        }
     })
 }
 

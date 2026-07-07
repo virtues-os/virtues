@@ -13,8 +13,15 @@
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
+	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
 	import { Popover } from "$lib/floating";
-	import { createPageShare, getPageShare, deletePageShare } from "$lib/api/client";
+	import {
+		createPageShare,
+		getPageShare,
+		deletePageShare,
+		getPageBacklinks,
+		type Backlink,
+	} from "$lib/api/client";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import { createYjsDocument, type YjsDocument } from "$lib/yjs";
@@ -107,8 +114,40 @@
 	let charCount = $state(0);
 	let linkCount = $state(0);
 
-	// TODO: Fetch actual backlinks from API
-	const backlinks = $state(0);
+	// References (backlinks) — pages that link to this one. Loaded lazily; the
+	// panel is a quiet, summonable right-hand rail, not always-on chrome.
+	let showReferences = $state(false);
+	let backlinks = $state<Backlink[]>([]);
+	let backlinksLoading = $state(false);
+	let backlinksLoadedFor = $state<string | null>(null);
+
+	async function loadBacklinks() {
+		if (!pageId) return;
+		// Avoid refetching the same page's backlinks on repeat toggles.
+		if (backlinksLoadedFor === pageId) return;
+		backlinksLoading = true;
+		try {
+			const refs = await getPageBacklinks(pageId);
+			// Guard against a page switch mid-flight.
+			if (pageId === lastLoadedPageId) {
+				backlinks = refs;
+				backlinksLoadedFor = pageId;
+			}
+		} catch (e) {
+			console.error("Failed to load backlinks:", e);
+		} finally {
+			backlinksLoading = false;
+		}
+	}
+
+	function toggleReferences() {
+		showReferences = !showReferences;
+		if (showReferences) loadBacklinks();
+	}
+
+	function openReference(refPageId: string, title: string) {
+		onNavigate?.(`/page/${refPageId}`);
+	}
 
 	// Copy state
 	let copied = $state(false);
@@ -169,8 +208,21 @@
 	// Track the last loaded pageId to avoid reloading the same page
 	let lastLoadedPageId = $state<string | null>(null);
 
+	// Flush a pending debounced save immediately (e.g. on unmount/unload).
+	// Without this, closing or switching the in-app tab within the 1s debounce
+	// window drops the title change and the recents list shows the stale title.
+	function flushSave() {
+		if (saveTimeout) {
+			clearTimeout(saveTimeout);
+			saveTimeout = null;
+			save();
+		}
+	}
+
 	// beforeunload: warn user about unsaved changes
 	function handleBeforeUnload(e: BeforeUnloadEvent) {
+		// Flush any pending title save before the page goes away.
+		flushSave();
 		if (hasUnsavedChanges) {
 			e.preventDefault();
 		}
@@ -179,11 +231,7 @@
 	// visibilitychange: flush pending saves + auto-snapshot when tab is backgrounded
 	function handleVisibilityChange() {
 		if (document.hidden) {
-			if (saveTimeout) {
-				clearTimeout(saveTimeout);
-				saveTimeout = null;
-				save();
-			}
+			flushSave();
 			// Auto-snapshot on blur with keepalive so the request survives tab switch
 			autoSnapshot('Auto-saved (background)', true);
 		}
@@ -215,6 +263,9 @@
 		);
 		// Cancel in-flight fetch
 		loadAbortController?.abort();
+		// Flush any pending title save before tearing down (SPA tab switch/close).
+		// The app stays alive, so the fire-and-forget save() completes.
+		flushSave();
 		// Clear all pending timers
 		if (saveTimeout) clearTimeout(saveTimeout);
 		if (typingTimeout) clearTimeout(typingTimeout);
@@ -278,6 +329,11 @@
 		}
 		isSynced = false;
 		isConnected = false;
+
+		// Reset references for the new page (refetched on next panel open)
+		backlinks = [];
+		backlinksLoadedFor = null;
+		if (showReferences) loadBacklinks();
 
 		try {
 			const response = await fetch(`/api/pages/${pageId}`, {
@@ -550,6 +606,8 @@
 				{yjsDoc}
 				bind:showCoverPicker
 				isShared={!!shareToken}
+				referencesActive={showReferences}
+				onToggleReferences={toggleReferences}
 				onShare={handleShare}
 				onIconSelect={(value) => {
 					icon = value;
@@ -567,6 +625,8 @@
 				onDelete={deletePage}
 			/>
 
+			<!-- Body: scrollable editor + optional References rail -->
+			<div class="page-body">
 			<!-- Main Content Area -->
 			<div
 				class="page-content"
@@ -669,6 +729,16 @@
 				</div>
 			</div>
 
+			{#if showReferences}
+				<ReferencesPanel
+					{backlinks}
+					loading={backlinksLoading}
+					onOpen={openReference}
+					onClose={() => (showReferences = false)}
+				/>
+			{/if}
+			</div>
+
 			<!-- Bottom Status Bar -->
 			<PageStatusBar
 				{linkCount}
@@ -695,9 +765,18 @@
 		min-height: 0;
 	}
 
+	/* Body - editor + optional references rail, side by side */
+	.page-body {
+		flex: 1;
+		display: flex;
+		min-height: 0;
+		overflow: hidden;
+	}
+
 	/* Main Content Area - scrollable */
 	.page-content {
 		flex: 1;
+		min-width: 0;
 		overflow-y: auto;
 		padding: 2rem 1.5rem;
 		padding-bottom: 4rem;
