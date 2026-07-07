@@ -695,7 +695,11 @@ pub async fn consume_handler(
         }
     };
 
-    if let Err(e) = insert_device_row(
+    // Idempotent on the device's iroh key: a re-pair of a device that kept its
+    // node_id UPDATEs the existing row and returns ITS id (so the token
+    // back-link + action fan-out below wire to the allowlisted device, not a
+    // fresh duplicate). Shadow `device_id` with the effective id.
+    let device_id = match insert_device_row(
         &mut tx,
         &device_id,
         kind,
@@ -707,13 +711,16 @@ pub async fn consume_handler(
     )
     .await
     {
-        tracing::warn!("pair consume: device insert failed: {e:#}");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": "device_insert_failed"})),
-        )
-            .into_response();
-    }
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!("pair consume: device insert failed: {e:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "device_insert_failed"})),
+            )
+                .into_response();
+        }
+    };
 
     // Back-fill the token → device link now that the device row exists.
     if let Err(e) = sqlx::query(
@@ -888,11 +895,26 @@ pub(crate) async fn insert_device_row(
     ip: Option<&str>,
     node_id: Option<&str>,
     source_id: Option<&str>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
+) -> Result<String, sqlx::Error> {
+    // Re-pairing a device that kept its iroh key sends the SAME node_id. Treat
+    // that as idempotent: UPDATE the existing row in place and return ITS id, so
+    // the caller wires the token back-link + action fan-out to the device that's
+    // actually on the allowlist. A plain INSERT would 500 on the unique
+    // `app_device_node_id_key`. A NULL node_id (e.g. a browser device) never
+    // conflicts — Postgres treats NULLs as distinct — so those always insert
+    // fresh with the caller-supplied id.
+    let row: (String,) = sqlx::query_as(
         "INSERT INTO app_device \
          (id, user_id, kind, label, device_info, paired_from_ip, node_id, source_id, last_seen_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
+         ON CONFLICT (node_id) DO UPDATE SET \
+           kind = EXCLUDED.kind, \
+           label = EXCLUDED.label, \
+           device_info = EXCLUDED.device_info, \
+           paired_from_ip = EXCLUDED.paired_from_ip, \
+           source_id = EXCLUDED.source_id, \
+           last_seen_at = now() \
+         RETURNING id",
     )
     .bind(device_id)
     .bind(OWNER_USER_ID)
@@ -902,9 +924,9 @@ pub(crate) async fn insert_device_row(
     .bind(ip)
     .bind(node_id)
     .bind(source_id)
-    .execute(&mut **tx)
-    .await
-    .map(|_| ())
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(row.0)
 }
 
 fn render_qr_svg(data: &str) -> String {
