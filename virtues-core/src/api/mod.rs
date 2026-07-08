@@ -183,10 +183,9 @@ pub use pins::{
     create_pin, delete_pin, list_pins, reorder_pins, update_pin, CreatePinRequest, Pin,
     UpdatePinRequest,
 };
-// Re-export only the request/response types from things; functions are
-// referenced directly via `crate::api::things::*` to avoid name clashes
-// with `wiki::get_thing` / `wiki::list_things` (which return the basic
-// entity row used by the Wiki browser surface).
+// Things are the single source over `wiki_things` (/api/things). Functions are
+// referenced directly via `crate::api::things::*`; only the request/response
+// types are re-exported here.
 pub use things::{
     CreateThingRequest, ListThingsParams, Thing, ThingListResponse, ThingSummary,
     UpdateThingRequest,
@@ -245,21 +244,18 @@ pub use wiki::{
     get_organization,
     get_person,
     get_telos,
-    get_thing,
     get_wiki_place,
     list_acts,
     list_chapters_for_act,
     list_days,
     list_organizations,
     list_people,
-    list_things,
     list_wiki_places,
     resolve_id,
     update_day,
     update_organization,
     update_person,
     update_temporal_event,
-    update_thing,
     update_wiki_place,
     CreateTemporalEventRequest,
     DaySource,
@@ -273,7 +269,6 @@ pub use wiki::{
     UpdateWikiOrganizationRequest,
     UpdateWikiPersonRequest,
     UpdateWikiPlaceRequest,
-    UpdateWikiThingRequest,
     WikiAct,
     WikiChapter,
     WikiDay,
@@ -283,7 +278,5 @@ pub use wiki::{
     WikiPersonListItem,
     WikiPlace,
     WikiPlaceListItem,
-    WikiThing,
-    WikiThingListItem,
     WikiTelos,
 };

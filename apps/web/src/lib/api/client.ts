@@ -1469,6 +1469,7 @@ export interface Thing {
 	category: string | null;
 	icon: string | null;
 	description: string | null;
+	content: string | null;
 	cover_image: string | null;
 	created_at: string;
 	updated_at: string;

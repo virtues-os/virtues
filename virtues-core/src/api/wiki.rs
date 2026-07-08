@@ -81,18 +81,6 @@ pub struct WikiOrganization {
 }
 
 /// A thing wiki page (catchall entity: pets, projects, concepts, etc.)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiThing {
-    pub id: String,
-    pub name: String,
-    pub category: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
 // ============================================================================
 // Wiki Page Types - Narrative Views
 // ============================================================================
@@ -156,9 +144,6 @@ pub struct WikiDay {
     pub autobiography: Option<String>,
     pub autobiography_sections: Option<serde_json::Value>,
     pub epigraph: Option<String>,
-    /// True if this day has a generated illustration BLOB. The BLOB itself
-    /// is served separately via GET /api/wiki/day/:date/illustration.
-    pub has_illustration: bool,
     pub last_edited_by: Option<String>,
     pub cover_image: Option<String>,
     pub act_id: Option<String>,
@@ -226,15 +211,6 @@ pub struct WikiOrganizationListItem {
     pub relationship_type: Option<String>,
 }
 
-/// A thing list item
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WikiThingListItem {
-    pub id: String,
-    pub name: String,
-    pub category: Option<String>,
-    pub description: Option<String>,
-}
-
 // ============================================================================
 // Update Request Types
 // ============================================================================
@@ -279,16 +255,6 @@ pub struct UpdateWikiOrganizationRequest {
     pub role_title: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<NaiveDate>,
-}
-
-/// Request to update a thing wiki page
-#[derive(Debug, Deserialize)]
-pub struct UpdateWikiThingRequest {
-    pub name: Option<String>,
-    pub category: Option<String>,
-    pub description: Option<String>,
-    pub content: Option<String>,
-    pub cover_image: Option<String>,
 }
 
 /// Request to update a day wiki page
@@ -638,90 +604,9 @@ pub async fn update_organization(
 // Thing CRUD Operations
 // ============================================================================
 
-/// Get a thing by ID
-pub async fn get_thing(pool: &PgPool, id: String) -> Result<WikiThing> {
-    let row = sqlx::query!(
-        r#"
-        SELECT
-            id, name, category, description, content, cover_image,
-            created_at, updated_at
-        FROM wiki_things
-        WHERE id = $1
-        "#,
-        id
-    )
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get thing: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Thing not found: {}", id)))?;
-
-    Ok(WikiThing {
-        id: row.id,
-        name: row.name,
-        category: row.category,
-        description: row.description,
-        content: row.content,
-        cover_image: row.cover_image,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-    })
-}
-
-/// List all things
-pub async fn list_things(pool: &PgPool) -> Result<Vec<WikiThingListItem>> {
-    let rows = sqlx::query!(
-        r#"
-        SELECT id, name, category, description
-        FROM wiki_things
-        ORDER BY name ASC
-        "#
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to list things: {}", e)))?;
-
-    Ok(rows
-        .into_iter()
-        .map(|row| WikiThingListItem {
-            id: row.id,
-            name: row.name,
-            category: row.category,
-            description: row.description,
-        })
-        .collect())
-}
-
-/// Update a thing
-pub async fn update_thing(
-    pool: &PgPool,
-    id: String,
-    req: UpdateWikiThingRequest,
-) -> Result<WikiThing> {
-    sqlx::query!(
-        r#"
-        UPDATE wiki_things
-        SET
-            name = COALESCE($2, name),
-            category = COALESCE($3, category),
-            description = COALESCE($4, description),
-            content = COALESCE($5, content),
-            cover_image = COALESCE($6, cover_image),
-            updated_at = now()
-        WHERE id = $1
-        "#,
-        id,
-        req.name,
-        req.category,
-        req.description,
-        req.content,
-        req.cover_image
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to update thing: {}", e)))?;
-
-    get_thing(pool, id).await
-}
+// Thing read/update moved to the single-source `api::things` module
+// (/api/things). The wiki thing endpoints were retired to avoid duplicating
+// queries over the same `wiki_things` table.
 
 // ============================================================================
 // Narrative Identity
@@ -1013,7 +898,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         r#"
         SELECT
             id, date, start_timezone, autobiography, autobiography_sections,
-            epigraph, (illustration IS NOT NULL) as has_illustration,
+            epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
@@ -1040,7 +925,7 @@ pub async fn get_or_create_day(pool: &PgPool, date: NaiveDate) -> Result<WikiDay
         VALUES ($1, $2)
         RETURNING
             id, date, start_timezone, autobiography, autobiography_sections,
-            epigraph, (illustration IS NOT NULL) as has_illustration,
+            epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         "#,
@@ -1072,7 +957,6 @@ fn wiki_day_from_row_with_counts(row: &sqlx::postgres::PgRow, date: NaiveDate, n
         autobiography: row.try_get("autobiography").ok().flatten(),
         autobiography_sections: row.try_get("autobiography_sections").ok().flatten(),
         epigraph: row.try_get("epigraph").ok().flatten(),
-        has_illustration: row.try_get::<bool, _>("has_illustration").unwrap_or(false),
         last_edited_by: row.try_get("last_edited_by").ok().flatten(),
         cover_image: row.try_get("cover_image").ok().flatten(),
         act_id: row.try_get("act_id").ok().flatten(),
@@ -1347,7 +1231,7 @@ pub async fn list_days(
         r#"
         SELECT
             id, date, start_timezone, autobiography, autobiography_sections,
-            epigraph, (illustration IS NOT NULL) as has_illustration,
+            epigraph,
             last_edited_by, cover_image, act_id, chapter_id, morning_baseline, battery_curve,
             data_quality, snapshot, readiness_score, readiness_details, created_at, updated_at
         FROM wiki_days
@@ -1371,31 +1255,6 @@ pub async fn list_days(
         .collect())
 }
 
-/// Fetch the raw illustration PNG bytes for a day. Returns None if no illustration.
-pub async fn get_day_illustration(pool: &PgPool, date: NaiveDate) -> Result<Option<Vec<u8>>> {
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let row: Option<(Vec<u8>,)> = sqlx::query_as(
-        "SELECT illustration FROM wiki_days WHERE date = $1 AND illustration IS NOT NULL",
-    )
-    .bind(&date_str)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| Error::Database(format!("Failed to get illustration: {e}")))?;
-
-    Ok(row.map(|(blob,)| blob))
-}
-
-/// Save illustration PNG bytes to a day's BLOB column.
-pub async fn save_day_illustration(pool: &PgPool, date: NaiveDate, png_bytes: &[u8]) -> Result<()> {
-    let date_str = date.format("%Y-%m-%d").to_string();
-    sqlx::query("UPDATE wiki_days SET illustration = $1, updated_at = now() WHERE date = $2")
-        .bind(png_bytes)
-        .bind(&date_str)
-        .execute(pool)
-        .await
-        .map_err(|e| Error::Database(format!("Failed to save illustration: {e}")))?;
-    Ok(())
-}
 
 // ============================================================================
 // ID Resolution - Parse entity type from ID
