@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Location Probe</title>
+    <style>
+      :root { color-scheme: dark; font-family: -apple-system, system-ui, sans-serif; }
+      body { margin: 0; background: #0b0b0c; color: #e7e7ea; padding: env(safe-area-inset-top) 16px 32px; }
+      h1 { font-size: 17px; font-weight: 600; margin: 20px 0 4px; }
+      p.sub { margin: 0 0 16px; color: #8a8a90; font-size: 13px; }
+      button { appearance: none; border: 0; border-radius: 12px; background: #2b6cff; color: #fff;
+               font-size: 16px; font-weight: 600; padding: 14px 18px; width: 100%; }
+      button:active { opacity: 0.7; }
+      .stat { display: flex; gap: 10px; margin: 16px 0; }
+      .card { flex: 1; background: #161619; border: 1px solid #232327; border-radius: 12px; padding: 12px; }
+      .card .n { font-size: 24px; font-weight: 700; }
+      .card .l { font-size: 11px; color: #8a8a90; text-transform: uppercase; letter-spacing: .04em; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+      th, td { text-align: left; padding: 6px 6px; border-bottom: 1px solid #1c1c20; white-space: nowrap; }
+      th { color: #8a8a90; font-weight: 500; position: sticky; top: 0; background: #0b0b0c; }
+      .tag { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 11px; }
+      .bg { background: #3a2a00; color: #ffcf70; }      /* wrote while backgrounded */
+      .relaunch { background: #062a12; color: #58e08a; } /* cold-relaunch by OS */
+      td.src { color: #9aa0ff; }
+      .empty { color: #6a6a70; font-size: 13px; padding: 24px 0; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <h1>Location Probe</h1>
+    <p class="sub">Tap Start once, grant <b>Always</b>. Then background the app, reboot, and move ~500&nbsp;m. Rows written while off-screen prove it.</p>
+    <button id="start">Start background collection</button>
+
+    <div class="stat">
+      <div class="card"><div class="n" id="total">0</div><div class="l">rows</div></div>
+      <div class="card"><div class="n" id="bg">0</div><div class="l">while off-screen</div></div>
+      <div class="card"><div class="n" id="relaunch">0</div><div class="l">cold relaunch</div></div>
+    </div>
+
+    <table>
+      <thead><tr><th>ts</th><th>state</th><th>reason</th><th>source</th><th>lat,lon</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="empty">no rows yet</td></tr></tbody>
+    </table>
+
+    <script>
+      const invoke = window.__TAURI__.core.invoke;
+
+      document.getElementById('start').addEventListener('click', async () => {
+        try { await invoke('plugin:location-probe|start_probe'); } catch (e) { alert('start failed: ' + e); }
+      });
+
+      function fmtLatLon(r) {
+        if (r.source && r.source.startsWith('start')) return '—';
+        if (r.lat === 0 && r.lon === 0) return '—';
+        return r.lat.toFixed(4) + ', ' + r.lon.toFixed(4);
+      }
+
+      async function refresh() {
+        let rows = [];
+        try { rows = await invoke('plugin:location-probe|read_rows', { payload: { limit: 300 } }); } catch (e) {}
+        rows = rows.rows || rows; // tolerate either shape
+        const tbody = document.getElementById('rows');
+        const bg = rows.filter(r => r.appState !== 'active').length;
+        const relaunch = rows.filter(r => (r.launchReason || '').startsWith('background')).length;
+        document.getElementById('total').textContent = rows.length;
+        document.getElementById('bg').textContent = bg;
+        document.getElementById('relaunch').textContent = relaunch;
+        if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">no rows yet</td></tr>'; return; }
+        tbody.innerHTML = rows.map(r => {
+          const offscreen = r.appState !== 'active';
+          const cold = (r.launchReason || '').startsWith('background');
+          const stateTag = offscreen ? `<span class="tag bg">${r.appState}</span>` : r.appState;
+          const reasonTag = cold ? `<span class="tag relaunch">${r.launchReason}</span>` : r.launchReason;
+          return `<tr><td>${(r.ts||'').replace('T',' ').replace('Z','')}</td><td>${stateTag}</td><td>${reasonTag}</td><td class="src">${r.source||''}</td><td>${fmtLatLon(r)}</td></tr>`;
+        }).join('');
+      }
+      refresh();
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>

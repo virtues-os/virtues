@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-reach-status"
+description = "Enables the reach_status command without any pre-configured scope."
+commands.allow = ["reach_status"]
+
+[[permission]]
+identifier = "deny-reach-status"
+description = "Denies the reach_status command without any pre-configured scope."
+commands.deny = ["reach_status"]
