@@ -1,6 +1,6 @@
 name: virtues
 options:
-  bundleIdPrefix: com.virtues.desktop
+  bundleIdPrefix: com.virtues
   deploymentTarget:
     iOS: 14.0
 fileGroups: [../../src]
@@ -11,7 +11,7 @@ settingGroups:
   app:
     base:
       PRODUCT_NAME: Virtues
-      PRODUCT_BUNDLE_IDENTIFIER: com.virtues.desktop
+      PRODUCT_BUNDLE_IDENTIFIER: com.virtues.app
 targetTemplates:
   app:
     type: application

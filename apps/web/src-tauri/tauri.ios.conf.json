@@ -1,5 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.virtues.app",
   "build": {
     "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html && cp src-tauri/ui/mobile-pair.html build/",
     "frontendDist": "../build"
