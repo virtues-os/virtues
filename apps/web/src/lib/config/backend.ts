@@ -44,7 +44,12 @@ export function installFetchProxy(): void {
   const origin = backendOrigin;
   const orig = window.fetch.bind(window);
 
-  const route = (p: string) => p.startsWith('/api');
+  // Backend path prefixes to route to the box. Everything else (SvelteKit's
+  // /_app assets, bundled html, client route data) stays on the local origin.
+  // NB: `/auth/session` is the session gate — miss it and the app thinks it's
+  // unpaired and bounces to the connect screen.
+  const BACKEND_PREFIXES = ['/api', '/auth', '/webhook', '/mcp', '/service'];
+  const route = (p: string) => BACKEND_PREFIXES.some((pre) => p === pre || p.startsWith(pre + '/'));
 
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     if (typeof input === 'string' && route(input)) {
