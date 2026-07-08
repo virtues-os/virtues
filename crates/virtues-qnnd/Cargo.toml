@@ -1,0 +1,18 @@
+[package]
+name = "virtues-qnnd"
+version = "0.1.0"
+edition = "2021"
+description = "Virtues QNN HTP serving daemon for the Radxa Dragon Q6A (Hexagon v68 NPU). Loads QAIRT context binaries once and serves embed/rerank executes over a tiny binary TCP protocol."
+publish = false
+
+# A thin Rust `main` forwards argv into the C++ daemon's `qnnd_main` (see
+# csrc/qnn_server.cpp). The C++ is compiled by build.rs against the Qualcomm
+# QAIRT SDK (resolved from QNN_SDK_ROOT). When the SDK is absent — normal dev
+# machines, CI legs without QAIRT — build.rs compiles a stub instead so the
+# whole workspace still builds; only boxes/legs with the SDK get a real daemon.
+[[bin]]
+name = "virtues-qnnd"
+path = "src/main.rs"
+
+[build-dependencies]
+cc = "1"
