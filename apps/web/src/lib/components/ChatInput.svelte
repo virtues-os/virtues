@@ -3,8 +3,8 @@
 	import { createEventDispatcher, onMount } from "svelte";
 	import { Spring } from "svelte/motion";
 	import type { ModelOption } from "$lib/config/models";
-	import { createEntityBadgeElement } from "$lib/utils/entityBadge";
-	import EntityPicker, { type EntityResult } from "./EntityPicker.svelte";
+	import { createEntityBadgeElement } from "$lib/utils/refBadge";
+	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
 
 	let {
 		value = $bindable(""),
@@ -59,7 +59,7 @@
 	// Bottom-align the controls once the field wraps past a single line.
 	const isMultiline = $derived(inputHeight.current > MIN_HEIGHT + 6);
 
-	// @ mention state - uses EntityPicker
+	// @ mention state - uses RefPicker
 	let showEntityPicker = $state(false);
 	// Save the text node and cursor position when @ is typed (before picker steals focus)
 	let savedTextNode: Text | null = $state(null);
@@ -158,7 +158,7 @@
 				result += node.textContent || "";
 			} else if (node.nodeType === Node.ELEMENT_NODE) {
 				const el = node as HTMLElement;
-				if (el.classList.contains("mention-chip")) {
+				if (el.classList.contains("ref-pill")) {
 					const entityUrl = el.dataset.entityUrl;
 					const name = el.textContent?.replace(/^@/, "") || "";
 					if (entityUrl) {
@@ -244,7 +244,7 @@
 		const atIndex = text.lastIndexOf("@", cursorPos - 1);
 		if (atIndex !== -1) {
 			const chip = createEntityBadgeElement(entity.name, entity.url, {
-				className: 'mention-chip',
+				className: 'ref-pill',
 			});
 
 			const space = document.createTextNode(" ");
@@ -458,7 +458,7 @@
 		</div>
 
 		{#if showEntityPicker}
-			<EntityPicker
+			<RefPicker
 				mode="single"
 				placeholder="Search entities to mention..."
 				onSelect={handleEntityPickerSelect}

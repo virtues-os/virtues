@@ -33,6 +33,7 @@ export type TabType =
 	| 'ontology' // Ontology data: /ontologies, /ontologies/{name}
 	// Storage namespaces
 	| 'drive' // Personal files: /drive, /drive/{path}
+	| 'asset' // Single file viewer (open density): /drive/file_{id}
 	| 'trash' // Drive trash: /trash
 	// System namespace
 	| 'virtues' // System pages: /virtues/{account|assistant|usage|jobs|sql|terminal|sitemap}

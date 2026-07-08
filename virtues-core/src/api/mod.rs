@@ -21,7 +21,7 @@ pub mod chats;
 pub mod code;
 pub mod compaction;
 pub mod credentials;
-pub mod day_illustration;
+pub mod image_gen;
 pub mod day_summary;
 pub mod developer;
 pub mod drive;
@@ -156,15 +156,15 @@ pub use pages::{
     get_version,
     list_pages,
     list_versions,
-    search_entities,
+    search_refs,
     update_page,
     validate_shared_file,
     Backlink,
     BacklinksResponse,
     CreatePageRequest,
     CreateVersionRequest,
-    EntitySearchResponse,
-    EntitySearchResult,
+    RefSearchResponse,
+    RefSearchResult,
     Page,
     PageListResponse,
     PageShare,

@@ -18,7 +18,7 @@
 	import type { AiIntent } from "$lib/ai/inlineComplete";
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import type { YjsDocument } from "$lib/yjs";
-	import { createEntityPicker, insertEntity } from "$lib/codemirror/extensions/entity-picker";
+	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
 	import {
 		createSlashCommands,
 		getDefaultSlashCommands,
@@ -27,9 +27,9 @@
 	} from "$lib/codemirror/extensions/slash-commands";
 	import { createSelectionToolbar } from "$lib/codemirror/extensions/selection-toolbar";
 	import { createMediaPaste } from "$lib/codemirror/extensions/media-paste";
-	import EntityPicker from "$lib/components/EntityPicker.svelte";
+	import RefPicker from "$lib/components/RefPicker.svelte";
 	import { toast } from "svelte-sonner";
-	import type { EntityResult } from "$lib/components/EntityPicker.svelte";
+	import type { EntityResult } from "$lib/components/RefPicker.svelte";
 	import SlashMenu from "$lib/components/SlashMenu.svelte";
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
 
@@ -158,7 +158,7 @@
 	// --- Entity Picker handlers ---
 	function handleEntitySelect(entity: EntityResult) {
 		if (!view) return;
-		insertEntity(view, entityPickerFrom, entity.name, entity.url);
+		insertRef(view, entityPickerFrom, entity.name, entity.url);
 		entityPickerOpen = false;
 	}
 
@@ -315,7 +315,7 @@
 		if (!yjsDoc) return;
 
 		// Create interactive extensions with callbacks
-		const entityPickerExt = createEntityPicker({
+		const entityPickerExt = createRefPicker({
 			onOpen: (coords, from) => {
 				entityPickerFrom = from;
 				entityPickerPos = coords;
@@ -325,7 +325,7 @@
 				entityPickerOpen = false;
 			},
 			onQueryChange: () => {
-				// EntityPicker component has its own search input, so we just need to keep it open
+				// RefPicker component has its own search input, so we just need to keep it open
 			},
 		});
 
@@ -486,7 +486,7 @@
 
 	<!-- Floating UI overlays -->
 	{#if entityPickerOpen}
-		<EntityPicker
+		<RefPicker
 			position={entityPickerPos}
 			onSelect={handleEntitySelect}
 			onClose={handleEntityClose}

@@ -566,10 +566,6 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/day/:date",
             get(api::wiki_get_day_handler).put(api::wiki_update_day_handler),
         )
-        .route(
-            "/api/wiki/day/:date/illustration",
-            get(api::wiki_get_day_illustration_handler),
-        )
         // Wiki - Temporal Events
         .route(
             "/api/wiki/day/:date/events",
@@ -631,8 +627,8 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             get(api::list_pages_handler).post(api::create_page_handler),
         )
         .route(
-            "/api/pages/search/entities",
-            get(api::search_entities_handler),
+            "/api/pages/search/refs",
+            get(api::search_refs_handler),
         )
         .route(
             "/api/pages/reflections/:date",

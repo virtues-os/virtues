@@ -44,7 +44,7 @@
 	import ContextViewPanel from "$lib/components/chat/ContextViewPanel.svelte";
 	import { ChatError } from "$lib/components/chat";
 	import { createYjsDocument } from "$lib/yjs";
-	import type { EntityResult } from "$lib/components/EntityPicker.svelte";
+	import type { EntityResult } from "$lib/components/RefPicker.svelte";
 	import type { AgentModeId } from "$lib/config/agentModes";
 
 	// Generate a random 16-char hex ID (matches backend format)

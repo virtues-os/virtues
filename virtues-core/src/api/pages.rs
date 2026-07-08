@@ -115,7 +115,7 @@ pub struct BacklinksResponse {
 
 /// Entity search result for autocomplete
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntitySearchResult {
+pub struct RefSearchResult {
     pub id: String,
     pub name: String,
     pub entity_type: String,
@@ -126,8 +126,8 @@ pub struct EntitySearchResult {
 
 /// Entity search response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntitySearchResponse {
-    pub results: Vec<EntitySearchResult>,
+pub struct RefSearchResponse {
+    pub results: Vec<RefSearchResult>,
 }
 
 // ============================================================================
@@ -517,7 +517,7 @@ pub async fn create_reflection(pool: &PgPool, date: &str, title: Option<&str>) -
 /// Raw entity search result from database (before URL computation)
 #[derive(Debug, Clone, sqlx::FromRow)]
 #[allow(dead_code)]
-struct RawEntitySearchResult {
+struct RawRefSearchResult {
     id: String,
     name: String,
     entity_type: String,
@@ -553,7 +553,7 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
 /// Results are ranked by:
 /// 1. Relevance: prefix matches (name starts with query) come before contains matches
 /// 2. Recency: within each relevance tier, most recently updated items come first
-pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchResponse> {
+pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse> {
     let query = query.trim();
 
     // For empty query, show most recent items
@@ -567,7 +567,7 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
 
     // Search across multiple tables with UNION
     // Relevance: 0 = prefix match (highest), 1 = contains match
-    let raw_results = sqlx::query_as::<_, RawEntitySearchResult>(
+    let raw_results = sqlx::query_as::<_, RawRefSearchResult>(
         r#"
         SELECT id, canonical_name as name, 'person' as entity_type, 'ri:user-line' as icon,
                NULL as mime_type, updated_at,
@@ -629,10 +629,10 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
     .await
     .map_err(|e| Error::Database(format!("Failed to search entities: {}", e)))?;
 
-    // Convert raw results to EntitySearchResult with computed URLs
-    let results: Vec<EntitySearchResult> = raw_results
+    // Convert raw results to RefSearchResult with computed URLs
+    let results: Vec<RefSearchResult> = raw_results
         .into_iter()
-        .map(|r| EntitySearchResult {
+        .map(|r| RefSearchResult {
             url: get_entity_url(&r.entity_type, &r.id),
             id: r.id,
             name: r.name,
@@ -642,7 +642,7 @@ pub async fn search_entities(pool: &PgPool, query: &str) -> Result<EntitySearchR
         })
         .collect();
 
-    Ok(EntitySearchResponse { results })
+    Ok(RefSearchResponse { results })
 }
 
 // ============================================================================

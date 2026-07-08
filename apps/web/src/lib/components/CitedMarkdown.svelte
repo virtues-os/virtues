@@ -3,9 +3,10 @@
 	import { Streamdown } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
-	import EntityChip from './EntityChip.svelte';
+	import Ref from './Ref.svelte';
+	import LinkChip from './LinkChip.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
-	import { parseEntityRoute } from '$lib/utils/entityRoutes';
+	import { parseEntityRoute } from '$lib/utils/refRoutes';
 	import type { BundledTheme } from 'shiki';
 
 	interface Props {
@@ -41,10 +42,26 @@
 		return citations?.byId.get(key);
 	}
 
-	// Preprocess content: fix adjacent citations [1][2] -> [1] [2]
 	const processedContent = $derived.by(() => {
 		if (!content) return '';
-		return content.replace(/\](\[\d+\])/g, '] $1');
+		// Fix adjacent citations [1][2] -> [1] [2]
+		let out = content.replace(/\](\[\d+\])/g, '] $1');
+		// Neutralize a lone "~" — the model uses it for "approximately"
+		// ("~10k stars", "~5ms"). Streamdown renders ~text~ as subscript, so
+		// an unintended pair drops a whole phrase below the baseline. Escaping
+		// keeps a literal tilde while leaving ~~strikethrough~~ (doubled) intact.
+		// Skip code spans/fences: backslash escapes are literal inside code,
+		// so escaping there would render a stray "\" (e.g. `rm ~/.cache`).
+		// Gate on the presence of a tilde first: this alternation-with-lookbehind
+		// re-runs on every streamed token (processedContent is $derived), so a
+		// full-body scan per delta is O(n^2) over a stream — and most messages
+		// have no tilde at all.
+		if (out.includes('~')) {
+			out = out.replace(/(```[\s\S]*?```|`[^`\n]+`)|(?<!~)~(?!~)/g, (m, code) =>
+				code ? m : '\\~'
+			);
+		}
+		return out;
 	});
 
 	// Convert CitationContext to Streamdown's sources format
@@ -133,11 +150,14 @@
 				<MarkdownCodeBlock {token} {isStreaming} />
 			{/snippet}
 
-			{#snippet link({ href, children, token }: { href: string; children: import('svelte').Snippet; token: any })}
-				{@const url = href || token?.href}
+			{#snippet link({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{@const url = token?.href}
 				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
+				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
 				{#if isEntity}
-					<EntityChip displayName={token.text} url={url} />
+					<Ref displayName={token.text} url={url} />
+				{:else if isExternal}
+					<LinkChip href={url} label={token.text} />
 				{:else if url}
 					<a href={url} target="_blank" rel="noopener noreferrer">{@render children()}</a>
 				{:else}

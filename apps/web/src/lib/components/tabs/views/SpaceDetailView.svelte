@@ -6,7 +6,7 @@
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
-	import EntityPicker from '$lib/components/EntityPicker.svelte';
+	import RefPicker from '$lib/components/RefPicker.svelte';
 	import ColorPickerModal from '$lib/components/sidebar/ColorPickerModal.svelte';
 
 	let { tab }: { tab: Tab; active?: boolean } = $props();
@@ -273,7 +273,7 @@
 </div>
 
 {#if pickerPos}
-	<EntityPicker
+	<RefPicker
 		mode="single"
 		position={pickerPos}
 		placeholder="Add a person, page, or link…"

@@ -19,7 +19,7 @@ import type { Text as YText } from 'yjs';
 
 import { checkboxes } from './extensions/checkboxes';
 import { codeBlocks } from './extensions/code-blocks';
-import { entityLinks } from './extensions/entity-links';
+import { entityLinks } from './extensions/ref-links';
 import { markdownKeybindings } from './extensions/keybindings';
 import { livePreview } from './extensions/live-preview';
 import { mediaWidgets } from './extensions/media-widgets';

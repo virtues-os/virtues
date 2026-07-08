@@ -826,7 +826,7 @@ let id = ids::generate_id("chat", &[title, &timestamp]);
 
             <h3>API Endpoint</h3>
             <div class="diagram-box">
-                <pre>GET /api/pages/search/entities?q={`{`}query{`}`}
+                <pre>GET /api/pages/search/refs?q={`{`}query{`}`}
 
 Response: {`{`}
   results: [{`{`}
@@ -844,8 +844,8 @@ Searches: pages, people, places, orgs, files</pre>
 
             <h3>Component</h3>
             <div class="diagram-box">
-                <pre>// EntityPicker.svelte - unified picker component
-&lt;EntityPicker
+                <pre>// RefPicker.svelte - unified picker component
+&lt;RefPicker
   mode="single" | "multi"
   onSelect={`{`}(entity) => ...{`}`}
   onSelectMultiple={`{`}(entities) => ...{`}`}
@@ -855,7 +855,7 @@ Searches: pages, people, places, orgs, files</pre>
   showQuickActions={`{`}true{`}`}             // "All in space" etc.
 /&gt;</pre>
             </div>
-            <p class="note">All @ interactions use the same <code>EntityPicker</code> component and API endpoint for consistency.</p>
+            <p class="note">All @ interactions use the same <code>RefPicker</code> component and API endpoint for consistency.</p>
         </section>
     </div>
 </Page>
