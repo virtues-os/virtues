@@ -1,0 +1,51 @@
+/**
+ * Reference pill — unified styles
+ *
+ * The single source of truth for what a "@" reference pill looks like, shared by
+ * every ref renderer:
+ * - Ref.svelte (.ref-pill)                    — chat assistant markdown
+ * - ChatInput.svelte (.ref-pill)              — composer contenteditable
+ * - CodeMirror (.cm-entity-link, theme.css)   — page editor (own layout, same tokens)
+ *
+ * The appearance tokens below are the contract; the CodeMirror rules in
+ * codemirror/theme.css consume the same variables so the pill never drifts.
+ */
+
+:root {
+	--ref-pill-bg: color-mix(in srgb, var(--color-primary) 12%, transparent);
+	--ref-pill-bg-hover: color-mix(in srgb, var(--color-primary) 20%, transparent);
+	--ref-pill-color: var(--color-primary);
+	--ref-pill-radius: 100px;
+	--ref-pill-font-size: 0.8125rem;
+	--ref-pill-transition: background-color 0.15s ease;
+}
+
+.ref-pill {
+	display: inline;
+	padding: 1px 6px;
+	margin: 0 1px;
+	border-radius: var(--ref-pill-radius);
+	background-color: var(--ref-pill-bg);
+	color: var(--ref-pill-color);
+	text-decoration: none;
+	cursor: pointer;
+	font-size: var(--ref-pill-font-size);
+	font-weight: normal;
+	transition: var(--ref-pill-transition);
+	border: none;
+	font-family: inherit;
+	user-select: none;
+}
+
+.ref-pill:hover {
+	background-color: var(--ref-pill-bg-hover);
+	text-decoration: none;
+}
+
+/* Leading type icon inside composer chips (inline SVG). */
+.ref-pill .ref-pill-icon {
+	display: inline-block;
+	vertical-align: -0.13em;
+	margin-right: 1px;
+	opacity: 0.85;
+}

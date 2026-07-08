@@ -1276,15 +1276,15 @@ export interface PageListResponse {
 	offset: number;
 }
 
-export interface EntitySearchResult {
+export interface RefSearchResult {
 	id: string;
 	name: string;
 	entity_type: string;
 	icon: string;
 }
 
-export interface EntitySearchResponse {
-	results: EntitySearchResult[];
+export interface RefSearchResponse {
+	results: RefSearchResult[];
 }
 
 /**
@@ -1370,8 +1370,8 @@ export async function deletePage(id: string): Promise<void> {
  * Search entities for autocomplete in the page editor
  * Used when typing [[ to link to entities
  */
-export async function searchEntities(query: string): Promise<EntitySearchResponse> {
-	const res = await fetch(`${API_BASE}/pages/search/entities?q=${encodeURIComponent(query)}`);
+export async function searchRefs(query: string): Promise<RefSearchResponse> {
+	const res = await fetch(`${API_BASE}/pages/search/refs?q=${encodeURIComponent(query)}`);
 	if (!res.ok) throw new Error(`Failed to search entities: ${res.statusText}`);
 	return res.json();
 }

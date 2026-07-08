@@ -5,7 +5,7 @@
 	 * Triggered by typing "/" in the CodeMirror editor.
 	 * Shows available commands filtered by query.
 	 *
-	 * Pattern follows EntityPicker - "dumb display" component
+	 * Pattern follows RefPicker - "dumb display" component
 	 * that receives state from the slash-commands plugin.
 	 *
 	 * Uses the floating UI system for smart positioning.

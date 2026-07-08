@@ -13,9 +13,13 @@
  * - External links open in a new tab
  */
 
-import type { Extension, Range } from '@codemirror/state';
-import { Decoration, type DecorationSet, type EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
+import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { getEntityTypeFromRoute, refIcon } from '$lib/utils/refRoutes';
+import { windowShellStore } from '$lib/stores/window-shell.svelte';
+import RefEmbed from '$lib/components/RefEmbed.svelte';
 
 // =============================================================================
 // URL Classification
@@ -26,25 +30,12 @@ const ENTITY_PREFIXES = [
 	'/day/', '/year/', '/source/', '/chat/', '/drive/', '/space/',
 ] as const;
 
-const ENTITY_ICON_MAP: Record<string, string> = {
-	'/person/': 'ri:user-line',
-	'/page/': 'ri:file-text-line',
-	'/org/': 'ri:building-line',
-	'/place/': 'ri:map-pin-line',
-	'/thing/': 'ri:shapes-line',
-	'/day/': 'ri:calendar-line',
-	'/year/': 'ri:calendar-2-line',
-	'/source/': 'ri:database-2-line',
-	'/chat/': 'ri:chat-3-line',
-	'/drive/': 'ri:file-line',
-	'/space/': 'ri:layout-masonry-line',
-};
-
-function getEntityIcon(url: string): string {
-	for (const prefix of ENTITY_PREFIXES) {
-		if (url.startsWith(prefix)) return ENTITY_ICON_MAP[prefix];
-	}
-	return 'ri:links-line';
+/** Leading icon for an entity pill — shared with every other ref renderer.
+ * `label` sharpens file icons by extension (report.pdf → pdf icon). */
+function getEntityIcon(url: string, label?: string): string {
+	const type = getEntityTypeFromRoute(url);
+	if (!type) return 'ri:links-line';
+	return refIcon(type, { filename: label });
 }
 
 function isEntityUrl(url: string): boolean {
@@ -193,7 +184,7 @@ class EntityLinkWidget extends WidgetType {
 		const iconSpan = document.createElement('span');
 		iconSpan.className = 'cm-entity-icon';
 		const icon = document.createElement('iconify-icon');
-		icon.setAttribute('icon', getEntityIcon(this.href));
+		icon.setAttribute('icon', getEntityIcon(this.href, this.label));
 		icon.setAttribute('width', '14');
 		iconSpan.appendChild(icon);
 		chip.appendChild(iconSpan);
@@ -204,14 +195,12 @@ class EntityLinkWidget extends WidgetType {
 		chip.appendChild(text);
 
 		chip.addEventListener('click', (e) => {
+			// Click model: ⌘/Ctrl-click opens beside; plain click falls through to CM
+			// so the caret lands in the line and the raw markdown reveals for editing.
+			if (!(e.metaKey || e.ctrlKey)) return;
 			e.preventDefault();
 			e.stopPropagation();
-			chip.dispatchEvent(
-				new CustomEvent('page-navigate', {
-					bubbles: true,
-					detail: { href: this.href },
-				})
-			);
+			windowShellStore.openRouteBeside(this.href, this.label.replace(/^@/, ''));
 		});
 
 		chip.addEventListener('contextmenu', (e) => {
@@ -276,6 +265,14 @@ class ExternalLinkWidget extends WidgetType {
 		text.textContent = this.label;
 		link.appendChild(text);
 
+		link.addEventListener('click', (e) => {
+			// ⌘/Ctrl-click opens the link; plain click falls through to CM (edit).
+			if (!(e.metaKey || e.ctrlKey)) return;
+			e.preventDefault();
+			e.stopPropagation();
+			window.open(this.href, '_blank', 'noopener,noreferrer');
+		});
+
 		link.addEventListener('contextmenu', (e) => {
 			showLinkContextMenu(e, view, this.from, this.to, this.href, true);
 		});
@@ -339,12 +336,126 @@ class InternalLinkWidget extends WidgetType {
 	ignoreEvent() { return false; }
 }
 
+/**
+ * Block embed: a whole line that is only `[@Label](/entity/id)` renders as a
+ * persistent card (the RefEmbed Svelte component) instead of an inline pill.
+ * This is the "embed" density — auto-promoted when a ref sits alone on a line.
+ */
+class RefEmbedWidget extends WidgetType {
+	// biome-ignore lint/suspicious/noExplicitAny: Svelte mount() instance handle
+	private instance: any = null;
+
+	constructor(
+		private label: string,
+		private href: string,
+		private from: number,
+		private to: number,
+	) {
+		super();
+	}
+
+	private cleanLabel() {
+		return this.label.replace(/^@/, '');
+	}
+
+	toDOM(view: EditorView) {
+		const container = document.createElement('div');
+		container.className = 'cm-ref-embed';
+
+		// Right-click → app menu (not the browser's). Same actions as inline links,
+		// framed for a card: open beside, copy, edit the raw markdown, remove.
+		container.addEventListener('contextmenu', (e) => {
+			e.preventDefault();
+			e.stopPropagation();
+			contextMenu.show({ x: e.clientX, y: e.clientY }, [
+				{
+					id: 'open',
+					label: 'Open beside',
+					icon: 'ri:layout-right-line',
+					action: () => {
+						windowShellStore.openRouteBeside(this.href, this.cleanLabel());
+					},
+				},
+				{
+					id: 'turn-into-pill',
+					label: 'Turn into pill',
+					icon: 'ri:price-tag-3-line',
+					dividerBefore: true,
+					// Drop the `!` marker → renders inline as a pill.
+					action: () =>
+						view.dispatch({
+							changes: { from: this.from, to: this.to, insert: `[${this.label}](${this.href})` },
+						}),
+				},
+				{
+					id: 'copy-link',
+					label: 'Copy link',
+					icon: 'ri:file-copy-line',
+					action: () => navigator.clipboard.writeText(`${window.location.origin}${this.href}`),
+				},
+				{
+					id: 'edit',
+					label: 'Edit (show markdown)',
+					icon: 'ri:edit-line',
+					dividerBefore: true,
+					action: () => {
+						view.dispatch({ selection: { anchor: this.from } });
+						view.focus();
+					},
+				},
+				{
+					id: 'remove',
+					label: 'Remove',
+					icon: 'ri:delete-bin-line',
+					variant: 'destructive' as const,
+					action: () => view.dispatch({ changes: { from: this.from, to: this.to, insert: '' } }),
+				},
+			]);
+		});
+
+		this.instance = mount(RefEmbed, {
+			target: container,
+			props: {
+				type: getEntityTypeFromRoute(this.href),
+				label: this.cleanLabel(),
+				url: this.href,
+				onOpen: () => windowShellStore.openRouteBeside(this.href, this.cleanLabel()),
+			},
+		});
+		return container;
+	}
+
+	destroy() {
+		if (this.instance) {
+			void unmount(this.instance);
+			this.instance = null;
+		}
+	}
+
+	eq(other: RefEmbedWidget) {
+		return other.label === this.label && other.href === this.href;
+	}
+
+	ignoreEvent() { return true; }
+}
+
 // =============================================================================
 // Decoration Builder
 // =============================================================================
 
 // Regex to find markdown links: [label](url) — but NOT images ![alt](url)
 const LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+// A line whose ENTIRE content is a `!`-prefixed link → embed. The `!` is the
+// density marker (same convention as image/media embeds): `![@X](url)` is a
+// block card, `[@X](url)` is an inline pill. Toggled via the right-click menu.
+const SOLE_EMBED_REGEX = /^\s*!\[([^\]]+)\]\(([^)]+)\)\s*$/;
+
+/** Entity refs render as embeds; files (/drive/) are left to the media/image
+ *  widgets and inline pills for now. */
+function isEmbeddableUrl(url: string): boolean {
+	return isEntityUrl(url) && !url.startsWith('/drive/');
+}
 
 function buildLinkDecorations(view: EditorView): DecorationSet {
 	const builder: Range<Decoration>[] = [];
@@ -424,4 +535,45 @@ const linkPillsPlugin = ViewPlugin.fromClass(
 	}
 );
 
-export const entityLinks: Extension = linkPillsPlugin;
+// =============================================================================
+// Block embeds — StateField (block decorations can't come from a plugin)
+// =============================================================================
+
+// A whole line that is only an entity/file ref → a block embed card. Scanned
+// from document state (not viewport) so it can live in a StateField; the
+// cursor's line is excluded so raw markdown reveals for editing.
+function buildEmbedDecorations(state: EditorState): DecorationSet {
+	const builder: Range<Decoration>[] = [];
+	const doc = state.doc;
+	const cursorLine = doc.lineAt(state.selection.main.head).number;
+
+	for (let lineNum = 1; lineNum <= doc.lines; lineNum++) {
+		if (lineNum === cursorLine) continue;
+		const line = doc.line(lineNum);
+		if (line.length === 0) continue;
+		const sole = line.text.match(SOLE_EMBED_REGEX);
+		if (sole && isEmbeddableUrl(sole[2])) {
+			builder.push(
+				Decoration.replace({
+					widget: new RefEmbedWidget(sole[1], sole[2], line.from, line.to),
+					block: true,
+				}).range(line.from, line.to),
+			);
+		}
+	}
+
+	return Decoration.set(builder);
+}
+
+const refEmbedField = StateField.define<DecorationSet>({
+	create(state) {
+		return buildEmbedDecorations(state);
+	},
+	update(deco, tr) {
+		if (tr.docChanged || tr.selection) return buildEmbedDecorations(tr.state);
+		return deco.map(tr.changes);
+	},
+	provide: (f) => EditorView.decorations.from(f),
+});
+
+export const entityLinks: Extension = [linkPillsPlugin, refEmbedField];

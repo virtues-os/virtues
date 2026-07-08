@@ -1857,35 +1857,6 @@ pub async fn wiki_get_day_handler(
     }
 }
 
-/// Serve a day's illustration as a PNG image.
-/// Returns 200 with image/png body if the illustration exists, 404 otherwise.
-pub async fn wiki_get_day_illustration_handler(
-    State(state): State<AppState>,
-    Path(date): Path<String>,
-) -> Response {
-    let parsed = match date.parse::<chrono::NaiveDate>() {
-        Ok(d) => d,
-        Err(_) => {
-            return error_response(Error::InvalidInput(format!("Invalid date: {date}")));
-        }
-    };
-    match crate::api::wiki::get_day_illustration(state.db.pool(), parsed).await {
-        Ok(Some(bytes)) => {
-            use axum::http::header;
-            (
-                axum::http::StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, "image/png"),
-                    (header::CACHE_CONTROL, "public, max-age=86400, immutable"),
-                ],
-                bytes,
-            )
-                .into_response()
-        }
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, "no illustration").into_response(),
-        Err(e) => error_response(e),
-    }
-}
 
 /// Update a day by date
 pub async fn wiki_update_day_handler(
@@ -2740,12 +2711,12 @@ pub struct EntitySearchQuery {
     pub q: String,
 }
 
-/// GET /api/pages/search/entities - Search entities for autocomplete
-pub async fn search_entities_handler(
+/// GET /api/pages/search/refs - Search entities for autocomplete
+pub async fn search_refs_handler(
     State(state): State<AppState>,
     Query(query): Query<EntitySearchQuery>,
 ) -> Response {
-    api_response(crate::api::search_entities(state.db.pool(), &query.q).await)
+    api_response(crate::api::search_refs(state.db.pool(), &query.q).await)
 }
 
 // ============================================================================

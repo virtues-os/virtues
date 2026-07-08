@@ -868,6 +868,17 @@ class WindowShellStore {
 		this.persistTabState();
 	}
 
+	/**
+	 * Open a route in the pane BESIDE the active one, splitting if needed.
+	 * This is the "open" gesture for references (⌘-click / embed click): it keeps
+	 * the pane you were working in visible instead of burying it behind a tab.
+	 */
+	openRouteBeside(route: string, label?: string): string {
+		const other: 'left' | 'right' = this.activePaneId === 'right' ? 'left' : 'right';
+		if (!this.isSplit) this.enableSplit();
+		return this.openTabFromRoute(route, { paneId: other, forceNew: true, label });
+	}
+
 	// Backwards compatibility aliases
 	openTabInPane(input: Omit<Tab, 'id' | 'createdAt'>, paneId: 'left' | 'right'): string {
 		return this.openTab(input, paneId);

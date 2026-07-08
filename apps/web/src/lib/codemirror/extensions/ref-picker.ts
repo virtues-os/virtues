@@ -9,7 +9,7 @@
 import type { Extension } from '@codemirror/state';
 import { type EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 
-export interface EntityPickerCallbacks {
+export interface RefPickerCallbacks {
 	onOpen: (coords: { x: number; y: number }, from: number) => void;
 	onClose: () => void;
 	onQueryChange: (query: string) => void;
@@ -22,17 +22,26 @@ interface PickerState {
 }
 
 /**
- * Insert an entity link at the current picker position and close the picker.
- * Inserts markdown: [@Label](/entity-type/id)
+ * Insert an entity reference at the picker position and close the picker.
+ *
+ * Density is chosen by context (the `!` marker = embed, matching image embeds):
+ * - alone on an otherwise-empty line → `![@Label](url)` (block embed card)
+ * - inline within text            → `[@Label](url) ` (pill)
+ * Either can be toggled later via the ref's right-click menu.
  */
-export function insertEntity(
+export function insertRef(
 	view: EditorView,
 	from: number,
 	label: string,
 	href: string,
 ): void {
 	const to = view.state.selection.main.head;
-	const insert = `[@${label}](${href}) `;
+	const line = view.state.doc.lineAt(from);
+	const before = view.state.doc.sliceString(line.from, from);
+	const after = view.state.doc.sliceString(to, line.to);
+	const alone = before.trim() === '' && after.trim() === '';
+
+	const insert = alone ? `![@${label}](${href})` : `[@${label}](${href}) `;
 	view.dispatch({
 		changes: { from, to, insert },
 		selection: { anchor: from + insert.length },
@@ -48,7 +57,7 @@ export function insertEntity(
  * just typed it locally. Remote Yjs changes don't move the local cursor
  * to right after the insertion, so this naturally filters them out.
  */
-export function createEntityPicker(callbacks: EntityPickerCallbacks): Extension {
+export function createRefPicker(callbacks: RefPickerCallbacks): Extension {
 	let state: PickerState = { active: false, from: 0, query: '' };
 
 	function close() {

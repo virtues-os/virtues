@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
-	import EntityPicker, { type EntityResult } from '$lib/components/EntityPicker.svelte';
+	import RefPicker, { type EntityResult } from '$lib/components/RefPicker.svelte';
 	import { slide, fly } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 
@@ -145,7 +145,7 @@
 	{/if}
 
 	{#if showPicker}
-		<EntityPicker
+		<RefPicker
 			mode="single"
 			keepOpen={true}
 			excludeIds={effectiveItems().map(i => i.id)}

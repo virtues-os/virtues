@@ -32,6 +32,7 @@ import DevelopersView from '$lib/components/tabs/views/DevelopersView.svelte';
 import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
 import DriveView from '$lib/components/tabs/views/DriveView.svelte';
+import AssetView from '$lib/components/tabs/views/AssetView.svelte';
 import TrashView from '$lib/components/tabs/views/TrashView.svelte';
 import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
@@ -658,6 +659,31 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// ASSET: /drive/file_{id} — single-file viewer (open density for a file ref)
+	// Matched before `drive` so an id-addressed file opens the viewer, while
+	// path-addressed routes (/drive/Documents/…) still open the browser.
+	// ========================================================================
+	asset: {
+		match: (path) => /^\/drive\/file_[^/]+$/.test(path),
+		parse: (path) => {
+			const match = path.match(/^\/drive\/(file_[^/]+)$/);
+			return {
+				type: 'asset',
+				label: 'File',
+				icon: 'ri:file-line',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => (id ? id : 'asset'),
+		deserialize: (serialized) =>
+			serialized.startsWith('file_') ? `/drive/${serialized}` : '/drive',
+		icon: 'ri:file-line',
+		defaultLabel: 'File',
+		component: AssetView,
+		detailComponent: AssetView,
+	},
+
+	// ========================================================================
 	// DRIVE NAMESPACE: /drive, /drive/{path}
 	// ========================================================================
 	drive: {
@@ -845,6 +871,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'developers', // Developers tab group (SQL/Terminal/Lake)
 		'ontology', // Ontology data browsing
 		'virtues', // Has /virtues/* pattern
+		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
 		'drive', // Has /drive/* pattern
 		'trash', // Drive trash
 		'chat-history', // Chat history list (before 'chat')

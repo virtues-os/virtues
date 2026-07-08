@@ -2,7 +2,7 @@
 	/**
 	 * AiPromptPopover — the prompt entry surface for the live AI cursor.
 	 *
-	 * "Dumb display" like SlashMenu/EntityPicker: floats at a position, collects
+	 * "Dumb display" like SlashMenu/RefPicker: floats at a position, collects
 	 * a quick action or free-text instruction, and reports it via onSubmit. The
 	 * host (CodeMirrorEditor) starts the AI session.
 	 */

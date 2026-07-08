@@ -22,6 +22,7 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/person': 'person',
 	'/place': 'place',
 	'/org': 'org',
+	'/thing': 'thing',
 	'/day': 'day',
 	'/year': 'year',
 	'/drive': 'file',
@@ -29,6 +30,7 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/chat': 'chat',
 	'/space': 'space',
 	'/sources': 'source',
+	'/source': 'source',
 };
 
 // Entity types to route bases
@@ -63,6 +65,55 @@ const TYPE_TO_ICON: Record<string, string> = {
 /** Icon name for an entity type (falls back to the generic @ icon). */
 export function entityTypeIcon(type: string | null | undefined): string {
 	return (type && TYPE_TO_ICON[type]) || 'ri:at-line';
+}
+
+// File sub-type icons, resolved from mime type first, then filename extension.
+// Lets a file ref show its true nature (image / pdf / audio / video) instead of
+// the generic file icon — even inline, where only the filename is known.
+const MIME_ICON: Array<[RegExp, string]> = [
+	[/^image\//, 'ri:image-line'],
+	[/^audio\//, 'ri:music-2-line'],
+	[/^video\//, 'ri:movie-line'],
+	[/^application\/pdf$/, 'ri:file-pdf-line'],
+];
+
+const EXT_ICON: Record<string, string> = {
+	jpg: 'ri:image-line', jpeg: 'ri:image-line', png: 'ri:image-line',
+	gif: 'ri:image-line', webp: 'ri:image-line', svg: 'ri:image-line',
+	bmp: 'ri:image-line', ico: 'ri:image-line', heic: 'ri:image-line',
+	pdf: 'ri:file-pdf-line',
+	mp3: 'ri:music-2-line', wav: 'ri:music-2-line', ogg: 'ri:music-2-line',
+	flac: 'ri:music-2-line', aac: 'ri:music-2-line', m4a: 'ri:music-2-line',
+	mp4: 'ri:movie-line', webm: 'ri:movie-line', mov: 'ri:movie-line',
+	avi: 'ri:movie-line', mkv: 'ri:movie-line',
+};
+
+export type RefIconHint = { mimeType?: string | null; filename?: string | null };
+
+/** Icon for a file ref, sharpened by mime type or filename extension. */
+export function fileIcon(hint?: RefIconHint): string {
+	const mime = hint?.mimeType;
+	if (mime) {
+		for (const [re, icon] of MIME_ICON) if (re.test(mime)) return icon;
+	}
+	const name = hint?.filename;
+	if (name) {
+		const dot = name.lastIndexOf('.');
+		const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+		if (ext && EXT_ICON[ext]) return EXT_ICON[ext];
+	}
+	return 'ri:file-line';
+}
+
+/**
+ * Icon name for a reference, given its target type and an optional hint.
+ * File refs are sharpened by mime type / filename (Server.jpg → image icon);
+ * all other types map straight from their entity type.
+ * Single source of truth for the leading icon across every ref renderer.
+ */
+export function refIcon(type: string | null | undefined, hint?: RefIconHint): string {
+	if (type === 'file') return fileIcon(hint);
+	return entityTypeIcon(type);
 }
 
 // All valid entity prefixes (exported for backward compatibility)

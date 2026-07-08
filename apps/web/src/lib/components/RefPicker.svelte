@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * EntityPicker - Unified entity search and selection component
+	 * RefPicker - Unified entity search and selection component
 	 *
 	 * Used for:
 	 * - Page @ mentions (single select, insert markdown link)
@@ -13,7 +13,7 @@
 	 * When the search input looks like a URL, a synthetic "Link" result
 	 * appears at the top of results.
 	 *
-	 * Uses: GET /api/pages/search/entities?q={query}
+	 * Uses: GET /api/pages/search/refs?q={query}
 	 * Uses the floating UI system for dismiss handling when positioned.
 	 */
 
@@ -117,7 +117,7 @@
 	async function fetchResults(q: string) {
 		isLoading = true;
 		try {
-			const response = await fetch(`/api/pages/search/entities?q=${encodeURIComponent(q)}`);
+			const response = await fetch(`/api/pages/search/refs?q=${encodeURIComponent(q)}`);
 			if (response.ok) {
 				const data = await response.json();
 				let items: EntityResult[] = data.results || [];
@@ -136,7 +136,7 @@
 				selectedIndex = 0;
 			}
 		} catch (e) {
-			console.error('EntityPicker fetch error:', e);
+			console.error('RefPicker fetch error:', e);
 		} finally {
 			isLoading = false;
 		}
