@@ -5,6 +5,7 @@ members = [
     "crates/virtues-iroh",
     "crates/virtues-iroh-ffi",
     "crates/virtues-registry",
+    "crates/virtues-qnnd",
     "actions",
     "apps/desktop",
     "services/virtues-api",
