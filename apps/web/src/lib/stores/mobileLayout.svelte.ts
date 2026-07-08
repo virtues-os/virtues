@@ -7,9 +7,14 @@
  *  - a viewport-width fallback (< 768px) so the mobile chrome can be exercised
  *    in a desktop browser during development without the native shell.
  *
- * The "You" sheet (device toggles, stream logs, long-tail nav, settings) is a
- * full-height overlay owned here so the tab bar and any deep link can open it.
+ * The Settings menu (a directory of every page/route not in the bottom bar,
+ * plus a native "This device" collector screen) is a full-height overlay owned
+ * here so the tab bar and any deep link can open it. `menuView` tracks which
+ * screen the sheet is showing — the route directory ('root') or the native
+ * device dashboard ('device').
  */
+
+export type MenuView = 'root' | 'device';
 
 const MOBILE_BREAKPOINT = 768;
 
@@ -27,7 +32,8 @@ function detectViewport(): boolean {
 // viewport fallback is reactive so dev-browser resizing flips the chrome.
 const shellMobile = detectShellFlag();
 let viewportMobile = $state(detectViewport());
-let youSheetOpen = $state(false);
+let menuOpen = $state(false);
+let menuView = $state<MenuView>('root');
 
 if (typeof window !== "undefined" && !shellMobile) {
 	window.addEventListener("resize", () => {
@@ -44,16 +50,26 @@ export const mobileLayout = {
 	get isNativeShell(): boolean {
 		return shellMobile;
 	},
-	get youSheetOpen(): boolean {
-		return youSheetOpen;
+	get menuOpen(): boolean {
+		return menuOpen;
 	},
-	set youSheetOpen(val: boolean) {
-		youSheetOpen = val;
+	get menuView(): MenuView {
+		return menuView;
 	},
-	openYou() {
-		youSheetOpen = true;
+	set menuView(v: MenuView) {
+		menuView = v;
 	},
-	closeYou() {
-		youSheetOpen = false;
+	/** Open the Settings menu at the route directory. */
+	openMenu() {
+		menuView = 'root';
+		menuOpen = true;
+	},
+	closeMenu() {
+		menuOpen = false;
+	},
+	/** Jump straight to the native device dashboard. */
+	openDevice() {
+		menuView = 'device';
+		menuOpen = true;
 	},
 };
