@@ -69,10 +69,10 @@
 			activate: () => go("/page", "Pages"),
 		},
 		{
-			id: "settings",
-			label: "Settings",
-			icon: "ri:settings-3-line",
-			iconActive: "ri:settings-3-fill",
+			id: "more",
+			label: "More",
+			icon: "ri:more-2-line",
+			iconActive: "ri:more-2-fill",
 			match: [],
 			activate: () => (mobileLayout.menuOpen ? mobileLayout.closeMenu() : mobileLayout.openMenu()),
 		},
@@ -81,7 +81,7 @@
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
 
 	function isActive(tab: Tab): boolean {
-		if (tab.id === "settings") return mobileLayout.menuOpen;
+		if (tab.id === "more") return mobileLayout.menuOpen;
 		if (mobileLayout.menuOpen) return false;
 		return tab.match.some((p) => activeRoute === p || activeRoute.startsWith(p + "/"));
 	}
