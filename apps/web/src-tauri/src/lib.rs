@@ -26,26 +26,30 @@ pub fn run() {
         eprintln!("[location-probe] start failed: {e}");
       }
 
-      // Decide where to land (mirrors desktop main.rs is_paired → pick-URL):
-      //   paired    → bind the loopback, serve the box over iroh, load it
-      //   not paired → the bundled connect shell (pair.html)
-      // ensure_serving() binds the port before we point the webview at it, so
+      // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit
+      // build; the box is a REST/WS API reached over the in-process iroh
+      // loopback. We inject the loopback origin so the SPA's /api + /ws route
+      // there (see lib/config/backend.ts), and bind the loopback before load so
       // the first request queues rather than gets refused.
       let reach = app.reach();
-      let url = if reach.is_paired() {
-        match tauri::async_runtime::block_on(reach.ensure_serving()) {
-          Ok(()) => WebviewUrl::External(reach.loopback_url().parse().expect("loopback url")),
-          Err(e) => {
-            eprintln!("[reach] serve failed: {e}");
-            WebviewUrl::App("mobile-pair.html".into())
-          }
+      let paired = reach.is_paired();
+      if paired {
+        if let Err(e) = tauri::async_runtime::block_on(reach.ensure_serving()) {
+          eprintln!("[reach] serve failed: {e}");
         }
-      } else {
-        WebviewUrl::App("mobile-pair.html".into())
-      };
+      }
 
-      WebviewWindowBuilder::new(app, "main", url)
+      // Always launch the connect shell; when paired it immediately redirects to
+      // the SPA root ("/"), which guarantees SvelteKit boots at "/" rather than
+      // "/index.html". Pre-pair it shows discovery + pairing.
+      let init = format!(
+        "window.__VIRTUES_BACKEND_ORIGIN__ = '{}'; window.__VIRTUES_PAIRED__ = {};",
+        reach.loopback_url(),
+        paired
+      );
+      WebviewWindowBuilder::new(app, "main", WebviewUrl::App("mobile-pair.html".into()))
         .title("Virtues")
+        .initialization_script(&init)
         .build()?;
       Ok(())
     })
