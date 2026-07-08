@@ -1,0 +1,33 @@
+[package]
+name = "virtues-reach-client"
+version = "0.1.0"
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "Transport-agnostic reach client: pair a device to a Virtues box and serve it over iroh. Shared by the desktop `virtues-client` sidecar and the mobile (Tauri) in-process reach plugin. Credential storage is injected via the BoxStore trait so each host provides its own keystore."
+license = "MIT"
+repository = "https://github.com/virtues-os/virtues"
+
+[dependencies]
+# iroh reach: dial the box by EndpointId, splice loopback connections / send
+# raw HTTP requests over bi-streams. Shared box/relay reach layer.
+virtues-iroh = { path = "../virtues-iroh" }
+
+# Device iroh key generation (seed) + hex encoding for storage.
+rand = "0.9"
+hex = "0.4"
+
+# Async runtime (consume/refresh use reqwest; the loopback uses TcpListener +
+# lookup_host). No cfg gating — mobile links this too.
+tokio = { version = "1.40", features = ["full"] }
+
+# HTTP client for the pair flow + reach refresh. rustls-webpki-roots keeps it
+# pure-Rust (cross-compiles to iOS) and trusts public roots for relay https.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+url = "2.5"
+# Enumerate local interfaces to pick the private /24 to scan for boxes.
+local-ip-address = "0.6"

@@ -4,6 +4,7 @@ members = [
     "crates/virtues-helpers",
     "crates/virtues-iroh",
     "crates/virtues-iroh-ffi",
+    "crates/virtues-reach-client",
     "crates/virtues-registry",
     "crates/virtues-qnnd",
     "actions",
@@ -17,6 +18,10 @@ members = [
 # workspace member, or `cargo metadata` (which the tauri CLI runs) fails.
 exclude = [
     "apps/web/src-tauri",
+    # Local Tauri mobile plugins, path-deps of the excluded src-tauri crate —
+    # must be excluded too so `cargo metadata` (run by the tauri CLI) resolves.
+    "apps/web/plugins/location-probe",
+    "apps/web/plugins/reach",
     # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
     # build so iroh's dep tree can't destabilize it during the spike.
     "spike-iroh",

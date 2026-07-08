@@ -907,7 +907,7 @@ pub(crate) async fn insert_device_row(
         "INSERT INTO app_device \
          (id, user_id, kind, label, device_info, paired_from_ip, node_id, source_id, last_seen_at) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now()) \
-         ON CONFLICT (node_id) DO UPDATE SET \
+         ON CONFLICT (node_id) WHERE node_id IS NOT NULL AND revoked_at IS NULL DO UPDATE SET \
            kind = EXCLUDED.kind, \
            label = EXCLUDED.label, \
            device_info = EXCLUDED.device_info, \

@@ -15,12 +15,9 @@ path = "src/main.rs"
 # CLI
 clap = { version = "4.5", features = ["derive"] }
 
-# iroh reach: the `:7117` helper dials the box over iroh and splices browser
-# connections to it. Shares the box/relay reach layer.
-virtues-iroh = { path = "../../crates/virtues-iroh" }
-# Device iroh key generation (seed) + hex encoding for storage.
-rand = "0.9"
-hex = "0.4"
+# Shared reach core: pair (consume) + the `:7117` loopback proxy over iroh.
+# The desktop supplies its keychain-backed BoxStore; the crate does the rest.
+virtues-reach-client = { path = "../../crates/virtues-reach-client" }
 
 # Async runtime (pair/status/discover are async; mDNS browse + reqwest need it)
 tokio = { version = "1.40", features = ["full"] }

@@ -1,0 +1,5 @@
+# Cross-compilation config (used by `cross build`).
+# sqlx checks queries at compile time against the committed .sqlx/ cache in
+# offline mode; pass the flag through into the build container.
+[build.env]
+passthrough = ["SQLX_OFFLINE"]

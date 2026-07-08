@@ -31,11 +31,12 @@ pub struct FoundServer {
 
 /// Check whether this machine is paired.
 ///
-/// Tries the keychain first, then falls back to `~/.virtues/bundle.json`. The
+/// Tries the keychain first, then falls back to `~/.virtues/box.json`. The
 /// fallback matters because macOS scopes keychain items to the creating binary:
-/// the bundle was written by the `virtues-client` sidecar, so this app binary
-/// often can't read that keychain entry. `pair` also writes the bundle to a
-/// 0600 file readable by any of the user's processes — the reliable signal.
+/// the iroh pairing record is written by the `virtues-client` sidecar (and by
+/// `virtues-client pair` on the CLI), so this app binary often can't read that
+/// keychain entry. `pair` also writes the record to a 0600 `box.json` readable
+/// by any of the user's processes — the reliable signal.
 fn is_paired() -> bool {
     let keychain_ok = keyring::Entry::new("virtues-client", "default-box")
         .and_then(|e| e.get_password())
@@ -44,7 +45,7 @@ fn is_paired() -> bool {
         return true;
     }
     dirs::home_dir()
-        .map(|h| h.join(".virtues").join("bundle.json").exists())
+        .map(|h| h.join(".virtues").join("box.json").exists())
         .unwrap_or(false)
 }
 
@@ -1254,9 +1255,4 @@ fn main() {
                 }
             }
         });
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    main();
 }

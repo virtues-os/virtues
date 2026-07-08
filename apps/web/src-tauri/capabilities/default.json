@@ -2,6 +2,7 @@
   "$schema": "https://schemas.tauri.app/capability/schema.json",
   "identifier": "default",
   "description": "Default capabilities for the main window",
+  "platforms": ["macOS", "windows", "linux"],
   "windows": ["*"],
   "permissions": [
     "core:default",

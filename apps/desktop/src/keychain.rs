@@ -16,7 +16,7 @@
 //! entitlement, headless Linux, etc.).
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use virtues_reach_client::{BoxStore, PairedBox};
 
 const SERVICE: &str = "virtues-client";
 /// Single-box-per-machine for v1. When multi-box support lands this becomes
@@ -32,35 +32,21 @@ const LEGACY_ACCOUNTS: &[&str] = &[
     "default-box-server-pin",
 ];
 
-/// The persisted paired-box record. Everything the thin client needs to reach
-/// and authorize the box.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PairedBox {
-    /// LAN origin we paired against, e.g. `http://10.0.0.5:8000` — the reach
-    /// fallback for a LAN-only box. Remote reach goes through the `:7117` helper
-    /// (see `box_node_id`/`relay_url`), not this URL.
-    pub box_url: String,
-    /// This device's `app_device.id` — sent to `DELETE /api/devices/:id` (via the
-    /// key-authed `:7117` helper) to self-revoke. `None` for legacy pairings.
-    #[serde(default)]
-    pub device_id: Option<String>,
-    /// The box's iroh **EndpointId** (hex) — dialed by the `:7117` helper. `None`
-    /// on a LAN-only box (no relay reach).
-    #[serde(default)]
-    pub box_node_id: Option<String>,
-    /// The relay URL to reach `box_node_id` through. Paired with it as the ticket.
-    #[serde(default)]
-    pub relay_url: Option<String>,
-    /// The box's iroh direct socket addresses (LAN/VPN `IP:port`). On the same
-    /// network the helper dials these directly — no relay, no discovery, no
-    /// third party. Present even for an unclaimed box (which has no relay).
-    #[serde(default)]
-    pub box_direct_addrs: Vec<String>,
-    /// This device's own iroh secret key (hex 32-byte seed), generated at pairing.
-    /// Its EndpointId is submitted to the box so it's allowlisted; the `:7117`
-    /// helper builds its iroh endpoint from this. `None` for legacy pairings.
-    #[serde(default)]
-    pub device_secret_hex: Option<String>,
+/// `virtues-reach-client` [`BoxStore`] backed by the OS keychain + 0600 file.
+/// The reach functions (`pair::consume`, `refresh_reach`, `build_client`) take
+/// this so the desktop keeps its keychain behavior while sharing the reach core.
+pub struct KeychainStore;
+
+impl BoxStore for KeychainStore {
+    fn load(&self) -> Result<Option<PairedBox>> {
+        load_box()
+    }
+    fn save(&self, rec: &PairedBox) -> Result<()> {
+        save_box(rec)
+    }
+    fn delete(&self) -> Result<()> {
+        delete_box()
+    }
 }
 
 fn entry(account: &str) -> Result<keyring::Entry> {
