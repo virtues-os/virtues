@@ -16,8 +16,10 @@
 //! - `reranker.rs` - sidecar client, :18182 (cross-encoder, bge-reranker-v2-m3;
 //!   search falls back to bi-encoder cosine if it's down)
 
+pub mod bm25;
 pub mod embedder;
 pub mod indexer;
+pub mod qnn_client;
 pub mod query;
 pub mod reranker;
 
