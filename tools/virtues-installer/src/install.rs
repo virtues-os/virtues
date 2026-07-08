@@ -251,10 +251,10 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     // explicit VIRTUES_QNN_LIB_DIR, else auto-detect libQnnHtp.so under the usual
     // roots (a Radxa QAIRT install, an onnxruntime-qnn wheel, …). Both
     // LD_LIBRARY_PATH (host) and ADSP_LIBRARY_PATH (DSP skel) must point there.
-    let qnn_env = match detect_qnn_lib_dir(cfg).await {
-        Some(dir) => {
-            ui::ok(&format!("QNN runtime libs: {dir}"));
-            format!("Environment=LD_LIBRARY_PATH={dir}\nEnvironment=ADSP_LIBRARY_PATH={dir}\n")
+    let qnn_env = match detect_qnn_libs(cfg).await {
+        Some((host, adsp)) => {
+            ui::ok(&format!("QNN runtime libs: {host}"));
+            format!("Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={adsp}\n")
         }
         None => {
             ui::warn(
@@ -286,25 +286,38 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     run_step("Start NPU daemon", cmd).await
 }
 
-/// Locate the QAIRT runtime lib directory (the one holding `libQnnHtp.so`, and
-/// beside it the v68 skel the DSP loads). Order: explicit `VIRTUES_QNN_LIB_DIR`,
-/// then a bounded `find` under the roots QAIRT/onnxruntime-qnn typically land in.
-/// `None` means "not found here" — the libs may still be on the default loader
-/// path (a baked appliance image), in which case the unit needs no env.
-async fn detect_qnn_lib_dir(cfg: &InstallConfig) -> Option<String> {
-    if let Some(dir) = cfg.qnn_lib_dir() {
-        return Some(dir);
-    }
-    // Bounded search (depth-capped, a handful of roots) — never a full-FS scan.
-    let script = "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
-                  /usr/lib/python3*/dist-packages /usr/local/lib/python3*/dist-packages \
-                  -maxdepth 7 -name libQnnHtp.so 2>/dev/null | head -1";
-    let out = Command::new("bash").arg("-c").arg(script).output().await.ok()?;
+/// The directory containing a named QNN `.so`, via a bounded `find` under the
+/// roots QAIRT / onnxruntime-qnn typically land in (never a full-FS scan).
+async fn find_lib_dir(name: &str) -> Option<String> {
+    let script = format!(
+        "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
+         /usr/lib/python3*/dist-packages /usr/local/lib/python3*/dist-packages \
+         -maxdepth 8 -name {name} 2>/dev/null | head -1"
+    );
+    let out = Command::new("bash").arg("-c").arg(&script).output().await.ok()?;
     let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if path.is_empty() {
         return None;
     }
     Path::new(&path).parent().map(|p| p.display().to_string())
+}
+
+/// Resolve `(LD_LIBRARY_PATH, ADSP_LIBRARY_PATH)` for the QNN daemon. These are
+/// DIFFERENT directories in the QAIRT SDK layout: the host libs (`libQnnHtp.so`,
+/// `libQnnSystem.so`) live under `lib/<host-triple>/`, but the DSP skel the
+/// Hexagon actually loads (`libQnnHtpV68Skel.so`) lives under
+/// `lib/hexagon-v68/unsigned/`. Pointing ADSP at the host dir → "Failed to load
+/// skel" and the daemon dies (learned on-device). LD = host dir; ADSP = skel dir
+/// as a `;`-separated list, with the standard Radxa DSP path `/usr/lib/dsp/cdsp`
+/// appended. `VIRTUES_QNN_LIB_DIR` overrides the host dir. `None` → libs are on
+/// the default loader path (baked image); the unit needs no env.
+async fn detect_qnn_libs(cfg: &InstallConfig) -> Option<(String, String)> {
+    let host = match cfg.qnn_lib_dir() {
+        Some(dir) => dir,
+        None => find_lib_dir("libQnnHtp.so").await?,
+    };
+    let skel = find_lib_dir("libQnnHtpV68Skel.so").await.unwrap_or_else(|| host.clone());
+    Some((host, format!("{skel};/usr/lib/dsp/cdsp")))
 }
 
 /// The standard Linux groups that gate access to GPU device nodes
