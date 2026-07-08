@@ -270,6 +270,7 @@
 
 <div
 	class="app-shell flex h-screen w-full bg-surface-elevated"
+	class:mobile-shell={mobileLayout.isMobile}
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
 	<!-- Desktop sidebar — hidden on the mobile (bottom-tab) shell -->
@@ -346,6 +347,14 @@
 	   scrollable content ends above it (the bar is position:fixed). */
 	main.is-mobile {
 		padding-bottom: calc(56px + env(safe-area-inset-bottom));
+	}
+
+	/* Belt-and-suspenders: never let the whole shell rubber-band sideways on a
+	   phone if a view has a rogue too-wide child. Views that opt into their own
+	   x-scroll still work (contained). */
+	.app-shell.mobile-shell {
+		overflow-x: hidden;
+		overscroll-behavior-x: none;
 	}
 
 	/* Focus-mode exit button — appears top-right when chrome is hidden. */
