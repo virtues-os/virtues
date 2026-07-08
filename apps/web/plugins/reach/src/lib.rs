@@ -17,11 +17,12 @@ use tauri::{
 };
 use tokio::sync::Mutex;
 use virtues_reach_client::{
-  BoxStore, PairedBox, SessionState, VirtuesIrohClient,
+  outbox, BoxStore, PairedBox, SessionState, VirtuesIrohClient,
 };
 
 mod commands;
 mod error;
+mod ffi;
 mod models;
 mod upload;
 
@@ -37,17 +38,38 @@ const LOOPBACK_PORT: u16 = 7117;
 // protection encrypts it at rest; keeping it a plain file (vs the Keychain)
 // keeps the BoxStore in pure Rust. Hardening to the iOS Keychain is a follow-up.
 
+/// `<AppSupport>/virtues/` — the app container dir holding creds + the outbox.
+fn virtues_dir() -> PathBuf {
+  let base = dirs::data_dir()
+    .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")))
+    .unwrap_or_else(|| PathBuf::from("."));
+  base.join("virtues")
+}
+
+/// Initialize the shared outbox and clear any stale in-flight claims. Idempotent
+/// — safe to call at launch and again after pairing (to refresh the device id).
+fn init_outbox(store: &FileStore) {
+  let device_id = store
+    .load()
+    .ok()
+    .flatten()
+    .and_then(|r| r.device_id)
+    .unwrap_or_default();
+  if let Err(e) = outbox::init(virtues_dir().join("outbox.sqlite"), &device_id, "ios_ingest") {
+    tracing::warn!(error = %format!("{e:#}"), "outbox init failed");
+    return;
+  }
+  let _ = outbox::reset_stale();
+}
+
 struct FileStore {
   path: PathBuf,
 }
 
 impl FileStore {
   fn new() -> Self {
-    let base = dirs::data_dir()
-      .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")))
-      .unwrap_or_else(|| PathBuf::from("."));
     FileStore {
-      path: base.join("virtues").join("box.json"),
+      path: virtues_dir().join("box.json"),
     }
   }
 }
@@ -144,6 +166,10 @@ impl ReachState {
       .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{LOOPBACK_PORT}: {e}")))?;
     std_listener.set_nonblocking(true)?;
 
+    // Refresh the outbox's device id now that we're definitely paired (setup()
+    // may have run pre-pair with an empty id).
+    init_outbox(&self.store);
+
     let client = virtues_reach_client::build_client(&rec).await?;
     *self.client.lock().await = Some(client.clone());
 
@@ -156,17 +182,17 @@ impl ReachState {
       }
     });
 
-    // Foreground upload loop: drain the collectors' shared SQLite to the box.
-    // (Background sync via BGTaskScheduler is a follow-up.)
+    // Foreground upload loop: drain the shared outbox to the box.
+    // (Background sync via BGTaskScheduler + sig-loc wake is wired separately.)
     let store = self.store.clone();
     tauri::async_runtime::spawn(async move {
       loop {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
         let Ok(Some(rec)) = store.load() else { continue };
-        match upload::drain_location(&client, &rec).await {
-          Ok(n) if n > 0 => tracing::info!("uploaded {n} location fixes"),
+        match upload::drain(&client, &rec).await {
+          Ok(n) if n > 0 => tracing::info!("uploaded {n} records"),
           Ok(_) => {}
-          Err(e) => tracing::warn!(error = %format!("{e:#}"), "location drain failed"),
+          Err(e) => tracing::warn!(error = %format!("{e:#}"), "outbox drain failed"),
         }
       }
     });
@@ -253,10 +279,17 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::pair,
       commands::reach_status,
       commands::forget,
-      commands::discover
+      commands::discover,
+      commands::outbox_stats
     ])
     .setup(|app, _api| {
-      app.manage(ReachState::new());
+      // Keep the Swift-called C ABI (virtues_enqueue) in the linked static lib.
+      ffi::keep_symbols();
+      let state = ReachState::new();
+      // Bring the outbox up before any collector enqueues (incl. a cold
+      // background relaunch, where setup() runs first).
+      init_outbox(&state.store);
+      app.manage(state);
       Ok(())
     })
     .build()

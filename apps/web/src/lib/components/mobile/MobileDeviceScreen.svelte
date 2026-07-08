@@ -31,6 +31,12 @@
 		loopbackUrl: string;
 	}
 
+	interface OutboxStats {
+		queued: number;
+		failing: number;
+		oldest: number; // unix seconds, 0 if empty
+	}
+
 	/** A collapsed run of consecutive near-identical fixes. */
 	interface LogRun {
 		ts: string;
@@ -43,6 +49,7 @@
 
 	let rows = $state<ProbeRow[]>([]);
 	let reach = $state<ReachStatus | null>(null);
+	let sync = $state<OutboxStats | null>(null);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
@@ -95,15 +102,17 @@
 		loading = true;
 		error = null;
 		try {
-			const [rowsResp, reachResp, ver] = await Promise.all([
+			const [rowsResp, reachResp, syncResp, ver] = await Promise.all([
 				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
 					payload: { limit: 50 },
 				}),
 				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
 				getVersion().catch(() => ""),
 			]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
 			reach = reachResp;
+			sync = syncResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -190,6 +199,28 @@
 		</div>
 	</div>
 
+	<div class="group-label">Sync</div>
+	<div class="card">
+		<div class="stream">
+			<div class="s-icon" class:on={sync != null && sync.queued === 0}>
+				<Icon icon="ri:refresh-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">
+					{#if !sync}—{:else if sync.queued === 0}Synced to your box{:else}{sync.queued} waiting to sync{/if}
+				</div>
+				<div class="s-sub">
+					{#if sync && sync.failing > 0}{sync.failing} retrying{:else}Uploaded over your private link{/if}
+				</div>
+			</div>
+			{#if sync && sync.queued > 0}
+				<span class="dot"></span>
+			{:else if sync}
+				<span class="dot on"></span>
+			{/if}
+		</div>
+	</div>
+
 	<div class="group-label">
 		<span>Recent activity</span>
 		<button class="refresh" onclick={load} aria-label="Refresh">
@@ -237,8 +268,8 @@
 	</div>
 
 	<p class="foot">
-		Recorded locally on this phone. The shared upload queue that syncs these to
-		your box lands in the next update.
+		Collected on this phone and synced to your box over your private link —
+		never through Virtues' servers.
 	</p>
 </div>
 
