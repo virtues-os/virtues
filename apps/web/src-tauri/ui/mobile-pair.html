@@ -52,6 +52,9 @@
     <p class="hint">The code is shown by <b>virtues pair</b> on the box (or in its Devices screen). It expires after a few minutes.</p>
 
     <script>
+      // Already paired → straight to the bundled SPA at root (loopback is up).
+      if (window.__VIRTUES_PAIRED__) { location.replace('/'); }
+
       const invoke = window.__TAURI__.core.invoke;
       const form = document.getElementById('form');
       const go = document.getElementById('go');
@@ -109,8 +112,8 @@
           const status = await invoke('plugin:reach|pair', { payload: { server, code } });
           if (status.paired) {
             say('Paired — opening your box…', 'ok');
-            // Give the loopback a beat, then load the box UI over iroh.
-            setTimeout(() => { window.location.href = status.loopbackUrl; }, 400);
+            // Give the loopback a beat, then load the bundled SPA at root.
+            setTimeout(() => { window.location.replace('/'); }, 400);
           } else {
             say('Pairing did not complete. Check the code and try again.', 'err');
             go.disabled = false;

@@ -1,9 +1,18 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm build && cp build/200.html build/index.html && cp src-tauri/ui/mobile-pair.html build/",
+    "frontendDist": "../build"
+  },
   "bundle": {
     "externalBin": [],
     "iOS": {
       "developmentTeam": "4YV9K677RY"
+    }
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:7117; font-src 'self' data:; media-src 'self' blob: http://127.0.0.1:7117; connect-src 'self' http://127.0.0.1:7117 ws://127.0.0.1:7117"
     }
   }
 }

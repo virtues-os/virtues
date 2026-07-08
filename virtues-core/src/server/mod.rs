@@ -796,6 +796,18 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
         app
     };
 
+    // CORS: the mobile app is a bundled SPA at its own `tauri://` origin that
+    // calls this API cross-origin over the iroh loopback. Auth is the proven
+    // iroh key (not Origin/cookies), so a permissive CORS is safe — it only
+    // relaxes the browser's same-origin policy, never the transport allowlist.
+    // Same-origin (desktop/browser served by the box) is unaffected.
+    let app = app.layer(
+        tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any),
+    );
+
     // iroh reach: the box is an iroh Endpoint that serves this same axum app
     // (LAN-direct → hole-punch → our relay), reachable by EndpointId with no
     // public inbound port. Serves a clone of `app`; the :8000 TCP listener below
