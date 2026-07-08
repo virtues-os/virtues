@@ -81,11 +81,11 @@ pub struct AssistantProfile {
     // Legacy model fields (kept for backward compatibility)
     pub default_model_id: Option<String>,
     pub background_model_id: Option<String>,
-    // New model slot system (4 purpose-based slots)
+    // Purpose-based model slots
     pub chat_model_id: Option<String>,
     pub lite_model_id: Option<String>,
-    pub reasoning_model_id: Option<String>,
     pub coding_model_id: Option<String>,
+    pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
     pub embedding_model_id: Option<String>,

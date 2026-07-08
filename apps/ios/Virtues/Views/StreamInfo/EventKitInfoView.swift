@@ -153,7 +153,7 @@ struct EventKitInfoView: View {
             }
             .padding(.vertical, 4)
 
-            Text("Data is synced every 5 minutes. Calendar events cover 30 days past to 90 days future.")
+            Text("Data is uploaded to your box every 15 minutes. Calendar events cover 30 days past to 90 days future.")
                 .font(.subheadline)
                 .foregroundColor(.warmForegroundMuted)
         }
@@ -162,7 +162,7 @@ struct EventKitInfoView: View {
     private var configSection: some View {
         InfoSection(title: "Configuration", icon: "slider.horizontal.3") {
             VStack(spacing: 10) {
-                InfoRow(label: "Sync Interval", value: "5 minutes")
+                InfoRow(label: "Sync Interval", value: "15 minutes")
                 InfoRow(label: "Calendar Range", value: "-30 to +90 days")
                 InfoRow(label: "Reminders", value: "Incomplete + last 30 days")
             }

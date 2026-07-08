@@ -456,7 +456,7 @@ struct DataView: View {
             } else {
                 showPermissionDenied(
                     type: "Microphone",
-                    message: "Audio recording requires microphone access to capture and transcribe your voice. Please enable it in Settings."
+                    message: "Microphone access lets the app record ambient audio; your box transcribes it. Please enable it in Settings."
                 )
             }
         } else {
@@ -473,7 +473,7 @@ struct DataView: View {
                 } else {
                     showPermissionDenied(
                         type: "Contacts",
-                        message: "Contact access helps identify people mentioned in your conversations. Please enable it in Settings."
+                        message: "Contact access lets the app sync your address book so your box can match people to your data. Please enable it in Settings."
                     )
                 }
             } else {

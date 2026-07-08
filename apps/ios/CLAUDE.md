@@ -10,7 +10,10 @@ The Virtues iOS app has a single purpose: **Reliable raw data collection**.
 - **Six data streams**: location, audio (microphone), healthkit, contacts, eventkit, financekit
 - **One backend action**: every stream POSTs to `/webhook/{action_id}` for the single `ios_ingest` action; the body's `stream` field tells the backend which ontology to fan the records into
 - **Batched uploads** - Groups SQLite entries by stream type (one request per stream that has pending data)
-- **5-minute sync intervals** with background support
+- **15-minute upload cadence** (battery); HealthKit *collects* every 5 min. Data is
+  durable in SQLite between cycles. NOTE: iOS's ~30s background budget means an
+  upload started in the background may not finish — orphaned `uploading` rows are
+  reset to `pending` at the start of the next cycle (see SQLiteManager)
 - **Dependency injection** - All managers are unit testable
 - **Centralized health monitoring** - Automated recovery from failures
 - **Generic stream processing** - Extensible architecture for new data types
@@ -234,9 +237,15 @@ return await uploadWithProcessor(processor: processor, events: events)
 | Timer Implementations | 4 different | 1 unified | 75% |
 | Health Check Timers | 3 separate | 1 coordinated | 67% |
 | Stream Upload Code | 120 lines | 75 lines | 43% |
-| Unit Testability | 0% | 100% | ∞ |
-| Background Reliability | ~60% | 100% | +40% |
-| Silent Data Loss | Common | Zero | 100% |
+| Unit Testability | 0% | high (DI in place) | — |
+| Background Reliability | ~60% | improved (not 100% — 30s budget still bounds) | — |
+| Silent Data Loss | Common | reduced (orphaned-row reset; box dedupes retries) | — |
+
+> Honesty note: earlier revisions of this doc claimed "100% background reliability"
+> and "zero silent data loss". Those are aspirations, not guarantees — iOS's ~30s
+> background budget can interrupt an upload, and durability rests on the
+> orphaned-`uploading` reset + the box's idempotent `ON CONFLICT DO NOTHING` ingest.
+> The refactor's real wins are DI, one timer abstraction, and one health coordinator.
 
 ### File Structure
 
@@ -377,12 +386,13 @@ The iOS app evolved from using in-memory buffers to a simpler, more reliable SQL
 
 The app blocks all data collection until onboarding completes.
 
-### Step 1: Endpoint Configuration
+### Step 1: Pair with the box
 
-1. Enter API endpoint URL
-2. Enter API key (device token)
-3. Verify connection to backend
-4. **Blocks progression until verified**
+1. In Settings, scan the box's QR code **or** enter its pairing code + address
+2. The device generates an iroh keypair; pairing (`/api/pair/consume`) allowlists
+   its EndpointId on the box and returns the reach ticket + action-id map
+3. Auth is the device's iroh key — there is NO bearer token / API key
+4. **Uploads can't complete until paired** (no action-ids → no webhook URL)
 
 ### Step 2: Permissions
 
@@ -604,9 +614,12 @@ every stream to that one URL.)
 
 - **Timeouts**: 30 seconds per request
 - **Retries**: Exponential backoff: 30s → 60s → 120s → 240s → 300s
-- **Batch size**: Unlimited (backend handles chunking)
-- **Auth**: `Authorization: Bearer <device token>` header on all requests (validated against the credential vault)
-- **Transport**: routed through `BoxTransport` so uploads work off-LAN via the tunnel
+- **Batch size**: byte-bounded sub-batches (~512KB) per request so a large backlog
+  drains incrementally and fits the request/background budget (see BatchUploadCoordinator)
+- **Auth**: none at the HTTP layer — the device's allowlisted **iroh key IS the
+  credential**. `BoxTransport` dials the box by its EndpointId; there is no bearer token
+- **Transport**: all requests ride `BoxTransport` (iroh/QUIC), which reaches the box
+  by EndpointId over LAN-direct / hole-punched / relay — works off-LAN, no typed URL
 
 ## Sync Monitoring
 

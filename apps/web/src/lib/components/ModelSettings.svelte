@@ -32,16 +32,16 @@
 			dbField: "lite_model_id",
 		},
 		{
-			key: "reasoning",
-			label: "Reasoning",
-			description: "Complex analysis",
-			dbField: "reasoning_model_id",
-		},
-		{
 			key: "coding",
 			label: "Coding",
 			description: "Code generation",
 			dbField: "coding_model_id",
+		},
+		{
+			key: "image",
+			label: "Image",
+			description: "Text-to-image",
+			dbField: "image_model_id",
 		},
 	];
 
@@ -51,8 +51,8 @@
 	let slotValues = $state<Record<string, string>>({
 		chat: "",
 		lite: "",
-		reasoning: "",
 		coding: "",
+		image: "",
 	});
 
 	onMount(async () => {
@@ -84,8 +84,8 @@
 						profile.lite_model_id ||
 						profile.background_model_id ||
 						"",
-					reasoning: profile.reasoning_model_id || "",
 					coding: profile.coding_model_id || "",
+					image: profile.image_model_id || "",
 				};
 			}
 		} catch (e) {

@@ -19,8 +19,8 @@ struct SettingsView: View {
 
     @State private var showingResetAlert = false
     @State private var showingStorageDetails = false
-    @State private var showingEndpointEdit = false
     @State private var showQRScanner = false
+    @State private var showManualPair = false
     @State private var isCompletingPairing = false
     @State private var pairingError: String?
     @State private var showCopiedToast = false
@@ -30,9 +30,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                // Server Section
-                Section(header: Text("Server")) {
-                    // Connection Status
+                // Box connection
+                Section(header: Text("Box")) {
+                    // Pairing status
                     HStack {
                         Text("Status")
                         Spacer()
@@ -40,22 +40,22 @@ struct SettingsView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundColor(.warmSuccess)
-                                Text("Connected")
+                                Text("Paired")
                                     .foregroundColor(.warmSuccess)
                             }
                         } else {
                             HStack(spacing: 4) {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.warmError)
-                                Text("Not Connected")
+                                Text("Not paired")
                                     .foregroundColor(.warmError)
                             }
                         }
                     }
 
-                    // Server URL
+                    // Box address (used only to pair; data traffic runs over iroh)
                     HStack {
-                        Text("Server URL")
+                        Text("Box address")
                         Spacer()
                         if deviceManager.isConfigured {
                             Text(deviceManager.configuration.apiEndpoint)
@@ -69,7 +69,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    // QR Scan to pair (primary action)
+                    // QR scan to pair (primary action)
                     Button(action: {
                         Haptics.light()
                         pairingError = nil
@@ -80,12 +80,25 @@ struct SettingsView: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle())
                                     .scaleEffect(0.8)
-                                Text("Connecting...")
+                                Text("Pairing…")
                             } else {
                                 Label("Scan QR Code to Pair", systemImage: "qrcode.viewfinder")
                             }
                         }
                         .foregroundColor(.warmPrimary)
+                    }
+                    .disabled(isCompletingPairing)
+
+                    // Enter the box's pairing code by hand — the box prints it (or
+                    // shows a QR) via `virtues pair`. Handy over Tailscale or when a
+                    // camera scan isn't. Same pairing as the QR.
+                    Button(action: {
+                        Haptics.light()
+                        pairingError = nil
+                        showManualPair = true
+                    }) {
+                        Label("Enter Code Manually", systemImage: "keyboard")
+                            .foregroundColor(.warmPrimary)
                     }
                     .disabled(isCompletingPairing)
 
@@ -98,20 +111,6 @@ struct SettingsView: View {
                                 .foregroundColor(.warmError)
                         }
                     }
-
-                    // Manual endpoint edit (secondary)
-                    Button(action: {
-                        Haptics.light()
-                        showingEndpointEdit = true
-                    }) {
-                        Label(
-                            deviceManager.isConfigured ? "Edit Server Manually" : "Manual Setup",
-                            systemImage: "link"
-                        )
-                        .foregroundColor(.warmForegroundMuted)
-                        .font(.subheadline)
-                    }
-
                 }
                 
                 // Permissions Section
@@ -178,7 +177,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Auto Sync")
                         Spacer()
-                        Text("Every 5 minutes")
+                        Text("Every 15 minutes")
                             .foregroundColor(.warmForegroundMuted)
                     }
 
@@ -224,7 +223,7 @@ struct SettingsView: View {
                             let ok = await uploadCoordinator.forceUpload()
                             await MainActor.run {
                                 isForceSyncing = false
-                                forceSyncResult = ok ? "✓ Upload sent" : "✗ Upload failed (see logs)"
+                                forceSyncResult = ok ? "✓ Sent to box" : "✗ Upload failed (see logs)"
                                 Haptics.success()
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                                     forceSyncResult = nil
@@ -315,19 +314,22 @@ struct SettingsView: View {
                     resetApp()
                 }
             } message: {
-                Text("Fully disconnects this phone from your box: wipes its credentials, tunnel, and all settings. You'll set it up again from scratch. Pending uploads will be lost.")
+                Text("Fully disconnects this phone from your box: clears its pairing and all settings. You'll set it up again from scratch. Pending uploads will be lost.")
             }
             .sheet(isPresented: $showingStorageDetails) {
                 StorageDetailsView()
-            }
-            .sheet(isPresented: $showingEndpointEdit) {
-                EndpointEditView()
             }
             .fullScreenCover(isPresented: $showQRScanner) {
                 QRScannerView(
                     onScanned: handleQRScanResult,
                     onCancel: { showQRScanner = false }
                 )
+            }
+            .sheet(isPresented: $showManualPair) {
+                ManualPairView { endpoint, code in
+                    // Same consume path as a scanned QR — just typed in.
+                    handleQRScanResult(endpoint: endpoint, pairToken: code, fingerprint: nil)
+                }
             }
             .overlay(alignment: .bottom) {
                 if showCopiedToast {
@@ -374,7 +376,7 @@ struct SettingsView: View {
                 // `consumePairToken`.
                 await MainActor.run {
                     deviceManager.updateConfiguration(apiEndpoint: endpoint)
-                    deviceManager.updateReach(boxNodeId: response.boxNodeId, relayUrl: response.relayUrl)
+                    deviceManager.updateReach(boxNodeId: response.boxNodeId, relayUrl: response.relayUrl, boxDirectAddrs: response.boxDirectAddrs)
                     deviceManager.updateActionIds(response.actionIds)
                     deviceManager.isConfigured = true
                     deviceManager.configurationState = .configured

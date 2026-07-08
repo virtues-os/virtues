@@ -355,9 +355,12 @@ extension AudioManager {
     }
 
     private func startRecordingChunk() {
-        // Create audio file URL
+        // Create audio file URL. Use a UUID (not a timestamp) so two chunks that
+        // start in the same sub-second — e.g. a silent chunk discarded and
+        // immediately restarted — can never collide on the same path while a prior
+        // chunk's finalize task is still reading/removing its file.
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let audioFilename = documentsPath.appendingPathComponent("chunk_\(Date().timeIntervalSince1970).m4a")
+        let audioFilename = documentsPath.appendingPathComponent("chunk_\(UUID().uuidString).m4a")
 
         // Configure recording settings for 16kHz sample rate with optimized compression
         let settings: [String: Any] = [

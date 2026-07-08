@@ -279,13 +279,13 @@ class NetworkManager: ObservableObject {
         request.timeoutInterval = 15
         guard let (data, http) = try? await BoxTransport.shared.send(request, session: session),
               http.statusCode == 200 else { return }
-        struct ReachResponse: Decodable { let boxNodeId: String?; let relayUrl: String? }
+        struct ReachResponse: Decodable { let boxNodeId: String?; let relayUrl: String?; let boxDirectAddrs: [String]? }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         guard let reach = try? decoder.decode(ReachResponse.self, from: data),
               let node = reach.boxNodeId, !node.isEmpty else { return }
         await MainActor.run {
-            DeviceManager.shared.updateReach(boxNodeId: node, relayUrl: reach.relayUrl)
+            DeviceManager.shared.updateReach(boxNodeId: node, relayUrl: reach.relayUrl, boxDirectAddrs: reach.boxDirectAddrs)
         }
     }
 
@@ -350,27 +350,6 @@ class NetworkManager: ObservableObject {
         }
     }
 
-    // MARK: - Connection Test
-
-    func testConnection(endpoint: String) async -> Bool {
-        guard let url = URL(string: endpoint) else { return false }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        request.timeoutInterval = 5.0
-        
-        do {
-            let (_, response) = try await session.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse {
-                return (200...499).contains(httpResponse.statusCode)
-            }
-        } catch {
-            // Log error but don't throw
-            print("Connection test failed: \(error)")
-        }
-        
-        return false
-    }
 }
 
 // MARK: - Request/Response Models
@@ -443,6 +422,10 @@ struct PairConsumeResponse: Codable {
     /// (`box_node_id` → `boxNodeId` via `.convertFromSnakeCase`.)
     let boxNodeId: String?
     /// The relay URL to reach `boxNodeId` through — the other half of the ticket.
-    /// (`relay_url` → `relayUrl` via `.convertFromSnakeCase`.)
+    /// (`relay_url` → `relayUrl` via `.convertFromSnakeCase`.) `nil` on an
+    /// unclaimed box, which is reached via `boxDirectAddrs` instead.
     let relayUrl: String?
+    /// The box's direct iroh sockets (`IP:port`) — how an unclaimed box is
+    /// reached LAN-direct. (`box_direct_addrs` → `boxDirectAddrs`.)
+    let boxDirectAddrs: [String]?
 }

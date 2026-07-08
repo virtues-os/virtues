@@ -1304,6 +1304,11 @@ fn create_agent_stream(
         let mut full_content = String::new();
         let mut reasoning_content = String::new();
         let mut in_reasoning = false;
+        // The whole turn streams as ONE text part (single TextStart/TextEnd), so
+        // text emitted across agent steps would otherwise concatenate with no
+        // separator ("…exact text.The earlier edit…"). When text resumes after a
+        // tool call, insert a paragraph break so each narration reads on its own.
+        let mut needs_text_break = false;
 
         // Token usage tracking
         let mut total_input_tokens: u32 = 0;
@@ -1360,10 +1365,21 @@ fn create_agent_stream(
                         let event = StreamEvent::ReasoningEnd { id: msg_id.clone() };
                         yield Ok(SseEvent::default().data(serialize_event(&event)));
                     }
-                    full_content.push_str(&content);
+                    // Text resuming after a tool call: break the paragraph so it
+                    // doesn't butt against the previous segment's final sentence.
+                    let delta = if needs_text_break
+                        && !full_content.is_empty()
+                        && !full_content.ends_with('\n')
+                    {
+                        format!("\n\n{}", content)
+                    } else {
+                        content
+                    };
+                    needs_text_break = false;
+                    full_content.push_str(&delta);
                     let event = StreamEvent::TextDelta {
                         id: msg_id.clone(),
-                        delta: content,
+                        delta,
                     };
                     yield Ok(SseEvent::default().data(serialize_event(&event)));
                 }
@@ -1383,6 +1399,9 @@ fn create_agent_stream(
                 }
 
                 AgentEvent::ToolCallStart { id, name, args } => {
+                    // Any text that resumes after this tool call starts a new
+                    // paragraph (see needs_text_break).
+                    needs_text_break = true;
                     // Track tool call for persistence
                     all_tool_calls.push(ToolCall {
                         tool_name: name.clone(),

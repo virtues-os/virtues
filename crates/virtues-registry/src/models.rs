@@ -52,10 +52,10 @@ pub enum ModelSlot {
     Chat,
     /// Fast/lite model - used for titles, summaries, background jobs
     Lite,
-    /// Reasoning model - used for complex analysis and thinking
-    Reasoning,
     /// Coding model - used for code generation and technical tasks
     Coding,
+    /// Image model - text-to-image generation (the `generate_image` tool)
+    Image,
 }
 
 impl ModelSlot {
@@ -63,8 +63,8 @@ impl ModelSlot {
         match self {
             ModelSlot::Chat => "chat",
             ModelSlot::Lite => "lite",
-            ModelSlot::Reasoning => "reasoning",
             ModelSlot::Coding => "coding",
+            ModelSlot::Image => "image",
         }
     }
 }
@@ -81,8 +81,8 @@ pub fn default_models() -> Vec<ModelConfig> {
         // handles parallel tool calls cleanly. (Gemini 3 stays out: via the
         // gateway's OpenAI-compatible endpoint it 400s on parallel tool calls,
         // needing a thought_signature the gateway doesn't pass through; see
-        // vercel/ai #11590/#10344. GLM 5 / 5.1 remain available as the Lite/
-        // Reasoning slots for users who want them.)
+        // vercel/ai #11590/#10344. GLM 5 / 5.1 remain selectable models, and
+        // GLM-4.7-flash is the Lite-slot default.)
         ModelConfig {
             model_id: "anthropic/claude-opus-4.8".to_string(),
             display_name: "Claude Opus 4.8".to_string(),
@@ -246,8 +246,8 @@ pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
         ModelSlot::Chat => "anthropic/claude-opus-4.8",
         ModelSlot::Lite => "zai/glm-4.7-flash",
-        ModelSlot::Reasoning => "zai/glm-5.1",
         ModelSlot::Coding => "anthropic/claude-opus-4.8",
+        ModelSlot::Image => "google/gemini-3-pro-image",
     }
 }
 

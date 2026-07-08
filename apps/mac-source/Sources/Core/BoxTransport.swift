@@ -47,10 +47,14 @@ actor BoxTransport {
     private func transportOrDial() async throws -> IrohTransport {
         if let t = transport { return t }
         guard let ticket else { throw TransportError.notConfigured }
+        // Relay-only for now (the Mac collector reaches a claimed box via the
+        // relay). LAN/Tailscale direct reach for an unclaimed box is the deferred
+        // Mac-collector pass — mirror iOS then (pass derived direct addrs here).
         let t = try await IrohTransport.dial(
-            relayUrl: ticket.relayUrl,
             boxIdHex: ticket.boxNodeId,
             deviceSeedHex: ticket.seed,
+            relayUrl: ticket.relayUrl,
+            directAddrs: [],
             background: false
         )
         transport = t

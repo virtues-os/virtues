@@ -19,8 +19,8 @@ pub struct UpdateAssistantProfileRequest {
     // New model slot system
     pub chat_model_id: Option<String>,
     pub lite_model_id: Option<String>,
-    pub reasoning_model_id: Option<String>,
     pub coding_model_id: Option<String>,
+    pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
     /// AI persona/tone: capable_warm, professional, casual, adaptive
@@ -76,8 +76,8 @@ pub async fn update_assistant_profile(
     add_field!(request.background_model_id, "background_model_id");
     add_field!(request.chat_model_id, "chat_model_id");
     add_field!(request.lite_model_id, "lite_model_id");
-    add_field!(request.reasoning_model_id, "reasoning_model_id");
     add_field!(request.coding_model_id, "coding_model_id");
+    add_field!(request.image_model_id, "image_model_id");
     add_field!(request.enabled_tools, "enabled_tools");
     add_field!(request.ui_preferences, "ui_preferences");
     add_field!(request.persona, "persona");
@@ -114,10 +114,10 @@ pub async fn update_assistant_profile(
     if let Some(v) = &request.lite_model_id {
         q = q.bind(v);
     }
-    if let Some(v) = &request.reasoning_model_id {
+    if let Some(v) = &request.coding_model_id {
         q = q.bind(v);
     }
-    if let Some(v) = &request.coding_model_id {
+    if let Some(v) = &request.image_model_id {
         q = q.bind(v);
     }
     if let Some(v) = &request.enabled_tools {
@@ -178,17 +178,6 @@ pub async fn get_chat_model(db: &PgPool) -> Result<String> {
         ).to_string()))
 }
 
-/// Helper to get the reasoning model (complex analysis)
-pub async fn get_reasoning_model(db: &PgPool) -> Result<String> {
-    let profile = get_assistant_profile(db).await?;
-
-    Ok(profile
-        .reasoning_model_id
-        .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
-            virtues_registry::models::ModelSlot::Reasoning
-        ).to_string()))
-}
-
 /// Helper to get the coding model (code generation)
 pub async fn get_coding_model(db: &PgPool) -> Result<String> {
     let profile = get_assistant_profile(db).await?;
@@ -197,6 +186,17 @@ pub async fn get_coding_model(db: &PgPool) -> Result<String> {
         .coding_model_id
         .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
             virtues_registry::models::ModelSlot::Coding
+        ).to_string()))
+}
+
+/// Helper to get the image model (text-to-image generation)
+pub async fn get_image_model(db: &PgPool) -> Result<String> {
+    let profile = get_assistant_profile(db).await?;
+
+    Ok(profile
+        .image_model_id
+        .unwrap_or_else(|| virtues_registry::models::default_model_for_slot(
+            virtues_registry::models::ModelSlot::Image
         ).to_string()))
 }
 

@@ -87,9 +87,6 @@
 	const currentDateSlug = $derived(getLocalDateSlug(page.date));
 	const todaySlug = $derived(getLocalDateSlug(new Date()));
 
-	// Day header illustration — served as BLOB via API route. Only rendered when present.
-	const illustrationUrl = $derived(`/api/wiki/day/${currentDateSlug}/illustration`);
-
 	// Relative date badge: "Today", "Yesterday", "2 days ago", "Tomorrow", "Future"
 	const relativeDateLabel = $derived(() => {
 		if (currentDateSlug === todaySlug) return "Today";
@@ -478,15 +475,8 @@
 		<article class="day-article wiki-article" bind:this={scrollContainerEl}>
 			<div class="day-content-with-toc">
 			<div class="day-content">
-				<!-- Header: title-page layout (illustration → h1 → meta → rule) -->
+				<!-- Header: title-page layout (h1 → meta → rule) -->
 				<header class="day-header" bind:this={headerEl}>
-					{#if page.hasIllustration}
-						<img
-							class="day-header-image"
-							src={illustrationUrl}
-							alt="Day illustration"
-						/>
-					{/if}
 					<h1 class="day-title">
 						{formatDate(page.date, page.dayOfWeek)}
 					</h1>
@@ -760,7 +750,7 @@
 		padding-bottom: 4rem;
 	}
 
-	/* Header: title-page layout — illustration, h1, meta, rule, all centered */
+	/* Header: title-page layout — h1, meta, rule, all centered */
 	.day-header {
 		margin-bottom: 2.5rem;
 		display: flex;
@@ -768,12 +758,6 @@
 		align-items: center;
 		text-align: center;
 		gap: 1rem;
-	}
-
-	.day-header-image {
-		display: block;
-		width: 220px;
-		height: auto;
 	}
 
 	.day-title-rule {

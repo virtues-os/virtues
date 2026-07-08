@@ -24,6 +24,20 @@ final class HealthCheckCoordinator {
     private(set) var lastCheckDate: Date?
     private(set) var managerStatuses: [String: HealthStatus] = [:]
 
+    // Exponential backoff for a manager that keeps failing its check. Because
+    // `performHealthCheck()` also *attempts recovery* (e.g. AudioManager restarts
+    // recording), calling it every 30s on a non-recoverable failure = a restart
+    // thrash loop (battery/CPU drain). We instead retry with growing delay.
+    //
+    // The ceiling doubles as the worst-case recovery-detection latency: while a
+    // manager is backed off we neither re-check nor observe it, so if it recovers
+    // on its own its status stays stale (and `managerStatuses` reports the old
+    // value) until the next attempt. 5 min bounds that lag while still throttling
+    // thrash hard (30s → 60s → 120s → 240s → 300s).
+    private var consecutiveUnhealthy: [String: Int] = [:]
+    private var backoffUntil: [String: Date] = [:]
+    private let maxBackoff: TimeInterval = 300  // 5 min ceiling
+
     private init() {}
 
     // MARK: - Registration
@@ -98,23 +112,41 @@ final class HealthCheckCoordinator {
         var unhealthyCount = 0
         var disabledCount = 0
 
+        let now = Date()
         for manager in managers {
+            let name = manager.healthCheckName
+
+            // Skip (and don't attempt recovery for) a manager still in backoff
+            // after repeated failures — prevents the 30s restart thrash loop.
+            if let until = backoffUntil[name], until > now {
+                continue
+            }
+
             let status = manager.performHealthCheck()
 
             lock.lock()
-            managerStatuses[manager.healthCheckName] = status
+            managerStatuses[name] = status
             lock.unlock()
 
             switch status {
             case .healthy:
                 healthyCount += 1
+                consecutiveUnhealthy[name] = 0
+                backoffUntil[name] = nil
 
             case .unhealthy(let reason):
                 unhealthyCount += 1
-                print("⚠️ [\(manager.healthCheckName)] Unhealthy: \(reason)")
+                let count = (consecutiveUnhealthy[name] ?? 0) + 1
+                consecutiveUnhealthy[name] = count
+                // 30s, 60s, 120s … capped at 30 min.
+                let delay = min(healthCheckInterval * pow(2, Double(count - 1)), maxBackoff)
+                backoffUntil[name] = now.addingTimeInterval(delay)
+                print("⚠️ [\(name)] Unhealthy: \(reason) — retry in \(Int(delay))s (attempt \(count))")
 
             case .disabled:
                 disabledCount += 1
+                consecutiveUnhealthy[name] = 0
+                backoffUntil[name] = nil
             }
         }
 

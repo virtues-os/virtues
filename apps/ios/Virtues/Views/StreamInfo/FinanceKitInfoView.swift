@@ -149,7 +149,7 @@ struct FinanceKitInfoView: View {
             }
             .padding(.vertical, 4)
 
-            Text("Data is synced every 5 minutes. Initial sync fetches up to 10 years of transaction history.")
+            Text("Data is uploaded to your box every 15 minutes. Initial sync fetches up to 10 years of transaction history.")
                 .font(.subheadline)
                 .foregroundColor(.warmForegroundMuted)
         }
@@ -158,7 +158,7 @@ struct FinanceKitInfoView: View {
     private var configSection: some View {
         InfoSection(title: "Configuration", icon: "slider.horizontal.3") {
             VStack(spacing: 10) {
-                InfoRow(label: "Sync Interval", value: "5 minutes")
+                InfoRow(label: "Sync Interval", value: "15 minutes")
                 InfoRow(label: "Initial Lookback", value: "10 years")
             }
 

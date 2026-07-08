@@ -38,6 +38,20 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
     // SQLite between cycles.
     private let backgroundTaskIdentifier = "com.virtues.ios.sync"
 
+    /// Max combined blob bytes per HTTP request. The adaptive batch caps the
+    /// event *count*, but bytes-per-event vary wildly (a HealthKit event is
+    /// tiny; a 30s AAC audio chunk is ~120KB; an initial 7-day HealthKit sync is
+    /// hundreds of events), so a single combined body can reach several MB. One
+    /// multi-MB body doesn't survive the iroh request-timeout / iOS background
+    /// budget over a slow path (e.g. Tailscale): the send stream is reset
+    /// mid-body and the box rejects the truncated body with a retryable 409,
+    /// which resends the SAME oversized batch forever. Splitting a stream's
+    /// events into sub-batches under this ceiling keeps every request small
+    /// enough to complete, and lets a large backlog drain incrementally (each
+    /// sub-batch that lands is marked complete). 512KB is well within budget on
+    /// any path while still amortizing per-request overhead.
+    private let maxUploadChunkBytes = 512 * 1024
+
     private var isPerformingUpload = false
     private let uploadLock = NSLock()
     private var lastUploadAttemptDate: Date?  // Written synchronously to prevent burst calls
@@ -448,8 +462,48 @@ class BatchUploadCoordinator: ObservableObject, HealthCheckable {
         }
     }
 
-    /// Generic upload method that works with any stream processor
+    /// Generic upload method that works with any stream processor.
+    ///
+    /// Events are uploaded in byte-bounded sub-batches (see `maxUploadChunkBytes`)
+    /// rather than one combined body: a single multi-MB request doesn't survive a
+    /// slow path's timeout budget and would get its whole batch stuck. Each
+    /// sub-batch is decoded → combined → POSTed independently, so a large backlog
+    /// drains incrementally and a failure only affects its own sub-batch. Returns
+    /// true if at least one sub-batch landed (so `lastSuccessfulSyncDate` still
+    /// advances on partial progress); events in failed sub-batches stay queued.
     private func uploadWithProcessor<P: StreamDataProcessor>(processor: P, events: [UploadEvent], to url: URL) async -> Bool {
+        var anySucceeded = false
+        for chunk in chunkedBySize(events) {
+            let ok = await uploadEventChunk(processor: processor, events: chunk, to: url)
+            if ok { anySucceeded = true }
+        }
+        return anySucceeded
+    }
+
+    /// Split events into contiguous sub-batches whose combined `dataBlob` bytes
+    /// stay under `maxUploadChunkBytes`. A single event larger than the ceiling
+    /// still goes out alone (it can't be split without decode-level chunking, and
+    /// its body is bounded by what the collector wrote).
+    private func chunkedBySize(_ events: [UploadEvent]) -> [[UploadEvent]] {
+        var chunks: [[UploadEvent]] = []
+        var current: [UploadEvent] = []
+        var runningBytes = 0
+        for event in events {
+            let size = event.dataBlob.count
+            if !current.isEmpty && runningBytes + size > maxUploadChunkBytes {
+                chunks.append(current)
+                current = []
+                runningBytes = 0
+            }
+            current.append(event)
+            runningBytes += size
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+
+    /// Upload one sub-batch of events as a single combined request.
+    private func uploadEventChunk<P: StreamDataProcessor>(processor: P, events: [UploadEvent], to url: URL) async -> Bool {
         do {
             var allItems: [P.DataType] = []
             var decodedEvents: [UploadEvent] = []

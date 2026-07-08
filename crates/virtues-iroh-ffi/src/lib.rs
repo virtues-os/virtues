@@ -12,10 +12,13 @@
 //! driven on the tokio runtime uniffi manages (`async_runtime = "tokio"`), which
 //! needs the multi-thread flavor for iroh's reactor — hence `rt-multi-thread`.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use virtues_iroh::{build_endpoint, EndpointId, RelayUrl, SecretKey, VirtuesIrohClient};
+use virtues_iroh::{
+    build_endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey, VirtuesIrohClient,
+};
 
 uniffi::setup_scaffolding!();
 
@@ -92,16 +95,26 @@ pub struct IrohTransport {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl IrohTransport {
-    /// Dial the box: `relay_url` = our relay, `box_id_hex` = the box's EndpointId
-    /// (from the pairing ticket), `device_seed_hex` = this device's 32-byte iroh
-    /// seed (generated at pairing; its EndpointId is on the box's allowlist).
-    /// `background` = dialing from an iOS background task → use the shorter
-    /// `DIAL_TIMEOUT_BG` budget so a cold dial bails instead of getting killed.
+    /// Dial the box. `box_id_hex` = the box's EndpointId (from the pairing
+    /// ticket); `device_seed_hex` = this device's 32-byte iroh seed (generated at
+    /// pairing; its EndpointId is on the box's allowlist). Reach is supplied two
+    /// ways, either or both:
+    /// - `relay_url` = our relay (a *claimed* box); `None`/empty for an unclaimed
+    ///   box that has no relay.
+    /// - `direct_addrs` = the box's direct sockets (`IP:port`), e.g. a Tailscale
+    ///   `100.x:51820` or a LAN `192.168.x:51820` — dialed by NodeId with nobody
+    ///   in the loop. This is what lets iOS reach an unclaimed box LAN-direct or
+    ///   over Tailscale, matching the desktop helper.
+    ///
+    /// At least one of `relay_url` / `direct_addrs` must be usable. `background` =
+    /// dialing from an iOS background task → use the shorter `DIAL_TIMEOUT_BG`
+    /// budget so a cold dial bails instead of getting killed.
     #[uniffi::constructor]
     pub async fn dial(
-        relay_url: String,
         box_id_hex: String,
         device_seed_hex: String,
+        relay_url: Option<String>,
+        direct_addrs: Vec<String>,
         background: bool,
     ) -> Result<Arc<Self>, IrohError> {
         let seed = decode_32(&device_seed_hex, "device seed")?;
@@ -110,17 +123,44 @@ impl IrohTransport {
             .trim()
             .parse()
             .map_err(|e| IrohError::BadHex(format!("box EndpointId: {e}")))?;
-        let relay: RelayUrl = relay_url
-            .trim()
-            .parse()
-            .map_err(|e| IrohError::BadRelayUrl(format!("{e}")))?;
+
+        // Relay is optional: a claimed box has one (remote reach); an unclaimed
+        // box has none and is reached purely by its direct addresses.
+        let relay: Option<RelayUrl> =
+            match relay_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                Some(s) => Some(
+                    s.parse()
+                        .map_err(|e| IrohError::BadRelayUrl(format!("{e}")))?,
+                ),
+                None => None,
+            };
+        let direct: Vec<SocketAddr> = direct_addrs
+            .iter()
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        if relay.is_none() && direct.is_empty() {
+            return Err(IrohError::Dial(
+                "no way to reach the box — no relay and no direct addresses".into(),
+            ));
+        }
+
         let dial_timeout = if background { DIAL_TIMEOUT_BG } else { DIAL_TIMEOUT };
         // A dialing client binds an ephemeral port (only the box pins one).
-        let endpoint = match tokio::time::timeout(dial_timeout, build_endpoint(secret, Some(relay.clone()), None)).await {
-            Ok(r) => r.map_err(|e| IrohError::Dial(format!("{e:#}")))?,
-            Err(_) => return Err(IrohError::Dial("timed out binding iroh endpoint".into())),
-        };
-        let client = VirtuesIrohClient::from_relay(endpoint, box_id, relay);
+        let endpoint =
+            match tokio::time::timeout(dial_timeout, build_endpoint(secret, relay.clone(), None))
+                .await
+            {
+                Ok(r) => r.map_err(|e| IrohError::Dial(format!("{e:#}")))?,
+                Err(_) => return Err(IrohError::Dial("timed out binding iroh endpoint".into())),
+            };
+        let mut addr = EndpointAddr::new(box_id);
+        for a in &direct {
+            addr = addr.with_ip_addr(*a);
+        }
+        if let Some(r) = relay {
+            addr = addr.with_relay_url(r);
+        }
+        let client = VirtuesIrohClient::new(endpoint, addr);
         Ok(Arc::new(Self { client }))
     }
 
