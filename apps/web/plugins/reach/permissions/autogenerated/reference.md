@@ -8,6 +8,7 @@ Default permissions for the reach plugin
 - `allow-reach-status`
 - `allow-forget`
 - `allow-discover`
+- `allow-outbox-stats`
 
 ## Permission Table
 
@@ -66,6 +67,32 @@ Enables the forget command without any pre-configured scope.
 <td>
 
 Denies the forget command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-outbox-stats`
+
+</td>
+<td>
+
+Enables the outbox_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-outbox-stats`
+
+</td>
+<td>
+
+Denies the outbox_stats command without any pre-configured scope.
 
 </td>
 </tr>

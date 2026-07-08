@@ -3,6 +3,7 @@ use tauri::{command, AppHandle, Runtime};
 use crate::models::{DiscoverResponse, FoundServer, PairRequest, ReachStatus};
 use crate::ReachExt;
 use crate::Result;
+use virtues_reach_client::outbox;
 
 #[command]
 pub(crate) async fn pair<R: Runtime>(
@@ -41,4 +42,13 @@ pub(crate) async fn discover<R: Runtime>(_app: AppHandle<R>) -> Result<DiscoverR
     format!("scanned from {}", ips.join(", "))
   };
   Ok(DiscoverResponse { servers, debug })
+}
+
+/// Sync-queue health for a stream (device screen's Sync section).
+#[command]
+pub(crate) async fn outbox_stats<R: Runtime>(
+  _app: AppHandle<R>,
+  stream: String,
+) -> Result<outbox::OutboxStats> {
+  Ok(outbox::stats(&stream).unwrap_or_default())
 }

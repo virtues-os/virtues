@@ -6,6 +6,19 @@ import UIKit
 // SQLite wants to copy bound strings, not borrow them.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+// The Rust outbox enqueue, bound by symbol name (no bridging header/modulemap).
+// Defined in the reach plugin's `ffi.rs`; the whole app links one static lib.
+@_silgen_name("virtues_enqueue")
+private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePointer<CChar>) -> Int32
+
+/// ISO-8601 with fractional seconds so distinct fixes get distinct timestamps
+/// (the outbox derives a per-record id from the record, incl. this).
+private let isoMillis: ISO8601DateFormatter = {
+  let f = ISO8601DateFormatter()
+  f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  return f
+}()
+
 /// The whole point of the spike.
 ///
 /// A single, process-wide `CLLocationManager` owner that:
@@ -25,6 +38,11 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   private let manager = CLLocationManager()
   private var started = false
+
+  /// Throttle: keep at most one fix per ~15s (matches the native app's sampling
+  /// cadence — avoids flooding the log + outbox with near-identical points).
+  private var lastFixAt: Date?
+  private let minFixInterval: TimeInterval = 15
 
   /// Set by the AppDelegate: "user" for a normal launch, "location" when the
   /// app was relaunched by the OS for a location event (launchOptions carried
@@ -46,7 +64,7 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     }
 
     manager.delegate = self
-    manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
     manager.allowsBackgroundLocationUpdates = true
     manager.pausesLocationUpdatesAutomatically = false
     manager.showsBackgroundLocationIndicator = true
@@ -64,9 +82,40 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   // MARK: - CLLocationManagerDelegate
 
   public func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
-    for l in locs {
-      write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: "update")
-    }
+    guard let l = locs.last else { return }
+    let now = Date()
+    if let last = lastFixAt, now.timeIntervalSince(last) < minFixInterval { return }
+    lastFixAt = now
+    // Local rolling log (device-screen "recent activity" + background badge).
+    write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: "update")
+    // Durable delivery: full-field record → shared outbox → box.
+    enqueueFix(l)
+  }
+
+  /// Build a box-shaped location record and enqueue it into the Rust outbox.
+  private func enqueueFix(_ l: CLLocation) {
+    var rec: [String: Any] = [
+      "timestamp": isoMillis.string(from: l.timestamp),
+      "latitude": l.coordinate.latitude,
+      "longitude": l.coordinate.longitude,
+      "altitude": l.altitude,
+      "horizontal_accuracy": l.horizontalAccuracy,
+      "vertical_accuracy": l.verticalAccuracy,
+      "speed": max(l.speed, 0),
+      // Local-only breadcrumb so the device screen can badge background fixes;
+      // the box keeps it in metadata (harmless).
+      "app_state": appStateString(),
+    ]
+    if l.course >= 0 { rec["course"] = l.course }
+    if let floor = l.floor { rec["floor_level"] = floor.level }
+
+    guard
+      let data = try? JSONSerialization.data(withJSONObject: rec),
+      let json = String(data: data, encoding: .utf8)
+    else { return }
+
+    let rc = "location".withCString { s in json.withCString { j in virtues_enqueue(s, j) } }
+    if rc != 0 { NSLog("[LocationProbe] enqueue failed rc=%d", rc) }
   }
 
   public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {

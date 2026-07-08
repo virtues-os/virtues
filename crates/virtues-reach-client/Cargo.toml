@@ -29,5 +29,10 @@ serde_json = "1.0"
 anyhow = "1.0"
 tracing = "0.1"
 url = "2.5"
+# Local durable outbox for collector records. `bundled` compiles sqlite3 from
+# source so it's byte-identical on iOS/Android/desktop.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Deterministic per-record ids (UUIDv5) so retries dedup at the box.
+uuid = { version = "1", features = ["v5"] }
 # Enumerate local interfaces to pick the private /24 to scan for boxes.
 local-ip-address = "0.6"

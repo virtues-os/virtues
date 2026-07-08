@@ -9,6 +9,7 @@
 mod model;
 mod store;
 
+pub mod outbox;
 pub mod pair;
 pub mod proxy;
 pub mod scan;
