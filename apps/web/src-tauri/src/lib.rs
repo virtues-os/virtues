@@ -42,8 +42,10 @@ pub fn run() {
       // Always launch the connect shell; when paired it immediately redirects to
       // the SPA root ("/"), which guarantees SvelteKit boots at "/" rather than
       // "/index.html". Pre-pair it shows discovery + pairing.
+      // __VIRTUES_MOBILE__ tells the SPA to render the bottom-tab phone chrome
+      // (hide the desktop sidebar) — see lib/stores/mobileLayout.svelte.ts.
       let init = format!(
-        "window.__VIRTUES_BACKEND_ORIGIN__ = '{}'; window.__VIRTUES_PAIRED__ = {};",
+        "window.__VIRTUES_BACKEND_ORIGIN__ = '{}'; window.__VIRTUES_PAIRED__ = {}; window.__VIRTUES_MOBILE__ = true;",
         reach.loopback_url(),
         paired
       );
