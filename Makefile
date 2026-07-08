@@ -5,7 +5,7 @@
 # Cloud services (virtues-atlas / virtues-api) deploy as Docker images to ECR.
 
 .DEFAULT_GOAL := help
-.PHONY: help init dev dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
+.PHONY: help init dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean db db-stop deploy-atlas deploy-virtues-api _ecr-push mac-app \
         iroh-ffi-ios iroh-ffi-mac
 
@@ -165,6 +165,12 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	VIRTUES_WEB_PORT=$(DEV_WEB_PORT) \
 	VIRTUES_MODELS_DIR=$(VIRTUES_MODELS_DIR) \
 	$(DEV_CORE_RUN)
+
+seed: db ## Load demo data (people/places/orgs/events) into the dev DB. Idempotent — safe to re-run.
+	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
+	ENVIRONMENT=dev \
+	DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
+	cargo run -p virtues -- seed
 
 dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
 	@echo "→ local virtues-api on :9002. Point dev-core at it with:"
