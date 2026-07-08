@@ -12,6 +12,7 @@
 	} from "$lib/stores/dndManager.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { sidebarState } from "$lib/stores/sidebarState.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { getWorkspaceMenuItems } from "$lib/utils/contextMenuItems";
 	import { updatePage, updateChat } from "$lib/api/client";
@@ -298,8 +299,11 @@
 		});
 	}
 
-	// Show sidebar toggle on left pane (or non-split mode)
-	const showSidebarToggle = $derived(!paneId || paneId === "left");
+	// Show sidebar toggle on left pane (or non-split mode). Hidden on mobile —
+	// the sidebar is replaced by the bottom-tab bar, so there's nothing to toggle.
+	const showSidebarToggle = $derived(
+		!mobileLayout.isMobile && (!paneId || paneId === "left"),
+	);
 
 	// Icon changes based on sidebar state
 	const sidebarIcon = $derived(
@@ -425,7 +429,7 @@
 		{/each}
 	</div>
 
-	{#if !paneId}
+	{#if !paneId && !mobileLayout.isMobile}
 		<button
 			class="split-toggle"
 			onclick={handleToggleSplit}
