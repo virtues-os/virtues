@@ -13,6 +13,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { invoke } from "@tauri-apps/api/core";
+	import { getVersion } from "@tauri-apps/api/app";
 	import { onMount } from "svelte";
 
 	interface ProbeRow {
@@ -24,13 +25,67 @@
 		launchReason: string;
 	}
 
+	interface ReachStatus {
+		paired: boolean;
+		session: string; // authed | rejected | unknown | unpaired
+		loopbackUrl: string;
+	}
+
+	/** A collapsed run of consecutive near-identical fixes. */
+	interface LogRun {
+		ts: string;
+		lat: number;
+		lon: number;
+		appState: string;
+		launchReason: string;
+		count: number;
+	}
+
 	let rows = $state<ProbeRow[]>([]);
+	let reach = $state<ReachStatus | null>(null);
+	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
 	let error = $state<string | null>(null);
 
 	const enabled = $derived(rows.length > 0);
 	const lastTs = $derived(rows[0]?.ts ?? null);
+
+	// Connection verdict from reach status.
+	const conn = $derived.by(() => {
+		if (!reach) return { label: "Checking…", tone: "idle" };
+		if (!reach.paired) return { label: "Not paired", tone: "off" };
+		if (reach.session === "authed") return { label: "Connected to your box", tone: "on" };
+		if (reach.session === "rejected") return { label: "Access rejected — re-pair", tone: "off" };
+		return { label: "Reconnecting…", tone: "idle" };
+	});
+
+	// Collapse consecutive fixes at the same rounded coord + state into one run,
+	// so a stationary phone shows "7 fixes" not 30 identical lines.
+	const runs = $derived.by<LogRun[]>(() => {
+		const out: LogRun[] = [];
+		for (const r of rows) {
+			const last = out[out.length - 1];
+			const sameSpot =
+				last &&
+				last.appState === r.appState &&
+				Math.abs(last.lat - r.lat) < 0.0005 &&
+				Math.abs(last.lon - r.lon) < 0.0005;
+			if (sameSpot) {
+				last.count++;
+			} else {
+				out.push({
+					ts: r.ts,
+					lat: r.lat,
+					lon: r.lon,
+					appState: r.appState,
+					launchReason: r.launchReason,
+					count: 1,
+				});
+			}
+		}
+		return out;
+	});
 
 	async function load() {
 		if (!mobileLayout.isNativeShell) {
@@ -40,11 +95,16 @@
 		loading = true;
 		error = null;
 		try {
-			const resp = await invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
-				payload: { limit: 30 },
-			});
-			// Newest first.
-			rows = (resp.rows ?? []).slice().reverse();
+			const [rowsResp, reachResp, ver] = await Promise.all([
+				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+					payload: { limit: 50 },
+				}),
+				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
+				getVersion().catch(() => ""),
+			]);
+			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
+			reach = reachResp;
+			version = ver;
 		} catch (e) {
 			error = String(e);
 		} finally {
@@ -86,6 +146,22 @@
 </script>
 
 <div class="device">
+	<div class="group-label">Connection</div>
+	<div class="card">
+		<div class="stream">
+			<div class="s-icon" class:on={conn.tone === "on"}>
+				<Icon icon="ri:links-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">{conn.label}</div>
+				<div class="s-sub">
+					{#if reach?.paired}This phone is paired{:else}Pair this phone to your box to sync{/if}
+				</div>
+			</div>
+			<span class="dot" class:on={conn.tone === "on"} class:off={conn.tone === "off"}></span>
+		</div>
+	</div>
+
 	<div class="group-label">Streams</div>
 	<div class="card">
 		<div class="stream">
@@ -131,13 +207,14 @@
 				background captures) will appear here.
 			</div>
 		{:else}
-			{#each rows as r, i (i)}
+			{#each runs as r, i (i)}
 				<div class="log">
 					<Icon icon="ri:pulse-line" width={15} />
 					<div class="l-body">
 						<div class="l-top">
 							<span class="l-time">{rel(r.ts)}</span>
-							<span class="l-badge" class:bg={isBackground(r)}>{r.appState}</span>
+							<span class="l-badge" class:bg={r.appState !== "active"}>{r.appState}</span>
+							{#if r.count > 1}<span class="l-count">×{r.count}</span>{/if}
 						</div>
 						<div class="l-sub">
 							{r.lat.toFixed(4)}, {r.lon.toFixed(4)}
@@ -147,6 +224,16 @@
 				</div>
 			{/each}
 		{/if}
+	</div>
+
+	<div class="group-label">About</div>
+	<div class="card">
+		<div class="about">
+			<span>App version</span><span class="v">{version || "—"}</span>
+		</div>
+		<div class="about">
+			<span>Recorded points</span><span class="v">{rows.length}</span>
+		</div>
 	</div>
 
 	<p class="foot">
@@ -282,10 +369,32 @@
 		background: color-mix(in srgb, #34c759 20%, transparent);
 		color: #248a3d;
 	}
+	.l-count {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+	}
 	.l-sub {
 		font-size: 12px;
 		font-variant-numeric: tabular-nums;
 		margin-top: 1px;
+	}
+
+	.about {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 12px 14px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 14px;
+	}
+	.about:last-child {
+		border-bottom: 0;
+	}
+	.about .v {
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.empty {
