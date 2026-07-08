@@ -65,11 +65,8 @@
 				</button>
 				<h2>This device</h2>
 			{:else}
-				<h2>Settings</h2>
+				<h2>More</h2>
 			{/if}
-			<button class="close" aria-label="Close" onclick={() => mobileLayout.closeMenu()}>
-				<Icon icon="ri:close-line" width={22} />
-			</button>
 		</header>
 
 		<div class="body">
@@ -131,7 +128,9 @@
 		z-index: 45;
 		display: flex;
 		flex-direction: column;
-		background: var(--color-surface-elevated, var(--color-surface));
+		/* Match the content pages (surface) so the iOS status-bar strip above the
+		   view doesn't read as a mismatched band. Cards provide the grouping. */
+		background: var(--color-surface);
 		animation: rise 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 	}
 
@@ -148,8 +147,7 @@
 		font-weight: 650;
 		flex: 1;
 	}
-	.back,
-	.close {
+	.back {
 		display: flex;
 		border: 0;
 		background: transparent;
