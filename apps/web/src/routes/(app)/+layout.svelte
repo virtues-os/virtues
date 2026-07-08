@@ -349,12 +349,19 @@
 		padding-bottom: calc(56px + env(safe-area-inset-bottom));
 	}
 
-	/* Belt-and-suspenders: never let the whole shell rubber-band sideways on a
-	   phone if a view has a rogue too-wide child. Views that opt into their own
-	   x-scroll still work (contained). */
+	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the
+	   WKWebView scroll the *document* — which drags the position:fixed bottom bar
+	   and the top tab strip out of view. Fixed + inset:0 takes the shell out of
+	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
+	   the document has nothing to scroll; only the view's own inner scroller
+	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
 	.app-shell.mobile-shell {
-		overflow-x: hidden;
-		overscroll-behavior-x: none;
+		position: fixed;
+		inset: 0;
+		height: auto;
+		width: auto;
+		overflow: hidden;
+		overscroll-behavior: none;
 	}
 
 	/* Focus-mode exit button — appears top-right when chrome is hidden. */
