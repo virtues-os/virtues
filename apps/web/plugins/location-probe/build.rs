@@ -1,4 +1,4 @@
-const COMMANDS: &[&str] = &["start_probe", "read_rows"];
+const COMMANDS: &[&str] = &["start_probe", "resume_probe", "read_rows"];
 
 fn main() {
   tauri_plugin::Builder::new(COMMANDS)

@@ -22,8 +22,11 @@ pub fn run() {
     .setup(|app| {
       // Background location: install the CLLocationManager delegate as early as
       // Tauri lets us (runs on every launch, incl. cold background relaunch).
-      if let Err(e) = app.location_probe().start_probe() {
-        eprintln!("[location-probe] start failed: {e}");
+      // resume_probe only (re)starts if already authorized — it never prompts,
+      // so a fresh/unauthorized install isn't cold-slapped before onboarding.
+      // The explicit "Enable" opt-in calls start_probe (which prompts).
+      if let Err(e) = app.location_probe().resume_probe() {
+        eprintln!("[location-probe] resume failed: {e}");
       }
 
       // Bundled-SPA architecture (Option A): the app IS the bundled SvelteKit

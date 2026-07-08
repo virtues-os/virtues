@@ -32,6 +32,24 @@ use models::ReachStatus;
 /// The loopback port the webview loads (parity with the desktop `:7117` helper).
 const LOOPBACK_PORT: u16 = 7117;
 
+// ─── Process-global warm iroh client ─────────────────────────────────────────
+//
+// `ensure_serving` builds one warm client for the loopback + foreground drain.
+// The FFI background drain (Swift-called on a sig-loc wake) can't reach Tauri
+// state, so we also stash the client here — one endpoint, reused everywhere.
+static WARM_CLIENT: std::sync::Mutex<Option<Arc<VirtuesIrohClient>>> =
+  std::sync::Mutex::new(None);
+
+pub(crate) fn set_warm_client(c: Arc<VirtuesIrohClient>) {
+  if let Ok(mut g) = WARM_CLIENT.lock() {
+    *g = Some(c);
+  }
+}
+
+pub(crate) fn warm_client() -> Option<Arc<VirtuesIrohClient>> {
+  WARM_CLIENT.lock().ok().and_then(|g| g.clone())
+}
+
 // ─── Credential storage: a 0600 file in the app container ────────────────────
 //
 // The 32-byte device seed is the credential. On iOS the app sandbox + data
@@ -172,6 +190,8 @@ impl ReachState {
 
     let client = virtues_reach_client::build_client(&rec).await?;
     *self.client.lock().await = Some(client.clone());
+    // Publish to the process-global so the FFI background drain reuses it.
+    set_warm_client(client.clone());
 
     // Serve the loopback (webview → box).
     let listener = tokio::net::TcpListener::from_std(std_listener)?;

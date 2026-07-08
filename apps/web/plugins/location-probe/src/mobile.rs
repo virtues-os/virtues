@@ -32,6 +32,13 @@ impl<R: Runtime> LocationProbe<R> {
       .map_err(Into::into)
   }
 
+  pub fn resume_probe(&self) -> crate::Result<StartResponse> {
+    self
+      .0
+      .run_mobile_plugin("resumeProbe", StartRequest {})
+      .map_err(Into::into)
+  }
+
   pub fn read_rows(&self, payload: RowsRequest) -> crate::Result<RowsResponse> {
     self
       .0

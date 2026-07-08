@@ -37,6 +37,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
   Builder::new("location-probe")
     .invoke_handler(tauri::generate_handler![
       commands::start_probe,
+      commands::resume_probe,
       commands::read_rows
     ])
     .setup(|app, api| {
