@@ -224,9 +224,6 @@ export interface DayPage extends WikiPageBase {
 	/** One-line literary subtitle for the day (Austen register, generated alongside autobiography) */
 	epigraph?: string;
 
-	/** Whether this day has a generated illustration BLOB (served via /api/wiki/day/:date/illustration) */
-	hasIllustration: boolean;
-
 	// ─────────────────────────────────────────────────────────────
 	// Data Quality (W6H journalist assessment, nightly)
 	// ─────────────────────────────────────────────────────────────

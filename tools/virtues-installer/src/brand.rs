@@ -28,7 +28,7 @@ const WORDMARK: &str = r#"
       VF    .JMML..JMML.     `Mbmo  `Mbod"YML.`Mbmmd' M9mmmP'
 "#;
 
-const MISSION: &str = "   This is technology that helps you be the person you want to become.";
+const MISSION: &str = "   This is technology that helps you be the person you ought to become.";
 
 /// The brand badges — claims, not instructions, so they live here in the
 /// installer (discovery mode) rather than on the pair screen (task mode).
@@ -47,7 +47,7 @@ pub fn print_header() {
     }
 
     println!("{WORDMARK}");
-    println!("   {}", style("This is technology that helps you be the person you want to become.").dim());
+    println!("   {}", style("This is technology that helps you be the person you ought to become.").dim());
     println!();
     println!("   {}", style("◆ Open Source    ◆ 100% Yours    ◆ $0 Venture Funding    ◆ Public Benefit Co").bold());
     println!();

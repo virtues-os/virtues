@@ -562,17 +562,26 @@ open class IrohTransport:
 
     
     /**
-     * Dial the box: `relay_url` = our relay, `box_id_hex` = the box's EndpointId
-     * (from the pairing ticket), `device_seed_hex` = this device's 32-byte iroh
-     * seed (generated at pairing; its EndpointId is on the box's allowlist).
-     * `background` = dialing from an iOS background task → use the shorter
-     * `DIAL_TIMEOUT_BG` budget so a cold dial bails instead of getting killed.
+     * Dial the box. `box_id_hex` = the box's EndpointId (from the pairing
+     * ticket); `device_seed_hex` = this device's 32-byte iroh seed (generated at
+     * pairing; its EndpointId is on the box's allowlist). Reach is supplied two
+     * ways, either or both:
+     * - `relay_url` = our relay (a *claimed* box); `None`/empty for an unclaimed
+     * box that has no relay.
+     * - `direct_addrs` = the box's direct sockets (`IP:port`), e.g. a Tailscale
+     * `100.x:51820` or a LAN `192.168.x:51820` — dialed by NodeId with nobody
+     * in the loop. This is what lets iOS reach an unclaimed box LAN-direct or
+     * over Tailscale, matching the desktop helper.
+     *
+     * At least one of `relay_url` / `direct_addrs` must be usable. `background` =
+     * dialing from an iOS background task → use the shorter `DIAL_TIMEOUT_BG`
+     * budget so a cold dial bails instead of getting killed.
      */
-public static func dial(relayUrl: String, boxIdHex: String, deviceSeedHex: String, background: Bool)async throws  -> IrohTransport {
+public static func dial(boxIdHex: String, deviceSeedHex: String, relayUrl: String?, directAddrs: [String], background: Bool)async throws  -> IrohTransport {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_virtues_iroh_ffi_fn_constructor_irohtransport_dial(FfiConverterString.lower(relayUrl),FfiConverterString.lower(boxIdHex),FfiConverterString.lower(deviceSeedHex),FfiConverterBool.lower(background)
+                uniffi_virtues_iroh_ffi_fn_constructor_irohtransport_dial(FfiConverterString.lower(boxIdHex),FfiConverterString.lower(deviceSeedHex),FfiConverterOptionString.lower(relayUrl),FfiConverterSequenceString.lower(directAddrs),FfiConverterBool.lower(background)
                 )
             },
             pollFunc: ffi_virtues_iroh_ffi_rust_future_poll_pointer,
@@ -785,6 +794,55 @@ extension IrohError: Foundation.LocalizedError {
         String(reflecting: self)
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]
+
+    public static func write(_ value: [String], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterString.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [String]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
 private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
 private let UNIFFI_RUST_FUTURE_POLL_MAYBE_READY: Int8 = 1
 
@@ -869,7 +927,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_virtues_iroh_ffi_checksum_method_irohtransport_request() != 51441) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_virtues_iroh_ffi_checksum_constructor_irohtransport_dial() != 44278) {
+    if (uniffi_virtues_iroh_ffi_checksum_constructor_irohtransport_dial() != 34158) {
         return InitializationResult.apiChecksumMismatch
     }
 

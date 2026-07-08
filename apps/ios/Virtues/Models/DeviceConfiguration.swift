@@ -37,7 +37,13 @@ struct DeviceConfiguration: Codable {
     /// iroh. `nil` on a dev/LAN box with no relay reach. Non-secret.
     var boxNodeId: String?
     /// The relay URL to reach `boxNodeId` through — the other half of the ticket.
+    /// `nil` on an unclaimed box (reached purely by `boxDirectAddrs`).
     var relayUrl: String?
+    /// The box's direct iroh sockets (`IP:port`, e.g. a LAN `192.168.x:51820`)
+    /// from the pairing reach ticket. Dialed by NodeId with nobody in the loop —
+    /// this is how an unclaimed box is reached LAN-direct (a Tailscale socket is
+    /// derived from `apiEndpoint` at dial time; see `DeviceManager`).
+    var boxDirectAddrs: [String]?
 
     private enum CodingKeys: String, CodingKey {
         case deviceId = "device_id"
@@ -47,6 +53,7 @@ struct DeviceConfiguration: Codable {
         case actionIds = "action_ids"
         case boxNodeId = "box_node_id"
         case relayUrl = "relay_url"
+        case boxDirectAddrs = "box_direct_addrs"
     }
 
     init(deviceId: String = UUID().uuidString,
@@ -55,7 +62,8 @@ struct DeviceConfiguration: Codable {
          configuredDate: Date? = nil,
          actionIds: [String: String] = [:],
          boxNodeId: String? = nil,
-         relayUrl: String? = nil) {
+         relayUrl: String? = nil,
+         boxDirectAddrs: [String]? = nil) {
         self.deviceId = deviceId
         self.apiEndpoint = apiEndpoint
         self.deviceName = deviceName
@@ -63,6 +71,7 @@ struct DeviceConfiguration: Codable {
         self.actionIds = actionIds
         self.boxNodeId = boxNodeId
         self.relayUrl = relayUrl
+        self.boxDirectAddrs = boxDirectAddrs
     }
 
     init(from decoder: Decoder) throws {
@@ -74,6 +83,7 @@ struct DeviceConfiguration: Codable {
         self.actionIds = (try? c.decodeIfPresent([String: String].self, forKey: .actionIds)) ?? [:]
         self.boxNodeId = try? c.decodeIfPresent(String.self, forKey: .boxNodeId)
         self.relayUrl = try? c.decodeIfPresent(String.self, forKey: .relayUrl)
+        self.boxDirectAddrs = try? c.decodeIfPresent([String].self, forKey: .boxDirectAddrs)
     }
 
     /// True when this device has an endpoint. The onboarding gate uses this to

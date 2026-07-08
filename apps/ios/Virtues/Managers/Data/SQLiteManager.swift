@@ -124,34 +124,36 @@ class SQLiteManager {
         sqlite3_finalize(statement)
     }
 
-    /// Reset records that have been stuck in 'uploading' for more than 10 minutes
-    /// Call this at the start of each sync cycle to handle interrupted syncs
+    /// Reset EVERY row stuck in 'uploading' back to 'pending'.
+    ///
+    /// Called at the start of each sync cycle — and that cycle (`performUpload`) is
+    /// single-flight (`tryBeginUpload`), so no upload is in progress when this runs.
+    /// Therefore any `uploading` row here is orphaned from a *previously interrupted*
+    /// cycle (crash, OS kill, background-task expiry). The old code only reset rows
+    /// older than 10 minutes, which permanently stranded a row whose interruption
+    /// happened <10 min ago — a silent data-loss path. Reset unconditionally instead.
+    ///
+    /// We do NOT increment `upload_attempts`: an interruption is not a delivery
+    /// failure (the box dedupes re-sends via `ON CONFLICT (source_stream_id) DO
+    /// NOTHING`, so re-sending is free), and counting it would eventually dead-letter
+    /// data that was never actually rejected. Genuine failures still count via the
+    /// separate `incrementRetry` path.
     func resetStaleUploads() -> Int {
         return queue.sync {
             var resetCount = 0
-
-            // `last_attempt_date IS NULL` covers any legacy in-flight row that
-            // predates the dequeue-time stamping above — without it, a NULL
-            // timestamp never satisfies `< ?` and the row stays stuck forever.
             let resetSQL = """
                 UPDATE upload_queue
-                SET status = 'pending',
-                    upload_attempts = upload_attempts + 1
+                SET status = 'pending'
                 WHERE status = 'uploading'
-                AND (last_attempt_date < ? OR last_attempt_date IS NULL)
             """
 
             var statement: OpaquePointer?
-            let tenMinutesAgo = Date().addingTimeInterval(-10 * 60).timeIntervalSince1970
-
             if sqlite3_prepare_v2(db, resetSQL, -1, &statement, nil) == SQLITE_OK {
-                sqlite3_bind_double(statement, 1, tenMinutesAgo)
-
                 if sqlite3_step(statement) == SQLITE_DONE {
                     resetCount = Int(sqlite3_changes(db))
                     #if DEBUG
                     if resetCount > 0 {
-                        print("🔄 Reset \(resetCount) stale upload(s) that were stuck for >10 minutes")
+                        print("🔄 Reset \(resetCount) orphaned upload(s) from an interrupted cycle")
                     }
                     #endif
                 }

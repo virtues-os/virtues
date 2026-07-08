@@ -85,16 +85,15 @@ pub async fn dispatch(
         ));
     }
 
-    // Resolve the three model tiers once (each is a cheap profile read).
+    // Resolve the model tiers once (each is a cheap profile read). Deep-research
+    // fan-out workers run on the normal chat model; the orchestrator's "strong"
+    // tier maps to it too — we don't spend the reasoning slot on workers.
     let fast = crate::api::assistant_profile::get_background_model(&pool)
         .await
         .unwrap_or_else(|_| default_tier_model("fast"));
     let balanced = crate::api::assistant_profile::get_chat_model(&pool)
         .await
         .unwrap_or_else(|_| default_tier_model("balanced"));
-    let strong = crate::api::assistant_profile::get_reasoning_model(&pool)
-        .await
-        .unwrap_or_else(|_| default_tier_model("strong"));
 
     let dispatch_id = DISPATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
     let tx = context.subagent_tx.clone();
@@ -130,7 +129,8 @@ pub async fn dispatch(
             .to_string();
         let model = match mission.get("model").and_then(|v| v.as_str()) {
             Some("fast") => fast.clone(),
-            Some("strong") => strong.clone(),
+            // "strong" collapses to the chat model — workers don't use the
+            // reasoning slot.
             _ => balanced.clone(),
         };
         let style = WorkerStyle::from_mission(mission);
@@ -443,7 +443,6 @@ fn default_tier_model(tier: &str) -> String {
     use virtues_registry::models::{default_model_for_slot, ModelSlot};
     let slot = match tier {
         "fast" => ModelSlot::Lite,
-        "strong" => ModelSlot::Reasoning,
         _ => ModelSlot::Chat,
     };
     default_model_for_slot(slot).to_string()

@@ -143,7 +143,7 @@ struct SimplePermissionRow: View {
         Divider()
 
         CollapsibleSection(title: "Configuration", icon: "slider.horizontal.3") {
-            InfoRow(label: "Sync Interval", value: "5 minutes")
+            InfoRow(label: "Sync Interval", value: "15 minutes")
             InfoRow(label: "Lookback Days", value: "90 days")
         }
 

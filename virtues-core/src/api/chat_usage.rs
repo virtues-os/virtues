@@ -268,7 +268,12 @@ pub async fn get_chat_usage(pool: &PgPool, chat_id: String) -> Result<ChatUsageI
         None => get_default_model()
             .await
             .map(|m| m.model_id)
-            .unwrap_or_else(|_| "anthropic/claude-sonnet-4-20250514".to_string()),
+            .unwrap_or_else(|_| {
+                virtues_registry::models::default_model_for_slot(
+                    virtues_registry::models::ModelSlot::Chat,
+                )
+                .to_string()
+            }),
     };
 
     // Get model context window from registry

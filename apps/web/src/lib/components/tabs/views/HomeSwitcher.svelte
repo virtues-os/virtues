@@ -7,16 +7,17 @@
 	import HomeViewFolio from "./HomeViewFolio.svelte";
 	import HomeViewRefined from "./HomeViewRefined.svelte";
 	import HomeViewSpread from "./HomeViewSpread.svelte";
+	import HomeViewCockpit from "./HomeViewCockpit.svelte";
 	// Consumes tab/active from the tab runtime; the Home variants take no props.
 	let {}: { tab?: unknown; active?: boolean } = $props();
 
-	type Variant = "original" | "folio" | "refined" | "spread";
+	type Variant = "original" | "folio" | "refined" | "spread" | "cockpit";
 	const KEY = "home-variant-prototype";
 
 	let variant = $state<Variant>(
 		(typeof localStorage !== "undefined" &&
 			(localStorage.getItem(KEY) as Variant)) ||
-			"spread",
+			"cockpit",
 	);
 
 	function pick(v: Variant) {
@@ -33,6 +34,7 @@
 		{ id: "folio", label: "Folio" },
 		{ id: "refined", label: "Refined" },
 		{ id: "spread", label: "Spread" },
+		{ id: "cockpit", label: "Cockpit" },
 	];
 </script>
 
@@ -43,8 +45,10 @@
 		<HomeViewFolio />
 	{:else if variant === "refined"}
 		<HomeViewRefined />
-	{:else}
+	{:else if variant === "spread"}
 		<HomeViewSpread />
+	{:else}
+		<HomeViewCockpit />
 	{/if}
 
 	<div class="switcher" role="radiogroup" aria-label="Home prototype">

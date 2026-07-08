@@ -8,6 +8,7 @@
 import Foundation
 import UIKit
 import Combine
+import Network
 
 enum DeviceConfigurationState {
     case notConfigured
@@ -19,7 +20,11 @@ enum DeviceConfigurationState {
 /// device's iroh seed (from the Keychain). Read off any thread by `BoxTransport`.
 struct IrohTicket {
     let boxNodeId: String
-    let relayUrl: String
+    /// `nil` on an unclaimed box (no relay) — reached via `directAddrs`.
+    let relayUrl: String?
+    /// Box direct sockets (`IP:port`) to dial by NodeId: the box's reported LAN
+    /// addrs plus a derived `<paired-host>:iroh-port` (covers Tailscale).
+    let directAddrs: [String]
     let deviceSeed: String
 }
 
@@ -77,14 +82,22 @@ class DeviceManager: ObservableObject {
         saveConfiguration(configuration)
     }
 
-    /// Persist the box's iroh reach ticket (`box_node_id` + `relay_url`) from a
-    /// pair/consume response. Non-secret; the device seed lives in the Keychain.
-    /// Also drops `BoxTransport`'s warm connection so the next call redials with
-    /// the new ticket.
-    func updateReach(boxNodeId: String?, relayUrl: String?) {
+    /// The box's pinned iroh UDP port (matches the box default `VIRTUES_IROH_PORT`
+    /// in `virtues-iroh`). Used to derive a direct dial socket from the paired
+    /// endpoint host (e.g. a Tailscale `100.x` → `100.x:51820`).
+    static let irohPort = 51820
+
+    /// Persist the box's iroh reach ticket (`box_node_id` + optional `relay_url` +
+    /// its direct sockets) from a pair/consume response. Non-secret; the device
+    /// seed lives in the Keychain. Also drops `BoxTransport`'s warm connection so
+    /// the next call redials with the new ticket.
+    func updateReach(boxNodeId: String?, relayUrl: String?, boxDirectAddrs: [String]? = nil) {
         Task { @MainActor in
             self.configuration.boxNodeId = (boxNodeId?.isEmpty == false) ? boxNodeId : nil
             self.configuration.relayUrl = (relayUrl?.isEmpty == false) ? relayUrl : nil
+            if let addrs = boxDirectAddrs, !addrs.isEmpty {
+                self.configuration.boxDirectAddrs = addrs
+            }
             self.saveConfiguration(self.configuration)
             // Reset the warm transport AFTER the new ticket is persisted, so a
             // concurrent send() can't redial off the old ticket in between.
@@ -93,17 +106,41 @@ class DeviceManager: ObservableObject {
     }
 
     /// Resolve the full dial ticket from persisted state, readable off any thread
-    /// (UserDefaults + Keychain are thread-safe). Returns `nil` unless the box
-    /// EndpointId, relay URL, and this device's seed are all present.
+    /// (UserDefaults + Keychain are thread-safe). Requires the box EndpointId +
+    /// this device's seed, and at least one reach path: a relay (claimed box) OR a
+    /// direct socket (unclaimed box — LAN addr from the ticket, and/or a derived
+    /// `<paired-host>:iroh-port` that carries Tailscale).
     static func currentReachTicket() -> IrohTicket? {
         guard
             let data = UserDefaults.standard.data(forKey: Self.configKey),
             let cfg = try? JSONDecoder().decode(DeviceConfiguration.self, from: data),
             let node = cfg.boxNodeId, !node.isEmpty,
-            let relay = cfg.relayUrl, !relay.isEmpty,
             let seed = KeychainStore.shared.loadIrohSeed(), !seed.isEmpty
         else { return nil }
-        return IrohTicket(boxNodeId: node, relayUrl: relay, deviceSeed: seed)
+        let relay = (cfg.relayUrl?.isEmpty == false) ? cfg.relayUrl : nil
+
+        var direct = cfg.boxDirectAddrs ?? []
+        // Derive `<paired-host>:iroh-port` from the endpoint we paired against,
+        // but ONLY when the host is a numeric IP literal (Tailscale `100.x` / a
+        // LAN IP) — that's what the Rust FFI can `parse::<SocketAddr>()`. A
+        // hostname would be silently dropped there, so counting it here would let
+        // the guard below hand back a ticket that fails at dial time with a
+        // generic error; skip it and rely on the box's reported LAN addrs / relay.
+        // Bracket IPv6 so `<ip>:port` parses, matching iroh's `SocketAddr` form.
+        if let host = URL(string: cfg.apiEndpoint)?.host {
+            let derived: String?
+            if IPv4Address(host) != nil {
+                derived = "\(host):\(Self.irohPort)"
+            } else if IPv6Address(host) != nil {
+                derived = "[\(host)]:\(Self.irohPort)"
+            } else {
+                derived = nil
+            }
+            if let derived, !direct.contains(derived) { direct.append(derived) }
+        }
+
+        guard relay != nil || !direct.isEmpty else { return nil }
+        return IrohTicket(boxNodeId: node, relayUrl: relay, directAddrs: direct, deviceSeed: seed)
     }
 
     /// Replace the stored `function_name → action_id` map. Called after a
@@ -115,38 +152,6 @@ class DeviceManager: ObservableObject {
         }
     }
     
-    func updateEndpoint(_ newEndpoint: String) async -> Bool {
-        let trimmedEndpoint = newEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Validate the endpoint format
-        guard validateEndpoint(trimmedEndpoint) else {
-            await MainActor.run {
-                self.lastError = "Invalid endpoint URL format"
-            }
-            return false
-        }
-        
-        // Test the connection to the new endpoint
-        let isReachable = await NetworkManager.shared.testConnection(endpoint: trimmedEndpoint)
-        if !isReachable {
-            await MainActor.run {
-                self.lastError = "Cannot reach the new endpoint"
-            }
-            return false
-        }
-        
-        // Update the configuration
-        await MainActor.run {
-            self.configuration.apiEndpoint = trimmedEndpoint
-            self.lastError = nil
-            
-            // Force save the configuration
-            self.saveConfiguration(self.configuration)
-        }
-
-        return true
-    }
-
     private func saveConfiguration(_ config: DeviceConfiguration) {
         if let encoded = try? JSONEncoder().encode(config) {
             userDefaults.set(encoded, forKey: Self.configKey)

@@ -72,9 +72,10 @@ actor BoxTransport {
         }
         do {
             let t = try await IrohTransport.dial(
-                relayUrl: ticket.relayUrl,
                 boxIdHex: ticket.boxNodeId,
                 deviceSeedHex: ticket.deviceSeed,
+                relayUrl: ticket.relayUrl,
+                directAddrs: ticket.directAddrs,
                 background: background
             )
             transport = t

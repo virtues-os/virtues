@@ -105,8 +105,8 @@ pub struct ModelInfoWithSlot {
 pub struct SlotDefaults {
     pub chat: String,
     pub lite: String,
-    pub reasoning: String,
     pub coding: String,
+    pub image: String,
 }
 
 /// List recommended models with slot assignments
@@ -121,8 +121,6 @@ pub async fn list_recommended_models() -> Result<RecommendedModelsResponse> {
                 "chat"
             } else if m.model_id == default_model_for_slot(ModelSlot::Lite) {
                 "lite"
-            } else if m.model_id == default_model_for_slot(ModelSlot::Reasoning) {
-                "reasoning"
             } else if m.model_id == default_model_for_slot(ModelSlot::Coding) {
                 "coding"
             } else {
@@ -141,8 +139,8 @@ pub async fn list_recommended_models() -> Result<RecommendedModelsResponse> {
     let slots = SlotDefaults {
         chat: default_model_for_slot(ModelSlot::Chat).to_string(),
         lite: default_model_for_slot(ModelSlot::Lite).to_string(),
-        reasoning: default_model_for_slot(ModelSlot::Reasoning).to_string(),
         coding: default_model_for_slot(ModelSlot::Coding).to_string(),
+        image: default_model_for_slot(ModelSlot::Image).to_string(),
     };
 
     Ok(RecommendedModelsResponse { data: models, slots })

@@ -214,16 +214,6 @@ class ChatInstanceStore {
                 }
             }),
             messages: [],
-            onResponse: (response) => {
-                // Extract thought signature from headers if available
-                const sig = response.headers.get('x-gemini-thought-signature');
-                if (sig) {
-                    const entry = this.instances.get(conversationId);
-                    if (entry) {
-                        entry.lastThoughtSignature = sig;
-                    }
-                }
-            },
             onData: (dataPart) => {
                 // Handle thought signature events (transient - only for state tracking)
                 if (dataPart.type === 'data-thought-signature') {
