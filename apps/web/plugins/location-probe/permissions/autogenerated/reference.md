@@ -45,6 +45,32 @@ Denies the read_rows command without any pre-configured scope.
 <tr>
 <td>
 
+`location-probe:allow-resume-probe`
+
+</td>
+<td>
+
+Enables the resume_probe command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`location-probe:deny-resume-probe`
+
+</td>
+<td>
+
+Denies the resume_probe command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `location-probe:allow-start-probe`
 
 </td>

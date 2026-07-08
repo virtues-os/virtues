@@ -11,6 +11,11 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 @_silgen_name("virtues_enqueue")
 private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePointer<CChar>) -> Int32
 
+// Drain the outbox to the box, blocking up to N seconds. Called from the
+// background (sig-loc wake) while holding an OS background-task assertion.
+@_silgen_name("virtues_drain_blocking")
+private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
+
 /// ISO-8601 with fractional seconds so distinct fixes get distinct timestamps
 /// (the outbox derives a per-record id from the record, incl. this).
 private let isoMillis: ISO8601DateFormatter = {
@@ -37,12 +42,17 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   public static let shared = LocationProbe()
 
   private let manager = CLLocationManager()
-  private var started = false
+  private var configured = false
+  private var updating = false
+  private var wantPrompt = false
 
   /// Throttle: keep at most one fix per ~15s (matches the native app's sampling
   /// cadence — avoids flooding the log + outbox with near-identical points).
   private var lastFixAt: Date?
   private let minFixInterval: TimeInterval = 15
+
+  /// Guards against overlapping background drains.
+  private var isDraining = false
 
   /// Set by the AppDelegate: "user" for a normal launch, "location" when the
   /// app was relaunched by the OS for a location event (launchOptions carried
@@ -51,32 +61,52 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   private override init() { super.init() }
 
-  /// Idempotent — safe to call from both the Rust setup hook and a JS command.
-  public func start() {
-    if started { return }
-    started = true
+  /// Start collecting. `prompt = false` (launch auto-resume) starts only if
+  /// already authorized and never shows a dialog; `prompt = true` (explicit
+  /// "Enable" opt-in) requests permission when undetermined. Idempotent.
+  public func start(prompt: Bool) {
+    configure()
+    wantPrompt = wantPrompt || prompt
 
-    // If the process came up straight into the background, the OS relaunched us
-    // (e.g. for a significant-location change) with no UI — the exact case the
-    // spike is proving. Record that as the launch reason.
     if launchReason == "user", appStateString() == "background" {
       launchReason = "background-launch"
     }
 
+    switch currentStatus() {
+    case .authorizedAlways, .authorizedWhenInUse:
+      beginUpdates()
+    case .notDetermined:
+      if prompt { manager.requestWhenInUseAuthorization() }  // two-step continues in didChange
+    default:
+      break  // denied / restricted — nothing to do
+    }
+  }
+
+  /// One-time manager configuration (safe to call before authorization).
+  private func configure() {
+    if configured { return }
+    configured = true
     manager.delegate = self
     manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
     manager.allowsBackgroundLocationUpdates = true
     manager.pausesLocationUpdatesAutomatically = false
     manager.showsBackgroundLocationIndicator = true
-    manager.requestAlwaysAuthorization()
+  }
 
-    // Significant-location-change is the one service that relaunches a
-    // terminated app into the background. startUpdatingLocation gives finer
-    // callbacks while the process is alive.
+  /// Begin location services. Idempotent. Significant-location-change is the one
+  /// service that relaunches a terminated app into the background; continuous
+  /// updates give finer callbacks while the process is alive.
+  private func beginUpdates() {
+    if updating { return }
+    updating = true
     manager.startMonitoringSignificantLocationChanges()
     manager.startUpdatingLocation()
-
     writeMarker(source: "start(reason=\(launchReason))")
+  }
+
+  private func currentStatus() -> CLAuthorizationStatus {
+    if #available(iOS 14.0, *) { return manager.authorizationStatus }
+    return CLLocationManager.authorizationStatus()
   }
 
   // MARK: - CLLocationManagerDelegate
@@ -90,6 +120,35 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: "update")
     // Durable delivery: full-field record → shared outbox → box.
     enqueueFix(l)
+    // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
+    // drain to the box now — the foreground loop won't run until next launch.
+    maybeDrainInBackground()
+  }
+
+  /// On a background/sig-loc wake, hold an OS background-task assertion and run
+  /// a bounded drain so queued fixes reach the box before iOS suspends us.
+  /// No-op in the foreground (the plugin's 20s loop handles that).
+  private func maybeDrainInBackground() {
+    if appStateString() == "active" { return }
+    if isDraining { return }
+    isDraining = true
+
+    var bg: UIBackgroundTaskIdentifier = .invalid
+    bg = UIApplication.shared.beginBackgroundTask(withName: "virtues-drain") {
+      // Expiration: iOS is reclaiming the process — end the assertion.
+      if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
+    }
+    let budget = Int32(min(max(UIApplication.shared.backgroundTimeRemaining - 3, 5), 25))
+    NSLog("[LocationProbe] bg drain start, budget=%ds", budget)
+
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      let rc = virtues_drain_blocking(budget)
+      NSLog("[LocationProbe] bg drain done rc/count=%d", rc)
+      DispatchQueue.main.async {
+        self?.isDraining = false
+        if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
+      }
+    }
   }
 
   /// Build a box-shaped location record and enqueue it into the Rust outbox.
@@ -119,13 +178,19 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   }
 
   public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
-    let raw: Int32
-    if #available(iOS 14.0, *) {
-      raw = m.authorizationStatus.rawValue
-    } else {
-      raw = CLLocationManager.authorizationStatus().rawValue
+    let status = currentStatus()
+    writeMarker(source: "auth=\(status.rawValue)")
+    switch status {
+    case .authorizedWhenInUse:
+      // Escalate to Always for background delivery (only after an explicit
+      // opt-in that requested When-In-Use), then start.
+      if wantPrompt { manager.requestAlwaysAuthorization() }
+      beginUpdates()
+    case .authorizedAlways:
+      beginUpdates()
+    default:
+      break
     }
-    writeMarker(source: "auth=\(raw)")
   }
 
   public func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {

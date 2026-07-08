@@ -22,6 +22,10 @@ impl<R: Runtime> LocationProbe<R> {
     Ok(StartResponse { started: false })
   }
 
+  pub fn resume_probe(&self) -> crate::Result<StartResponse> {
+    Ok(StartResponse { started: false })
+  }
+
   pub fn read_rows(&self, _payload: RowsRequest) -> crate::Result<RowsResponse> {
     Ok(RowsResponse { rows: vec![] })
   }

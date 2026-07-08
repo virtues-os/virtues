@@ -8,12 +8,17 @@ class RowsArgs: Decodable {
 }
 
 class LocationProbePlugin: Plugin {
-  /// Start (or re-affirm) background location collection from JS. On a normal
-  /// launch this is how the delegate gets installed; on a cold background
-  /// relaunch the AppDelegate has already called `LocationProbe.shared.start()`
-  /// before any webview — this call is then a harmless no-op (idempotent).
+  /// Explicit user opt-in ("Enable"): prompt for permission if undetermined,
+  /// then start collecting.
   @objc public func startProbe(_ invoke: Invoke) throws {
-    DispatchQueue.main.async { LocationProbe.shared.start() }
+    DispatchQueue.main.async { LocationProbe.shared.start(prompt: true) }
+    invoke.resolve(["started": true])
+  }
+
+  /// Launch auto-resume: start collecting only if already authorized; never
+  /// prompts. Called on every launch (incl. cold background relaunch).
+  @objc public func resumeProbe(_ invoke: Invoke) throws {
+    DispatchQueue.main.async { LocationProbe.shared.start(prompt: false) }
     invoke.resolve(["started": true])
   }
 
