@@ -62,10 +62,31 @@ impl ResolutionReport {
 pub const EMBED_GGUF: &str = "embeddinggemma-300m-qat-Q8_0.gguf";
 pub const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 
+/// The Dragon NPU path's QAIRT context binaries (Hexagon v68) — gte-small embed
+/// + answerai-colbert@256 rerank, served by `virtues-qnnd` on loopback :7788.
+/// NOT GGUFs and NOT EmbeddingGemma: that's the HTTP-sidecar path. Must agree
+/// with the installer (`config.rs` qnn_embed_bin / qnn_rerank_bin).
+pub const QNN_EMBED_BIN: &str = "gte_v68_vtcm2.bin";
+pub const QNN_RERANK_BIN: &str = "cb256_v68_vtcm2.bin";
+
 fn models_dir() -> PathBuf {
     std::env::var("VIRTUES_MODELS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/lib/virtues/models"))
+}
+
+/// Dragon NPU daemon address, if this box runs one — its presence selects the
+/// QNN inference path (mirrors `search::embedder`).
+fn qnnd_addr() -> Option<String> {
+    std::env::var("VIRTUES_QNND_ADDR").ok().filter(|s| !s.trim().is_empty())
+}
+
+fn qnn_models_dir() -> PathBuf {
+    std::env::var("VIRTUES_QNND_MODELS_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| models_dir().join("qnn"))
 }
 
 /// Report llama-server-backed inference resolution.
@@ -75,6 +96,40 @@ fn models_dir() -> PathBuf {
 /// endpoints. The "are the sidecars actually up?" checks live in the
 /// embedder/reranker startup paths and in `virtues warm-models`.
 pub fn resolution_report() -> ResolutionReport {
+    // Dragon NPU path: report the QNN daemon + its context binaries, not the
+    // HTTP-sidecar GGUFs. Checked first so a Dragon box never mis-reports
+    // EmbeddingGemma/gte-reranker as "missing" (they aren't used here).
+    if qnnd_addr().is_some() {
+        let dir = qnn_models_dir();
+        let source_for = |f: &str| {
+            let p = dir.join(f);
+            if p.is_file() {
+                ModelSource::Baked(p)
+            } else {
+                ModelSource::Download
+            }
+        };
+        return ResolutionReport {
+            accelerator: "qnn-npu (Qualcomm Hexagon v68)".to_string(),
+            precision: "int8 w8a16 (QNN HTP)".to_string(),
+            models_dir: Some(dir.clone()),
+            models: vec![
+                ModelEntry {
+                    name: "embed",
+                    repo: "gte-small · Hexagon NPU :7788",
+                    gguf_file: QNN_EMBED_BIN,
+                    source: source_for(QNN_EMBED_BIN),
+                },
+                ModelEntry {
+                    name: "rerank",
+                    repo: "answerai-colbert@256 · Hexagon NPU :7788",
+                    gguf_file: QNN_RERANK_BIN,
+                    source: source_for(QNN_RERANK_BIN),
+                },
+            ],
+        };
+    }
+
     let dir = models_dir();
     let source_for = |gguf: &str| {
         let p = dir.join(gguf);
