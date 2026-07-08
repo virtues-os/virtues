@@ -25,7 +25,10 @@
 		activate: () => void;
 	}
 
+	// Navigating to any content tab also leaves the Settings view (tap-away is
+	// how you dismiss it — there's no modal to close).
 	function go(route: string, label: string) {
+		mobileLayout.closeMenu();
 		windowShellStore.openTabFromRoute(route, { label });
 	}
 
@@ -52,8 +55,10 @@
 			icon: "ri:add-line",
 			iconActive: "ri:add-line",
 			match: [],
-			activate: () =>
-				windowShellStore.openTabFromRoute("/", { label: "New Chat", forceNew: true }),
+			activate: () => {
+				mobileLayout.closeMenu();
+				windowShellStore.openTabFromRoute("/", { label: "New Chat", forceNew: true });
+			},
 		},
 		{
 			id: "pages",
@@ -69,7 +74,7 @@
 			icon: "ri:settings-3-line",
 			iconActive: "ri:settings-3-fill",
 			match: [],
-			activate: () => mobileLayout.openMenu(),
+			activate: () => (mobileLayout.menuOpen ? mobileLayout.closeMenu() : mobileLayout.openMenu()),
 		},
 	];
 

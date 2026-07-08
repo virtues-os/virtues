@@ -1,13 +1,15 @@
 <script lang="ts">
 	/**
-	 * Settings menu — the bottom bar's 5th tab.
+	 * Settings — the bottom bar's 5th tab. A directory of every page/route not
+	 * in the bar, plus a native "This device" entry that pushes to the collector
+	 * dashboard. The iOS "More" pattern: one tab that reaches everything else.
 	 *
-	 * A directory of every page/route that isn't in the bottom bar, plus a
-	 * native "This device" entry that pushes to the collector dashboard. The
-	 * iOS-native "More" pattern: one tab that reaches everything else.
-	 *
-	 * Full-height sheet with a grabber; covers the desktop tab strip so no
-	 * dimmed chrome peeks. `mobileLayout.menuView` toggles root ↔ device.
+	 * NOT a modal sheet — it's a full content-area *view*, exactly like Home /
+	 * Today / Pages. It fills the content region (top → just above the bottom
+	 * bar), the bottom bar stays visible with Settings lit, and you leave by
+	 * tapping another tab. No grabber, no drag-to-dismiss (nothing to fight
+	 * iOS's top-edge system gesture). `mobileLayout.menuView` toggles root ↔
+	 * device.
 	 */
 	import Icon from "$lib/components/Icon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -55,12 +57,7 @@
 </script>
 
 {#if mobileLayout.menuOpen}
-	<!-- Scrim -->
-	<button class="scrim" aria-label="Close" onclick={() => mobileLayout.closeMenu()}></button>
-
-	<section class="sheet">
-		<div class="grabber"></div>
-
+	<section class="panel">
 		<header class="head">
 			{#if mobileLayout.menuView === "device"}
 				<button class="back" aria-label="Back" onclick={() => (mobileLayout.menuView = "root")}>
@@ -122,47 +119,27 @@
 {/if}
 
 <style>
-	.scrim {
+	/* A full content-area view (not a modal): fills top → just above the bottom
+	   bar, opaque, with the bar (z-50) staying on top and tappable. No scrim, no
+	   grabber. Leaving = tapping another tab. */
+	.panel {
 		position: fixed;
-		inset: 0;
-		z-index: 60;
-		border: 0;
-		background: rgba(0, 0, 0, 0.4);
-		animation: fade 0.15s ease;
-	}
-
-	.sheet {
-		position: fixed;
+		top: 0;
 		left: 0;
 		right: 0;
-		bottom: 0;
-		/* Cover the desktop tab strip; leave a small scrim peek at the very top
-		   like a native iOS sheet. */
-		top: max(8px, env(safe-area-inset-top));
-		z-index: 61;
+		bottom: calc(50px + env(safe-area-inset-bottom));
+		z-index: 45;
 		display: flex;
 		flex-direction: column;
 		background: var(--color-surface-elevated, var(--color-surface));
-		border-top-left-radius: 16px;
-		border-top-right-radius: 16px;
-		overflow: hidden;
-		animation: slide 0.24s cubic-bezier(0.32, 0.72, 0, 1);
-	}
-
-	.grabber {
-		width: 36px;
-		height: 5px;
-		border-radius: 3px;
-		background: color-mix(in srgb, var(--color-foreground) 18%, transparent);
-		margin: 8px auto 2px;
-		flex: none;
+		animation: rise 0.22s cubic-bezier(0.32, 0.72, 0, 1);
 	}
 
 	.head {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 6px 16px 8px;
+		padding: max(8px, env(safe-area-inset-top)) 16px 8px;
 		flex: none;
 	}
 	.head h2 {
@@ -286,20 +263,15 @@
 		cursor: pointer;
 	}
 
-	@keyframes slide {
-		from {
-			transform: translateY(100%);
-		}
-		to {
-			transform: translateY(0);
-		}
-	}
-	@keyframes fade {
+	/* Gentle rise + fade on enter — a view swap, not a modal slide. */
+	@keyframes rise {
 		from {
 			opacity: 0;
+			transform: translateY(8px);
 		}
 		to {
 			opacity: 1;
+			transform: translateY(0);
 		}
 	}
 </style>
