@@ -12,4 +12,23 @@ import { initBackendFromShell } from '$lib/config/backend';
 
 initBackendFromShell();
 
+// On the native phone shell, lock the viewport so it behaves like an app:
+// no pinch-to-zoom, and no auto-zoom when a text input (< 16px) is focused
+// (WKWebView honours maximum-scale=1 for both). Scoped to mobile so the
+// desktop browser keeps normal zoom/accessibility. Not viewport-fit=cover —
+// we rely on iOS's automatic safe-area inset, which keeps the bars clear of
+// the Dynamic Island / home indicator.
+if (typeof window !== 'undefined' && (window as unknown as { __VIRTUES_MOBILE__?: boolean }).__VIRTUES_MOBILE__) {
+	let vp = document.querySelector('meta[name="viewport"]');
+	if (!vp) {
+		vp = document.createElement('meta');
+		vp.setAttribute('name', 'viewport');
+		document.head.appendChild(vp);
+	}
+	vp.setAttribute(
+		'content',
+		'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no'
+	);
+}
+
 export {};
