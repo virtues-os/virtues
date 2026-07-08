@@ -161,9 +161,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       "horizontal_accuracy": l.horizontalAccuracy,
       "vertical_accuracy": l.verticalAccuracy,
       "speed": max(l.speed, 0),
-      // Local-only breadcrumb so the device screen can badge background fixes;
-      // the box keeps it in metadata (harmless).
-      "app_state": appStateString(),
+      // Provenance: whether this fix was captured while the app was active or
+      // running autonomously in the background. The box stores `raw_data` into
+      // metadata.ios_raw, so this lands as a queryable signal (no box change).
+      "raw_data": ["app_state": appStateString()],
     ]
     if l.course >= 0 { rec["course"] = l.course }
     if let floor = l.floor { rec["floor_level"] = floor.level }
