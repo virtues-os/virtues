@@ -48,6 +48,11 @@ env:
   # box before publishing (llama-server smoke test below only proves the
   # binary starts).
   LLAMA_CPP_TAG: b9606
+  # QAIRT SDK (Community) version used to BUILD virtues-qnnd, the Dragon NPU
+  # daemon (aarch64 only). Public download from Qualcomm's software center; the
+  # daemon is header-only against it (dlopen's the runtime libs on the box). Must
+  # match the QAIRT the .bin context binaries were compiled with.
+  QAIRT_VERSION: 2.42.0.251225
 
 jobs:
   build:
@@ -185,6 +190,41 @@ jobs:
       - name: Smoke llama-server (CPU)
         run: /tmp/llama-bin/llama-server --version
 
+      # virtues-qnnd — the Dragon NPU daemon (aarch64 only). It compiles against
+      # the QAIRT SDK *headers* (the daemon dlopen's the runtime libs on the box,
+      # so no libs are needed here). QAIRT Community is a public ~2 GB download,
+      # version-pinned, so cache the extracted SDK keyed on the version.
+      - name: Cache QAIRT SDK
+        if: matrix.arch == 'aarch64'
+        id: qairt
+        uses: actions/cache@v4
+        with:
+          path: /tmp/qairt
+          key: qairt-${{ env.QAIRT_VERSION }}-v1
+
+      - name: Fetch QAIRT SDK (Community)
+        if: matrix.arch == 'aarch64' && steps.qairt.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq unzip
+          mkdir -p /tmp/qairt
+          # Plain GET (NO range — the gateway 403s range requests) + a browser
+          # UA; follows the softwarecenter → apigwx-aws redirect. Verified public
+          # (unauthenticated) 2026-07-07.
+          curl -fSL --retry 3 -A "Mozilla/5.0" -o /tmp/qairt/qairt.zip \
+            "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${QAIRT_VERSION}/v${QAIRT_VERSION}.zip"
+          unzip -q /tmp/qairt/qairt.zip -d /tmp/qairt
+          rm -f /tmp/qairt/qairt.zip
+
+      - name: Build virtues-qnnd (Dragon NPU daemon)
+        if: matrix.arch == 'aarch64'
+        run: |
+          # SDK unzips to /tmp/qairt/qairt/<version>/; locate the include root.
+          H=$(find /tmp/qairt -path '*/include/QNN/QnnInterface.h' 2>/dev/null | head -1)
+          test -n "$H" || (echo "QAIRT headers not found under /tmp/qairt" >&2 && exit 1)
+          export QNN_SDK_ROOT="$(cd "$(dirname "$H")/../.." && pwd)"
+          echo "QNN_SDK_ROOT=$QNN_SDK_ROOT"
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-qnnd --bin virtues-qnnd --target ${{ matrix.target }}
+
       # Node is needed only to BUILD the SvelteKit app (adapter-static
       # produces pure HTML/JS/CSS; no Node at runtime on the box). The
       # web package + lockfile live at apps/web/, not the repo root.
@@ -252,8 +292,17 @@ jobs:
             cp "$REL/$b" "staging/actions-bin/$b"
           done
 
+          # virtues-qnnd — Dragon NPU daemon, aarch64 only (built against QAIRT
+          # above). Packaged when present; the installer extracts it if there and
+          # only errors on a Dragon that finds it missing.
+          TAR_EXTRA=""
+          if [ -x "$REL/virtues-qnnd" ]; then
+            cp "$REL/virtues-qnnd" staging/virtues-qnnd
+            TAR_EXTRA="virtues-qnnd"
+          fi
+
           TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
-          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web actions actions-bin
+          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web actions actions-bin $TAR_EXTRA
           (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
 
           # The installer ships as a standalone binary (NOT inside the
