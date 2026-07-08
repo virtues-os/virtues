@@ -267,10 +267,6 @@
 		</div>
 	</div>
 
-	<p class="foot">
-		Collected on this phone and synced to your box over your private link —
-		never through Virtues' servers.
-	</p>
 </div>
 
 <style>
@@ -437,11 +433,5 @@
 	.empty.err {
 		color: #e5484d;
 		font-variant-numeric: tabular-nums;
-	}
-	.foot {
-		font-size: 11px;
-		color: var(--color-foreground-muted);
-		line-height: 1.5;
-		margin: 16px 4px 0;
 	}
 </style>
