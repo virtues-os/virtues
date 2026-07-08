@@ -346,7 +346,7 @@
 	/* Mobile shell: edge-to-edge, and reserve the bottom-tab bar's height so
 	   scrollable content ends above it (the bar is position:fixed). */
 	main.is-mobile {
-		padding-bottom: calc(56px + env(safe-area-inset-bottom));
+		padding-bottom: calc(50px + env(safe-area-inset-bottom));
 	}
 
 	/* Pin the whole shell to the viewport on mobile. Without this, iOS lets the
