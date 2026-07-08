@@ -1748,27 +1748,8 @@ pub async fn wiki_update_organization_handler(
 
 // --- Thing ---
 
-/// Get a thing by ID
-pub async fn wiki_get_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    api_response(crate::api::get_thing(state.db.pool(), id).await)
-}
-
-/// List all things
-pub async fn wiki_list_things_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::list_things(state.db.pool()).await)
-}
-
-/// Update a thing by ID
-pub async fn wiki_update_thing_handler(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(request): Json<crate::api::UpdateWikiThingRequest>,
-) -> Response {
-    api_response(crate::api::update_thing(state.db.pool(), id, request).await)
-}
+// Thing handlers retired — use /api/things (thing_*_handler) as the single
+// source over wiki_things.
 
 // --- Narrative Identity ---
 

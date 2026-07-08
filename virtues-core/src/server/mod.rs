@@ -533,12 +533,7 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
             "/api/wiki/org/:id",
             get(api::wiki_get_organization_handler).put(api::wiki_update_organization_handler),
         )
-        // Wiki - Thing
-        .route("/api/wiki/things", get(api::wiki_list_things_handler))
-        .route(
-            "/api/wiki/thing/:id",
-            get(api::wiki_get_thing_handler).put(api::wiki_update_thing_handler),
-        )
+        // Wiki - Thing: retired; things live under /api/things (single source)
         // Wiki - Narrative Identity
         .route(
             "/api/wiki/narrative-identity",

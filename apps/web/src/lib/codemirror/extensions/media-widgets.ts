@@ -17,6 +17,7 @@
 import { type EditorState, type Extension, type Range, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, type EditorView, EditorView as EditorViewValue, WidgetType } from '@codemirror/view';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
+import { isEntityRoute } from '$lib/utils/refRoutes';
 
 const MEDIA_REGEX = /!\[([^\]]*)\]\(([^)]+)\)/g;
 
@@ -335,6 +336,9 @@ function buildMediaDecorations(state: EditorState): DecorationSet {
 		for (let match = MEDIA_REGEX.exec(line.text); match !== null; match = MEDIA_REGEX.exec(line.text)) {
 			const rawAlt = match[1];
 			const url = match[2];
+			// App refs (`![@X](/person/id)`, `![file](/drive/id)`) are ref embeds,
+			// rendered by ref-links; media widgets only handle direct/external urls.
+			if (isEntityRoute(url)) continue;
 			const from = line.from + match.index;
 			const to = from + match[0].length;
 			// Strip |width suffix for filename/type detection

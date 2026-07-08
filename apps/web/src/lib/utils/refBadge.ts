@@ -45,13 +45,15 @@ const ICON_DATA: Record<string, IconData> = {
 	'ri:at-line': riAtLine,
 };
 
-/** Build a trusted inline SVG for a resolved ref icon (bundled data, not user input). */
-function refIconSvg(type: string | null, filename?: string): string {
+/** Build a trusted inline SVG for a resolved ref icon (bundled data, not user
+ * input). Inline SVG — not the `<iconify-icon>` web component — so it renders
+ * offline / on a self-hosted box with no Iconify network fetch. */
+export function refIconSvg(type: string | null, filename?: string, size = 11): string {
 	const name = refIcon(type, { filename });
 	const data = ICON_DATA[name] ?? (riAtLine as IconData);
 	const w = data.width ?? 24;
 	const h = data.height ?? 24;
-	return `<svg class="ref-pill-icon" viewBox="0 0 ${w} ${h}" width="11" height="11" fill="currentColor" aria-hidden="true">${data.body}</svg>`;
+	return `<svg class="ref-pill-icon" viewBox="0 0 ${w} ${h}" width="${size}" height="${size}" fill="currentColor" aria-hidden="true">${data.body}</svg>`;
 }
 
 /**

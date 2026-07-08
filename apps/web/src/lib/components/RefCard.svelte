@@ -4,6 +4,7 @@
 	// two densities never diverge. Fetches a normalized summary for entity targets;
 	// files/links render from what the ref already carries.
 	import Icon from "$lib/components/Icon.svelte";
+	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import { refIcon } from "$lib/utils/refRoutes";
 	import { getRefSummary, type RefSummary } from "$lib/utils/refSummary";
 
@@ -66,13 +67,15 @@
 	{/if}
 
 	{#if type === "place" && summary?.coords}
-		<!-- Schematic location. Real map imagery (warmed at resolution, box-proxied,
-		     cached) is a later slice — this stays local + offline. -->
-		<div class="ref-card-map" title="{summary.coords.lat}, {summary.coords.lng}">
-			<Icon icon="ri:map-pin-2-fill" width="20" />
-			<span class="ref-card-coords">
-				{summary.coords.lat.toFixed(3)}, {summary.coords.lng.toFixed(3)}
-			</span>
+		<!-- Real map via the app's shared Leaflet/CartoDB component, non-interactive
+		     so clicks pass through to the card. -->
+		<div class="ref-card-map">
+			<MovementMap
+				stops={[{ lat: summary.coords.lat, lng: summary.coords.lng, label: title }]}
+				height={120}
+				zoom={14}
+				interactive={false}
+			/>
 		</div>
 	{/if}
 
@@ -130,17 +133,10 @@
 	}
 
 	.ref-card-map {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 10px 12px;
-		color: var(--color-foreground-muted);
-		background: var(--color-surface-sunken, var(--color-border));
+		width: 100%;
 		border-bottom: 1px solid var(--color-border);
-	}
-	.ref-card-coords {
-		font-size: 0.6875rem;
-		font-variant-numeric: tabular-nums;
+		background: var(--color-surface-sunken, var(--color-border));
+		pointer-events: none;
 	}
 
 	.ref-card-body {

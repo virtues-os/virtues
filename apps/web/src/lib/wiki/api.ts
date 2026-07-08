@@ -83,7 +83,6 @@ export interface WikiDayApi {
 	autobiography: string | null;
 	autobiography_sections: Array<{ id: string; heading: string; content: string; authored_by: string; last_edited_at: string }> | null;
 	epigraph: string | null;
-	has_illustration: boolean;
 	last_edited_by: string | null;
 	cover_image: string | null;
 	act_id: string | null;
@@ -309,19 +308,23 @@ export async function updateOrganization(
 
 // --- Thing ---
 
+// Things are served by the single `/api/things` API (over wiki_things); the
+// `/api/wiki/thing*` duplicates were retired. The Thing response is a superset
+// of WikiThingApi (it also carries `icon`), so these shapes stay compatible.
 export async function getThingById(
 	id: string,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${encodeURIComponent(id)}`);
+	const res = await fetchFn(`/api/things/${encodeURIComponent(id)}`);
 	if (!res.ok) return null;
 	return res.json();
 }
 
 export async function listThings(fetchFn: FetchFn = fetch): Promise<WikiThingListItem[]> {
-	const res = await fetchFn("/api/wiki/things");
+	const res = await fetchFn("/api/things");
 	if (!res.ok) return [];
-	return res.json();
+	const data = await res.json();
+	return data.things ?? [];
 }
 
 export async function updateThing(
@@ -329,7 +332,7 @@ export async function updateThing(
 	data: Partial<WikiThingApi>,
 	fetchFn: FetchFn = fetch
 ): Promise<WikiThingApi | null> {
-	const res = await fetchFn(`/api/wiki/thing/${id}`, {
+	const res = await fetchFn(`/api/things/${id}`, {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(data),

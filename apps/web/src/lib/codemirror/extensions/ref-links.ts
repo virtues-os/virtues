@@ -17,7 +17,8 @@ import { type EditorState, type Extension, type Range, StateField } from '@codem
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate, WidgetType } from '@codemirror/view';
 import { mount, unmount } from 'svelte';
 import { contextMenu } from '$lib/stores/contextMenu.svelte';
-import { getEntityTypeFromRoute, refIcon } from '$lib/utils/refRoutes';
+import { getEntityTypeFromRoute } from '$lib/utils/refRoutes';
+import { refIconSvg } from '$lib/utils/refBadge';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import RefEmbed from '$lib/components/RefEmbed.svelte';
 
@@ -29,14 +30,6 @@ const ENTITY_PREFIXES = [
 	'/person/', '/page/', '/org/', '/place/', '/thing/',
 	'/day/', '/year/', '/source/', '/chat/', '/drive/', '/space/',
 ] as const;
-
-/** Leading icon for an entity pill — shared with every other ref renderer.
- * `label` sharpens file icons by extension (report.pdf → pdf icon). */
-function getEntityIcon(url: string, label?: string): string {
-	const type = getEntityTypeFromRoute(url);
-	if (!type) return 'ri:links-line';
-	return refIcon(type, { filename: label });
-}
 
 function isEntityUrl(url: string): boolean {
 	return ENTITY_PREFIXES.some(p => url.startsWith(p));
@@ -183,10 +176,9 @@ class EntityLinkWidget extends WidgetType {
 
 		const iconSpan = document.createElement('span');
 		iconSpan.className = 'cm-entity-icon';
-		const icon = document.createElement('iconify-icon');
-		icon.setAttribute('icon', getEntityIcon(this.href, this.label));
-		icon.setAttribute('width', '14');
-		iconSpan.appendChild(icon);
+		// Inline SVG (bundled), not <iconify-icon> — the web component fetches from
+		// the Iconify network API, which fails offline / on a self-hosted box.
+		iconSpan.innerHTML = refIconSvg(getEntityTypeFromRoute(this.href), this.label, 14);
 		chip.appendChild(iconSpan);
 
 		const text = document.createElement('span');
@@ -451,10 +443,11 @@ const LINK_REGEX = /\[([^\]]+)\]\(([^)]+)\)/g;
 // block card, `[@X](url)` is an inline pill. Toggled via the right-click menu.
 const SOLE_EMBED_REGEX = /^\s*!\[([^\]]+)\]\(([^)]+)\)\s*$/;
 
-/** Entity refs render as embeds; files (/drive/) are left to the media/image
- *  widgets and inline pills for now. */
+/** Any app ref — entity or file (/drive/) — embeds as a RefEmbed card. Direct/
+ *  external media urls (e.g. /api/drive/.../download, https://…png) are left to
+ *  the media widgets. */
 function isEmbeddableUrl(url: string): boolean {
-	return isEntityUrl(url) && !url.startsWith('/drive/');
+	return isEntityUrl(url);
 }
 
 function buildLinkDecorations(view: EditorView): DecorationSet {

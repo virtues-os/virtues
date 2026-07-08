@@ -99,7 +99,7 @@ async function fetchByType(type: string, id: string): Promise<RefSummary | null>
 			};
 		}
 		case "thing": {
-			const r = await fetch(`${API}/wiki/thing/${encodeURIComponent(id)}`);
+			const r = await fetch(`${API}/things/${encodeURIComponent(id)}`);
 			if (!r.ok) return null;
 			const t = await r.json();
 			const facts: RefFact[] = [];

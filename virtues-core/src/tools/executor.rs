@@ -308,7 +308,7 @@ impl ToolExecutor {
             .filter(|s| !s.is_empty())
             .ok_or_else(|| ToolError::InvalidParameters("prompt is required".into()))?;
 
-        let png = crate::api::day_illustration::generate_image_via_gateway(&self._pool, prompt)
+        let png = crate::api::image_gen::generate_image_via_gateway(&self._pool, prompt)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Image generation failed: {e}")))?;
 
@@ -569,7 +569,7 @@ impl ToolExecutor {
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
         } else if let Some(thing_id) = item_url.strip_prefix("/thing/") {
-            match crate::api::get_thing(pool, thing_id.to_string()).await {
+            match crate::api::things::get_thing(pool, thing_id).await {
                 Ok(thing) => Ok(ToolResult::success(serde_json::json!({
                     "type": "thing",
                     "id": thing.id,
