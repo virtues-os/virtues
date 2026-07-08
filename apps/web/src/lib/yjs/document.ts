@@ -10,6 +10,7 @@ import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { writable, type Writable } from 'svelte/store';
+import { getWsUrl } from '$lib/config/backend';
 
 export interface YjsDocument {
 	ydoc: Y.Doc;
@@ -45,10 +46,9 @@ export function createYjsDocument(pageId: string, _initialContent?: string): Yjs
 	const isSynced = writable(false);
 	const isConnected = writable(false);
 
-	// Build WebSocket URL (base URL only - y-websocket appends the roomname/pageId)
-	const wsProtocol = typeof window !== 'undefined' && location.protocol === 'https:' ? 'wss:' : 'ws:';
-	const wsHost = typeof window !== 'undefined' ? location.host : 'localhost:8000';
-	const wsUrl = `${wsProtocol}//${wsHost}/ws/yjs`;
+	// Base WS URL (y-websocket appends room/pageId). Same-origin on desktop;
+	// routed to the iroh loopback on mobile via the backend config.
+	const wsUrl = getWsUrl('/ws/yjs');
 
 	// WebSocket provider for real-time sync
 	const provider = new WebsocketProvider(wsUrl, pageId, ydoc, {
