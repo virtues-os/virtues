@@ -207,6 +207,106 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
     run_step("Start inference sidecars", cmd).await
 }
 
+/// Provision the Dragon NPU daemon: fetch the QAIRT context binaries +
+/// tokenizers, then install + start `virtues-qnnd.service`. Replaces the
+/// llama-server sidecars on our board — the runtime talks to it natively (no
+/// HTTP) via `VIRTUES_QNND_ADDR`.
+///
+/// Depends on two things this installer does NOT produce: the `virtues-qnnd`
+/// binary in the tarball (CI must build it for aarch64 with `QNN_SDK_ROOT`) and
+/// the Qualcomm QAIRT runtime libs on the appliance image (proprietary — see
+/// `QNN_UNIT_TEMPLATE`).
+pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
+    let bin = cfg.qnnd_binary_path();
+    if !bin.exists() {
+        return Err(anyhow!(
+            "virtues-qnnd not found at {} — this tarball has no NPU daemon \
+             (the aarch64 build leg needs QNN_SDK_ROOT to produce a real one)",
+            bin.display()
+        ));
+    }
+
+    let qnn_dir = cfg.qnn_models_dir();
+    fs::create_dir_all(&qnn_dir).with_context(|| format!("creating {}", qnn_dir.display()))?;
+
+    // Context binaries + tokenizers (SHA-verified, skipped if already present).
+    for name in [&cfg.qnn_embed_bin, &cfg.qnn_rerank_bin] {
+        crate::download::fetch_asset(cfg, name, qnn_dir.join(name)).await?;
+    }
+    for (dest_rel, asset) in &cfg.qnn_tokenizers {
+        crate::download::fetch_asset(cfg, asset, qnn_dir.join(dest_rel)).await?;
+    }
+
+    let mut cmd = Command::new("chown");
+    cmd.args(["-R", "virtues:virtues", qnn_dir.to_str().unwrap()]);
+    let _ = cmd.output().await;
+
+    // The daemon opens the Hexagon DSP node (`/dev/fastrpc-cdsp`, `render`
+    // group) — the same detection the GPU path uses covers it.
+    let supp_groups = match gpu_access_groups().await.as_slice() {
+        [] => String::new(),
+        groups => format!("SupplementaryGroups={}\n", groups.join(" ")),
+    };
+    // QAIRT runtime libs (Qualcomm-proprietary — not shipped by us). Prefer an
+    // explicit VIRTUES_QNN_LIB_DIR, else auto-detect libQnnHtp.so under the usual
+    // roots (a Radxa QAIRT install, an onnxruntime-qnn wheel, …). Both
+    // LD_LIBRARY_PATH (host) and ADSP_LIBRARY_PATH (DSP skel) must point there.
+    let qnn_env = match detect_qnn_lib_dir(cfg).await {
+        Some(dir) => {
+            ui::ok(&format!("QNN runtime libs: {dir}"));
+            format!("Environment=LD_LIBRARY_PATH={dir}\nEnvironment=ADSP_LIBRARY_PATH={dir}\n")
+        }
+        None => {
+            ui::warn(
+                "QNN runtime libs (libQnnHtp.so) not found — the daemon needs QAIRT on the \
+                 box. Install it (e.g. `pip install onnxruntime-qnn`, or the Radxa QAIRT SDK) \
+                 and set VIRTUES_QNN_LIB_DIR, or bake the libs into the appliance image.",
+            );
+            String::new()
+        }
+    };
+
+    let body = QNN_UNIT_TEMPLATE
+        .replace("__SUPP_GROUPS__", &supp_groups)
+        .replace("__QNN_ENV__", &qnn_env)
+        .replace("__BIN__", &bin.display().to_string())
+        .replace("__EMBED_BIN__", &qnn_dir.join(&cfg.qnn_embed_bin).display().to_string())
+        .replace("__RERANK_BIN__", &qnn_dir.join(&cfg.qnn_rerank_bin).display().to_string());
+    fs::write("/etc/systemd/system/virtues-qnnd.service", body)
+        .context("writing virtues-qnnd.service")?;
+
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("daemon-reload");
+    run_step("Install NPU daemon unit", cmd).await?;
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["enable", "virtues-qnnd"]);
+    run_step("Enable NPU daemon", cmd).await?;
+    let mut cmd = Command::new("systemctl");
+    cmd.args(["restart", "virtues-qnnd"]);
+    run_step("Start NPU daemon", cmd).await
+}
+
+/// Locate the QAIRT runtime lib directory (the one holding `libQnnHtp.so`, and
+/// beside it the v68 skel the DSP loads). Order: explicit `VIRTUES_QNN_LIB_DIR`,
+/// then a bounded `find` under the roots QAIRT/onnxruntime-qnn typically land in.
+/// `None` means "not found here" — the libs may still be on the default loader
+/// path (a baked appliance image), in which case the unit needs no env.
+async fn detect_qnn_lib_dir(cfg: &InstallConfig) -> Option<String> {
+    if let Some(dir) = cfg.qnn_lib_dir() {
+        return Some(dir);
+    }
+    // Bounded search (depth-capped, a handful of roots) — never a full-FS scan.
+    let script = "find /opt /usr/lib /usr/local/lib /qairt* \"$HOME\" \
+                  /usr/lib/python3*/dist-packages /usr/local/lib/python3*/dist-packages \
+                  -maxdepth 7 -name libQnnHtp.so 2>/dev/null | head -1";
+    let out = Command::new("bash").arg("-c").arg(script).output().await.ok()?;
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
+    Path::new(&path).parent().map(|p| p.display().to_string())
+}
+
 /// The standard Linux groups that gate access to GPU device nodes
 /// (`/dev/dri/*` and friends). The llama-server sidecars run unprivileged as
 /// `virtues`; without membership in these groups the GPU backend can't open
@@ -294,6 +394,43 @@ Type=simple
 User=virtues
 Group=virtues
 __SUPP_GROUPS__ExecStart=__BIN__ --rerank --pooling rank -m __MODEL__ --host 127.0.0.1 --port 18182 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 99
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
+"#;
+
+/// The Dragon NPU daemon unit. `virtues-qnnd` loads the two QAIRT context
+/// binaries once and serves embed/rerank on loopback :7788 (see
+/// `crates/virtues-qnnd`). `--burst` pins the HTP to its performance power
+/// corners. `__SUPP_GROUPS__` grants access to the DSP device node
+/// (`/dev/fastrpc-cdsp`, `render` group). `__QNN_ENV__` sets both
+/// `LD_LIBRARY_PATH` (host-side `libQnnHtp.so`/`libQnnSystem.so`) and
+/// `ADSP_LIBRARY_PATH` (the DSP-side `libQnnHtpV68Skel.so`, loaded onto the
+/// Hexagon) to the detected QAIRT lib dir — verified sufficient on-device. Empty
+/// when the libs are already on the default loader path (appliance image).
+const QNN_UNIT_TEMPLATE: &str = r#"[Unit]
+Description=Virtues NPU inference daemon (virtues-qnnd, Hexagon v68)
+Documentation=https://virtues.com/docs
+After=network.target
+
+[Service]
+Type=simple
+User=virtues
+Group=virtues
+__SUPP_GROUPS____QNN_ENV__ExecStart=__BIN__ __EMBED_BIN__ __RERANK_BIN__ --burst --port 7788
 Restart=on-failure
 RestartSec=5
 
@@ -559,22 +696,27 @@ async fn psql_exists(sql: &str) -> Result<bool> {
 /// `mode::validate_manual` — the runtime re-embeds the probe strings at boot
 /// and refuses to serve search against a silently-swapped model.
 fn inference_env_keys(
+    cfg: &InstallConfig,
     mode: &InferenceMode,
     validation: Option<&ValidationReport>,
 ) -> Vec<(&'static str, String)> {
     match mode {
-        // Dragon + Bundled both talk to locally-provisioned sidecars on
-        // loopback; the runtime uses the EmbeddingGemma defaults (256-dim
-        // truncation, gemma prompts) since it's our own model — no fingerprint
-        // pin. `VIRTUES_INFERENCE` records which path chose it.
-        InferenceMode::Dragon | InferenceMode::Bundled => vec![
+        // Dragon: the native NPU daemon (`virtues-qnnd`) on loopback :7788. Its
+        // presence (`VIRTUES_QNND_ADDR`) is what switches core's embedder +
+        // reranker to the QNN path (gte-small 384-d + colbert MaxSim); no HTTP
+        // sidecar, no fingerprint pin (it's our compiled model).
+        InferenceMode::Dragon => vec![
+            ("VIRTUES_INFERENCE", "dragon".to_string()),
+            ("VIRTUES_QNND_ADDR", "127.0.0.1:7788".to_string()),
             (
-                "VIRTUES_INFERENCE",
-                match mode {
-                    InferenceMode::Bundled => "bundled".to_string(),
-                    _ => "dragon".to_string(),
-                },
+                "VIRTUES_QNND_MODELS_DIR",
+                cfg.qnn_models_dir().display().to_string(),
             ),
+        ],
+        // Bundled: the portable CPU llama-server sidecars on loopback (the
+        // throwaway-trial path). EmbeddingGemma defaults, no fingerprint pin.
+        InferenceMode::Bundled => vec![
+            ("VIRTUES_INFERENCE", "bundled".to_string()),
             ("VIRTUES_EMBED_URL", "http://127.0.0.1:18181".to_string()),
             ("VIRTUES_RERANK_URL", "http://127.0.0.1:18182".to_string()),
         ],
@@ -652,7 +794,7 @@ pub async fn write_env_file(
         actions_dir = cfg.actions_dir().display(),
         actions_bin_dir = cfg.actions_bin_dir().display(),
     );
-    for (k, v) in inference_env_keys(mode, validation) {
+    for (k, v) in inference_env_keys(cfg, mode, validation) {
         body.push_str(&format!("{k}={v}\n"));
     }
     fs::write(&path, body).with_context(|| format!("writing {}", path.display()))?;
@@ -707,7 +849,7 @@ async fn merge_env_file(
         ("VIRTUES_ACTIONS_DIR", cfg.actions_dir().display().to_string()),
         ("VIRTUES_ACTIONS_BIN_DIR", cfg.actions_bin_dir().display().to_string()),
     ];
-    want.extend(inference_env_keys(mode, validation));
+    want.extend(inference_env_keys(cfg, mode, validation));
 
     let missing: Vec<&(&str, String)> = want.iter().filter(|(k, _)| !present.contains(*k)).collect();
     if missing.is_empty() {
@@ -844,7 +986,7 @@ WantedBy=multi-user.target
 /// `check_sidecars` is true only in Dragon mode — a manual-inference box has
 /// no local sidecar units and no GGUFs on disk, and probing for them would
 /// report phantom issues on every healthy install.
-pub async fn health_check(cfg: &InstallConfig, check_sidecars: bool) -> Result<u32> {
+pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u32> {
     let mut issues = 0u32;
 
     // Postgres reachable via peer auth (no password prompt, no TCP).
@@ -860,7 +1002,34 @@ pub async fn health_check(cfg: &InstallConfig, check_sidecars: bool) -> Result<u
         issues += 1;
     }
 
-    if check_sidecars {
+    if let InferenceMode::Dragon = mode {
+        // NPU daemon accepting connections on loopback :7788. It takes a few
+        // seconds to load both context binaries after `systemctl start` — retry.
+        let mut up = false;
+        for _ in 0..10 {
+            if tokio::net::TcpStream::connect("127.0.0.1:7788").await.is_ok() {
+                up = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        if up {
+            ui::ok("NPU daemon responding on :7788");
+        } else {
+            ui::warn("virtues-qnnd not responding on :7788 — journalctl -u virtues-qnnd");
+            issues += 1;
+        }
+        // Context binaries + tokenizers on disk.
+        let qnn_dir = cfg.qnn_models_dir();
+        for f in [cfg.qnn_embed_bin.as_str(), cfg.qnn_rerank_bin.as_str()] {
+            if qnn_dir.join(f).is_file() {
+                ui::ok(&format!("NPU model present: {f}"));
+            } else {
+                ui::warn(&format!("NPU model missing: {} — re-run the installer", qnn_dir.join(f).display()));
+                issues += 1;
+            }
+        }
+    } else if let InferenceMode::Bundled = mode {
         // Inference sidecars responding. /health returns 200 only once the
         // model is loaded, so this also catches a bad/missing GGUF. Model load
         // can take a few seconds after `systemctl start` — retry briefly.

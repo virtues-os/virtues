@@ -1,20 +1,27 @@
 //! Inference mode resolution + manual-endpoint validation.
 //!
-//! Inference comes from exactly two places, decided once per install:
+//! Inference is decided once per install, in three flavors:
 //!
-//!   · **Dragon** — our own board, detected from the device tree. The
-//!     installer provisions the llama-server sidecars locally
-//!     (`install::install_inference`) and the runtime talks to loopback.
-//!   · **Manual** — any other machine. The user runs their own
-//!     OpenAI-style embedding endpoint (plus an optional reranker); the
-//!     installer asks for the URLs, probes them, and pins a model
-//!     fingerprint so the runtime can detect a silently-swapped model at
-//!     boot (see `virtues-core/src/search/embedder.rs`).
+//!   · **Dragon** — our own board (Radxa Dragon Q6A, Hexagon v68 NPU),
+//!     detected from the device tree. Inference is built in: the installer
+//!     provisions the on-box NPU daemon and the runtime talks to it over
+//!     loopback. Zero config, the "it just works" appliance path.
+//!   · **Manual / bring-your-own (recommended for any other board)** — the
+//!     user runs their own OpenAI-style embedding endpoint (plus an optional
+//!     reranker) on whatever their silicon supports; the installer asks for
+//!     the URL, probes it (auto-detecting the embedding dimension), and pins
+//!     a model fingerprint so the runtime can detect a silently-swapped model
+//!     at boot (see `virtues-core/src/search/embedder.rs`).
+//!   · **Bundled (throwaway trial only)** — a portable CPU-only llama-server
+//!     we build+test in CI, dropped in with our two models and no config. It
+//!     is honestly slow and not a deployment; it exists so someone can watch
+//!     the product move in five minutes before standing up a real endpoint.
 //!
-//! There is deliberately no general "managed" mode for arbitrary hardware:
-//! provisioning sidecars on machines we can't test produces more broken
-//! boxes than it saves keystrokes. Either it's our board and inference is
-//! built in, or the user owns the endpoint and we validate it.
+//! There is deliberately no general "managed" mode for arbitrary accelerators:
+//! provisioning tuned sidecars on the thousand SBCs we can't test produces more
+//! broken boxes than it saves keystrokes. Either it's our board (NPU built in),
+//! or the user owns the endpoint and we validate it, or it's the honest-slow
+//! CPU trial.
 
 use std::time::{Duration, Instant};
 
@@ -24,13 +31,16 @@ use sha2::{Digest, Sha256};
 use crate::ui;
 
 pub enum InferenceMode {
-    /// Our board, detected automatically; sidecars provisioned locally.
+    /// Our board (Radxa Dragon Q6A, Hexagon v68 NPU), detected automatically.
+    /// Inference is built in — the installer provisions the on-box NPU daemon
+    /// and the runtime talks to it over loopback.
     Dragon,
-    /// User opted into the bundled local engine on non-Dragon hardware: same
-    /// local-sidecar provisioning as Dragon, but **CPU-only** (the portable
-    /// llama-server we build + test in CI — no GPU/driver babysitting). A
-    /// zero-setup "quick trial" path, honestly not the production choice for
-    /// large corpora; for GPU/scale the user runs their own endpoint (Manual).
+    /// User opted into the bundled local engine on non-Dragon hardware: a
+    /// portable **CPU-only** llama-server (the one we build + test in CI — no
+    /// GPU/driver babysitting), our two models, zero config. A throwaway
+    /// tire-kicking path, honestly slow and NOT a deployment; for anything real
+    /// the user runs their own endpoint (Manual), which is the recommended
+    /// generic path.
     Bundled,
     /// User-run endpoints on any other machine. `embed_model` is the model
     /// name sent in every `/v1/embeddings` request body — llama.cpp ignores
@@ -42,12 +52,6 @@ pub enum InferenceMode {
         embed_url: String,
         embed_model: String,
         rerank_url: Option<String>,
-        /// Optional HuggingFace repo id for the embedding model (e.g.
-        /// `google/embeddinggemma-300m`). Used at validation time to pull the
-        /// model's official query/document prompt prefixes from its
-        /// `config_sentence_transformers.json`. `None` → fall back to a
-        /// known-family table, then no prefix.
-        hf_repo: Option<String>,
     },
 }
 
@@ -90,12 +94,8 @@ impl InferenceMode {
                     ensure_local(u, "Rerank endpoint")?;
                 }
                 let embed_model = embed_model_from_env();
-                let hf_repo = std::env::var("VIRTUES_EMBED_HF_REPO")
-                    .ok()
-                    .filter(|s| !s.trim().is_empty())
-                    .map(|s| s.trim().to_string());
                 ui::ok(&format!("Inference mode: manual (embed: {embed_url})"));
-                return Ok(Self::Manual { embed_url, embed_model, rerank_url, hf_repo });
+                return Ok(Self::Manual { embed_url, embed_model, rerank_url });
             }
             Some(other) => bail!(
                 "unrecognized VIRTUES_INFERENCE={other} — expected \"bundled\", \"manual\", or \"dragon\""
@@ -128,14 +128,15 @@ impl InferenceMode {
         let choice = cliclack::select("How should Virtues run inference?")
             .item(
                 "byo",
-                "Bring your own endpoint",
-                "run llama.cpp / Ollama yourself — uses your GPU; the right choice for daily use",
+                "Bring your own endpoint  (recommended)",
+                "run llama.cpp / Ollama / vLLM on your own hardware — GPU- or NPU-accelerated, \
+                 tuned to your silicon; the right choice for any real use",
             )
             .item(
                 "bundled",
-                "Quick trial (bundled, CPU-only)",
-                "we set up a local engine + our two models, no config — CPU inference, fine to \
-                 kick the tires, slow on large data; switch to your own endpoint for real use",
+                "Just kick the tires  (bundled CPU, throwaway)",
+                "we drop in a local CPU engine + our two models, zero config — but it's SLOW and \
+                 NOT a deployment; stand up your own endpoint before loading real data",
             )
             .interact()
             .context("choosing an inference path")?;
@@ -145,10 +146,11 @@ impl InferenceMode {
             return Ok(Self::Bundled);
         }
 
-        // Manual (bring-your-own). Show recipes + how to stand a server up, then
-        // ask for the URL. Re-running the installer is always safe (idempotent),
-        // so "Ctrl-C, start your server, re-run" is a fine path too.
-        print_recipes();
+        // Manual (bring-your-own) — the recommended generic path. Show the
+        // per-silicon guide + how to stand a server up, then ask for the URL.
+        // Re-running the installer is always safe (idempotent), so "Ctrl-C,
+        // start your server, re-run" is a fine path too.
+        print_byo_guide();
         println!("  Start one of the above first (it must be reachable at the URL you enter).");
         println!("  Not ready? Ctrl-C, get your endpoint running, then re-run this installer.");
         println!();
@@ -188,36 +190,14 @@ impl InferenceMode {
             Some(u)
         };
 
-        // Model name: llama.cpp serves whatever it loaded regardless, but
-        // Ollama routes by this field and 404s on names it doesn't know.
-        let model_raw: String = cliclack::input(
-            "Model name your server expects (required for Ollama, e.g. \"embeddinggemma\" — Enter to skip for llama.cpp)",
-        )
-        .required(false)
-        .interact()
-        .context("reading embedding model name")?;
-        let embed_model = if model_raw.trim().is_empty() {
-            "default".to_string()
-        } else {
-            model_raw.trim().to_string()
-        };
+        // Two URLs and we're done — no model-name question. llama.cpp / vLLM
+        // serve whatever they loaded, so `"default"` is right for them. The one
+        // server that routes by model name is Ollama; that user sets
+        // VIRTUES_EMBED_MODEL themselves (they know their model). We still probe
+        // + fingerprint the endpoint below — that runs silently, no prompts.
+        let embed_model = embed_model_from_env();
 
-        // Optional HF repo id → we pull the model's official query/doc prompt
-        // prefixes from its config_sentence_transformers.json at validation time
-        // (better recall for models that want asymmetric prompts, e.g. e5/bge).
-        let hf_repo_raw: String = cliclack::input(
-            "HuggingFace repo for your model (optional, improves search quality — e.g. google/embeddinggemma-300m; Enter to skip)",
-        )
-        .required(false)
-        .interact()
-        .context("reading HuggingFace repo id")?;
-        let hf_repo = if hf_repo_raw.trim().is_empty() {
-            None
-        } else {
-            Some(hf_repo_raw.trim().to_string())
-        };
-
-        Ok(Self::Manual { embed_url, embed_model, rerank_url, hf_repo })
+        Ok(Self::Manual { embed_url, embed_model, rerank_url })
     }
 }
 
@@ -258,32 +238,48 @@ fn has_tty() -> bool {
     std::fs::File::open("/dev/tty").is_ok()
 }
 
-/// The "what do I point this at" block shown before the URL prompts. Two
-/// recipes per endpoint, all speaking the contracts we pin: embeddings is the
-/// universal OpenAI `/v1/embeddings` (llama.cpp or Ollama both work); rerank is
-/// pinned to llama.cpp's `/v1/rerank` shape (our own Dragon sidecar), shown in
-/// GPU and CPU flavors. Cloud APIs are intentionally absent — see `ensure_local`.
-fn print_recipes() {
+/// The "what do I point this at" card shown before the URL prompts. Because we
+/// support exactly one board fully (the Dragon NPU) and can't tune sidecars for
+/// the thousand other SBCs, the bring-your-own path leans on the user knowing
+/// their own silicon — so this maps common accelerators to a server that lands
+/// on them, lists known-good models (with dims, for picking — we auto-detect the
+/// real dim when we probe), then shows concrete start commands. Everything
+/// speaks the contracts we pin: OpenAI `/v1/embeddings` (llama.cpp / Ollama /
+/// vLLM all work) and the optional llama.cpp-style `/v1/rerank`. Cloud APIs are
+/// intentionally absent — see `ensure_local`.
+fn print_byo_guide() {
     use console::style;
     println!();
     println!("  Virtues runs inference on a service YOU host — this box, a machine on your");
     println!("  LAN, or one over your VPN. It needs an OpenAI-style /v1/embeddings endpoint;");
     println!("  a /v1/rerank endpoint is optional (search still works without one).");
     println!("  Cloud APIs (OpenAI, Cohere, …) are not supported — your data stays yours.");
+    println!("  {}", style("You don't need to know your model's dimension — we detect it when we probe.").dim());
     println!();
-    println!("  {}", style("Embedding endpoint — pick one:").bold());
-    println!("    llama.cpp:  llama-server --embeddings --pooling mean \\");
-    println!("                  -m embeddinggemma-300m-qat-Q8_0.gguf --port 18181");
-    println!("                → URL http://localhost:18181   (model name: any)");
-    println!("    Ollama:     ollama pull embeddinggemma");
-    println!("                → URL http://localhost:11434   (model name: embeddinggemma)");
+    println!("  {}", style("Pick a server for your silicon:").bold());
+    println!("    NVIDIA / any x86 CPU    Ollama             ollama pull <model>        :11434");
+    println!("    Apple Silicon          Ollama / llama.cpp  (Metal, automatic)");
+    println!("    Adreno GPU (Qualcomm)  llama.cpp Vulkan    llama-server -ngl 99 …");
+    println!("    Mali GPU (many SBCs)   llama.cpp Vulkan    llama-server -ngl 99 …");
+    println!("    Rockchip NPU (RK3588)  RKLLM               rkllm-server …");
+    println!("    CPU-only fallback      llama.cpp           llama-server …  (no -ngl)");
     println!();
-    println!("  {}", style("Rerank endpoint (optional) — pick one:").bold());
-    println!("    llama.cpp (GPU):  llama-server --reranking --pooling rank -ngl 99 \\");
-    println!("                        -m gte-reranker-modernbert-base-Q8_0.gguf --port 18182");
-    println!("    llama.cpp (CPU):  llama-server --reranking --pooling rank \\");
-    println!("                        -m gte-reranker-modernbert-base-Q8_0.gguf --port 18182");
-    println!("                      → URL http://localhost:18182");
+    println!("  {}", style("Known-good models (embedding dim in parens):").bold());
+    println!("    embed :  gte-small (384) · bge-small-en-v1.5 (384) · e5-small-v2 (384)");
+    println!("             embeddinggemma-300m (768) · nomic-embed-text-v1.5 (768)");
+    println!("    rerank:  gte-reranker-modernbert-base · bge-reranker-v2-m3 · jina-reranker-v2");
+    println!();
+    println!("  {}", style("Start commands (we'll ask only for the URLs):").bold());
+    println!("    embeddings (llama.cpp, mean pooling required):");
+    println!("      llama-server --embeddings --pooling mean -m gte-small.Q8_0.gguf --port 18181");
+    println!("        → URL http://localhost:18181");
+    println!("    embeddings (Ollama — routes by model, so export the name):");
+    println!("      ollama pull nomic-embed-text");
+    println!("        → URL http://localhost:11434   (+ VIRTUES_EMBED_MODEL=nomic-embed-text)");
+    println!("    rerank (llama.cpp, optional — drop -ngl for CPU):");
+    println!("      llama-server --reranking --pooling rank -ngl 99 \\");
+    println!("        -m gte-reranker-modernbert-base.Q8_0.gguf --port 18182");
+    println!("        → URL http://localhost:18182");
     println!();
     println!("  {}", style("Docs: https://virtues.com/docs/inference").dim());
     println!();
@@ -443,8 +439,8 @@ fn fingerprint_vectors(vectors: &[Vec<f32>]) -> String {
 pub struct ValidationReport {
     pub dims: usize,
     pub fingerprint: String,
-    /// Asymmetric prompt prefixes resolved for this model (HF card → known
-    /// family → none). Empty string = no prefix. Written to the env as
+    /// Asymmetric prompt prefixes resolved for this model (explicit env →
+    /// known-family table → none). Empty string = no prefix. Written to the env as
     /// `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT` and applied by the runtime
     /// embedder. Never affects the fingerprint (probes are embedded raw).
     pub query_prompt: String,
@@ -465,7 +461,6 @@ pub async fn validate_manual(
     embed_url: &str,
     embed_model: &str,
     rerank_url: Option<&str>,
-    hf_repo: Option<&str>,
 ) -> Result<ValidationReport> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
@@ -535,24 +530,19 @@ pub async fn validate_manual(
         ui::skip("No reranker — search still works without one, slightly lower precision");
     }
 
-    let (query_prompt, doc_prompt) = resolve_prompts(&client, embed_model, hf_repo).await;
+    let (query_prompt, doc_prompt) = resolve_prompts(embed_model);
 
     Ok(ValidationReport { dims, p50_ms, fingerprint, query_prompt, doc_prompt, rerank_ok })
 }
 
 /// Resolve the asymmetric (query, document) prompt prefixes for a manual model.
+/// Local-only — the installer never reaches out over the network to guess these.
 /// Ladder, most authoritative first:
 ///   1. explicit env (`VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT`) — power user
-///   2. the model's own HuggingFace `config_sentence_transformers.json` (if a
-///      repo id was given) — self-updating, we maintain nothing
-///   3. a small known-family table keyed on the model name — prefix conventions
+///   2. a small known-family table keyed on the model name — prefix conventions
 ///      are sticky even as weights churn
-///   4. none — a wrong prefix hurts more than a missing one, so default empty
-async fn resolve_prompts(
-    client: &reqwest::Client,
-    embed_model: &str,
-    hf_repo: Option<&str>,
-) -> (String, String) {
+///   3. none — a wrong prefix hurts more than a missing one, so default empty
+fn resolve_prompts(embed_model: &str) -> (String, String) {
     // 1. Explicit env wins (and honors an intentional empty = "no prefix").
     let env_q = std::env::var("VIRTUES_EMBED_QUERY_PROMPT").ok();
     let env_d = std::env::var("VIRTUES_EMBED_DOC_PROMPT").ok();
@@ -561,84 +551,24 @@ async fn resolve_prompts(
         return (env_q.unwrap_or_default(), env_d.unwrap_or_default());
     }
 
-    // 2. Authoritative: the model's published sentence-transformers config.
-    if let Some(repo) = hf_repo {
-        match fetch_hf_prompts(client, repo).await {
-            Ok(Some((q, d))) => {
-                ui::ok(&format!("Prompt prefixes: from HuggingFace ({repo})"));
-                return (q, d);
-            }
-            Ok(None) => ui::skip(&format!(
-                "{repo} publishes no usable query/document prompts — trying model name"
-            )),
-            Err(e) => ui::warn(&format!("couldn't read prompts from {repo} ({e:#}) — trying model name")),
-        }
-    }
-
-    // 3. Known-family table (conventions move far slower than model weights).
+    // 2. Known-family table (conventions move far slower than model weights).
     if let Some((q, d)) = family_prompts(embed_model) {
         ui::ok(&format!("Prompt prefixes: recognized model family from \"{embed_model}\""));
         return (q, d);
     }
 
-    // 4. None — safe default.
+    // 3. None — safe default.
     ui::skip(
         "No prompt prefixes — search still works. If your model expects them, set \
-         VIRTUES_EMBED_QUERY_PROMPT / VIRTUES_EMBED_DOC_PROMPT (see its HuggingFace card's \
+         VIRTUES_EMBED_QUERY_PROMPT / VIRTUES_EMBED_DOC_PROMPT (see your model's \
          config_sentence_transformers.json).",
     );
     (String::new(), String::new())
 }
 
-/// Pull query/document prompt prefixes from a model's
-/// `config_sentence_transformers.json` on HuggingFace. Returns `Ok(None)` when
-/// the file has no `prompts` or we can't confidently map one to "query" and one
-/// to "document" — the key names aren't standardized, so we match by substring.
-async fn fetch_hf_prompts(
-    client: &reqwest::Client,
-    repo: &str,
-) -> Result<Option<(String, String)>> {
-    let repo = repo.trim().trim_matches('/');
-    let url = format!("https://huggingface.co/{repo}/resolve/main/config_sentence_transformers.json");
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?
-        .error_for_status()
-        .with_context(|| format!("GET {url}"))?;
-    let body: serde_json::Value = resp.json().await.context("parsing config_sentence_transformers.json")?;
-    let Some(prompts) = body.get("prompts").and_then(|p| p.as_object()) else {
-        return Ok(None);
-    };
-
-    // Key names vary by model (query / Retrieval-query / search_query / …). Match
-    // the query side and the document side by substring, most-specific first.
-    let find = |needles: &[&str]| -> Option<String> {
-        for (k, v) in prompts {
-            let kl = k.to_lowercase();
-            if needles.iter().any(|n| kl.contains(n)) {
-                if let Some(s) = v.as_str() {
-                    return Some(s.to_string());
-                }
-            }
-        }
-        None
-    };
-    let query = find(&["query", "search_query", "question"]);
-    let doc = find(&["passage", "document", "corpus", "search_document", "text"]);
-
-    match (query, doc) {
-        (Some(q), Some(d)) => Ok(Some((q, d))),
-        // A query-only convention (e.g. bge) is legitimate: prefix queries, not docs.
-        (Some(q), None) => Ok(Some((q, String::new()))),
-        _ => Ok(None),
-    }
-}
-
 /// Known-family prompt conventions, keyed on a substring of the model name.
 /// Deliberately tiny: these conventions are stable across model versions, so
-/// this is a near-zero-maintenance fallback for when no HF repo id was given.
+/// this is a near-zero-maintenance fallback when the user hasn't set prompts.
 fn family_prompts(model: &str) -> Option<(String, String)> {
     let m = model.to_lowercase();
     let pair = |q: &str, d: &str| Some((q.to_string(), d.to_string()));

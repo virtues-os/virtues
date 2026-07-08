@@ -48,7 +48,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference: Dragon auto-detect, else pick bundled-CPU (turnkey) or manual BYO endpoint");
+        ui::skip("  • Inference: Dragon NPU auto-detect, else bring your own endpoint (recommended) or a throwaway bundled-CPU trial");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip(&format!(
@@ -73,14 +73,8 @@ pub async fn run(cli: Config) -> Result<()> {
         // Dragon + Bundled both provision our own local sidecars — nothing to
         // validate (we control the endpoint).
         InferenceMode::Dragon | InferenceMode::Bundled => None,
-        InferenceMode::Manual { embed_url, embed_model, rerank_url, hf_repo } => Some(
-            mode::validate_manual(
-                embed_url,
-                embed_model,
-                rerank_url.as_deref(),
-                hf_repo.as_deref(),
-            )
-            .await?,
+        InferenceMode::Manual { embed_url, embed_model, rerank_url } => Some(
+            mode::validate_manual(embed_url, embed_model, rerank_url.as_deref()).await?,
         ),
     };
 
@@ -95,11 +89,13 @@ pub async fn run(cli: Config) -> Result<()> {
     // ─── Virtues ────────────────────────────────────────────────────────
     ui::section("Virtues");
     download::download_binary(&mut cfg, target.arch).await?;
-    // Dragon/Bundled: after the tarball, provision the sidecars (they need the
-    // llama-server binary it ships). Manual: the user's endpoints were
-    // already validated above — no llama-server, no GGUF fetch, no units.
+    // After the tarball, provision local inference. Dragon → the QNN NPU daemon
+    // (context binaries + tokenizers + virtues-qnnd.service). Bundled → the
+    // portable CPU llama-server sidecars. Manual → nothing (the user's endpoints
+    // were validated above).
     match &inference {
-        InferenceMode::Dragon | InferenceMode::Bundled => install::install_inference(&cfg).await?,
+        InferenceMode::Dragon => install::install_qnn(&cfg).await?,
+        InferenceMode::Bundled => install::install_inference(&cfg).await?,
         InferenceMode::Manual { .. } => {
             ui::skip("Manual inference — skipping local sidecar provisioning")
         }
@@ -115,7 +111,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     // ─── Verifying ──────────────────────────────────────────────────────
     ui::section("Verifying");
-    let issues = install::health_check(&cfg, matches!(inference, InferenceMode::Dragon)).await?;
+    let issues = install::health_check(&cfg, &inference).await?;
     if issues > 0 {
         ui::warn(&format!("{issues} post-install issue(s) — run `virtues doctor` for details"));
     }

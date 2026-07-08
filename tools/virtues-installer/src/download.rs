@@ -96,6 +96,17 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
         );
     }
 
+    // virtues-qnnd — the Dragon NPU daemon (Hexagon v68). Present only in the
+    // aarch64 tarball built with QNN_SDK_ROOT; absent (or a stub) elsewhere, so
+    // install it only when the real binary shipped. install_qnn checks for it
+    // and errors clearly if a Dragon install finds it missing.
+    let qnnd_src = tmpdir.path().join("virtues-qnnd");
+    if qnnd_src.is_file() {
+        let qnnd_dst = cfg.qnnd_binary_path();
+        install_executable(&qnnd_src, &qnnd_dst)?;
+        ui::ok(&format!("Installed virtues-qnnd → {}", qnnd_dst.display()));
+    }
+
     // Install web dir (newer tarballs ship apps/web/build/ as web/).
     let web_src = tmpdir.path().join("web");
     if web_src.is_dir() {
@@ -163,9 +174,20 @@ pub async fn download_binary(cfg: &mut InstallConfig, arch: &str) -> Result<()> 
 /// NEW file names, never in place, which is what makes the skip safe.
 pub async fn fetch_model(cfg: &InstallConfig, name: &str) -> Result<()> {
     let dest = cfg.models_dir().join(name);
+    fetch_asset(cfg, name, dest).await
+}
+
+/// Download release asset `name` (from the models bucket) to an arbitrary
+/// `dest`, SHA256-verified, skipping if already present. `fetch_model` is the
+/// common case (into the GGUF models dir); the QNN path uses this directly to
+/// place `.bin`s + tokenizers under the QNN models dir with a nested layout.
+pub async fn fetch_asset(cfg: &InstallConfig, name: &str, dest: std::path::PathBuf) -> Result<()> {
     if dest.is_file() && fs::metadata(&dest).map(|m| m.len() > 0).unwrap_or(false) {
         ui::skip(&format!("Model already present: {name}"));
         return Ok(());
+    }
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
 
     let url = format!("{}/{name}", cfg.models_base);
