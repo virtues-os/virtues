@@ -5,7 +5,7 @@
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
 	import MobileTabBar from "$lib/components/mobile/MobileTabBar.svelte";
-	import MobileYouSheet from "$lib/components/mobile/MobileYouSheet.svelte";
+	import MobileMenuSheet from "$lib/components/mobile/MobileMenuSheet.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import ServerProvisioning from "$lib/components/ServerProvisioning.svelte";
@@ -302,7 +302,7 @@
 <!-- Mobile bottom-tab chrome (phone shell only) -->
 {#if mobileLayout.isMobile}
 	<MobileTabBar />
-	<MobileYouSheet />
+	<MobileMenuSheet />
 {/if}
 
 <!-- Focus mode: floating exit affordance (chrome is hidden via body.focus-mode) -->

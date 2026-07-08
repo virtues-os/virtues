@@ -64,20 +64,20 @@
 			activate: () => go("/page", "Pages"),
 		},
 		{
-			id: "you",
-			label: "You",
-			icon: "ri:user-3-line",
-			iconActive: "ri:user-3-fill",
+			id: "settings",
+			label: "Settings",
+			icon: "ri:settings-3-line",
+			iconActive: "ri:settings-3-fill",
 			match: [],
-			activate: () => mobileLayout.openYou(),
+			activate: () => mobileLayout.openMenu(),
 		},
 	];
 
 	const activeRoute = $derived(windowShellStore.activeTab?.route ?? "");
 
 	function isActive(tab: Tab): boolean {
-		if (tab.id === "you") return mobileLayout.youSheetOpen;
-		if (mobileLayout.youSheetOpen) return false;
+		if (tab.id === "settings") return mobileLayout.menuOpen;
+		if (mobileLayout.menuOpen) return false;
 		return tab.match.some((p) => activeRoute === p || activeRoute.startsWith(p + "/"));
 	}
 </script>
