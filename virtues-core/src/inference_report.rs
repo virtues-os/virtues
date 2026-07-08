@@ -158,7 +158,10 @@ pub fn resolution_report() -> ResolutionReport {
         },
     ];
     ResolutionReport {
-        accelerator: "llama-server".to_string(),
+        // The qualifier belongs to this path only — CUDA vs CPU is decided by
+        // which llama-server binary CI built. The QNN path's accelerator string
+        // is self-describing, so doctor prints `accelerator` verbatim.
+        accelerator: "llama-server (GPU or CPU per sidecar build)".to_string(),
         precision: "Q8_0 (QAT) embed / Q8_0 rerank".to_string(),
         models_dir: Some(dir),
         models,

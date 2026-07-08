@@ -34,10 +34,7 @@ pub async fn run() -> i32 {
 /// before pulling anything so the user sees what's about to be exercised.
 pub fn print_inference(r: &ResolutionReport, issues: &mut ui::Issues) {
     ui::subsection("Inference");
-    ui::kv(
-        "accelerator",
-        &format!("{} (GPU or CPU per sidecar build)", r.accelerator),
-    );
+    ui::kv("accelerator", &r.accelerator);
     ui::kv("precision", &r.precision);
     match &r.models_dir {
         Some(d) => ui::kv("models dir", &d.display().to_string()),

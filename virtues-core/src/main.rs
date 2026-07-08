@@ -708,6 +708,11 @@ fn maybe_reexec_as_service_user() {
     const DB_COMMANDS: &[&str] = &[
         "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
         "migrate", "seed",
+        // `doctor` reads the env file (inference mode) and the DB (reach legs),
+        // both `virtues`-owned. Run as another user it can read neither, so it
+        // would render the default llama-server guess + "DB unknown" — a
+        // confident, wrong report. Re-exec so it reports this box's real config.
+        "doctor",
     ];
     let Some(cmd) = std::env::args().nth(1) else { return };
     if !DB_COMMANDS.contains(&cmd.as_str()) {
