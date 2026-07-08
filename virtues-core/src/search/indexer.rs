@@ -8,6 +8,7 @@ use anyhow::Result;
 use pgvector::Vector;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 use super::embedder::get_embedder;
 
@@ -237,10 +238,24 @@ async fn embed_one_batch(
             };
             let embedding_id = format!("{}:{}:{}", ont_name, record_id, ci);
 
+            // BM25 lexical terms for this chunk. Same tokenizer query.rs uses.
+            let (bm_terms, bm_tfs, bm_len) = bm25_postings(chunk);
+
+            // Was this chunk indexed before? Detected BEFORE the upsert so the
+            // corpus stats (N, Σlen) update by the right delta on a re-index.
+            // `None` row → new doc; `Some(_)` → existing (bm25_len may be NULL on
+            // pre-migration rows, treated as 0).
+            let prior_len: Option<Option<i64>> = sqlx::query_scalar(
+                "SELECT bm25_len FROM search_embeddings WHERE id = $1",
+            )
+            .bind(&embedding_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+
             sqlx::query(
                 "INSERT INTO search_embeddings \
-                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, timestamp, content, source_table) \
-                 VALUES ($1, $2, $3, $4, 'embeddinggemma', $10, $5, $6, $7, $8, $9, $11) \
+                 (id, ontology, record_id, text_hash, model, chunk_index, title, preview, author, timestamp, content, source_table, bm25_len) \
+                 VALUES ($1, $2, $3, $4, 'embeddinggemma', $10, $5, $6, $7, $8, $9, $11, $12) \
                  ON CONFLICT (ontology, record_id, chunk_index) DO UPDATE SET \
                    text_hash = EXCLUDED.text_hash, \
                    model = EXCLUDED.model, \
@@ -249,7 +264,8 @@ async fn embed_one_batch(
                    author = EXCLUDED.author, \
                    timestamp = EXCLUDED.timestamp, \
                    content = EXCLUDED.content, \
-                   source_table = EXCLUDED.source_table",
+                   source_table = EXCLUDED.source_table, \
+                   bm25_len = EXCLUDED.bm25_len",
             )
             .bind(&embedding_id)
             .bind(ont_name)
@@ -259,9 +275,10 @@ async fn embed_one_batch(
             .bind(preview)
             .bind(author)
             .bind(ts_parsed)
-            .bind(chunk.as_str()) // content — the same text we embed, for lexical/FTS
+            .bind(chunk.as_str()) // content — the same text we embed, for lexical/BM25
             .bind(ci as i32)
             .bind(table) // source_table — for the wiki_entity_refs join (entity filtering)
+            .bind(bm_len)
             .execute(&mut *tx)
             .await?;
 
@@ -273,6 +290,45 @@ async fn embed_one_batch(
             .bind(Vector::from(embedding))
             .execute(&mut *tx)
             .await?;
+
+            // Replace this chunk's BM25 postings (idempotent under re-index).
+            sqlx::query("DELETE FROM search_bm25_postings WHERE chunk_id = $1")
+                .bind(&embedding_id)
+                .execute(&mut *tx)
+                .await?;
+            if !bm_terms.is_empty() {
+                sqlx::query(
+                    "INSERT INTO search_bm25_postings (chunk_id, term, tf) \
+                     SELECT $1, t, f FROM UNNEST($2::text[], $3::int[]) AS u(t, f)",
+                )
+                .bind(&embedding_id)
+                .bind(&bm_terms)
+                .bind(&bm_tfs)
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            // Corpus stats: a new chunk adds a doc + its length; a re-index only
+            // adjusts Σlen by the length delta (doc count unchanged).
+            match prior_len {
+                None => {
+                    sqlx::query(
+                        "UPDATE search_bm25_stats \
+                         SET n_docs = n_docs + 1, sum_len = sum_len + $1 WHERE singleton",
+                    )
+                    .bind(bm_len)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                Some(old) => {
+                    sqlx::query(
+                        "UPDATE search_bm25_stats SET sum_len = sum_len + $1 WHERE singleton",
+                    )
+                    .bind(bm_len - old.unwrap_or(0))
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
         }
         tx.commit().await?;
 
@@ -297,6 +353,22 @@ async fn embed_one_batch(
     }
 
     Ok((rows.len(), batch_count))
+}
+
+/// Build this chunk's BM25 postings: the distinct terms, their term-frequencies
+/// (parallel to `terms`), and the total token count (the document length used
+/// for BM25 length normalization). Uses the shared [`bm25::tokens`](super::bm25)
+/// tokenizer so ingest-time terms match query-time terms exactly.
+fn bm25_postings(chunk: &str) -> (Vec<String>, Vec<i32>, i64) {
+    let toks = super::bm25::tokens(chunk);
+    let len = toks.len() as i64;
+    let mut tf: HashMap<String, i32> = HashMap::new();
+    for t in toks {
+        *tf.entry(t).or_insert(0) += 1;
+    }
+    let terms: Vec<String> = tf.keys().cloned().collect();
+    let tfs: Vec<i32> = terms.iter().map(|t| tf[t]).collect();
+    (terms, tfs, len)
 }
 
 /// Target window size in whitespace words. Retrieval-quality research

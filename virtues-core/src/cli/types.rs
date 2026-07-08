@@ -302,6 +302,16 @@ pub enum Commands {
         yes: bool,
     },
 
+    /// Rebuild the derived search index from source with the current model.
+    /// Wipes the vector + BM25 index (source data is untouched), resizes the
+    /// vector columns to match the model, and re-embeds. Use after an index
+    /// schema change (e.g. the halfvec/BM25 upgrade) or to recover a stale index.
+    Reindex {
+        /// Skip the confirmation prompt (scripts/CI).
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Report the inference stack's hardware resolution without downloading:
     /// detected accelerator, whether this build links CUDA, the chosen ONNX
     /// precision, and whether each model is baked or would be downloaded. The

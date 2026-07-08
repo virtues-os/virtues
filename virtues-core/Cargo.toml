@@ -133,6 +133,11 @@ hex = "0.4"
 hmac = "0.12"
 sha2 = "0.10"
 
+# WordPiece tokenization for the Dragon NPU path (`search/qnn_client.rs`): the
+# QNN daemon is token-in, so we tokenize + pack int32 IDs here before the RPC.
+# Local `from_file` only — no HTTP feature (we ship the tokenizer.json).
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
 # `virtues backup` / `virtues restore` — single self-contained tarball
 # containing pg_dump + lake archives + env. `tar` reads/writes streaming
 # archives; `flate2` is the gzip layer.

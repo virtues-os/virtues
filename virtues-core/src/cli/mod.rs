@@ -6,6 +6,7 @@ pub mod configure_inference;
 pub mod diag;
 pub mod doctor;
 pub mod link;
+pub mod reindex;
 pub mod report_crash;
 pub mod reset;
 pub mod restore;
@@ -77,6 +78,12 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Same — must run before the app builds the guarded embedder, which
             // would fail on the fingerprint mismatch this command fixes.
             unreachable!("ConfigureInference command should be handled in main.rs");
+        }
+
+        Commands::Reindex { .. } => {
+            // Same — runs before the normal init path, whose ensure_embedding_dims
+            // would refuse the width change on the still-populated index.
+            unreachable!("Reindex command should be handled in main.rs");
         }
 
         Commands::Migrate => {

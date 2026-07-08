@@ -37,8 +37,28 @@
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
+
+use super::qnn_client::{QnnClient, GTE_DIM};
+
+/// The Dragon NPU daemon's loopback address, if this box runs one. Set by the
+/// installer's `dragon` mode; its presence is what switches embedding (and
+/// reranking) from the HTTP sidecar path to the native QNN client.
+pub(super) fn qnnd_addr() -> Option<String> {
+    std::env::var("VIRTUES_QNND_ADDR").ok().filter(|s| !s.trim().is_empty())
+}
+
+/// Directory holding the QNN tokenizers (`tok_gte/`, `tok_colbert/`) shipped
+/// alongside the `.bin` context binaries.
+pub(super) fn qnnd_models_dir() -> PathBuf {
+    std::env::var("VIRTUES_QNND_MODELS_DIR")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/var/lib/virtues/models/qnn"))
+}
 
 /// EmbeddingGemma's native output is 768-dim; on Dragon we keep only the first
 /// `DRAGON_STORED_DIM` (Matryoshka truncation) and re-normalize — a 3× storage/
@@ -67,6 +87,11 @@ fn fingerprint_pinned_env() -> bool {
 /// probed native dims (`VIRTUES_EMBED_DIMS`, no truncation). Dragon/dev: 256
 /// (Matryoshka truncation of EmbeddingGemma's 768).
 pub fn configured_embed_dim() -> usize {
+    // Dragon NPU path: gte-small's native 384, stored untruncated (not
+    // Matryoshka-trained). Takes precedence over the HTTP-mode logic below.
+    if qnnd_addr().is_some() {
+        return GTE_DIM;
+    }
     if fingerprint_pinned_env() {
         std::env::var("VIRTUES_EMBED_DIMS")
             .ok()
@@ -147,8 +172,8 @@ struct EmbeddingRow {
 
 /// llama-server HTTP-backed embedder. The sidecar owns the model, GPU,
 /// threading; per-call latency is dominated by inference, not transport
-/// (loopback HTTP).
-pub struct LocalEmbedder {
+/// (loopback HTTP). One of the two backends behind [`LocalEmbedder`].
+struct HttpEmbedder {
     client: reqwest::Client,
     base_url: String,
     /// The `model` field sent on every /v1/embeddings request. llama.cpp
@@ -173,8 +198,8 @@ pub struct LocalEmbedder {
     truncate: bool,
 }
 
-impl LocalEmbedder {
-    pub async fn new() -> Result<Self> {
+impl HttpEmbedder {
+    async fn new() -> Result<Self> {
         let base_url = resolve_base_url();
         // reqwest is `rustls-tls-no-provider`; building any client (even for
         // loopback HTTP) panics "No provider set" unless the process default
@@ -344,6 +369,82 @@ impl LocalEmbedder {
     }
 }
 
+/// The active embedding backend, chosen once at construction: the HTTP sidecar
+/// (llama-server or the user's BYO endpoint) or the Dragon NPU daemon
+/// (`qnn_client`). Callers never see this — they hold `Arc<LocalEmbedder>` and
+/// call the same methods regardless.
+enum Backend {
+    Http(Arc<HttpEmbedder>),
+    Qnn(Arc<QnnClient>),
+}
+
+/// The embedder callers use. A thin dispatcher over [`Backend`] that preserves
+/// the previous public surface (so `get_embedder()` consumers are unchanged),
+/// selecting the QNN NPU path when `VIRTUES_QNND_ADDR` is set.
+pub struct LocalEmbedder {
+    backend: Backend,
+    /// The stored vector width (= the vector column's dims). Http: resolved from
+    /// the endpoint/config as before. Qnn: gte-small's native 384 (no Matryoshka).
+    stored_dim: usize,
+}
+
+impl LocalEmbedder {
+    pub async fn new() -> Result<Self> {
+        if let Some(addr) = qnnd_addr() {
+            let dir = qnnd_models_dir();
+            let client = QnnClient::new(addr.clone(), &dir).with_context(|| {
+                format!("initializing QNN client (addr={addr}, models={})", dir.display())
+            })?;
+            // Liveness: a tiny embed round-trip, so we fail at startup with a
+            // clear message instead of on the first search.
+            client.embed("virtues warm-up probe").await.with_context(|| {
+                format!("QNN daemon unreachable at {addr} — check: systemctl status virtues-qnnd")
+            })?;
+            return Ok(Self { backend: Backend::Qnn(Arc::new(client)), stored_dim: GTE_DIM });
+        }
+        let http = HttpEmbedder::new().await?;
+        let stored_dim = http.stored_dim;
+        Ok(Self { backend: Backend::Http(Arc::new(http)), stored_dim })
+    }
+
+    /// Embed a search **query**. (gte is symmetric — query and document use the
+    /// same packing — so the QNN path doesn't distinguish them; the HTTP path
+    /// still applies its asymmetric query prompt.)
+    pub async fn embed_query_async(&self, text: &str) -> Result<Vec<f32>> {
+        match &self.backend {
+            Backend::Http(h) => h.embed_query_async(text).await,
+            Backend::Qnn(c) => c.embed(text).await,
+        }
+    }
+
+    /// Embed a single stored **document/content** string.
+    pub async fn embed_async(&self, text: &str) -> Result<Vec<f32>> {
+        match &self.backend {
+            Backend::Http(h) => h.embed_async(text).await,
+            Backend::Qnn(c) => c.embed(text).await,
+        }
+    }
+
+    /// Embed a batch of **documents/content**.
+    pub async fn embed_batch_async(&self, texts: Vec<String>) -> Result<Vec<Vec<f32>>> {
+        match &self.backend {
+            Backend::Http(h) => h.embed_batch_async(texts).await,
+            Backend::Qnn(c) => c.embed_batch(&texts).await,
+        }
+    }
+
+    pub fn dimension(&self) -> usize {
+        self.stored_dim
+    }
+
+    fn backend_label(&self) -> &'static str {
+        match &self.backend {
+            Backend::Http(_) => "http-sidecar",
+            Backend::Qnn(_) => "qnn-npu",
+        }
+    }
+}
+
 impl Embedder for LocalEmbedder {
     fn dimension(&self) -> usize {
         self.stored_dim
@@ -418,9 +519,9 @@ pub async fn get_embedder() -> Result<Arc<LocalEmbedder>> {
             let start = std::time::Instant::now();
             let embedder = LocalEmbedder::new().await?;
             tracing::info!(
-                "Embedding sidecar ready in {:.1}s (url={}, dim={})",
+                "Embedder ready in {:.1}s (backend={}, dim={})",
                 start.elapsed().as_secs_f64(),
-                embedder.base_url,
+                embedder.backend_label(),
                 embedder.dimension()
             );
             Ok::<_, anyhow::Error>(Arc::new(embedder))

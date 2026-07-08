@@ -126,39 +126,62 @@ impl Database {
             )));
         }
 
-        let current = self.vector_column_dim("search_vectors", "embedding").await?;
-        if current == Some(target) {
+        // The target column is `halfvec(target)` (fp16 — half the storage, ~3×
+        // faster query, recall within noise of fp32). We need both the width AND
+        // the type family: an already-`halfvec` column at the right width is a
+        // no-op; a legacy `vector` column at the right width still converts (a
+        // lossless-enough cast — no re-embed), and any width change needs a
+        // reindex.
+        let current_type = self.vector_column_type("search_vectors", "embedding").await?;
+        let current = current_type.as_deref().and_then(parse_vector_dim);
+        let is_halfvec = current_type
+            .as_deref()
+            .map(|t| t.trim_start().starts_with("halfvec"))
+            .unwrap_or(false);
+        if is_halfvec && current == Some(target) {
             return Ok(());
         }
 
-        // Changing the width drops the existing vectors' shape — only safe when
-        // nothing is stored yet.
-        let populated: i64 = sqlx::query_scalar(
-            "SELECT (SELECT count(*) FROM search_vectors) \
-                  + (SELECT count(*) FROM search_topic_cache)",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| Error::Database(format!("counting stored vectors: {e}")))?;
-        if populated > 0 {
-            let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
-            return Err(Error::Database(format!(
-                "embedding index is vector({from}) but the configured model needs \
-                 vector({target}), and {populated} vectors are already stored — run \
-                 `virtues configure-inference` to re-embed (wipes the derived vectors, \
-                 keeps your data)"
-            )));
+        // Only a WIDTH change drops the vectors' meaning and forces a re-embed;
+        // a same-width vector→halfvec cast preserves them. Guard on the former.
+        let dim_changed = current != Some(target);
+        if dim_changed {
+            let populated: i64 = sqlx::query_scalar(
+                "SELECT (SELECT count(*) FROM search_vectors) \
+                      + (SELECT count(*) FROM search_topic_cache)",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("counting stored vectors: {e}")))?;
+            if populated > 0 {
+                let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
+                return Err(Error::Database(format!(
+                    "embedding index is halfvec({from}) but the configured model needs \
+                     halfvec({target}), and {populated} vectors are already stored — run \
+                     `virtues reindex` to re-embed (wipes the derived vectors, keeps your data)"
+                )));
+            }
         }
 
-        tracing::info!(from = ?current, to = target, "sizing embedding columns to the configured model");
+        tracing::info!(
+            from = ?current_type, to = target, "sizing embedding columns (halfvec) to the configured model"
+        );
         // target is a validated usize (≤ max), so the format! interpolation is
-        // injection-safe. Rebuild the HNSW index at the new width.
+        // injection-safe. Cast to halfvec and rebuild the HNSW index. Cosine ops
+        // (`<=>`) — matches the operator query.rs uses, and for our L2-normalized
+        // embeddings it ranks identically to inner product.
         for stmt in [
             "DROP INDEX IF EXISTS search_vectors_hnsw".to_string(),
-            format!("ALTER TABLE search_vectors ALTER COLUMN embedding TYPE vector({target})"),
-            format!("ALTER TABLE search_topic_cache ALTER COLUMN embedding TYPE vector({target})"),
+            format!(
+                "ALTER TABLE search_vectors ALTER COLUMN embedding \
+                 TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
+            format!(
+                "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
+                 TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
             "CREATE INDEX search_vectors_hnsw ON search_vectors \
-             USING hnsw (embedding vector_cosine_ops)"
+             USING hnsw (embedding halfvec_cosine_ops)"
                 .to_string(),
         ] {
             sqlx::query(&stmt)
@@ -169,10 +192,10 @@ impl Database {
         Ok(())
     }
 
-    /// The declared dimension of a pgvector column, e.g. `vector(256)` → 256.
-    /// `None` if the column has no dimension modifier or isn't found.
-    async fn vector_column_dim(&self, table: &str, col: &str) -> Result<Option<usize>> {
-        let ty: Option<String> = sqlx::query_scalar(
+    /// The formatted SQL type of a column, e.g. `"vector(256)"` or
+    /// `"halfvec(384)"`. `None` if the column isn't found.
+    async fn vector_column_type(&self, table: &str, col: &str) -> Result<Option<String>> {
+        sqlx::query_scalar(
             "SELECT format_type(a.atttypid, a.atttypmod) \
              FROM pg_attribute a \
              WHERE a.attrelid = $1::regclass AND a.attname = $2 AND NOT a.attisdropped",
@@ -181,8 +204,14 @@ impl Database {
         .bind(col)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| Error::Database(format!("reading {table}.{col} type: {e}")))?;
-        Ok(ty.and_then(|s| parse_vector_dim(&s)))
+        .map_err(|e| Error::Database(format!("reading {table}.{col} type: {e}")))
+    }
+
+    /// The declared dimension of a pgvector column, e.g. `vector(256)` → 256.
+    /// `None` if the column has no dimension modifier or isn't found.
+    #[allow(dead_code)]
+    async fn vector_column_dim(&self, table: &str, col: &str) -> Result<Option<usize>> {
+        Ok(self.vector_column_type(table, col).await?.as_deref().and_then(parse_vector_dim))
     }
 
     /// Poll `SELECT 1` until Postgres responds or we exhaust the budget.

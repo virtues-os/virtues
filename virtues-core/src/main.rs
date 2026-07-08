@@ -76,6 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("restore")
                 | Some("reset")
                 | Some("configure-inference")
+                | Some("reindex")
                 | Some("sudo")
                 | Some("warm-models")
         );
@@ -470,6 +471,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!("error: configure-inference failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // ─── `virtues reindex` ──────────────────────────────────────────────────
+    // Rebuild the derived search index from source. Runs BEFORE normal init:
+    // its ensure_embedding_dims refuses the width change (e.g. halfvec 256→384)
+    // while the index is populated — reindex is the wedge-clearer.
+    if let Some(Commands::Reindex { yes }) = &cli.command {
+        match virtues::cli::reindex::run(*yes).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("error: reindex failed: {e}");
                 std::process::exit(1);
             }
         }

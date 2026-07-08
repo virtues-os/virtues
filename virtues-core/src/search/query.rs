@@ -1,27 +1,31 @@
 //! Semantic search query engine.
 //!
-//! Hybrid retrieval: embeds the query (EmbeddingGemma, 256-dim) and searches
-//! `search_vectors` (pgvector `vector(256)`, HNSW cosine) AND the lexical
-//! `content_tsv` (Postgres FTS), fuses the two with Reciprocal Rank Fusion,
-//! dedupes to one chunk per record, then reranks the survivors with a
-//! cross-encoder for precision.
+//! Hybrid retrieval, per the on-device field-report measurements:
+//!   1. Dense recall — the query embedding against `search_vectors`
+//!      (pgvector `halfvec`, HNSW cosine `<=>`), top-200.
+//!   2. Lexical recall — real BM25 (k1=1.5, b=0.75) over `search_bm25_postings`,
+//!      document-frequency derived inline, top-200. (Not `ts_rank`, which has no
+//!      IDF and dragged hybrid *below* dense-only.)
+//!   3. Fusion — z-score normalize both arms over the candidate union and blend
+//!      with a query-adaptive weight α: rare-term/entity queries lean lexical,
+//!      paraphrase queries stay dense.
+//!   4. Dedupe to one chunk per record, then a *conditional* cross-encoder /
+//!      ColBERT rerank — only when the fused top-1/top-2 margin is tight.
 
 use anyhow::Result;
 use pgvector::Vector;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::bm25;
 use super::embedder::get_embedder;
 use super::reranker::get_reranker;
 
-/// A single semantic search result.
-///
-/// `score` is normalized to [0, 1] in all cases:
-/// - After reranking (the normal path): sigmoid of the cross-encoder logit.
-/// - When the reranker is unavailable / not run: the RRF fusion score,
-///   min-max-rescaled to [0, 1] within the result set (raw RRF values are
-///   tiny, e.g. ~0.03, and only meaningful as a within-query ordering).
+/// A single semantic search result. `score` is always normalized to [0, 1]
+/// within the result set (min-max) — after reranking it's the rerank order,
+/// otherwise the fused-score order. Only meaningful as a within-query ranking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub ontology: String,
@@ -42,16 +46,14 @@ pub struct SemanticSearchEngine {
     pool: Arc<PgPool>,
 }
 
-/// Cap each reranker candidate so a (query, doc) pair fits the rerank
-/// sidecar's context. The sidecar runs `-c 2048` and llama-server *rejects*
-/// (doesn't truncate) a rerank sequence that overflows the ubatch, which
-/// would fail the whole batch and silently drop us to bi-encoder ranking.
-/// A cross-encoder only needs a document's lead to judge relevance, so
-/// truncating to ~512 tokens is standard practice and lossless in effect.
-/// ~1000 chars ≈ ~256 tokens — the efficiency knee for a cross-encoder
-/// (compute is O(L²), and positional bias anchors relevance to a document's
-/// lead, so 256→512 buys ~2-5% accuracy for ~3.5× the latency). Char-based
-/// (not byte) slicing keeps it UTF-8 safe.
+/// First-stage candidate pool per arm before fusion. The field-report SQL used
+/// 200; the fused top-`recall_limit` feed the reranker.
+const CANDIDATE_POOL: i64 = 200;
+
+/// Cap each reranker candidate so a (query, doc) pair fits the rerank model's
+/// window (~512 tok for the cross-encoder, 256 for ColBERT). A document's lead
+/// carries the relevance signal, so truncating to ~1000 chars (~256 tok) is
+/// lossless in effect. Char-based (not byte) slicing keeps it UTF-8 safe.
 const MAX_RERANK_CHARS: usize = 1000;
 
 fn truncate_for_rerank(text: &str) -> String {
@@ -62,10 +64,21 @@ fn truncate_for_rerank(text: &str) -> String {
     }
 }
 
-/// Min-max rescale candidate scores into [0, 1] in place. Used for the
-/// no-rerank fallback, where raw RRF values are tiny (~0.03) and only mean
-/// anything as a within-query ordering — this preserves the
-/// `SearchResult.score ∈ [0,1]` contract without changing the order.
+/// Conditional-rerank trigger: rerank only when the fused top-1/top-2 score
+/// margin is below this (the ranking is ambiguous and reranking can reorder it);
+/// skip it when the top result already dominates. The field report calibrated a
+/// ~60th-percentile gap offline on SciFact; we can't transplant that constant to
+/// a personal corpus, so this defaults conservatively (skip only clear top-1
+/// wins) and is tunable via `VIRTUES_RERANK_GAP` pending real-data calibration.
+fn rerank_gap_threshold() -> f64 {
+    std::env::var("VIRTUES_RERANK_GAP")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|v| *v >= 0.0)
+        .unwrap_or(1.5)
+}
+
+/// Min-max rescale candidate scores into [0, 1] in place, preserving order.
 fn normalize_scores(candidates: &mut [SearchResult]) {
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for c in candidates.iter() {
@@ -84,8 +97,6 @@ impl SemanticSearchEngine {
     }
 
     /// Confirms the search_vectors HNSW index is reachable.
-    /// Schema creation happens via the migration file; this exists only as
-    /// a startup sanity check.
     pub async fn ensure_vec_table(&self) -> Result<()> {
         sqlx::query("SELECT 1 FROM search_vectors LIMIT 0")
             .execute(self.pool.as_ref())
@@ -94,46 +105,85 @@ impl SemanticSearchEngine {
         Ok(())
     }
 
+    /// The query-adaptive fusion weight α (lexical share) plus the BM25 corpus
+    /// stats (N, avgdl) reused by the main query. α = 0.4·clip((mean top-2 query
+    /// IDF − 5)/5): high-IDF (rare/entity) query terms pull α up toward lexical;
+    /// common paraphrase terms leave it near 0 (pure dense). df for the query's
+    /// terms is fetched here (cheap, indexed) and the IDFs computed in Rust.
+    async fn fusion_alpha(&self, terms: &[String]) -> Result<(f64, i64, f64)> {
+        if terms.is_empty() {
+            return Ok((0.0, 0, 1.0));
+        }
+        let (n_docs, sum_len): (i64, i64) =
+            sqlx::query_as("SELECT n_docs, sum_len FROM search_bm25_stats WHERE singleton")
+                .fetch_optional(self.pool.as_ref())
+                .await?
+                .unwrap_or((0, 0));
+        if n_docs == 0 {
+            return Ok((0.0, 0, 1.0));
+        }
+        let avg_len = sum_len as f64 / n_docs as f64;
+
+        let df_rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT term, count(*)::int8 FROM search_bm25_postings \
+             WHERE term = ANY($1) GROUP BY term",
+        )
+        .bind(terms)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        let df: HashMap<String, i64> = df_rows.into_iter().collect();
+
+        // IDF over the distinct query terms (Lucene/BM25+ variant, matching the
+        // scoring SQL). An absent term has df=0 → maximal IDF.
+        let mut distinct: Vec<&String> = terms.iter().collect();
+        distinct.sort();
+        distinct.dedup();
+        let mut idfs: Vec<f64> = distinct
+            .iter()
+            .map(|t| {
+                let d = df.get(*t).copied().unwrap_or(0) as f64;
+                (((n_docs as f64) - d + 0.5) / (d + 0.5) + 1.0).ln()
+            })
+            .collect();
+        idfs.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let top2 = &idfs[..idfs.len().min(2)];
+        let mean_idf = if top2.is_empty() {
+            0.0
+        } else {
+            top2.iter().sum::<f64>() / top2.len() as f64
+        };
+        let alpha = 0.4 * ((mean_idf - 5.0) / 5.0).clamp(0.0, 1.0);
+        Ok((alpha, n_docs, avg_len))
+    }
+
     /// Search for similar documents by natural language query.
-    ///
-    /// Pipeline:
-    /// 1. Hybrid recall — dense (pgvector cosine) ⊕ lexical (FTS), fused by RRF,
-    ///    deduped to one chunk per record, capped at `recall_limit` (≤20).
-    /// 2. Cross-encoder reranker scores (query, chunk) pairs for precision.
-    ///
-    /// Falls back to RRF ordering if the reranker is unavailable.
     pub async fn search(
         &self,
         query: &str,
         ontologies: Option<&[String]>,
         date_after: Option<&str>,
         date_before: Option<&str>,
-        // Resolved entity IDs (person/place/org/thing). When set, only rows
-        // whose source record references one of these entities are returned —
-        // entity-aware retrieval via wiki_entity_refs.
+        // Resolved entity IDs (person/place/org/thing). When set, only rows whose
+        // source record references one of these entities are returned.
         entities: Option<&[String]>,
         limit: Option<i64>,
     ) -> Result<Vec<SearchResult>> {
         let embedder = get_embedder().await?;
-        // Query side of the asymmetric embedding (query prompt).
         let query_vec = embedder.embed_query_async(query).await?;
         let query_vector = Vector::from(query_vec);
         let limit = limit.unwrap_or(10).clamp(1, 50);
-
-        // Over-fetch for reranking: 2x requested limit, capped at 20. The
-        // reranker is overhead/layer-bound (latency ~linear in candidate
-        // count), and the first stage already surfaces the right doc in the
-        // top-20 with good recall — so 20 is the tuned ceiling (~768ms on the
-        // appliance), not 30. Bounded by first-stage recall; don't go lower
-        // without confirming recall on an eval set.
         let recall_limit = (limit * 2).clamp(10, 20);
 
-        // Hybrid retrieval: dense (pgvector cosine) ⊕ lexical (Postgres FTS),
-        // fused with Reciprocal Rank Fusion (RRF, k=60) before reranking. The
-        // lexical arm catches exact tokens dense embeddings smear (proper
-        // nouns, project names, IDs). $1 = query vector, $2 = query text;
-        // filters start at $3 and are shared by both arms; the final
-        // placeholder is the recall limit (used as LIMIT in all three stages).
+        // Lexical arm inputs: BM25 query terms (same tokenizer as ingest) and the
+        // adaptive fusion weight (+ corpus stats reused in the scoring SQL).
+        let terms = bm25::tokens(query);
+        let (alpha, n_docs, avg_len) = self.fusion_alpha(&terms).await?;
+        let w_dense = 1.0 - alpha;
+        let w_lex = alpha;
+
+        // Shared filters (applied to both arms). $1 = query vector, $2 = query
+        // terms; filter placeholders start at $3; the final placeholder is the
+        // recall limit.
         let mut filter_sql = String::new();
         let mut next = 3usize;
         if let Some(onts) = ontologies {
@@ -144,11 +194,11 @@ impl SemanticSearchEngine {
             }
         }
         if date_after.is_some() {
-            filter_sql.push_str(&format!(" AND se.timestamp >= ${}", next));
+            filter_sql.push_str(&format!(" AND se.timestamp >= ${next}"));
             next += 1;
         }
         if date_before.is_some() {
-            filter_sql.push_str(&format!(" AND se.timestamp <= ${}", next));
+            filter_sql.push_str(&format!(" AND se.timestamp <= ${next}"));
             next += 1;
         }
         let entity_filter = entities.map(|e| !e.is_empty()).unwrap_or(false);
@@ -156,43 +206,64 @@ impl SemanticSearchEngine {
             filter_sql.push_str(&format!(
                 " AND EXISTS (SELECT 1 FROM wiki_entity_refs er \
                   WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
-                  AND er.entity_id = ANY(${}))",
-                next
+                  AND er.entity_id = ANY(${next}))",
             ));
             next += 1;
         }
         let lim = next; // recall_limit placeholder
 
-        // `, se.id` tiebreakers make ROW_NUMBER (and thus RRF) deterministic
-        // across runs when many rows tie on distance/ts_rank. The final stage
-        // dedupes to the best-RRF chunk per record (DISTINCT ON record_id) so a
-        // multi-chunk record surfaces once, then re-sorts by RRF and caps.
+        // Hybrid: dense (halfvec `<=>`) ⊕ BM25 (inline df), unioned, z-fused with
+        // a query-adaptive weight, deduped to the best chunk per record.
+        // Numeric constants (N, avgdl, k1, b, weights) are Rust-computed and
+        // inlined — injection-safe (all f64/i64).
         let sql = format!(
-            "WITH dense AS ( \
-               SELECT se.id, ROW_NUMBER() OVER (ORDER BY vs.embedding <=> $1, se.id) AS rnk \
-               FROM search_vectors vs JOIN search_embeddings se ON vs.embedding_id = se.id \
+            "WITH prm AS (SELECT $1::halfvec AS qv), \
+             dense AS ( \
+               SELECT se.id \
+               FROM search_vectors vs JOIN search_embeddings se ON se.id = vs.embedding_id, prm \
                WHERE 1=1{f} \
-               ORDER BY vs.embedding <=> $1, se.id LIMIT ${lim} \
-             ), lexical AS ( \
-               SELECT se.id, ROW_NUMBER() OVER (ORDER BY ts_rank(se.content_tsv, websearch_to_tsquery('english', $2)) DESC, se.id) AS rnk \
-               FROM search_embeddings se \
-               WHERE se.content_tsv @@ websearch_to_tsquery('english', $2){f} \
-               ORDER BY ts_rank(se.content_tsv, websearch_to_tsquery('english', $2)) DESC, se.id LIMIT ${lim} \
-             ), fused AS ( \
-               SELECT COALESCE(d.id, l.id) AS id, \
-                      (COALESCE(1.0/(60 + d.rnk), 0) + COALESCE(1.0/(60 + l.rnk), 0))::float8 AS rrf \
-               FROM dense d FULL OUTER JOIN lexical l ON d.id = l.id \
+               ORDER BY vs.embedding <=> prm.qv, se.id LIMIT {pool} \
+             ), lex AS ( \
+               SELECT dt.chunk_id AS id, \
+                      sum( ln(({n}::float8 - df.df + 0.5)/(df.df + 0.5) + 1) \
+                           * dt.tf * {k1p1} \
+                           / (dt.tf + {k1}*({omb} + {b}*COALESCE(se.bm25_len,1)::float8/{avg})) ) AS bs \
+               FROM search_bm25_postings dt \
+               JOIN (SELECT term, count(*) AS df FROM search_bm25_postings \
+                     WHERE term = ANY($2) GROUP BY term) df ON df.term = dt.term \
+               JOIN search_embeddings se ON se.id = dt.chunk_id \
+               WHERE dt.term = ANY($2){f} \
+               GROUP BY dt.chunk_id, se.bm25_len ORDER BY bs DESC LIMIT {pool} \
+             ), u AS (SELECT id FROM dense UNION SELECT id FROM lex), \
+             sc AS ( \
+               SELECT u.id, -(vs.embedding <=> prm.qv) AS ds, COALESCE(l.bs, 0) AS bs \
+               FROM u JOIN search_vectors vs ON vs.embedding_id = u.id \
+                      LEFT JOIN lex l ON l.id = u.id, prm \
+             ), z AS ( \
+               SELECT id, \
+                 (ds - avg(ds) OVER())/(COALESCE(stddev_samp(ds) OVER(),0) + 1e-9) AS dz, \
+                 (bs - avg(bs) OVER())/(COALESCE(stddev_samp(bs) OVER(),0) + 1e-9) AS bz \
+               FROM sc \
              ), best AS ( \
                SELECT DISTINCT ON (se.record_id) \
                       se.ontology, se.record_id, se.title, se.preview, se.author, \
                       to_char(se.timestamp AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
-                      se.content, f.rrf \
-               FROM fused f JOIN search_embeddings se ON se.id = f.id \
-               ORDER BY se.record_id, f.rrf DESC, se.id \
+                      se.content, ({wd}*z.dz + {wl}*z.bz)::float8 AS s \
+               FROM z JOIN search_embeddings se ON se.id = z.id \
+               ORDER BY se.record_id, s DESC, se.id \
              ) \
-             SELECT ontology, record_id, title, preview, author, ts, content, rrf \
-             FROM best ORDER BY rrf DESC, record_id LIMIT ${lim}",
+             SELECT ontology, record_id, title, preview, author, ts, content, s \
+             FROM best ORDER BY s DESC, record_id LIMIT ${lim}",
             f = filter_sql,
+            pool = CANDIDATE_POOL,
+            n = n_docs,
+            avg = avg_len,
+            k1 = bm25::K1,
+            k1p1 = bm25::K1 + 1.0,
+            omb = 1.0 - bm25::B,
+            b = bm25::B,
+            wd = w_dense,
+            wl = w_lex,
             lim = lim,
         );
 
@@ -206,11 +277,11 @@ impl SemanticSearchEngine {
                 Option<String>,
                 Option<String>,
                 Option<String>, // content (chunk text)
-                f64,             // rrf
+                f64,             // fused score
             ),
         >(&sql)
         .bind(&query_vector)
-        .bind(query);
+        .bind(&terms);
 
         if let Some(onts) = ontologies {
             for ont in onts {
@@ -248,45 +319,47 @@ impl SemanticSearchEngine {
                 author: row.4,
                 timestamp: row.5,
                 content: row.6,
-                // RRF fusion score (tiny; ordering only). Overwritten by the
-                // reranker, or min-max-normalized below if rerank doesn't run.
-                score: row.7,
+                score: row.7, // fused score; reranked or normalized below
             })
             .collect();
 
-        let reranked = if candidates.len() > 1 {
+        // Conditional rerank: only when the fused top-1/top-2 margin is tight.
+        let ambiguous = candidates.len() > 1 && {
+            let gap = candidates[0].score - candidates[1].score;
+            gap < rerank_gap_threshold()
+        };
+        let reranked = if ambiguous {
             match self.rerank_candidates(query, &mut candidates).await {
                 Ok(did) => {
                     if did {
                         let q: String = query.chars().take(60).collect();
-                        tracing::debug!("Reranked {} candidates for query: {}", candidates.len(), q);
+                        tracing::debug!("Reranked {} candidates for: {}", candidates.len(), q);
                     }
                     did
                 }
                 Err(e) => {
-                    tracing::warn!("Reranker unavailable, using RRF ranking: {}", e);
+                    tracing::warn!("Reranker unavailable, using fused ranking: {}", e);
                     false
                 }
             }
         } else {
             false
         };
+        let _ = reranked;
 
-        // No rerank ran → scores are raw RRF (≈0.03). Min-max rescale to [0,1]
-        // so the contract holds and callers/the LLM see interpretable values;
-        // candidates are already RRF-ordered so ordering is unchanged.
-        if !reranked {
-            normalize_scores(&mut candidates);
-        }
-
+        // Normalize to [0, 1] for the caller/LLM (order already set — by rerank
+        // if it ran, else by the fused SQL).
+        normalize_scores(&mut candidates);
         candidates.truncate(limit as usize);
         Ok(candidates)
     }
 
-    /// Rerank candidates with the cross-encoder over the matched **chunk**
-    /// text (not the whole record — that's the point of chunking). Returns
-    /// `true` if it actually reranked, `false` if there were no usable docs.
-    /// Errors only when the reranker sidecar is unreachable.
+    /// Rerank candidates over the matched **chunk** text. Returns `true` if it
+    /// reranked, `false` if there were no usable docs. Errors only when the
+    /// reranker is unreachable (caller falls back to fused order). Sets each
+    /// candidate's `score` to the raw rerank score (cross-encoder logit or
+    /// ColBERT MaxSim); the caller min-max normalizes — both are monotonic, so
+    /// order is preserved either way.
     async fn rerank_candidates(
         &self,
         query: &str,
@@ -297,8 +370,6 @@ impl SemanticSearchEngine {
         let mut rerank_indices: Vec<usize> = Vec::new();
         let mut rerank_docs: Vec<String> = Vec::new();
         for (i, c) in candidates.iter().enumerate() {
-            // The matched chunk is the right rerank unit; `preview` is a
-            // fallback for any legacy row indexed before `content` existed.
             let text = c
                 .content
                 .clone()
@@ -309,26 +380,19 @@ impl SemanticSearchEngine {
                 rerank_docs.push(truncate_for_rerank(&text));
             }
         }
-
         if rerank_docs.is_empty() {
             return Ok(false);
         }
 
         let scores = reranker.rerank_async(query, &rerank_docs).await?;
-
         for score in &scores {
-            let original_idx = rerank_indices[score.index];
-            let normalized = 1.0 / (1.0 + (-(score.score as f64)).exp());
-            candidates[original_idx].score = normalized;
+            candidates[rerank_indices[score.index]].score = score.score as f64;
         }
-
         candidates.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-
         Ok(true)
     }
-
 }

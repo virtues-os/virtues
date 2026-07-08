@@ -23,6 +23,9 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
+use super::embedder::{qnnd_addr, qnnd_models_dir};
+use super::qnn_client::QnnClient;
+
 const DEFAULT_URL: &str = "http://127.0.0.1:18182";
 
 /// Score from the cross-encoder reranker. `index` refers to the position
@@ -46,13 +49,14 @@ struct RerankRow {
 }
 
 /// llama-server HTTP-backed reranker. The sidecar owns the model, GPU,
-/// threading; one POST scores every (query, document) pair in the batch.
-pub struct LocalReranker {
+/// threading; one POST scores every (query, document) pair in the batch. One of
+/// the two backends behind [`LocalReranker`].
+struct HttpReranker {
     client: reqwest::Client,
     base_url: String,
 }
 
-impl LocalReranker {
+impl HttpReranker {
     async fn new() -> Result<Self> {
         let base_url = resolve_base_url();
         // See embedder.rs: reqwest's rustls build panics "No provider set"
@@ -128,6 +132,65 @@ fn resolve_base_url() -> String {
         .unwrap_or_else(|_| DEFAULT_URL.to_string())
 }
 
+/// The active rerank backend, chosen once at construction: the HTTP sidecar
+/// (cross-encoder over `/v1/rerank`) or the Dragon NPU daemon running
+/// answerai-colbert@256, scored by ColBERT late-interaction (MaxSim). Both
+/// return one scalar per document, so the caller (`query.rs`) is unchanged.
+enum Backend {
+    Http(Arc<HttpReranker>),
+    Qnn(Arc<QnnClient>),
+}
+
+/// The reranker callers use. Thin dispatcher over [`Backend`]; selects the QNN
+/// NPU path when `VIRTUES_QNND_ADDR` is set.
+pub struct LocalReranker {
+    backend: Backend,
+}
+
+impl LocalReranker {
+    async fn new() -> Result<Self> {
+        if let Some(addr) = qnnd_addr() {
+            // Reuse the embedder's daemon liveness contract implicitly — the
+            // embedder init already proved the socket; here we just build the
+            // client (tokenizers load) and defer errors to first rerank, which
+            // query.rs already treats as non-fatal (falls back to fusion order).
+            let client = QnnClient::new(addr, &qnnd_models_dir())
+                .context("initializing QNN reranker client")?;
+            return Ok(Self { backend: Backend::Qnn(Arc::new(client)) });
+        }
+        Ok(Self { backend: Backend::Http(Arc::new(HttpReranker::new().await?)) })
+    }
+
+    /// Score `documents` against `query`; one score per document, indexed into
+    /// the input slice. HTTP: cross-encoder logits. QNN: ColBERT MaxSim sums
+    /// (higher = more relevant; unbounded positive, monotonic — `query.rs`'s
+    /// sigmoid preserves their order).
+    pub async fn rerank_async(
+        &self,
+        query: &str,
+        documents: &[String],
+    ) -> Result<Vec<RerankScore>> {
+        match &self.backend {
+            Backend::Http(h) => h.rerank_async(query, documents).await,
+            Backend::Qnn(c) => {
+                let scores = c.rerank(query, documents).await?;
+                Ok(scores
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, score)| RerankScore { index, score })
+                    .collect())
+            }
+        }
+    }
+
+    fn backend_label(&self) -> &'static str {
+        match &self.backend {
+            Backend::Http(_) => "http-sidecar",
+            Backend::Qnn(_) => "qnn-npu-colbert",
+        }
+    }
+}
+
 static RERANKER: OnceCell<Arc<LocalReranker>> = OnceCell::const_new();
 
 /// Errors when the sidecar is unreachable; a failed init is retried on the
@@ -136,13 +199,13 @@ static RERANKER: OnceCell<Arc<LocalReranker>> = OnceCell::const_new();
 pub async fn get_reranker() -> Result<Arc<LocalReranker>> {
     let reranker = RERANKER
         .get_or_try_init(|| async {
-            tracing::info!("Initializing rerank sidecar client...");
+            tracing::info!("Initializing reranker...");
             let start = std::time::Instant::now();
             let reranker = LocalReranker::new().await?;
             tracing::info!(
-                "Rerank sidecar ready in {:.1}s (url={})",
+                "Reranker ready in {:.1}s (backend={})",
                 start.elapsed().as_secs_f64(),
-                reranker.base_url
+                reranker.backend_label()
             );
             Ok::<_, anyhow::Error>(Arc::new(reranker))
         })
