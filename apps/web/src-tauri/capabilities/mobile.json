@@ -10,6 +10,7 @@
     "location-probe:default",
     "reach:default",
     "health:default",
-    "eventkit:default"
+    "eventkit:default",
+    "contacts:default"
   ]
 }

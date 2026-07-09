@@ -177,6 +177,60 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Default permissions for the contacts plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-resume`\n- `allow-status`\n- `allow-collect`",
+          "type": "string",
+          "const": "contacts:default",
+          "markdownDescription": "Default permissions for the contacts plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-resume`\n- `allow-status`\n- `allow-collect`"
+        },
+        {
+          "description": "Enables the collect command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:allow-collect",
+          "markdownDescription": "Enables the collect command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the enable command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:allow-enable",
+          "markdownDescription": "Enables the enable command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the resume command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:allow-resume",
+          "markdownDescription": "Enables the resume command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:allow-status",
+          "markdownDescription": "Enables the status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the collect command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:deny-collect",
+          "markdownDescription": "Denies the collect command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:deny-enable",
+          "markdownDescription": "Denies the enable command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the resume command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:deny-resume",
+          "markdownDescription": "Denies the resume command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the status command without any pre-configured scope.",
+          "type": "string",
+          "const": "contacts:deny-status",
+          "markdownDescription": "Denies the status command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

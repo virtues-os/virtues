@@ -61,11 +61,14 @@
 	let healthSync = $state<OutboxStats | null>(null);
 	let cal = $state<StreamStatus | null>(null);
 	let calSync = $state<OutboxStats | null>(null);
+	let contacts = $state<StreamStatus | null>(null);
+	let contactsSync = $state<OutboxStats | null>(null);
 	let version = $state<string>("");
 	let loading = $state(true);
 	let starting = $state(false);
 	let enablingHealth = $state(false);
 	let enablingCal = $state(false);
+	let enablingContacts = $state(false);
 	let error = $state<string | null>(null);
 
 	const enabled = $derived(rows.length > 0);
@@ -115,8 +118,18 @@
 		loading = true;
 		error = null;
 		try {
-			const [rowsResp, reachResp, syncResp, healthResp, healthSyncResp, calResp, calSyncResp, ver] =
-				await Promise.all([
+			const [
+				rowsResp,
+				reachResp,
+				syncResp,
+				healthResp,
+				healthSyncResp,
+				calResp,
+				calSyncResp,
+				contactsResp,
+				contactsSyncResp,
+				ver,
+			] = await Promise.all([
 					invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
 						payload: { limit: 50 },
 					}),
@@ -126,6 +139,8 @@
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
 					invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
 					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
+					invoke<StreamStatus>("plugin:contacts|status").catch(() => null),
+					invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
 					getVersion().catch(() => ""),
 				]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
@@ -135,6 +150,8 @@
 			healthSync = healthSyncResp;
 			cal = calResp;
 			calSync = calSyncResp;
+			contacts = contactsResp;
+			contactsSync = contactsSyncResp;
 			version = ver;
 		} catch (e) {
 			error = String(e);
@@ -184,6 +201,19 @@
 		}
 	}
 
+	async function enableContacts() {
+		enablingContacts = true;
+		error = null;
+		try {
+			contacts = await invoke<StreamStatus>("plugin:contacts|enable");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingContacts = false;
+		}
+	}
+
 	let syncingNow = $state(false);
 	async function syncNow() {
 		syncingNow = true;
@@ -192,6 +222,7 @@
 			// Grab the latest samples from each collector, then drain to the box.
 			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
 			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
+			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
 			await invoke("plugin:reach|drain_now");
 			await load();
 		} catch (e) {
@@ -291,6 +322,26 @@
 			{#if !cal?.authorized}
 				<button class="s-action" onclick={enableCalendar} disabled={enablingCal}>
 					{enablingCal ? "Enabling…" : "Enable"}
+				</button>
+			{:else}
+				<span class="dot on"></span>
+			{/if}
+		</div>
+		<div class="stream">
+			<div class="s-icon" class:on={contacts?.authorized}>
+				<Icon icon="ri:contacts-book-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Contacts</div>
+				<div class="s-sub">
+					{#if contacts?.authorized}
+						On{#if contactsSync && contactsSync.queued > 0} · {contactsSync.queued} syncing{:else} · synced{/if}
+					{:else}The people in your life{/if}
+				</div>
+			</div>
+			{#if !contacts?.authorized}
+				<button class="s-action" onclick={enableContacts} disabled={enablingContacts}>
+					{enablingContacts ? "Enabling…" : "Enable"}
 				</button>
 			{:else}
 				<span class="dot on"></span>

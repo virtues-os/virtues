@@ -24,6 +24,7 @@ exclude = [
     "apps/web/plugins/reach",
     "apps/web/plugins/health",
     "apps/web/plugins/eventkit",
+    "apps/web/plugins/contacts",
     # Throwaway iroh evaluation crate — own Cargo.lock, kept out of the main
     # build so iroh's dep tree can't destabilize it during the spike.
     "spike-iroh",
