@@ -92,6 +92,16 @@ public final class HealthCollector {
   private func start() {
     if collecting { return }
     collecting = true
+
+    // One-time: an earlier build sent sleep in the wrong shape, so the box
+    // dropped it while our anchor advanced past it. Reset the sleep anchor once
+    // to re-backfill (the box dedups on HKSample.uuid, so re-fetch is safe).
+    let migKey = "virtues.health.sleep_refetch_v1"
+    if !UserDefaults.standard.bool(forKey: migKey) {
+      UserDefaults.standard.removeObject(forKey: "virtues.health.anchor.HKCategoryTypeIdentifierSleepAnalysis")
+      UserDefaults.standard.set(true, forKey: migKey)
+    }
+
     collectAll()  // immediate
 
     // While the process is alive, poll every 5 min for new samples. Background
@@ -142,14 +152,18 @@ public final class HealthCollector {
       guard let self = self else { return }
       for s in samples {
         guard let c = s as? HKCategorySample else { continue }
-        let mins = (c.endDate.timeIntervalSince(c.startDate) / 60).rounded()
+        // Integer minutes — the box reads duration as i64 (a JSON float fails
+        // `as_i64()`); it wants top-level `sleep_duration` + `sleep_stage`.
+        let mins = Int((c.endDate.timeIntervalSince(c.startDate) / 60).rounded())
+        let stage = self.sleepStateName(c.value)
         self.enqueue([
           "id": c.uuid.uuidString,
           "timestamp": iso.string(from: c.startDate),
           "metric_type": "sleep",
-          "value": mins,
           "unit": "minutes",
-          "raw_data": ["sleep_state": self.sleepStateName(c.value), "duration_minutes": mins],
+          "sleep_duration": mins,
+          "sleep_stage": stage,
+          "raw_data": ["sleep_state": stage, "duration_minutes": mins],
         ])
       }
     }
