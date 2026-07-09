@@ -62,6 +62,10 @@ targets:
         NSCalendarsFullAccessUsageDescription: "Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers."
         # Contacts read access.
         NSContactsUsageDescription: "Virtues reads your contacts to build your personal timeline and understand who's in your life — stored on your own box, not Virtues' servers."
+        # FinanceKit read access — without a usage string the API SIGABRTs.
+        # Both keys (Apple's documented one + the one the prod app used) for safety.
+        NSFinancialDataUsageDescription: "Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers."
+        NSFinanceUsageDescription: "Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers."
         UIBackgroundModes:
           - location
           - processing
