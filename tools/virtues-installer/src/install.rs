@@ -709,7 +709,93 @@ pub async fn provision_db() -> Result<()> {
         "psql", "-d", "virtues",
         "-c", "CREATE EXTENSION IF NOT EXISTS vector",
     ]);
-    run_step("Install pgvector extension", cmd).await
+    run_step("Install pgvector extension", cmd).await?;
+
+    harden_postgres().await
+}
+
+/// Appliance-durability tuning for the Postgres cluster.
+///
+/// Two problems this fixes, both invisible until the day power is yanked from
+/// a box in someone's home:
+///
+///  1. **systemd kills recovery.** The default unit gives Postgres 90s to
+///     become ready; after an unclean shutdown WAL replay can take minutes on
+///     a large index, so systemd SIGKILLs the server mid-recovery — the exact
+///     path to "PANIC: could not locate a valid checkpoint record" that fills
+///     the Immich/Home-Assistant forums. A drop-in with `TimeoutStartSec=
+///     infinity` lets recovery finish. (The PGDG unit is already `Type=notify`,
+///     so it reports ready the instant recovery completes — no fixed guess.)
+///
+///  2. **Flash wear + WAL volume.** `wal_compression=lz4` shrinks the
+///     full-page images that dominate WAL on a write-heavy embedding backfill;
+///     stretched checkpoints cut the FPI rate further. Cheap CPU, real flash
+///     savings on eMMC/SD/consumer-NVMe without power-loss protection.
+///
+/// Data checksums (the cheap corruption detector for a hard-unplugged box) can
+/// only be set at initdb time, so they're not touched here — that belongs in
+/// the cluster-creation path (PG18 defaults them on; a note for the golden
+/// image). Idempotent: the drop-in is overwritten, the ALTER SYSTEM settings
+/// are last-writer-wins, and a reload (not restart) applies them without
+/// disturbing a running box.
+async fn harden_postgres() -> Result<()> {
+    // Resolve the running PG unit name (PGDG ships `postgresql@NN-main`; the
+    // distro meta-unit `postgresql.service` pulls it in). The drop-in has to
+    // land on the unit that actually runs the postmaster, so ask systemd which
+    // postgresql@* instance is active rather than hardcoding a version.
+    let instance = active_pg_instance().await;
+    let unit = instance.as_deref().unwrap_or("postgresql");
+    let dropin_dir = format!("/etc/systemd/system/{unit}.service.d");
+    fs::create_dir_all(&dropin_dir)
+        .with_context(|| format!("creating {dropin_dir}"))?;
+    fs::write(
+        format!("{dropin_dir}/virtues-durability.conf"),
+        "[Service]\n# Never SIGKILL Postgres mid-WAL-replay after an unclean\n# shutdown — recovery can exceed the 90s default on a large index.\nTimeoutStartSec=infinity\n",
+    )
+    .context("writing postgres durability drop-in")?;
+    let mut cmd = Command::new("systemctl");
+    cmd.arg("daemon-reload");
+    run_step("Postgres: recovery-safe startup timeout", cmd).await?;
+
+    // WAL/checkpoint tuning via ALTER SYSTEM (writes postgresql.auto.conf).
+    // All reloadable — no restart needed.
+    for (k, v) in [
+        ("wal_compression", "lz4"),
+        ("checkpoint_timeout", "15min"),
+        ("checkpoint_completion_target", "0.9"),
+        ("max_wal_size", "4GB"),
+        ("min_wal_size", "1GB"),
+    ] {
+        let mut cmd = Command::new("sudo");
+        cmd.args([
+            "-u", "postgres", "psql", "-c",
+            &format!("ALTER SYSTEM SET {k} = '{v}'"),
+        ]);
+        // Best-effort per setting: an older PG without lz4 WAL compression
+        // shouldn't abort the whole install — log and continue.
+        if run_step(&format!("Postgres: set {k}={v}"), cmd).await.is_err() {
+            ui::warn(&format!("Postgres: could not set {k} (older server?) — skipping"));
+        }
+    }
+    let mut cmd = Command::new("sudo");
+    cmd.args(["-u", "postgres", "psql", "-c", "SELECT pg_reload_conf()"]);
+    run_step("Postgres: reload config", cmd).await
+}
+
+/// The active `postgresql@NN-main` instance unit, if the box uses the PGDG
+/// multi-version layout. Returns None on distros where `postgresql.service`
+/// is itself the running unit (dnf/RHEL), in which case the caller falls back
+/// to that name.
+async fn active_pg_instance() -> Option<String> {
+    let out = Command::new("systemctl")
+        .args(["list-units", "--type=service", "--state=active", "--no-legend", "postgresql@*"])
+        .output()
+        .await
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace()
+        .find(|t| t.starts_with("postgresql@") && t.ends_with(".service"))
+        .map(|t| t.trim_end_matches(".service").to_string())
 }
 
 async fn psql_exists(sql: &str) -> Result<bool> {
