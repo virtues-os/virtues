@@ -26,6 +26,12 @@ public final class FinanceCollector {
   private let enabledKey = "virtues.finance.enabled"
   private let backYears = 3
 
+  /// FinanceKit APIs **abort the app** if called without the
+  /// `com.apple.developer.financekit` entitlement (pending Apple approval). Until
+  /// it's granted, keep the collector fully inert — never touch FinanceStore.
+  /// Flip to `true` alongside re-adding the entitlement in project.yml.
+  private let entitled = false
+
   private init() {}
 
   public var isCollecting: Bool { collecting }
@@ -34,6 +40,7 @@ public final class FinanceCollector {
   public func authorized() -> Bool { UserDefaults.standard.bool(forKey: enabledKey) }
 
   public func enable(_ completion: @escaping (Bool) -> Void) {
+    guard entitled else { completion(false); return }
     #if canImport(FinanceKit)
       guard #available(iOS 17.4, *), FinanceStore.isDataAvailable(.financialData) else {
         completion(false)
@@ -55,6 +62,7 @@ public final class FinanceCollector {
   }
 
   public func resume() {
+    guard entitled else { return }
     #if canImport(FinanceKit)
       guard #available(iOS 17.4, *), authorized() else { return }
       collecting = true
@@ -63,6 +71,7 @@ public final class FinanceCollector {
   }
 
   public func collectAll() {
+    guard entitled else { return }
     #if canImport(FinanceKit)
       guard #available(iOS 17.4, *), authorized() else { return }
       Task { await self.collect() }

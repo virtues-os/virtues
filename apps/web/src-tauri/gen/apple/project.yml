@@ -83,10 +83,11 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
-        # com.apple.developer.financekit: RESTRICTED — needs an Apple approval
-        # request (developer.apple.com/contact/request/financekit) before
-        # automatic provisioning will include it. Re-enable once granted; the
-        # Finance collector code is ready and compiles.
+        # com.apple.developer.financekit: the App ID HAS this (prod shipped it),
+        # but automatic DEV signing won't attach it even with
+        # -allowProvisioningUpdates — it needs a MANUAL dev provisioning profile
+        # that includes FinanceKit (portal), or a distribution/TestFlight build.
+        # Re-enable + set `entitled=true` in Finance.swift once that's in place.
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
@@ -98,7 +99,11 @@ targets:
         VALID_ARCHS: arm64 
         LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
         LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
-        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: true
+        # false: on iOS 14+ the Swift runtime (incl. libswiftCore /
+        # libswift_Concurrency) ships in the OS. Embedding it (the stale Tauri
+        # template default) embedded libswift_Concurrency without libswiftCore
+        # once the Finance plugin pulled in async/await → dyld crash at launch.
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: false
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
       groups: [app]
     dependencies:
