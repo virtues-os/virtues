@@ -21,3 +21,9 @@ pub(crate) async fn resume<R: Runtime>(app: AppHandle<R>) -> Result<HealthStatus
 pub(crate) async fn status<R: Runtime>(app: AppHandle<R>) -> Result<HealthStatus> {
   app.health().status()
 }
+
+/// Fetch new samples now (the "Sync now" button pairs this with a drain).
+#[command]
+pub(crate) async fn collect<R: Runtime>(app: AppHandle<R>) -> Result<HealthStatus> {
+  app.health().collect()
+}

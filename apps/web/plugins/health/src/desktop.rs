@@ -23,4 +23,7 @@ impl<R: Runtime> Health<R> {
   pub fn status(&self) -> crate::Result<HealthStatus> {
     Ok(HealthStatus::default())
   }
+  pub fn collect(&self) -> crate::Result<HealthStatus> {
+    Ok(HealthStatus::default())
+  }
 }

@@ -245,6 +245,22 @@ impl ReachState {
     }
   }
 
+  /// Drain the outbox to the box right now (the "Sync now" button). Returns the
+  /// number of records delivered.
+  pub async fn drain_now(&self) -> Result<usize> {
+    let rec = match self.store.load()? {
+      Some(r) => r,
+      None => return Ok(0),
+    };
+    let client = match self.client().await {
+      Some(c) => c,
+      None => return Ok(0),
+    };
+    upload::drain(&client, &rec)
+      .await
+      .map_err(|e| Error::Reach(format!("{e:#}")))
+  }
+
   pub async fn pair(&self, server: &str, code: &str) -> Result<ReachStatus> {
     let origin = normalize_server(server);
     let device_info = serde_json::json!({
@@ -300,7 +316,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::reach_status,
       commands::forget,
       commands::discover,
-      commands::outbox_stats
+      commands::outbox_stats,
+      commands::drain_now
     ])
     .setup(|app, _api| {
       // Keep the Swift-called C ABI (virtues_enqueue) in the linked static lib.

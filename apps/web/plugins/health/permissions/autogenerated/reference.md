@@ -7,6 +7,7 @@ Default permissions for the health plugin
 - `allow-enable`
 - `allow-resume`
 - `allow-status`
+- `allow-collect`
 
 ## Permission Table
 
@@ -16,6 +17,32 @@ Default permissions for the health plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`health:allow-collect`
+
+</td>
+<td>
+
+Enables the collect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:deny-collect`
+
+</td>
+<td>
+
+Denies the collect command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>

@@ -104,6 +104,10 @@ public final class HealthCollector {
 
     collectAll()  // immediate
 
+    // Ask iOS for a periodic background window (stationary catch-up); the
+    // handler self-chains thereafter.
+    BackgroundSync.shared.schedule()
+
     // While the process is alive, poll every 5 min for new samples. Background
     // catch-up comes from BGProcessingTask / any wake calling collectAll().
     let t = DispatchSource.makeTimerSource(queue: .global(qos: .utility))

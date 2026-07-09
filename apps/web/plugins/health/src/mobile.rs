@@ -46,4 +46,11 @@ impl<R: Runtime> Health<R> {
       .run_mobile_plugin("status", EmptyRequest {})
       .map_err(Into::into)
   }
+
+  pub fn collect(&self) -> crate::Result<HealthStatus> {
+    self
+      .0
+      .run_mobile_plugin("collect", EmptyRequest {})
+      .map_err(Into::into)
+  }
 }
