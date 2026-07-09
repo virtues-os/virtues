@@ -27,10 +27,9 @@ public final class FinanceCollector {
   private let backYears = 3
 
   /// FinanceKit APIs **abort the app** if called without the
-  /// `com.apple.developer.financekit` entitlement (pending Apple approval). Until
-  /// it's granted, keep the collector fully inert — never touch FinanceStore.
-  /// Flip to `true` alongside re-adding the entitlement in project.yml.
-  private let entitled = false
+  /// `com.apple.developer.financekit` entitlement. It's now signed in (the
+  /// entitlement value must be the array ["financial-data"], not `true`).
+  private let entitled = true
 
   private init() {}
 
